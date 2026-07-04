@@ -10,7 +10,7 @@ The design rationale behind this spec lives in `~/.hermes/planning/planning-v2-d
 
 A database-backed personal planning system replacing a markdown-file system. It manages sprints, sprint items, tickets, and planning days for a single user (Khushal), and lets AI agents take tickets through a shaping-and-execution pipeline under explicit per-ticket permission ceilings. It runs entirely on the local machine.
 
-The system is: one SQLite database; one Python server process (JSON API + web UI + WebSocket event feed + embedded dispatcher + boundary scheduler); one CLI used by both agents and the human; a set of skill documents as artifacts. Agents never mutate canonical state directly — they write proposals; code resolves them.
+The system is: one SQLite database; one Python server process (JSON API + web UI + WebSocket event feed + embedded dispatcher + boundary scheduler); one CLI used by agents (the human operates through the UI, never the CLI); a set of skill documents as artifacts. Agents never mutate canonical state directly — they write proposals; code resolves them.
 
 ## 2. Stack and runtime
 
@@ -41,7 +41,7 @@ All entities carry `id` (short random slug with type prefix: `sp_`, `si_`, `t_`,
 - Agent-permitted direct transitions: `todo ↔ active`, and setting `blocked` with blocker links. `done` and `deferred_next_sprint` require a proposal accepted by the human (Section 4.4 mechanics apply, with the item's single gating field being `status`).
 
 ### 3.3 Ticket
-- Fields: `title`, `state` (Section 4.1), `priority` ∈ {P0..P3} (default P3), `deadline` (nullable date), `project` (same enum, nullable when parented — derived from parent's item), `sprint_item_id` (nullable), `sprint_id` (nullable; writable only when `sprint_item_id` is NULL — writes rejected otherwise; when parented it is derived from the parent item), `recap` (markdown, writable only when state is past `needs_success`; writes before that are rejected with a structured error), `ceiling` (a ticket state; Section 4.3), `at_cap` ∈ {`stop`, `suggest`}, `auto_blocked` (bool, Section 7.5), `chat_session_key` (nullable string), `fields` (Section 4.2).
+- Fields: `title`, `state` (Section 4.1), `priority` ∈ {P0..P3} (default P3), `deadline` (nullable date), `project` (same enum, nullable when parented — derived from parent's item), `sprint_item_id` (nullable), `sprint_id` (nullable; writable only when `sprint_item_id` is NULL — writes rejected otherwise; when parented it is derived from the parent item), `recap` (markdown, writable only when state is past `needs_success`; writes before that are rejected with a structured error), `ceiling` (a ticket state; Section 4.3), `at_cap` ∈ {`stop`, `propose`}, `auto_blocked` (bool, Section 7.5), `chat_session_key` (nullable string), `fields` (Section 4.2).
 - Title length ≤ 200 chars, enforced on every write path.
 
 ### 3.4 Day
@@ -78,11 +78,14 @@ Each pre-terminal state has one **gating field**:
 | in_progress | result | needs_review (or done, Section 4.4) |
 | needs_review | — (human approval of `result.value`) | done |
 
+The `result.notes` slot is the ticket's **review notes**: the specific things that need careful checking, written during planning and updated as review happens. Review itself is not a new mechanism: in `needs_review`, an agent orchestrates the Codex CLI against the result and these notes, fixes what review surfaces, and updates the notes — then the human approves. No extra states, entities, or flow machinery for this.
+
 ### 4.3 Ceiling and at-cap
 
-- `ceiling` is the highest state an agent-caused advancement may move the ticket **into**. Human actions ignore the ceiling entirely (the human may jump a ticket to any state, including straight to `done`; skipped gating fields simply keep `value = null`).
-- `at_cap = stop`: agent proposals on any field other than the current state's gating field are rejected with a structured error. `at_cap = suggest`: agents may file proposals on later fields; those proposals never advance state until the ticket's current state reaches them.
-- Defaults at creation: `ceiling = needs_success`, `at_cap = stop` [RULING R2 default].
+- The agent grant is two things, always together: **how far** (`ceiling`) and **what happens there** (`at_cap`). These are the whole vocabulary of agent permission.
+- `ceiling` is the highest state an agent-caused advancement may move the ticket **into**. Below the ceiling, agents work freely: proposals on the current gating field auto-accept and advance (Section 4.4). Human actions ignore the ceiling entirely (the human may jump a ticket to any state, including straight to `done`; skipped gating fields simply keep `value = null`).
+- `at_cap` governs the ticket once it sits at its ceiling: `stop` — agents may not file any proposal; the ticket rests untouched until the human changes the grant. `propose` — agents may file a proposal on the current gating field only; it parks for the human; nothing advances.
+- Defaults at creation: `ceiling = needs_success`, `at_cap = propose` (an agent may draft a success condition for approval; nothing advances) [RULING R2 default].
 
 ### 4.4 The resolution engine
 
@@ -94,7 +97,7 @@ The only write path for `fields.*.value` and for agent-caused state changes. Sem
 4. Human resolution of a pending proposal: **accept** (value ← body), **edit** (value ← human-edited text; logged as accepted with `edited: true`), or leave it and discuss in chat. There is no reject action; a proposal can be superseded or the ticket dropped.
 5. Special case `in_progress`: an accepted `result` advances to `needs_review` unless `ceiling = done`, in which case it advances directly to `done`. Human approval in `needs_review` (a dedicated approve action, not a field proposal) sets `done`.
 6. Every transition writes exactly one `state_changed` event `{from, to, cause}`. One canonical function per transition edge in the code; no second writer.
-7. **The onward grant.** Human acceptance of a gating-field proposal (accept or edit-accept, UI or CLI) requires an explicit `next_ceiling`: any state at or beyond the newly entered state, or `none` — meaning the ceiling becomes exactly the newly entered state (agents may still propose there; nothing advances). An accept without it is rejected with a structured error. The same action may optionally set `at_cap`. Agent auto-accepts never change the ceiling. The `needs_review` approve action and sprint-item status accepts carry no onward grant (they are terminal for agent involvement).
+7. **The onward grant.** Human acceptance of a gating-field proposal (accept or edit-accept) requires the explicit grant pair: `next_ceiling` — any state at or beyond the newly entered state, or `none` meaning the ceiling becomes exactly the newly entered state — AND `at_cap` (`stop`: agents don't even propose from here; `propose`: agents may draft the next gating field for approval). Both are stated on every accept, even when the answer is "nothing further"; an accept without the pair is rejected with a structured error. Agent auto-accepts change neither ceiling nor at_cap. The `needs_review` approve action and sprint-item status accepts carry no onward grant (they are terminal for agent involvement).
 
 ### 4.5 Derived views (must exist as queryable API endpoints, not stored columns)
 
@@ -143,7 +146,7 @@ Every 60s (configurable), inside the server process. Order within a tick: (1) re
 
 ### 7.2 Eligibility and ordering
 
-A ticket is eligible iff ALL of: not `done`/`dropped`/`needs_review`; not blocked (3.6); not `auto_blocked`; no active claim; and an agent can do work on it — meaning (a) the current gating field has no pending proposal and the advance-target ≤ `ceiling`, or (b) `at_cap = suggest` and some later field lacks both value and pending proposal, or (c) state is `in_progress` and `result` has no pending proposal and `needs_review` ≤ `ceiling`. Ordering: priority (P0 first), then deadline ascending with NULLs last, then `created_at` ascending.
+A ticket is eligible iff ALL of: not `done`/`dropped`/`needs_review`; not blocked (3.6); not `auto_blocked`; no active claim; and an agent can do work on it — meaning the current gating field has no pending proposal AND either (a) the advance-target ≤ `ceiling` (the agent can move it), or (b) the ticket is at its ceiling with `at_cap = propose` (the agent can draft the gating field for approval). A ticket at its ceiling with `at_cap = stop` is never eligible. Ordering: priority (P0 first), then deadline ascending with NULLs last, then `created_at` ascending.
 
 ### 7.3 Claims and runs
 
@@ -161,26 +164,25 @@ A run ending `crashed`, `timed_out`, or `spawn_failed` increments `tickets.conse
 
 ### 7.6 Server-side write validation
 
-Every agent write (proposal, recap, heartbeat, run close) must carry `PLAN_RUN_ID` + `PLAN_CLAIM` matching the ticket's active claim, except proposal/recap writes from non-dispatched contexts (human CLI without claim env) which are permitted as `proposed_by: "khushal"`. A write with a stale/foreign claim is rejected with a structured error naming the mismatch.
+Every agent write (proposal, recap, heartbeat, run close) must carry `PLAN_RUN_ID` + `PLAN_CLAIM` matching the ticket's active claim, except proposal/recap writes from non-dispatched agent contexts (no claim env — e.g. the planner-main chat agent), which are permitted with the proposer taken from `PLAN_ACTOR` (default `agent`). Human writes happen through the UI/API only — the CLI is an agent tool. A write with a stale/foreign claim is rejected with a structured error naming the mismatch.
 
 ## 8. The CLI (`plan`)
 
-A single entry point (`plan`, installed via `pip install -e .` console script) speaking HTTP to the server. Global behavior: `--json` on every verb (machine output; stable exit codes: 0 success, 1 validation/domain error, 2 connection error); long text via `--body-file <path>` or `-` for stdin — body text is never passed as an inline argument; env defaults `PLAN_SERVER_URL`, `PLAN_TICKET_ID` (verbs taking a ticket id use it when omitted), `PLAN_RUN_ID`, `PLAN_CLAIM`.
+A single entry point (`plan`, installed via `pip install -e .` console script) speaking HTTP to the server. **The CLI is for agents (and developer debugging); the human never uses it — every human action lives in the UI.** No resolution verbs exist in it: accepting, approving, granting, unblocking, and day-plan decisions are UI/API-only. Global behavior: `--json` on every verb (machine output; stable exit codes: 0 success, 1 validation/domain error, 2 connection error); long text via `--body-file <path>` or `-` for stdin — body text is never passed as an inline argument; env defaults `PLAN_SERVER_URL`, `PLAN_TICKET_ID` (verbs taking a ticket id use it when omitted), `PLAN_RUN_ID`, `PLAN_CLAIM`, `PLAN_ACTOR`.
 
 Verbs (exact):
 - `plan serve` — run the server (foreground).
-- `plan seed --source <dir>` — Section 12.
-- `plan ticket create|show|list|drop|set` (`set` for priority/deadline/ceiling/at-cap/day-assignment/sprint-assignment; ceiling/at-cap changes are human-only — rejected when claim env present).
+- `plan seed --source <dir>` / `plan seed --demo` — Section 12.
+- `plan ticket create|show|list|set` (`set` for priority/deadline/day-assignment/sprint-assignment only; ceiling and at_cap are not CLI-settable — grants are human, in the UI).
 - `plan propose <field>` (body via stdin/file) · `plan recap` (same input rules) · `plan note <field>`.
-- `plan accept <ticket> <field> --next <state|none> [--edit-file <path>]` (`--next` is the mandatory onward grant, Section 4.4) · `plan approve <ticket>` (needs_review→done) · `plan unblock <ticket>` (clears auto_block).
-- `plan item create|show|list|set|propose-status` · `plan sprint create|show|freeze-kickoff|freeze-review|set` · `plan idea create|list`.
-- `plan day show [date]|plan-accept-all|plan-reject-all|invalidate <node>|add-ticket|remove-ticket`.
+- `plan item create|show|list|set|propose-status` (`set` limited to the agent-permitted transitions of Section 3.2) · `plan sprint show` · `plan idea create|list`.
+- `plan day show [date]|add-ticket|remove-ticket`.
 - `plan link add|rm <from> <to> --kind <kind>` · `plan run heartbeat|close --outcome <o> --summary -`.
-- `plan queue approvals|pickup|overdue` — the derived views.
+- `plan queue approvals|pickup|overdue` — the derived views (read-only).
 
 ## 9. HTTP API and events
 
-- REST JSON under `/api/`: CRUD + actions exactly mirroring Section 8 verbs, plus `GET /api/board`, `GET /api/day/<date>`, `GET /api/sprint/current`, `GET /api/queues`. Every mutating endpoint routes through the same canonical functions as the CLI (one writer per edge).
+- REST JSON under `/api/`: CRUD + actions mirroring Section 8 verbs, PLUS the human actions that deliberately have no CLI form — accept/edit-accept with the grant pair, `needs_review` approve, unblock, grant changes, sprint create/freeze, day-plan accept/accept-all/invalidate/reject-all, drop — and `GET /api/board`, `GET /api/day/<date>`, `GET /api/sprint/current`, `GET /api/queues`. Every mutating endpoint routes through the same canonical functions (one writer per edge).
 - `WS /api/events?since=<id>`: tails the `events` table (poll interval 300ms server-side), pushing `{events:[...], cursor}` batches. Used by the UI as an **invalidation signal only** — the UI refetches JSON endpoints (debounced 250ms); it never reconciles event payloads into local state.
 - Test mode (Section 13): `POST /api/test/tick-boundary` and `POST /api/test/tick-dispatcher` run one tick synchronously; available only when test mode is on, else 404.
 
@@ -193,8 +195,8 @@ Design system (per PRINCIPLES.md, binding):
 - Type: strict scale, five sizes maximum. Motion: entrances ease out, nothing bounces, all durations from motion tokens. Add nothing to a screen unless it makes the user feel something or a smart person genuinely needs it to understand the screen; no explanatory text for the obvious.
 - Before writing any component, record the component inventory for all five screens in decisions.md; build few, reuse hard, no near-duplicates.
 
-1. **Day (home)**: the brief (rendered markdown); the day-plan tree with per-node Accept / Invalidate and top-level Accept-all / Reject-all; the day's ticket list (ordered); the **while-you-were-away digest** — every ticket whose recap changed since the last-seen cursor (latest recap shown) plus everything newly awaiting the human, with a "mark caught up" action that advances the cursor (one server-stored `last_seen_event_id`; the digest survives reloads until marked caught up); a Review entry showing the pending count; and the day chat panel (Section 11) — quick capture happens here, by telling the planner, which files tickets/ideas via the CLI (Section 17).
-2. **Review**: the global approval surface, one pending item at a time — gating-field proposals, sprint-item status proposals, and `needs_review` results, oldest first. Each item shows the proposal rendered, a quick-edit textarea, Accept (with the mandatory onward-grant picker of Section 4.4 — a plain state picker including "no further"), Skip (item stays queued, move on), and a link to the full Ticket. Resolved items leave the queue immediately. The whole flow is operable from the keyboard (bindings delegated).
+1. **Day (home)**: the brief (rendered markdown); the day-plan tree with per-node Accept / Invalidate and top-level Accept-all / Reject-all; the day's ticket list (ordered); a Review entry showing the pending count; and the day chat panel (Section 11) — quick capture happens here, by telling the planner, which files tickets/ideas via the CLI (Section 17).
+2. **Review**: the one-at-a-time review surface — one home of approvals (the Ticket screen is the other), and where the morning pass happens. Pending items — gating-field proposals, sprint-item status proposals, and `needs_review` results — presented one at a time, oldest first. Each shows the proposal rendered, a quick-edit textarea, Accept (with the mandatory grant-pair picker of Section 4.4: how far, and stop-vs-propose — plain pickers, including "no further"), Skip (item stays queued, move on), and a link to the full Ticket. Resolved items leave the queue immediately.
 3. **Board**: one column per ticket state (`dropped` hidden), cards show title, priority, deadline, project, pending-proposal marker, running-claim marker. No drag-and-drop in v1: card click opens Ticket.
 4. **Ticket**: all four fields as sections (value rendered as markdown; pending proposal shown with Accept/Edit, accepts carrying the onward grant; notes editable inline), recap, state control, ceiling and at-cap as plain pickers (no dial widgetry), a **Copy ticket** button (copies a plain-text block — title, state, priority, field values, recap, links — to the clipboard for pasting into any agent or editor), links, day/sprint assignment, run history, event log, and the chat panel (Section 11).
 5. **Sprint**: kickoff fields, items grouped by status (with ticket rollup counts and blockers-cleared flags), loose tickets, review fields (frozen states shown as locked).
@@ -225,25 +227,26 @@ Archives and historical daily folders are not imported — only the latest day's
 - **Append-only events**; derived views computed on read, never stored.
 - **Contracts first**: each domain has a contracts file (types, enums, shapes) generated at stage 1; all implementation imports its types from contracts and never redeclares a shape locally; the frontend consumes exactly the JSON shapes the contracts document. A shape change means changing the contract file and letting type errors drive the fixes.
 - **Pure logic dependency-free**: state machine, resolution, eligibility, ordering, seed parsing, and planning-date math live in each domain's logic layer as plain functions importing nothing but stdlib (and domain contracts); FastAPI/DB code imports them, never the reverse. The acid test: if a rule can't be unit-tested with no mocks, it's in the wrong place.
+- **Audio capture seam (future, reserved).** Audio capture is not in v1, but its arrival point is fixed now: it will be its own isolated domain module behind an adapter interface, feeding the chat input. Build the chat input as a component that accepts pluggable input sources, and couple nothing to the assumption that input is typed text — dropping the audio module in later must touch its own new folder and one registration, nothing else.
 - Never touch `~/.hermes/planning/` (the live markdown system), `~/.hermes/hermes-agent/`, or any path outside this repository at build/test time.
 
 ## 15. Non-goals (v1)
 
-No push notifications, no iOS client, no auth/multi-user, no weekly-check cron, no repo/session evidence adapters, no Necessary-Calls entity, no Mode field, no drag-and-drop, no markdown export mirror, no archive import, no diff-style proposal views, no staleness/deadline-horizon/sprint-health widgets, no instructional empty states, no mobile-specific layout, no command palette.
+No push notifications, no iOS client, no auth/multi-user, no weekly-check cron, no repo/session evidence adapters, no Necessary-Calls entity, no Mode field, no drag-and-drop, no markdown export mirror, no archive import, no diff-style proposal views, no staleness/deadline-horizon/sprint-health widgets, no instructional empty states, no mobile-specific layout, no command palette, no keyboard-shortcut layer, no activity/away digest, no audio capture (its seam is reserved in Section 14).
 
 ## 16. Rulings in force
 
-Defaults the owner may override before the run; each is tagged where it binds: **R1** boundary hour 05:00. **R2** new-ticket grant `ceiling=needs_success, at_cap=stop`. **R3** spawn profile `default`, worker skill `planning-worker`. **R4** boundary evidence DB-internal only. **R5** replan serialization, latest-wins. **R6** seed excludes archives. **R7** max concurrent runs 2.
+Defaults the owner may override before the run; each is tagged where it binds: **R1** boundary hour 05:00. **R2** new-ticket grant `ceiling=needs_success, at_cap=propose`. **R3** spawn profile `default`, worker skill `planning-worker`. **R4** boundary evidence DB-internal only. **R5** replan serialization, latest-wins. **R6** seed excludes archives. **R7** max concurrent runs 2.
 
 ## 17. Skills artifacts
 
-Write four skill documents under `skills/` (not installed anywhere by the build): `planning-worker.md` (how a dispatched agent works a ticket via the CLI: orient with `plan ticket show --json`, propose via stdin, recap discipline, heartbeats, never asking questions), `planning-boundary.md` (the judgment pass contract), `planner-main.md` (the day/system chat agent: operating the queues and day plan via CLI, and quick capture — anything the human tosses into the day chat that is work or an idea gets filed as a standalone ticket or idea via the CLI, immediately, defaulting to P3), `planning-executor.md` (working an in_progress ticket you own). Each ≤ 150 lines, written for the agent that will load it. DOCS.md summarizes their roles.
+Write four skill documents under `skills/` (not installed anywhere by the build): `planning-worker.md` (how a dispatched agent works a ticket via the CLI: orient with `plan ticket show --json`, propose via stdin, recap discipline, heartbeats, never asking questions), `planning-boundary.md` (the judgment pass contract), `planner-main.md` (the day/system chat agent: operating the queues and day plan via CLI, and quick capture — anything the human tosses into the day chat that is work or an idea gets filed as a standalone ticket or idea via the CLI, immediately, defaulting to P3), `planning-executor.md` (working an in_progress ticket you own, including the review discipline: at needs_review, orchestrate the Codex CLI against the result and the review notes, fix what it surfaces, update the notes). Each ≤ 150 lines, written for the agent that will load it. DOCS.md summarizes their roles.
 
 ---
 
 ## 18. Delivery expectations and acceptance checklist
 
-**Build in this order**: (1) contracts skeleton — schema DDL, enums, typed models, adapter interfaces, config loading, CLI/API surface stubs; (2) **the verify instrument** (18.2), runnable with every checklist item FAIL; (3) pure-logic modules + unit tests (items 1–21 and 36) green; (4) server wiring — API, WS, resolution engine over DB, dispatcher, boundary scheduler, CLI against the API; (5) UI views; (6) Playwright e2e suite, items 22–34 and 37 green; (7) the fake-ticket dogfood pass (Section 18.5): Level A green (item 35), Levels B and C executed with evidence recorded in DOGFOOD.md. Do not start a later stage while an earlier stage's tests fail.
+**Build in this order**: (1) contracts skeleton — schema DDL, enums, typed models, adapter interfaces, config loading, CLI/API surface stubs; (2) **the verify instrument** (18.2), runnable with every checklist item FAIL; (3) pure-logic modules + unit tests (items 1–21 and 36) green; (4) server wiring — API, WS, resolution engine over DB, dispatcher, boundary scheduler, CLI against the API; (5) UI views; (6) Playwright e2e suite, items 22–34 green; (7) the fake-ticket dogfood pass (Section 18.5): Level A green (item 35), Levels B and C executed with evidence recorded in DOGFOOD.md. Do not start a later stage while an earlier stage's tests fail.
 
 Where this document delegates a choice, make it, implement it fully, and record it in decisions.md. If a genuine contradiction emerges, state it in PROGRESS.md and propose a resolution consistent with Section 14's rules — do not silently pick.
 
@@ -256,10 +259,10 @@ Where this document delegates a choice, make it, implement it fully, and record 
 
 ### 18.2 The verify instrument
 
-- One command: `./verify` (executable script at repo root). Runs in order: ruff, mypy, unit suite, build check (`python -m compileall src/` + `node --check` on every file in `assets/`), then the Playwright e2e suite headless. Prints a per-item scoreboard for every acceptance test below (item number, name, PASS/FAIL) and ends with exactly `VERIFY: N/37 PASS`.
+- One command: `./verify` (executable script at repo root). Runs in order: ruff, mypy, unit suite, build check (`python -m compileall src/` + `node --check` on every file in `assets/`), then the Playwright e2e suite headless. Prints a per-item scoreboard for every acceptance test below (item number, name, PASS/FAIL) and ends with exactly `VERIFY: N/36 PASS`.
 - The instrument fails with an explicit message if any test file contains `@pytest.mark.skip`, `pytest.skip(`, `xfail`, `.only`, a commented-out test, or an empty test body — the scan itself is unit-tested (item 21).
 - Built at stage 2, before implementation; all items report FAIL until their stage lands. The scoreboard is the single source of truth for completeness.
-- Unit items are 1–21 and 36; end-to-end items are 22–35 and 37. Item 34 (snapshot migration) runs against `migration/source-snapshot/`, and item 35 (dogfood Level A) is the scripted CLI walkthrough — both part of the suite, not manual steps. Levels B and C of the dogfood (Section 18.5) are deliberately OUTSIDE `./verify`: they use live agents and belong to stage 7's evidence, not the deterministic gate.
+- Unit items are 1–21 and 36; end-to-end items are 22–35. Item 34 (snapshot migration) runs against `migration/source-snapshot/`, and item 35 (dogfood Level A) is the scripted walkthrough — both part of the suite, not manual steps. Levels B and C of the dogfood (Section 18.5) are deliberately OUTSIDE `./verify`: they use live agents and belong to stage 7's evidence, not the deterministic gate.
 
 ### 18.3 Acceptance tests
 
@@ -274,8 +277,8 @@ External boundaries (hermes spawn, boundary/replan agent, chat gateway) are fake
 **Unit (pytest, pure logic + engine over a temp DB):**
 1. Planning-date math: 2026-07-05T04:59 local → planning date 2026-07-04; T05:00 → 2026-07-05; boundary hour honored from config.
 2. Gating chain: accepting success/approach/plan/result proposals advances exactly one state each, in order, with one `state_changed` event per step.
-3. Ceiling auto-accept: ceiling `needs_plan`, proposals filed on success then approach auto-accept and advance; the plan proposal stays pending (state `needs_plan`, ticket in approval queue).
-4. At-cap stop vs suggest: with `stop`, an agent proposal on a non-gating field returns the structured error; with `suggest`, it files as pending and does not advance state.
+3. Ceiling auto-accept: ceiling `needs_plan` with `at_cap = propose`, proposals filed on success then approach auto-accept and advance; the plan proposal stays pending (state `needs_plan`, ticket in approval queue).
+4. At-cap stop vs propose: at its ceiling with `at_cap = stop`, any agent proposal — including the current gating field — is rejected with the structured error; with `at_cap = propose`, a proposal on the current gating field files as pending and nothing advances; below the ceiling the behavior is identical for both values.
 5. One pending proposal per field: a second proposal supersedes the first; `proposal_superseded` event carries the replaced body.
 6. Edit-accept: accepting with edited text stores the edited text exactly as `value`, flags `edited: true` in the event.
 7. Result routing: accepted result with ceiling `needs_review` → state `needs_review`; with ceiling `done` → `done`; approve action in `needs_review` → `done`.
@@ -297,10 +300,10 @@ External boundaries (hermes spawn, boundary/replan agent, chat gateway) are fake
 **End-to-end (Playwright, chromium, two browser contexts where stated):**
 22. CLI create → live board: `plan ticket create` via subprocess with env pointing at the test server; the ticket appears on the Board in `needs_success` in a second context without reload.
 23. Env-pinned propose: `plan propose success` with `PLAN_TICKET_ID` set and a multi-line markdown body on stdin; Ticket screen shows the proposal rendered, intact.
-24. Accept in Review: the pending proposal appears on the Review screen; Accept is impossible without choosing an onward grant; choosing "no further" advances the ticket one state with ceiling equal to the new state (asserted via API); the item leaves the queue and both contexts update without reload.
-25. Edit-accept in Review: the quick-edit textarea comes prefilled with the proposal; submitting altered text with onward grant `needs_plan` stores the altered text exactly as the field value on Ticket and sets the ceiling to `needs_plan`.
+24. Accept in Review: the pending proposal appears on the Review screen; Accept is impossible without choosing the grant pair; choosing ("no further", stop) advances the ticket one state with ceiling equal to the new state and `at_cap = stop` (asserted via API); the item leaves the queue and both contexts update without reload.
+25. Edit-accept in Review: the quick-edit textarea comes prefilled with the proposal; submitting altered text with grant (`needs_plan`, propose) stores the altered text exactly as the field value on Ticket, sets the ceiling to `needs_plan` and `at_cap` to propose.
 26. Chat panel: opens on Ticket with the fake gateway (echo); a sent message renders a reply; `chat_session_key` persisted (asserted via API); gateway-offline fake renders the offline notice.
-27. Auto-accept chain e2e: ticket with ceiling `needs_plan`: two CLI proposals advance it to `needs_plan` with the plan proposal pending in the approval queue.
+27. Auto-accept chain e2e: ticket with ceiling `needs_plan` and `at_cap = propose`: two CLI proposals advance it to `needs_plan` with the plan proposal pending in the approval queue.
 28. Day view: with a fake boundary adapter, driving `POST /api/test/tick-boundary` at fake-now 05:01 produces the brief and a proposed tree; Accept-all adds the child tickets to the day list.
 29. Invalidation: invalidating the root calls the fake replan adapter and renders the replacement tree; invalidating one child replaces only that child (other nodes keep status).
 30. Dispatcher e2e: eligible ticket + fake spawn adapter; `POST /api/test/tick-dispatcher` claims it (run visible on Ticket); the fake worker's CLI calls (propose result with claim env) park it in `needs_review`; it appears in the approval queue; approve → `done`.
@@ -308,16 +311,15 @@ External boundaries (hermes spawn, boundary/replan agent, chat gateway) are fake
 32. Sprint view live: `plan item set --status active` via CLI reflects on the Sprint screen in both contexts without reload; loose ticket appears in the loose section.
 33. Seed e2e: `plan seed --source tests/fixtures/planning-md/` against the test server, then Board/Sprint/Backlog show the fixture's expected titles and counts.
 34. Snapshot migration e2e: `plan seed --source migration/source-snapshot/` imports the frozen real data with exactly the ground truth stated in Section 12 (1 sprint with those dates; 12 items split 6/5/1 with "Ship waitlist mechanics." done; the 4 named tickets in their mapped states with the Chat ID preserved; 9 deferred items; 20 ideas); the migration report lists zero silently-skipped sections (anything unparsed is enumerated in it); a second run imports zero duplicates.
-35. Dogfood Level A: `scripts/dogfood_cli.py` drives the full user+agent workflow through the real CLI against a test server seeded with `plan seed --demo`: create a ticket; propose and accept through every gate — every accept carrying its onward grant — including one edit-accept and one superseded proposal; write and overwrite the recap; assign to the day and remove; create a blocking link and confirm dispatch-ineligibility, then complete the blocker and confirm eligibility; claim via the test dispatcher tick; propose result with claim env; approve from needs_review to done. The script asserts each step's resulting state via `--json` output and exits non-zero on the first mismatch.
-36. Onward grant (unit): a human accept without `next_ceiling` is rejected with the structured error and changes nothing; accept with `none` sets the ceiling to the newly entered state; accept with a later state sets that ceiling; agent auto-accepts leave the ceiling untouched; the `needs_review` approve action requires no grant.
-37. Away digest e2e: an agent-context CLI session updates a recap and files a proposal; Day's digest shows both entries; a reload keeps them; "mark caught up" clears the digest and it stays clear after another reload; the pending proposal still shows in Review (the digest is not the queue).
+35. Dogfood Level A: `scripts/dogfood_cli.py` drives the full workflow against a test server seeded with `plan seed --demo` — agent actions through the real CLI, human actions (accepts with grant pairs, needs_review approve, day-plan decisions) through the HTTP API, since the CLI deliberately has no human verbs: create a ticket; propose and accept through every gate — every accept carrying its grant pair — including one edit-accept and one superseded proposal; write and overwrite the recap; assign to the day and remove; create a blocking link and confirm dispatch-ineligibility, then complete the blocker and confirm eligibility; claim via the test dispatcher tick; propose result with claim env; approve from needs_review to done. The script asserts each step's resulting state via `--json`/response output and exits non-zero on the first mismatch.
+36. Onward grant (unit): a human accept missing either half of the grant pair is rejected with the structured error and changes nothing; accept with (`none`, `stop`) leaves the ticket resting — a subsequent agent proposal is rejected; accept with (`none`, `propose`) permits a pending proposal on the new gating field; accept with a later ceiling permits advancement to it; agent auto-accepts change neither ceiling nor at_cap; the `needs_review` approve action requires no grant.
 
 ### 18.5 Fake-ticket dogfood (stage 7)
 
 The application must be proven with realistic fake tickets at three escalating levels of automation. This is the one sanctioned exception to the fakes-only rule: Levels B and C use the real local Hermes runtime — never inside `./verify`, always recorded in DOGFOOD.md with log evidence.
 
 - **Level A — the CLI as a user and agent would drive it.** The scripted walkthrough of item 35. Deterministic, gating, part of `./verify`.
-- **Level B — a Hermes agent works a fake ticket.** Spawn one real session: `hermes chat -q "Read <repo>/skills/planning-worker.md, then work planning ticket <id> using the plan CLI"` with the agent env vars pinned (server URL + ticket id) against a running server with a demo-seeded ticket shaped for it (ceiling `needs_plan`, `at_cap = suggest`). Pass evidence, mechanical: at least one proposal and one recap write recorded on that ticket by the session (asserted from the event log), session output captured under `data/logs/` and referenced in DOGFOOD.md. The repo's skill artifacts are exercised via the read-this-file prompt because they are not installed into `~/.hermes/skills/` during the run.
+- **Level B — a Hermes agent works a fake ticket.** Spawn one real session: `hermes chat -q "Read <repo>/skills/planning-worker.md, then work planning ticket <id> using the plan CLI"` with the agent env vars pinned (server URL + ticket id) against a running server with a demo-seeded ticket shaped for it (ceiling `needs_plan`, `at_cap = propose`). Pass evidence, mechanical: at least one proposal and one recap write recorded on that ticket by the session (asserted from the event log), session output captured under `data/logs/` and referenced in DOGFOOD.md. The repo's skill artifacts are exercised via the read-this-file prompt because they are not installed into `~/.hermes/skills/` during the run.
 - **Level C — a dispatched ticket agent end to end.** Enable the real spawn adapter (config), one eligible demo ticket, real dispatcher tick: claim → run row → the spawned agent writes at least one proposal carrying the claim env → run closes with a terminal outcome and the ticket lands where its ceiling dictates. Evidence: the run row, the event sequence, and the per-run log path, all in DOGFOOD.md.
 
 Levels B and C depend on live agent behavior: apply the three-attempt rule per level (materially different approach each time — prompt shape, ticket shaping, ceiling), and record every attempt honestly in DOGFOOD.md. Completion requires both levels' mechanical evidence. If server, CLI, or dispatcher code changes after a level's evidence was produced, that level is stale and must be re-run.
