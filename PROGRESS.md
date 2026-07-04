@@ -4,7 +4,7 @@ Read this first after any context compaction. It is the build's memory.
 
 ## Current stage
 
-**Stage 3 (pure logic + unit tests) — dispatching.** Stages per SPEC.md §18: (1) contracts, (2) verify instrument, (3) pure logic + unit tests, (4) server wiring, (5) UI, (6) e2e, (7) dogfood.
+**Stage 4 (server wiring) — dispatching T09 → T10∥T11 → T12∥T13.** Stages per SPEC.md §18: (1) contracts, (2) verify instrument, (3) pure logic + unit tests, (4) server wiring, (5) UI, (6) e2e, (7) dogfood.
 
 ## Stage ledger
 
@@ -12,7 +12,7 @@ Read this first after any context compaction. It is the build's memory.
 |---|---|
 | 1. Contracts skeleton | **complete** — 36 src files, ruff+mypy strict green, DDL↔contract cross-check exact, CLI tree per §8, codex-reviewed (plan: 9 findings folded; impl: no violations found) |
 | 2. Verify instrument | **complete** — `./verify` behaves per §18.2 on the bare tree (gates green, 36 FAIL, `VERIFY: 0/36 PASS`, exit 1; run 001 archived); codex impl review NO VIOLATIONS |
-| 3. Pure logic + unit tests (items 1–21, 36) | dispatching wave of 5 ticket-orchestrators + T08 |
+| 3. Pure logic + unit tests (items 1–21, 36) | **complete** — verify run 002: `VERIFY: 22/36 PASS`, all 22 unit items green; five ticket pipelines + T08 done, all codex impl reviews archived with dispositions; four load-bearing spot-checks passed (planning-date math, seed parser vs real snapshot, claim CAS, resolution engine) |
 | 4. Server wiring | not started |
 | 5. UI views | not started |
 | 6. Playwright e2e (items 22–34) | not started |
@@ -20,8 +20,10 @@ Read this first after any context compaction. It is the build's memory.
 
 ## What just happened
 
-- T01 (contracts): ticket → sub-agent plan (orchestration/tickets/T01-contracts/plan.md, 1200+ lines) → codex plan review (9 findings, all accepted, amendments §18 appended to plan) → **implementation agent dispatched, running in main tree**.
-- T02 (verify instrument): ticket-as-plan codex-reviewed (6 findings folded in) → **implementation agent dispatched, running in main tree**. File sets disjoint from T01 (scripts/+verify vs src/+assets/+pyproject).
+- Stages 1+2 integrated and committed (170514b). Reviews clean (D10). Verify run 001 archived: gates green, `VERIFY: 0/36 PASS` as required at stage 2.
+- **Stage-3 wave dispatched**: five per-ticket Fable orchestrators (t03-orch…t07-orch) + T08 Opus implementer, all running concurrently in the main tree on disjoint file sets, each running its internal plan→codex→implement→codex pipeline (D8).
+- Stage-4 tickets cut (T09 server shell, T10 domain APIs, T11 runtimes+real adapters, T12 CLI wiring, T13 chat+seed). UI component inventory recorded ahead of stage 5 (D11).
+- Owner directives adopted mid-run: per-ticket orchestrator sub-agents, model tiering, delegated mechanical verification (D8), grunt work off the top-level context.
 - Earlier: full spec read; environment confirmed (preflight all PASS); §12 snapshot contradiction resolved (D3, committed 2143ce1).
 
 ## Contradiction: SPEC §12 ground truth vs frozen snapshot
@@ -44,7 +46,7 @@ Orchestration per CLAUDE.md: contract-scoped tickets in `orchestration/tickets/`
 
 ## Next step
 
-T01 in flight (planning sub-agent running). T02 ticket written (verify instrument; its ticket text doubles as the plan for codex review). Then stage-3 wave.
+Stage-3 wave in flight. State at last check: all five plans written; T03/T04/T06 codex plan reviews done; T05/T07 plan reviews in progress; T08 COMPLETE (test_a21 green, impl-review archived). Idle orchestrators (t03/t06/t07) nudged to continue to implementation. When the unit suite goes green: disposition reports → delegated verify run → my own spot-checks (planning-date math, resolution engine, claim CAS, seed parser vs snapshot) → commit stage 3 → dispatch T09 (then T10∥T11, then T12∥T13). All tickets through T21 are already cut. DOGFOOD.md skeleton exists (honest placeholders only).
 
 ## Stage-3 decomposition (pinned)
 

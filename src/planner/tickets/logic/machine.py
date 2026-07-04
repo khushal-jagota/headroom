@@ -1,0 +1,107 @@
+"""State-machine math for §4.2/§4.3/§4.4: linear order indexing, gating and
+advance tables, the auto-accept condition, ceiling comparison, and onward-grant
+resolution. Pure: contracts/errors + fields_codec only."""
+
+from __future__ import annotations
+
+from planner.core.errors import ErrorCode, PlannerError
+from planner.tickets.contracts import (
+    ADVANCE_TARGET,
+    GATING_FIELD,
+    NO_FURTHER,
+    STATE_ORDER,
+    AtCap,
+    FieldName,
+    GrantPair,
+    NextCeiling,
+    TicketFields,
+    TicketState,
+)
+from planner.tickets.logic import fields_codec
+
+
+def state_index(state: TicketState) -> int:
+    try:
+        return STATE_ORDER.index(state)
+    except ValueError as exc:
+        raise PlannerError(
+            ErrorCode.validation, "state outside the linear order", {"state": state.value}
+        ) from exc
+
+
+def is_terminal(state: TicketState) -> bool:
+    return state in (TicketState.done, TicketState.dropped)
+
+
+def gating_field(state: TicketState) -> FieldName | None:
+    return GATING_FIELD.get(state)
+
+
+def advance_target(state: TicketState, ceiling: TicketState) -> TicketState:
+    if state is TicketState.in_progress and ceiling is TicketState.done:
+        return TicketState.done
+    target = ADVANCE_TARGET.get(state)
+    if target is None:
+        raise PlannerError(
+            ErrorCode.validation, "state has no advance target", {"state": state.value}
+        )
+    return target
+
+
+def auto_accept_target(
+    state: TicketState, ceiling: TicketState, field: FieldName
+) -> TicketState | None:
+    if is_terminal(state):
+        return None
+    if field is not gating_field(state):
+        return None
+    target = advance_target(state, ceiling)
+    if state_index(target) > state_index(ceiling):
+        return None
+    return target
+
+
+def at_or_beyond_ceiling(state: TicketState, ceiling: TicketState) -> bool:
+    return state_index(state) >= state_index(ceiling)
+
+
+def validate_ceiling(ceiling: TicketState) -> None:
+    if ceiling not in STATE_ORDER:
+        raise PlannerError(
+            ErrorCode.grant_invalid, "ceiling must be a linear state", {"ceiling": ceiling.value}
+        )
+
+
+def resolve_grant(
+    new_state: TicketState, next_ceiling: NextCeiling | None, at_cap: AtCap | None
+) -> GrantPair:
+    if next_ceiling is None or at_cap is None:
+        missing: list[str] = []
+        if next_ceiling is None:
+            missing.append("next_ceiling")
+        if at_cap is None:
+            missing.append("at_cap")
+        raise PlannerError(
+            ErrorCode.grant_missing, "accept requires the onward grant pair", {"missing": missing}
+        )
+    if next_ceiling == NO_FURTHER:
+        # the ceiling becomes exactly the newly entered state
+        return GrantPair(next_ceiling=new_state, at_cap=at_cap)
+    if not isinstance(next_ceiling, TicketState):
+        raise PlannerError(
+            ErrorCode.grant_invalid, "unknown next_ceiling", {"next_ceiling": str(next_ceiling)}
+        )
+    if next_ceiling not in STATE_ORDER or state_index(next_ceiling) < state_index(new_state):
+        raise PlannerError(
+            ErrorCode.grant_invalid,
+            "next_ceiling must be at or beyond the new state",
+            {"next_ceiling": next_ceiling.value, "new_state": new_state.value},
+        )
+    return GrantPair(next_ceiling=next_ceiling, at_cap=at_cap)
+
+
+def has_pending_gating_proposal(state: TicketState, fields: TicketFields) -> bool:
+    field = gating_field(state)
+    if field is None:
+        return False
+    return fields_codec.get_slot(fields, field).proposal is not None

@@ -45,3 +45,35 @@ SPEC §18.2's build check runs `node --check` on every file in `assets/`; `node 
 ## D10 — T01/T02 integration reviews
 
 T02 codex diff review: NO VIOLATIONS (seven confirmations, file/line cited; archive at orchestration/tickets/T02-verify/impl-review.md). T01 codex diff review found no missing enum members, tables, or route gaps; its closing schema cross-check (every table's columns vs its contract dataclass) succeeded inside the codex session and was independently re-run by the top-level orchestrator: all six audited tables match exactly, all ten tables present (archive at orchestration/tickets/T01-contracts/impl-review.md). Verify run 001 (orchestration/verify-runs/001-stage2.md) matched the stage-2 expectation exactly: gates green, 36 FAIL, `VERIFY: 0/36 PASS`, exit 1.
+
+## D11 — UI component inventory (recorded before any component is written, per SPEC §10)
+
+Seventeen components cover all six screens (SPEC says "five screens" in the inventory sentence while defining six; the inventory covers all six — treated as a spec typo, not a licence to skip one). Build few, reuse hard:
+
+1. **App shell** — top nav with six screen links + Review pending-count badge; content slot; hash routing.
+2. **Panel** — titled section container; the only box primitive.
+3. **Markdown block** — renders markdown strings (brief, field values, proposals, bodies, kickoff/review text).
+4. **Field editor** — textarea + save for directly-editable text (notes slots, day notes/brief, kickoff/review fields pre-freeze, current_state_note).
+5. **Meta chips** — one badge component with variants: priority, state/status, project, deadline, markers (pending-proposal, running-claim, blockers-cleared, auto-blocked, frozen).
+6. **Entity row** — title + chips + click-through; used by board cards, day ticket list, item lists, loose tickets, ideas, overdue.
+7. **Proposal card** — rendered proposal + quick-edit textarea + Accept; hosts the grant-pair picker; used on Review and Ticket.
+8. **Grant-pair picker** — ceiling select (valid onward states + "no further") + at-cap radio; embedded in proposal card and grant control; Accept disabled until both halves chosen.
+9. **Plan tree** — root focus + child rows, per-node Accept/Invalidate, top-level Accept-all/Reject-all.
+10. **Chat panel** — message list + input; input is a pluggable source component (the §14 audio seam); offline notice state.
+11. **State control** — current state, human jump select, drop (Ticket).
+12. **Grant control** — plain ceiling/at-cap pickers + save (Ticket).
+13. **Create form** — title + small fields; variants: ticket, item, idea.
+14. **Event log** — kind + summary + time rows (Ticket).
+15. **Run history** — status/times/summary rows (Ticket).
+16. **Review card** — the one-at-a-time surface: wraps Proposal card (or needs_review result, or item status proposal), Skip, open-ticket link.
+17. **Error line** — structured-error rendering (code + message), inline near the failed action.
+
+## D12 — Post-first-write test consolidation in test_dispatch.py and test_sprints.py (fence-required justification)
+
+T05 and T06 initially split several acceptance items across multiple anchored tests (six `test_a09_*`, three `test_a11_*`, seven `test_a15_*`, five `test_a16_*`, six `test_a10_*`, five `test_a20_*`). SPEC §18.3's first fence requires a 1:1 mapping, and the verify scorer deliberately fails an item with multiple anchored matches. The change: for each affected item, its assertions were merged into exactly one `test_aNN_` named test asserting the item's full SPEC statement; supplementary tests were renamed to non-anchored prefixes and kept running with no assertions weakened or deleted. Justification: restores the 1:1 fence; coverage strictly non-decreasing.
+
+Two further post-first-write test changes from codex implementation reviews, both strengthenings, no assertion weakened: **test_a07** now asserts the exact four-step state-change sequence for the ceiling=done leg instead of a membership check plus guard (T04 impl review finding 7); **test_a09** and three sibling link rejections now pin the full structured-error envelope (code, message presence, detail keys/values) instead of the ErrorCode alone (T05 impl review finding 1).
+
+## D13 — Seed spec tensions resolved during T07 (flagged by the implementer, ratified here)
+
+(a) SPEC §12 routes workspace "body/success/approach text into the matching fields' values", but §4.2 fixes exactly four field keys — there is no "body" field. `Success:`/`Approach:` text imports into the matching values; `Body:` plus unrecognized sub-bullets import into `fields.success.notes` (the free-guidance slot legal in every imported state). Nothing is dropped; the report stays silent-drop-free. (b) §12's ticket mapping list names Priority/Ticket ID/Chat ID but not Project, so a workspace ticket's `Project:` line is preserved verbatim inside the notes text and the DB `project` column stays NULL for standalone imported tickets — spec-literal; the human can set project post-cutover. (c) Blocked tracking items import with an empty `blocked_by` list — the markdown names no blocker ticket ids; migration preserves source truth.
