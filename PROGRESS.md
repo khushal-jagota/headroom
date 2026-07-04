@@ -46,7 +46,7 @@ Orchestration per CLAUDE.md: contract-scoped tickets in `orchestration/tickets/`
 
 ## Next step
 
-Stage-3 wave in flight. State at last check: all five plans written; T03/T04/T06 codex plan reviews done; T05/T07 plan reviews in progress; T08 COMPLETE (test_a21 green, impl-review archived). Idle orchestrators (t03/t06/t07) nudged to continue to implementation. When the unit suite goes green: disposition reports → delegated verify run → my own spot-checks (planning-date math, resolution engine, claim CAS, seed parser vs snapshot) → commit stage 3 → dispatch T09 (then T10∥T11, then T12∥T13). All tickets through T21 are already cut. DOGFOOD.md skeleton exists (honest placeholders only).
+Stage 4 in flight. Wave A (T09 server shell + T11 runtimes): implementations LANDED (all files present, unit suite green, mypy clean across 80 files); their codex diff reviews + final reports still pending — chase those before stage-4 close. Wave B (T10 domain APIs + T13 chat/seed) dispatched, running. T12 (CLI wiring) dispatches when T10+T13 land. Then: delegated verify run (expect still 22/36 — e2e items need stages 5–6), commit stage 4, dispatch T14 (UI foundation) then T15/T16/T17 (screens, parallel), then stage 6 e2e (T18 → T19∥T20), then stage 7 (T21 + Levels B/C mine, live hermes). Known orchestrator hazards: codex exec calls can hang (kill + relaunch tighter); orchestrators sometimes idle mid-pipeline (ping them); anchored-test 1:1 fence (e2e tickets carry the reminder).
 
 ## Stage-3 decomposition (pinned)
 

@@ -22,3 +22,10 @@ Contracts: `core/contracts.py`, `core/errors.py`, `core/config.py`, `core/clock.
 ## Acceptance for integration
 
 Self-smoke (scripted, not committed as tests — e2e items cover this later): boot under test mode on a temp DB; `GET /api/meta` 200; WS `?since=0` receives an event appended via `append_event`; `POST /api/test/set-now` changes the planning date returned by a probe; stale-claim rejection unit-exercisable by calling `require_claim` directly. ruff + mypy strict clean; existing unit suite stays green.
+
+## Pinned seam with T11 (binding for both tickets)
+
+T09 and T11 run concurrently; this seam is fixed so they never touch each other's files:
+- Test tick endpoints lazily import and call `planner.dispatch.runtime.run_tick(conn_factory, config, clock, adapters)` and `planner.days.scheduler.run_boundary_tick(conn_factory, config, clock, adapters)`; each returns a small JSON-able report dict. Until T11 lands, ImportError/AttributeError → HTTP 501 `{"error": {"code": "validation", "message": "runtime not wired yet"}}`.
+- The lifespan, when NOT test_mode, lazily imports and calls `planner.core.loops.start_background_loops(config, clock, adapters, conn_factory)` → returns an object with `.stop()` awaited at shutdown; ImportError tolerated (log, continue) until T11 lands.
+- authctx public API (T10 will consume): `RequestContext` dataclass (actor: str, run_id: str | None, claim: str | None, is_claimed_agent: bool, is_human: bool), FastAPI dependency `request_context`, `require_claim(conn, ctx, ticket_id, now) -> None` (raises stale_claim), `reject_agents(ctx) -> None` (raises agent_forbidden).

@@ -16,3 +16,7 @@ Contracts: `dispatch/` data+logic (T05), `days/boundary.py` (T03), adapter proto
 ## Acceptance for integration
 
 Self-smoke under test mode with fakes on a temp DB: eligible ticket + `POST /api/test/tick-dispatcher` → claim + runs row + FakeSpawn called with correct env/log path; second tick → no double-claim (cap respected); expired claim on next tick → reclaimed. `POST /api/test/tick-boundary` at a fake 05:01 → day row + brief + proposed tree from FakeBoundary; second tick same date → no-op. Real adapters: constructed OK from config; RealSpawn smoke = spawn `/bin/sh -c 'echo hi'` variant via injected binary override writing the log file (never hermes in tests). ruff + mypy strict clean; unit suite stays green.
+
+## Pinned seam with T09 (binding for both tickets)
+
+Your public entry points, exactly: `planner.dispatch.runtime.run_tick(conn_factory, config, clock, adapters) -> dict` (one §7.1-ordered tick, JSON-able report: reclaimed/timed_out/spawned/skipped-reason) and `planner.days.scheduler.run_boundary_tick(conn_factory, config, clock, adapters) -> dict` (one boundary check, report incl. ran/skipped/judgment outcome). Plus `planner.core.loops.start_background_loops(config, clock, adapters, conn_factory)` returning an object with async `.stop()`. T09's shell calls all three lazily by these names; do not rename. You do not modify core/server.py, core/testmode.py, core/ws.py, or core/authctx.py — those are T09's.
