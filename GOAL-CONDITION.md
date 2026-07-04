@@ -12,7 +12,7 @@ claude -p "/goal <condition text>"
 
 Build the application defined in SPEC.md, working under the process rules in CLAUDE.md. The goal is met only when ALL of the following are demonstrated in the final turn, freshly, with complete command output shown in that same turn — no claims from memory, no quoting earlier runs:
 
-1. `./verify` exits 0 and prints `VERIFY: 35/35 PASS` — the per-item scoreboard defined in SPEC.md Section 18.2, covering every acceptance test in Section 18.3, including the real-data snapshot migration (item 34) and the scripted CLI dogfood (item 35).
+1. `./verify` exits 0 and prints `VERIFY: 37/37 PASS` — the per-item scoreboard defined in SPEC.md Section 18.2, covering every acceptance test in Section 18.3, including the real-data snapshot migration (item 34) and the scripted CLI dogfood (item 35).
 
 2. The Codex audit gate passes: `codex exec` run from the repo root with the contents of codex-audit.md, full output shown, final line exactly `AUDIT: PASS`. The audit must be run after the last code or documentation change — any change after an audit invalidates it.
 
