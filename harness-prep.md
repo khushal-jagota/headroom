@@ -21,5 +21,6 @@ None. There are no auth-walled dependencies in the build: no external APIs are c
 | 9 | External APIs required by build | none — adapters faked in tests | N/A |
 | 10 | Git clean on intended branch (`main`) | `git status --porcelain` empty, branch `main` | PASS (after initial commit) |
 | 11 | Migration snapshot frozen in-repo | `ls migration/source-snapshot/` (real planning data, 2026-07-04: 12 sprint items, 4 tickets, 9 deferred, 20 ideas) | PASS |
+| 12 | Hermes CLI present and answers one-shot | `which hermes` + `hermes chat -q "reply with only the word READY"` (needed for dogfood Levels B/C) | PASS (8s round-trip) |
 
 Preflight executed 2026-07-04. All checks pass; no human-only items outstanding.

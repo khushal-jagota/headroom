@@ -12,11 +12,13 @@ claude -p "/goal <condition text>"
 
 Build the application defined in SPEC.md, working under the process rules in CLAUDE.md. The goal is met only when ALL of the following are demonstrated in the final turn, freshly, with complete command output shown in that same turn — no claims from memory, no quoting earlier runs:
 
-1. `./verify` exits 0 and prints `VERIFY: 34/34 PASS` — the per-item scoreboard defined in SPEC.md Section 18.2, covering every acceptance test in Section 18.3, including the real-data snapshot migration (item 34).
+1. `./verify` exits 0 and prints `VERIFY: 35/35 PASS` — the per-item scoreboard defined in SPEC.md Section 18.2, covering every acceptance test in Section 18.3, including the real-data snapshot migration (item 34) and the scripted CLI dogfood (item 35).
 
 2. The Codex audit gate passes: `codex exec` run from the repo root with the contents of codex-audit.md, full output shown, final line exactly `AUDIT: PASS`. The audit must be run after the last code or documentation change — any change after an audit invalidates it.
 
-3. PROGRESS.md shows all six build stages from SPEC.md Section 18 completed in order; decisions.md lists every delegated choice made; DOCS.md is complete per SPEC.md Section 18.1.
+3. PROGRESS.md shows all seven build stages from SPEC.md Section 18 completed in order; decisions.md lists every delegated choice made; DOCS.md is complete per SPEC.md Section 18.1.
+
+4. DOGFOOD.md records the Section 18.5 fake-ticket dogfood: Level A green inside verify; Levels B and C each showing their mechanical evidence (event-log excerpts, run rows, log file paths) from executions after the last change to server, CLI, or dispatcher code.
 
 Constraints:
 - Operate as a planner and orchestrator per CLAUDE.md: implementation substance is dispatched to contract-scoped sub-agents; you plan, dispatch, review, integrate serially, and verify. Direct edits are for glue and integration repairs only, noted in PROGRESS.md.

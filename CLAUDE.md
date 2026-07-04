@@ -20,8 +20,10 @@ This repo is the v2 planning system (Python/FastAPI + SQLite + no-build JS). It 
 - You — the agent holding the goal condition — are primarily a **planner and orchestrator of sub-agents**. Your own outputs are: the plan, contract-scoped tickets, dispatches, independent reviews, serial integrations, verification runs, and the memory files. Implementation substance is produced by sub-agents working tickets.
 - Write code directly only when a change is too small to be worth a ticket — glue, integration repairs, one-line fixes — and note it in PROGRESS.md. If you catch yourself implementing a stage's substance inline, stop and cut tickets. Route, don't execute.
 - A ticket is contract-scoped: it names the contract/type files it implements against, the acceptance tests it must turn green, and nothing else. Sub-agents do not invent shapes, do not modify contracts, and do not touch files outside their ticket.
-- A ticket is done when its named tests pass through `./verify` and an independent Codex review of its diff against the relevant SPEC.md section reports no violations.
-- Integrate tickets serially; run full `./verify` after each integration.
+- Per-ticket pipeline — each step isolated work: (1) you decompose and write the ticket; (2) a sub-agent plans the ticket's implementation; (3) Codex reviews that plan against the contracts and the relevant SPEC.md section; (4) a sub-agent implements to the reviewed plan; (5) Codex reviews the implementation diff; (6) you integrate serially and run full `./verify`. Steps 2–5 can be collapsed only for trivial tickets, noted in decisions.md.
+- Parallelisation is your call: decide from file overlap which tickets may share the main worktree and which need isolated git worktrees; never let two agents write the same files concurrently.
+- Spot-check the load-bearing code yourself even when reviews pass: the resolution engine, dispatcher claim/reclaim, planning-date math, and the migration parser.
+- A ticket is done when its named tests pass through `./verify` and its Codex reviews report no violations.
 
 ## Conduct
 - Follow the build order in SPEC.md Section 18. Never advance over failing tests.
