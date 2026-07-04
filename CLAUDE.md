@@ -1,0 +1,32 @@
+# CLAUDE.md
+
+The specification for this project lives in **SPEC.md**. It is the single source of truth. Never modify it.
+
+This repo is the v2 planning system (Python/FastAPI + SQLite + no-build JS). It is built and tested entirely inside this repository: never read from or write to `~/.hermes/planning/` (the live markdown planning system), `~/.hermes/hermes-agent/`, or any other repo. External boundaries (hermes spawn, boundary/replan agent, chat gateway) are adapters with fakes; tests use the fakes, always.
+
+## Memory
+- **PROGRESS.md** — update every work cycle: current build stage, what just passed, current hypothesis, next step, blockers. After any context compaction, read it first — it is your memory, not the conversation.
+- **decisions.md** — every delegated or judgment call, briefly justified.
+- **DOCS.md** — plain-language documentation of what exists and how it works, written progressively as work completes, never retrofitted. Simple sentences, no jargon. A smart non-engineer must be able to read it. If a section can't be understood without reading the code, rewrite the section.
+
+## Verification
+- `./verify` is the only source of truth for completeness. Run it fresh before any claim of progress and show the full output. Never assert results from memory or quote an earlier run.
+- Browser behavior is asserted through the Playwright e2e suite inside `./verify` — never eyeballed.
+- The Codex CLI is the independent reviewer. Use it wherever a second pair of eyes beats self-review: auditing completed work against the spec, reviewing intricate logic (the resolution engine, dispatch eligibility, planning-date math), checking a diff before integration. Invoke it non-interactively — `codex exec "..."` — pointing it at specific files plus the relevant SPEC.md section, asking for concrete violations. Surface its full output, then address or refute each point in writing before moving on.
+
+## Sub-agents
+- Break implementation into tickets and dispatch to sub-agents where parallelism helps.
+- A ticket is contract-scoped: it names the contract/type files it implements against, the acceptance tests it must turn green, and nothing else. Sub-agents do not invent shapes, do not modify contracts, and do not touch files outside their ticket.
+- A ticket is done when its named tests pass through `./verify` and an independent Codex review of its diff against the relevant SPEC.md section reports no violations.
+- Integrate tickets serially; run full `./verify` after each integration.
+
+## Conduct
+- Follow the build order in SPEC.md Section 18. Never advance over failing tests.
+- Blocked three attempts on the same problem → log it in PROGRESS.md and change approach materially, not the same idea harder.
+- Do not ask questions mid-run. Delegated choices are yours; make them and log them in decisions.md.
+
+## Project notes
+- Python ≥ 3.12, venv at `.venv`, deps pinned in `requirements.txt`. Run the server: `plan serve` (or `python -m planner serve`). DB and logs live under `data/` (gitignored).
+- Frontend is no-build vanilla JS in `assets/` — classic scripts, no bundler; syntax-check with `node --check`.
+- The event feed is an invalidation signal; the UI refetches JSON. Do not build client-side state stores.
+- One canonical writer function per state transition. Agents (claim-carrying requests) write proposals only — the resolution engine is the single door to canonical values.
