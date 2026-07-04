@@ -16,8 +16,9 @@ This repo is the v2 planning system (Python/FastAPI + SQLite + no-build JS). It 
 - Browser behavior is asserted through the Playwright e2e suite inside `./verify` — never eyeballed.
 - The Codex CLI is the independent reviewer. Use it wherever a second pair of eyes beats self-review: auditing completed work against the spec, reviewing intricate logic (the resolution engine, dispatch eligibility, planning-date math), checking a diff before integration. Invoke it non-interactively — `codex exec "..."` — pointing it at specific files plus the relevant SPEC.md section, asking for concrete violations. Surface its full output, then address or refute each point in writing before moving on.
 
-## Sub-agents
-- Break implementation into tickets and dispatch to sub-agents where parallelism helps.
+## Operating model: plan and orchestrate
+- You — the agent holding the goal condition — are primarily a **planner and orchestrator of sub-agents**. Your own outputs are: the plan, contract-scoped tickets, dispatches, independent reviews, serial integrations, verification runs, and the memory files. Implementation substance is produced by sub-agents working tickets.
+- Write code directly only when a change is too small to be worth a ticket — glue, integration repairs, one-line fixes — and note it in PROGRESS.md. If you catch yourself implementing a stage's substance inline, stop and cut tickets. Route, don't execute.
 - A ticket is contract-scoped: it names the contract/type files it implements against, the acceptance tests it must turn green, and nothing else. Sub-agents do not invent shapes, do not modify contracts, and do not touch files outside their ticket.
 - A ticket is done when its named tests pass through `./verify` and an independent Codex review of its diff against the relevant SPEC.md section reports no violations.
 - Integrate tickets serially; run full `./verify` after each integration.

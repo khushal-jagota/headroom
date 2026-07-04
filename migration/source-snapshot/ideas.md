@@ -1,0 +1,93 @@
+# Ideas
+
+Interesting concepts, product ideas, and things worth exploring later.
+
+Rules:
+- Use this for ideas that are not yet concrete enough to belong in a sprint or in deferred work.
+- Keep entries readable standalone.
+- Optional sub-bullets are allowed when grounded in real conversation or research.
+
+## Ideas
+- A dedicated messaging app where all your AI agents live as persistent contacts — separate from human communication — with threads, status, and async task management.
+  - Agent companies/providers should be able to define reusable action buttons users can press for repeatable requests they want that agent to handle.
+  - Example: a planner agent could have a button like “send me an image of a work item I’m meant to do.”
+  - Mobile UX idea: use Dynamic Island / live activity-style surfaces to show which agents are waiting on the user, so agent handoffs feel ambient rather than buried in an app.
+  - Desktop UX idea: create an equivalent ambient agent-status surface, possibly playful — e.g. a cursor-adjacent “agents following/held by the cursor” pattern — so waiting agents are visible without becoming another bloody inbox.
+- Adapt Clicky into your stack.
+  - Open-source pointer-guide system where a helper cursor follows your cursor to teach unfamiliar interfaces using pictures and voice AI.
+  - Likely fit: fold it into your products or agent tooling as guided interface learning / onboarding rather than treating it as a standalone curiosity.
+  - Needs a pass on where it belongs and what slight adaptation would make it feel like yours instead of a random bolt-on.
+- Unbiased paid curation platform for product recommendations.
+  - Platform coordinates who reviews what; items are supplied by the platform to reduce sponsor bias.
+  - Model A: vetted community reviewers submit structured reviews.
+  - Model B: platform-employed reviewers run mini-blog-style review streams that are aggregated into a trusted recommendation layer.
+  - Monetization: paid access can be primary, with affiliate links as secondary revenue as long as reviewer incentives stay decoupled.
+  - GTM challenge: paywall + no SEO moat means discovery must come from UGC and social distribution (e.g., TikTok clips from review outputs).
+  - Category format: rank products by budget / mid-tier / premium for specific intents (e.g., best beard trimmer, electric toothbrushes).
+  - Bias-control mechanism: brands can send products to the platform, but reviewer compensation is fixed and reviewers are blinded to whether an item was purchased or provided.
+- Open-source LLM/agent wiki: a Wikipedia-like shared knowledge base for memory systems, agents, recommendations, and practical AI patterns.
+  - Thesis: memory systems and agents are new, important, and moving fast; builders need a living public wiki rather than everyone rediscovering the same little horrors in private.
+  - Shape: free GitHub-backed knowledge base people can download, fork, and use directly in their own agent setups.
+  - Contribution model: easy submissions plus a small collaborator/editor group to keep quality high and prevent it becoming a landfill with markdown.
+  - Content could include design patterns, implementation notes, recommendations, tradeoffs, examples, and kept-up-to-date best practices.
+  - Goal: build and share the practical knowledge base so everyone can build better AI systems.
+- “Ask your LLM” website/company context layer.
+  - Hook something into a company’s code or deploy flow — maybe a deploy hook, maybe another integration — that maintains an LLM-readable wiki/context layer for the company.
+  - Purpose: let LLMs understand and find the company/product better, instead of scraping vague website pages and confidently hallucinating like a Victorian ghost.
+  - Website surface: a button users can press to ask their own LLM about the company/product using the maintained context.
+  - Enterprise surface: let a company connect its own LLM so users can query company/product information better through a trusted, company-maintained knowledge layer.
+- Personal learning feed from the learning wiki.
+  - Thesis: the learning wiki already captures things the user wants to understand; a companion app could turn those learning items into generated images, videos, or other scrollable explanations.
+  - Shape: a doom-scroll-like learning feed, but for the user's own confusing or high-interest topics instead of generic education slop.
+  - Built-in chat lets the user pause on anything interesting or unclear and talk it through while scrolling.
+- Daily workspace tracks for different kinds of work.
+  - Thesis: the `Workspace` should evolve into the place to do work from, and work is broader than coding: design, marketing, product, research, writing, planning, agent runs, and whatever new AI-native work patterns emerge. Coding is the current centre of gravity, not the ontology. Thank God, frankly.
+  - Possible shape: probably part of `Workspace`, though maybe its own tab later if it becomes important enough.
+  - Core benefit: reduce context switching by bringing all work surfaces into one place. Sending an email through an agent should feel as easy and native as coding with an agent, rather than requiring a separate app, thread, tool, or mental mode switch.
+  - Three-track model:
+    - Copilot work: deep work, planning, design, product thinking, writing, or making where the user works with AI rather than handing it off.
+    - Employee work: well-briefed tasks that can be offloaded to agents, but still require understanding, review, and judgement.
+    - Vibe work: ideation-heavy / best-pass agent exploration where the value of extra options outweighs imperfect or non-scalable implementation.
+  - Useful for best-pass experiments, option generation, prototypes, design/marketing passes, sidetrack explorations, and “maybe useful, cheap to try” work.
+  - Design constraint: keep these work modes distinct enough that speculative vibe work does not pollute the committed tracker or main workspace priorities.
+- Short emails with attached LLM-readable context documents.
+  - Email body stays really short, to the point, pure signal, very little detail, very top-level.
+  - Attach a short document designed for LLM email parsers and for people who want to copy the context into an LLM.
+  - Use it for yourself first, then consider whether there is a product shape around it.
+- Hypnotherapy as a service.
+  - Productized access to hypnosis / guided suggestion / therapeutic audio flows for behaviour change, emotional regulation, confidence, habits, or other specific outcomes.
+  - Could start as a personal-use system or narrow service before thinking about broader productization.
+- Shared company prompt context system.
+  - A shared place for simple, reusable information about company systems, teams, concepts, processes, or other recurring context.
+  - Prompts can pull in these context building blocks instead of repeatedly explaining the same background.
+  - Each actual prompt then mostly needs a “how to think” section: the reasoning style, judgement frame, and task-specific instruction, with shared facts supplied separately.
+- Migrate Hermes planning/system state onto a real database.
+  - Current file-backed planner/Hermes surfaces are useful but brittle once state becomes more structured, queryable, and cross-surface.
+  - Idea: move the relevant Hermes/planner state into something database-backed so relationships, history, queries, status, and UI rendering are not all smuggled through markdown files like a tiny paperwork submarine.
+  - Preserve as a system/product idea, not current sprint work.
+- Vylo product model: preserve the move from goals toward stable focuses.
+  - Mini-courses / bounded progression units are already effectively handled by the current product shape; do not preserve that as the open question.
+  - The live idea to preserve is the shift from long-running `goals` toward stable focuses: relatively durable arenas from the old repo’s focus model — sales, leadership, dealing with management, hiring, etc. — that tell Vylo what the person is doing and how that area is going over time.
+  - This matters more as real-life analysis becomes central, because Vylo needs to understand the user’s broad operating arena rather than treating every improvement arc as the main organising object.
+  - Placement: preserve for a later product-model pass or sprint item if focuses become part of the next sprint.
+- Vylo mini-course idea: pre-made mini-courses for specific outcomes.
+  - Separate from the “goals → focuses” product-model question: mini-courses already exist as bounded progression units, but there may be value in pre-made mini-courses for common outcomes.
+  - Example: “Get TikTok ready” as a pitching / presentation mini-course that helps someone prepare their product/story/persona for TikTok-style communication.
+  - Preserve as a later content/product-packaging idea rather than current sprint work.
+- Slow research agent / kickoff skill for ambiguous ideas.
+  - Researches ideas slowly and deliberately rather than sprinting off with a self-important clipboard.
+  - It should pause to ask the user about judgement-heavy areas: taste, scope, audience, product direction, what counts as useful, and what not to decide yet.
+  - Useful when the task is not coding and not just “go gather facts”; the value is in researching while preserving the user’s judgement rather than letting the agent silently choose the shape.
+  - Possible form: a Hermes skill or a better kickoff prompt that starts with scope checks, then proceeds in stages with explicit check-ins before making big taste/scope calls.
+  - Core anti-pattern to fight: the agent over-deciding the interesting parts because it mistakes momentum for usefulness.
+- Tree-based harness for breaking down hard problems.
+  - Break a difficult problem into explicit trees and branches: top level, immediate next level, then the next level again, preserving reasoning, assumptions, constraints, and unresolved questions at each node.
+  - The user should be able to inspect the tree top-down, critique assumptions, change answers at any level, and have everything downstream of that node rerun.
+  - When branches get too large for one agent, specific agents could take charge of specific branches and return bottom-level outputs.
+  - Needs a usable visual interface: the point is not just decomposition, but letting the user move down the tree as much as they want and steer the structure without managing every detail manually.
+  - Likely useful for very difficult design problems and feature-development problems where a hands-off but inspectable reasoning harness is worth the cost.
+- Vylo marketing vertical: charisma maxing.
+- TikTok-style social games for people who think they are above TikTok games.
+  - Shape: mobile app with website access, or just a web app, built around quick social game formats like Wavelength.
+  - Positioning: make the games feel slightly ironic, clever, or socially elevated rather than openly “TikTok game” coded.
+  - Core trick: let users feel like they are playing the format with a wink — more important, self-aware, and above it — while still getting the same easy social loop. Naturally, civilisation advances.

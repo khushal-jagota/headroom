@@ -202,9 +202,11 @@ Design system (per PRINCIPLES.md, binding):
 
 Each ticket and each day has at most one chat session. The chat panel connects through a **gateway adapter** wrapping the Hermes gateway (`tui_gateway.ws` import, same pattern as the old viewer). If the gateway is unreachable the panel renders "gateway offline" and the rest of the UI is unaffected. The entity's `chat_session_key` persists the session id. In tests the adapter is a fake that echoes. Live gateway behavior is a post-run human item, not an acceptance test.
 
-## 12. Seed
+## 12. Seed and migration
 
-`plan seed --source <dir>` reads a markdown planning directory with the current system's shapes and imports: `sprints/current/sprint-kickoff.md` → sprint kickoff fields; `sprint-tracking.md` items → sprint items (statuses: Todo→todo, In Progress→active, Done→done, Blocked→blocked, Deferred→deferred_next_sprint; `Priority:`/`Urgency:`/`Project:` fields mapped; Mode dropped); `sprint-review.md` → review fields; the latest `daily/YYYY-MM-DD/workspace.md` tickets → tickets (Readiness mapping: Concepts→needs_success, Needs Shaping→needs_approach, Ready→needs_plan, In Progress→in_progress; `Ticket ID:` preserved as an alias field; `Chat ID:` → `chat_session_key`; `Priority:` mapped; body/success/approach text into the matching fields' values) linked to sprint items by title match when unambiguous, else standalone with sprint assignment; `deferred.md` → sprint items with `sprint_id = NULL` (project sections and P-labels mapped); `ideas.md` → ideas. Archives are not imported [RULING R6 default]. Seeding is idempotent by alias/title: re-running against the same source creates no duplicates. Tested against synthetic fixtures in `tests/fixtures/` that reproduce these shapes; never against the live directory in tests.
+Migration from the markdown system is an in-run deliverable, not an afterthought. A frozen snapshot of the real planning data (taken 2026-07-04) is committed at `migration/source-snapshot/`; the build must migrate it successfully. The live directory is still never read at build/test time — the snapshot is the real-data target; final live cutover at switch time is the human's moment (§18.4).
+
+`plan seed --source <dir>` reads a markdown planning directory with the current system's shapes and imports: `sprints/current/sprint-kickoff.md` → sprint kickoff fields; `sprint-tracking.md` items → sprint items (statuses: Todo→todo, In Progress→active, Done→done, Blocked→blocked, Deferred→deferred_next_sprint; `Priority:`/`Urgency:`/`Project:` fields mapped; Mode dropped); `sprint-review.md` → review fields; the latest `daily/YYYY-MM-DD/workspace.md` tickets → tickets (Readiness mapping: Concepts→needs_success, Needs Shaping→needs_approach, Ready→needs_plan, In Progress→in_progress; `Ticket ID:` preserved as an alias field; `Chat ID:` → `chat_session_key`; `Priority:` mapped; body/success/approach text into the matching fields' values) linked to sprint items by title match when unambiguous, else standalone with sprint assignment; `deferred.md` → sprint items with `sprint_id = NULL` (project sections and P-labels mapped); `ideas.md` → ideas. Archives and historical daily folders are not imported — only the latest day's workspace feeds tickets [RULING R6 default]. Seeding is idempotent by alias/title: re-running against the same source creates no duplicates. Every seed run emits a migration report (printed, and with `--json` structured): counts imported per entity kind, plus an explicit list of skipped/unparseable sections — silent drops are forbidden. Unit-tested against synthetic fixtures in `tests/fixtures/`; additionally proven end-to-end against `migration/source-snapshot/` (item 34), whose known ground truth is: 1 sprint (2026-07-01 → 2026-07-12); 12 sprint items (6 todo, 5 active, 1 done — the done item titled "Ship waitlist mechanics."); 4 tickets from the 2026-07-03 workspace (mic-publish and app-typography at needs_plan; landing-gate-1 and durable-personas at in_progress; `Chat ID: 20260702_114500_0ec57a` preserved on landing-gate-1); 9 deferred items (NULL sprint, projects mapped from the Vylo/Tribe/Learning/Other headings); 20 ideas. The live directory is never read in tests.
 
 ## 13. Configuration and test mode
 
@@ -237,7 +239,7 @@ Write four skill documents under `skills/` (not installed anywhere by the build)
 
 ## 18. Delivery expectations and acceptance checklist
 
-**Build in this order**: (1) contracts skeleton — schema DDL, enums, typed models, adapter interfaces, config loading, CLI/API surface stubs; (2) **the verify instrument** (18.2), runnable with every checklist item FAIL; (3) pure-logic modules + unit tests 1–21 green; (4) server wiring — API, WS, resolution engine over DB, dispatcher, boundary scheduler, CLI against the API; (5) UI views; (6) Playwright e2e suite, items 22–33 green. Do not start a later stage while an earlier stage's tests fail.
+**Build in this order**: (1) contracts skeleton — schema DDL, enums, typed models, adapter interfaces, config loading, CLI/API surface stubs; (2) **the verify instrument** (18.2), runnable with every checklist item FAIL; (3) pure-logic modules + unit tests 1–21 green; (4) server wiring — API, WS, resolution engine over DB, dispatcher, boundary scheduler, CLI against the API; (5) UI views; (6) Playwright e2e suite, items 22–34 green. Do not start a later stage while an earlier stage's tests fail.
 
 Where this document delegates a choice, make it, implement it fully, and record it in decisions.md. If a genuine contradiction emerges, state it in PROGRESS.md and propose a resolution consistent with Section 14's rules — do not silently pick.
 
@@ -249,9 +251,10 @@ Where this document delegates a choice, make it, implement it fully, and record 
 
 ### 18.2 The verify instrument
 
-- One command: `./verify` (executable script at repo root). Runs in order: ruff, mypy, unit suite, build check (`python -m compileall src/` + `node --check` on every file in `assets/`), then the Playwright e2e suite headless. Prints a per-item scoreboard for every acceptance test below (item number, name, PASS/FAIL) and ends with exactly `VERIFY: N/33 PASS`.
+- One command: `./verify` (executable script at repo root). Runs in order: ruff, mypy, unit suite, build check (`python -m compileall src/` + `node --check` on every file in `assets/`), then the Playwright e2e suite headless. Prints a per-item scoreboard for every acceptance test below (item number, name, PASS/FAIL) and ends with exactly `VERIFY: N/34 PASS`.
 - The instrument fails with an explicit message if any test file contains `@pytest.mark.skip`, `pytest.skip(`, `xfail`, `.only`, a commented-out test, or an empty test body — the scan itself is unit-tested (item 21).
 - Built at stage 2, before implementation; all items report FAIL until their stage lands. The scoreboard is the single source of truth for completeness.
+- Items 22–34 are end-to-end; item 34 (snapshot migration) runs against `migration/source-snapshot/` and is part of the suite, not a manual step.
 
 ### 18.3 Acceptance tests
 
@@ -299,7 +302,8 @@ External boundaries (hermes spawn, boundary/replan agent, chat gateway) are fake
 31. Refresh restores state: on Day, Board, and Ticket mid-flow (pending proposal, running claim), a reload renders identical content.
 32. Sprint view live: `plan item set --status active` via CLI reflects on the Sprint screen in both contexts without reload; loose ticket appears in the loose section.
 33. Seed e2e: `plan seed --source tests/fixtures/planning-md/` against the test server, then Board/Sprint/Backlog show the fixture's expected titles and counts.
+34. Snapshot migration e2e: `plan seed --source migration/source-snapshot/` imports the frozen real data with exactly the ground truth stated in Section 12 (1 sprint with those dates; 12 items split 6/5/1 with "Ship waitlist mechanics." done; the 4 named tickets in their mapped states with the Chat ID preserved; 9 deferred items; 20 ideas); the migration report lists zero silently-skipped sections (anything unparsed is enumerated in it); a second run imports zero duplicates.
 
 ### 18.4 Post-run human pass (not tests)
 
-Live Hermes gateway chat; live dispatcher spawning a real agent; seeding from the real `~/.hermes/planning/`; installing skills into `~/.hermes/skills/`; launchd supervision; UI look-and-feel judgment.
+Live Hermes gateway chat; live dispatcher spawning a real agent; the final cutover seed against the live `~/.hermes/planning/` at switch time (the in-run migration proves the machinery on the frozen snapshot; the live directory will have drifted since 2026-07-04 and its import is reviewed by the human); installing skills into `~/.hermes/skills/`; launchd supervision; UI look-and-feel judgment.
