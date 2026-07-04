@@ -2,6 +2,8 @@
 
 The specification for this project lives in **SPEC.md**. It is the single source of truth. Never modify it.
 
+**PRINCIPLES.md** holds the standing engineering and design rules; they bind everywhere SPEC.md doesn't explicitly override them. Never modify it either.
+
 This repo is the v2 planning system (Python/FastAPI + SQLite + no-build JS). It is built and tested entirely inside this repository: never read from or write to `~/.hermes/planning/` (the live markdown planning system), `~/.hermes/hermes-agent/`, or any other repo. External boundaries (hermes spawn, boundary/replan agent, chat gateway) are adapters with fakes; tests use the fakes, always.
 
 ## Memory

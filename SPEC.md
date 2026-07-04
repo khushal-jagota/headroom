@@ -19,7 +19,10 @@ The system is: one SQLite database; one Python server process (JSON API + web UI
 - Frontend: no-build vanilla JS + CSS served as static files by the server. No bundler, no framework, no client-side state store.
 - Tests: pytest for unit; Playwright (Python, chromium, headless) for end-to-end. Lint: ruff. Typecheck: mypy (strict on `src/`).
 - The server binds `127.0.0.1` only. No auth in v1. Default port 8767 (configurable).
-- Layout: `src/planner/` (package), `assets/` (JS/CSS), `tests/unit/`, `tests/e2e/`, `tests/fixtures/`, `skills/`, `scripts/`, `data/` (gitignored; default DB location `data/planning.db`).
+- Layout: `src/planner/` organised by semantic domain — `core/` (shared infrastructure: db, events, config, server shell, adapters' interfaces) plus `tickets/`, `sprints/`, `days/`, `dispatch/`, `seed/`, `chat/`. Within every domain, organise by kind of work (contracts, logic, data, api) — layers within domains, never feature-slices, never one flat pile. Non-trivial things get folders.
+- Every tunable (timings, TTLs, limits, ordering weights, the boundary hour) lives in the configuration module (Section 13), never inline.
+- Repo root also carries: `assets/` (JS/CSS), `tests/unit/`, `tests/e2e/`, `tests/fixtures/`, `skills/`, `scripts/`, `data/` (gitignored; default DB location `data/planning.db`).
+- PRINCIPLES.md at the repo root binds this build; where this spec is explicit, the spec overrides. One explicit override: the core/module registry rule is out of scope for v1 — the planner is a single product with no pluggable modules; the registry pattern applies to adapters only (spawn, boundary/replan, gateway).
 
 ## 3. Data model
 
@@ -184,6 +187,11 @@ Verbs (exact):
 
 Five screens, served at `/`. Simplicity is the ruling aesthetic: fewer things done cleanly. Every screen renders from server JSON; refresh at any moment restores identical state.
 
+Design system (per PRINCIPLES.md, binding):
+- One token file, `assets/tokens.css`, owns everything themable: surfaces, text tokens, accent (bright/surface/text), radius scale, motion durations (fast/base/slow), spacing scale, border widths. The app's entire personality must be tunable by editing this one file. No new token categories without evidence of need.
+- Type: strict scale, five sizes maximum. Motion: entrances ease out, nothing bounces, all durations from motion tokens. Add nothing to a screen unless it makes the user feel something or a smart person genuinely needs it to understand the screen; no explanatory text for the obvious.
+- Before writing any component, record the component inventory for all five screens in decisions.md; build few, reuse hard, no near-duplicates.
+
 1. **Day (home)**: the brief (rendered markdown), the day-plan tree with per-node Accept / Invalidate and top-level Accept-all / Reject-all, the day's ticket list (ordered), and the approval queue inline (each entry: ticket title, field, proposal body rendered, Accept / Edit buttons — Edit opens a textarea prefilled with the proposal).
 2. **Board**: one column per ticket state (`dropped` hidden), cards show title, priority, deadline, project, pending-proposal marker, running-claim marker. No drag-and-drop in v1: card click opens Ticket.
 3. **Ticket**: all four fields as sections (value rendered as markdown; pending proposal shown side-by-side with Accept/Edit; notes editable inline), recap, state/ceiling/at-cap controls, links, day/sprint assignment, run history, event log, and the chat panel (Section 11).
@@ -209,7 +217,8 @@ Each ticket and each day has at most one chat session. The chat panel connects t
 - **Proposals-only for agents.** No code path lets a request carrying claim env write `fields.*.value` or change state except via the resolution engine.
 - **Adapters at every external boundary**: spawn (subprocess), boundary/replan agent, gateway chat. Each is a small interface with a real and a fake implementation; tests use fakes; nothing in tests shells out to `hermes` or opens network connections beyond localhost Playwright↔server.
 - **Append-only events**; derived views computed on read, never stored.
-- **Pure logic dependency-free**: state machine, resolution, eligibility, ordering, seed parsing, and planning-date math live in modules importing nothing but stdlib; FastAPI/DB code imports them, never the reverse.
+- **Contracts first**: each domain has a contracts file (types, enums, shapes) generated at stage 1; all implementation imports its types from contracts and never redeclares a shape locally; the frontend consumes exactly the JSON shapes the contracts document. A shape change means changing the contract file and letting type errors drive the fixes.
+- **Pure logic dependency-free**: state machine, resolution, eligibility, ordering, seed parsing, and planning-date math live in each domain's logic layer as plain functions importing nothing but stdlib (and domain contracts); FastAPI/DB code imports them, never the reverse. The acid test: if a rule can't be unit-tested with no mocks, it's in the wrong place.
 - Never touch `~/.hermes/planning/` (the live markdown system), `~/.hermes/hermes-agent/`, or any path outside this repository at build/test time.
 
 ## 15. Non-goals (v1)

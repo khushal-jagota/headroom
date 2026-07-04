@@ -21,7 +21,7 @@ Build the application defined in SPEC.md, working under the process rules in CLA
 Constraints:
 - Follow the build order in SPEC.md Section 18 exactly. The verify instrument is built at stage 2, before implementation, and initially reports all items FAIL. No stage begins while a prior stage's tests fail.
 - Tests obey the fences in SPEC.md Section 18.3: one named test per checklist item, assertions using the spec's stated values, no skipped or disabled tests, post-first-write changes justified in decisions.md.
-- Never modify SPEC.md, CLAUDE.md, codex-audit.md, or this condition's source document. Work only inside this repository; never touch `~/.hermes/planning/` or `~/.hermes/hermes-agent/`.
+- Never modify SPEC.md, PRINCIPLES.md, CLAUDE.md, codex-audit.md, or this condition's source document. Work only inside this repository; never touch `~/.hermes/planning/` or `~/.hermes/hermes-agent/`.
 - Update PROGRESS.md every work cycle. If blocked on the same problem for three consecutive attempts, log it and change approach materially.
 - Do not ask questions. Delegated choices are yours; make them and record them in decisions.md.
 - If the Codex audit returns AUDIT: FAIL, address every listed violation, re-run `./verify`, then re-run the audit. Repeat until it passes. Concerns from the audit must be addressed or explicitly refuted in decisions.md but do not block completion.
