@@ -1,0 +1,105 @@
+"""Shared vocabulary used across every domain: cross-domain enums, the event
+kinds, the link kinds, and the two infrastructure shapes (event row, link row).
+
+Stdlib only. Nothing here imports another planner module."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Any
+
+JsonDict = dict[str, Any]  # event payloads, adapter blobs
+UnixTime = int             # unix seconds
+
+
+class Project(StrEnum):                     # SPEC §3.2, exact strings (capitalised as in SPEC)
+    Vylo = "Vylo"
+    Tribe = "Tribe"
+    Learning = "Learning"
+    Other = "Other"
+
+
+class Priority(StrEnum):                     # SPEC §3.2/§3.3 — homed in core (shared vocabulary)
+    P0 = "P0"
+    P1 = "P1"
+    P2 = "P2"
+    P3 = "P3"
+
+
+class LinkKind(StrEnum):                     # SPEC §3.6, exact strings
+    belongs_to = "belongs_to"                # ticket -> sprint item
+    parent_child = "parent_child"            # ticket -> ticket
+    blocks = "blocks"                        # ticket -> ticket | ticket -> sprint item
+    relates = "relates"                      # any -> any
+
+
+class EventKind(StrEnum):
+    # --- named explicitly in SPEC ---
+    state_changed = "state_changed"                  # §4.4.6 {from, to, cause}
+    proposal_accepted = "proposal_accepted"          # §4.4.2/4 {field, body, resolved_by, edited}
+    proposal_superseded = "proposal_superseded"      # §4.4.1 {field, replaced_body}
+    day_ticket_removed = "day_ticket_removed"        # §3.4 {ticket_id}
+    day_closed = "day_closed"                        # §6.2 {done_count, not_done_count}
+    auto_blocked = "auto_blocked"                    # §7.5 {consecutive_failures}
+
+    # --- supplemental: creation, one per entity ---
+    ticket_created = "ticket_created"
+    sprint_created = "sprint_created"
+    sprint_item_created = "sprint_item_created"
+    idea_created = "idea_created"
+    day_created = "day_created"                      # §3.4 materialization
+
+    # --- supplemental: proposals and fields ---
+    proposal_filed = "proposal_filed"                # {field, body, proposed_by}
+    note_updated = "note_updated"                    # §4.2 notes slot {field}
+    recap_updated = "recap_updated"                  # §3.3
+    grant_changed = "grant_changed"                  # {ceiling, at_cap, cause}
+
+    # --- supplemental: plain field updates (§3.2 "event-logged" updates) ---
+    ticket_updated = "ticket_updated"                # {field, from, to} plain edits
+    item_updated = "item_updated"
+    sprint_updated = "sprint_updated"
+    day_updated = "day_updated"                      # notes/brief manual edits
+    item_status_changed = "item_status_changed"      # {from, to, cause} incl. agent todo<->active
+
+    # --- supplemental: day plan lifecycle ---
+    plan_proposed = "plan_proposed"                  # boundary judgment stored {tree}
+    plan_node_accepted = "plan_node_accepted"        # {node} ("root" | child position)
+    plan_accepted_all = "plan_accepted_all"
+    plan_node_invalidated = "plan_node_invalidated"  # {node}
+    plan_replanned = "plan_replanned"                # §6.3 {old_tree, scope: "root"|"child", node}
+    plan_rejected = "plan_rejected"                  # reject-all {old_tree}
+    day_ticket_added = "day_ticket_added"            # {ticket_id, position, cause}
+    boundary_failed = "boundary_failed"              # §6.2 adapter failure/timeout {error}
+
+    # --- supplemental: runs and claims ---
+    run_started = "run_started"                      # {run_id, pid}
+    run_closed = "run_closed"                        # {run_id, status, summary}
+    claim_heartbeat = "claim_heartbeat"              # {run_id, claim_expires}
+    claim_reclaimed = "claim_reclaimed"              # {run_id, reason: "expired"|"dead_pid"}
+    auto_block_cleared = "auto_block_cleared"        # human unblock action
+
+    # --- supplemental: freeze, links, chat ---
+    kickoff_frozen = "kickoff_frozen"
+    review_frozen = "review_frozen"
+    addendum_added = "addendum_added"                # {date, text}
+    link_added = "link_added"                        # {from_id, to_id, kind}
+    link_removed = "link_removed"
+    chat_session_created = "chat_session_created"    # {session_key}
+
+
+@dataclass(frozen=True)
+class EventRow:                              # a row read back from the append-only events table
+    id: int
+    entity_id: str
+    kind: str
+    payload: JsonDict
+    created_at: int
+
+
+@dataclass(frozen=True)
+class Link:                                  # SPEC §3.6 links row
+    from_id: str
+    to_id: str
+    kind: LinkKind

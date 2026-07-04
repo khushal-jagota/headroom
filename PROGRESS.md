@@ -4,15 +4,15 @@ Read this first after any context compaction. It is the build's memory.
 
 ## Current stage
 
-**Stage 1 (contracts skeleton) — starting.** Stages per SPEC.md §18: (1) contracts, (2) verify instrument, (3) pure logic + unit tests, (4) server wiring, (5) UI, (6) e2e, (7) dogfood.
+**Stage 3 (pure logic + unit tests) — dispatching.** Stages per SPEC.md §18: (1) contracts, (2) verify instrument, (3) pure logic + unit tests, (4) server wiring, (5) UI, (6) e2e, (7) dogfood.
 
 ## Stage ledger
 
 | Stage | Status |
 |---|---|
-| 1. Contracts skeleton | in progress |
-| 2. Verify instrument | not started |
-| 3. Pure logic + unit tests (items 1–21, 36) | not started |
+| 1. Contracts skeleton | **complete** — 36 src files, ruff+mypy strict green, DDL↔contract cross-check exact, CLI tree per §8, codex-reviewed (plan: 9 findings folded; impl: no violations found) |
+| 2. Verify instrument | **complete** — `./verify` behaves per §18.2 on the bare tree (gates green, 36 FAIL, `VERIFY: 0/36 PASS`, exit 1; run 001 archived); codex impl review NO VIOLATIONS |
+| 3. Pure logic + unit tests (items 1–21, 36) | dispatching wave of 5 ticket-orchestrators + T08 |
 | 4. Server wiring | not started |
 | 5. UI views | not started |
 | 6. Playwright e2e (items 22–34) | not started |
@@ -20,9 +20,9 @@ Read this first after any context compaction. It is the build's memory.
 
 ## What just happened
 
-- Full read of SPEC.md, PRINCIPLES.md, codex-audit.md, harness-prep.md, and every file in `migration/source-snapshot/`.
-- Environment confirmed: Python 3.14.3 venv with pinned deps, Playwright chromium, node v22.22.3, codex CLI 0.142.5, hermes CLI present. All preflight items PASS per harness-prep.md.
-- **Contradiction found and resolved (see below).**
+- T01 (contracts): ticket → sub-agent plan (orchestration/tickets/T01-contracts/plan.md, 1200+ lines) → codex plan review (9 findings, all accepted, amendments §18 appended to plan) → **implementation agent dispatched, running in main tree**.
+- T02 (verify instrument): ticket-as-plan codex-reviewed (6 findings folded in) → **implementation agent dispatched, running in main tree**. File sets disjoint from T01 (scripts/+verify vs src/+assets/+pyproject).
+- Earlier: full spec read; environment confirmed (preflight all PASS); §12 snapshot contradiction resolved (D3, committed 2143ce1).
 
 ## Contradiction: SPEC §12 ground truth vs frozen snapshot
 
@@ -44,7 +44,28 @@ Orchestration per CLAUDE.md: contract-scoped tickets in `orchestration/tickets/`
 
 ## Next step
 
-Write ticket T01 (contracts skeleton), dispatch planning sub-agent, codex-review the plan, implement, review, integrate.
+T01 in flight (planning sub-agent running). T02 ticket written (verify instrument; its ticket text doubles as the plan for codex review). Then stage-3 wave.
+
+## Stage-3 decomposition (pinned)
+
+Item→ticket map, file-disjoint so the wave can run in parallel:
+- T03 days: items 1 (planning date), 12 (day-ticket removal), 17 (plan tree), 18 (boundary deterministic pass) — owns `src/planner/days/`, `tests/unit/test_days*.py`
+- T04 tickets engine: items 2,3,4,5,6,7,8,13,36 — owns `src/planner/tickets/`, `tests/unit/test_tickets*.py`
+- T05 dispatch+links: items 9,11,14,15,16 — owns `src/planner/dispatch/`, `src/planner/core/links.py`, `tests/unit/test_dispatch*.py`
+- T06 sprints: items 10, 20 — owns `src/planner/sprints/`, `tests/unit/test_sprints*.py`
+- T07 seed parser + fixtures: item 19 — owns `src/planner/seed/`, `tests/fixtures/planning-md/`, `tests/unit/test_seed*.py`
+- T08 instrument integrity: item 21 — owns `tests/unit/test_instrument*.py` (tests scripts/verify_lib scan + clock fake-now-ignored); trivial, pipeline collapsed (to log in decisions.md)
+
+Shared `tests/unit/conftest.py` (temp-DB fixture, fake clock) is orchestrator glue, written before the wave.
+
+## Stage 4–7 decomposition (sketch, refine at stage start)
+
+- Stage 4: T09 server shell (WS tailer, error handler, test endpoints incl. set-now, §7.6 claim validation); T10 domain APIs over stage-3 writers + derived views (board/queues/sprint-current/day); T11 dispatcher runtime + boundary scheduler + real adapters (subprocess spawn, hermes boundary, gateway); T12 CLI wiring (all §8 verbs → HTTP, exit codes, --json); T13 chat + seed endpoints.
+- Stage 5: T14 tokens/shell/fetch+WS layer/markdown renderer (component inventory → decisions.md first); T15 Day+Review; T16 Board+Ticket; T17 Sprint+Backlog + chat panel.
+- Stage 6: T18 e2e harness + items 22–27; T19 items 28–32; T20 items 33–34.
+- Stage 7: T21 dogfood script (item 35) + four skills docs; Levels B/C run top-level with live hermes, evidence into DOGFOOD.md.
+
+Dispatch model for all of these: per-ticket Fable orchestrators per D8 (playbook at orchestration/orchestrator-playbook.md), Opus planners/implementers except Fable planners on load-bearing tickets; verification delegated to Opus agents archiving to orchestration/verify-runs/.
 
 ## Blockers
 

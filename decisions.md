@@ -16,7 +16,7 @@ SPEC §12 pins item 34's expected import exactly (12 items 6/5/1, 9 deferred und
 
 ## D4 — CLI lives at `src/planner/cli/`
 
-SPEC §2 names core/ plus six domains and doesn't place the CLI. The CLI is a surface over the HTTP API, not a domain; it gets its own folder beside the domains (non-trivial things get folders), importing only contracts + stdlib + HTTP client.
+SPEC §2 names core/ plus six domains and doesn't place the CLI. The CLI is a surface over the HTTP API, not a domain; it gets its own folder beside the domains (non-trivial things get folders). Amended after T01 plan review: it imports contracts, click, httpx, and stdlib — never domain logic or data layers. The layering is the rule; click/httpx are pinned dependencies chosen for it.
 
 ## D5 — Test-mode clock control via `POST /api/test/set-now`
 
@@ -25,3 +25,23 @@ SPEC §2 names core/ plus six domains and doesn't place the CLI. The CLI is a su
 ## D6 — Background loops idle in test mode; ticks only via test endpoints
 
 With PLAN_TEST_MODE=1 the dispatcher and boundary scheduler do not tick on timers; `POST /api/test/tick-dispatcher` / `tick-boundary` run single synchronous ticks. Deterministic tests require exactly-one-tick semantics; the spec's test endpoints exist precisely to drive ticks.
+
+## D7 — Pipeline collapses for trivial tickets
+
+Per CLAUDE.md, steps 2–5 of the per-ticket pipeline may collapse for trivial tickets. Collapsed so far: **T02** (plan step folded into the ticket text, which codex then reviewed — plan review still happened, see orchestration/tickets/T02-verify/plan-review.md); **T08** (single test file against an already-reviewed instrument API: implementation dispatched directly, codex review at diff stage only).
+
+## D8 — Per-ticket orchestrator sub-agents with model tiering (owner directive, mid-run)
+
+From stage 3 onward, each ticket is dispatched to a per-ticket orchestrator sub-agent (Fable) that runs the pipeline internally: planning agent → codex plan review → orchestrator sense-check/adjust → implementation agent → codex diff review → report. The top-level agent only decomposes, integrates serially, runs `./verify`, and spot-checks load-bearing code (resolution engine, claim/reclaim, planning-date math, seed parser per CLAUDE.md). Directed by the owner during the run; supersedes the flat pipeline used for T01/T02 (which ran plan and implementation agents directly under the top-level orchestrator).
+
+Model tiering (owner: use judgement, Fable allowed liberally for groundwork): planners are Fable for the load-bearing groundwork tickets — T04 resolution engine, T05 dispatch/claims, T07 seed parser — and Opus for the mechanical ones (T03 days, T06 sprints); implementers are Opus everywhere (a good plan + codex diff review carries implementation); orchestrators always Fable.
+
+Mechanical verification is delegated too (owner directive): Opus verification agents run `./verify` and smoke checks, archive the full output under `orchestration/verify-runs/`, and report headlines; the top-level agent runs checks itself only when truly cheap. The final goal demonstration is the exception — run fresh by the top-level agent with full output shown, as the goal condition requires.
+
+## D9 — "every file in assets/" under `node --check` reads as every JS file
+
+SPEC §18.2's build check runs `node --check` on every file in `assets/`; `node --check` only parses JavaScript, and `assets/` legitimately holds CSS (`tokens.css`, required by §10). The instrument checks every `*.js` under `assets/` recursively — the only reading under which the required CSS can exist at all. Flagged by codex during the T02 implementation review; recorded here for the auditor.
+
+## D10 — T01/T02 integration reviews
+
+T02 codex diff review: NO VIOLATIONS (seven confirmations, file/line cited; archive at orchestration/tickets/T02-verify/impl-review.md). T01 codex diff review found no missing enum members, tables, or route gaps; its closing schema cross-check (every table's columns vs its contract dataclass) succeeded inside the codex session and was independently re-run by the top-level orchestrator: all six audited tables match exactly, all ten tables present (archive at orchestration/tickets/T01-contracts/impl-review.md). Verify run 001 (orchestration/verify-runs/001-stage2.md) matched the stage-2 expectation exactly: gates green, 36 FAIL, `VERIFY: 0/36 PASS`, exit 1.
