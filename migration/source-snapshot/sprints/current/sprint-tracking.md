@@ -98,15 +98,6 @@ Date range: 2026-07-01 to 2026-07-12
   - Current state: implementation progressed substantially on 2026-07-02; local commits wire transcription/voice input into the composer, and the running notes report real-phone validation done.
   - Still open for sprint truth: user closeout/ship state confirmation before marking this sprint item done.
 
-- Finish design leftovers.
-  - Priority: P2
-  - Urgency:
-  - Mode: Supervised
-  - Project: Vylo
-  - Named remaining slices: app typography pass and finishing `docs/design.md`.
-  - `docs/design.md` was completed/updated in a 2026-07-02 repo commit.
-  - App typography pass remains open; other design leftovers can be picked up opportunistically rather than tracked as separate sprint tasks.
-
 ## Done
 
 - Ship waitlist mechanics.

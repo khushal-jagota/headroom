@@ -23,8 +23,27 @@ Rules:
 - P3: Cornell pilot and advisor maintenance.
   - Keep enough contact/follow-up available as background relationship maintenance, but do not treat it as an active sprint commitment unless deliberately pulled back in.
 
+- P2: Finish design leftovers.
+  - Named remaining slices: app typography pass and finishing `docs/design.md`.
+  - `docs/design.md` was completed/updated in a 2026-07-02 repo commit; the typography pass is already tracked as its own ticket, so the umbrella item moves out of the active sprint.
+
 ## Tribe
+
+- P2: Shape the Tribe founding-member loop.
+  - Decide what the first repeatable Tribe gathering looks like and who the anchor members are before investing in any tooling.
+
+- P3: Tribe onboarding one-pager.
+  - A short readable document for new people: what Tribe is, cadence, expectations. Only after the founding-member loop is settled.
 
 ## Learning
 
+- P2: SQLite internals deep-dive writeup.
+  - Turn the WAL/locking notes gathered while building local-first tools into a standalone learning-wiki entry.
+
+- P3: Spaced-repetition pass over the negotiation notes.
+  - The notes exist; the pass is background maintenance, not sprint work.
+
 ## Other
+
+- P3: Home office ergonomics batch.
+  - Chair, desk height, and monitor arm decisions batched into one purchasing pass instead of three separate rabbit holes.

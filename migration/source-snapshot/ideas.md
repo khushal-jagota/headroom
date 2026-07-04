@@ -91,3 +91,9 @@ Rules:
   - Shape: mobile app with website access, or just a web app, built around quick social game formats like Wavelength.
   - Positioning: make the games feel slightly ironic, clever, or socially elevated rather than openly “TikTok game” coded.
   - Core trick: let users feel like they are playing the format with a wink — more important, self-aware, and above it — while still getting the same easy social loop. Naturally, civilisation advances.
+- Morning planning brief as a generated audio note.
+  - The day brief already gets written each boundary; a spoken version for the first coffee would make the 5am boundary feel like a service instead of a document.
+- Agent-drafted sprint reviews from the event log.
+  - Once planning state is database-backed, the sprint review's outcomes section could be drafted automatically from what actually happened rather than from memory.
+- Durable-personas CRM export for founder outreach.
+  - If personas compound properly, a lightweight export view (who, context, last touch) covers the founder-outreach use case without building a separate CRM.
