@@ -159,5 +159,6 @@ def test_check_css_syntax_clean_and_each_failure_mode() -> None:
         "1 unclosed '{'",
     ]
     # braces inside strings and comments never count; an escaped newline is a
-    # legal string continuation, not a termination error.
+    # legal string continuation (LF or CRLF), not a termination error.
     assert verify_lib.check_css_syntax('/* { */ .a { content: "\\\n}"; }') == []
+    assert verify_lib.check_css_syntax('.a { content: "x\\\r\ny"; }') == []

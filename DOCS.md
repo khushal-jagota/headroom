@@ -17,7 +17,7 @@ The human uses a web page. AI agents use a command-line tool. That split is deli
 
 ## The one rule everything follows
 
-Agents never change the record directly. An agent that wants to move work forward files a **proposal**. A piece of code called the resolution engine is the only thing that can turn a proposal into a real value or move a ticket to its next stage. Some proposals are approved automatically (when the human has granted room in advance), and everything else waits for the human. Every change, by anyone, is written down in an append-only event log — nothing is ever edited in place or deleted.
+Agents never change the record directly. An agent that wants to move work forward files a **proposal**. A piece of code called the resolution engine is the only thing that can turn a proposal into a real value or move a ticket to its next stage. Some proposals are approved automatically (when the human has granted room in advance), and everything else waits for the human. And every change, by anyone, writes a line into an event log that is strictly append-only: the log itself is never edited or trimmed. The records the log describes do change — a ticket's fields update, and taking a ticket off a day's list removes that link — but each such change leaves its own permanent line in the log, so the history of what happened is never lost.
 
 ## How far an agent may go: the ceiling and the at-cap rule
 

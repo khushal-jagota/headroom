@@ -200,6 +200,10 @@ def check_css_syntax(text: str) -> list[str]:
             continue
         if quote is not None:
             if ch == "\\":
+                if text[i + 1 : i + 3] == "\r\n":  # escaped CRLF continuation
+                    line += 1
+                    i += 3
+                    continue
                 if text[i + 1 : i + 2] == "\n":
                     line += 1  # escaped newline: a legal string continuation
                 i += 2
