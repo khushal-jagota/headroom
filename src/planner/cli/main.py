@@ -6,22 +6,115 @@ only).
 Every verb supports --json (machine output; exit codes 0 success, 1
 validation/domain error, 2 connection error). Long text arrives via
 `--body-file <path>` where `-` reads stdin — body text is never an inline
-argument. In T01 every handler except `serve` raises NotImplementedError after
-argument parsing, so the full verb tree renders under --help; the HTTP calls land
-in stage 4."""
+argument. Every handler speaks HTTP through planner.cli.http, which owns all
+output and exit-code decisions; a handler only builds a route + body."""
 
 from __future__ import annotations
 
+import os
 import sqlite3
+import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import click
+from click.core import ParameterSource
+
+from planner.cli import http
 
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
 _FIELDS = ["success", "approach", "plan", "result"]
 _LINK_KINDS = ["belongs_to", "parent_child", "blocks", "relates"]
 _TICKET_ID_ENV = "PLAN_TICKET_ID"
+
+
+# --- body input, id resolution, and render helpers (amendment 6) ---------------
+
+
+def _read_source(spec: str, as_json: bool) -> str:
+    """`-` -> stdin; else read the file. Unreadable file -> validation exit 1."""
+    if spec == "-":
+        return sys.stdin.read()
+    try:
+        return Path(spec).read_text(encoding="utf-8")
+    except OSError:
+        http.fail_validation(f"cannot read body file: {spec}", as_json)
+
+
+def _positional_is_stdin_marker(positional: str | None) -> bool:
+    """True only for a '-' the caller actually typed. click fills the positional from
+    PLAN_TICKET_ID too, and an env value of '-' is a bogus ticket id, not a stdin
+    request (amendment 6: body sources are explicit only)."""
+    if positional != "-":
+        return False
+    source = click.get_current_context().get_parameter_source("ticket_id")
+    return source == ParameterSource.COMMANDLINE
+
+
+def read_body(positional_ticket_id: str | None, body_file: str | None, as_json: bool) -> str:
+    """Required-body verbs. Body source is explicit only: --body-file PATH (or -), or a
+    trailing positional that is literally '-' (the stdin marker, not a ticket id).
+    Whitespace-only body -> validation exit 1. Returns the original unstripped text."""
+    if body_file is not None:
+        text = _read_source(body_file, as_json)
+    elif _positional_is_stdin_marker(positional_ticket_id):
+        text = sys.stdin.read()
+    else:
+        http.fail_validation("body required: pass '-' for stdin or --body-file PATH", as_json)
+    if not text.strip():
+        http.fail_validation("empty body", as_json)
+    return text
+
+
+def read_optional_body(body_file: str | None, as_json: bool) -> str | None:
+    """Optional-body verbs. Body comes only from --body-file (which may be '-');
+    absent flag -> None."""
+    if body_file is None:
+        return None
+    return _read_source(body_file, as_json)
+
+
+def resolve_ticket_id(positional: str | None, as_json: bool) -> str:
+    """Effective ticket id. A real positional wins; a None or '-' positional falls back
+    to PLAN_TICKET_ID (re-read here since click's envvar fallback does not fire when the
+    positional is the '-' stdin marker). Missing -> validation exit 1."""
+    if positional is not None and positional != "-":
+        return positional
+    env = os.environ.get(_TICKET_ID_ENV, "").strip()
+    if env and env != "-":  # '-' is the stdin marker, never a ticket id
+        return env
+    http.fail_validation("ticket id required: pass it or set PLAN_TICKET_ID", as_json)
+
+
+def _drop_none(d: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in d.items() if v is not None}
+
+
+def _lines(rows: list[Any], fmt: Callable[[Any], str]) -> str:
+    return "\n".join(fmt(r) for r in rows) if rows else "(none)"
+
+
+def _seed_human(data: Any) -> str:
+    lines = [
+        f"seed: {data['sprints']} sprint(s), {data['sprint_items']} item(s), "
+        f"{data['deferred_items']} deferred, {data['tickets']} ticket(s), "
+        f"{data['ideas']} idea(s), {data['links']} link(s), "
+        f"{data['duplicates_skipped']} duplicate(s)"
+    ]
+    skipped = data["skipped"]
+    if skipped:
+        lines.append(f"skipped: {len(skipped)}")
+        for s in skipped:
+            lines.append(f"  - {s['source_file']} [{s['heading']}]: {s['reason']}")
+    return "\n".join(lines)
+
+
+def _require_run_id(as_json: bool) -> str:
+    rid = os.environ.get("PLAN_RUN_ID", "").strip()
+    if not rid:
+        http.fail_validation("run id required: set PLAN_RUN_ID", as_json)
+    return rid
 
 
 def json_option(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -81,7 +174,16 @@ def serve(as_json: bool) -> None:
 @json_option
 def seed(source: str | None, demo: bool, as_json: bool) -> None:
     """Import a markdown planning directory, or create a demo dataset (§12)."""
-    raise NotImplementedError
+    if (source is None) == (not demo):
+        http.fail_validation("provide exactly one of --source or --demo", as_json)
+    body: dict[str, Any]
+    if demo:
+        body = {"demo": True}
+    else:
+        assert source is not None
+        body = {"source_dir": os.path.abspath(source)}  # server resolves in ITS cwd
+    data = http.send("POST", "/api/seed", as_json=as_json, json_body=body)
+    http.emit(data, as_json, _seed_human(data))
 
 
 # --- top-level proposal/recap/note verbs ---
@@ -94,7 +196,12 @@ def seed(source: str | None, demo: bool, as_json: bool) -> None:
 @json_option
 def propose(field: str, ticket_id: str | None, body_file: str | None, as_json: bool) -> None:
     """File or replace a proposal on a field (agent path)."""
-    raise NotImplementedError
+    body = read_body(ticket_id, body_file, as_json)
+    tid = resolve_ticket_id(ticket_id, as_json)
+    data = http.send(
+        "POST", f"/api/tickets/{tid}/propose/{field}", as_json=as_json, json_body={"body": body}
+    )
+    http.emit(data, as_json, f"proposed {field} on {data['id']}")
 
 
 @main.command("recap")
@@ -103,7 +210,10 @@ def propose(field: str, ticket_id: str | None, body_file: str | None, as_json: b
 @json_option
 def recap(ticket_id: str | None, body_file: str | None, as_json: bool) -> None:
     """Write a ticket recap (rejected before needs_approach)."""
-    raise NotImplementedError
+    body = read_body(ticket_id, body_file, as_json)
+    tid = resolve_ticket_id(ticket_id, as_json)
+    data = http.send("PUT", f"/api/tickets/{tid}/recap", as_json=as_json, json_body={"body": body})
+    http.emit(data, as_json, f"recap written on {data['id']}")
 
 
 @main.command("note")
@@ -113,7 +223,12 @@ def recap(ticket_id: str | None, body_file: str | None, as_json: bool) -> None:
 @json_option
 def note(field: str, ticket_id: str | None, body_file: str | None, as_json: bool) -> None:
     """Write a field's notes slot (human or agent, any time)."""
-    raise NotImplementedError
+    body = read_body(ticket_id, body_file, as_json)
+    tid = resolve_ticket_id(ticket_id, as_json)
+    data = http.send(
+        "PUT", f"/api/tickets/{tid}/notes/{field}", as_json=as_json, json_body={"note": body}
+    )
+    http.emit(data, as_json, f"note {field} written on {data['id']}")
 
 
 # --- ticket group ---
@@ -142,7 +257,19 @@ def ticket_create(
     as_json: bool,
 ) -> None:
     """Create a ticket."""
-    raise NotImplementedError
+    body: dict[str, Any] = {"title": title}
+    if priority is not None:
+        body["priority"] = priority
+    if deadline is not None:
+        body["deadline"] = deadline
+    if project is not None:
+        body["project"] = project
+    if sprint is not None:
+        body["sprint_id"] = sprint       # --sprint -> sprint_id
+    if item is not None:
+        body["sprint_item_id"] = item    # --item   -> sprint_item_id
+    data = http.send("POST", "/api/tickets", as_json=as_json, json_body=body)
+    http.emit(data, as_json, f"{data['id']} {data['state']}")
 
 
 @ticket.command("show")
@@ -150,7 +277,9 @@ def ticket_create(
 @json_option
 def ticket_show(ticket_id: str | None, as_json: bool) -> None:
     """Show a ticket (defaults to $PLAN_TICKET_ID)."""
-    raise NotImplementedError
+    tid = resolve_ticket_id(ticket_id, as_json)
+    data = http.send("GET", f"/api/tickets/{tid}", as_json=as_json)
+    http.emit(data, as_json, f"{data['id']} {data['state']} {data['priority']} {data['title']}")
 
 
 @ticket.command("list")
@@ -160,7 +289,13 @@ def ticket_show(ticket_id: str | None, as_json: bool) -> None:
 @json_option
 def ticket_list(state: str | None, project: str | None, sprint: str | None, as_json: bool) -> None:
     """List tickets."""
-    raise NotImplementedError
+    params = _drop_none({"state": state, "project": project, "sprint_id": sprint})
+    data = http.send("GET", "/api/tickets", as_json=as_json, params=params)
+    http.emit(
+        data,
+        as_json,
+        _lines(data["tickets"], lambda t: f"{t['id']} {t['state']} {t['priority']} {t['title']}"),
+    )
 
 
 @ticket.command("set")
@@ -179,7 +314,30 @@ def ticket_set(
     as_json: bool,
 ) -> None:
     """Set priority / deadline / day / sprint (no ceiling or at_cap — grants are human)."""
-    raise NotImplementedError
+    tid = resolve_ticket_id(ticket_id, as_json)
+    patch: dict[str, Any] = {}
+    if priority is not None:
+        patch["priority"] = priority
+    if deadline is not None:
+        patch["deadline"] = None if deadline == "none" else deadline
+    if sprint is not None:
+        patch["sprint_id"] = None if sprint == "none" else sprint
+    if not patch and day is None:
+        http.fail_validation("nothing to set: pass --priority/--deadline/--sprint/--day", as_json)
+    data: Any = None
+    if patch:
+        data = http.send("PATCH", f"/api/tickets/{tid}", as_json=as_json, json_body=patch)
+    if day is not None:
+        data = http.send(
+            "POST", f"/api/day/{day}/tickets", as_json=as_json, json_body={"ticket_id": tid}
+        )
+    # `data` is the LAST successful response: ticket_json if only PATCH, day view if --day.
+    human = (
+        f"day {data['id']}: {len(data['tickets'])} ticket(s)"
+        if "tickets" in data
+        else f"{data['id']} {data['state']}"
+    )
+    http.emit(data, as_json, human)
 
 
 # --- item group ---
@@ -206,7 +364,15 @@ def item_create(
     as_json: bool,
 ) -> None:
     """Create a sprint item."""
-    raise NotImplementedError
+    body: dict[str, Any] = {"title": title, "project": project}
+    if priority is not None:
+        body["priority"] = priority
+    if deadline is not None:
+        body["deadline"] = deadline
+    if sprint is not None:
+        body["sprint_id"] = sprint
+    data = http.send("POST", "/api/items", as_json=as_json, json_body=body)
+    http.emit(data, as_json, f"{data['id']} {data['status']}")
 
 
 @item.command("show")
@@ -214,7 +380,8 @@ def item_create(
 @json_option
 def item_show(item_id: str, as_json: bool) -> None:
     """Show a sprint item."""
-    raise NotImplementedError
+    data = http.send("GET", f"/api/items/{item_id}", as_json=as_json)
+    http.emit(data, as_json, f"{data['id']} {data['status']} {data['priority']} {data['title']}")
 
 
 @item.command("list")
@@ -224,7 +391,15 @@ def item_show(item_id: str, as_json: bool) -> None:
 @json_option
 def item_list(status: str | None, project: str | None, backlog: bool, as_json: bool) -> None:
     """List sprint items."""
-    raise NotImplementedError
+    params = _drop_none({"status": status, "project": project})
+    if backlog:
+        params["sprint_id"] = "null"        # views.list_items maps "null" -> IS NULL
+    data = http.send("GET", "/api/items", as_json=as_json, params=params)
+    http.emit(
+        data,
+        as_json,
+        _lines(data["items"], lambda i: f"{i['id']} {i['status']} {i['priority']} {i['title']}"),
+    )
 
 
 @item.command("set")
@@ -234,7 +409,15 @@ def item_list(status: str | None, project: str | None, backlog: bool, as_json: b
 @json_option
 def item_set(item_id: str, status: str | None, blocked_by: str | None, as_json: bool) -> None:
     """Set an agent-permitted item transition (§3.2)."""
-    raise NotImplementedError
+    body: dict[str, Any] = {}
+    if status is not None:
+        body["status"] = status
+    if blocked_by is not None:
+        body["blocked_by"] = [s for s in (x.strip() for x in blocked_by.split(",")) if s]
+    if not body:
+        http.fail_validation("nothing to set: pass --status/--blocked-by", as_json)
+    data = http.send("PATCH", f"/api/items/{item_id}", as_json=as_json, json_body=body)
+    http.emit(data, as_json, f"{data['id']} {data['status']}")
 
 
 @item.command("propose-status")
@@ -246,7 +429,12 @@ def item_set(item_id: str, status: str | None, blocked_by: str | None, as_json: 
 @json_option
 def item_propose_status(item_id: str, to_status: str, body_file: str | None, as_json: bool) -> None:
     """Propose a done / deferred_next_sprint status for human acceptance."""
-    raise NotImplementedError
+    note = read_optional_body(body_file, as_json)
+    data = http.send(
+        "POST", f"/api/items/{item_id}/propose-status",
+        as_json=as_json, json_body={"to": to_status, "note": note},
+    )
+    http.emit(data, as_json, f"{data['id']} status proposal {to_status}")
 
 
 # --- sprint group ---
@@ -261,7 +449,14 @@ def sprint() -> None:
 @json_option
 def sprint_show(as_json: bool) -> None:
     """Show the current sprint view."""
-    raise NotImplementedError
+    data = http.send("GET", "/api/sprint/current", as_json=as_json)
+    s = data["sprint"]
+    human = (
+        "no current sprint"
+        if s is None
+        else f"sprint {s['name']} {s['date_start']}..{s['date_end']}"
+    )
+    http.emit(data, as_json, human)
 
 
 # --- idea group ---
@@ -279,14 +474,19 @@ def idea() -> None:
 @json_option
 def idea_create(title: str, project: str | None, body_file: str | None, as_json: bool) -> None:
     """Create an idea."""
-    raise NotImplementedError
+    body: dict[str, Any] = {"title": title, "body": read_optional_body(body_file, as_json) or ""}
+    if project is not None:
+        body["project"] = project
+    data = http.send("POST", "/api/ideas", as_json=as_json, json_body=body)
+    http.emit(data, as_json, f"{data['id']} {data['title']}")
 
 
 @idea.command("list")
 @json_option
 def idea_list(as_json: bool) -> None:
     """List ideas."""
-    raise NotImplementedError
+    data = http.send("GET", "/api/ideas", as_json=as_json)
+    http.emit(data, as_json, _lines(data["ideas"], lambda i: f"{i['id']} {i['title']}"))
 
 
 # --- day group ---
@@ -302,7 +502,9 @@ def day() -> None:
 @json_option
 def day_show(date: str | None, as_json: bool) -> None:
     """Show a day (defaults to the current planning date; accepts 'today')."""
-    raise NotImplementedError
+    seg = date or "today"
+    data = http.send("GET", f"/api/day/{seg}", as_json=as_json)
+    http.emit(data, as_json, f"day {data['id']}: {len(data['tickets'])} ticket(s)")
 
 
 @day.command("add-ticket")
@@ -311,7 +513,11 @@ def day_show(date: str | None, as_json: bool) -> None:
 @json_option
 def day_add_ticket(ticket_id: str, date: str | None, as_json: bool) -> None:
     """Add a ticket to a day (accepts 'today')."""
-    raise NotImplementedError
+    seg = date or "today"
+    data = http.send(
+        "POST", f"/api/day/{seg}/tickets", as_json=as_json, json_body={"ticket_id": ticket_id}
+    )
+    http.emit(data, as_json, f"day {data['id']}: {len(data['tickets'])} ticket(s)")
 
 
 @day.command("remove-ticket")
@@ -320,7 +526,9 @@ def day_add_ticket(ticket_id: str, date: str | None, as_json: bool) -> None:
 @json_option
 def day_remove_ticket(ticket_id: str, date: str | None, as_json: bool) -> None:
     """Remove a ticket from a day (deferring; ticket state untouched)."""
-    raise NotImplementedError
+    seg = date or "today"
+    data = http.send("DELETE", f"/api/day/{seg}/tickets/{ticket_id}", as_json=as_json)
+    http.emit(data, as_json, f"day {data['id']}: {len(data['tickets'])} ticket(s)")
 
 
 # --- link group ---
@@ -338,7 +546,11 @@ def link() -> None:
 @json_option
 def link_add(from_id: str, to_id: str, kind: str, as_json: bool) -> None:
     """Add a link."""
-    raise NotImplementedError
+    data = http.send(
+        "POST", "/api/links", as_json=as_json,
+        json_body={"from_id": from_id, "to_id": to_id, "kind": kind},
+    )
+    http.emit(data, as_json, f"linked {from_id} -{kind}-> {to_id}")
 
 
 @link.command("rm")
@@ -348,7 +560,11 @@ def link_add(from_id: str, to_id: str, kind: str, as_json: bool) -> None:
 @json_option
 def link_rm(from_id: str, to_id: str, kind: str, as_json: bool) -> None:
     """Remove a link."""
-    raise NotImplementedError
+    data = http.send(
+        "DELETE", "/api/links", as_json=as_json,
+        params={"from_id": from_id, "to_id": to_id, "kind": kind},
+    )
+    http.emit(data, as_json, f"unlinked {from_id} -{kind}-> {to_id}")
 
 
 # --- run group ---
@@ -363,7 +579,9 @@ def run() -> None:
 @json_option
 def run_heartbeat(as_json: bool) -> None:
     """Extend the claim by one TTL."""
-    raise NotImplementedError
+    rid = _require_run_id(as_json)
+    data = http.send("POST", f"/api/runs/{rid}/heartbeat", as_json=as_json)
+    http.emit(data, as_json, f"heartbeat: claim_expires {data['claim_expires']}")
 
 
 @run.command("close")
@@ -372,7 +590,13 @@ def run_heartbeat(as_json: bool) -> None:
 @json_option
 def run_close(outcome: str, summary: str | None, as_json: bool) -> None:
     """Close the run with a terminal outcome."""
-    raise NotImplementedError
+    rid = _require_run_id(as_json)
+    summary_text = _read_source(summary, as_json) if summary is not None else None
+    data = http.send(
+        "POST", f"/api/runs/{rid}/close",
+        as_json=as_json, json_body={"outcome": outcome, "summary": summary_text},
+    )
+    http.emit(data, as_json, f"run closed {data['run']['status']}")
 
 
 # --- queue group ---
@@ -387,21 +611,42 @@ def queue() -> None:
 @json_option
 def queue_approvals(as_json: bool) -> None:
     """Pending gating-field / status proposals and needs_review, oldest first."""
-    raise NotImplementedError
+    data = http.send("GET", "/api/queues", as_json=as_json)
+    section = data["approvals"]
+    http.emit(
+        {"approvals": section},
+        as_json,
+        _lines(section, lambda e: f"{e['entity_type']} {e['entity_id']} {e['kind']} {e['title']}"),
+    )
 
 
 @queue.command("pickup")
 @json_option
 def queue_pickup(as_json: bool) -> None:
     """Dispatcher-eligible tickets (§7.2)."""
-    raise NotImplementedError
+    data = http.send("GET", "/api/queues", as_json=as_json)
+    section = data["pickup"]
+    http.emit(
+        {"pickup": section},
+        as_json,
+        _lines(section, lambda e: f"{e['ticket_id']} {e['state']} {e['priority']} {e['title']}"),
+    )
 
 
 @queue.command("overdue")
 @json_option
 def queue_overdue(as_json: bool) -> None:
     """Tickets/items past deadline and not done/dropped."""
-    raise NotImplementedError
+    data = http.send("GET", "/api/queues", as_json=as_json)
+    section = data["overdue"]
+    http.emit(
+        {"overdue": section},
+        as_json,
+        _lines(
+            section,
+            lambda e: f"{e['entity_type']} {e['id']} {e['state']} {e['priority']} {e['title']}",
+        ),
+    )
 
 
 if __name__ == "__main__":
