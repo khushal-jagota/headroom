@@ -30,6 +30,22 @@ verify) → reframe snapshot README + DOGFOOD finding #1 → full `./verify` (36
 re-run dogfood B/C at the new frozen tree (dispatcher+API changed, §18.5) → commit →
 verify → re-audit until AUDIT: PASS.
 
+**Progress (2026-07-05, cont.):**
+- Fix A + Fix B landed by two concurrent Opus implementers on disjoint files. I
+  spot-checked both source diffs directly (dispatcher reclaim + the security boundary
+  are load-bearing): Fix A retains child Popen handles, `is_pid_alive` reaps via
+  poll() with a signal-0 fallback for untracked pids, `reap_finished_children` runs
+  once per tick after the sweep; the tick probes liveness through the same adapter
+  instance that spawns. Fix B adds `reject_agent_fields` and gates each PATCH route to
+  the §8/§3.2 surface. Fix B's internal codex: "No concrete SPEC violations found."
+  Fix A's internal codex verdict was still pending at integration; I integrated on my
+  own diff review + the integrated verify (CLAUDE.md: spot-check load-bearing code).
+- Integrated `./verify` with both fixes: **VERIFY: 36/36 PASS**, all gates green.
+- Committed round 4 at **`528ec7c`** (code fixes + snapshot README reframe + D21).
+- Dispatched Opus agent `dogfood-r4` to re-run Levels B/C at `528ec7c` (§18.5 —
+  dispatcher+API changed). Next: integrate its evidence, commit, fresh verify +
+  enveloped audit until AUDIT: PASS.
+
 ### Superseded: FINAL GATE (rounds 1–3)
 
 All seven stages complete. Stages per SPEC.md §18: (1) contracts, (2) verify instrument, (3) pure logic + unit tests, (4) server wiring, (5) UI, (6) e2e, (7) dogfood.
