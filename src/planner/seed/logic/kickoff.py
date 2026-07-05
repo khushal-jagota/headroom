@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 from typing import Final
 
-from planner.core.errors import ErrorCode, PlannerError
+from planner.core.contracts import ErrorCode, PlannerError
 from planner.seed.contracts import ParsedSprint, SkippedSection
 from planner.seed.logic.blocks import (
     REASON_SECTION,

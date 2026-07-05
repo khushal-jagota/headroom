@@ -139,3 +139,25 @@ def test_a21_instrument_integrity(tmp_path: Path) -> None:
     after = datetime.now().astimezone()
     assert before <= observed <= after
     assert observed != fake_aware
+
+
+def test_check_css_syntax_clean_and_each_failure_mode() -> None:
+    clean = '/* header */\n.card { content: "}{"; }\n@media (a) { .x { color: red; } }\n'
+    assert verify_lib.check_css_syntax(clean) == []
+    assert verify_lib.check_css_syntax("") == []
+
+    assert verify_lib.check_css_syntax(".a { color: red;") == ["1 unclosed '{'"]
+    assert verify_lib.check_css_syntax(".a { }\n}\n") == ["line 2: unexpected '}'"]
+    assert verify_lib.check_css_syntax("/* never closed\n.a { }\n") == [
+        "line 1: unterminated block comment"
+    ]
+    assert verify_lib.check_css_syntax('.a::before { content: "oops\n; }') == [
+        "line 1: unterminated string"
+    ]
+    assert verify_lib.check_css_syntax('.a::before { content: "runs off the end') == [
+        "line 1: unterminated string",
+        "1 unclosed '{'",
+    ]
+    # braces inside strings and comments never count; an escaped newline is a
+    # legal string continuation, not a termination error.
+    assert verify_lib.check_css_syntax('/* { */ .a { content: "\\\n}"; }') == []

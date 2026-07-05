@@ -1,13 +1,13 @@
 """Write admission: who may write what, when. The §4.3 agent-proposal matrix,
 the human-only gate (§7.6), recap/sprint/title/deadline/body validators (§3.3).
-Pure: contracts/errors + machine only; raises PlannerError as the rejection."""
+Pure: contracts + machine only; raises PlannerError as the rejection."""
 
 from __future__ import annotations
 
 from datetime import date
 from typing import Final
 
-from planner.core.errors import ErrorCode, PlannerError
+from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import AtCap, FieldName, TicketState
 from planner.tickets.logic import machine
 

@@ -1,0 +1,28 @@
+INFO:     Started server process [98772]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8791 (Press CTRL+C to quit)
+INFO:     127.0.0.1:58444 - "GET /api/meta HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58453 - "POST /api/seed HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:58517 - "POST /api/seed HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58521 - "GET /api/tickets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58529 - "POST /api/tickets/t_gfsfcm7z/grant HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58588 - "GET /api/tickets/t_gfsfcm7z HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58597 - "GET /api/sprint/current HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58598 - "GET /api/items HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58599 - "GET /api/tickets?sprint_id=sp_r1n1udhv HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58616 - "POST /api/tickets/t_gfsfcm7z/propose/success HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58617 - "PUT /api/tickets/t_gfsfcm7z/recap HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58618 - "POST /api/tickets/t_gfsfcm7z/propose/approach HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58619 - "PUT /api/tickets/t_gfsfcm7z/recap HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58620 - "POST /api/tickets/t_gfsfcm7z/propose/plan HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58621 - "PUT /api/tickets/t_gfsfcm7z/recap HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58622 - "GET /api/tickets/t_gfsfcm7z HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58698 - "GET /api/tickets/t_gfsfcm7z HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58700 - "GET /api/tickets/t_gfsfcm7z HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59051 - "GET /api/tickets/t_gfsfcm7z HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59168 - "GET /api/tickets/t_gfsfcm7z/events HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [98772]

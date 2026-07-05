@@ -1,17 +1,18 @@
 """Stage-4 runtime tests: dispatcher tick, boundary tick, replan queue, real
 adapters, background loops. Ticks are driven DIRECTLY as functions on a temp DB with
-fakes and TestClock — never through HTTP, never spawning hermes (the one subprocess is
-a tmp /bin/sh echo script). Descriptive names, no aNN anchors — no §18.3 checklist item
-is owned here; e2e items 28–30 exercise these runtimes later through T09's endpoints."""
+fakes and TestClock — never through HTTP, never spawning any process (the real spawn
+adapter is exercised against a recording subprocess.Popen stub, per §7.4). Descriptive
+names, no aNN anchors — no §18.3 checklist item is owned here; e2e items 28–30
+exercise these runtimes later through T09's endpoints."""
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import fcntl
 import json
 import logging
 import os
+import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -626,26 +627,40 @@ def test_real_adapters_constructed_from_config(cfg: Config) -> None:
     assert exc.value.code is ErrorCode.gateway_offline
 
 
-def test_real_spawn_echo_smoke(cfg: Config, tmp_path: Path) -> None:
-    script = tmp_path / "fake-hermes.sh"
-    script.write_text(
-        "#!/bin/sh\n"
-        'echo "argv=$@"\n'
-        'echo "url=$PLAN_SERVER_URL"\n'
-        'echo "run=$PLAN_RUN_ID"\n'
-        'echo "claim=$PLAN_CLAIM"\n'
-        'echo "ticket=$PLAN_TICKET_ID"\n'
-        "echo \"pgid=$(ps -o pgid= -p $$ | tr -d ' ')\"\n"
-    )
-    script.chmod(0o755)
+def test_real_spawn_builds_command_env_and_log_without_spawning(
+    cfg: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class StubProcess:
+        pid = 4242
+
+    def recording_popen(command: list[str], **kwargs: object) -> StubProcess:
+        stdout = kwargs["stdout"]
+        calls.append(
+            {
+                "command": command,
+                "env": kwargs["env"],
+                "start_new_session": kwargs["start_new_session"],
+                "stdin": kwargs["stdin"],
+                "stdout_path": getattr(stdout, "name", None),
+                "stdout_mode": getattr(stdout, "mode", None),
+                "stderr": kwargs["stderr"],
+            }
+        )
+        return StubProcess()
+
+    monkeypatch.setattr("planner.core.adapters.real.subprocess.Popen", recording_popen)
+
     (tmp_path / "logs").mkdir()
+    log_path = tmp_path / "logs" / "run_smoke.log"
     request = SpawnRequest(
         ticket_id="t_smoke",
         run_id="run_smoke",
         claim="claim_x",
         server_url="http://127.0.0.1:8767",
-        log_path=str(tmp_path / "logs" / "run_smoke.log"),
-        hermes_bin=str(script),
+        log_path=str(log_path),
+        hermes_bin="/opt/hermes/bin/hermes",
         profile=cfg.hermes_profile,
         skill=cfg.worker_skill,
     )
@@ -653,32 +668,36 @@ def test_real_spawn_echo_smoke(cfg: Config, tmp_path: Path) -> None:
     assert result.ok is True
     assert result.error is None
     assert isinstance(result.pid, int)
-    assert result.pid > 0
+    assert result.pid == 4242
 
-    log = tmp_path / "logs" / "run_smoke.log"
-    deadline = time.monotonic() + 10
-    contents = ""
-    while time.monotonic() < deadline:
-        if log.exists():
-            contents = log.read_text()
-            if "pgid=" in contents:  # last echoed line ⇒ full output present
-                break
-        time.sleep(0.05)
-    assert "pgid=" in contents, f"log never populated: {contents!r}"
-
-    lines = dict(line.split("=", 1) for line in contents.splitlines() if "=" in line)
-    expected_argv = "-p default --skills planning-worker chat -q work planning ticket t_smoke"
-    assert lines["argv"] == expected_argv  # profile/skill from cfg defaults
-    assert lines["url"] == "http://127.0.0.1:8767"
-    assert lines["run"] == "run_smoke"
-    assert lines["claim"] == "claim_x"
-    assert lines["ticket"] == "t_smoke"
-    # start_new_session made the child its own session/group leader (detachment).
-    assert int(lines["pgid"]) == result.pid
-
-    with contextlib.suppress(ChildProcessError):
-        assert result.pid is not None
-        os.waitpid(result.pid, 0)
+    assert len(calls) == 1
+    call = calls[0]
+    # the exact §7.4 command line, profile/skill from cfg defaults
+    assert call["command"] == [
+        "/opt/hermes/bin/hermes",
+        "-p",
+        "default",
+        "--skills",
+        "planning-worker",
+        "chat",
+        "-q",
+        "work planning ticket t_smoke",
+    ]
+    env = call["env"]
+    assert isinstance(env, dict)
+    assert env["PLAN_SERVER_URL"] == "http://127.0.0.1:8767"
+    assert env["PLAN_TICKET_ID"] == "t_smoke"
+    assert env["PLAN_RUN_ID"] == "run_smoke"
+    assert env["PLAN_CLAIM"] == "claim_x"
+    # detachment: the child starts as its own session/group leader
+    assert call["start_new_session"] is True
+    # log wiring: stdout is the request's log file (binary write), stderr folds
+    # into it, stdin is closed
+    assert call["stdout_path"] == str(log_path)
+    assert call["stdout_mode"] == "wb"
+    assert call["stderr"] == subprocess.STDOUT
+    assert call["stdin"] == subprocess.DEVNULL
+    assert log_path.exists()  # opening for write created the log file up front
 
 
 # --- background loops ---

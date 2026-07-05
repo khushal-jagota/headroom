@@ -6,13 +6,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import time
 from datetime import date, datetime, timedelta
 
 from planner.core.contracts import EventKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event
 from planner.core.ids import ID_PREFIXES, day_id, new_id
+from planner.days.logic.dates import planning_date
 
 _TABLES = (
     "sprints", "sprint_items", "tickets", "days", "day_tickets",
@@ -20,14 +20,16 @@ _TABLES = (
 )
 
 
-def seed_demo(conn: sqlite3.Connection) -> None:
+def seed_demo(conn: sqlite3.Connection, now: int, *, boundary_hour: int) -> None:
+    """now is unix seconds from the caller's clock; the demo's dates ("today", the
+    sprint range, the deadlines) all derive from it through the §6.1 planning-date
+    rule with the config boundary hour — no wall time is read here (§13)."""
     for table in _TABLES:
         if conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] > 0:
             raise PlannerError(
                 ErrorCode.db_not_empty, "seed --demo requires an empty database", {"table": table}
             )
-    now = int(time.time())
-    today = datetime.now().astimezone().date()
+    today = planning_date(datetime.fromtimestamp(now).astimezone(), boundary_hour)
     conn.execute("BEGIN IMMEDIATE")
     try:
         _build_demo(conn, now, today)

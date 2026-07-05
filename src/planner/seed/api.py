@@ -6,10 +6,12 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Request
 
+from planner.core.clock import Clock
+from planner.core.config import Config
 from planner.core.errors import ErrorCode, PlannerError
 from planner.seed.contracts import MigrationReport
 from planner.seed.demo import seed_demo
@@ -42,17 +44,20 @@ async def seed(body: dict[str, Any], request: Request) -> dict[str, Any]:
     if has_source == demo:  # both present, or neither
         raise PlannerError(ErrorCode.validation, "provide exactly one of source_dir or demo")
     conn_factory: Callable[[], sqlite3.Connection] = request.app.state.conn_factory
+    config = cast(Config, request.app.state.config)
+    now = cast(Clock, request.app.state.clock).now_unix()
     conn = conn_factory()
     try:
         if demo:
-            seed_demo(conn)  # raises db_not_empty on a non-empty database
+            # raises db_not_empty on a non-empty database
+            seed_demo(conn, now, boundary_hour=config.boundary_hour)
             report = _demo_report(conn)
         else:
             if not isinstance(source_dir, str) or not Path(source_dir).is_dir():
                 raise PlannerError(
                     ErrorCode.validation, "source_dir must be an existing directory"
                 )
-            report = seed_from_source(conn, source_dir)
+            report = seed_from_source(conn, source_dir, now)
     finally:
         conn.close()
     return asdict(report)

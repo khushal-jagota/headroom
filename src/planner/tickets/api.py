@@ -27,6 +27,7 @@ from planner.core.authctx import (
     reject_agents,
     request_context,
     require_claim,
+    validate_carried_claim,
 )
 from planner.core.clock import Clock
 from planner.core.config import Config
@@ -270,6 +271,7 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
     if not body:
         raise PlannerError(ErrorCode.validation, "no ticket fields to update", {})
     now = clk.now_unix()
+    validate_carried_claim(conn, ctx, ticket_id, now)
     if "title" in body:
         _set_title(conn, ticket_id, body["title"], title_max_chars=cfg.title_max_chars, now=now)
     if "priority" in body:
@@ -426,19 +428,49 @@ async def ticket_copy_text(ticket_id: str, conn: DbConn) -> str:
     return tickets_views.copy_text(conn, ticket_id)
 
 
+def _validate_link_claim(conn: sqlite3.Connection, ctx: RequestContext,
+                         from_id: str, to_id: str, now: int) -> None:
+    """§7.6 for link writes: a claim-carrying request must hold the active claim on a
+    ticket endpoint of the link (either side — an agent may link its own ticket in
+    both directions). Non-ticket endpoints have no claim to validate against; a claim
+    matching neither ticket endpoint is rejected naming the from-side mismatch."""
+    if not ctx.is_claimed_agent:
+        return None
+    ticket_ids = [
+        entity_id
+        for entity_id in (from_id, to_id)
+        if conn.execute("SELECT 1 FROM tickets WHERE id = ?", (entity_id,)).fetchone()
+        is not None
+    ]
+    first_error: PlannerError | None = None
+    for ticket_id in ticket_ids:
+        try:
+            require_claim(conn, ctx, ticket_id, now)
+            return None
+        except PlannerError as exc:
+            if first_error is None:
+                first_error = exc
+    if first_error is not None:
+        raise first_error
+    return None
+
+
 @router.post("/links")
-async def add_link(body: LinkBody, conn: DbConn, clk: Clk) -> JsonDict:
+async def add_link(body: LinkBody, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
     kind = parse_enum(LinkKind, body.kind, "kind")
     now = clk.now_unix()
+    _validate_link_claim(conn, ctx, body.from_id, body.to_id, now)
     with txn(conn):
         core_links.add_link(conn, body.from_id, body.to_id, kind, now)
     return {"from_id": body.from_id, "to_id": body.to_id, "kind": kind.value}
 
 
 @router.delete("/links")
-async def remove_link(conn: DbConn, clk: Clk, from_id: str, to_id: str, kind: str) -> JsonDict:
+async def remove_link(conn: DbConn, ctx: Ctx, clk: Clk, from_id: str, to_id: str,
+                      kind: str) -> JsonDict:
     kind_enum = parse_enum(LinkKind, kind, "kind")
     now = clk.now_unix()
+    _validate_link_claim(conn, ctx, from_id, to_id, now)
     with txn(conn):
         core_links.remove_link(conn, from_id, to_id, kind_enum, now)
     return {"ok": True}

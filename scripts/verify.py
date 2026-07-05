@@ -19,7 +19,14 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from verify_lib import ITEMS, ItemResult, parse_junit, scan_test_files, score
+from verify_lib import (
+    ITEMS,
+    ItemResult,
+    check_css_syntax,
+    parse_junit,
+    scan_test_files,
+    score,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VENV_BIN = REPO_ROOT / ".venv" / "bin"
@@ -85,16 +92,29 @@ def run_pytest(target: str, junit: Path, name: str, timeout: int | None = None) 
 
 
 def run_build_check() -> GateResult:
-    """compileall over src/ plus node --check on every *.js under assets/."""
+    """compileall over src/ plus a syntax check on EVERY file under assets/:
+    node --check per *.js, check_css_syntax per *.css, and any other file type
+    fails the gate outright."""
     ok = True
     rc, _ = _run([sys.executable, "-m", "compileall", "-q", "src/"])
     if rc != 0:
         ok = False
     assets = REPO_ROOT / "assets"
-    js_files = sorted(assets.rglob("*.js")) if assets.is_dir() else []
-    for js in js_files:
-        rc_js, _ = _run(["node", "--check", str(js)])
-        if rc_js != 0:
+    files = sorted(p for p in assets.rglob("*") if p.is_file()) if assets.is_dir() else []
+    for path in files:
+        if path.suffix == ".js":
+            rc_js, _ = _run(["node", "--check", str(path)])
+            if rc_js != 0:
+                ok = False
+        elif path.suffix == ".css":
+            print(f"\n=== css check {path} ===", flush=True)
+            errors = check_css_syntax(path.read_text(encoding="utf-8"))
+            for error in errors:
+                print(f"[verify] {path}: {error}", flush=True)
+            if errors:
+                ok = False
+        else:
+            print(f"[verify] unexpected file type in assets/: {path}", flush=True)
             ok = False
     return GateResult("build check", ok)
 

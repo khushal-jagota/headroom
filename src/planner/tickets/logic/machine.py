@@ -1,10 +1,10 @@
 """State-machine math for §4.2/§4.3/§4.4: linear order indexing, gating and
 advance tables, the auto-accept condition, ceiling comparison, and onward-grant
-resolution. Pure: contracts/errors + fields_codec only."""
+resolution. Pure: contracts + fields_codec only."""
 
 from __future__ import annotations
 
-from planner.core.errors import ErrorCode, PlannerError
+from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import (
     ADVANCE_TARGET,
     GATING_FIELD,

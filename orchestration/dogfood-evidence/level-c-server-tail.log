@@ -1,0 +1,35 @@
+INFO:     Started server process [4160]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8792 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [4160]
+INFO:     Started server process [6220]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8792 (Press CTRL+C to quit)
+INFO:     127.0.0.1:59629 - "GET /api/tickets/t_cf8z7aq0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59643 - "GET /api/sprint/current HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59659 - "POST /api/runs/run_2wvs10j3/heartbeat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59669 - "POST /api/tickets/t_cf8z7aq0/propose/success HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59679 - "PUT /api/tickets/t_cf8z7aq0/recap HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59682 - "POST /api/tickets/t_cf8z7aq0/propose/approach HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59685 - "PUT /api/tickets/t_cf8z7aq0/recap HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59693 - "POST /api/tickets/t_cf8z7aq0/propose/plan HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59697 - "PUT /api/tickets/t_cf8z7aq0/recap HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59716 - "POST /api/runs/run_2wvs10j3/close HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59726 - "GET /api/tickets/t_cf8z7aq0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59771 - "GET /api/tickets/t_cf8z7aq0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59779 - "POST /api/runs/run_61x513rd/heartbeat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59780 - "POST /api/tickets/t_cf8z7aq0/propose/result HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59785 - "PUT /api/tickets/t_cf8z7aq0/recap HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59786 - "POST /api/runs/run_61x513rd/close HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59789 - "GET /api/tickets/t_cf8z7aq0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59807 - "GET /api/tickets/t_cf8z7aq0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59843 - "GET /api/queues HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [6220]

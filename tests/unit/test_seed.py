@@ -7,7 +7,7 @@ here, never imported from the parsers."""
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -24,6 +24,11 @@ from planner.seed.logic.tracking import parse_tracking
 from planner.seed.logic.workspace import match_item_title, parse_workspace
 
 FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "planning-md"
+
+# Seeding takes the caller's clock; tests pin one. Noon UTC keeps the demo's
+# planning date (boundary hour 5) at 2026-07-04 for any sane local timezone.
+_FIXED_NOW = int(datetime(2026, 7, 4, 12, 0, tzinfo=UTC).timestamp())
+_DEMO_TODAY = date(2026, 7, 4)
 
 _REASON_DAILY = "not the latest daily folder; only the latest day's workspace.md is imported (R6)"
 _REASON_FILE = "file has no migration mapping (only workspace.md is imported from a daily folder)"
@@ -75,7 +80,7 @@ _EXPECTED_SKIPS = [
 def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     tmp_db: Connection,
 ) -> None:
-    report = seed_from_source(tmp_db, FIXTURE)
+    report = seed_from_source(tmp_db, FIXTURE, _FIXED_NOW)
 
     # (1) report counts.
     assert (
@@ -254,7 +259,7 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert report.skipped == _EXPECTED_SKIPS
 
     # (13) idempotent re-run: zero new rows, all hits counted.
-    report2 = seed_from_source(tmp_db, FIXTURE)
+    report2 = seed_from_source(tmp_db, FIXTURE, _FIXED_NOW)
     assert (
         report2.sprints, report2.sprint_items, report2.deferred_items,
         report2.tickets, report2.ideas, report2.links,
@@ -275,13 +280,13 @@ def test_seed_demo_requires_empty_db(tmp_db: Connection) -> None:
         ("idea_seed", "a stray idea", "", 0, 0),
     )
     with pytest.raises(PlannerError) as excinfo:
-        seed_demo(tmp_db)
+        seed_demo(tmp_db, _FIXED_NOW, boundary_hour=5)
     assert excinfo.value.code == ErrorCode.db_not_empty
 
 
 def test_seed_demo_dataset_shape(tmp_db: Connection) -> None:
-    seed_demo(tmp_db)
-    today = datetime.now().astimezone().date()
+    seed_demo(tmp_db, _FIXED_NOW, boundary_hour=5)
+    today = _DEMO_TODAY
 
     states = sorted(row["state"] for row in tmp_db.execute("SELECT state FROM tickets").fetchall())
     assert states == sorted(
@@ -335,7 +340,7 @@ def test_seed_demo_dataset_shape(tmp_db: Connection) -> None:
     assert len(plan["children"]) == 2
 
     with pytest.raises(PlannerError) as excinfo:
-        seed_demo(tmp_db)
+        seed_demo(tmp_db, _FIXED_NOW, boundary_hour=5)
     assert excinfo.value.code == ErrorCode.db_not_empty
 
 

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import time
 from pathlib import Path
 from typing import cast
 
@@ -32,9 +31,11 @@ from planner.seed.logic.tracking import parse_tracking
 from planner.seed.logic.workspace import parse_workspace
 
 
-def seed_from_source(conn: sqlite3.Connection, source_dir: str | Path) -> MigrationReport:
+def seed_from_source(conn: sqlite3.Connection, source_dir: str | Path,
+                     now: int) -> MigrationReport:
+    """now is unix seconds from the caller's clock (the app clock in the server,
+    a fixed instant in tests) — the importer never reads wall time itself (§13)."""
     root = Path(source_dir)
-    now = int(time.time())
     if not root.exists():
         raise PlannerError(ErrorCode.validation, f"seed source directory not found: {root}")
     kickoff_path = root / "sprints" / "current" / "sprint-kickoff.md"

@@ -27,7 +27,6 @@ import sqlite3
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -53,11 +52,13 @@ PLAN_BODY = "Plan:\n1. propose result with the claim env\n2. close the run\n3. h
 RESULT_BODY = "Result: the walkthrough completed; every gate asserted."
 RUN_SUMMARY = "Dogfood run complete."
 
-# Set once in main() from the environment; the walkthrough date is fixed for the run so
-# step 1's deadline and step 9's day path agree byte-for-byte.
+# Set once in main(). The walkthrough date is the SERVER's planning date (read once
+# from GET /api/day/today), never the local wall clock, so the script tracks the
+# server clock — real or PLAN_FAKE_NOW — and step 1's deadline, step 9's day path,
+# and the demo-seeded day all agree byte-for-byte.
 SERVER_URL = ""
 DB_PATH = ""
-REAL_TODAY = ""
+SERVER_TODAY = ""
 
 
 @dataclass
@@ -180,12 +181,13 @@ def pickup_ids(step: int) -> list[str]:
 
 
 def step_01_create(w: Walk) -> None:
-    d = cli(1, ["ticket", "create", "--title", TITLE, "--priority", "P0", "--deadline", REAL_TODAY])
+    d = cli(1, ["ticket", "create", "--title", TITLE, "--priority", "P0",
+                "--deadline", SERVER_TODAY])
     expect(1, "create.state", d["state"], "needs_success")
     expect(1, "create.ceiling", d["ceiling"], "needs_success")
     expect(1, "create.at_cap", d["at_cap"], "propose")
     expect(1, "create.priority", d["priority"], "P0")
-    expect(1, "create.deadline", d["deadline"], REAL_TODAY)
+    expect(1, "create.deadline", d["deadline"], SERVER_TODAY)
     w.ticket_id = d["id"]
     ok(1, "create")
 
@@ -293,7 +295,7 @@ def step_08_day(w: Walk) -> None:
 
 
 def step_09_day_plan(w: Walk) -> None:
-    d = human(9, "POST", f"/api/day/{REAL_TODAY}/plan/accept", {"node": 1})
+    d = human(9, "POST", f"/api/day/{SERVER_TODAY}/plan/accept", {"node": 1})
     expect(9, "plan.child1.status", d["plan"]["children"][1]["status"], "accepted")
     expect(9, "plan.root.status", d["plan"]["root"]["status"], "accepted")
     ok(9, "day-plan accept")
@@ -357,7 +359,7 @@ def step_13_approve(w: Walk) -> None:
 
 
 def main() -> int:
-    global SERVER_URL, DB_PATH, REAL_TODAY
+    global SERVER_URL, DB_PATH, SERVER_TODAY
     server_url = os.environ.get("PLAN_SERVER_URL", "").strip()
     db_path = os.environ.get("PLAN_DB_PATH", "").strip()
     if not server_url or not db_path:
@@ -367,7 +369,7 @@ def main() -> int:
         return 2
     SERVER_URL = server_url.rstrip("/")
     DB_PATH = db_path
-    REAL_TODAY = datetime.now().astimezone().date().isoformat()
+    SERVER_TODAY = str(api_get(0, "/api/day/today")["id"]).removeprefix("day_")
 
     w = Walk()
     step_01_create(w)

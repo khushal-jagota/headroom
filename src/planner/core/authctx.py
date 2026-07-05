@@ -181,6 +181,17 @@ def require_claim(
     return None
 
 
+def validate_carried_claim(
+    conn: sqlite3.Connection, ctx: RequestContext, ticket_id: str, now: int
+) -> None:
+    """§7.6 gate for mutating ticket-target routes: a request carrying claim headers
+    must hold the target ticket's active claim (the full require_claim order applies);
+    human and plain-agent requests pass through unchanged."""
+    if ctx.is_claimed_agent:
+        require_claim(conn, ctx, ticket_id, now)
+    return None
+
+
 def reject_agents(ctx: RequestContext) -> None:
     """(H) routes: any agent-classified request (claimed or plain) is agent_forbidden."""
     if ctx.is_human:

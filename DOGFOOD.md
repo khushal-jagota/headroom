@@ -1,6 +1,6 @@
 # DOGFOOD.md — the Section 18.5 fake-ticket dogfood record
 
-Three escalating levels. Levels B and C are the one sanctioned exception to the fakes-only rule: they use the real local Hermes runtime, never inside `./verify`. Narrative without corresponding logs is not evidence; every claim below must point at an artifact (event-log excerpt, run row, file under `data/logs/`).
+Three escalating levels. Levels B and C are the one sanctioned exception to the fakes-only rule: they use the real local Hermes runtime, never inside `./verify`. Narrative without corresponding logs is not evidence; every claim below must point at an artifact (event-log excerpt, run row, file under `data/logs/`). Because `data/` is gitignored, durable copies of the load-bearing artifacts — the session and per-run logs, server-log tails, and full event-row dumps from both dogfood databases — are tracked in `orchestration/dogfood-evidence/`.
 
 ## Level A — the CLI as a user and agent would drive it (item 35, gating)
 
@@ -16,7 +16,7 @@ Status: **PASS — attempt 1** (2026-07-05, tree `7118677696e46c1879cd7f30ecebe6
    ```
    PLAN_DB_PATH=data/dogfood-b.db PLAN_PORT=8791 PLAN_DISPATCH_ENABLED=0 .venv/bin/plan serve
    ```
-   Server log: `data/logs/level-b-server.log`.
+   Server log: `data/logs/level-b-server.log` (tracked tail: `orchestration/dogfood-evidence/level-b-server-tail.log`).
 2. Seed wrinkle, disclosed: on startup the real boundary job had already created a day row plus `day_created`/`day_closed`/`boundary_failed` events, so `plan seed --demo` refused with `db_not_empty`. As the human operator I cleared those three bootstrap tables (`DELETE FROM days; DELETE FROM events; DELETE FROM boundary_runs;` via sqlite3 on the scratch DB) and re-ran the seed, which then reported `{"sprints": 1, "sprint_items": 3, "tickets": 8, ...}`.
 3. Ticket shaping (human action, grant route): no demo ticket sits at `needs_success` with ceiling `needs_plan`, so the closest — `t_gfsfcm7z` "Draft the onboarding email success criteria." (state `needs_success`, ceiling `needs_success`, at_cap `propose`) — was raised via `POST /api/tickets/t_gfsfcm7z/grant {"ceiling":"needs_plan","at_cap":"propose"}` (event 24, `cause: human_grant`).
 4. One real session, env pinned, all output captured:
@@ -25,9 +25,9 @@ Status: **PASS — attempt 1** (2026-07-05, tree `7118677696e46c1879cd7f30ecebe6
      hermes chat -q "Read /Users/khushaljagota/.hermes/planning-v2/skills/planning-worker.md, then work planning ticket t_gfsfcm7z using the plan CLI" \
      > data/logs/level-b-attempt1.log 2>&1
    ```
-   The session exited 0 after ~4 minutes. Session log: `data/logs/level-b-attempt1.log` (154 lines).
+   The session exited 0 after ~4 minutes. Session log: `data/logs/level-b-attempt1.log` (154 lines; tracked copy: `orchestration/dogfood-evidence/level-b-attempt1.log`).
 
-### Evidence (event log, `data/dogfood-b.db`, also served by `GET /api/tickets/t_gfsfcm7z/events`)
+### Evidence (event log, `data/dogfood-b.db`, also served by `GET /api/tickets/t_gfsfcm7z/events`; full event-row dump tracked at `orchestration/dogfood-evidence/level-b-events.txt`)
 
 ```
 id  kind               payload (truncated)                                          local time
@@ -51,7 +51,7 @@ Proposal writes by the session: 3 (events 25, 28, 31 — event 31 carries `"prop
 
 ### Side effects, disclosed honestly
 
-The spawned agent went beyond its ticket brief (all visible in `data/logs/level-b-attempt1.log`):
+The spawned agent went beyond its ticket brief (all visible in `data/logs/level-b-attempt1.log` / `orchestration/dogfood-evidence/level-b-attempt1.log`):
 
 - It ran `./verify` on its own initiative (reported `VERIFY: 36/36 PASS`). The dogfood operator did not run it.
 - It appended a one-line dogfood note to `PROGRESS.md` (left in place, uncommitted, for the lead to keep or drop).
@@ -70,14 +70,14 @@ Two-phase start so the dispatcher could not claim mid-shaping: first `PLAN_DB_PA
 - The three other dispatch-eligible demo tickets stop-capped at their current states: `t_tvtm5jnk` → (`in_progress`, `stop`), `t_vxh0bqmx` → (`needs_approach`, `stop`), `t_w05bp2fm` → (`needs_plan`, `stop`). The rest were already ineligible by state.
 - Verified with `plan queue pickup --json`: exactly one entry, `t_cf8z7aq0`.
 
-Then the shaping server was killed and the same DB relaunched with real dispatch: `PLAN_DB_PATH=data/dogfood-c.db PLAN_PORT=8792 PLAN_DISPATCH_ENABLED=1 PLAN_TICK_SECONDS=20 PLAN_MAX_RUNS=1 .venv/bin/plan serve` (log: `data/logs/level-c-server.log`). No test mode; `spawn_adapter: auto` resolved to the real adapter.
+Then the shaping server was killed and the same DB relaunched with real dispatch: `PLAN_DB_PATH=data/dogfood-c.db PLAN_PORT=8792 PLAN_DISPATCH_ENABLED=1 PLAN_TICK_SECONDS=20 PLAN_MAX_RUNS=1 .venv/bin/plan serve` (log: `data/logs/level-c-server.log`; tracked tail: `orchestration/dogfood-evidence/level-c-server-tail.log`). No test mode; `spawn_adapter: auto` resolved to the real adapter.
 
 ### Attempts log (three-attempt rule)
 
-- **Attempt 1 — FAIL (recorded honestly).** Stock adapter command. First tick claimed the ticket: run `run_49eek207`, pid 4189, per-run log `data/logs/run_49eek207.log`. The spawned session died instantly: `Error: Unknown skill(s): planning-worker` — the skill is deliberately not installed in `~/.hermes` (§18.5). Observation for the record: the dead child became a **zombie** (the server holds the Popen without reaping), and `os.kill(pid, 0)` reports zombies alive, so the dead-pid sweep did not fire; the run sat `running` and would only have been reclaimed at claim-TTL expiry (15 min). No proposals, no recap. Run outcome: closed `reclaimed` (reason `dead_pid`, event 29) by the attempt-2 server's first tick after the restart reaped the zombie — `reclaimed` by design leaves the circuit breaker unchanged (D6), so `consecutive_failures` stayed 0.
+- **Attempt 1 — FAIL (recorded honestly).** Stock adapter command. First tick claimed the ticket: run `run_49eek207`, pid 4189, per-run log `data/logs/run_49eek207.log` (tracked copy: `orchestration/dogfood-evidence/run_49eek207.log`). The spawned session died instantly: `Error: Unknown skill(s): planning-worker` — the skill is deliberately not installed in `~/.hermes` (§18.5). Observation for the record: the dead child became a **zombie** (the server holds the Popen without reaping), and `os.kill(pid, 0)` reports zombies alive, so the dead-pid sweep did not fire; the run sat `running` and would only have been reclaimed at claim-TTL expiry (15 min). No proposals, no recap. Run outcome: closed `reclaimed` (reason `dead_pid`, event 29) by the attempt-2 server's first tick after the restart reaped the zombie — `reclaimed` by design leaves the circuit breaker unchanged (D6), so `consecutive_failures` stayed 0.
 - **Attempt 2 — PASS.** Materially different prompt shape, sanctioned by §18.5: the server relaunched with `PLAN_HERMES_BIN=orchestration/dogfood/hermes-wrapped.sh` — a disclosed repo-local shim that execs the real hermes with the unresolvable `--skills planning-worker` flag dropped and the message enriched to "Read <repo>/skills/planning-worker.md, then work planning ticket t_cf8z7aq0. Act only through the plan CLI; do not run ./verify, do not modify or delete any repository files." (guardrail added after the Level B session's repo side effects). Nothing in `src/` changed; the shim only rewrites the spawn command line.
 
-### Evidence (runs table + event log, `data/dogfood-c.db`)
+### Evidence (runs table + event log, `data/dogfood-c.db`; full event-row dump tracked at `orchestration/dogfood-evidence/level-c-events.txt`)
 
 Runs (`SELECT id,ticket_id,status,started_at,ended_at,pid FROM runs`):
 
@@ -115,7 +115,7 @@ Every write in runs 2 and 3 was made under an active claim (server-side §7.6 va
 
 Final ticket state (`GET /api/tickets/t_cf8z7aq0`): state `in_progress` = ceiling, `at_cap propose`, success/approach/plan accepted, result proposal pending for human review, `auto_blocked false`, `consecutive_failures 0`. The ticket landed exactly where its ceiling dictates.
 
-Per-run logs under `data/logs/`: `run_49eek207.log` (78 bytes, the skill error), `run_2wvs10j3.log` (11 KB), `run_61x513rd.log` (4.6 KB — its final message: "I only used the plan CLI for ticket actions. No repository files modified or deleted. ./verify not run.").
+Per-run logs under `data/logs/` (tracked copies of all three in `orchestration/dogfood-evidence/`): `run_49eek207.log` (78 bytes, the skill error), `run_2wvs10j3.log` (11 KB), `run_61x513rd.log` (4.6 KB — its final message: "I only used the plan CLI for ticket actions. No repository files modified or deleted. ./verify not run.").
 
 Cleanup: both dogfood servers killed; `pgrep -f "planning ticket"` empty. One pre-existing `plan serve` (pid 43519, a `t09-smoke` server on a temp-directory DB, not started by this dogfood run) was left untouched and reported to the lead.
 

@@ -27,6 +27,10 @@ Read this first after any context compaction. It is the build's memory.
 - Owner directives adopted mid-run: per-ticket orchestrator sub-agents, model tiering, delegated mechanical verification (D8), grunt work off the top-level context.
 - Earlier: full spec read; environment confirmed (preflight all PASS); §12 snapshot contradiction resolved (D3, committed 2143ce1).
 
+## Contradiction: SPEC §18.2 build check vs §10 token file
+
+§18.2 requires the build check to run `node --check` on every file in `assets/`; §10 requires `assets/tokens.css` to exist; `node --check` cannot parse CSS, so the two cannot both hold literally. Resolution (per §18, consistent with §14): the instrument checks every file in assets/ — `node --check` for JS, a real CSS syntax validation for CSS, and an explicit failure for any other file type — checking strictly more than either literal reading alone. Recorded as D17(2), superseding D9.
+
 ## Contradiction: SPEC §12 ground truth vs frozen snapshot
 
 SPEC §12 pins item 34's ground truth: 12 sprint items (6 todo, 5 active, 1 done), 9 deferred items with projects mapped from the Vylo/Tribe/Learning/Other headings, 20 ideas. The snapshot as committed at f2f9049 contained 13 items (6 todo, **6** active, 1 done), **3** deferred items (all Vylo; the Tribe/Learning/Other headings empty), and **17** ideas. The pinned 9 and 20 equal a naive count of every top-level bullet including the files' "Rules:" preamble bullets, which are instructions, not work items, and carry no project heading or P-label; and no parse rule can make 6 structurally identical in-progress items count as 5.

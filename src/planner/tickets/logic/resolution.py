@@ -8,8 +8,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from planner.core.contracts import EventKind
-from planner.core.errors import ErrorCode, PlannerError
+from planner.core.contracts import ErrorCode, EventKind, PlannerError
 from planner.tickets.contracts import (
     AtCap,
     FieldName,

@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from planner.core.errors import ErrorCode, PlannerError
+from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import FieldName, FieldSlot, Proposal, TicketFields
 
 
