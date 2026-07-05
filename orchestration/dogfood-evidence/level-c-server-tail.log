@@ -1,33 +1,30 @@
-INFO:     Started server process [66906]
+INFO:     Started server process [87709]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
-INFO:     Uvicorn running on http://127.0.0.1:8794 (Press CTRL+C to quit)
-INFO:     127.0.0.1:54316 - "GET /api/tickets/t_nb3m0ta8 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54328 - "POST /api/runs/run_egsw8wzs/heartbeat HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54343 - "GET /api/sprint/current HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54366 - "POST /api/tickets/t_nb3m0ta8/propose/success HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54370 - "PUT /api/tickets/t_nb3m0ta8/recap HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54376 - "GET /api/tickets/t_nb3m0ta8 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54381 - "POST /api/tickets/t_nb3m0ta8/propose/approach HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54384 - "PUT /api/tickets/t_nb3m0ta8/recap HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54388 - "GET /api/tickets/t_nb3m0ta8 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54404 - "POST /api/tickets/t_nb3m0ta8/propose/plan HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54409 - "PUT /api/tickets/t_nb3m0ta8/recap HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54413 - "GET /api/tickets/t_nb3m0ta8 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54415 - "POST /api/runs/run_egsw8wzs/close HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54423 - "GET /api/tickets/t_nb3m0ta8 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54427 - "POST /api/runs/run_egsw8wzs/heartbeat HTTP/1.1" 409 Conflict
-INFO:     127.0.0.1:54453 - "GET /api/tickets/t_nb3m0ta8 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54465 - "POST /api/runs/run_wv0pm4uf/heartbeat HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54476 - "POST /api/tickets/t_nb3m0ta8/propose/result HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54477 - "PUT /api/tickets/t_nb3m0ta8/recap HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54478 - "GET /api/tickets/t_nb3m0ta8 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54482 - "POST /api/runs/run_wv0pm4uf/close HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54483 - "GET /api/tickets/t_nb3m0ta8 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54507 - "GET /api/tickets/t_nb3m0ta8 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54533 - "GET /api/queues HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54535 - "GET /api/queues HTTP/1.1" 200 OK
+INFO:     Uvicorn running on http://127.0.0.1:8796 (Press CTRL+C to quit)
+INFO:     127.0.0.1:57446 - "GET /api/tickets/t_cr043k8y HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57462 - "GET /api/tickets?sprint_id=sp_h8weptae HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57464 - "POST /api/runs/run_eenhta99/heartbeat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57470 - "GET /api/sprint/current HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57485 - "POST /api/tickets/t_cr043k8y/propose/success HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57488 - "PUT /api/tickets/t_cr043k8y/recap HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57489 - "GET /api/tickets/t_cr043k8y HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57494 - "POST /api/tickets/t_cr043k8y/propose/approach HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57497 - "PUT /api/tickets/t_cr043k8y/recap HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57498 - "GET /api/tickets/t_cr043k8y HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57505 - "POST /api/tickets/t_cr043k8y/propose/plan HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57518 - "PUT /api/tickets/t_cr043k8y/recap HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57519 - "GET /api/tickets/t_cr043k8y HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57526 - "POST /api/tickets/t_cr043k8y/propose/result HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57544 - "PUT /api/tickets/t_cr043k8y/notes/result HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57545 - "PUT /api/tickets/t_cr043k8y/recap HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57546 - "GET /api/tickets/t_cr043k8y HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57549 - "POST /api/runs/run_eenhta99/close HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57554 - "GET /api/tickets/t_cr043k8y HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58653 - "GET /api/tickets/t_cr043k8y HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58678 - "GET /api/queues HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58682 - "GET /api/queues HTTP/1.1" 200 OK
 INFO:     Shutting down
 INFO:     Waiting for application shutdown.
 INFO:     Application shutdown complete.
-INFO:     Finished server process [66906]
+INFO:     Finished server process [87709]
