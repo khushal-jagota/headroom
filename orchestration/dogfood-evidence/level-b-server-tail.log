@@ -1,25 +1,20 @@
-INFO:     Started server process [18259]
+INFO:     Started server process [27016]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
-INFO:     Uvicorn running on http://127.0.0.1:8797 (Press CTRL+C to quit)
-INFO:     127.0.0.1:61403 - "GET /api/meta HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61404 - "GET /api/meta HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61414 - "POST /api/seed HTTP/1.1" 400 Bad Request
-INFO:     127.0.0.1:61415 - "POST /api/seed HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61419 - "POST /api/tickets/t_uzqkw800/grant HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61444 - "GET /api/tickets/t_uzqkw800 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61455 - "GET /api/sprint/current HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61456 - "GET /api/items HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61457 - "GET /api/tickets HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61472 - "POST /api/tickets/t_uzqkw800/propose/success HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61475 - "PUT /api/tickets/t_uzqkw800/recap HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61478 - "POST /api/tickets/t_uzqkw800/propose/approach HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61482 - "PUT /api/tickets/t_uzqkw800/recap HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61490 - "POST /api/tickets/t_uzqkw800/propose/plan HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61493 - "PUT /api/tickets/t_uzqkw800/recap HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61500 - "GET /api/tickets/t_uzqkw800 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:61508 - "GET /api/tickets/t_uzqkw800 HTTP/1.1" 200 OK
+INFO:     Uvicorn running on http://127.0.0.1:8799 (Press CTRL+C to quit)
+INFO:     127.0.0.1:63849 - "GET /api/meta HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63850 - "POST /api/seed HTTP/1.1" 400 Bad Request
+INFO:     127.0.0.1:63851 - "POST /api/seed HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63852 - "POST /api/tickets/t_j68zj895/grant HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63887 - "GET /api/tickets/t_j68zj895 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63916 - "POST /api/tickets/t_j68zj895/propose/success HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63929 - "PUT /api/tickets/t_j68zj895/recap HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63930 - "POST /api/tickets/t_j68zj895/propose/approach HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63939 - "POST /api/tickets/t_j68zj895/propose/plan HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63940 - "PUT /api/tickets/t_j68zj895/recap HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63941 - "GET /api/tickets/t_j68zj895 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63964 - "GET /api/tickets/t_j68zj895 HTTP/1.1" 200 OK
 INFO:     Shutting down
 INFO:     Waiting for application shutdown.
 INFO:     Application shutdown complete.
-INFO:     Finished server process [18259]
+INFO:     Finished server process [27016]

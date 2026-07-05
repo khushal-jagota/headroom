@@ -4,6 +4,21 @@ Read this first after any context compaction. It is the build's memory.
 
 ## Current stage
 
+**CLOSE-OUT — owner accepted the §12 snapshot contradiction (D23).** Surfaced the snapshot
+self-contradiction to the owner after it recurred as an audit violation with no code
+resolution possible (SPEC unmodifiable; live data unreadable). Owner ruling: keep the
+current reconciled "mostly real" snapshot as-is (verify stays 36/36; item 34 green) and
+accept the §12 contradiction explicitly — do NOT revert to the original bytes (would fail
+item 34) and do NOT keep looping the audit for a PASS on it. So "done" is now: verify
+36/36, every genuine code violation (rounds 4–5) fixed, dogfood B/C fresh at the final
+tree, and the final audit run to DEMONSTRATE the snapshot is the SOLE remaining item (an
+owner-accepted, documented spec self-contradiction that does not block completion).
+
+Remaining: dogfood-r4 finishing B/C at `3dc243b` → commit evidence + D22/D23 notes →
+fresh verify (36/36) → final audit (expect snapshot-only) → report the honest end state.
+
+### Superseded: audit round 5
+
 **FINAL GATE — audit round 5: one new code violation (route sibling) + snapshot.**
 Re-audit at tree `8f9f93b` confirmed both round-4 code violations FIXED (dead-worker,
 the four PATCH gates held). It found one NEW violation of the same class — a route
