@@ -32,6 +32,12 @@ class SpawnResult:
 
 class SpawnAdapter(Protocol):
     def spawn(self, request: SpawnRequest) -> SpawnResult: ...
+    # Dispatcher dead-worker probe (§7.1/§7.3): the reclaim sweep's per-pid liveness
+    # check. A real adapter can reap its own exited children within one tick.
+    def is_pid_alive(self, pid: int) -> bool: ...
+    # Per-tick housekeeping: reap/drop any exited children the sweep will not probe (runs
+    # that closed by any path), so the server holds no zombies or stale handles.
+    def reap_finished_children(self) -> None: ...
 
 
 @dataclass(frozen=True)

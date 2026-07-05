@@ -15,7 +15,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from planner.core.authctx import reject_agents
+from planner.core.authctx import reject_agent_fields, reject_agents
 from planner.core.clock import Clock
 from planner.core.contracts import EventKind, JsonDict, Priority, Project
 from planner.core.errors import ErrorCode, PlannerError
@@ -220,6 +220,9 @@ async def patch_item(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
         raise PlannerError(ErrorCode.validation, "no item fields to update", {})
     if "blocked_by" in body and "status" not in body:
         raise PlannerError(ErrorCode.validation, "blocked_by requires status", {})
+    # §3.2/§8: an agent's only item write surface is the status transition (todo↔active,
+    # blocked); plain fields and sprint moves are human-only.
+    reject_agent_fields(ctx, body, set(_ITEM_PLAIN_FIELDS) | {"sprint_id"})
     for field in _ITEM_PLAIN_FIELDS:
         if field in body:
             if field == "deadline":
@@ -291,7 +294,9 @@ async def get_sprint(sprint_id: str, conn: DbConn) -> JsonDict:
 
 
 @router.patch("/sprints/{sprint_id}")
-async def patch_sprint(sprint_id: str, body: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
+async def patch_sprint(sprint_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
+                       clk: Clk) -> JsonDict:
+    reject_agents(ctx)  # §8: agents get `sprint show` only — no sprint edit surface.
     recognized = set(_SPRINT_TEXT_FIELDS) | {"date_start", "date_end"}
     for key in body:
         if key not in recognized:

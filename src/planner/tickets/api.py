@@ -27,6 +27,7 @@ from fastapi.responses import PlainTextResponse
 from planner.core import links as core_links
 from planner.core.authctx import (
     RequestContext,
+    reject_agent_fields,
     reject_agents,
     request_context,
     require_claim,
@@ -61,6 +62,10 @@ from planner.tickets.contracts import (
 from planner.tickets.logic import admission
 
 router = APIRouter()
+
+# §8: agents drive priority/deadline/day/sprint via `ticket set`; title and project are
+# human-only, so an agent-classified PATCH touching them is agent_forbidden (§14).
+_TICKET_HUMAN_ONLY_FIELDS = ("title", "project")
 
 
 # --- shared plumbing (imported by the other api modules) -----------------------
@@ -279,6 +284,7 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
             raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": key})
     if not body:
         raise PlannerError(ErrorCode.validation, "no ticket fields to update", {})
+    reject_agent_fields(ctx, body, _TICKET_HUMAN_ONLY_FIELDS)
     now = clk.now_unix()
     validate_carried_claim(conn, ctx, ticket_id, now)
     if "title" in body:

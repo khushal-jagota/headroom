@@ -4,7 +4,35 @@ Read this first after any context compaction. It is the build's memory.
 
 ## Current stage
 
-**FINAL GATE: fresh ./verify + codex audit.** All seven stages complete. Stages per SPEC.md §18: (1) contracts, (2) verify instrument, (3) pure logic + unit tests, (4) server wiring, (5) UI, (6) e2e, (7) dogfood.
+**FINAL GATE — audit round 4: two code violations + snapshot.** All seven build stages
+complete; the round-4 enveloped audit at tree `42c5396` returned AUDIT: FAIL with three
+violations:
+1. **§7.1/§7.3 dead-worker detection** — `RealSpawnAdapter.spawn()` discards the `Popen`
+   handle and `_pid_alive` trusts `os.kill(pid,0)`, so exited-but-unreaped children
+   (zombies) read as alive until TTL; the tick's required dead-worker detection never
+   fires for the server's own children. GENUINE. Fix A (Opus): the real spawn adapter
+   retains child handles; the reclaim sweep reaps via `poll()` and reports exited
+   children dead within one tick. Files: `core/adapters/real.py`, `dispatch/runtime.py`,
+   the spawn-adapter protocol/fake, a unit test; DOGFOOD systemic-finding #1 → "fixed".
+2. **§8/§3.2/§14 agent write surface** — PATCH routes let a plain agent mutate
+   canonical/human-owned fields outside §8's agent surface: ticket title/project; item
+   plain fields + sprint move; sprint text/dates and day brief/notes (the last two
+   ungated entirely). GENUINE. Fix B (Opus): field/route-level actor gating to §8.
+   Files: `tickets/api.py`, `sprints/api.py`, `days/api.py`, an `authctx.py` helper,
+   `test_authctx_routes.py`.
+3. **§12 snapshot amendment** — recurring. Reframed (mine): SPEC is the single source of
+   truth, pins the ground-truth counts, and locks item 34 to them; the initial `f2f9049`
+   commit contradicted the spec's own counts; §18 mandates reconciling to the
+   source-of-truth — the only satisfiable branch. Not code-fixable.
+
+Sequence: land Fix A + Fix B (disjoint files, concurrent Opus, I run the integrated
+verify) → reframe snapshot README + DOGFOOD finding #1 → full `./verify` (36/36) →
+re-run dogfood B/C at the new frozen tree (dispatcher+API changed, §18.5) → commit →
+verify → re-audit until AUDIT: PASS.
+
+### Superseded: FINAL GATE (rounds 1–3)
+
+All seven stages complete. Stages per SPEC.md §18: (1) contracts, (2) verify instrument, (3) pure logic + unit tests, (4) server wiring, (5) UI, (6) e2e, (7) dogfood.
 
 ## Stage ledger
 

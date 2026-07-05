@@ -10,6 +10,7 @@ family), not a logic or data module."""
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from typing import Final, NoReturn
 
@@ -201,3 +202,26 @@ def reject_agents(ctx: RequestContext) -> None:
         "human-only action",
         {"actor": ctx.actor, "is_claimed_agent": ctx.is_claimed_agent},
     )
+
+
+def reject_agent_fields(
+    ctx: RequestContext, body_keys: Iterable[str], human_only_keys: Collection[str]
+) -> None:
+    """Field-level agent boundary for PATCH routes that expose both agent-permitted and
+    human-only keys (§8, §14): an agent-classified request (claimed or plain) that
+    touches any human-only field is agent_forbidden, naming the first offending field.
+    Human requests pass through untouched."""
+    if ctx.is_human:
+        return None
+    for key in body_keys:
+        if key in human_only_keys:
+            raise PlannerError(
+                ErrorCode.agent_forbidden,
+                "human-only field",
+                {
+                    "field": key,
+                    "actor": ctx.actor,
+                    "is_claimed_agent": ctx.is_claimed_agent,
+                },
+            )
+    return None

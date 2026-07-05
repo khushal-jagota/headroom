@@ -32,6 +32,16 @@ class FakeSpawnAdapter:
         self.next_pid += 1
         return SpawnResult(ok=True, pid=pid)
 
+    def is_pid_alive(self, _pid: int) -> bool:
+        # Fakes never spawn a real process, so a fake pid is always "alive". The
+        # dispatcher's test-mode path uses _pid_alive_always regardless (§7.4); this
+        # only exists so the fake satisfies the SpawnAdapter protocol.
+        return True
+
+    def reap_finished_children(self) -> None:
+        # Nothing was ever really spawned, so there is nothing to reap.
+        return None
+
 
 @dataclass
 class FakeBoundaryAdapter:

@@ -57,7 +57,10 @@ def release_dispatcher_lock(lock_path: str) -> None:
 
 
 def _pid_alive(pid: int) -> bool:
-    """Real-mode liveness probe via signal 0."""
+    """Signal-0 liveness probe. Real-mode dead-worker detection runs through the spawn
+    adapter's is_pid_alive (which reaps its own exited children via Popen.poll()); this
+    is the fallback for pids the adapter does not track — e.g. a claim carried across a
+    server restart. It cannot distinguish a zombie from a live process (D-known)."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -146,9 +149,14 @@ def run_tick(
     try:
         now = clock.now_unix()
 
-        # (1) reclaim expired claims / dead pids.
-        pid_alive = _pid_alive_always if config.test_mode else _pid_alive
+        # (1) reclaim expired claims / dead pids. Real mode probes liveness through the
+        # spawn adapter — the SAME instance that spawned the children — so an exited
+        # child is reaped and reclaimed within this tick, not at TTL.
+        pid_alive = _pid_alive_always if config.test_mode else adapters.spawn.is_pid_alive
         report["reclaimed"] = sweep_reclaims(conn, now, pid_alive, config.failure_limit)
+        # Reap children of runs that closed by any path (the sweep only probes running
+        # rows). No-op on the fake adapter, so test mode signals nothing.
+        adapters.spawn.reap_finished_children()
 
         # (2) enforce per-run max runtime.
         kill = _kill_noop if config.test_mode else _sigterm

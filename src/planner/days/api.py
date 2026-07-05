@@ -108,7 +108,9 @@ async def get_day(date: str, conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
 
 
 @router.patch("/day/{date}")
-async def patch_day(date: str, raw: dict[str, Any], conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
+async def patch_day(date: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
+                    clk: Clk) -> JsonDict:
+    reject_agents(ctx)  # §8: brief/notes are human-only; the boundary adapter writes them
     body = DayPatchBody(brief=body_opt_str(raw, "brief"), notes=body_opt_str(raw, "notes"))
     did = resolve_day_id(date, clk, cfg)
     now = clk.now_unix()

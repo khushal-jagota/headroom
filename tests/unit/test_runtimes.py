@@ -700,6 +700,93 @@ def test_real_spawn_builds_command_env_and_log_without_spawning(
     assert log_path.exists()  # opening for write created the log file up front
 
 
+def test_real_spawn_reaps_exited_child_and_detects_dead_within_a_tick(
+    cfg: Config, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§7.1/§7.3 dead-worker detection. No real process is spawned: subprocess.Popen is
+    a controllable stub (§7.4/§14). The adapter retains each child handle; is_pid_alive
+    reaps an exited child via poll() and reports it dead within one tick, reaps other
+    finished children on the same pass (no zombie/handle buildup), and falls back to the
+    signal-0 probe for a pid it never spawned."""
+
+    class FakePopen:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+            self.returncode: int | None = None  # None == still running
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+    created: list[FakePopen] = []
+
+    def fake_popen(command: list[str], **kwargs: object) -> FakePopen:
+        proc = FakePopen(pid=51000 + len(created))
+        created.append(proc)
+        return proc
+
+    monkeypatch.setattr("planner.core.adapters.real.subprocess.Popen", fake_popen)
+
+    (tmp_path / "logs").mkdir()
+    adapter = RealSpawnAdapter(cfg)
+
+    def _spawn(run_id: str) -> int:
+        result = adapter.spawn(
+            SpawnRequest(
+                ticket_id="t_reap",
+                run_id=run_id,
+                claim="claim_x",
+                server_url="http://127.0.0.1:8767",
+                log_path=str(tmp_path / "logs" / f"{run_id}.log"),
+                hermes_bin="hermes",
+                profile=cfg.hermes_profile,
+                skill=cfg.worker_skill,
+            )
+        )
+        assert result.ok is True
+        assert result.pid is not None
+        return result.pid
+
+    pid_a = _spawn("run_a")
+    pid_b = _spawn("run_b")
+    child_a, child_b = created[0], created[1]
+
+    # is_pid_alive is the per-pid reclaim probe. Tracked + running -> alive (no signal).
+    assert adapter.is_pid_alive(pid_a) is True
+
+    # child_a exits: poll() reaps it and is_pid_alive reports dead THIS call — one tick,
+    # not TTL — dropping the handle without signalling a possibly-recycled pid.
+    child_a.returncode = 1
+    assert adapter.is_pid_alive(pid_a) is False
+    assert pid_a not in adapter._children
+
+    # child_b's run closes by another path (done/blocked/crashed); the sweep never probes
+    # its pid, so reap_finished_children is what drops its handle — no zombie left behind.
+    child_b.returncode = 0
+    assert pid_b in adapter._children
+    adapter.reap_finished_children()
+    assert pid_b not in adapter._children
+
+    # With nothing tracked, liveness runs through the signal-0 fallback (_pid_alive).
+    kill_targets: list[int] = []
+    kill_exc: list[BaseException | None] = [None]
+
+    def fake_kill(target: int, sig: int) -> None:
+        kill_targets.append(target)
+        exc = kill_exc[0]
+        if exc is not None:
+            raise exc
+
+    monkeypatch.setattr("planner.dispatch.runtime.os.kill", fake_kill)
+
+    # A reaped pid the adapter no longer tracks -> fallback; the kernel has forgotten it.
+    kill_exc[0] = ProcessLookupError()
+    assert adapter.is_pid_alive(pid_a) is False
+    # A pid this adapter never spawned -> fallback; a live process reports alive.
+    kill_exc[0] = None
+    assert adapter.is_pid_alive(424242) is True
+    assert kill_targets == [pid_a, 424242]
+
+
 # --- background loops ---
 
 

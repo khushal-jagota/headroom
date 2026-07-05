@@ -47,6 +47,11 @@ def _parse_json_object(text: str) -> dict[str, Any]:
 class RealSpawnAdapter:
     def __init__(self, config: Config) -> None:
         self._config = config
+        # pid -> the live Popen of a child WE spawned. Retaining the handle lets the
+        # server (the Popen parent) reap its own children via poll(); otherwise an
+        # exited child lingers as a zombie and os.kill(pid, 0) reports it alive until
+        # claim-TTL expiry (§7.1/§7.3 dead-worker detection).
+        self._children: dict[int, subprocess.Popen[bytes]] = {}
 
     def spawn(self, request: SpawnRequest) -> SpawnResult:
         env = dict(os.environ)
@@ -76,7 +81,35 @@ class RealSpawnAdapter:
                 )
         except OSError as exc:
             return SpawnResult(ok=False, error=str(exc))
+        self._children[process.pid] = process
         return SpawnResult(ok=True, pid=process.pid)
+
+    def is_pid_alive(self, pid: int) -> bool:
+        """Per-pid dead-worker probe for the reclaim sweep (§7.1/§7.3). A pid we spawned
+        is probed with Popen.poll(): None => still running (alive); a returncode => it has
+        exited and poll() has just reaped it, so we drop the handle and report dead —
+        detected within one tick, not at TTL. An untracked pid (e.g. a claim carried across
+        a server restart, whose Popen this process never owned) falls back to the signal-0
+        probe."""
+        process = self._children.get(pid)
+        if process is None:
+            # Local import: real <- runtime would close the runtime -> registry -> real
+            # import cycle at module load. _pid_alive is the single fallback impl.
+            from planner.dispatch.runtime import _pid_alive
+
+            return _pid_alive(pid)
+        if process.poll() is None:
+            return True
+        del self._children[pid]
+        return False
+
+    def reap_finished_children(self) -> None:
+        """Reap and drop every tracked child that has exited (Popen.poll() reaps it). The
+        dispatcher calls this once per tick, so children of runs that closed by any path —
+        which the reclaim sweep never probes by pid — are not left as zombies or retained
+        handles. is_pid_alive only reaps the single pid it is asked about."""
+        for done_pid in [p for p, proc in self._children.items() if proc.poll() is not None]:
+            del self._children[done_pid]
 
 
 class RealBoundaryAdapter:
