@@ -1,95 +1,341 @@
-"""Sprint-item, sprint, current-sprint view, and idea routes (§9). Ideas are
-homed here because the Idea shape lives in this domain's contracts. Stubs until
-stage 4."""
+"""Sprint-item, sprint, current-sprint view, and idea routes (§9). Thin HTTP shells
+over the stage-3 sprint writers and the sprint read views. Ideas are homed here
+because the Idea shape lives in this domain's contracts. Sprint writers take a
+`clock: Clock`, not `now: int` — do not mix them up.
+
+Two gap-fill writers (D1 ideas, D3 sprint dates) have no data-layer sibling yet;
+they are written writer-shaped (A1) so the integrator can relocate them into
+sprints/data.py as a pure cut-paste."""
 
 from __future__ import annotations
 
+import sqlite3
+from datetime import date
 from typing import Any
 
 from fastapi import APIRouter
+from pydantic import BaseModel
+
+from planner.core.authctx import reject_agents
+from planner.core.clock import Clock
+from planner.core.contracts import EventKind, JsonDict, Priority, Project
+from planner.core.errors import ErrorCode, PlannerError
+from planner.core.events import append_event
+from planner.core.ids import ID_PREFIXES, new_id
+from planner.days.logic.dates import planning_date
+from planner.sprints import data as sprints_data
+from planner.sprints import views as sprints_views
+from planner.sprints.contracts import KICKOFF_FIELDS, REVIEW_FIELDS, ItemStatus
+from planner.sprints.logic import DateRange, find_overlap
+from planner.tickets.api import Cfg, Clk, Ctx, DbConn, parse_enum, txn
 
 router = APIRouter()
 
+_SPRINT_TEXT_FIELDS = ("name",) + KICKOFF_FIELDS + REVIEW_FIELDS
+_ITEM_PLAIN_FIELDS = ("title", "body", "priority", "deadline", "project", "current_state_note")
+
+
+# --- request models ------------------------------------------------------------
+
+
+class CreateItemBody(BaseModel):
+    title: str = ""
+    project: str | None = None
+    body: str = ""
+    priority: str | None = None
+    deadline: str | None = None
+    current_state_note: str = ""
+    sprint_id: str | None = None
+
+
+class ProposeStatusBody(BaseModel):
+    to: str = ""
+    note: str | None = None
+
+
+class CreateSprintBody(BaseModel):
+    name: str = ""
+    date_start: str = ""
+    date_end: str = ""
+    limiting_factor: str = ""
+    primary_bet: str = ""
+    supports: str = ""
+    premortem: str = ""
+
+
+class AddendumBody(BaseModel):
+    date: str = ""
+    text: str = ""
+
+
+class CreateIdeaBody(BaseModel):
+    title: str = ""
+    body: str = ""
+    project: str | None = None
+
+
+# --- private gap-fill writers (D1/D3; A1: writer-shaped for relocation) ---------
+
+
+def _create_idea(conn: sqlite3.Connection, *, title: str, body: str, project: Project | None,
+                 now: int) -> JsonDict:
+    if not title:
+        raise PlannerError(ErrorCode.validation, "idea title is required", {})
+    idea_id = new_id(ID_PREFIXES["idea"])
+    with txn(conn):
+        conn.execute(
+            "INSERT INTO ideas (id, title, body, project, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (idea_id, title, body, project.value if project is not None else None, now, now),
+        )
+        append_event(conn, idea_id, EventKind.idea_created, {"title": title, "source": "api"}, now)
+    row = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone()
+    assert row is not None
+    return sprints_views.idea_json(row)
+
+
+def _set_sprint_dates(conn: sqlite3.Connection, sprint_id: str, *, date_start: str | None,
+                      date_end: str | None, clock: Clock) -> None:
+    sprint = sprints_data.read_sprint(conn, sprint_id)
+    new_start = date_start if date_start is not None else sprint.date_start
+    new_end = date_end if date_end is not None else sprint.date_end
+    for label, value in (("date_start", new_start), ("date_end", new_end)):
+        try:
+            date.fromisoformat(value)
+        except ValueError as exc:
+            raise PlannerError(
+                ErrorCode.validation, f"invalid {label}", {label: value}
+            ) from exc
+    if new_start > new_end:
+        raise PlannerError(
+            ErrorCode.validation,
+            "date_start must not be after date_end",
+            {"date_start": new_start, "date_end": new_end},
+        )
+    others = [
+        DateRange(id=str(r["id"]), date_start=str(r["date_start"]), date_end=str(r["date_end"]))
+        for r in conn.execute(
+            "SELECT id, date_start, date_end FROM sprints WHERE id != ?", (sprint_id,)
+        ).fetchall()
+    ]
+    conflict = find_overlap(new_start, new_end, others)
+    if conflict is not None:
+        raise PlannerError(
+            ErrorCode.sprint_overlap,
+            "sprint dates overlap",
+            {"conflict_id": conflict, "date_start": new_start, "date_end": new_end},
+        )
+    now = clock.now_unix()
+    with txn(conn):
+        conn.execute(
+            "UPDATE sprints SET date_start = ?, date_end = ?, updated_at = ? WHERE id = ?",
+            (new_start, new_end, now, sprint_id),
+        )
+        if new_start != sprint.date_start:
+            append_event(
+                conn,
+                sprint_id,
+                EventKind.sprint_updated,
+                {"field": "date_start", "from": sprint.date_start, "to": new_start},
+                now,
+            )
+        if new_end != sprint.date_end:
+            append_event(
+                conn,
+                sprint_id,
+                EventKind.sprint_updated,
+                {"field": "date_end", "from": sprint.date_end, "to": new_end},
+                now,
+            )
+
+
+def _marshal_item_deadline(raw: object) -> None:
+    if raw is None:
+        return
+    if not isinstance(raw, str):
+        raise PlannerError(ErrorCode.validation, "invalid deadline", {"deadline": raw})
+    try:
+        date.fromisoformat(raw)
+    except ValueError as exc:
+        raise PlannerError(
+            ErrorCode.validation, "invalid deadline", {"deadline": raw}
+        ) from exc
+
+
+# --- item routes ---------------------------------------------------------------
+
 
 @router.post("/items")
-async def create_item(body: dict[str, Any]) -> dict[str, Any]:
-    raise NotImplementedError
+async def create_item(body: CreateItemBody, conn: DbConn, clk: Clk) -> JsonDict:
+    if body.project is None:
+        raise PlannerError(ErrorCode.validation, "project is required")
+    project = parse_enum(Project, body.project, "project")
+    priority = parse_enum(Priority, body.priority, "priority") if body.priority is not None \
+        else Priority.P3
+    _marshal_item_deadline(body.deadline)
+    item = sprints_data.create_item(
+        conn,
+        title=body.title,
+        project=project,
+        body=body.body,
+        priority=priority,
+        deadline=body.deadline,
+        current_state_note=body.current_state_note,
+        sprint_id=body.sprint_id,
+        clock=clk,
+    )
+    return {**sprints_views.item_json(item), "blockers_cleared": False}
 
 
 @router.get("/items")
-async def list_items(
-    status: str | None = None,
-    project: str | None = None,
-    sprint_id: str | None = None,
-) -> dict[str, Any]:
-    raise NotImplementedError
+async def list_items(conn: DbConn, status: str | None = None, project: str | None = None,
+                     sprint_id: str | None = None) -> JsonDict:
+    status_enum = parse_enum(ItemStatus, status, "status") if status is not None else None
+    project_enum = parse_enum(Project, project, "project") if project is not None else None
+    return {
+        "items": sprints_views.list_items(
+            conn, status=status_enum, project=project_enum, sprint_id_filter=sprint_id
+        )
+    }
 
 
 @router.get("/items/{item_id}")
-async def get_item(item_id: str) -> dict[str, Any]:
-    raise NotImplementedError
+async def get_item(item_id: str, conn: DbConn) -> JsonDict:
+    return sprints_views.item_detail(conn, item_id)
 
 
 @router.patch("/items/{item_id}")
-async def patch_item(item_id: str, body: dict[str, Any]) -> dict[str, Any]:
-    raise NotImplementedError
+async def patch_item(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
+                     clk: Clk) -> JsonDict:
+    recognized = set(_ITEM_PLAIN_FIELDS) | {"sprint_id", "status", "blocked_by"}
+    for key in body:
+        if key not in recognized:
+            raise PlannerError(ErrorCode.validation, "unknown item field", {"field": key})
+    if not body:
+        raise PlannerError(ErrorCode.validation, "no item fields to update", {})
+    if "blocked_by" in body and "status" not in body:
+        raise PlannerError(ErrorCode.validation, "blocked_by requires status", {})
+    for field in _ITEM_PLAIN_FIELDS:
+        if field in body:
+            if field == "deadline":
+                _marshal_item_deadline(body["deadline"])
+            sprints_data.update_item_field(conn, item_id, field, body[field], clock=clk)
+    if "sprint_id" in body:
+        sprints_data.assign_item_sprint(conn, item_id, body["sprint_id"], clock=clk)
+    if "status" in body:
+        to_status = parse_enum(ItemStatus, body["status"], "status")
+        sprints_data.transition_item_status(
+            conn, item_id, to_status, clock=clk, by_agent=not ctx.is_human,
+            blocked_by=body.get("blocked_by"),
+        )
+    return sprints_views.item_detail(conn, item_id)
 
 
 @router.post("/items/{item_id}/propose-status")
-async def propose_item_status(item_id: str, body: dict[str, Any]) -> dict[str, Any]:
-    raise NotImplementedError
+async def propose_item_status(item_id: str, body: ProposeStatusBody, conn: DbConn, ctx: Ctx,
+                              clk: Clk) -> JsonDict:
+    to_status = parse_enum(ItemStatus, body.to, "status")
+    sprints_data.propose_item_status(
+        conn, item_id, to_status, note=body.note, proposed_by=ctx.actor, clock=clk
+    )
+    return sprints_views.item_detail(conn, item_id)
 
 
 @router.post("/items/{item_id}/accept-status")
-async def accept_item_status(item_id: str, body: dict[str, Any]) -> dict[str, Any]:
-    raise NotImplementedError
+async def accept_item_status(item_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+    reject_agents(ctx)
+    sprints_data.accept_item_status(conn, item_id, clock=clk, resolved_by="human")
+    return sprints_views.item_detail(conn, item_id)
+
+
+# --- sprint routes -------------------------------------------------------------
 
 
 @router.post("/sprints")
-async def create_sprint(body: dict[str, Any]) -> dict[str, Any]:
-    raise NotImplementedError
+async def create_sprint(body: CreateSprintBody, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+    reject_agents(ctx)
+    for label, raw in (("date_start", body.date_start), ("date_end", body.date_end)):
+        try:
+            date.fromisoformat(raw)
+        except ValueError:
+            raise PlannerError(ErrorCode.validation, f"invalid {label}", {label: raw}) from None
+    sprint = sprints_data.create_sprint(
+        conn,
+        name=body.name,
+        date_start=body.date_start,
+        date_end=body.date_end,
+        limiting_factor=body.limiting_factor,
+        primary_bet=body.primary_bet,
+        supports=body.supports,
+        premortem=body.premortem,
+        clock=clk,
+    )
+    return sprints_views.sprint_json(sprint)
 
 
 @router.get("/sprints")
-async def list_sprints() -> dict[str, Any]:
-    raise NotImplementedError
+async def list_sprints(conn: DbConn) -> JsonDict:
+    return {"sprints": sprints_views.list_sprints(conn)}
 
 
 @router.get("/sprints/{sprint_id}")
-async def get_sprint(sprint_id: str) -> dict[str, Any]:
-    raise NotImplementedError
+async def get_sprint(sprint_id: str, conn: DbConn) -> JsonDict:
+    return sprints_views.sprint_json(sprints_data.read_sprint(conn, sprint_id))
 
 
 @router.patch("/sprints/{sprint_id}")
-async def patch_sprint(sprint_id: str, body: dict[str, Any]) -> dict[str, Any]:
-    raise NotImplementedError
+async def patch_sprint(sprint_id: str, body: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
+    recognized = set(_SPRINT_TEXT_FIELDS) | {"date_start", "date_end"}
+    for key in body:
+        if key not in recognized:
+            raise PlannerError(ErrorCode.validation, "unknown sprint field", {"field": key})
+    if not body:
+        raise PlannerError(ErrorCode.validation, "no sprint fields to update", {})
+    for field in _SPRINT_TEXT_FIELDS:
+        if field in body:
+            sprints_data.update_sprint_field(conn, sprint_id, field, body[field], clock=clk)
+    if "date_start" in body or "date_end" in body:
+        _set_sprint_dates(
+            conn, sprint_id, date_start=body.get("date_start"), date_end=body.get("date_end"),
+            clock=clk,
+        )
+    return sprints_views.sprint_json(sprints_data.read_sprint(conn, sprint_id))
 
 
 @router.post("/sprints/{sprint_id}/freeze-kickoff")
-async def freeze_kickoff(sprint_id: str) -> dict[str, Any]:
-    raise NotImplementedError
+async def freeze_kickoff(sprint_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+    reject_agents(ctx)
+    return sprints_views.sprint_json(sprints_data.freeze_kickoff(conn, sprint_id, clock=clk))
 
 
 @router.post("/sprints/{sprint_id}/freeze-review")
-async def freeze_review(sprint_id: str) -> dict[str, Any]:
-    raise NotImplementedError
+async def freeze_review(sprint_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+    reject_agents(ctx)
+    return sprints_views.sprint_json(sprints_data.freeze_review(conn, sprint_id, clock=clk))
 
 
 @router.post("/sprints/{sprint_id}/addenda")
-async def add_addendum(sprint_id: str, body: dict[str, Any]) -> dict[str, Any]:
-    raise NotImplementedError
+async def add_addendum(sprint_id: str, body: AddendumBody, conn: DbConn, clk: Clk) -> JsonDict:
+    sprint = sprints_data.add_addendum(conn, sprint_id, date=body.date, text=body.text, clock=clk)
+    return sprints_views.sprint_json(sprint)
 
 
 @router.get("/sprint/current")
-async def current_sprint() -> dict[str, Any]:
-    raise NotImplementedError
+async def current_sprint(conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
+    today_iso = planning_date(clk.now(), cfg.boundary_hour).isoformat()
+    return sprints_views.sprint_current_view(conn, today_iso, clk.now_unix())
+
+
+# --- idea routes ---------------------------------------------------------------
 
 
 @router.post("/ideas")
-async def create_idea(body: dict[str, Any]) -> dict[str, Any]:
-    raise NotImplementedError
+async def create_idea(body: CreateIdeaBody, conn: DbConn, clk: Clk) -> JsonDict:
+    project = parse_enum(Project, body.project, "project") if body.project is not None else None
+    return _create_idea(conn, title=body.title, body=body.body, project=project,
+                        now=clk.now_unix())
 
 
 @router.get("/ideas")
-async def list_ideas() -> dict[str, Any]:
-    raise NotImplementedError
+async def list_ideas(conn: DbConn) -> JsonDict:
+    return {"ideas": sprints_views.list_ideas(conn)}

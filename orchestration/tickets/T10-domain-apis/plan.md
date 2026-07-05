@@ -963,3 +963,49 @@ FastAPI's response typing; `PlainTextResponse` route returns `str` with
 per-request connections only; `BEGIN IMMEDIATE` contention resolves via the connection's
 `busy_timeout` (set in `db.connect`); GET `/day/{date}` writes (materialization) are spec-mandated
 and autocommit-safe.
+
+---
+
+## 9. Binding amendments after codex review (override the body above)
+
+Per orchestration/tickets/T10-domain-apis/plan-review.md. Findings 3 (board card `id`) and 4
+(overdue item statuses) were refuted there — the body stands for those.
+
+**A1 (finding 1).** The D1/D2/D3 private writers stay in their api modules (T10 owns no `data.py`),
+but they must be *writer-shaped for relocation*: plain functions taking `(conn, …ids/values…,
+keyword-only clock-or-now)` exactly like their `data.py` siblings, no FastAPI/pydantic/Request
+types in their signatures or bodies, transactions and event payloads mirroring the neighboring
+writers verbatim. The integrator will be asked to relocate them into `tickets/data.py` /
+`sprints/data.py`; write them so that relocation is a pure cut-paste plus import fixes.
+
+**A2 (finding 2).** `_day_view` wraps its `days_data.read_day(conn, did, now)` call in
+`with txn(conn):` — a materializing read is a write path when the day is absent, and
+`materialize_day` is multi-statement (INSERT + event) on an autocommit connection. Section 0's
+"reads run bare" does not apply to this one call. The subsequent `list_day_tickets`/`read_ticket`
+reads stay bare. (All other day mutations already run inside `txn`.)
+
+**A5 (finding 5).** Approvals queue, review entries only: `waiting_since` is NOT the digest's
+`updated_at` proxy. After computing the digest, `queues_view` replaces `waiting_since` for entries
+with `kind == "review"` using one query per such ticket (or one grouped query):
+`SELECT created_at FROM events WHERE entity_id = ? AND kind = 'state_changed' AND
+json_extract(payload, '$.to') = 'needs_review' ORDER BY id DESC LIMIT 1`, falling back to the
+ticket's `updated_at` when no row exists. Gating-field and item-status entries keep
+`proposal.created_at`. The final ascending sort on `waiting_since` across all three kinds is
+unchanged. Concern C4 is thereby resolved for the API queue; the boundary digest (agent-facing)
+keeps its documented proxy.
+
+**A6 (finding 6).** `resolve_day_id` never string-formats the raw segment: the non-`today` branch is
+`parsed = date.fromisoformat(date_seg)` (ValueError → validation error) then
+`return ids.day_id(parsed)` — so compact ISO forms ("20260704") still yield canonical
+`day_2026-07-04` ids (§3.4).
+
+**A7 (finding 7).** `POST /items` and `PATCH /items/{id}`: a present, non-null `deadline` is
+marshalled through `date.fromisoformat` at the route (ValueError →
+`PlannerError(ErrorCode.validation, "invalid deadline", {"deadline": raw})`) before reaching
+`create_item`/`update_item_field`, which do not validate it. Passing the original string through
+after validation (no reformatting) keeps the writer's stored value identical to the input.
+Tickets routes are unchanged (their writers already call `validate_deadline`).
+
+**Smoke additions.** Step 10 gains one assertion: `PATCH /api/items/{i1}` `{deadline: "not-a-date"}`
+→ 400 with `error.code == "validation"` (A7 proof). Step 12 gains: GET `/api/day/20260704` → 200
+with `id == "day_2026-07-04"` (A6 proof).
