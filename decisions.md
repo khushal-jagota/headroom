@@ -85,3 +85,7 @@ SPEC §18's rule is "Do not start a later stage while an earlier stage's tests f
 ## D15 — Full-suite e2e failures (items 32/33): missing script tags in the served shell
 
 The full `./verify` run after stage 6+7 tickets landed showed items 32/33 FAIL though each ticket's isolated runs were green. Root cause (found by the integration fixer): the `GET /` shell HTML in core/server.py never included `<script>` tags for screens-sprint.js and screens-backlog.js — T17's screens were unloadable in a real page walk; T17's own smoke drove its screens through a page that registered them differently. Fix: the two script tags (app-side; no assertion touched). tests/e2e/conftest.py also gained a fake-now parameter hook used by the fixed tests' setup — a harness fixture addition, no acceptance-test assertion changed. Post-fix: `./verify` 36/36 PASS, exit 0 (orchestration/verify-runs/003-stage7-fix.md).
+
+## D16 — Audit model: gpt-5.6 unavailable on this account; strongest available used
+
+codex-audit.md instructs invoking the audit "with the strongest available model" and illustrates `--model gpt-5.6`. On this machine's Codex account that model string is rejected at request time (`400 invalid_request_error: The 'gpt-5.6' model is not supported when using Codex with a ChatGPT account`). The audit therefore runs with the strongest model the account supports — `gpt-5.5` (confirmed answering) — satisfying the instruction's substance; the failed gpt-5.6 attempt is preserved in the session record.
