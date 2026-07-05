@@ -196,6 +196,746 @@
     return line;
   }
 
+  // 5.8 Create form (D11 #13) — item / idea variants. Owns form mechanics ONLY
+  // (disable, clear, error placement); the screen's onSubmit builds the request
+  // body and returns the fetchJson promise. No optimistic UI — a successful create
+  // is reflected only when the WS-invalidation refetch re-renders the list.
+  var PROJECTS = ["Vylo", "Tribe", "Learning", "Other"];   // §3.2 Project enum
+  var PRIORITIES = ["P0", "P1", "P2", "P3"];                // §3.2 priorities
+  var FORM_SPECS = {
+    item: {
+      submitLabel: "Add item",
+      fields: [
+        { name: "title", kind: "text", label: "Title", required: true, placeholder: "Item title" },
+        { name: "project", kind: "select", label: "Project", options: PROJECTS, default: "Vylo" },
+        { name: "priority", kind: "select", label: "Priority", options: PRIORITIES, default: "P3" },
+        { name: "deadline", kind: "date", label: "Deadline" }
+      ]
+    },
+    idea: {
+      submitLabel: "Add idea",
+      fields: [
+        { name: "title", kind: "text", label: "Title", required: true, placeholder: "Idea title" },
+        { name: "project", kind: "select", label: "Project", options: PROJECTS,
+          includeBlank: true, blankLabel: "— no project —", default: "" },
+        { name: "body", kind: "textarea", label: "Body" }
+      ]
+    }
+  };
+
+  function createForm(variant, onSubmit) {
+    var spec = FORM_SPECS[variant];
+    var form = make("form", "create-form");
+    form.setAttribute("data-create", variant);
+    var controls = [];
+    spec.fields.forEach(function (field) {
+      var wrap = make("div", "create-form-field");
+      wrap.appendChild(make("label", "create-form-label", field.label));
+      var control;
+      var reset = "";
+      if (field.kind === "select") {
+        control = make("select", "form-control");
+        if (field.includeBlank) {
+          var blank = make("option", null, field.blankLabel);
+          blank.value = "";
+          control.appendChild(blank);
+        }
+        field.options.forEach(function (opt) {
+          var option = make("option", null, opt);
+          option.value = opt;
+          control.appendChild(option);
+        });
+        reset = field.default !== undefined
+          ? field.default
+          : (field.includeBlank ? "" : field.options[0]);
+        control.value = reset;
+      } else if (field.kind === "textarea") {
+        control = make("textarea", "form-control");
+        control.rows = 4;
+      } else {
+        control = make("input", "form-control");
+        control.type = field.kind === "date" ? "date" : "text";
+        if (field.placeholder) {
+          control.setAttribute("placeholder", field.placeholder);
+        }
+      }
+      control.setAttribute("data-input", field.name);
+      if (field.required) {
+        control.required = true;
+      }
+      wrap.appendChild(control);
+      form.appendChild(wrap);
+      controls.push({ name: field.name, control: control, reset: reset });
+    });
+    var actions = make("div", "field-editor-actions");
+    var submit = make("button", "button button--primary", spec.submitLabel);
+    submit.type = "submit";
+    actions.appendChild(submit);
+    form.appendChild(actions);
+
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var prior = form.querySelector(".error-line");
+      if (prior) {
+        prior.parentNode.removeChild(prior);
+      }
+      if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+      }
+      var values = {};
+      controls.forEach(function (entry) {
+        values[entry.name] = entry.control.value;
+      });
+      submit.disabled = true;
+      Promise.resolve(onSubmit(values)).then(
+        function () {
+          controls.forEach(function (entry) {
+            entry.control.value = entry.reset;
+          });
+        },
+        function (err) {
+          actions.prepend(errorLine(err));
+        }
+      ).then(function () {
+        submit.disabled = false;
+      });
+    });
+    return form;
+  }
+
+  // ------------------------------------------------------------------------
+  // T15 additions (D11 items 7, 8, 9, 10, 16) — Day + Review composites, the
+  // pluggable chat-input registry, and the small state-machine mirrors the two
+  // screens share. Additive: nothing above this line is touched. The server
+  // re-validates every grant (machine.py:75-100); these mirrors only pick which
+  // grant options to OFFER, never gate a write.
+  // ------------------------------------------------------------------------
+
+  // §4.1 linear order + §4.2 tables, mirrored for grant-option math only.
+  var STATE_ORDER = [
+    "needs_success", "needs_approach", "needs_plan",
+    "in_progress", "needs_review", "done"
+  ];
+  var GATING_FIELD = {
+    needs_success: "success",
+    needs_approach: "approach",
+    needs_plan: "plan",
+    in_progress: "result"
+  };
+  var ADVANCE = {
+    needs_success: "needs_approach",
+    needs_approach: "needs_plan",
+    needs_plan: "in_progress",
+    in_progress: "needs_review"
+  };
+
+  // Transient conversation-render state (SPEC §11 / §9 no-store doctrine). Chat
+  // messages have NO server representation (chat/service.py:81-104 stores only the
+  // session key), so this is not a cache of canonical data: losing it on reload is
+  // correct. It survives WS-flush re-renders because scripts are not re-executed —
+  // only route() re-runs, and each re-render rebuilds the panel from these.
+  var chatTranscripts = {};   // entity_id -> [{who: "you"|"planner", text: string}]
+  var chatDrafts = {};        // entity_id -> string (pending, unsent input text)
+  var _atcapSeq = 0;          // per-instance unique radio-group names
+
+  function advanceTarget(state, ceiling) {
+    // Mirror of machine.py:40-48 (+ the ceiling=done special case).
+    if (state === "in_progress" && ceiling === "done") {
+      return "done";
+    }
+    return ADVANCE[state] || null;
+  }
+
+  function gatingField(state) {
+    return GATING_FIELD[state] || null;
+  }
+
+  function quietLine(text) {
+    return make("div", "quiet-line", text);
+  }
+
+  // Shared mutating-button discipline (amendment A3): on click clear any prior
+  // error and disable; on rejection re-enable and surface the error; on SUCCESS
+  // stay disabled — the WS-flush re-render replaces the DOM, and re-enabling would
+  // only reopen the flush-gap double-fire window. Private helper (not exported).
+  function bindMutating(button, container, run) {
+    button.addEventListener("click", function () {
+      var prior = container.querySelector(".error-line");
+      if (prior) {
+        container.removeChild(prior);
+      }
+      button.disabled = true;
+      Promise.resolve(run()).then(
+        function () {},
+        function (err) {
+          button.disabled = false;
+          container.prepend(errorLine(err));
+        }
+      );
+    });
+  }
+
+  // --- the pluggable chat-input source (SPEC §14 audio seam) -----------------
+  // A source is factory(ctx) -> HTMLElement. ctx.submit(text) -> Promise is the
+  // only way a source delivers input (the panel owns transport); ctx.initialText
+  // is the preserved draft; ctx.onInput(text) reports pending text so the panel
+  // can preserve the draft across re-renders.
+  function makeTextInputSource(ctx) {
+    var wrap = make("div", "chat-input");
+    var textarea = make("textarea", "field-editor-input chat-input-text");
+    textarea.setAttribute("data-chat-input", "");
+    textarea.rows = 2;
+    textarea.value = ctx.initialText || "";
+    textarea.addEventListener("input", function () {
+      ctx.onInput(textarea.value);
+    });
+    var send = make("button", "button button--primary", "Send");
+    send.type = "button";
+    send.setAttribute("data-chat-send", "");
+    send.addEventListener("click", function () {
+      var text = textarea.value.trim();
+      if (!text) {
+        return;
+      }
+      send.disabled = true;
+      textarea.value = "";
+      ctx.onInput("");
+      Promise.resolve(ctx.submit(text)).then(
+        function () {
+          send.disabled = false;
+        },
+        function () {
+          send.disabled = false;
+        }
+      );
+    });
+    wrap.appendChild(textarea);
+    wrap.appendChild(send);
+    return wrap;
+  }
+
+  // --- D11 item 8: grant-pair picker -----------------------------------------
+  // getGrant() returns null until BOTH halves are explicitly chosen. The ceiling
+  // options are exactly the states resolve_grant accepts (machine.py:94-99): the
+  // NO_FURTHER sentinel plus every STATE_ORDER state at or beyond newState.
+  function grantPairPicker(newState, onChange) {
+    var wrap = make("div", "grant-picker");
+    var label = make("label", "grant-label");
+    label.appendChild(make("span", null, "how far"));
+    var select = make("select", "grant-ceiling");
+    select.setAttribute("data-grant-ceiling", "");
+    var placeholder = make("option", null, "");
+    placeholder.value = "";
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    placeholder.hidden = true;
+    select.appendChild(placeholder);
+    var noFurther = make("option", null, "No further");
+    noFurther.value = "none";
+    select.appendChild(noFurther);
+    var start = STATE_ORDER.indexOf(newState);
+    if (start < 0) {
+      start = 0;
+    }
+    STATE_ORDER.slice(start).forEach(function (state) {
+      var option = make("option", null, state.replace(/_/g, " "));
+      option.value = state;
+      select.appendChild(option);
+    });
+    select.addEventListener("change", onChange);
+    label.appendChild(select);
+    wrap.appendChild(label);
+
+    var atcap = make("span", "grant-atcap");
+    atcap.setAttribute("data-grant-atcap", "");
+    var groupName = "atcap-" + String((_atcapSeq += 1));
+    var inputs = [];
+    [["stop", "Stop"], ["propose", "Propose"]].forEach(function (pair) {
+      var radioLabel = make("label", null);
+      var input = make("input", null);
+      input.type = "radio";
+      input.name = groupName;
+      input.value = pair[0];
+      input.addEventListener("change", onChange);
+      inputs.push(input);
+      radioLabel.appendChild(input);
+      radioLabel.appendChild(make("span", null, pair[1]));
+      atcap.appendChild(radioLabel);
+    });
+    wrap.appendChild(atcap);
+
+    wrap.getGrant = function () {
+      if (select.value === "") {
+        return null;
+      }
+      var checked = null;
+      inputs.forEach(function (input) {
+        if (input.checked) {
+          checked = input;
+        }
+      });
+      if (checked === null) {
+        return null;
+      }
+      return { next_ceiling: select.value, at_cap: checked.value };
+    };
+    return wrap;
+  }
+
+  // --- D11 item 7: proposal card ---------------------------------------------
+  // edited_body is included iff the textarea differs (strict string) from the
+  // proposal body from this render's fetch (resolution.py:151-161). When
+  // requireGrant, Accept is unfireable until the picker yields both halves.
+  function proposalCard(opts) {
+    var card = make("div", "proposal-card");
+    card.appendChild(make("div", "proposal-meta", "proposed by " + opts.proposal.proposed_by));
+    card.appendChild(markdownBlock(opts.proposal.body));
+    var textarea = make("textarea", "field-editor-input proposal-edit");
+    textarea.setAttribute("data-edit", "");
+    textarea.rows = 8;
+    textarea.value = opts.proposal.body;
+    card.appendChild(textarea);
+
+    var picker = null;
+    var inFlight = false;
+    var resolved = false;
+    var actions = make("div", "proposal-card-actions");
+    var accept = make("button", "button button--primary", "Accept");
+    accept.type = "button";
+    accept.setAttribute("data-accept", "");
+
+    function sync() {
+      accept.disabled = inFlight || resolved ||
+        (opts.requireGrant && (picker === null || picker.getGrant() === null));
+    }
+
+    if (opts.requireGrant) {
+      picker = grantPairPicker(opts.newState, sync);
+      card.appendChild(picker);
+    }
+
+    accept.addEventListener("click", function () {
+      var prior = actions.querySelector(".error-line");
+      if (prior) {
+        actions.removeChild(prior);
+      }
+      var payload = {};
+      if (textarea.value !== opts.proposal.body) {
+        payload.edited_body = textarea.value;
+      }
+      if (opts.requireGrant) {
+        var grant = picker.getGrant();
+        payload.next_ceiling = grant.next_ceiling;
+        payload.at_cap = grant.at_cap;
+      }
+      inFlight = true;
+      sync();
+      Promise.resolve(opts.onAccept(payload)).then(
+        function () {
+          resolved = true;   // A3: stay disabled after a successful accept
+          inFlight = false;
+          sync();
+        },
+        function (err) {
+          inFlight = false;
+          actions.prepend(errorLine(err));
+          sync();
+        }
+      );
+    });
+
+    actions.appendChild(accept);
+    card.appendChild(actions);
+    sync();   // Accept starts disabled when a grant is required (nothing picked)
+    return card;
+  }
+
+  // --- D11 item 9: day-plan tree ---------------------------------------------
+  // node is "root" (string) or the child position (NUMBER — the server rejects
+  // string positions, days/api.py:83-91). No local status mutation: the four
+  // routes append events, so the WS flush re-render shows the new tree.
+  function planTree(plan, handlers) {
+    var wrap = make("div", "plan-tree");
+    var actions = make("div", "plan-tree-actions");
+
+    var acceptAll = make("button", "button button--primary", "Accept all");
+    acceptAll.type = "button";
+    acceptAll.setAttribute("data-accept-all", "");
+    bindMutating(acceptAll, actions, function () {
+      return handlers.acceptAll();
+    });
+    var rejectAll = make("button", "button", "Reject all");
+    rejectAll.type = "button";
+    rejectAll.setAttribute("data-reject-all", "");
+    bindMutating(rejectAll, actions, function () {
+      return handlers.rejectAll();
+    });
+    actions.appendChild(acceptAll);
+    actions.appendChild(rejectAll);
+    wrap.appendChild(actions);
+
+    function makeNode(ref, isRoot, label, status, ticketId) {
+      var node = make("div", isRoot ? "plan-node plan-node--root" : "plan-node plan-node--child");
+      node.setAttribute("data-node", isRoot ? "root" : String(ref));
+      node.setAttribute("data-status", status);
+      node.appendChild(make("span", "plan-node-status", status));
+      node.appendChild(make("span", isRoot ? "plan-node-focus" : "plan-node-note", label));
+      if (!isRoot && ticketId) {
+        var link = make("a", "plan-node-ticket", "open");
+        link.setAttribute("href", "#/ticket/" + ticketId);
+        node.appendChild(link);
+      }
+      var nodeActions = make("span", "plan-node-actions");
+      if (status !== "accepted") {   // Accept only offered on a not-yet-accepted node
+        var acceptNode = make("button", "button", "Accept");
+        acceptNode.type = "button";
+        acceptNode.setAttribute("data-accept", "");
+        bindMutating(acceptNode, actions, function () {
+          return handlers.accept(ref);
+        });
+        nodeActions.appendChild(acceptNode);
+      }
+      var invalidate = make("button", "button", "Invalidate");
+      invalidate.type = "button";
+      invalidate.setAttribute("data-invalidate", "");
+      bindMutating(invalidate, actions, function () {
+        return handlers.invalidate(ref);
+      });
+      nodeActions.appendChild(invalidate);
+      node.appendChild(nodeActions);
+      return node;
+    }
+
+    wrap.appendChild(makeNode("root", true, plan.root.focus, plan.root.status, null));
+    (plan.children || []).forEach(function (child) {
+      wrap.appendChild(
+        makeNode(child.position, false, child.note || child.ticket_id, child.status, child.ticket_id)
+      );
+    });
+    return wrap;
+  }
+
+  // --- D11 item 10: chat panel -----------------------------------------------
+  // entityId is the SERVER-provided chat id (day.id / ticket.id), never built
+  // client-side. Rebuilds its message list from the module-scope transcript, which
+  // the WS flush does not touch — that is the survival mechanism.
+  function chatPanel(entityId, opts) {
+    var panelEl = make("div", "chat-panel");
+    panelEl.setAttribute("data-chat-panel", "");
+    var messages = make("div", "chat-messages");
+    messages.setAttribute("data-chat-messages", "");
+    panelEl.appendChild(messages);
+
+    function paint() {
+      messages.replaceChildren();
+      (chatTranscripts[entityId] || []).forEach(function (msg) {
+        if (msg.who === "you") {
+          var you = make("div", "chat-msg chat-msg--you", msg.text);
+          you.setAttribute("data-chat-msg", "you");
+          messages.appendChild(you);
+        } else {
+          var reply = make("div", "chat-msg chat-msg--planner");
+          reply.setAttribute("data-chat-msg", "planner");
+          reply.appendChild(markdownBlock(msg.text));
+          messages.appendChild(reply);
+        }
+      });
+    }
+    paint();
+
+    if (!opts.available) {
+      var offline = make("div", "chat-offline", "gateway offline");
+      offline.setAttribute("data-chat-offline", "");
+      panelEl.appendChild(offline);
+      return panelEl;   // §11 notice; no input source rendered when offline
+    }
+
+    var source;
+    var ctx = {
+      initialText: chatDrafts[entityId] || "",
+      onInput: function (text) {
+        chatDrafts[entityId] = text;
+      },
+      submit: function (text) {
+        if (!chatTranscripts[entityId]) {
+          chatTranscripts[entityId] = [];
+        }
+        chatTranscripts[entityId].push({ who: "you", text: text });
+        delete chatDrafts[entityId];
+        paint();
+        return Planner.api.fetchJson("/api/chat/" + entityId + "/send", {
+          method: "POST",
+          body: { text: text }
+        }).then(
+          function (res) {
+            chatTranscripts[entityId].push({ who: "planner", text: res.reply_text });
+            if (panelEl.isConnected) {   // a flush may have replaced the panel mid-flight
+              paint();
+            }
+            return res;
+          },
+          function (err) {
+            var prior = panelEl.querySelector(".error-line");
+            if (prior) {
+              panelEl.removeChild(prior);
+            }
+            panelEl.insertBefore(errorLine(err), source);
+            return Promise.reject(err);
+          }
+        );
+      }
+    };
+    source = Planner.chatInput.sources[Planner.chatInput.active](ctx);
+    panelEl.appendChild(source);
+    return panelEl;
+  }
+
+  // --- D11 item 16: review card ----------------------------------------------
+  // The shell is panel() (D11 #2 — the only box primitive). The screen guards
+  // staleness before constructing (proposal null / state moved on).
+  function reviewCard(opts) {
+    var entry = opts.entry;
+    var detail = opts.detail;
+    var kind = entry.kind;
+    var gating = kind === "success" || kind === "approach" ||
+      kind === "plan" || kind === "result";
+    var content = [];
+    var head = make("div", "review-card-head");
+    var footer = make("div", "review-card-actions");
+    var primary = null;
+
+    if (gating) {
+      head.appendChild(chip("state", detail.state));
+      head.appendChild(chip("pending-proposal"));
+      content.push(head);
+      content.push(proposalCard({
+        proposal: detail.fields[kind].proposal,
+        requireGrant: true,
+        newState: advanceTarget(detail.state, detail.ceiling),
+        onAccept: opts.onAccept
+      }));
+    } else if (kind === "review") {
+      head.appendChild(chip("state", detail.state));
+      content.push(head);
+      content.push(markdownBlock(detail.fields.result.value));
+      if (detail.fields.result.notes) {
+        var note = make("div", "review-note");
+        note.appendChild(markdownBlock(detail.fields.result.notes));
+        content.push(note);
+      }
+      primary = make("button", "button button--primary", "Approve");
+      primary.type = "button";
+      primary.setAttribute("data-approve", "");
+      bindMutating(primary, footer, function () {
+        return opts.onApprove();
+      });
+    } else if (kind === "status") {
+      head.appendChild(chip(null, detail.status));
+      head.appendChild(chip(null, "→ " + detail.status_proposal.to_status));
+      content.push(head);
+      if (detail.status_proposal.note) {
+        content.push(make("div", "review-note", detail.status_proposal.note));
+      }
+      primary = make("button", "button button--primary", "Accept");
+      primary.type = "button";
+      primary.setAttribute("data-accept-status", "");
+      bindMutating(primary, footer, function () {
+        return opts.onAcceptStatus();
+      });
+    }
+
+    if (primary) {
+      footer.appendChild(primary);
+    }
+    var skip = make("button", "button", "Skip");
+    skip.type = "button";
+    skip.setAttribute("data-skip", "");
+    skip.addEventListener("click", function () {
+      opts.onSkip();
+    });
+    footer.appendChild(skip);
+    if (entry.entity_type === "ticket") {
+      var open = make("a", "review-open", "open ticket");
+      open.setAttribute("data-open-ticket", "");
+      open.setAttribute("href", "#/ticket/" + entry.entity_id);
+      footer.appendChild(open);
+    }
+    content.push(footer);
+
+    var section = panel(entry.title, content);
+    section.setAttribute("data-review-card", "");
+    section.setAttribute("data-entity-id", entry.entity_id);
+    section.setAttribute("data-kind", kind);
+    if (gating) {
+      section.setAttribute("data-field", kind);
+    }
+    return section;
+  }
+
+  // ------------------------------------------------------------------------
+  // T16 additions (D11 items 11, 12, 14, 15) — State control, Grant control,
+  // Event log, Run history. Additive: nothing above this line is touched. These
+  // reuse the T15 grant-pair picker and the shared bindMutating discipline; the
+  // server re-validates every write, so the pickers only choose what to OFFER.
+  // ------------------------------------------------------------------------
+
+  function stateLabel(s) {
+    return String(s).replace(/_/g, " ");
+  }
+
+  function formatUnix(seconds) {
+    if (seconds === null || seconds === undefined) {
+      return "";
+    }
+    return new Date(Number(seconds) * 1000).toLocaleString();
+  }
+
+  // The exact event-row summary (payload keys confirmed against resolution.py /
+  // api.py writers). Unlisted kinds get an empty summary; kind + time still show.
+  function eventSummary(kind, payload) {
+    payload = payload || {};
+    if (kind === "state_changed") {
+      return String(payload.from) + " → " + String(payload.to);
+    }
+    if (kind === "proposal_accepted") {
+      return String(payload.field) + " · " + String(payload.resolved_by);
+    }
+    if (kind === "ticket_updated") {
+      return String(payload.field);
+    }
+    return "";
+  }
+
+  // D11 #11: state control — human jump / drop / (conditional) unblock. No
+  // re-render on success; the WS flush handles it (bindMutating stays disabled).
+  function stateControl(opts) {
+    var wrap = make("div", "state-control");
+    wrap.setAttribute("data-state-control", "");
+    wrap.appendChild(make("span", "state-control-current", stateLabel(opts.state)));
+
+    var select = make("select", "state-control-select form-control");
+    select.setAttribute("data-state-select", "");
+    STATE_ORDER.forEach(function (s) {
+      var option = make("option", null, stateLabel(s));
+      option.value = s;
+      select.appendChild(option);
+    });
+    select.value = opts.state;
+    wrap.appendChild(select);
+
+    var errorHost = make("div", "state-control-error");
+
+    var jump = make("button", "button", "Jump");
+    jump.type = "button";
+    jump.setAttribute("data-state-jump", "");
+    bindMutating(jump, errorHost, function () {
+      return opts.onJump(select.value);
+    });
+    wrap.appendChild(jump);
+
+    var drop = make("button", "button", "Drop");
+    drop.type = "button";
+    drop.setAttribute("data-drop", "");
+    bindMutating(drop, errorHost, function () {
+      return opts.onDrop();
+    });
+    wrap.appendChild(drop);
+
+    if (opts.autoBlocked) {
+      var unblock = make("button", "button", "Unblock");
+      unblock.type = "button";
+      unblock.setAttribute("data-unblock", "");
+      bindMutating(unblock, errorHost, function () {
+        return opts.onUnblock();
+      });
+      wrap.appendChild(unblock);
+    }
+
+    wrap.appendChild(errorHost);
+    return wrap;
+  }
+
+  // D11 #12: grant control — plain ceiling/at-cap pickers via the T15 grant-pair
+  // picker (no dial). Save is disabled until BOTH picker halves are chosen. "No
+  // further" (next_ceiling === "none") means the ceiling becomes exactly the
+  // current state (resolve_grant, machine.py:87-89).
+  function grantControl(opts) {
+    var wrap = make("div", "grant-control");
+    wrap.setAttribute("data-grant-control", "");
+
+    // Raw values (not stateLabel'd) so the persisted grant is asserted verbatim.
+    var current = make(
+      "div", "grant-control-current",
+      "ceiling: " + opts.ceiling + " · at-cap: " + opts.atCap
+    );
+    current.setAttribute("data-grant-current", "");
+    wrap.appendChild(current);
+
+    var errorHost = make("div", "grant-control-error");
+
+    var save = make("button", "button button--primary", "Save");
+    save.type = "button";
+    save.setAttribute("data-grant-save", "");
+    save.disabled = true;
+
+    var picker = grantPairPicker(opts.state, function () {
+      save.disabled = picker.getGrant() === null;
+    });
+    wrap.appendChild(picker);
+
+    bindMutating(save, errorHost, function () {
+      var grant = picker.getGrant();
+      var ceiling = grant.next_ceiling === "none" ? opts.state : grant.next_ceiling;
+      return opts.onSave(ceiling, grant.at_cap);
+    });
+    wrap.appendChild(save);
+    wrap.appendChild(errorHost);
+    return wrap;
+  }
+
+  // D11 #14: event log — events as served (ascending id), rendered in order.
+  function eventLog(events) {
+    var wrap = make("div", "event-log");
+    wrap.setAttribute("data-event-log", "");
+    if (!events || !events.length) {
+      wrap.appendChild(quietLine("(no events)"));
+      return wrap;
+    }
+    events.forEach(function (ev) {
+      var row = make("div", "event-log-row");
+      row.setAttribute("data-event-row", "");
+      row.setAttribute("data-event-kind", ev.kind);
+      row.appendChild(make("span", "event-log-kind", ev.kind));
+      row.appendChild(make("span", "event-log-summary", eventSummary(ev.kind, ev.payload)));
+      row.appendChild(make("span", "event-log-time", formatUnix(ev.created_at)));
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+
+  // D11 #15: run history — runs as served (newest first), rendered in order.
+  function runHistory(runs) {
+    var wrap = make("div", "run-history");
+    wrap.setAttribute("data-run-history", "");
+    if (!runs || !runs.length) {
+      wrap.appendChild(quietLine("(no runs)"));
+      return wrap;
+    }
+    runs.forEach(function (run) {
+      var row = make("div", "run-history-row");
+      row.setAttribute("data-run-row", "");
+      row.setAttribute("data-run-status", run.status);
+      row.appendChild(make("span", "run-history-status", run.status));
+      var times = formatUnix(run.started_at) +
+        (run.ended_at ? " – " + formatUnix(run.ended_at) : "");
+      row.appendChild(make("span", "run-history-times", times));
+      row.appendChild(make("span", "run-history-detail", run.summary || run.error || ""));
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+
   Planner.components = {
     appShell: appShell,
     panel: panel,
@@ -203,6 +943,34 @@
     fieldEditor: fieldEditor,
     chip: chip,
     entityRow: entityRow,
-    errorLine: errorLine
+    errorLine: errorLine,
+    createForm: createForm,
+    quietLine: quietLine,
+    advanceTarget: advanceTarget,
+    gatingField: gatingField,
+    STATE_ORDER: STATE_ORDER,
+    proposalCard: proposalCard,
+    grantPairPicker: grantPairPicker,
+    planTree: planTree,
+    chatPanel: chatPanel,
+    reviewCard: reviewCard,
+    stateControl: stateControl,
+    grantControl: grantControl,
+    eventLog: eventLog,
+    runHistory: runHistory
+  };
+
+  // The pluggable chat-input registry (SPEC §14 audio seam). A later audio script
+  // registers a second source with one <script> tag and no edits here: chatPanel
+  // reads sources[active] at render time and couples only to the ctx contract.
+  Planner.chatInput = {
+    sources: { text: makeTextInputSource },
+    active: "text",
+    register: function (name, factory, makeActive) {
+      Planner.chatInput.sources[name] = factory;
+      if (makeActive) {
+        Planner.chatInput.active = name;
+      }
+    }
   };
 })();

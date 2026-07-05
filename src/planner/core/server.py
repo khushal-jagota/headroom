@@ -59,6 +59,10 @@ _SHELL = """<!doctype html>
 <script src="/assets/markdown.js"></script>
 <script src="/assets/components.js"></script>
 <script src="/assets/app.js"></script>
+<script src="/assets/screens-day.js"></script>
+<script src="/assets/screens-review.js"></script>
+<script src="/assets/screens-board.js"></script>
+<script src="/assets/screens-ticket.js"></script>
 </body>
 </html>
 """

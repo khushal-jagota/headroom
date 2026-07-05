@@ -409,3 +409,539 @@ textarea {
   color: var(--text-muted);
   font-size: var(--type-sm);
 }
+
+/* --- Sprint + Backlog screens (T17) -------------------------------------- */
+
+.screen-title {
+  font-size: var(--type-xl);
+  color: var(--text-strong);
+  margin: 0 0 var(--space-2);
+}
+
+.sprint-header {
+  margin-bottom: var(--space-4);
+}
+
+.sprint-dates {
+  font-size: var(--type-sm);
+}
+
+.sprint-field {
+  margin-bottom: var(--space-4);
+}
+
+.sprint-field-label {
+  font-size: var(--type-xs);
+  color: var(--text-muted);
+  font-weight: 600;
+  margin-bottom: var(--space-1);
+}
+
+.status-group {
+  margin-bottom: var(--space-4);
+}
+
+.status-group-title {
+  font-size: var(--type-sm);
+  color: var(--text-muted);
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+}
+
+.list-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.sprint-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-bottom: var(--space-1);
+}
+
+.rollup {
+  font-size: var(--type-xs);
+  color: var(--text-faint);
+  padding-left: var(--space-3);
+}
+
+.addendum {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+}
+
+.addendum-date {
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.create-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.create-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.create-form-label {
+  font-size: var(--type-xs);
+  color: var(--text-muted);
+}
+
+.form-control {
+  width: 100%;
+  background: var(--surface-sunken);
+  color: var(--text-default);
+  border: var(--border-hairline) solid var(--text-faint);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-ui);
+  font-size: var(--type-sm);
+  line-height: 1.5;
+}
+
+.form-control:focus {
+  border-color: var(--accent-bright);
+  outline: none;
+}
+
+/* --- Day screen (T15) ---------------------------------------------------- */
+
+.day-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.day-ticket-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.day-ticket-row .entity-row {
+  flex: 1;
+}
+
+.review-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface-raised);
+  border: var(--border-hairline) solid var(--surface-overlay);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  text-decoration: none;
+  color: var(--text-strong);
+}
+
+.review-entry:hover {
+  background: var(--surface-overlay);
+}
+
+.review-entry-count {
+  font-size: var(--type-xs);
+  background: var(--accent-surface);
+  color: var(--accent-text);
+  border: var(--border-hairline) solid var(--accent-bright);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-2);
+}
+
+.review-entry-count.zero {
+  background: transparent;
+  color: var(--text-faint);
+  border-color: var(--text-faint);
+}
+
+/* --- Plan tree (T15) ----------------------------------------------------- */
+
+.plan-tree {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.plan-tree-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.plan-node {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+}
+
+.plan-node--root .plan-node-focus {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+.plan-node-status {
+  font-size: var(--type-xs);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--surface-overlay);
+  color: var(--text-muted);
+}
+
+.plan-node[data-status="proposed"] .plan-node-status {
+  background: var(--accent-surface);
+  color: var(--accent-text);
+  border: var(--border-hairline) solid var(--accent-bright);
+}
+
+.plan-node[data-status="invalidated"] .plan-node-status {
+  background: transparent;
+  color: var(--text-faint);
+}
+
+.plan-node-note {
+  color: var(--text-default);
+}
+
+.plan-node-ticket {
+  font-size: var(--type-sm);
+  color: var(--text-muted);
+}
+
+.plan-node-ticket:hover {
+  color: var(--text-strong);
+}
+
+.plan-node-actions {
+  margin-left: auto;
+  display: flex;
+  gap: var(--space-1);
+}
+
+/* --- Chat panel (T15) ---------------------------------------------------- */
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.chat-msg {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--type-sm);
+  max-width: 85%;
+}
+
+.chat-msg--you {
+  align-self: flex-end;
+  background: var(--surface-overlay);
+  color: var(--text-strong);
+}
+
+.chat-msg--planner {
+  align-self: flex-start;
+  background: var(--surface-sunken);
+}
+
+.chat-offline {
+  color: var(--text-muted);
+  font-size: var(--type-sm);
+}
+
+.chat-input {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.chat-input-text {
+  flex: 1;
+}
+
+/* --- Proposal / grant / review (T15) ------------------------------------- */
+
+select {
+  font: inherit;
+}
+
+.grant-ceiling {
+  background: var(--surface-sunken);
+  color: var(--text-default);
+  border: var(--border-hairline) solid var(--text-faint);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+}
+
+.grant-picker {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  background: var(--accent-surface);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+
+.grant-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--type-xs);
+  color: var(--accent-text);
+}
+
+.grant-atcap {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.grant-atcap label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--type-sm);
+  color: var(--accent-text);
+}
+
+.grant-atcap input {
+  accent-color: var(--accent-bright);
+}
+
+.proposal-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.proposal-meta {
+  font-size: var(--type-xs);
+  color: var(--text-muted);
+}
+
+.proposal-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.review-screen {
+  max-width: calc(var(--space-7) * 14);
+  margin: 0 auto;
+}
+
+.review-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.review-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.review-note {
+  font-size: var(--type-sm);
+  color: var(--text-muted);
+}
+
+/* --- Board screen (T16) -------------------------------------------------- */
+
+.board {
+  display: flex;
+  gap: var(--space-4);
+  overflow-x: auto;
+  align-items: flex-start;
+}
+
+.board-column {
+  min-width: calc(var(--space-7) * 5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  background: var(--surface-raised);
+  border: var(--border-hairline) solid var(--surface-overlay);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+
+.board-column-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--type-sm);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.board-column-count {
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--text-faint);
+}
+
+.board-column-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* --- Ticket screen (T16) ------------------------------------------------- */
+
+.ticket-header-chips {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.ticket-field,
+.ticket-recap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* --- State control (T16) ------------------------------------------------- */
+
+.state-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.state-control-current {
+  font-size: var(--type-sm);
+  color: var(--text-muted);
+}
+
+.state-control-select {
+  width: auto;
+}
+
+.state-control-error,
+.grant-control-error,
+.ticket-copy-error,
+.ticket-links-error,
+.ticket-day-error,
+.ticket-sprint-error {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* --- Grant control (T16) ------------------------------------------------- */
+
+.grant-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.grant-control-current {
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--text-muted);
+}
+
+/* --- Run history / Event log (T16) --------------------------------------- */
+
+.run-history,
+.event-log {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.run-history-row,
+.event-log-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+}
+
+.run-history-status,
+.event-log-kind {
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.run-history-times,
+.event-log-time {
+  font-size: var(--type-xs);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.run-history-detail,
+.event-log-summary {
+  font-size: var(--type-sm);
+  color: var(--text-default);
+}
+
+/* --- Links / day / sprint (T16) ------------------------------------------ */
+
+.ticket-links,
+.ticket-day {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ticket-link-row,
+.ticket-day-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.ticket-link-kind {
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--text-muted);
+}
+
+.ticket-link-target {
+  color: var(--accent-bright);
+  text-decoration: none;
+}
+
+.ticket-link-add,
+.ticket-day-add,
+.ticket-sprint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-2);
+}

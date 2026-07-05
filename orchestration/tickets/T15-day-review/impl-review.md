@@ -1,0 +1,10 @@
+# T15 implementation review — codex findings + orchestrator dispositions
+
+Raw codex output: `impl-review-raw.txt` (same folder). Scope given to codex: T15's files only (screens-day.js, screens-review.js, the T15 block of components.js, the four (T15) app.css sections, the two `_SHELL` lines, smoke.py), with T16/T17's interleaved uncommitted work explicitly excluded. Codex verdict: VIOLATIONS: 2 (one P2, one P3). It confirmed the grant-pair discipline, SPEC behavior, amendments A1/A3–A6, foundation style, data-* contract, and XSS discipline clean; it could not execute smoke.py in its read-only sandbox (the orchestrator ran it fresh instead — 10/10, exit 0, before and after the fixes below).
+
+| # | Finding | Disposition |
+|---|---|---|
+| P2 | screens-review.js stale-wrap dead-end: after the wrap rule cleared `skipped`, a first entry that turned stale again rendered the empty line immediately, hiding later live approvals in the same queue payload until the next flush/reload — against amendment A2's no-dead-end intent. | **ACCEPTED, FIXED by the orchestrator.** `show(root, live)` now takes the fetched entry list: a stale entry is marked skipped and the walk advances to `live.slice(1)` within the same payload; the empty quiet line renders only when the list is exhausted. No dead end, nothing hidden, no loop (the list strictly shrinks per step; each step is one detail fetch for a different entry; human Skip still triggers a full fresh-queue re-render). The `wrapped` flag is gone. |
+| P3 | smoke.py did not pin the child plan rows' `data-node` values ("0"/"1") — plan §7(a) requires them; the §6 contract's positions feed stage-6 selectors. | **ACCEPTED, FIXED by the orchestrator.** Added `attr_list(page, ".plan-node--child", "data-node") == ["0", "1"]` to check (a). |
+
+Post-fix verification (run fresh by the orchestrator): `node --check assets/screens-review.js` clean; `.venv/bin/ruff check .` all passed; fence grep (`import|export|await` over assets/*.js) empty; smoke 10/10 `SMOKE PASS`, exit 0.
