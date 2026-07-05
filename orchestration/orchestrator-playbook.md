@@ -17,6 +17,7 @@ Pipeline (run it yourself, inside your own context):
 6. **Report** — write `orchestration/tickets/<TICKET>/report.md`: what was built, test results (paste the pytest tail), review outcomes, deviations from ticket (should be zero), concerns for the integrator. Your final agent message: a short summary + PASS/FAIL per named test + any contract-change requests.
 
 Rules:
+- codex exec output is BUFFERED: long silence usually means it is still working, with everything landing at once (often ~9+ minutes in). Redirect its output to a file and watch the file's size; only kill and relaunch (with a tighter prompt) after ~15 minutes with a still-empty file.
 - Nest freely: you may spawn as many sub-agents as the ticket needs — planner, implementer, fix agents for review findings, a verifier to run checks — each scoped tightly. Prefer a fresh scoped sub-agent over doing implementation work inside your own context.
 - Drive your children: when you spawn a sub-agent (foreground or background), stay active until its result is in hand and acted on. Never end your turn while your pipeline is mid-step — an idle orchestrator stalls the whole build.
 - Tests are part of the ticket: the named tests must assert the SPEC's exact values (states, orderings, error shapes). No `pytest.skip`, no `xfail`, no empty bodies, no commented-out tests — the verify instrument scans for these and the run fails.

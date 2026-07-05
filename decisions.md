@@ -81,3 +81,7 @@ Two further post-first-write test changes from codex implementation reviews, bot
 ## D14 — Stage-boundary overlap for file-disjoint tickets
 
 SPEC §18's rule is "Do not start a later stage while an earlier stage's tests fail." Where an earlier stage had no failing tests (its own tests all green; the later items' tests simply not yet written), file-disjoint next-stage tickets were dispatched concurrently to save wall-clock: T14 (UI foundation) overlapped T12 (CLI wiring); T21 (dogfood script + skills) overlapped T19/T20 (e2e items 28–34). Verify remained the gate at every integration point; no stage's written tests were ever red while a later stage's work landed.
+
+## D15 — Full-suite e2e failures (items 32/33): missing script tags in the served shell
+
+The full `./verify` run after stage 6+7 tickets landed showed items 32/33 FAIL though each ticket's isolated runs were green. Root cause (found by the integration fixer): the `GET /` shell HTML in core/server.py never included `<script>` tags for screens-sprint.js and screens-backlog.js — T17's screens were unloadable in a real page walk; T17's own smoke drove its screens through a page that registered them differently. Fix: the two script tags (app-side; no assertion touched). tests/e2e/conftest.py also gained a fake-now parameter hook used by the fixed tests' setup — a harness fixture addition, no acceptance-test assertion changed. Post-fix: `./verify` 36/36 PASS, exit 0 (orchestration/verify-runs/003-stage7-fix.md).

@@ -62,6 +62,8 @@ _SHELL = """<!doctype html>
 <script src="/assets/screens-day.js"></script>
 <script src="/assets/screens-review.js"></script>
 <script src="/assets/screens-board.js"></script>
+<script src="/assets/screens-sprint.js"></script>
+<script src="/assets/screens-backlog.js"></script>
 <script src="/assets/screens-ticket.js"></script>
 </body>
 </html>

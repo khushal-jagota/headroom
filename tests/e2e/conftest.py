@@ -65,7 +65,7 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
     handles: list[ServerHandle] = []
     counter = 0
 
-    def make(gateway: str | None = None) -> ServerHandle:
+    def make(gateway: str | None = None, fake_now: str | None = None) -> ServerHandle:
         nonlocal counter
         srvdir = tmp_path / f"srv{counter}"
         counter += 1
@@ -84,7 +84,7 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
                 "PLAN_TEST_MODE": "1",
                 "PLAN_DB_PATH": str(db_path),
                 "PLAN_PORT": str(port),
-                "PLAN_FAKE_NOW": FAKE_NOW,
+                "PLAN_FAKE_NOW": fake_now if fake_now is not None else FAKE_NOW,
                 "PLAN_LOGS_DIR": str(srvdir / "logs"),
                 "PLAN_DISPATCHER_LOCK_PATH": str(srvdir / "dispatcher.lock"),
                 "PLAN_WS_POLL_MS": "50",
