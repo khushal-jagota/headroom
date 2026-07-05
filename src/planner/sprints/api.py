@@ -327,7 +327,9 @@ async def freeze_review(sprint_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> Jso
 
 
 @router.post("/sprints/{sprint_id}/addenda")
-async def add_addendum(sprint_id: str, raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
+async def add_addendum(sprint_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
+                       clk: Clk) -> JsonDict:
+    reject_agents(ctx)  # §3.1/§8: weekly_addenda is an append-only canonical sprint field.
     body = AddendumBody(date=body_str(raw, "date"), text=body_str(raw, "text"))
     sprint = sprints_data.add_addendum(
         conn, sprint_id, date=body["date"], text=body["text"], clock=clk

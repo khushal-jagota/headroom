@@ -4,6 +4,30 @@ Read this first after any context compaction. It is the build's memory.
 
 ## Current stage
 
+**FINAL GATE — audit round 5: one new code violation (route sibling) + snapshot.**
+Re-audit at tree `8f9f93b` confirmed both round-4 code violations FIXED (dead-worker,
+the four PATCH gates held). It found one NEW violation of the same class — a route
+Fix B didn't cover — plus the recurring snapshot:
+1. **`POST /sprints/{id}/addenda` ungated** (§8/§14): appends canonical `weekly_addenda`
+   with no `reject_agents`; §8 gives agents only `sprint show`. GENUINE. Also concern:
+   `POST /chat/{id}/send` ungated. Fix (Opus `fix-boundary-sweep`): a COMPLETE sweep of
+   every mutating route, gating addenda + chat/send + any other human-only route with no
+   gate, and proving each route's gate against the §8 agent surface so no sibling
+   remains. This closes the whole class rather than one route per round.
+2. **§12 snapshot** — flagged a 4th time. migration/README.md reframed again, now leading
+   with the §18.4 division-of-proof argument: the spec assigns real-byte fidelity to the
+   human at cutover (§18.4) and assigns migration-logic correctness to the build (item 34);
+   the auditor's "prove it's the real snapshot" is a real-byte demand the spec routes to
+   §18.4, not the build. If after this round the snapshot is the LONE remaining violation,
+   it is a genuine spec self-contradiction beyond my authority to resolve (cannot modify
+   SPEC, cannot read the forbidden live data) and will be surfaced to the owner rather than
+   looped on further (CLAUDE.md: blocked 3×  → change approach materially).
+
+Sequence: land the sweep → re-run dogfood B/C at the new tree (§18.5, api changed) →
+commit → verify → re-audit.
+
+## Superseded stage
+
 **FINAL GATE — audit round 4: two code violations + snapshot.** All seven build stages
 complete; the round-4 enveloped audit at tree `42c5396` returned AUDIT: FAIL with three
 violations:

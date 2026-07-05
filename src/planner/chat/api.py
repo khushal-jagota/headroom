@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 
 from planner.chat import service
+from planner.core import authctx
 from planner.core.adapters.registry import Adapters
 from planner.core.clock import Clock
 from planner.core.errors import ErrorCode, PlannerError
@@ -21,6 +22,7 @@ router = APIRouter()
 async def send_message(
     entity_id: str, body: dict[str, Any], request: Request
 ) -> dict[str, Any]:
+    authctx.reject_agents(authctx.request_context(request))  # §11/§8: chat is human-only.
     text = body.get("text")
     if not isinstance(text, str):
         raise PlannerError(ErrorCode.validation, "text is required")

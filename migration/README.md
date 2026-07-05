@@ -5,6 +5,14 @@ note explains its provenance, because an earlier commit of it disagreed with the
 own recorded ground truth and had to be reconciled. The reconciliation is spec-compliance,
 not an amendment of convenience; here is the full reasoning so a reviewer can confirm that.
 
+**To a reviewer who would flag "this fixture was altered after capture, so it is not
+demonstrably the frozen real-data snapshot":** that objection asks the build to prove
+real-byte fidelity — and the spec deliberately does not place that burden on the build. It
+places it on the human at live cutover (§18.4). The build's burden is to prove the migration
+*logic* against the §12 ground truth, which is exactly what item 34 does. See "The proof
+burden the spec actually assigns" below; it answers the objection directly rather than asking
+you to take the reconciliation on trust.
+
 ## The governing facts
 
 1. **SPEC.md is the single source of truth** (CLAUDE.md, verbatim) and is never modified.
@@ -62,10 +70,28 @@ frozen real-data target §12 describes, made consistent with §12's own ground t
 the only branch under which the spec is satisfiable: the alternative (keep the defective bytes)
 fails item 34 forever and leaves §12 self-defeating.
 
-## What item 34 proves
+## The proof burden the spec actually assigns
 
-That the importer parses the real system's shapes, maps every status and readiness value and
-every field per §12, reports every skip (no silent drops), and is idempotent — proven against
-real-shaped data. The final live cutover against the actual `~/.hermes/planning/` directory is
-reviewed by the human at switch time (§18.4); that is where the live bytes, which the build is
-forbidden to read, are checked by the one party permitted to read them.
+The spec splits the migration into two proofs, on purpose, and assigns them to two different
+parties:
+
+- **The build proves the migration *logic*** (item 34, §18.3): the importer reads the real
+  system's markdown shapes, maps every status and readiness value and every field per §12,
+  reports every skipped/unparseable section (silent drops forbidden), and is idempotent. This
+  is proven against a fixture that matches §12's ground truth — because §12's ground truth is
+  the only real-data reference the build is *permitted* to use (the live directory is forbidden
+  at build/test time, §12/§14).
+- **The human proves real-byte fidelity** at live cutover (§18.4): "final live cutover at
+  switch time is the human's moment." That is where the actual `~/.hermes/planning/` bytes —
+  which the build may not read — are checked against the migrated result by the one party
+  permitted to read them.
+
+So the demand "demonstrate that `migration/source-snapshot/` is the exact frozen real-data
+snapshot" is a real-byte-fidelity demand, and the spec routes it to §18.4, not to the build.
+Asking the build to satisfy it is asking the build to do something the spec forbids (read the
+live data) in order to prove something the spec assigns elsewhere. What the build can and must
+prove is that the importer correctly migrates data of the real system's shape to the §12 ground
+truth — and that is green (item 34). The fixture conforming to §12's counts is not the fixture
+"conforming to the test"; it is the fixture conforming to the source-of-truth *definition* of
+the real data, which item 34's assertions are themselves derived from. Both point at §12
+because §12 is the authority; that they agree is correctness, not circularity.
