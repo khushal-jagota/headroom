@@ -42,7 +42,26 @@ _STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.gateway_offline: 503,
 }
 
-_SHELL = "<!doctype html><meta charset=utf-8><title>planner</title><div id=app></div>"
+_SHELL = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>planner</title>
+<link rel="stylesheet" href="/assets/tokens.css">
+<link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="/assets/config.js"></script>
+<script src="/assets/api.js"></script>
+<script src="/assets/markdown.js"></script>
+<script src="/assets/components.js"></script>
+<script src="/assets/app.js"></script>
+</body>
+</html>
+"""
 
 
 def http_status_for(code: ErrorCode) -> int:

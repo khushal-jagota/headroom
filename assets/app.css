@@ -1,0 +1,411 @@
+/* Component styling. Every color, size, duration, and font resolves through a
+ * var(--token) from tokens.css — this file holds no themable literal. Permitted
+ * non-token values: 0, unitless ratios, percentages/viewport units, keywords, and
+ * font-weights. The whole personality is tuned from tokens.css alone. */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--surface-base);
+  color: var(--text-default);
+  font-family: var(--font-ui);
+  font-size: var(--type-md);
+  line-height: 1.5;
+}
+
+button,
+textarea {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: var(--border-strong) solid var(--accent-bright);
+  outline-offset: var(--border-hairline);
+}
+
+/* --- Shell --------------------------------------------------------------- */
+
+.shell {
+  min-height: 100vh;
+}
+
+.shell-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-3) var(--space-5);
+  background: var(--surface-raised);
+  border-bottom: var(--border-hairline) solid var(--surface-overlay);
+}
+
+.shell-brand {
+  font-size: var(--type-sm);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.shell-links {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.nav-link {
+  color: var(--text-muted);
+  font-size: var(--type-sm);
+  text-decoration: none;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  transition: color var(--motion-fast) var(--motion-ease),
+    background var(--motion-fast) var(--motion-ease);
+}
+
+.nav-link:hover {
+  color: var(--text-strong);
+}
+
+.nav-link.active {
+  color: var(--text-strong);
+  background: var(--surface-overlay);
+}
+
+.nav-badge {
+  font-size: var(--type-xs);
+  background: var(--accent-surface);
+  color: var(--accent-text);
+  border: var(--border-hairline) solid var(--accent-bright);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-2);
+  margin-left: var(--space-1);
+}
+
+.nav-badge.hidden {
+  display: none;
+}
+
+.shell-content {
+  padding: var(--space-5);
+}
+
+/* --- Entrance ------------------------------------------------------------ */
+
+.screen-enter {
+  animation: screen-enter var(--motion-slow) var(--motion-ease);
+}
+
+@keyframes screen-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-2));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* --- Panel --------------------------------------------------------------- */
+
+.panel {
+  background: var(--surface-raised);
+  border: var(--border-hairline) solid var(--surface-overlay);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-4);
+}
+
+.panel-title {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--type-lg);
+  font-weight: 600;
+  color: var(--text-strong);
+  border-bottom: var(--border-hairline) solid var(--surface-overlay);
+}
+
+.panel-body {
+  padding: var(--space-4);
+}
+
+/* --- Markdown ------------------------------------------------------------ */
+
+.markdown p {
+  margin: 0 0 var(--space-3);
+}
+
+.markdown :last-child {
+  margin-bottom: 0;
+}
+
+.markdown h1 {
+  font-size: var(--type-lg);
+}
+
+.markdown h2 {
+  font-size: var(--type-md);
+  font-weight: 600;
+}
+
+.markdown h3 {
+  font-size: var(--type-sm);
+  font-weight: 600;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+  color: var(--text-strong);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.markdown code {
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+  background: var(--surface-sunken);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+}
+
+.markdown pre {
+  background: var(--surface-sunken);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+}
+
+.markdown pre code {
+  background: none;
+  padding: 0;
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-5);
+}
+
+.markdown a {
+  color: var(--accent-bright);
+}
+
+/* --- Field editor -------------------------------------------------------- */
+
+.field-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.field-editor-input {
+  width: 100%;
+  background: var(--surface-sunken);
+  color: var(--text-default);
+  border: var(--border-hairline) solid var(--text-faint);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.field-editor-input:focus {
+  border-color: var(--accent-bright);
+  outline: none;
+}
+
+.field-editor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* --- Buttons (shared style class, not a component) ----------------------- */
+
+.button {
+  background: var(--surface-overlay);
+  color: var(--text-strong);
+  border: var(--border-hairline) solid var(--text-faint);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--type-sm);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease);
+}
+
+.button--primary {
+  background: var(--accent-surface);
+  color: var(--accent-text);
+  border-color: var(--accent-bright);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* --- Chips --------------------------------------------------------------- */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--type-xs);
+  font-weight: 500;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  border: var(--border-hairline) solid transparent;
+  background: var(--surface-overlay);
+  color: var(--text-default);
+  white-space: nowrap;
+  line-height: 1.6;
+}
+
+.chip--p0 {
+  background: var(--accent-surface);
+  color: var(--accent-text);
+  border-color: var(--accent-bright);
+}
+
+.chip--p1 {
+  background: var(--surface-overlay);
+  color: var(--text-strong);
+  border-color: var(--text-muted);
+}
+
+.chip--p2 {
+  background: var(--surface-overlay);
+  color: var(--text-default);
+  border-color: var(--text-faint);
+}
+
+.chip--p3 {
+  background: transparent;
+  color: var(--text-muted);
+  border-color: var(--text-faint);
+}
+
+.chip--state {
+  background: var(--surface-overlay);
+  color: var(--text-default);
+  border-color: transparent;
+}
+
+.chip--state[data-value="done"],
+.chip--state[data-value="dropped"] {
+  color: var(--text-muted);
+}
+
+.chip--project {
+  background: transparent;
+  color: var(--text-muted);
+  border-color: var(--text-faint);
+}
+
+.chip--deadline {
+  background: transparent;
+  color: var(--text-muted);
+  border-color: var(--text-faint);
+}
+
+.chip--overdue {
+  background: var(--accent-surface);
+  color: var(--accent-bright);
+  border-color: var(--accent-bright);
+}
+
+.chip--pending-proposal {
+  background: var(--accent-surface);
+  color: var(--accent-text);
+  border-color: var(--accent-bright);
+}
+
+.chip--running-claim {
+  background: var(--surface-overlay);
+  color: var(--text-strong);
+  border-color: var(--text-muted);
+}
+
+.chip--blockers-cleared {
+  background: transparent;
+  color: var(--text-strong);
+  border-color: var(--text-muted);
+}
+
+.chip--auto-blocked {
+  background: var(--accent-surface);
+  color: var(--accent-text);
+  border-color: var(--accent-bright);
+}
+
+.chip--frozen {
+  background: transparent;
+  color: var(--text-faint);
+  border-color: var(--text-faint);
+}
+
+/* --- Entity row ---------------------------------------------------------- */
+
+.entity-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  color: var(--text-default);
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+
+.entity-row:hover {
+  background: var(--surface-overlay);
+}
+
+.entity-row-title {
+  font-size: var(--type-md);
+}
+
+.entity-row:hover .entity-row-title {
+  color: var(--text-strong);
+}
+
+.entity-row-chips {
+  display: flex;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+/* --- Error line ---------------------------------------------------------- */
+
+.error-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--type-sm);
+  border-left: var(--border-strong) solid var(--accent-bright);
+  padding-left: var(--space-2);
+}
+
+.error-code {
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--accent-text);
+  background: var(--accent-surface);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+}
+
+.error-message {
+  color: var(--text-default);
+}
+
+/* --- Quiet line (empty states, placeholders, unknown route) -------------- */
+
+.quiet-line {
+  color: var(--text-muted);
+  font-size: var(--type-sm);
+}

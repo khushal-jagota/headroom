@@ -425,3 +425,14 @@ Acceptance mapping: server boots + `/` renders shell with nav (smoke 5/7); place
 10. **Smoke tempo**: server runs with `PLAN_WS_POLL_MS=50` so the two-event coalescing proof has ~230ms of slack; `ui_debounce_ms` stays 250 (asserted). Residual flake risk only if two localhost POSTs straddle >200ms — accepted; if it ever flakes, the fallback is widening the sleep, not weakening the exactly-one assertion. Reconnect/backoff is implemented per §3 but not smoke-tested (needs a server bounce) — Codex review should eyeball that path.
 11. **T15–T17 seam**: their `<script>` tags will be appended to `_SHELL` after `app.js`; classic scripts execute in order before `DOMContentLoaded`, so `registerScreen` overwrite-wins replaces the placeholders before boot routes. Router exposes `registerScreen(name, render(root, params))` and nothing else.
 12. **Audio seam (§14)**: no chat code in T14; the bus and components are input-source-agnostic; nothing here assumes typed text anywhere. The chat panel (D11 item 10) lands later behind the gateway adapter.
+
+---
+
+## 13. BINDING AMENDMENTS (orchestrator sense-check — these override anything above on conflict)
+
+- **A1 (nav set ratified):** five nav links as planned (§5.1). D11 item 1's "six screen links" is recorded as a deliberate deviation in plan-review.md S1 — do NOT add a Ticket nav link.
+- **A2 (type tokens ratified):** the `--type-xs…xl` + `--font-ui`/`--font-mono` additions stand (plan-review.md S2).
+- **A3 (JS file count):** the ticket acceptance's "six JS files" is a ticket typo — exactly the five .js files in §2–§6 exist; all five must pass `node --check`. Do not invent a sixth file.
+- **A4 (grep fence):** the literal word "await" must not appear anywhere in any assets/*.js file, comments included; nor `import`/`export` as words. The §11 grep must return empty.
+- **A5 (smoke discipline):** cursor assertion exactly `== 3`; the exactly-one-flush assertions are never weakened; flake remedy is widening the settle sleep only. smoke.py must pass `.venv/bin/ruff check` (rules E/F/W/I/UP/B, 100 cols).
+- **A6 (server.py fence restated):** the diff to src/planner/core/server.py touches ONLY the `_SHELL` string — zero changes to any other line of that file.
