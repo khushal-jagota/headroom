@@ -8,23 +8,19 @@ re-implementation of close_run's own check."""
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter
-from pydantic import BaseModel
 
 from planner.core.authctx import require_claim
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.dispatch import data as dispatch_data
-from planner.dispatch.contracts import AGENT_CLOSE_OUTCOMES, RunStatus
+from planner.dispatch.contracts import AGENT_CLOSE_OUTCOMES, CloseRunBody, RunStatus
 from planner.tickets import views as tickets_views
-from planner.tickets.api import Cfg, Clk, Ctx, DbConn, parse_enum, txn
+from planner.tickets.api import Cfg, Clk, Ctx, DbConn, body_opt_str, body_str, parse_enum, txn
 
 router = APIRouter()
-
-
-class CloseRunBody(BaseModel):
-    outcome: str = ""
-    summary: str | None = None
 
 
 @router.post("/runs/{run_id}/heartbeat")
@@ -40,18 +36,21 @@ async def heartbeat(run_id: str, conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk) -> 
 
 
 @router.post("/runs/{run_id}/close")
-async def close_run(run_id: str, body: CloseRunBody, conn: DbConn, ctx: Ctx, cfg: Cfg,
+async def close_run(run_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
                     clk: Clk) -> JsonDict:
+    body = CloseRunBody(outcome=body_str(raw, "outcome"), summary=body_opt_str(raw, "summary"))
     now = clk.now_unix()
     run = tickets_views.get_run(conn, run_id)
     if run is None:
         raise PlannerError(ErrorCode.not_found, "run not found", {"run_id": run_id})
     require_claim(conn, ctx, run["ticket_id"], now)
-    status = parse_enum(RunStatus, body.outcome, "outcome")
+    status = parse_enum(RunStatus, body["outcome"], "outcome")
     if status not in AGENT_CLOSE_OUTCOMES:
         raise PlannerError(
-            ErrorCode.validation, "outcome must be done or blocked", {"outcome": body.outcome}
+            ErrorCode.validation, "outcome must be done or blocked", {"outcome": body["outcome"]}
         )
     with txn(conn):
-        dispatch_data.close_run(conn, run_id, status, now, cfg.failure_limit, summary=body.summary)
+        dispatch_data.close_run(
+            conn, run_id, status, now, cfg.failure_limit, summary=body["summary"]
+        )
     return {"run": tickets_views.get_run(conn, run_id)}

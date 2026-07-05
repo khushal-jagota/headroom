@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import date
+from typing import Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel
 
 from planner.core import ids
 from planner.core.authctx import reject_agents, validate_carried_claim
@@ -19,31 +19,27 @@ from planner.core.config import Config
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days import data as days_data
-from planner.days.contracts import PlanTree
+from planner.days.contracts import AddDayTicketBody, DayPatchBody, PlanNodeBody, PlanTree
 from planner.days.logic import tree as plan_tree
 from planner.days.logic.dates import planning_date
 from planner.days.scheduler import submit_replan
-from planner.tickets.api import Cfg, Clk, Ctx, DbConn, txn
+from planner.tickets.api import Cfg, Clk, Ctx, DbConn, body_opt_str, body_str, txn
 from planner.tickets.data import read_ticket
 from planner.tickets.views import ticket_json
 
 router = APIRouter()
 
 
-# --- request models ------------------------------------------------------------
+# --- request-body marshallers (contract shapes in days/contracts.py) ------------
 
 
-class DayPatchBody(BaseModel):
-    brief: str | None = None
-    notes: str | None = None
-
-
-class AddDayTicketBody(BaseModel):
-    ticket_id: str = ""
-
-
-class PlanNodeBody(BaseModel):
-    node: int | str | None = None
+def _marshal_plan_node(raw: JsonDict) -> PlanNodeBody:
+    node = raw.get("node")
+    if node is not None and not isinstance(node, int | str):
+        raise PlannerError(
+            ErrorCode.validation, "node must be 'root' or a child position", {"node": node}
+        )
+    return PlanNodeBody(node=node)
 
 
 # --- shared day helpers --------------------------------------------------------
@@ -112,29 +108,31 @@ async def get_day(date: str, conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
 
 
 @router.patch("/day/{date}")
-async def patch_day(date: str, body: DayPatchBody, conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
+async def patch_day(date: str, raw: dict[str, Any], conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
+    body = DayPatchBody(brief=body_opt_str(raw, "brief"), notes=body_opt_str(raw, "notes"))
     did = resolve_day_id(date, clk, cfg)
     now = clk.now_unix()
-    if body.brief is None and body.notes is None:
+    if body["brief"] is None and body["notes"] is None:
         raise PlannerError(ErrorCode.validation, "no day fields to update", {})
-    if body.brief is not None:
+    if body["brief"] is not None:
         with txn(conn):
-            days_data.set_brief(conn, did, body.brief, now)
-    if body.notes is not None:
+            days_data.set_brief(conn, did, body["brief"], now)
+    if body["notes"] is not None:
         with txn(conn):
-            days_data.set_notes(conn, did, body.notes, now)
+            days_data.set_notes(conn, did, body["notes"], now)
     return _day_view(conn, did, now)
 
 
 @router.post("/day/{date}/tickets")
-async def add_day_ticket(date: str, body: AddDayTicketBody, conn: DbConn, ctx: Ctx,
+async def add_day_ticket(date: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                          cfg: Cfg, clk: Clk) -> JsonDict:
+    body = AddDayTicketBody(ticket_id=body_str(raw, "ticket_id"))
     did = resolve_day_id(date, clk, cfg)
     now = clk.now_unix()
-    read_ticket(conn, body.ticket_id)  # existence guard (avoids a raw FK 500)
-    validate_carried_claim(conn, ctx, body.ticket_id, now)
+    read_ticket(conn, body["ticket_id"])  # existence guard (avoids a raw FK 500)
+    validate_carried_claim(conn, ctx, body["ticket_id"], now)
     with txn(conn):
-        days_data.add_day_ticket(conn, did, body.ticket_id, now)
+        days_data.add_day_ticket(conn, did, body["ticket_id"], now)
     return _day_view(conn, did, now)
 
 
@@ -150,12 +148,13 @@ async def remove_day_ticket(date: str, ticket_id: str, conn: DbConn, ctx: Ctx, c
 
 
 @router.post("/day/{date}/plan/accept")
-async def plan_accept(date: str, body: PlanNodeBody, conn: DbConn, ctx: Ctx, cfg: Cfg,
+async def plan_accept(date: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
                       clk: Clk) -> JsonDict:
+    body = _marshal_plan_node(raw)
     reject_agents(ctx)
     did = resolve_day_id(date, clk, cfg)
     now = clk.now_unix()
-    node = _parse_node(body.node)
+    node = _parse_node(body["node"])
     tree = _load_plan_or_error(conn, did)
     if isinstance(node, int):
         _require_child(tree, node)
@@ -178,12 +177,13 @@ async def plan_accept_all(date: str, conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk)
 
 
 @router.post("/day/{date}/plan/invalidate")
-async def plan_invalidate(date: str, body: PlanNodeBody, conn: DbConn, ctx: Ctx, cfg: Cfg,
+async def plan_invalidate(date: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
                           clk: Clk) -> JsonDict:
+    body = _marshal_plan_node(raw)
     reject_agents(ctx)
     did = resolve_day_id(date, clk, cfg)
     now = clk.now_unix()
-    node = _parse_node(body.node)
+    node = _parse_node(body["node"])
     tree = _load_plan_or_error(conn, did)
     if isinstance(node, int):
         _require_child(tree, node)

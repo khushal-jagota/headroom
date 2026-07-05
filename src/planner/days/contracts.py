@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
+from typing import TypedDict
 
 
 class NodeStatus(StrEnum):         # §6.3
@@ -51,6 +52,25 @@ class DayTicket:                   # day_tickets row (§3.4)
     day_id: str
     ticket_id: str
     position: int                  # contiguous from 0
+
+
+# --- request bodies (§9 wire shapes) ---
+# Every key is optional on the wire: an absent key takes the documented default,
+# unknown keys are ignored. The api layer marshals the raw JSON dict into these
+# shapes; a null or wrong-typed value raises ErrorCode.validation.
+
+
+class DayPatchBody(TypedDict, total=False):       # PATCH /day/{date}
+    brief: str | None              # absent/null = leave unchanged
+    notes: str | None              # absent/null = leave unchanged
+
+
+class AddDayTicketBody(TypedDict, total=False):   # POST /day/{date}/tickets
+    ticket_id: str                 # required (default "" fails the existence guard)
+
+
+class PlanNodeBody(TypedDict, total=False):       # POST /day/{date}/plan/{accept,invalidate}
+    node: int | str | None         # "root" or a child position; route requires it
 
 
 # Planning-date math (§6.1): implemented in days/logic/dates.py at stage 3.

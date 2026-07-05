@@ -14,7 +14,6 @@ from datetime import date
 from typing import Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel
 
 from planner.core.authctx import reject_agents
 from planner.core.clock import Clock
@@ -25,9 +24,18 @@ from planner.core.ids import ID_PREFIXES, new_id
 from planner.days.logic.dates import planning_date
 from planner.sprints import data as sprints_data
 from planner.sprints import views as sprints_views
-from planner.sprints.contracts import KICKOFF_FIELDS, REVIEW_FIELDS, ItemStatus
+from planner.sprints.contracts import (
+    KICKOFF_FIELDS,
+    REVIEW_FIELDS,
+    AddendumBody,
+    CreateIdeaBody,
+    CreateItemBody,
+    CreateSprintBody,
+    ItemStatus,
+    ProposeStatusBody,
+)
 from planner.sprints.logic import DateRange, find_overlap
-from planner.tickets.api import Cfg, Clk, Ctx, DbConn, parse_enum, txn
+from planner.tickets.api import Cfg, Clk, Ctx, DbConn, body_opt_str, body_str, parse_enum, txn
 
 router = APIRouter()
 
@@ -35,43 +43,39 @@ _SPRINT_TEXT_FIELDS = ("name",) + KICKOFF_FIELDS + REVIEW_FIELDS
 _ITEM_PLAIN_FIELDS = ("title", "body", "priority", "deadline", "project", "current_state_note")
 
 
-# --- request models ------------------------------------------------------------
+# --- request-body marshallers (contract shapes in sprints/contracts.py) ---------
 
 
-class CreateItemBody(BaseModel):
-    title: str = ""
-    project: str | None = None
-    body: str = ""
-    priority: str | None = None
-    deadline: str | None = None
-    current_state_note: str = ""
-    sprint_id: str | None = None
+def _marshal_create_item(raw: JsonDict) -> CreateItemBody:
+    return CreateItemBody(
+        title=body_str(raw, "title"),
+        project=body_opt_str(raw, "project"),
+        body=body_str(raw, "body"),
+        priority=body_opt_str(raw, "priority"),
+        deadline=body_opt_str(raw, "deadline"),
+        current_state_note=body_str(raw, "current_state_note"),
+        sprint_id=body_opt_str(raw, "sprint_id"),
+    )
 
 
-class ProposeStatusBody(BaseModel):
-    to: str = ""
-    note: str | None = None
+def _marshal_create_sprint(raw: JsonDict) -> CreateSprintBody:
+    return CreateSprintBody(
+        name=body_str(raw, "name"),
+        date_start=body_str(raw, "date_start"),
+        date_end=body_str(raw, "date_end"),
+        limiting_factor=body_str(raw, "limiting_factor"),
+        primary_bet=body_str(raw, "primary_bet"),
+        supports=body_str(raw, "supports"),
+        premortem=body_str(raw, "premortem"),
+    )
 
 
-class CreateSprintBody(BaseModel):
-    name: str = ""
-    date_start: str = ""
-    date_end: str = ""
-    limiting_factor: str = ""
-    primary_bet: str = ""
-    supports: str = ""
-    premortem: str = ""
-
-
-class AddendumBody(BaseModel):
-    date: str = ""
-    text: str = ""
-
-
-class CreateIdeaBody(BaseModel):
-    title: str = ""
-    body: str = ""
-    project: str | None = None
+def _marshal_create_idea(raw: JsonDict) -> CreateIdeaBody:
+    return CreateIdeaBody(
+        title=body_str(raw, "title"),
+        body=body_str(raw, "body"),
+        project=body_opt_str(raw, "project"),
+    )
 
 
 # --- private gap-fill writers (D1/D3; A1: writer-shaped for relocation) ---------
@@ -166,22 +170,23 @@ def _marshal_item_deadline(raw: object) -> None:
 
 
 @router.post("/items")
-async def create_item(body: CreateItemBody, conn: DbConn, clk: Clk) -> JsonDict:
-    if body.project is None:
+async def create_item(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
+    body = _marshal_create_item(raw)
+    if body["project"] is None:
         raise PlannerError(ErrorCode.validation, "project is required")
-    project = parse_enum(Project, body.project, "project")
-    priority = parse_enum(Priority, body.priority, "priority") if body.priority is not None \
-        else Priority.P3
-    _marshal_item_deadline(body.deadline)
+    project = parse_enum(Project, body["project"], "project")
+    priority = parse_enum(Priority, body["priority"], "priority") \
+        if body["priority"] is not None else Priority.P3
+    _marshal_item_deadline(body["deadline"])
     item = sprints_data.create_item(
         conn,
-        title=body.title,
+        title=body["title"],
         project=project,
-        body=body.body,
+        body=body["body"],
         priority=priority,
-        deadline=body.deadline,
-        current_state_note=body.current_state_note,
-        sprint_id=body.sprint_id,
+        deadline=body["deadline"],
+        current_state_note=body["current_state_note"],
+        sprint_id=body["sprint_id"],
         clock=clk,
     )
     return {**sprints_views.item_json(item), "blockers_cleared": False}
@@ -232,11 +237,12 @@ async def patch_item(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
 
 
 @router.post("/items/{item_id}/propose-status")
-async def propose_item_status(item_id: str, body: ProposeStatusBody, conn: DbConn, ctx: Ctx,
+async def propose_item_status(item_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                               clk: Clk) -> JsonDict:
-    to_status = parse_enum(ItemStatus, body.to, "status")
+    body = ProposeStatusBody(to=body_str(raw, "to"), note=body_opt_str(raw, "note"))
+    to_status = parse_enum(ItemStatus, body["to"], "status")
     sprints_data.propose_item_status(
-        conn, item_id, to_status, note=body.note, proposed_by=ctx.actor, clock=clk
+        conn, item_id, to_status, note=body["note"], proposed_by=ctx.actor, clock=clk
     )
     return sprints_views.item_detail(conn, item_id)
 
@@ -252,22 +258,23 @@ async def accept_item_status(item_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> 
 
 
 @router.post("/sprints")
-async def create_sprint(body: CreateSprintBody, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+async def create_sprint(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+    body = _marshal_create_sprint(raw)
     reject_agents(ctx)
-    for label, raw in (("date_start", body.date_start), ("date_end", body.date_end)):
+    for label, value in (("date_start", body["date_start"]), ("date_end", body["date_end"])):
         try:
-            date.fromisoformat(raw)
+            date.fromisoformat(value)
         except ValueError:
-            raise PlannerError(ErrorCode.validation, f"invalid {label}", {label: raw}) from None
+            raise PlannerError(ErrorCode.validation, f"invalid {label}", {label: value}) from None
     sprint = sprints_data.create_sprint(
         conn,
-        name=body.name,
-        date_start=body.date_start,
-        date_end=body.date_end,
-        limiting_factor=body.limiting_factor,
-        primary_bet=body.primary_bet,
-        supports=body.supports,
-        premortem=body.premortem,
+        name=body["name"],
+        date_start=body["date_start"],
+        date_end=body["date_end"],
+        limiting_factor=body["limiting_factor"],
+        primary_bet=body["primary_bet"],
+        supports=body["supports"],
+        premortem=body["premortem"],
         clock=clk,
     )
     return sprints_views.sprint_json(sprint)
@@ -315,8 +322,11 @@ async def freeze_review(sprint_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> Jso
 
 
 @router.post("/sprints/{sprint_id}/addenda")
-async def add_addendum(sprint_id: str, body: AddendumBody, conn: DbConn, clk: Clk) -> JsonDict:
-    sprint = sprints_data.add_addendum(conn, sprint_id, date=body.date, text=body.text, clock=clk)
+async def add_addendum(sprint_id: str, raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
+    body = AddendumBody(date=body_str(raw, "date"), text=body_str(raw, "text"))
+    sprint = sprints_data.add_addendum(
+        conn, sprint_id, date=body["date"], text=body["text"], clock=clk
+    )
     return sprints_views.sprint_json(sprint)
 
 
@@ -330,9 +340,11 @@ async def current_sprint(conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
 
 
 @router.post("/ideas")
-async def create_idea(body: CreateIdeaBody, conn: DbConn, clk: Clk) -> JsonDict:
-    project = parse_enum(Project, body.project, "project") if body.project is not None else None
-    return _create_idea(conn, title=body.title, body=body.body, project=project,
+async def create_idea(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
+    body = _marshal_create_idea(raw)
+    project = parse_enum(Project, body["project"], "project") \
+        if body["project"] is not None else None
+    return _create_idea(conn, title=body["title"], body=body["body"], project=project,
                         now=clk.now_unix())
 
 

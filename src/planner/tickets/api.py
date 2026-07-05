@@ -5,9 +5,13 @@ re-implements a domain rule and no route appends events.
 
 This module also homes the shared request plumbing (config/clock accessors, the
 per-request connection dependency, the transaction context manager, and the enum
-marshaller). The other api modules import these from here; the direction is strictly
-one-way (sprints/days/dispatch api -> tickets api), and views modules import no api
-module at all."""
+and body-key marshallers). The other api modules import these from here; the direction
+is strictly one-way (sprints/days/dispatch api -> tickets api), and views modules
+import no api module at all.
+
+Request bodies arrive as plain dicts and are marshalled into the TypedDict shapes
+declared in each domain's contracts (§14); a null or wrong-typed key raises the
+validation envelope rather than FastAPI's 422, so the CLI and UI see one error shape."""
 
 from __future__ import annotations
 
@@ -19,7 +23,6 @@ from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
 
 from planner.core import links as core_links
 from planner.core.authctx import (
@@ -41,9 +44,17 @@ from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
 from planner.tickets.contracts import (
     NO_FURTHER,
+    AcceptBody,
     AtCap,
+    CreateTicketBody,
     FieldName,
+    GrantBody,
+    LinkBody,
     NextCeiling,
+    NoteBody,
+    ProposeBody,
+    RecapBody,
+    StateBody,
     Ticket,
     TicketState,
 )
@@ -99,49 +110,45 @@ def parse_enum[E: StrEnum](enum_cls: type[E], raw: str, what: str) -> E:
         raise PlannerError(ErrorCode.validation, f"invalid {what}", {what: raw}) from None
 
 
-# --- request models ------------------------------------------------------------
+def body_str(body: JsonDict, key: str, default: str = "") -> str:
+    """Marshal an optional string body key: absent -> default; null or non-string ->
+    the validation envelope. Unknown keys are ignored by the callers, matching the
+    §14 body shapes."""
+    raw = body.get(key, default)
+    if not isinstance(raw, str):
+        raise PlannerError(ErrorCode.validation, f"invalid {key}", {key: raw})
+    return raw
 
 
-class CreateTicketBody(BaseModel):
-    title: str = ""
-    priority: str | None = None
-    deadline: str | None = None
-    project: str | None = None
-    sprint_id: str | None = None
-    sprint_item_id: str | None = None
+def body_opt_str(body: JsonDict, key: str) -> str | None:
+    raw = body.get(key)
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise PlannerError(ErrorCode.validation, f"invalid {key}", {key: raw})
+    return raw
 
 
-class ProposeBody(BaseModel):
-    body: str = ""
+# --- request-body marshallers (contract shapes in tickets/contracts.py) ---------
 
 
-class AcceptBody(BaseModel):
-    edited_body: str | None = None
-    next_ceiling: str | None = None
-    at_cap: str | None = None
+def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
+    return CreateTicketBody(
+        title=body_str(raw, "title"),
+        priority=body_opt_str(raw, "priority"),
+        deadline=body_opt_str(raw, "deadline"),
+        project=body_opt_str(raw, "project"),
+        sprint_id=body_opt_str(raw, "sprint_id"),
+        sprint_item_id=body_opt_str(raw, "sprint_item_id"),
+    )
 
 
-class NoteBody(BaseModel):
-    note: str | None = None
-
-
-class RecapBody(BaseModel):
-    body: str = ""
-
-
-class GrantBody(BaseModel):
-    ceiling: str | None = None
-    at_cap: str | None = None
-
-
-class StateBody(BaseModel):
-    to: str = ""
-
-
-class LinkBody(BaseModel):
-    from_id: str = ""
-    to_id: str = ""
-    kind: str = ""
+def _marshal_accept(raw: JsonDict) -> AcceptBody:
+    return AcceptBody(
+        edited_body=body_opt_str(raw, "edited_body"),
+        next_ceiling=body_opt_str(raw, "next_ceiling"),
+        at_cap=body_opt_str(raw, "at_cap"),
+    )
 
 
 # --- grant marshallers ---------------------------------------------------------
@@ -217,23 +224,25 @@ def _set_project(conn: sqlite3.Connection, ticket_id: str, project: Project | No
 
 
 @router.post("/tickets")
-async def create_ticket(body: CreateTicketBody, conn: DbConn, ctx: Ctx, cfg: Cfg,
+async def create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
                         clk: Clk) -> JsonDict:
+    body = _marshal_create_ticket(raw)
     now = clk.now_unix()
-    priority = parse_enum(Priority, body.priority, "priority") if body.priority is not None \
-        else Priority.P3
-    project = parse_enum(Project, body.project, "project") if body.project is not None else None
+    priority = parse_enum(Priority, body["priority"], "priority") \
+        if body["priority"] is not None else Priority.P3
+    project = parse_enum(Project, body["project"], "project") \
+        if body["project"] is not None else None
     ticket = tickets_data.create_ticket(
         conn,
-        title=body.title,
+        title=body["title"],
         actor=ctx.actor,
         now=now,
         title_max_chars=cfg.title_max_chars,
         project=project,
         priority=priority,
-        deadline=body.deadline,
-        sprint_id=body.sprint_id,
-        sprint_item_id=body.sprint_item_id,
+        deadline=body["deadline"],
+        sprint_id=body["sprint_id"],
+        sprint_item_id=body["sprint_item_id"],
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -291,33 +300,35 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
 
 
 @router.post("/tickets/{ticket_id}/propose/{field}")
-async def propose_field(ticket_id: str, field: str, body: ProposeBody, conn: DbConn, ctx: Ctx,
+async def propose_field(ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                         clk: Clk) -> JsonDict:
+    body = ProposeBody(body=body_str(raw, "body"))
     field_enum = parse_enum(FieldName, field, "field")
     now = clk.now_unix()
     if ctx.is_claimed_agent:
         require_claim(conn, ctx, ticket_id, now)
     ticket = tickets_data.file_proposal(
-        conn, ticket_id, field=field_enum, body=body.body, actor=ctx.actor, now=now
+        conn, ticket_id, field=field_enum, body=body["body"], actor=ctx.actor, now=now
     )
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/accept/{field}")
-async def accept_field(ticket_id: str, field: str, body: AcceptBody, conn: DbConn, ctx: Ctx,
+async def accept_field(ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                        clk: Clk) -> JsonDict:
+    body = _marshal_accept(raw)
     reject_agents(ctx)
     field_enum = parse_enum(FieldName, field, "field")
     now = clk.now_unix()
-    next_ceiling = _parse_next_ceiling(body.next_ceiling)
-    at_cap = _parse_grant_at_cap(body.at_cap)
+    next_ceiling = _parse_next_ceiling(body["next_ceiling"])
+    at_cap = _parse_grant_at_cap(body["at_cap"])
     ticket = tickets_data.accept_proposal(
         conn,
         ticket_id,
         field=field_enum,
         actor=ctx.actor,
         now=now,
-        edited_body=body.edited_body,
+        edited_body=body["edited_body"],
         next_ceiling=next_ceiling,
         at_cap=at_cap,
     )
@@ -333,50 +344,55 @@ async def approve_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> Js
 
 
 @router.put("/tickets/{ticket_id}/notes/{field}")
-async def put_notes(ticket_id: str, field: str, body: NoteBody, conn: DbConn, ctx: Ctx,
+async def put_notes(ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                     clk: Clk) -> JsonDict:
+    body = NoteBody(note=body_opt_str(raw, "note"))
     field_enum = parse_enum(FieldName, field, "field")
     now = clk.now_unix()
     if ctx.is_claimed_agent:
         require_claim(conn, ctx, ticket_id, now)
     ticket = tickets_data.set_note(
-        conn, ticket_id, field=field_enum, note=body.note, actor=ctx.actor, now=now
+        conn, ticket_id, field=field_enum, note=body["note"], actor=ctx.actor, now=now
     )
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.put("/tickets/{ticket_id}/recap")
-async def put_recap(ticket_id: str, body: RecapBody, conn: DbConn, ctx: Ctx,
+async def put_recap(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                     clk: Clk) -> JsonDict:
+    body = RecapBody(body=body_str(raw, "body"))
     now = clk.now_unix()
     if ctx.is_claimed_agent:
         require_claim(conn, ctx, ticket_id, now)
-    ticket = tickets_data.write_recap(conn, ticket_id, body=body.body, actor=ctx.actor, now=now)
+    ticket = tickets_data.write_recap(conn, ticket_id, body=body["body"], actor=ctx.actor, now=now)
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/grant")
-async def grant_ticket(ticket_id: str, body: GrantBody, conn: DbConn, ctx: Ctx,
+async def grant_ticket(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                        clk: Clk) -> JsonDict:
+    body = GrantBody(ceiling=body_opt_str(raw, "ceiling"), at_cap=body_opt_str(raw, "at_cap"))
     reject_agents(ctx)
     now = clk.now_unix()
-    if body.ceiling is None or body.at_cap is None:
-        missing = [name for name, raw in (("ceiling", body.ceiling), ("at_cap", body.at_cap))
-                   if raw is None]
+    ceiling_raw = body["ceiling"]
+    at_cap_raw = body["at_cap"]
+    if ceiling_raw is None or at_cap_raw is None:
+        missing = [name for name, value in (("ceiling", ceiling_raw), ("at_cap", at_cap_raw))
+                   if value is None]
         raise PlannerError(
             ErrorCode.grant_missing, "grant requires ceiling and at_cap", {"missing": missing}
         )
     try:
-        ceiling = TicketState(body.ceiling)
+        ceiling = TicketState(ceiling_raw)
     except ValueError:
         raise PlannerError(
-            ErrorCode.grant_invalid, "unknown ceiling", {"ceiling": body.ceiling}
+            ErrorCode.grant_invalid, "unknown ceiling", {"ceiling": ceiling_raw}
         ) from None
     try:
-        at_cap = AtCap(body.at_cap)
+        at_cap = AtCap(at_cap_raw)
     except ValueError:
         raise PlannerError(
-            ErrorCode.grant_invalid, "unknown at_cap", {"at_cap": body.at_cap}
+            ErrorCode.grant_invalid, "unknown at_cap", {"at_cap": at_cap_raw}
         ) from None
     ticket = tickets_data.change_grant(
         conn, ticket_id, ceiling=ceiling, at_cap=at_cap, actor=ctx.actor, now=now
@@ -385,11 +401,12 @@ async def grant_ticket(ticket_id: str, body: GrantBody, conn: DbConn, ctx: Ctx,
 
 
 @router.post("/tickets/{ticket_id}/state")
-async def set_state(ticket_id: str, body: StateBody, conn: DbConn, ctx: Ctx,
+async def set_state(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                     clk: Clk) -> JsonDict:
+    body = StateBody(to=body_str(raw, "to"))
     reject_agents(ctx)
     now = clk.now_unix()
-    to_state = parse_enum(TicketState, body.to, "state")
+    to_state = parse_enum(TicketState, body["to"], "state")
     ticket = tickets_data.set_state(conn, ticket_id, new_state=to_state, actor=ctx.actor, now=now)
     return tickets_views.ticket_json(ticket, now)
 
@@ -456,13 +473,18 @@ def _validate_link_claim(conn: sqlite3.Connection, ctx: RequestContext,
 
 
 @router.post("/links")
-async def add_link(body: LinkBody, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
-    kind = parse_enum(LinkKind, body.kind, "kind")
+async def add_link(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+    body = LinkBody(
+        from_id=body_str(raw, "from_id"),
+        to_id=body_str(raw, "to_id"),
+        kind=body_str(raw, "kind"),
+    )
+    kind = parse_enum(LinkKind, body["kind"], "kind")
     now = clk.now_unix()
-    _validate_link_claim(conn, ctx, body.from_id, body.to_id, now)
+    _validate_link_claim(conn, ctx, body["from_id"], body["to_id"], now)
     with txn(conn):
-        core_links.add_link(conn, body.from_id, body.to_id, kind, now)
-    return {"from_id": body.from_id, "to_id": body.to_id, "kind": kind.value}
+        core_links.add_link(conn, body["from_id"], body["to_id"], kind, now)
+    return {"from_id": body["from_id"], "to_id": body["to_id"], "kind": kind.value}
 
 
 @router.delete("/links")

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Final
+from typing import Final, TypedDict
 
 from planner.core.contracts import Priority, Project
 
@@ -89,6 +89,49 @@ class SprintItem:                  # §3.2
     status_proposal: ItemStatusProposal | None = None
     created_at: int = 0
     updated_at: int = 0
+
+
+# --- request bodies (§9 wire shapes) ---
+# Every key is optional on the wire: an absent key takes the documented default,
+# unknown keys are ignored. The api layer marshals the raw JSON dict into these
+# shapes; a null or wrong-typed value raises ErrorCode.validation. Enum-valued
+# keys carry the string form and are parsed against the contract enums in api.
+
+
+class CreateItemBody(TypedDict, total=False):     # POST /items
+    title: str                     # default ""
+    project: str | None            # Project value; route requires it
+    body: str                      # default ""
+    priority: str | None           # Priority value; default P3
+    deadline: str | None           # ISO date
+    current_state_note: str        # default ""
+    sprint_id: str | None          # null/absent = backlog
+
+
+class ProposeStatusBody(TypedDict, total=False):  # POST /items/{id}/propose-status
+    to: str                        # ItemStatus value; required (default "" is rejected)
+    note: str | None               # optional rationale shown in Review
+
+
+class CreateSprintBody(TypedDict, total=False):   # POST /sprints
+    name: str                      # default ""
+    date_start: str                # ISO date; required (default "" is rejected)
+    date_end: str                  # ISO date; required (default "" is rejected)
+    limiting_factor: str           # default ""
+    primary_bet: str               # default ""
+    supports: str                  # default ""
+    premortem: str                 # default ""
+
+
+class AddendumBody(TypedDict, total=False):       # POST /sprints/{id}/addenda
+    date: str                      # ISO date; default ""
+    text: str                      # default ""
+
+
+class CreateIdeaBody(TypedDict, total=False):     # POST /ideas
+    title: str                     # route requires it non-empty
+    body: str                      # default ""
+    project: str | None            # Project value
 
 
 @dataclass

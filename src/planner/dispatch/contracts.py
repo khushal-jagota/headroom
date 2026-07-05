@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Final
+from typing import Final, TypedDict
 
 from planner.core.contracts import Priority
 from planner.tickets.contracts import AtCap, TicketState
@@ -31,6 +31,17 @@ FAILURE_STATUSES: Final[frozenset[RunStatus]] = frozenset({
 AGENT_CLOSE_OUTCOMES: Final[frozenset[RunStatus]] = frozenset({
     RunStatus.done, RunStatus.blocked,
 })
+
+
+# --- request bodies (§9 wire shapes) ---
+# Every key is optional on the wire: an absent key takes the documented default,
+# unknown keys are ignored. The api layer marshals the raw JSON dict into these
+# shapes; a null or wrong-typed value raises ErrorCode.validation.
+
+
+class CloseRunBody(TypedDict, total=False):       # POST /runs/{id}/close
+    outcome: str                   # RunStatus value in AGENT_CLOSE_OUTCOMES; required
+    summary: str | None
 
 
 @dataclass

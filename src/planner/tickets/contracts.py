@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Final, Literal
+from typing import Final, Literal, TypedDict
 
 from planner.core.contracts import Priority, Project
 
@@ -91,6 +91,55 @@ NextCeiling = TicketState | Literal["none"]    # valid TicketState values are ST
 class GrantPair:                   # required on every human accept/edit-accept
     next_ceiling: NextCeiling
     at_cap: AtCap
+
+
+# --- request bodies (§9 wire shapes) ---
+# Every key is optional on the wire: an absent key takes the documented default,
+# unknown keys are ignored. The api layer marshals the raw JSON dict into these
+# shapes; a null or wrong-typed value raises ErrorCode.validation. Enum-valued
+# keys carry the string form and are parsed against the contract enums in api.
+
+
+class CreateTicketBody(TypedDict, total=False):   # POST /tickets
+    title: str                     # default ""
+    priority: str | None           # Priority value; default P3
+    deadline: str | None           # ISO date
+    project: str | None            # Project value
+    sprint_id: str | None
+    sprint_item_id: str | None
+
+
+class ProposeBody(TypedDict, total=False):        # POST /tickets/{id}/propose/{field}
+    body: str                      # default ""
+
+
+class AcceptBody(TypedDict, total=False):         # POST /tickets/{id}/accept/{field}
+    edited_body: str | None        # human edit applied before resolution
+    next_ceiling: str | None       # TicketState value or NO_FURTHER; grant pair (§4.4.7)
+    at_cap: str | None             # AtCap value; grant pair (§4.4.7)
+
+
+class NoteBody(TypedDict, total=False):           # PUT /tickets/{id}/notes/{field}
+    note: str | None               # null clears the note
+
+
+class RecapBody(TypedDict, total=False):          # PUT /tickets/{id}/recap
+    body: str                      # default ""
+
+
+class GrantBody(TypedDict, total=False):          # POST /tickets/{id}/grant
+    ceiling: str | None            # TicketState value; route requires it (grant_missing)
+    at_cap: str | None             # AtCap value; route requires it (grant_missing)
+
+
+class StateBody(TypedDict, total=False):          # POST /tickets/{id}/state
+    to: str                        # TicketState value; required (default "" is rejected)
+
+
+class LinkBody(TypedDict, total=False):           # POST /links (ticket-anchored, homed here)
+    from_id: str                   # required (default "" fails endpoint checks)
+    to_id: str                     # required (default "" fails endpoint checks)
+    kind: str                      # LinkKind value; required (default "" is rejected)
 
 
 @dataclass
