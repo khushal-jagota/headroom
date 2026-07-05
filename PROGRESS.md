@@ -4,7 +4,7 @@ Read this first after any context compaction. It is the build's memory.
 
 ## Current stage
 
-**Stage 6 (Playwright e2e, items 22–34) — dispatching T18 → T19∥T20.** Stages per SPEC.md §18: (1) contracts, (2) verify instrument, (3) pure logic + unit tests, (4) server wiring, (5) UI, (6) e2e, (7) dogfood.
+**FINAL GATE: fresh ./verify + codex audit.** All seven stages complete. Stages per SPEC.md §18: (1) contracts, (2) verify instrument, (3) pure logic + unit tests, (4) server wiring, (5) UI, (6) e2e, (7) dogfood.
 
 ## Stage ledger
 
@@ -15,11 +15,12 @@ Read this first after any context compaction. It is the build's memory.
 | 3. Pure logic + unit tests (items 1–21, 36) | **complete** — verify run 002: `VERIFY: 22/36 PASS`, all 22 unit items green; five ticket pipelines + T08 done, all codex impl reviews archived with dispositions; four load-bearing spot-checks passed (planning-date math, seed parser vs real snapshot, claim CAS, resolution engine) |
 | 4. Server wiring | **complete** (66de9cf) — T09 shell/WS/§7.6 (token-echo leak fixed), T10 all §9 routes + views (claim-order + deadline-type fixes), T11 runtimes (stale-lock fix), T12 CLI (env-sentinel fix), T13 chat/seed (NO VIOLATIONS); every pipeline codex-reviewed; suite 81 green |
 | 5. UI views | **complete** (6899dd3) — T14 foundation (XSS bypass in markdown safeHref caught+fixed), T15 Day+Review (queue dead-end fixed), T16 Board+Ticket (clean; smokes hardened), T17 Sprint+Backlog; D11 inventory realized; node --check green |
-| 6. Playwright e2e (items 22–34) | not started |
-| 7. Dogfood (item 35 + Levels B/C) | not started |
+| 6. Playwright e2e (items 22–34) | **complete** (7118677) — T18 items 22–27, T19 28–32, T20 33–34 (snapshot ground truth pinned); integration fix D15 (missing script tags caught by full-suite run) |
+| 7. Dogfood (item 35 + Levels B/C) | **complete** — item 35 green in verify (T21); Level B PASS attempt 1 (3 proposals + 3 recaps by live hermes session, evidence in DOGFOOD.md); Level C PASS attempt 2 (real dispatcher claim → claim-env proposals → runs closed done, ticket landed at ceiling; attempt-1 zombie-pid failure recorded honestly) |
 
 ## What just happened
 
+- 2026-07-05: Dogfooded the planning-worker loop on ticket `t_gfsfcm7z` via the live `plan` CLI. Success and approach auto-accepted; plan parked at the `needs_plan` ceiling for human review; recap updated. Fresh `./verify`: `VERIFY: 36/36 PASS`.
 - Stages 1+2 integrated and committed (170514b). Reviews clean (D10). Verify run 001 archived: gates green, `VERIFY: 0/36 PASS` as required at stage 2.
 - **Stage-3 wave dispatched**: five per-ticket Fable orchestrators (t03-orch…t07-orch) + T08 Opus implementer, all running concurrently in the main tree on disjoint file sets, each running its internal plan→codex→implement→codex pipeline (D8).
 - Stage-4 tickets cut (T09 server shell, T10 domain APIs, T11 runtimes+real adapters, T12 CLI wiring, T13 chat+seed). UI component inventory recorded ahead of stage 5 (D11).
