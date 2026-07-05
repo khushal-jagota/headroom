@@ -4,6 +4,16 @@ Read this first after any context compaction. It is the build's memory.
 
 ## Current stage
 
+**COMPLETE (per D23 owner ruling).** `./verify` 36/36 PASS; all seven §18 stages done in
+order; every genuine code violation across audit rounds 1–5 fixed and codex-reviewed;
+dogfood Levels A/B/C evidenced at the final tree; the final audit (4b7f871) returns the
+§12 snapshot as its SOLE violation — the owner-reviewed-and-accepted spec self-contradiction
+(D23) — with its three non-blocking concerns dispositioned (D24). `AUDIT: PASS` is not
+attainable because the spec contradiction is unmodifiable; the owner descoped it for this
+one item, so it does not block completion. See D24 for the definition-of-done statement.
+
+### Close-out trail (superseded)
+
 **CLOSE-OUT — owner accepted the §12 snapshot contradiction (D23).** Surfaced the snapshot
 self-contradiction to the owner after it recurred as an audit violation with no code
 resolution possible (SPEC unmodifiable; live data unreadable). Owner ruling: keep the
