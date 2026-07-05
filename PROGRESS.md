@@ -4,7 +4,7 @@ Read this first after any context compaction. It is the build's memory.
 
 ## Current stage
 
-**Stage 4 (server wiring) — dispatching T09 → T10∥T11 → T12∥T13.** Stages per SPEC.md §18: (1) contracts, (2) verify instrument, (3) pure logic + unit tests, (4) server wiring, (5) UI, (6) e2e, (7) dogfood.
+**Stage 6 (Playwright e2e, items 22–34) — dispatching T18 → T19∥T20.** Stages per SPEC.md §18: (1) contracts, (2) verify instrument, (3) pure logic + unit tests, (4) server wiring, (5) UI, (6) e2e, (7) dogfood.
 
 ## Stage ledger
 
@@ -14,7 +14,7 @@ Read this first after any context compaction. It is the build's memory.
 | 2. Verify instrument | **complete** — `./verify` behaves per §18.2 on the bare tree (gates green, 36 FAIL, `VERIFY: 0/36 PASS`, exit 1; run 001 archived); codex impl review NO VIOLATIONS |
 | 3. Pure logic + unit tests (items 1–21, 36) | **complete** — verify run 002: `VERIFY: 22/36 PASS`, all 22 unit items green; five ticket pipelines + T08 done, all codex impl reviews archived with dispositions; four load-bearing spot-checks passed (planning-date math, seed parser vs real snapshot, claim CAS, resolution engine) |
 | 4. Server wiring | **complete** (66de9cf) — T09 shell/WS/§7.6 (token-echo leak fixed), T10 all §9 routes + views (claim-order + deadline-type fixes), T11 runtimes (stale-lock fix), T12 CLI (env-sentinel fix), T13 chat/seed (NO VIOLATIONS); every pipeline codex-reviewed; suite 81 green |
-| 5. UI views | not started |
+| 5. UI views | **complete** (6899dd3) — T14 foundation (XSS bypass in markdown safeHref caught+fixed), T15 Day+Review (queue dead-end fixed), T16 Board+Ticket (clean; smokes hardened), T17 Sprint+Backlog; D11 inventory realized; node --check green |
 | 6. Playwright e2e (items 22–34) | not started |
 | 7. Dogfood (item 35 + Levels B/C) | not started |
 
