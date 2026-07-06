@@ -334,3 +334,42 @@ Two genuine codex findings on the backend diff, both fixed:
   pattern; the lead surfaces re-seed-vs-migrations to the owner.
 
 Verify after fixes: **VERIFY: PASS** (all 5 gates; 15 e2e).
+
+### Backlog + Ideas split into two redesigned screens (2026-07-06)
+
+Built the redesigned Backlog and NEW Ideas screens to the owner-approved mockups
+(`orchestration/backlog-redesign/{backlog,ideas}.html` + `notes.md`). Judgment calls:
+
+- **Direct build, not orchestrated.** The change touches seven tightly-coupled files,
+  four of them shared (`app.css`, `app.js`, `components.js`, `server.py`). Splitting
+  Backlog/Ideas across sub-agents would have them writing the same shared files
+  concurrently for near-zero parallelism gain, so I built it directly and verified with
+  full `./verify` + targeted e2e. Logged per CLAUDE.md (direct-edit when a split is
+  net-negative).
+- **Selectors = chip toggles, not native `<select>`s.** The mockups' whole feel rests on
+  the segmented `.opt` control against transparent inputs; a native select reads
+  off-language. The toggle is a ~25-line local helper (aria-pressed, one selected),
+  cheap enough to justify over the strip-first fallback. Same helper in both screens
+  (screens are self-contained; small duplication over a shared export).
+- **Backlog rows anchor to `#/backlog`, not `#/item/{id}`.** The mockup navigates rows to
+  an item page, but this app has NO item detail screen (no route, no registered screen)
+  and building one is explicitly out of scope. A dead `#/item/{id}` would render "no such
+  screen"; a self-link is harmless and keeps the row a real, hover-lifting anchor — which
+  is exactly what the prior `screens-backlog.js` did. Flagged for the owner: the "one
+  click to the item page" interaction has no destination until an item page exists.
+- **`comp.createForm` left in place, now unused.** The rewrite builds both compose forms
+  bespoke (transparent inputs + chip toggles + the dormant `<details>` / always-open
+  capture), so `createForm`/`FORM_SPECS` in `components.js` and the `.list-stack` /
+  `.create-form*` CSS are now orphaned. Left in place (single-caller dead code) rather
+  than widen a shared-file edit the lead scoped to "nav only" — flagged for a deliberate
+  prune.
+- **Font sizes snapped to the closed type scale.** The mockups use 12/14/16/21px, which
+  aren't in tokens.css's closed five-size scale; snapped each to the nearest token
+  (→ xs/sm/md/lg) to honor "all via tokens.css" over pixel-exact fidelity. Colours,
+  radii, borders, motion all tokenized; only reading measures (760/680px) and a couple
+  of layout thresholds stay raw px (the Day/ticket precedent).
+- **Relative date uses the browser clock** (cosmetic only): "today" / "Nd" under a week /
+  "Mon D" older. e2e never asserts its exact text (it drifts with the real clock).
+
+Verify: **VERIFY: PASS** — 5 gates, 106 unit + 17 e2e (2 new backlog/ideas flow tests,
+`test_e33` updated to the split).

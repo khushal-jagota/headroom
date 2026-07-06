@@ -1694,3 +1694,460 @@ details.fsec[open] > summary .fsec-chev::before {
 [data-screen="sprint"] details.sett .tkts {
   padding-top: var(--space-2);
 }
+
+/* --- Backlog screen (redesign) ------------------------------------------- */
+/* orchestration/backlog-redesign/backlog.html: SCAN unscheduled work by priority,
+   ADD to it. A centered index column — header → dormant compose → priority groups of
+   flat, navigable rows. Scoped to [data-screen="backlog"]; reuses the shared .chip and
+   the transparent .in caret idiom. Values via tokens.css, except the reading measure. */
+
+[data-screen="backlog"] .doc {
+  width: 100%;
+}
+
+[data-screen="backlog"] .head,
+[data-screen="backlog"] .col {
+  max-width: 760px;                 /* the index reading measure */
+  margin: 0 auto;
+}
+
+[data-screen="backlog"] .head {
+  padding: var(--space-5) var(--space-4) var(--space-4);
+  border-bottom: var(--border-hairline) solid var(--border-color);
+}
+
+[data-screen="backlog"] .head .row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+[data-screen="backlog"] .col {
+  padding: 0 var(--space-4) 128px;  /* the read's generous tail (matches Day) */
+}
+
+/* header title + a static count pill (reusing the shared .pill, neutralized) */
+[data-screen="backlog"] .title,
+[data-screen="ideas"] .title {
+  flex: 1;
+  font-size: var(--type-lg);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text-strong);
+}
+
+[data-screen="backlog"] .meta,
+[data-screen="ideas"] .meta {
+  display: flex;
+  gap: var(--space-1);
+  padding-top: 2px;
+}
+
+[data-screen="backlog"] .head .pill,
+[data-screen="ideas"] .head .pill {
+  cursor: default;
+}
+
+[data-screen="backlog"] .head .pill:hover,
+[data-screen="ideas"] .head .pill:hover {
+  color: var(--text-muted);
+}
+
+/* compose — dormant at rest; a quiet affordance that opens the labeled form */
+[data-screen="backlog"] details.make {
+  border-bottom: var(--border-hairline) solid var(--border-color);
+}
+
+[data-screen="backlog"] details.make > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4) 0;
+  font-size: var(--type-sm);
+  color: var(--text-faint);
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+[data-screen="backlog"] details.make > summary::-webkit-details-marker {
+  display: none;
+}
+
+[data-screen="backlog"] details.make > summary:hover {
+  color: var(--text-default);
+}
+
+[data-screen="backlog"] details.make .plus {
+  width: var(--space-3);
+  text-align: center;
+  color: var(--text-faintest);
+  transition: transform var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease);
+}
+
+[data-screen="backlog"] details.make[open] > summary {
+  color: var(--text-muted);
+}
+
+[data-screen="backlog"] details.make[open] > summary .plus {
+  transform: rotate(45deg);       /* + becomes × when open */
+}
+
+[data-screen="backlog"] .form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-1) 0 var(--space-5);
+}
+
+[data-screen="backlog"] .fl {
+  margin-bottom: var(--space-2);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--text-faintest);
+}
+
+[data-screen="backlog"] .fl-opt {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-faintest);
+}
+
+[data-screen="backlog"] .two {
+  display: flex;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+}
+
+[data-screen="backlog"] .two > div {
+  flex: 1;
+  min-width: 150px;               /* wrap threshold (a layout value) */
+}
+
+[data-screen="backlog"] .commit {
+  align-self: flex-start;
+}
+
+/* priority group — a whisper label + rhythm (the Sprint status-group treatment) */
+[data-screen="backlog"] .grp {
+  margin-top: var(--space-6);
+}
+
+[data-screen="backlog"] .glabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--text-faintest);
+}
+
+[data-screen="backlog"] .glabel .n {
+  color: var(--text-faintest);
+}
+
+/* item row — flat + navigable, divided by seams; hover lifts the title only */
+[data-screen="backlog"] .brow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-top: var(--border-hairline) solid var(--border-color);
+  text-decoration: none;
+  color: inherit;
+}
+
+[data-screen="backlog"] .grp .brow:first-of-type {
+  border-top: 0;
+}
+
+[data-screen="backlog"] .brow .bt {
+  flex: 1;
+  font-weight: 500;
+  color: var(--text-default);
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+[data-screen="backlog"] .brow:hover .bt {
+  color: var(--text-strong);
+}
+
+[data-screen="backlog"] .brow .chips {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+
+[data-screen="backlog"] .brow .chips .chip {
+  align-self: center;
+}
+
+/* --- Ideas screen (redesign) --------------------------------------------- */
+/* orchestration/backlog-redesign/ideas.html: CAPTURE with least friction, then
+   browse the pile. The compose is the hero (always open, the Today focus-line idiom);
+   the pile is newest-first, bodies DISCLOSE, title-only ideas are flat. Scoped to
+   [data-screen="ideas"]; body renders via the shared markdown block. */
+
+[data-screen="ideas"] .doc {
+  width: 100%;
+}
+
+[data-screen="ideas"] .head,
+[data-screen="ideas"] .col {
+  max-width: 680px;                 /* a tight read+capture measure (matches Day) */
+  margin: 0 auto;
+}
+
+[data-screen="ideas"] .head {
+  padding: var(--space-5) var(--space-4) var(--space-4);
+  border-bottom: var(--border-hairline) solid var(--border-color);
+}
+
+[data-screen="ideas"] .head .row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+[data-screen="ideas"] .col {
+  padding: 0 var(--space-4) 128px;
+}
+
+/* capture — the hero: always open, the Today focus-line treatment */
+[data-screen="ideas"] .capture {
+  padding: var(--space-5) 0;
+  border-bottom: var(--border-hairline) solid var(--border-color);
+}
+
+[data-screen="ideas"] .capture .title-in {
+  font-size: var(--type-lg);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text-strong);
+}
+
+[data-screen="ideas"] .capture .detail-in {
+  margin-top: var(--space-4);
+  font-size: var(--type-md);
+  line-height: 1.66;
+  color: var(--text-muted);
+}
+
+[data-screen="ideas"] .capture .foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+  flex-wrap: wrap;
+}
+
+[data-screen="ideas"] .capture .foot .spacer {
+  flex: 1;
+}
+
+[data-screen="ideas"] .hint {
+  font-size: var(--type-xs);
+  color: var(--text-faintest);
+}
+
+[data-screen="ideas"] .hint kbd {
+  font-family: inherit;
+  font-size: var(--type-xs);
+  color: var(--text-faint);
+  background: var(--surface-raised);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+}
+
+/* the pile — newest first; a whisper label carries the section */
+[data-screen="ideas"] .list {
+  margin-top: var(--space-6);
+}
+
+[data-screen="ideas"] .list .glabel {
+  padding: var(--space-1) 0 var(--space-2);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--text-faintest);
+}
+
+/* idea = a disclosure (title + project + date; expand reveals the body). Title-only
+   ideas are FLAT rows with an empty chevron. Rows are divided by seams only; the row
+   right after the section label carries none. */
+[data-screen="ideas"] details.idea,
+[data-screen="ideas"] .flat {
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+[data-screen="ideas"] .list .glabel + details.idea,
+[data-screen="ideas"] .list .glabel + .flat {
+  border-top: 0;
+}
+
+[data-screen="ideas"] details.idea > summary,
+[data-screen="ideas"] .flat {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+}
+
+[data-screen="ideas"] details.idea > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+[data-screen="ideas"] details.idea > summary::-webkit-details-marker {
+  display: none;
+}
+
+[data-screen="ideas"] .chev {
+  flex: none;
+  align-self: center;
+  width: var(--space-3);
+  text-align: center;
+  font-size: var(--type-xs);
+  color: var(--text-faintest);
+  transition: transform var(--motion-fast) var(--motion-ease);
+}
+
+[data-screen="ideas"] details.idea[open] > summary .chev {
+  transform: rotate(90deg);
+}
+
+[data-screen="ideas"] .it {
+  flex: 1;
+  font-size: var(--type-md);
+  font-weight: 500;
+  color: var(--text-default);
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+[data-screen="ideas"] details.idea > summary:hover .it,
+[data-screen="ideas"] details.idea[open] > summary .it {
+  color: var(--text-strong);
+}
+
+[data-screen="ideas"] .when {
+  align-self: center;
+  min-width: 44px;                /* keeps the date column aligned */
+  text-align: right;
+  white-space: nowrap;
+  font-size: var(--type-xs);
+  color: var(--text-faintest);
+}
+
+[data-screen="ideas"] .chip {
+  align-self: center;
+}
+
+[data-screen="ideas"] .idea .body {
+  padding: 0 0 var(--space-4) var(--space-6);
+  font-size: var(--type-md);
+  line-height: 1.66;
+  color: var(--text-muted);
+}
+
+/* --- shared compose surfaces (Backlog + Ideas) --------------------------- */
+/* The transparent inline-edit inputs (amber caret) and the chip-toggle selectors and
+   grayscale commit — one look across both compose forms. */
+
+[data-screen="backlog"] .in,
+[data-screen="ideas"] .in {
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  font-family: inherit;
+  line-height: 1.6;
+  color: var(--text-default);
+  caret-color: var(--accent-bright);
+  resize: none;
+}
+
+[data-screen="backlog"] .in::placeholder,
+[data-screen="ideas"] .in::placeholder {
+  color: var(--text-faintest);
+  font-style: italic;
+}
+
+[data-screen="backlog"] .in.title-in {
+  font-size: var(--type-md);
+  color: var(--text-strong);
+}
+
+[data-screen="backlog"] .in.detail-in {
+  font-size: var(--type-sm);
+  color: var(--text-muted);
+}
+
+[data-screen="backlog"] .seg,
+[data-screen="ideas"] .seg {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+[data-screen="backlog"] .opt,
+[data-screen="ideas"] .opt {
+  padding: var(--space-1) var(--space-3);
+  font-family: inherit;
+  font-size: var(--type-xs);
+  color: var(--text-faint);
+  background: var(--surface-raised);
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--motion-ease),
+    background var(--motion-fast) var(--motion-ease);
+}
+
+[data-screen="backlog"] .opt:hover,
+[data-screen="ideas"] .opt:hover {
+  color: var(--text-default);
+}
+
+[data-screen="backlog"] .opt[aria-pressed="true"],
+[data-screen="ideas"] .opt[aria-pressed="true"] {
+  color: var(--text-strong);
+  background: var(--surface-overlay);
+}
+
+[data-screen="backlog"] .commit,
+[data-screen="ideas"] .commit {
+  padding: var(--space-2) var(--space-4);
+  font-family: inherit;
+  font-size: var(--type-sm);
+  font-weight: 600;
+  color: var(--text-default);
+  background: var(--surface-raised);
+  border: 0;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--motion-ease),
+    background var(--motion-fast) var(--motion-ease);
+}
+
+[data-screen="backlog"] .commit:hover,
+[data-screen="ideas"] .commit:hover {
+  color: var(--text-strong);
+  background: var(--surface-overlay);
+}
+
+[data-screen="backlog"] .commit:disabled,
+[data-screen="ideas"] .commit:disabled {
+  color: var(--text-faintest);
+  background: var(--surface-sunken);
+  cursor: default;
+}

@@ -23,6 +23,7 @@
       board: "#/board",
       sprint: "#/sprint",
       backlog: "#/backlog",
+      ideas: "#/ideas",
       ticketPrefix: "#/ticket/"
     }
   };

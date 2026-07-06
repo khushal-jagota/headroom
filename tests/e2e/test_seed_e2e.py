@@ -202,8 +202,9 @@ def test_e33_seed_fixture_ui(server_factory, context_factory, open_page, cli):
     assert len(loose) == 3
     assert set(loose) == LOOSE_33
 
-    # Backlog — ready selector anchors a landed backlog-item row; the ideas list is a
-    # second independent fetch, so gate its row count before reading.
+    # Backlog — ready selector anchors a landed backlog-item row. Rows are server-sorted
+    # (priority → created_at), grouped by priority; the row itself no longer repeats the
+    # priority (the group states it), so the P-label lives on the group label only.
     page = open_page(
         ctx,
         server,
@@ -211,15 +212,35 @@ def test_e33_seed_fixture_ui(server_factory, context_factory, open_page, cli):
         '[data-screen="backlog"] [data-backlog-items] [data-item-id]',
         settled=True,
     )
-    _wait_count(page, "[data-ideas] [data-idea-id]", 3)
     assert _texts(page, "[data-backlog-items] [data-item-id] .entity-row-title") == [
         "Rotate the leaked staging key.",
         "Tune the retrieval cache.",
         "Read the WAL internals paper.",
     ]
-    rows = _texts(page, "[data-backlog-items] [data-item-id]")
-    for row_text, prio in zip(rows, ["P0", "P2", "P3"], strict=True):
-        assert prio in row_text
+    for prio, title in [
+        ("P0", "Rotate the leaked staging key."),
+        ("P2", "Tune the retrieval cache."),
+        ("P3", "Read the WAL internals paper."),
+    ]:
+        assert (
+            _texts(page, f'[data-priority-group="{prio}"] [data-item-id] .entity-row-title')
+            == [title]
+        )
+    # The row states project, not priority (priority is the group).
+    p0_row = _texts(page, '[data-priority-group="P0"] [data-item-id]')
+    assert len(p0_row) == 1
+    assert "P0" not in p0_row[0]
+
+    # Ideas — now its own top-level screen (#/ideas), a second independent fetch, so gate
+    # its row count before reading.
+    page = open_page(
+        ctx,
+        server,
+        "#/ideas",
+        '[data-screen="ideas"] [data-ideas] [data-idea-id]',
+        settled=True,
+    )
+    _wait_count(page, "[data-ideas] [data-idea-id]", 3)
     ideas = _texts(page, "[data-ideas] [data-idea-id] .entity-row-title")
     assert len(ideas) == 3
     assert set(ideas) == IDEAS_33

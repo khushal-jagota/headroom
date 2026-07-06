@@ -45,7 +45,8 @@
       ["review", "Review"],
       ["board", "Board"],
       ["sprint", "Sprint"],
-      ["backlog", "Backlog"]
+      ["backlog", "Backlog"],
+      ["ideas", "Ideas"]
     ];
     items.forEach(function (pair) {
       var name = pair[0];

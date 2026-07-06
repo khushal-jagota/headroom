@@ -202,6 +202,22 @@ All seven stages complete. Stages per SPEC.md §18: (1) contracts, (2) verify in
 
 ## What just happened
 
+- 2026-07-06: **Backlog + Ideas rebuilt as TWO separate screens** to the approved mockups
+  (`orchestration/backlog-redesign/`), NOT committed. Backlog (`screens-backlog.js` rewrite)
+  = unscheduled items grouped by priority (P0–P3 whisper labels), flat navigable rows
+  (project + optional deadline, priority NOT repeated), a dormant "+ New backlog item"
+  compose (transparent inputs + chip-toggle project/priority + optional deadline/description,
+  posts `body` now). Ideas (`screens-ideas.js`, NEW) = capture-first: an always-open hero
+  compose (title + Enter saves), newest-first pile, body disclosed on expand only for ideas
+  that have one (title-only = flat, no chevron), markdown body via `markdownBlock`, a light
+  relative date. Wiring: `#/ideas` route (app.js placeholder + config.js ROUTES), Ideas nav
+  entry (components.js appShell), `screens-ideas.js` script tag (server.py `_SHELL`); Backlog
+  stays `#/backlog`. CSS: `[data-screen="backlog"]` + `[data-screen="ideas"]` scoped blocks
+  in app.css, all via tokens, reusing the shared `.chip`. e2e: new `test_backlog_ideas.py`
+  (create-lands-in-group; capture flat-vs-disclosure) + `test_e33` updated for the ideas
+  split + priority-grouping. Decisions logged (rows→#/backlog since no item page; chips over
+  selects; `createForm` now orphaned but left; type-scale snapping). **`./verify` → VERIFY:
+  PASS** (106 unit + 17 e2e). Lead reviews/commits.
 - 2026-07-05: Dogfooded the planning-worker loop on ticket `t_gfsfcm7z` via the live `plan` CLI. Success and approach auto-accepted; plan parked at the `needs_plan` ceiling for human review; recap updated. Fresh `./verify`: `VERIFY: 36/36 PASS`.
 - Stages 1+2 integrated and committed (170514b). Reviews clean (D10). Verify run 001 archived: gates green, `VERIFY: 0/36 PASS` as required at stage 2.
 - **Stage-3 wave dispatched**: five per-ticket Fable orchestrators (t03-orch…t07-orch) + T08 Opus implementer, all running concurrently in the main tree on disjoint file sets, each running its internal plan→codex→implement→codex pipeline (D8).

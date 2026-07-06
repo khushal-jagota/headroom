@@ -25,7 +25,7 @@
 
   // Placeholders — T15–T17 scripts, appended after this file, re-register the real
   // screens over these before DOMContentLoaded fires (overwrite-wins).
-  ["day", "review", "board", "ticket", "sprint", "backlog"].forEach(function (name) {
+  ["day", "review", "board", "ticket", "sprint", "backlog", "ideas"].forEach(function (name) {
     Planner.registerScreen(name, function (root) {
       root.appendChild(quietLine("not built yet"));
     });
