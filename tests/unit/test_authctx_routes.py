@@ -220,6 +220,32 @@ def test_patch_sprint_agent_is_forbidden_human_succeeds(tmp_path: Path) -> None:
     assert _col(db_path, "sprints", sid, "name") == "Human edit"
 
 
+def test_patch_sprint_marshals_bad_field_types(tmp_path: Path) -> None:
+    # PATCH /sprints marshals each field like the Day PATCH: a non-string value is a
+    # clean validation error (400), never a raw SQLite binding error; a null is treated
+    # as absent (→ "no fields to update"), never a NOT-NULL crash. Both write nothing.
+    # The new Mid-sprint Review field round-trips through the same route.
+    app, db_path = _make_app(tmp_path)
+    sid = _sprint(db_path)
+    with TestClient(app) as client:
+        bad = client.patch(f"/api/sprints/{sid}", json={"outcomes": ["nope"]})
+        assert bad.status_code == 400
+        assert bad.json()["error"]["code"] == "validation"
+        assert _col(db_path, "sprints", sid, "outcomes") == ""  # unchanged, no crash
+
+        nul = client.patch(f"/api/sprints/{sid}", json={"premortem": None})
+        assert nul.status_code == 400
+        assert nul.json()["error"]["code"] == "validation"
+        assert _col(db_path, "sprints", sid, "premortem") == ""  # unchanged, no crash
+
+        ok = client.patch(
+            f"/api/sprints/{sid}", json={"mid_where_we_stand": "Halfway, tracking."}
+        )
+    assert ok.status_code == 200
+    assert ok.json()["mid_where_we_stand"] == "Halfway, tracking."
+    assert _col(db_path, "sprints", sid, "mid_where_we_stand") == "Halfway, tracking."
+
+
 # --- PATCH /day/{date}: human-only (§8) -----------------------------------------
 
 

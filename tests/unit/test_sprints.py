@@ -9,15 +9,15 @@ Item 10 — sprint-item permissions: agent todo->active succeeds; agent direct
 active->done write rejected; done via proposal + accept succeeds; blocked_by
 stored and blockers_cleared computed when all blockers done.
 
-Item 20 — freeze rules + overlap: kickoff write after freeze rejected;
-weekly_addenda append still allowed; review same pattern (independent flag);
-sprint overlap rejected (inclusive ranges).
+Item 20 — freeze (DORMANT, rev6) + overlap: freeze is retired, so freeze_kickoff /
+freeze_review are inert no-ops (no flag, no event) and kickoff/review fields stay
+always-editable; weekly_addenda append still works; sprint overlap rejected
+(inclusive ranges).
 """
 
 from __future__ import annotations
 
 import inspect
-from datetime import datetime
 
 import pytest
 
@@ -153,8 +153,8 @@ def test_a10_sprint_item_permissions(tmp_db, fake_clock) -> None:
 
 
 def test_a20_freeze_rules_and_overlap(tmp_db, fake_clock) -> None:
-    # Leg 1 — kickoff write after freeze rejected with the structured error;
-    # pre-freeze write succeeds; freeze is an idempotent latch.
+    # Leg 1 — freeze is DORMANT (rev6): freeze_kickoff is an inert no-op (no flag
+    # latched, no event) and the kickoff field is editable before AND after the call.
     sp = create_sprint(
         tmp_db, name="S", date_start="2026-07-01", date_end="2026-07-14", clock=fake_clock
     )
@@ -164,25 +164,14 @@ def test_a20_freeze_rules_and_overlap(tmp_db, fake_clock) -> None:
         {"field": "primary_bet", "from": "", "to": "x"},
     ]
     frozen = freeze_kickoff(tmp_db, sp.id, clock=fake_clock)
-    assert frozen.kickoff_frozen_at is not None
-    assert _events(tmp_db, sp.id, "kickoff_frozen") == [
-        {"frozen_at": frozen.kickoff_frozen_at},
-    ]
-    with pytest.raises(PlannerError) as ei:
-        update_sprint_field(tmp_db, sp.id, "primary_bet", "y", clock=fake_clock)
-    assert ei.value.code == ErrorCode.frozen_write
-    assert ei.value.detail["field"] == "primary_bet"
-    assert ei.value.detail["group"] == "kickoff"
-    assert read_sprint(tmp_db, sp.id).primary_bet == "x"
-    # Idempotent latch: re-freeze at a later time preserves the original
-    # timestamp and emits no second event.
-    first_at = frozen.kickoff_frozen_at
-    fake_clock.set(datetime(2026, 7, 5, 9, 0, 0).astimezone())
-    refrozen = freeze_kickoff(tmp_db, sp.id, clock=fake_clock)
-    assert refrozen.kickoff_frozen_at == first_at
-    assert len(_events(tmp_db, sp.id, "kickoff_frozen")) == 1
+    assert frozen.kickoff_frozen_at is None                 # inert: nothing latched
+    assert _events(tmp_db, sp.id, "kickoff_frozen") == []   # inert: no event
+    # Still writable after the freeze call — nothing in a sprint locks.
+    still = update_sprint_field(tmp_db, sp.id, "primary_bet", "y", clock=fake_clock)
+    assert still.primary_bet == "y"
+    assert read_sprint(tmp_db, sp.id).primary_bet == "y"
 
-    # Leg 2 — weekly_addenda append still allowed after kickoff freeze (§3.1 carve-out).
+    # Leg 2 — weekly_addenda append still works (dormant in the UI, functional at the API).
     with_addendum = add_addendum(
         tmp_db, sp.id, date="2026-07-05", text="note", clock=fake_clock
     )
@@ -192,26 +181,19 @@ def test_a20_freeze_rules_and_overlap(tmp_db, fake_clock) -> None:
         {"date": "2026-07-05", "text": "note"},
     ]
 
-    # Leg 3 — review fields: same pattern, independent flag, both directions.
-    # Kickoff-frozen sprint S still takes review writes (review not frozen).
+    # Leg 3 — review fields: freeze_review is inert too; review fields stay editable.
     reviewed = update_sprint_field(tmp_db, sp.id, "outcomes", "o", clock=fake_clock)
     assert reviewed.outcomes == "o"
-    assert reviewed.kickoff_frozen_at is not None
-    assert reviewed.review_frozen_at is None
-    # A second, non-overlapping sprint: freeze review only, kickoff stays writable.
     sp2 = create_sprint(
         tmp_db, name="R", date_start="2026-08-01", date_end="2026-08-14", clock=fake_clock
     )
     ok = update_sprint_field(tmp_db, sp2.id, "outcomes", "r1", clock=fake_clock)
     assert ok.outcomes == "r1"
     frozen2 = freeze_review(tmp_db, sp2.id, clock=fake_clock)
-    assert frozen2.review_frozen_at is not None
-    assert frozen2.kickoff_frozen_at is None
-    with pytest.raises(PlannerError) as ei2:
-        update_sprint_field(tmp_db, sp2.id, "outcomes", "r2", clock=fake_clock)
-    assert ei2.value.code == ErrorCode.frozen_write
-    assert ei2.value.detail["field"] == "outcomes"
-    assert ei2.value.detail["group"] == "review"
+    assert frozen2.review_frozen_at is None                  # inert: nothing latched
+    assert _events(tmp_db, sp2.id, "review_frozen") == []    # inert: no event
+    r2 = update_sprint_field(tmp_db, sp2.id, "outcomes", "r2", clock=fake_clock)
+    assert r2.outcomes == "r2"                               # editable after the call
     still_ok = update_sprint_field(tmp_db, sp2.id, "primary_bet", "bet", clock=fake_clock)
     assert still_ok.primary_bet == "bet"
 

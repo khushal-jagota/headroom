@@ -26,6 +26,7 @@ from planner.sprints import data as sprints_data
 from planner.sprints import views as sprints_views
 from planner.sprints.contracts import (
     KICKOFF_FIELDS,
+    MID_SPRINT_FIELDS,
     REVIEW_FIELDS,
     AddendumBody,
     CreateIdeaBody,
@@ -39,7 +40,7 @@ from planner.tickets.api import Cfg, Clk, Ctx, DbConn, body_opt_str, body_str, p
 
 router = APIRouter()
 
-_SPRINT_TEXT_FIELDS = ("name",) + KICKOFF_FIELDS + REVIEW_FIELDS
+_SPRINT_TEXT_FIELDS = ("name",) + KICKOFF_FIELDS + MID_SPRINT_FIELDS + REVIEW_FIELDS
 _ITEM_PLAIN_FIELDS = ("title", "body", "priority", "deadline", "project", "current_state_note")
 
 
@@ -301,19 +302,33 @@ async def patch_sprint(sprint_id: str, body: dict[str, Any], conn: DbConn, ctx: 
     for key in body:
         if key not in recognized:
             raise PlannerError(ErrorCode.validation, "unknown sprint field", {"field": key})
-    if not body:
-        raise PlannerError(ErrorCode.validation, "no sprint fields to update", {})
+    # Marshal each field to a string, mirroring the Day PATCH: a null or non-string
+    # value raises the validation envelope instead of hitting the NOT NULL constraint
+    # or a raw SQLite binding error. A null is treated as absent (skipped).
+    edits: dict[str, str] = {}
     for field in _SPRINT_TEXT_FIELDS:
-        if field in body:
-            sprints_data.update_sprint_field(conn, sprint_id, field, body[field], clock=clk)
-    if "date_start" in body or "date_end" in body:
+        value = body_opt_str(body, field)
+        if value is not None:
+            edits[field] = value
+    setting_dates = "date_start" in body or "date_end" in body
+    if not edits and not setting_dates:
+        raise PlannerError(ErrorCode.validation, "no sprint fields to update", {})
+    for field, value in edits.items():
+        sprints_data.update_sprint_field(conn, sprint_id, field, value, clock=clk)
+    if setting_dates:
         _set_sprint_dates(
-            conn, sprint_id, date_start=body.get("date_start"), date_end=body.get("date_end"),
+            conn, sprint_id,
+            date_start=body_opt_str(body, "date_start"),
+            date_end=body_opt_str(body, "date_end"),
             clock=clk,
         )
     return sprints_views.sprint_json(sprints_data.read_sprint(conn, sprint_id))
 
 
+# Freeze + addenda routes below are DORMANT (rev6): the redesigned Sprint Overview
+# retired freeze and the weekly-addenda UI. Kept (not deleted) so the §5 freeze /
+# §3.1 addenda backends stay reversible; nothing in the live UI calls them now, so
+# kickoff/review fields (and the new mid-sprint fields) stay always-editable.
 @router.post("/sprints/{sprint_id}/freeze-kickoff")
 async def freeze_kickoff(sprint_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
     reject_agents(ctx)

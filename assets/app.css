@@ -426,34 +426,10 @@ textarea {
   font-size: var(--type-sm);
 }
 
-.sprint-field {
-  margin-bottom: var(--space-4);
-}
-
-.sprint-field-label {
-  font-size: var(--type-xs);
-  color: var(--text-muted);
-  font-weight: 600;
-  margin-bottom: var(--space-1);
-}
-
 .list-stack {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-}
-
-.addendum {
-  display: flex;
-  gap: var(--space-3);
-  align-items: baseline;
-}
-
-.addendum-date {
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  color: var(--text-muted);
-  white-space: nowrap;
 }
 
 .create-form {
@@ -1431,6 +1407,86 @@ details.fsec[open] > summary .fsec-chev::before {
   margin-top: var(--space-3);
   font-size: var(--type-sm);
   color: var(--text-faintest);
+}
+
+/* Sprint Overview (rev6): Kickoff / Mid-sprint Review / Sprint Review. Three headed
+   <details.phase> sections; the phase decides which is open (JS). Each field is a
+   label + the shared .ed inline-edit surface. No freeze, no amber, no ✓/●/○ marks. */
+[data-screen="sprint"] details.phase {
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+[data-screen="sprint"] details.phase > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-5) 0;
+}
+
+[data-screen="sprint"] details.phase > summary::-webkit-details-marker {
+  display: none;
+}
+
+[data-screen="sprint"] .phase .pnm {
+  font-size: var(--type-md);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-default);
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+[data-screen="sprint"] details.phase > summary:hover .pnm {
+  color: var(--text-strong);
+}
+
+[data-screen="sprint"] .phase .pmeta {
+  flex: 1;
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-faintest);
+}
+
+[data-screen="sprint"] .phase .chev {
+  font-size: var(--type-sm);
+  color: var(--text-faintest);
+  transition: transform var(--motion-fast) var(--motion-ease);
+}
+
+[data-screen="sprint"] details.phase[open] > summary .chev {
+  transform: rotate(90deg);
+}
+
+[data-screen="sprint"] .phase .body {
+  padding: 0 0 var(--space-6);
+}
+
+[data-screen="sprint"] .phase .refline {
+  font-size: var(--type-sm);
+  line-height: 1.5;
+  color: var(--text-faintest);
+  margin-bottom: var(--space-5);
+}
+
+[data-screen="sprint"] .field + .field {
+  margin-top: var(--space-5);
+}
+
+[data-screen="sprint"] .field .flabel {
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--text-faintest);
+  margin-bottom: var(--space-2);
+}
+
+[data-screen="sprint"] .field .fval {
+  font-size: var(--type-md);
+  line-height: 1.62;
+  color: var(--text-default);
 }
 
 /* status group — a whisper label (not a panel header); rhythm carries the rest */

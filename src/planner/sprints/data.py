@@ -19,6 +19,7 @@ from planner.core.events import append_event
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.sprints.contracts import (
     KICKOFF_FIELDS,
+    MID_SPRINT_FIELDS,
     PROPOSAL_ONLY_STATUSES,
     REVIEW_FIELDS,
     Addendum,
@@ -33,9 +34,7 @@ from planner.sprints.logic import (
     blockers_cleared,
     classify_agent_transition,
     classify_human_transition,
-    field_write_admissible,
     find_overlap,
-    frozen_group,
 )
 
 
@@ -47,7 +46,9 @@ class ItemRead(NamedTuple):
 _ITEM_PLAIN_FIELDS: frozenset[str] = frozenset(
     {"title", "body", "priority", "deadline", "project", "current_state_note"}
 )
-_SPRINT_TEXT_FIELDS: frozenset[str] = frozenset(KICKOFF_FIELDS + REVIEW_FIELDS + ("name",))
+_SPRINT_TEXT_FIELDS: frozenset[str] = frozenset(
+    KICKOFF_FIELDS + REVIEW_FIELDS + MID_SPRINT_FIELDS + ("name",)
+)
 
 
 @contextmanager
@@ -72,6 +73,9 @@ def _row_to_sprint(row: sqlite3.Row) -> Sprint:
         primary_bet=row["primary_bet"],
         supports=row["supports"],
         premortem=row["premortem"],
+        mid_where_we_stand=row["mid_where_we_stand"],
+        mid_whats_changed=row["mid_whats_changed"],
+        mid_what_to_adjust=row["mid_what_to_adjust"],
         weekly_addenda=[Addendum(**a) for a in json.loads(row["weekly_addenda"])],
         kickoff_frozen_at=row["kickoff_frozen_at"],
         outcomes=row["outcomes"],
@@ -216,13 +220,10 @@ def update_sprint_field(
             "field is not an editable sprint text field",
             {"field": field},
         )
+    # Freeze retired (rev6): nothing in a sprint locks, so every text field
+    # (kickoff / mid-sprint / review / name) is always editable regardless of the
+    # dormant kickoff_frozen_at / review_frozen_at columns. No admissibility gate.
     sprint = _load_sprint(conn, sprint_id)
-    if not field_write_admissible(field, sprint.kickoff_frozen_at, sprint.review_frozen_at):
-        raise PlannerError(
-            ErrorCode.frozen_write,
-            "field is frozen",
-            {"field": field, "group": frozen_group(field)},
-        )
     now = clock.now_unix()
     prev = getattr(sprint, field)
     with _tx(conn):
@@ -241,35 +242,16 @@ def update_sprint_field(
 
 
 def freeze_kickoff(conn: sqlite3.Connection, sprint_id: str, *, clock: Clock) -> Sprint:
-    sprint = _load_sprint(conn, sprint_id)
-    if sprint.kickoff_frozen_at is not None:
-        return sprint
-    now = clock.now_unix()
-    with _tx(conn):
-        # Latch inside the transaction: only the write that flips NULL emits the event.
-        cursor = conn.execute(
-            "UPDATE sprints SET kickoff_frozen_at = ?, updated_at = ? "
-            "WHERE id = ? AND kickoff_frozen_at IS NULL",
-            (now, now, sprint_id),
-        )
-        if cursor.rowcount == 1:
-            append_event(conn, sprint_id, EventKind.kickoff_frozen, {"frozen_at": now}, now)
+    """DORMANT (rev6): freeze is retired — nothing in a sprint locks. Inert no-op,
+    kept present (reversible): it never latches kickoff_frozen_at and emits no event,
+    so kickoff fields stay always-editable. Validates existence only (404 on unknown
+    id); `clock` is accepted for signature stability but unused."""
     return _load_sprint(conn, sprint_id)
 
 
 def freeze_review(conn: sqlite3.Connection, sprint_id: str, *, clock: Clock) -> Sprint:
-    sprint = _load_sprint(conn, sprint_id)
-    if sprint.review_frozen_at is not None:
-        return sprint
-    now = clock.now_unix()
-    with _tx(conn):
-        cursor = conn.execute(
-            "UPDATE sprints SET review_frozen_at = ?, updated_at = ? "
-            "WHERE id = ? AND review_frozen_at IS NULL",
-            (now, now, sprint_id),
-        )
-        if cursor.rowcount == 1:
-            append_event(conn, sprint_id, EventKind.review_frozen, {"frozen_at": now}, now)
+    """DORMANT (rev6): review freeze retired — inert no-op, see freeze_kickoff. Never
+    latches review_frozen_at, emits no event; review fields stay always-editable."""
     return _load_sprint(conn, sprint_id)
 
 

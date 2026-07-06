@@ -1,0 +1,225 @@
+<meta charset="utf-8">
+<title>Backlog</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<!--
+  Backlog — the pool of UNSCHEDULED sprint items (sprint_id = null), server-sorted by
+  priority then created_at (/api/items?sprint_id=null). Applies the decoded design system
+  (see ../sprint-redesign/principles.md) to a screen whose job is: SCAN the unscheduled
+  work by priority, and ADD to it. Nothing more.
+
+  What this screen is FOR (the one thing): a prioritised index of not-yet-scheduled work
+  you triage and pull from. So priority is the organising axis — items are grouped by
+  P0/P1/P2/P3, exactly the way the Sprint page groups by status. The rows are the primary
+  content; the create surface is secondary (scanning is the job, adding is the errand).
+
+  Deliberate calls (justified in notes.md):
+   · FLAT rows, no disclosure. A backlog item has no sub-tickets (unlike a sprint item) and
+     its depth — description, notes, sprint assignment — lives on the item page one click
+     away. Progressive disclosure must EARN its place; here it doesn't, so the page stays a
+     calm index (the Today screen's flatness), not the Sprint tree. The row navigates.
+   · Priority is the group, so it is NOT repeated as a chip on every row (that would be
+     double-stating). Rows carry only project + an optional deadline.
+   · Create is DORMANT: a quiet affordance at the top that opens the compose. On a scan-first
+     page the list must read uninterrupted (P2, calm at rest). Shown OPEN here so the fields
+     are reviewable; collapsed is the resting state. (Ideas, a capture-first page, keeps its
+     compose always-open instead — the one real ergonomic difference between the two.)
+   · No amber beyond the edit caret. Amber is rationed to a system-surfaced ask ("needs
+     you"); a create is always-on, user-initiated capture, not an ask — so the commit button
+     stays grayscale and amber's meaning stays intact (P5). The caret while typing is the
+     usual inline-edit amber.
+
+  Tokens + idioms shared verbatim with the Ticket / Sprint / Today mockups.
+-->
+<style>
+:root{
+  --bg:#1b1917; --sunk:#141210; --raise:#24211b; --line:rgba(230,210,175,.11);
+  --fg1:#f4f1ea; --fg2:#dcd8cf; --fg3:#b4b0a6; --fg4:#8a867c; --fg5:#66625a;
+  --amber:#e7a742; --amber-ink:#1c1406; --done:#7fa564;
+  --f:"Inter",-apple-system,system-ui,sans-serif; --dur:130ms;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg2);font:500 15px/1.6 var(--f);-webkit-font-smoothing:antialiased}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+
+.doc{height:100dvh;overflow-y:auto}
+.col{max-width:760px;margin:0 auto;padding:0 44px 160px}
+
+/* header — screen title (fixed, not an entity name so not editable) + a quiet count pill.
+   Same shape as the Sprint header (P4: pill is background only). */
+.head{border-bottom:1px solid var(--line);padding:22px 44px 16px;max-width:760px;margin:0 auto}
+.head .row{display:flex;align-items:flex-start;gap:16px}
+.title{font-size:20px;font-weight:600;line-height:1.3;color:var(--fg1);flex:1}
+.meta{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;padding-top:2px}
+.pill{font-size:12px;color:var(--fg3);background:#26221c;border-radius:6px;padding:5px 10px;white-space:nowrap}
+.pill .k{color:var(--fg5);margin-right:5px}
+
+/* create — dormant at rest; a quiet affordance that opens the compose (P2). */
+details.make{border-bottom:1px solid var(--line)}
+details.make>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:9px;padding:16px 0;color:var(--fg4);font-size:13px;font-weight:500;transition:color var(--dur)}
+details.make>summary::-webkit-details-marker{display:none}
+details.make>summary:hover{color:var(--fg2)}
+details.make .plus{font-size:14px;color:var(--fg5);width:14px;text-align:center;transition:transform var(--dur),color var(--dur)}
+details.make[open]>summary{color:var(--fg3)}
+details.make[open]>summary .plus{transform:rotate(45deg)}
+
+/* compose — labeled fields. Text inputs are the inline-edit surface: no box, amber caret
+   (P7). Chip selectors reuse the chip look. The commit is grayscale, not amber (see head). */
+.form{padding:4px 0 22px;display:flex;flex-direction:column;gap:19px}
+.fl{font-size:11px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--fg5);margin-bottom:8px}
+.in{background:transparent;border:0;outline:none;font-family:inherit;color:var(--fg2);caret-color:var(--amber);padding:0;width:100%;resize:none;line-height:1.6}
+.in::placeholder{color:var(--fg5);font-style:italic}
+.in.title-in{font-size:16px;color:var(--fg1);line-height:1.5}
+.in.detail-in{font-size:14px;color:var(--fg3)}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.opt{font-size:12px;color:var(--fg4);background:#221f19;border-radius:5px;padding:5px 11px;cursor:pointer;border:0;font-family:inherit;transition:color var(--dur),background var(--dur)}
+.opt:hover{color:var(--fg2)}
+.opt[aria-pressed="true"]{color:var(--fg1);background:#2c2820}
+.two{display:flex;gap:44px;flex-wrap:wrap}
+.two>div{flex:1;min-width:150px}
+.commit{align-self:flex-start;font-size:13px;font-weight:600;color:var(--fg2);background:var(--raise);border:0;border-radius:7px;padding:9px 16px;cursor:pointer;font-family:inherit;transition:background var(--dur),color var(--dur)}
+.commit:hover{background:#2c2820;color:var(--fg1)}
+.commit:disabled{color:var(--fg5);cursor:default;background:#221f19}
+
+/* priority group — a whisper label (not a panel header) + rhythm, exactly the Sprint
+   status-group treatment. Empty priorities are simply not rendered. */
+.grp{margin-top:26px}
+.grp .glabel{font-size:11px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--fg5);display:flex;align-items:center;gap:8px;padding:2px 0 4px}
+.grp .glabel .n{color:var(--fg5);font-weight:600}
+
+/* item row — flat + navigable. Divided by border seams (primary-row idiom); hover lifts
+   the title only (P4: no hover box on a seam-divided list). Title + project + optional due. */
+.brow{display:flex;align-items:baseline;gap:12px;padding:13px 0;border-top:1px solid var(--line);text-decoration:none;color:inherit;transition:color var(--dur)}
+.grp .brow:first-of-type{border-top:0}
+.brow .bt{font-size:15px;font-weight:500;color:var(--fg2);flex:1;transition:color var(--dur)}
+.brow:hover .bt{color:var(--fg1)}
+.brow .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:baseline}
+.chip{font-size:12px;color:var(--fg4);background:#221f19;border-radius:5px;padding:3px 8px;white-space:nowrap}
+.chip .k{color:var(--fg5);margin-right:4px}
+
+.empty{font-size:13px;color:var(--fg5);font-style:italic;padding:30px 0}
+</style>
+
+<div class="doc">
+  <header class="head">
+    <div class="row">
+      <div class="title">Backlog</div>
+      <div class="meta">
+        <span class="pill"><span class="k">unscheduled</span>11</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="col">
+
+    <!-- CREATE — dormant affordance, shown OPEN here so the compose is reviewable. At rest
+         it is just the "New backlog item" line; the list reads uninterrupted below it. -->
+    <details class="make" open>
+      <summary><span class="plus">+</span> New backlog item</summary>
+      <div class="form">
+        <div>
+          <div class="fl">Title</div>
+          <input class="in title-in" type="text" placeholder="What needs doing?" value="Cohort segmentation rules">
+        </div>
+        <div class="two">
+          <div>
+            <div class="fl">Project</div>
+            <div class="seg" role="group" aria-label="Project">
+              <button class="opt" aria-pressed="false">Vylo</button>
+              <button class="opt" aria-pressed="true">Tribe</button>
+              <button class="opt" aria-pressed="false">Learning</button>
+              <button class="opt" aria-pressed="false">Other</button>
+            </div>
+          </div>
+          <div>
+            <div class="fl">Priority</div>
+            <div class="seg" role="group" aria-label="Priority">
+              <button class="opt" aria-pressed="false">P0</button>
+              <button class="opt" aria-pressed="false">P1</button>
+              <button class="opt" aria-pressed="true">P2</button>
+              <button class="opt" aria-pressed="false">P3</button>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="fl">Deadline <span style="color:var(--fg5);font-weight:400;letter-spacing:0;text-transform:none">— optional</span></div>
+          <input class="in detail-in" type="text" placeholder="YYYY-MM-DD">
+        </div>
+        <div>
+          <div class="fl">Description <span style="color:var(--fg5);font-weight:400;letter-spacing:0;text-transform:none">— optional</span></div>
+          <textarea class="in detail-in" rows="2" placeholder="Why it matters, any context. Lives on the item page."></textarea>
+        </div>
+        <button class="commit">Add to backlog</button>
+      </div>
+    </details>
+
+    <!-- P0 — surfaces first because the server sorts by priority. Rarely populated (a P0
+         usually lives in the sprint), but shown when present. -->
+    <div class="grp">
+      <div class="glabel">P0 <span class="n">· 1</span></div>
+      <a class="brow" href="#/item/i_1">
+        <span class="bt">Safari signup returns 500 on double-submit</span>
+        <span class="chips"><span class="chip">Vylo</span></span>
+      </a>
+    </div>
+
+    <!-- P1 -->
+    <div class="grp">
+      <div class="glabel">P1 <span class="n">· 3</span></div>
+      <a class="brow" href="#/item/i_2">
+        <span class="bt">Instrument the activation funnel end to end</span>
+        <span class="chips"><span class="chip">Vylo</span><span class="chip"><span class="k">due</span>Jul 18</span></span>
+      </a>
+      <a class="brow" href="#/item/i_3">
+        <span class="bt">Migrate Tribe import off the legacy CSV path</span>
+        <span class="chips"><span class="chip">Tribe</span></span>
+      </a>
+      <a class="brow" href="#/item/i_4">
+        <span class="bt">Second reviewer for the resolution engine writes</span>
+        <span class="chips"><span class="chip">Vylo</span></span>
+      </a>
+    </div>
+
+    <!-- P2 -->
+    <div class="grp">
+      <div class="glabel">P2 <span class="n">· 4</span></div>
+      <a class="brow" href="#/item/i_5">
+        <span class="bt">Weekly cohort digest email</span>
+        <span class="chips"><span class="chip">Vylo</span></span>
+      </a>
+      <a class="brow" href="#/item/i_6">
+        <span class="bt">Cohort segmentation rules</span>
+        <span class="chips"><span class="chip">Tribe</span></span>
+      </a>
+      <a class="brow" href="#/item/i_7">
+        <span class="bt">Read Kleppmann ch. 5–7 for the sync design</span>
+        <span class="chips"><span class="chip">Learning</span></span>
+      </a>
+      <a class="brow" href="#/item/i_8">
+        <span class="bt">Typography pass across the app shell</span>
+        <span class="chips"><span class="chip">Vylo</span></span>
+      </a>
+    </div>
+
+    <!-- P3 -->
+    <div class="grp">
+      <div class="glabel">P3 <span class="n">· 3</span></div>
+      <a class="brow" href="#/item/i_9">
+        <span class="bt">Waitlist admin view for support</span>
+        <span class="chips"><span class="chip">Other</span></span>
+      </a>
+      <a class="brow" href="#/item/i_10">
+        <span class="bt">Referral loop spike — is it worth a sprint?</span>
+        <span class="chips"><span class="chip">Vylo</span></span>
+      </a>
+      <a class="brow" href="#/item/i_11">
+        <span class="bt">Onboarding email sequence rewrite</span>
+        <span class="chips"><span class="chip">Vylo</span></span>
+      </a>
+    </div>
+
+  </div>
+</div>

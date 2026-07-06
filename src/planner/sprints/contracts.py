@@ -36,6 +36,12 @@ KICKOFF_FIELDS: Final[tuple[str, ...]] = ("limiting_factor", "primary_bet", "sup
 REVIEW_FIELDS: Final[tuple[str, ...]] = (
     "outcomes", "solo_reflection", "joint_discussion", "updates_to_thinking", "carry_forward",
 )
+# Mid-sprint Review (rev6): three headed markdown sub-fields on the sprint, edited
+# per-field in place. NOT weekly_addenda and NOT freeze-grouped — frozen_group()
+# returns None for these, so they stay always-editable (freeze is dormant/retired).
+MID_SPRINT_FIELDS: Final[tuple[str, ...]] = (
+    "mid_where_we_stand", "mid_whats_changed", "mid_what_to_adjust",
+)
 
 
 @dataclass(frozen=True)
@@ -62,7 +68,10 @@ class Sprint:                      # §3.1
     primary_bet: str
     supports: str
     premortem: str
-    weekly_addenda: list[Addendum] = field(default_factory=list)   # append-only
+    mid_where_we_stand: str = ""            # Mid-sprint Review sub-fields (rev6)
+    mid_whats_changed: str = ""
+    mid_what_to_adjust: str = ""
+    weekly_addenda: list[Addendum] = field(default_factory=list)   # append-only; dormant (rev6)
     kickoff_frozen_at: int | None = None
     outcomes: str = ""
     solo_reflection: str = ""

@@ -66,6 +66,16 @@ E32_ITEM_TITLE = "E32 item"
 E32_ITEM_PROJECT = "Vylo"
 E32_LOOSE_TITLE = "E32 loose ticket"
 
+# Sprint Overview (rev6 redesign): the three headed inline-editable sections. Kickoff
+# renders its seeded fields; a Mid-sprint Review sub-field round-trips through the
+# shared inlineEdit → per-field PATCH → WS-flush re-render (the same path as Day/ticket).
+SO_SPRINT_NAME = "SO sprint"
+SO_START = "2026-07-01"           # range contains baseline planning date 2026-07-04
+SO_END = "2026-07-14"             # a 2-week span
+SO_LIMITING = "SO can build faster than we can validate."
+SO_BET = "SO 100 on the waitlist, first cohort activated."
+SO_MID_STAND = "SO halfway in, the bet is tracking."
+
 
 def _set_now(api, server, iso):
     return api.human_post(server, "/api/test/set-now", {"now": iso})
@@ -437,3 +447,69 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
     assert iid in [i["id"] for i in cur["groups"]["active"]], cur
     assert iid not in [i["id"] for i in cur["groups"]["todo"]], cur
     assert ltid in [t["id"] for t in cur["loose_tickets"]], cur
+
+
+def test_sprint_overview_fields_and_edit(server, context_factory, open_page, api):
+    # A current sprint (its 2-week range contains the baseline planning date), seeded
+    # with Kickoff content at create → the Overview opens kickoff-open (Kickoff open,
+    # Mid-sprint + Sprint Review collapsed until they have content).
+    api.human_post(
+        server,
+        "/api/sprints",
+        {
+            "name": SO_SPRINT_NAME,
+            "date_start": SO_START,
+            "date_end": SO_END,
+            "limiting_factor": SO_LIMITING,
+            "primary_bet": SO_BET,
+        },
+    )
+
+    ready = '[data-phase="kickoff"]'
+    page = open_page(context_factory(), server, "#/sprint/overview", ready, settled=True)
+
+    # The tab pair marks Sprint Overview current; the bet frame echoes primary_bet.
+    assert page.inner_text(".tabs .tab.cur") == "Sprint Overview"
+    assert SO_BET in page.inner_text(".frame .lead")
+
+    # All three sections render, in the fixed order Kickoff · Mid-sprint · Sprint Review.
+    phases = page.eval_on_selector_all(
+        "[data-phase]", "els => els.map(e => e.getAttribute('data-phase'))"
+    )
+    assert phases == ["kickoff", "mid", "review"], phases
+
+    # Kickoff is open (fresh sprint) → its seeded fields render as inline-edit surfaces.
+    assert page.inner_text('[data-field="limiting_factor"] .fval') == SO_LIMITING
+    assert page.inner_text('[data-field="primary_bet"] .fval') == SO_BET
+    # The three Mid-sprint Review sub-fields exist as inline-edit surfaces (empty here).
+    for key in ("mid_where_we_stand", "mid_whats_changed", "mid_what_to_adjust"):
+        assert page.query_selector(f'[data-field="{key}"] .fval.ed') is not None
+
+    # Inline-edit round-trip on the NEW Mid-sprint field: open its section, focus the
+    # field, overwrite, blur → PATCH /api/sprints/{id} {mid_where_we_stand} → the WS
+    # flush re-renders from the saved value (no optimistic UI). Same driver as e29.
+    page.click('[data-phase="mid"] > summary')
+    sel = '[data-field="mid_where_we_stand"] .fval'
+    f0 = page.evaluate("window.__plannerDebug.flushes")
+    page.evaluate(
+        "(a) => { const el = document.querySelector(a.sel);"
+        " el.focus(); el.textContent = a.text; el.blur(); }",
+        {"sel": sel, "text": SO_MID_STAND},
+    )
+    page.wait_for_function(
+        "(f0) => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS
+    )
+    # Mid now has content → the section stays open (running phase) → the value shows.
+    page.wait_for_function(
+        "(a) => { const el = document.querySelector(a.sel);"
+        " return !!el && el.innerText.trim() === a.text; }",
+        arg={"sel": sel, "text": SO_MID_STAND},
+        timeout=WAIT_MS,
+    )
+
+    # The edit persisted canonically, and ONLY that field changed (per-field PATCH).
+    cur = api.get(server, "/api/sprint/current")["sprint"]
+    assert cur["mid_where_we_stand"] == SO_MID_STAND, cur
+    assert cur["mid_whats_changed"] == "", cur
+    assert cur["mid_what_to_adjust"] == "", cur
+    assert cur["limiting_factor"] == SO_LIMITING, cur   # untouched by the mid edit

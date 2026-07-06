@@ -45,10 +45,21 @@ to `#/sprint/overview` AS-IS, interim). **Day = structured fields** (`focus/brie
 if_today_lands` replace `brief`; boundary adapter fills them; plan-tree dropped from boundary,
 dormant). `./verify` PASS. Codex now invoked via the `/codex-cli` skill (CLAUDE.md).
 
-**Pending build triggers:** (1) **Sprint Overview build** — the redesigned Kickoff / Mid-sprint
-Review / Sprint Review page (no freeze/amber/number, structured fields) to REPLACE the interim old
-panels at `#/sprint/overview`. (2) prune dead CSS. (3) small confirms: sprint phase marks (gone vs
-neutral), sprint name static-vs-editable.
+**Sprint Overview built + green (2026-07-06, NOT committed — lead reviews/commits):** the redesigned
+`#/sprint/overview` (`screens-sprint.js` `renderOverview` rewrite + `[data-screen="sprint"]` phase/field
+CSS): three headed `<details class="phase">` sections — **Kickoff** (limiting_factor/primary_bet/supports/
+premortem) → **Mid-sprint Review** (3 NEW cols `mid_where_we_stand`/`mid_whats_changed`/`mid_what_to_adjust`)
+→ **Sprint Review** (outcomes/solo_reflection/joint_discussion/updates_to_thinking/carry_forward). Every
+sub-field is the shared `inlineEdit` hook + `.ed` surface → PATCH `/api/sprints/{id}` that ONE field
+(human-only, `reject_agents`). NO freeze/amber/number/addenda UI. Phase-open derived from content (P8).
+Backend: 3 new sprint columns (`db.py` DDL + `contracts.py` `MID_SPRINT_FIELDS`/dataclass + `data.py`
+`_SPRINT_TEXT_FIELDS`/`_row_to_sprint` + `api.py` `_SPRINT_TEXT_FIELDS` + `views.py` `sprint_json`);
+**§5 freeze + §3.1 weekly_addenda backends kept DORMANT** (flagged, reversible; mid fields are NOT
+weekly_addenda). e2e `test_sprint_overview_fields_and_edit` added; Tracking hooks (e32/e33) untouched.
+Pruned only the orphaned `.sprint-field`/`.addendum` CSS. **`./verify` → VERIFY: PASS** (15 e2e).
+
+**Pending build triggers:** (1) prune dead CSS (broader sweep — this build removed only its own
+orphans). (2) small confirms: sprint name static-vs-editable.
 
 **Agents (all idle):** ticket-fix, day-build, sprint-design, sprint-impl-plan. NOTE: sub-agents'
 plain-text finals don't reach the lead — they report via SendMessage; an idle notification ≠ done,

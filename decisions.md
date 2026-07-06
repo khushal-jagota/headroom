@@ -272,3 +272,65 @@ substitution. Changes that alter HOW (not what) is asserted:
   `[data-field="result"] .proposal-card` to the visible `[data-approval-block]` (meta =
   `.proposal-meta`, body = `.approval-draft .markdown-block`); `mid_t` retargeted to
   `[data-approval-block][data-mode="gating-pending"]`. `expected_t` values unchanged.
+
+## Sprint Overview redesign — rev6 (2026-07-06, uncommitted; lead reviews)
+
+Replaced the interim old kickoff/review/weekly-addenda panels at `#/sprint/overview`
+with the redesigned Sprint Overview (three headed inline-editable sections, mirroring
+the Day-fields pattern). Judgment calls made autonomously (owner not consulted mid-run):
+
+1. **Phase-open derived from content, not a backend flag.** The mockup's three phases
+   (kickoff-open / running / review-open) only decide which `<details>` section is OPEN
+   by default. There is no backend "phase" field and freeze is retired, so I derive it
+   from the sprint's own data (P8): Sprint Review has content → review-open (Kickoff
+   collapsed, Mid + Review open); else Mid-sprint has content → running (Mid open); else
+   kickoff-open (Kickoff open). No new column, faithful to the documented arc.
+2. **Freeze + weekly-addenda backends kept DORMANT, not deleted.** The rev6 design has no
+   freeze and no addenda UI. Per the lead, I left the §5 freeze (`kickoff_frozen_at` /
+   `review_frozen_at` + the two freeze endpoints) and the §3.1 `weekly_addenda` field +
+   endpoint in place (reversible), flagged dormant in `db.py` and `sprints/api.py`. With
+   nothing ever freezing, `field_write_admissible` returns True for kickoff/review, so all
+   fields stay editable. The Mid-sprint Review is THREE NEW columns
+   (`mid_where_we_stand` / `mid_whats_changed` / `mid_what_to_adjust`), NOT `weekly_addenda`.
+3. **Shared sprint header left as-is (dates pill only).** The mockup header shows a second
+   "day X / 14" pill. The header is shared by both sprint pages (Tracking + Overview) and
+   adding a day-count pill would (a) change the shipped Tracking header and (b) need a
+   "day within sprint" derivation the backend doesn't expose. Out of scope; omitted.
+4. **Pruned only the orphaned overview-only CSS.** Removed `.sprint-field` /
+   `.sprint-field-label` / `.addendum` / `.addendum-date` (dead after the rewrite); KEPT
+   `.list-stack` (Backlog uses it). The broader dead-CSS sweep stays a separate trigger.
+5. **New CSS scoped under `[data-screen="sprint"]`.** The mockup's `.field` / `.flabel` /
+   `.fval` / `.phase` are generic names; scoped them to the sprint screen (file discipline)
+   and resolved every value through `tokens.css`. Reused the shared `.ed` inline-edit surface.
+6. **e2e named descriptively, not `test_eNN_`.** The item registry is retired (verify scores
+   e2e by ran+passed, not anchors), so `test_sprint_overview_fields_and_edit` asserts the
+   three sections render + a round-trip edit on the NEW mid field persists canonically.
+   The Sprint Tracking hooks (e32 loose-tickets/status, e33 seed) are untouched and green.
+
+Verify after: **VERIFY: PASS** (ruff/mypy/unit/build/e2e all green; 15 e2e tests).
+
+### Codex round 1 — freeze fully neutralized + PATCH type-marshalling (2026-07-06)
+
+Two genuine codex findings on the backend diff, both fixed:
+
+- **P2 — freeze was NOT actually dormant.** `update_sprint_field` still rejected
+  kickoff/review writes when a frozen flag was set, and the `freeze-*` endpoints could
+  still set the flag — contradicting "nothing in a sprint locks." Fix: removed the
+  `field_write_admissible` gate from `update_sprint_field` (every text field always
+  editable, regardless of the flag columns) AND made `freeze_kickoff`/`freeze_review`
+  INERT no-ops (never latch the flag, emit no event). Columns + endpoints kept present
+  (reversible); `freeze.py` logic left in place but no longer imported by `data.py`.
+  Rewrote `test_a20_freeze_rules_and_overlap` legs 1+3 to assert the dormant behavior
+  (no flag, no event, writes succeed after a freeze call).
+- **P3 — sprint PATCH lacked the Day-field type marshalling.** `patch_sprint` passed
+  `body[field]` straight to the writer, so a `null` hit the NOT NULL constraint and an
+  object/list produced a raw SQLite binding error (500). Fix: marshal every field via
+  `body_opt_str` (mirrors the Day PATCH) — non-string → clean `validation` (400), null →
+  treated as absent; date_start/date_end marshalled the same way (they previously
+  TypeError'd on non-string). Added `test_patch_sprint_marshals_bad_field_types`.
+
+- **P1 (migration) — flag only, not fixed** (lead's call): existing DBs won't get the 3
+  new columns (CREATE-IF-NOT-EXISTS, no ALTER) — matches the committed Day-fields
+  pattern; the lead surfaces re-seed-vs-migrations to the owner.
+
+Verify after fixes: **VERIFY: PASS** (all 5 gates; 15 e2e).

@@ -1,0 +1,212 @@
+<meta charset="utf-8">
+<title>Ideas</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<!--
+  Ideas — §3.5 raw capture (/api/ideas: title, body markdown, project nullable, no priority,
+  no status; created_at DESC). Applies the decoded design system (see
+  ../sprint-redesign/principles.md) to a screen whose job is: CAPTURE a thought with the
+  least friction, then browse the pile.
+
+  What this screen is FOR (the one thing): capture. So — unlike Backlog, where scanning is
+  the job and create is dormant — the compose is the HERO: always open at the top, the
+  largest type on the page, borrowing the Today focus-line idiom (prominent, no box,
+  separated by rhythm alone, P4). Type a title, press Enter, it's saved; detail and project
+  are quiet and optional. That single difference — capture always-open vs. create dormant —
+  is the honest expression of the two screens' different purposes.
+
+  The pile below, newest first (raw capture reads latest-thought-first). An idea's substance
+  IS its body, but a wall of open bodies isn't calm — so bodies DISCLOSE: each idea is
+  title + project, expand to read (P2). This is where progressive disclosure genuinely earns
+  its place (it does not on Backlog). Title-only ideas — the quick dumps — are FLAT rows
+  with no chevron: an affordance that reveals nothing is inert (P8), so it isn't drawn. This
+  is a deliberate, considered refinement of the Sprint's "expand-to-none" (justified in
+  notes.md).
+
+  No amber beyond the edit caret: capture is user-initiated, not a system ask, so the commit
+  stays grayscale and amber keeps its one meaning (P5). Tokens shared verbatim with the
+  Ticket / Sprint / Today mockups; measure is the Today read width (this is a read+capture,
+  not a chip list).
+-->
+<style>
+:root{
+  --bg:#1b1917; --sunk:#141210; --raise:#24211b; --line:rgba(230,210,175,.11);
+  --fg1:#f4f1ea; --fg2:#dcd8cf; --fg3:#b4b0a6; --fg4:#8a867c; --fg5:#66625a;
+  --amber:#e7a742; --amber-ink:#1c1406; --done:#7fa564;
+  --f:"Inter",-apple-system,system-ui,sans-serif; --dur:130ms;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg2);font:500 15px/1.6 var(--f);-webkit-font-smoothing:antialiased}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+
+.doc{height:100dvh;overflow-y:auto}
+.col{max-width:680px;margin:0 auto;padding:0 40px 160px}
+
+/* header — screen title + a quiet count. Same shape as Backlog / Sprint (P4: pill bg only). */
+.head{border-bottom:1px solid var(--line);padding:22px 40px 16px;max-width:680px;margin:0 auto}
+.head .row{display:flex;align-items:flex-start;gap:16px}
+.title{font-size:20px;font-weight:600;line-height:1.3;color:var(--fg1);flex:1}
+.meta{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;padding-top:2px}
+.pill{font-size:12px;color:var(--fg3);background:#26221c;border-radius:6px;padding:5px 10px;white-space:nowrap}
+
+/* CAPTURE — the hero. Always open, no box, the Today focus-line treatment. Title input is
+   the biggest type; detail + project sit quietly under it; commit is grayscale. The inputs
+   are the inline-edit surface: transparent, amber caret, italic-faint placeholder (P7). */
+.capture{padding:26px 0 24px;border-bottom:1px solid var(--line)}
+.in{background:transparent;border:0;outline:none;font-family:inherit;color:var(--fg2);caret-color:var(--amber);padding:0;width:100%;resize:none}
+.in::placeholder{color:var(--fg5);font-style:italic}
+.capture .title-in{font-size:21px;font-weight:600;color:var(--fg1);line-height:1.4}
+.capture .detail-in{font-size:15px;color:var(--fg3);line-height:1.66;margin-top:16px}
+.capture .foot{display:flex;align-items:center;gap:14px;margin-top:20px;flex-wrap:wrap}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.opt{font-size:12px;color:var(--fg4);background:#221f19;border-radius:5px;padding:5px 11px;cursor:pointer;border:0;font-family:inherit;transition:color var(--dur),background var(--dur)}
+.opt:hover{color:var(--fg2)}
+.opt[aria-pressed="true"]{color:var(--fg1);background:#2c2820}
+.foot .spacer{flex:1}
+.hint{font-size:12px;color:var(--fg5)}
+.hint kbd{font-family:inherit;color:var(--fg4);background:#221f19;border-radius:4px;padding:1px 6px;font-size:11px}
+.commit{font-size:13px;font-weight:600;color:var(--fg2);background:var(--raise);border:0;border-radius:7px;padding:9px 16px;cursor:pointer;font-family:inherit;transition:background var(--dur),color var(--dur)}
+.commit:hover{background:#2c2820;color:var(--fg1)}
+
+/* the pile — newest first. A whisper label carries the section; rows below it. */
+.list{margin-top:30px}
+.list .glabel{font-size:11px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--fg5);padding:2px 0 6px}
+
+/* idea = the disclosure primitive (shared with the Sprint item). Title + project + date;
+   expand reveals the body. Rows divided by border seams; not inset (P4). */
+.chev{width:14px;flex:none;text-align:center;color:var(--fg5);font-size:12px;align-self:center;transition:transform var(--dur)}
+details.idea{border-top:1px solid var(--line)}
+.list details.idea:first-of-type,.list .flat:first-of-type{border-top:0}
+details.idea>summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;gap:12px;padding:14px 0;transition:color var(--dur)}
+details.idea>summary::-webkit-details-marker{display:none}
+details.idea[open]>summary .chev{transform:rotate(90deg)}
+.it{font-size:15px;font-weight:500;color:var(--fg2);flex:1;transition:color var(--dur)}
+details.idea>summary:hover .it,details.idea[open]>summary .it{color:var(--fg1)}
+.chip{font-size:12px;color:var(--fg4);background:#221f19;border-radius:5px;padding:3px 8px;white-space:nowrap;align-self:center}
+.when{font-size:12px;color:var(--fg5);white-space:nowrap;align-self:center;min-width:44px;text-align:right}
+.idea .body{padding:2px 0 18px 26px;font-size:15px;line-height:1.66;color:var(--fg3)}
+.idea .body p+p{margin-top:11px}
+
+/* title-only idea = a FLAT row, no chevron (nothing to disclose — the chevron would be
+   inert, P8). Same rhythm as a summary; the empty .chev keeps the title column aligned. */
+.flat{display:flex;align-items:baseline;gap:12px;padding:14px 0;border-top:1px solid var(--line)}
+.flat .it{color:var(--fg2)}
+</style>
+
+<div class="doc">
+  <header class="head">
+    <div class="row">
+      <div class="title">Ideas</div>
+      <div class="meta">
+        <span class="pill">18</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="col">
+
+    <!-- CAPTURE — always open, the hero. Prefilled here to show a capture mid-flight;
+         at rest it is the placeholder line alone, inviting a thought. -->
+    <section class="capture">
+      <input class="in title-in" type="text" placeholder="Capture an idea…" value="What if onboarding were a single question?">
+      <textarea class="in detail-in" rows="2" placeholder="Add detail — optional">Instead of a multi-step form, ask one thing that matters and infer the rest. Lower the activation cost to almost nothing. Worth a spike next sprint.</textarea>
+      <div class="foot">
+        <div class="seg" role="group" aria-label="Project">
+          <button class="opt" aria-pressed="true">None</button>
+          <button class="opt" aria-pressed="false">Vylo</button>
+          <button class="opt" aria-pressed="false">Tribe</button>
+          <button class="opt" aria-pressed="false">Learning</button>
+          <button class="opt" aria-pressed="false">Other</button>
+        </div>
+        <div class="spacer"></div>
+        <span class="hint"><kbd>&#8629;</kbd> to capture</span>
+        <button class="commit">Capture</button>
+      </div>
+    </section>
+
+    <!-- THE PILE — newest first. Bodies disclose; title-only dumps are flat. -->
+    <div class="list">
+      <div class="glabel">Captured</div>
+
+      <details class="idea">
+        <summary>
+          <span class="chev">&#8250;</span>
+          <span class="it">Weekly "what changed" note to the cohort</span>
+          <span class="chip">Vylo</span>
+          <span class="when">2d</span>
+        </summary>
+        <div class="body">
+          <p>A short, honest weekly note — what shipped, what we learned, what's next. Not a changelog; a voice. It doubles as the thing that keeps the waitlist warm before they're activated.</p>
+          <p>Could reuse the sprint review's "updates to thinking" as the raw material so it's nearly free to write.</p>
+        </div>
+      </details>
+
+      <div class="flat">
+        <span class="chev"></span>
+        <span class="it">Steal Linear's command palette for jumping between sprints</span>
+        <span class="chip">Vylo</span>
+        <span class="when">2d</span>
+      </div>
+
+      <details class="idea">
+        <summary>
+          <span class="chev">&#8250;</span>
+          <span class="it">The planner should be able to say "not yet" to a proposal</span>
+          <span class="chip">Vylo</span>
+          <span class="when">4d</span>
+        </summary>
+        <div class="body">
+          <p>Right now a status proposal is accept-or-nothing. A soft "defer this decision to tomorrow" would match how planning actually feels — some calls aren't ready, and forcing accept/reject makes you rush them.</p>
+        </div>
+      </details>
+
+      <div class="flat">
+        <span class="chev"></span>
+        <span class="it">Read up on CRDTs before committing to the sync model</span>
+        <span class="chip">Learning</span>
+        <span class="when">4d</span>
+      </div>
+
+      <details class="idea">
+        <summary>
+          <span class="chev">&#8250;</span>
+          <span class="it">Tribe and Vylo could share one identity layer</span>
+          <span class="chip">Tribe</span>
+          <span class="when">Jul 1</span>
+        </summary>
+        <div class="body">
+          <p>If both products lean on the same account, the Tribe import problem mostly disappears and cross-product referral becomes trivial. Big architectural bet though — park it until the waitlist proves demand.</p>
+        </div>
+      </details>
+
+      <div class="flat">
+        <span class="chev"></span>
+        <span class="it">Name for the activated-cohort tier?</span>
+        <span class="when">Jun 29</span>
+      </div>
+
+      <details class="idea">
+        <summary>
+          <span class="chev">&#8250;</span>
+          <span class="it">Show the premortem back to me on the last day of the sprint</span>
+          <span class="chip">Vylo</span>
+          <span class="when">Jun 27</span>
+        </summary>
+        <div class="body">
+          <p>I wrote down what would go wrong at kickoff. On review day, put that next to what actually happened. Closes the loop and makes the premortem a live instrument, not a ritual.</p>
+        </div>
+      </details>
+
+      <div class="flat">
+        <span class="chev"></span>
+        <span class="it">Dark-mode-only is fine — don't build a light theme</span>
+        <span class="when">Jun 24</span>
+      </div>
+
+    </div>
+
+  </div>
+</div>

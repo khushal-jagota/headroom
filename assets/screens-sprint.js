@@ -4,9 +4,15 @@
  *     progressive disclosure, calm at rest. Items are native <details> collapsed
  *     by default; expanding one reveals its ticket rows. Read + navigate only —
  *     the sole write is the inline sprint-name edit.
- *   #/sprint/overview → the OVERVIEW page: today's kickoff / review / weekly-addenda
- *     panels, relocated AS-IS (their visual redesign is future work). Kept reachable
- *     via the two-page tab pair so §10.5 coverage is not dropped.
+ *   #/sprint/overview → the SPRINT OVERVIEW page (redesign, rev6,
+ *     orchestration/sprint-redesign/kickoff-review-mockup.html): three headed
+ *     `<details class="phase">` sections — Kickoff / Mid-sprint Review / Sprint
+ *     Review — each a set of headed inline-editable fields (the Today/ticket idiom).
+ *     Every field commits on blur → PATCH that ONE sprint field (shared inlineEdit
+ *     hook, human-only). NO freeze, NO amber, NO sprint number, NO weekly-addenda
+ *     UI (rev6 retired them; their backends stay dormant). The phase only decides
+ *     which section is OPEN by default, derived from which sections already have
+ *     content (P8 state-drives-surface).
  *
  * DOM is built with createElement / textContent only; rendered markdown HTML is
  * reached solely through Planner.components.markdownBlock. No optimistic UI: a
@@ -24,16 +30,21 @@
   // only hash hrefs). Only hash-route hrefs come from C.ROUTES.
   var CURRENT = "/api/sprint/current";
   function sprintPath(id) { return "/api/sprints/" + id; }
-  function freezePath(id, k) { return "/api/sprints/" + id + "/freeze-" + k; }
-  function addendaPath(id) { return "/api/sprints/" + id + "/addenda"; }
 
-  var KICKOFF = [                          // §3.1 kickoff fields, fixed order
+  // The three Overview sections, each [field_key, label] in fixed order. KICKOFF +
+  // REVIEW are the §3.1 fields; MID is the rev6 Mid-sprint Review sub-fields.
+  var KICKOFF = [
     ["limiting_factor", "Limiting factor"],
     ["primary_bet", "Primary bet"],
     ["supports", "Supports"],
     ["premortem", "Premortem"]
   ];
-  var REVIEW = [                           // §3.1 review fields, fixed order
+  var MID = [
+    ["mid_where_we_stand", "Where we stand"],
+    ["mid_whats_changed", "What's changed"],
+    ["mid_what_to_adjust", "What to adjust"]
+  ];
+  var REVIEW = [
     ["outcomes", "Outcomes"],
     ["solo_reflection", "Solo reflection"],
     ["joint_discussion", "Joint discussion"],
@@ -279,144 +290,73 @@
     root.replaceChildren(doc);
   }
 
-  // --- OVERVIEW page (kickoff / review / weekly addenda, relocated AS-IS) -------
+  // --- OVERVIEW page (Kickoff / Mid-sprint Review / Sprint Review, redesign) ----
 
-  function freezePanelFields(pairs, s, sid, kind) {
-    var frozenAt = kind === "kickoff" ? s.kickoff_frozen_at : s.review_frozen_at;
-    var frozen = frozenAt !== null;
-    var body = [];
-    if (frozen) {
-      body.push(comp.chip("frozen"));
-    }
-    pairs.forEach(function (pair) {
-      body.push(fieldWrap(pair[0], pair[1], s[pair[0]], frozen, sid));
-    });
-    if (!frozen) {
-      body.push(freezeButton(kind, sid));
-    }
-    var section = comp.panel(kind === "kickoff" ? "Kickoff" : "Review", body);
-    section.setAttribute("data-" + kind, "");
-    if (frozen) {
-      section.setAttribute("data-frozen", "1");
-    }
-    return section;
+  // The bet, stated once atop the sections — a read-only echo of primary_bet (its
+  // editable copy is the Kickoff "Primary bet" field below). Same frame as tracking,
+  // minus the health line (that's a tracking-only rollup).
+  function overviewBet(s) {
+    var frame = make("section", "frame");
+    var lead = make("div", "lead");
+    lead.appendChild(comp.markdownBlock(s.primary_bet));
+    frame.appendChild(lead);
+    return frame;
   }
 
-  function kickoffPanel(s, sid) { return freezePanelFields(KICKOFF, s, sid, "kickoff"); }
-  function reviewPanel(s, sid) { return freezePanelFields(REVIEW, s, sid, "review"); }
-
-  function fieldWrap(key, label, value, frozen, sid) {
-    var wrap = make("div", "sprint-field");
-    wrap.setAttribute("data-field", key);
-    wrap.appendChild(make("div", "sprint-field-label", label));
-    wrap.appendChild(comp.markdownBlock(value));
-    if (!frozen) {
-      wrap.appendChild(comp.fieldEditor(value, function (newValue) {
+  // One field — the shared primitive across all three sections: a header label + an
+  // inline-editable markdown body (the Today/ticket idiom). Editing commits on blur →
+  // PATCH that ONE sprint field; the WS flush re-renders (no optimistic UI). Nothing
+  // freezes, so every field is always editable.
+  function overviewField(s, sid, pair) {
+    var field = make("div", "field");
+    field.setAttribute("data-field", pair[0]);
+    field.appendChild(make("div", "flabel", pair[1]));
+    var val = make("div", "fval");
+    comp.inlineEdit(val, {
+      getValue: function () { return s[pair[0]]; },
+      onSave: function (raw) {
         var b = {};
-        b[key] = newValue;
+        b[pair[0]] = raw;
         return api.fetchJson(sprintPath(sid), { method: "PATCH", body: b });
-      }));
-    }
-    return wrap;
-  }
-
-  function freezeButton(kind, sid) {
-    var btn = make("button", "button", "Freeze " + kind);
-    btn.type = "button";
-    btn.setAttribute("data-freeze", kind);
-    btn.addEventListener("click", function () {
-      var prior = btn.parentNode.querySelector(".error-line");
-      if (prior) {
-        prior.parentNode.removeChild(prior);
-      }
-      btn.disabled = true;
-      api.fetchJson(freezePath(sid, kind), { method: "POST" }).then(
-        function () {},
-        function (err) {
-          var line = comp.errorLine(err);
-          if (btn.nextSibling) {
-            btn.parentNode.insertBefore(line, btn.nextSibling);
-          } else {
-            btn.parentNode.appendChild(line);
-          }
-        }
-      ).then(function () {
-        btn.disabled = false;
-      });
+      },
+      markdown: true,
+      multiline: true,
+      placeholder: "(none)"
     });
-    return btn;
+    field.appendChild(val);
+    return field;
   }
 
-  function addendaPanel(s, sid) {
-    return comp.panel("Weekly addenda", [addendaList(s.weekly_addenda), addendaForm(sid)]);
-  }
-
-  function addendaList(list) {
-    var stack = make("div", "list-stack");
-    stack.setAttribute("data-addenda", "");
-    if (list.length) {
-      list.forEach(function (a) {
-        var row = make("div", "addendum");
-        row.setAttribute("data-addendum", "");
-        row.appendChild(make("span", "addendum-date", a.date));
-        row.appendChild(comp.markdownBlock(a.text));
-        stack.appendChild(row);
-      });
-    } else {
-      stack.appendChild(quiet("(none)"));
+  // A section — one native <details> primitive (name + meta + chevron), body = its
+  // fields (an optional refline first). `open` is phase-driven, decided by the caller.
+  function phaseSection(kind, name, meta, open, fields, s, sid, refline) {
+    var details = make("details", "phase");
+    details.setAttribute("data-phase", kind);
+    if (open) {
+      details.setAttribute("open", "");
     }
-    return stack;
+    var summary = make("summary");
+    summary.appendChild(make("span", "pnm", name));
+    summary.appendChild(make("span", "pmeta", meta));
+    summary.appendChild(make("span", "chev", "›"));
+    details.appendChild(summary);
+    var body = make("div", "body");
+    if (refline) {
+      body.appendChild(make("div", "refline", refline));
+    }
+    fields.forEach(function (pair) {
+      body.appendChild(overviewField(s, sid, pair));
+    });
+    details.appendChild(body);
+    return details;
   }
 
-  function addendaForm(sid) {
-    var form = make("form", "create-form");
-    form.setAttribute("data-addenda-form", "");
-
-    var dateWrap = make("div", "create-form-field");
-    dateWrap.appendChild(make("label", "create-form-label", "Date"));
-    var dateInput = make("input", "form-control");
-    dateInput.type = "date";
-    dateInput.setAttribute("data-input", "date");
-    dateWrap.appendChild(dateInput);
-    form.appendChild(dateWrap);
-
-    var textWrap = make("div", "create-form-field");
-    textWrap.appendChild(make("label", "create-form-label", "Note"));
-    var textArea = make("textarea", "form-control");
-    textArea.rows = 3;
-    textArea.setAttribute("data-input", "text");
-    textWrap.appendChild(textArea);
-    form.appendChild(textWrap);
-
-    var actions = make("div", "field-editor-actions");
-    var submit = make("button", "button button--primary", "Add addendum");
-    submit.type = "submit";
-    actions.appendChild(submit);
-    form.appendChild(actions);
-
-    form.addEventListener("submit", function (e) {
-      e.preventDefault();
-      var prior = form.querySelector(".error-line");
-      if (prior) {
-        prior.parentNode.removeChild(prior);
-      }
-      submit.disabled = true;
-      api.fetchJson(addendaPath(sid), {
-        method: "POST",
-        body: { date: dateInput.value, text: textArea.value }
-      }).then(
-        function () {
-          dateInput.value = "";
-          textArea.value = "";
-        },
-        function (err) {
-          actions.prepend(comp.errorLine(err));
-        }
-      ).then(function () {
-        submit.disabled = false;
-      });
+  // Any of a section's fields already written? Drives which section opens (P8).
+  function sectionHasContent(s, fields) {
+    return fields.some(function (pair) {
+      var v = s[pair[0]];
+      return v !== null && v !== undefined && String(v).trim() !== "";
     });
-    return form;
   }
 
   function renderOverview(root, res) {
@@ -426,9 +366,30 @@
     doc.appendChild(sprintHeader(s, sid));
     var col = make("div", "col");
     col.appendChild(tabPair("overview"));
-    col.appendChild(kickoffPanel(s, sid));
-    col.appendChild(reviewPanel(s, sid));
-    col.appendChild(addendaPanel(s, sid));
+    col.appendChild(overviewBet(s));
+
+    // Phase → which section opens, derived from the sprint's own content (no backend
+    // phase flag, no freeze): review-open once the Sprint Review has content; running
+    // once the Mid-sprint Review does; kickoff-open at the start.
+    var reviewHas = sectionHasContent(s, REVIEW);
+    var midHas = sectionHasContent(s, MID);
+    var openKickoff = !reviewHas && !midHas;
+    var openMid = reviewHas || midHas;
+    var openReview = reviewHas;
+
+    col.appendChild(
+      phaseSection("kickoff", "Kickoff", "set at the start", openKickoff, KICKOFF, s, sid, null)
+    );
+    col.appendChild(
+      phaseSection("mid", "Mid-sprint Review", "mid-sprint", openMid, MID, s, sid, null)
+    );
+    col.appendChild(
+      phaseSection(
+        "review", "Sprint Review", "end of sprint", openReview, REVIEW, s, sid,
+        "Written with the Mid-sprint Review above in view — it's the raw material " +
+          "for this retrospective."
+      )
+    );
     doc.appendChild(col);
     root.replaceChildren(doc);
   }

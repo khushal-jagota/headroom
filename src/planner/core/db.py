@@ -20,14 +20,17 @@ CREATE TABLE IF NOT EXISTS sprints (
   primary_bet         TEXT NOT NULL DEFAULT '',
   supports            TEXT NOT NULL DEFAULT '',
   premortem           TEXT NOT NULL DEFAULT '',
-  weekly_addenda      TEXT NOT NULL DEFAULT '[]',    -- JSON list[Addendum], append-only
-  kickoff_frozen_at   INTEGER,
+  mid_where_we_stand  TEXT NOT NULL DEFAULT '',      -- Mid-sprint Review (rev6): headed markdown sub-fields
+  mid_whats_changed   TEXT NOT NULL DEFAULT '',
+  mid_what_to_adjust  TEXT NOT NULL DEFAULT '',
+  weekly_addenda      TEXT NOT NULL DEFAULT '[]',    -- JSON list[Addendum]; dormant (rev6 retired the addenda UI)
+  kickoff_frozen_at   INTEGER,                        -- dormant (rev6 retired freeze; nothing sets this now)
   outcomes            TEXT NOT NULL DEFAULT '',
   solo_reflection     TEXT NOT NULL DEFAULT '',
   joint_discussion    TEXT NOT NULL DEFAULT '',
   updates_to_thinking TEXT NOT NULL DEFAULT '',
   carry_forward       TEXT NOT NULL DEFAULT '',
-  review_frozen_at    INTEGER,
+  review_frozen_at    INTEGER,                        -- dormant (rev6 retired freeze; nothing sets this now)
   created_at          INTEGER NOT NULL,
   updated_at          INTEGER NOT NULL,
   CHECK (date_start <= date_end)
