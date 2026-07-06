@@ -1,9 +1,18 @@
-/* Sprint screen (#/sprint) — SPEC §10 screen 5 on the T14 foundation. Composes the
- * D11 primitives (panel, markdownBlock, fieldEditor, chip, entityRow, errorLine).
- * DOM is built with createElement / textContent only; rendered markdown HTML is reached
- * solely through Planner.components.markdownBlock. No optimistic UI: a successful write
- * surfaces only when the WS-invalidation refetch re-renders the screen. Classic
- * script: registers the "sprint" screen over app.js's placeholder (overwrite-wins). */
+/* Sprint screen — TWO pages behind one registered "sprint" screen (params.sub):
+ *   #/sprint, #/sprint/tracking → the TRACKING page (redesign,
+ *     orchestration/sprint-redesign/mockup.html): sprint → items → tickets,
+ *     progressive disclosure, calm at rest. Items are native <details> collapsed
+ *     by default; expanding one reveals its ticket rows. Read + navigate only —
+ *     the sole write is the inline sprint-name edit.
+ *   #/sprint/overview → the OVERVIEW page: today's kickoff / review / weekly-addenda
+ *     panels, relocated AS-IS (their visual redesign is future work). Kept reachable
+ *     via the two-page tab pair so §10.5 coverage is not dropped.
+ *
+ * DOM is built with createElement / textContent only; rendered markdown HTML is
+ * reached solely through Planner.components.markdownBlock. No optimistic UI: a
+ * successful write surfaces only when the WS-invalidation refetch re-renders the
+ * screen. Classic script: registers the "sprint" screen over app.js's placeholder
+ * (overwrite-wins). */
 (function () {
   "use strict";
   var Planner = (window.Planner = window.Planner || {});
@@ -31,9 +40,18 @@
     ["updates_to_thinking", "Updates to thinking"],
     ["carry_forward", "Carry forward"]
   ];
-  var STATUS_ORDER = ["todo", "active", "done", "blocked", "deferred_next_sprint"];   // §3.2
-  var STATE_ORDER = ["needs_success", "needs_approach", "needs_plan",
-                     "in_progress", "needs_review", "done", "dropped"];               // §4.1
+
+  // Tracking-page grouping: live groups always render (visible at rest, even when
+  // empty); settled groups tuck behind a group-level disclosure. §3.2 status enum.
+  var LIVE_ORDER = ["active", "todo", "blocked"];
+  var SETTLED_ORDER = ["done", "deferred_next_sprint"];
+  var GROUP_LABEL = {
+    active: "Active",
+    todo: "Todo",
+    blocked: "Blocked",
+    done: "Done",
+    deferred_next_sprint: "Deferred → next sprint"
+  };
 
   function make(tag, className, text) {
     var node = document.createElement(tag);
@@ -50,16 +68,218 @@
     return make("div", "quiet-line", text);
   }
 
-  // --- header ------------------------------------------------------------------
+  function prettyState(state) {
+    return String(state).replace(/_/g, " ");
+  }
 
-  function sprintHeader(s) {
-    var header = make("div", "sprint-header");
-    header.appendChild(make("h1", "screen-title", s.name));
-    header.appendChild(make("div", "sprint-dates quiet-line", s.date_start + " – " + s.date_end));
+  // --- shared header + two-page tab pair ---------------------------------------
+
+  // The sprint name is the one editable surface across both pages (P7 in-place edit;
+  // PATCH /api/sprints/{id} {name}, human-only, never freeze-gated). The date range
+  // is a read-only pill; its .sprint-dates span carries the range text ALONE (the
+  // "dates" key is a sibling) so the value stays exact.
+  function sprintHeader(s, sid) {
+    var header = make("header", "sprint-header");
+    var row = make("div", "sprint-header-row");
+    var title = make("h1", "screen-title");
+    comp.inlineEdit(title, {
+      getValue: function () { return s.name; },
+      onSave: function (raw) {
+        return api.fetchJson(sprintPath(sid), { method: "PATCH", body: { name: raw } });
+      },
+      placeholder: "(unnamed sprint)"
+    });
+    row.appendChild(title);
+    var meta = make("div", "sprint-meta");
+    var pill = make("span", "pill sprint-dates-pill");
+    pill.appendChild(make("span", "pill-key", "dates"));
+    pill.appendChild(make("span", "sprint-dates", s.date_start + " – " + s.date_end));
+    meta.appendChild(pill);
+    row.appendChild(meta);
+    header.appendChild(row);
     return header;
   }
 
-  // --- kickoff / review (shared freeze pattern) --------------------------------
+  function tabPair(current) {
+    var nav = make("nav", "tabs");
+    [["overview", "Sprint Overview"], ["tracking", "Sprint Tracking"]].forEach(function (pair) {
+      var tab = make("a", "tab" + (pair[0] === current ? " cur" : ""), pair[1]);
+      tab.setAttribute("href", "#/sprint/" + pair[0]);
+      nav.appendChild(tab);
+    });
+    return nav;
+  }
+
+  // --- TRACKING page (the redesign) --------------------------------------------
+
+  // The bet, stated once — a read-only echo of primary_bet (the editable copy lives
+  // on the Overview page's Primary bet field). Health = "X of M done": X = items with
+  // status done, M = total items, derived from the groups on render (P8 state-driven).
+  function betFrame(s, groups) {
+    var frame = make("section", "frame");
+    var lead = make("div", "lead");
+    lead.appendChild(comp.markdownBlock(s.primary_bet));
+    frame.appendChild(lead);
+    var total = 0;
+    Object.keys(groups).forEach(function (k) {
+      total += (groups[k] || []).length;
+    });
+    var done = (groups.done || []).length;
+    frame.appendChild(make("div", "health", done + " of " + total + " done"));
+    return frame;
+  }
+
+  function countText(tickets) {
+    var n = (tickets || []).length;
+    if (n === 0) {
+      return "no tickets yet";
+    }
+    return n === 1 ? "1 ticket" : n + " tickets";
+  }
+
+  function itemChips(item) {
+    var chips = make("span", "chips");
+    chips.appendChild(comp.chip("priority", item.priority));
+    chips.appendChild(comp.chip("project", item.project));
+    if (item.deadline) {
+      chips.appendChild(comp.chip("deadline", item.deadline));
+    }
+    if (item.blockers_cleared) {
+      chips.appendChild(comp.chip("blockers-cleared"));
+    }
+    (item.blocked_by_titles || []).forEach(function (blockerTitle) {
+      var chip = make("span", "chip chip--blocked-by");
+      chip.appendChild(make("span", "k", "blocked by"));
+      chip.appendChild(document.createTextNode(blockerTitle));
+      chips.appendChild(chip);
+    });
+    return chips;
+  }
+
+  // A ticket row: state · title · priority, navigating to the ticket page. Inside an
+  // item disclosure the title is a plain .tt; on a LOOSE row it also carries
+  // entity-row-title (the loose-ticket e2e contract) — item-ticket titles must NOT,
+  // so the item-title selector [data-item-id] .entity-row-title stays exact.
+  function ticketRow(t, looseTitle) {
+    var row = make("a", "tk");
+    row.setAttribute("href", C.ROUTES.ticketPrefix + t.id);
+    row.setAttribute("data-ticket-id", t.id);
+    row.appendChild(make("span", "st st--" + t.state, prettyState(t.state)));
+    row.appendChild(make("span", looseTitle ? "tt entity-row-title" : "tt", t.title));
+    row.appendChild(make("span", "pr", t.priority));
+    return row;
+  }
+
+  // The item = the primary row, a native <details data-item-id> composed in-screen
+  // (its summary is chevron + title + chips + count — a different composition from the
+  // ticket build's collapsibleField, so it is NOT routed through it: components.js
+  // stays untouched). The title span carries entity-row-title; the chevron, chips and
+  // count are siblings, so its textContent equals the title exactly (e2e item 33).
+  function itemDisclosure(item) {
+    var details = make("details", "item");
+    details.setAttribute("data-item-id", item.id);
+    var summary = make("summary");
+    summary.appendChild(make("span", "chev", "›"));
+    summary.appendChild(make("span", "it entity-row-title", item.title));
+    summary.appendChild(itemChips(item));
+    summary.appendChild(make("span", "count", countText(item.tickets)));
+    details.appendChild(summary);
+    var body = make("div", "tkts");
+    var tickets = item.tickets || [];
+    if (tickets.length) {
+      tickets.forEach(function (t) {
+        body.appendChild(ticketRow(t, false));
+      });
+    } else {
+      body.appendChild(make("div", "none", "No tickets on this item yet."));
+    }
+    details.appendChild(body);
+    return details;
+  }
+
+  function groupLabel(status, count) {
+    var label = make("div", "glabel");
+    label.appendChild(document.createTextNode(GROUP_LABEL[status] + " "));
+    label.appendChild(make("span", "n", "· " + count));
+    return label;
+  }
+
+  // Live group — always rendered (visible even when empty) so [data-status-group=…]
+  // resolves for the "ready when active is empty" e2e wait (item 32).
+  function liveGroup(status, items) {
+    var group = make("div", "grp");
+    group.setAttribute("data-status-group", status);
+    group.appendChild(groupLabel(status, items.length));
+    items.forEach(function (item) {
+      group.appendChild(itemDisclosure(item));
+    });
+    return group;
+  }
+
+  // Settled group — a collapsed group-level disclosure; the inner grp carries
+  // data-status-group so [data-status-group="done"] [data-item-id] still resolves
+  // (item 33 reads titles visibility-agnostically, so collapsed is fine).
+  function settledGroup(status, items) {
+    var details = make("details", "sett");
+    var summary = make("summary");
+    summary.appendChild(make(
+      "span", "glabel2" + (status === "done" ? " glabel2--done" : ""),
+      GROUP_LABEL[status] + " · " + items.length
+    ));
+    summary.appendChild(make("span", "gchev", "›"));
+    details.appendChild(summary);
+    var group = make("div", "grp settled");
+    group.setAttribute("data-status-group", status);
+    items.forEach(function (item) {
+      group.appendChild(itemDisclosure(item));
+    });
+    details.appendChild(group);
+    return details;
+  }
+
+  // Loose tickets (§5) — tickets on the sprint with no item parent, tucked behind a
+  // group-level disclosure. Rows link direct to the ticket; the [data-loose] body and
+  // per-row data-ticket-id are the e2e contract (items 32 + 33).
+  function looseDisclosure(tickets) {
+    var details = make("details", "sett");
+    var summary = make("summary");
+    summary.appendChild(make("span", "glabel2", "Loose tickets · " + tickets.length));
+    summary.appendChild(make("span", "gchev", "›"));
+    details.appendChild(summary);
+    var body = make("div", "tkts");
+    body.setAttribute("data-loose", "");
+    tickets.forEach(function (t) {
+      body.appendChild(ticketRow(t, true));
+    });
+    details.appendChild(body);
+    return details;
+  }
+
+  function renderTracking(root, res) {
+    var s = res.sprint;
+    var sid = s.id;
+    var doc = make("div", "doc");
+    doc.appendChild(sprintHeader(s, sid));
+    var col = make("div", "col");
+    col.appendChild(tabPair("tracking"));
+    col.appendChild(betFrame(s, res.groups));
+    LIVE_ORDER.forEach(function (status) {
+      col.appendChild(liveGroup(status, res.groups[status] || []));
+    });
+    SETTLED_ORDER.forEach(function (status) {
+      var items = res.groups[status] || [];
+      if (items.length) {
+        col.appendChild(settledGroup(status, items));
+      }
+    });
+    if (res.loose_tickets.length) {
+      col.appendChild(looseDisclosure(res.loose_tickets));
+    }
+    doc.appendChild(col);
+    root.replaceChildren(doc);
+  }
+
+  // --- OVERVIEW page (kickoff / review / weekly addenda, relocated AS-IS) -------
 
   function freezePanelFields(pairs, s, sid, kind) {
     var frozenAt = kind === "kickoff" ? s.kickoff_frozen_at : s.review_frozen_at;
@@ -126,114 +346,6 @@
     });
     return btn;
   }
-
-  // --- items -------------------------------------------------------------------
-
-  function itemsPanel(groups) {
-    return comp.panel("Items", STATUS_ORDER.map(function (status) {
-      return statusGroup(status, groups[status] || []);
-    }));
-  }
-
-  function prettyStatus(status) {
-    var spaced = status.replace(/_/g, " ");
-    return spaced.charAt(0).toUpperCase() + spaced.slice(1);
-  }
-
-  function statusGroup(status, items) {
-    var group = make("div", "status-group");
-    group.setAttribute("data-status-group", status);
-    group.appendChild(make("div", "status-group-title", prettyStatus(status) + " · " + items.length));
-    if (items.length) {
-      var stack = make("div", "list-stack");
-      items.forEach(function (item) {
-        stack.appendChild(itemRow(item));
-      });
-      group.appendChild(stack);
-    } else {
-      group.appendChild(quiet("(none)"));
-    }
-    return group;
-  }
-
-  function itemChips(item) {
-    var chips = [
-      comp.chip("priority", item.priority),
-      comp.chip("project", item.project)
-    ];
-    if (item.deadline) {
-      chips.push(comp.chip("deadline", item.deadline));
-    }
-    if (item.blockers_cleared) {
-      chips.push(comp.chip("blockers-cleared"));
-    }
-    if (item.status_proposal) {
-      chips.push(comp.chip("pending-proposal"));
-    }
-    return chips;
-  }
-
-  function rollupText(rollup) {
-    var total = 0;
-    STATE_ORDER.forEach(function (st) {
-      total += rollup[st] || 0;
-    });
-    var parts = STATE_ORDER.filter(function (st) {
-      return rollup[st] > 0;
-    }).map(function (st) {
-      return st.replace(/_/g, " ") + " " + rollup[st];
-    });
-    var text = total === 1 ? "1 ticket" : total + " tickets";
-    if (parts.length) {
-      text += " · " + parts.join(" · ");
-    }
-    return text;
-  }
-
-  function itemRow(item) {
-    var wrap = make("div", "sprint-item");
-    wrap.setAttribute("data-item-id", item.id);
-    wrap.appendChild(comp.entityRow({
-      href: C.ROUTES.sprint,
-      title: item.title,
-      chips: itemChips(item)
-    }));
-    var rollup = make("span", "rollup", rollupText(item.rollup));
-    rollup.setAttribute("data-rollup", "");
-    wrap.appendChild(rollup);
-    return wrap;
-  }
-
-  // --- loose tickets -----------------------------------------------------------
-
-  function loosePanel(tickets) {
-    return comp.panel("Loose tickets", looseSection(tickets));
-  }
-
-  function looseSection(tickets) {
-    var section = make("section", "list-stack");
-    section.setAttribute("data-loose", "");
-    if (tickets.length) {
-      tickets.forEach(function (t) {
-        section.appendChild(looseRow(t));
-      });
-    } else {
-      section.appendChild(quiet("(none)"));
-    }
-    return section;
-  }
-
-  function looseRow(t) {
-    var row = comp.entityRow({
-      href: C.ROUTES.ticketPrefix + t.id,
-      title: t.title,
-      chips: [comp.chip("state", t.state), comp.chip("priority", t.priority)]
-    });
-    row.setAttribute("data-ticket-id", t.id);
-    return row;
-  }
-
-  // --- weekly addenda (append-only; rendered pre- and post-freeze) --------------
 
   function addendaPanel(s, sid) {
     return comp.panel("Weekly addenda", [addendaList(s.weekly_addenda), addendaForm(sid)]);
@@ -307,27 +419,39 @@
     return form;
   }
 
+  function renderOverview(root, res) {
+    var s = res.sprint;
+    var sid = s.id;
+    var doc = make("div", "doc");
+    doc.appendChild(sprintHeader(s, sid));
+    var col = make("div", "col");
+    col.appendChild(tabPair("overview"));
+    col.appendChild(kickoffPanel(s, sid));
+    col.appendChild(reviewPanel(s, sid));
+    col.appendChild(addendaPanel(s, sid));
+    doc.appendChild(col);
+    root.replaceChildren(doc);
+  }
+
   // --- render ------------------------------------------------------------------
 
   function renderSprint(root, params) {
     root.setAttribute("data-screen", "sprint");
+    var overview = params && params.sub === "overview";
     api.fetchJson(CURRENT).then(
       function (res) {
         if (res.sprint === null) {
-          root.appendChild(quiet("No current sprint."));
+          root.replaceChildren(quiet("No current sprint."));
           return;
         }
-        var s = res.sprint;
-        var sid = s.id;
-        root.appendChild(sprintHeader(s));
-        root.appendChild(kickoffPanel(s, sid));
-        root.appendChild(itemsPanel(res.groups));
-        root.appendChild(loosePanel(res.loose_tickets));
-        root.appendChild(reviewPanel(s, sid));
-        root.appendChild(addendaPanel(s, sid));
+        if (overview) {
+          renderOverview(root, res);
+        } else {
+          renderTracking(root, res);
+        }
       },
       function (err) {
-        root.appendChild(comp.errorLine(err));
+        root.replaceChildren(comp.errorLine(err));
       }
     );
   }

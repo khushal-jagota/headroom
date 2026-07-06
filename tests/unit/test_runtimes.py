@@ -508,12 +508,12 @@ def test_boundary_tick_runs_once_per_planning_date(
 
     day = tmp_db.execute("SELECT * FROM days WHERE id='day_2026-07-05'").fetchone()
     assert day is not None
-    assert day["brief"] == "# Brief for 2026-07-05"
-    tree = load_plan(tmp_db, "day_2026-07-05")
-    assert tree is not None
-    assert tree.root.focus == "Fake focus"
-    assert tree.root.status == NodeStatus.proposed
-    assert tree.children == []
+    assert day["focus"] == "Focus for 2026-07-05"
+    assert day["brief_take"] == "Brief take for 2026-07-05"
+    assert day["watchout"] == "Watchout for 2026-07-05"
+    assert day["if_today_lands"] == "If today lands for 2026-07-05"
+    # The boundary no longer proposes a plan (retired); the plan column stays NULL.
+    assert load_plan(tmp_db, "day_2026-07-05") is None
     rows = tmp_db.execute("SELECT judgment FROM boundary_runs").fetchall()
     assert len(rows) == 1
     assert rows[0]["judgment"] == "ok"

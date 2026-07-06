@@ -23,27 +23,26 @@ NOW_0501 = "2026-07-05T05:01:00"
 DAY_PREV = "2026-07-04"
 DAY_CUR = "2026-07-05"
 
-# fake boundary adapter literals (core/adapters/fakes.py:44-83) — DEFAULT behaviors,
-# unscriptable from a test (the fake lives in the server process):
-FAKE_BRIEF_H1 = "Brief for 2026-07-05"   # brief "# Brief for <date>" → <h1> text
+# fake boundary adapter literals (core/adapters/fakes.py) — DEFAULT behaviors,
+# unscriptable from a test (the fake lives in the server process). It fills the four
+# overview fields keyed off the planning date:
+FAKE_FOCUS = "Focus for 2026-07-05"
+FAKE_TAKE = "Brief take for 2026-07-05"
+FAKE_WATCH = "Watchout for 2026-07-05"
+FAKE_LANDS = "If today lands for 2026-07-05"
 
-# item 28 — the boundary writes an UNSTRUCTURED brief; the Day overview degrades it
-# into the Brief Take slot (no focus/watchout/lands headings present to parse).
+# item 28 — the boundary FILLS the four overview fields; the Day overview renders each
+# in its own slot (focus hero + Brief Take / Watchout / If Today Lands bodies).
 
-# item 29 — a STRUCTURED brief (a leading focus line + the three fixed H2s), seeded
-# through the human brief PATCH, then amended in place. Each body is a single
-# paragraph so its slot's inner_text is exactly the source line.
+# item 29 — the four overview fields, seeded per-field through the human PATCH, then
+# amended in place. Each body is a single line so its slot's inner_text is exactly the
+# source text.
 E29_FOCUS = "E29 ship the waitlist funnel to real traffic."
 E29_TAKE = "E29 yesterday closed at sixty-two percent completion."
 E29_WATCH = "E29 the hero still does not say what Vylo is in one line."
 E29_LANDS = "E29 real visitors are in the waitlist table by tonight."
 E29_FOCUS_EDIT = "E29 signal today, not polish."
-E29_BRIEF = (
-    E29_FOCUS + "\n\n"
-    "## Brief Take\n\n" + E29_TAKE + "\n\n"
-    "## Watchout\n\n" + E29_WATCH + "\n\n"
-    "## If Today Lands\n\n" + E29_LANDS + "\n"
-)
+E29_WATCH_EDIT = "E29 watch the funnel drop-off after signup."
 
 # item 30 (ceiling needs_review so accepted result parks AT needs_review, §4.4.5)
 E30_TITLE = "E30 dispatch ticket"
@@ -141,17 +140,16 @@ def _snap_board(p: Page, mid):
 
 
 def _snap_day(p: Page):
-    # The Day overview renders the (unstructured, fake-adapter) brief in the Brief
-    # Take slot; its <h1> is the state that must survive a reload unchanged.
-    return {"brief": p.inner_text('[data-day-take-body] h1')}
+    # The Day overview renders the fake-adapter fields in their slots; the Brief Take
+    # body is the state that must survive a reload unchanged.
+    return {"take": p.inner_text('[data-day-take-body]')}
 
 
 def test_e28_day_boundary_accept_all(server, context_factory, open_page, cli, api):
-    # A boundary judgment pass writes the day's brief (fake adapter: "# Brief for
-    # <date>", unstructured). The Day is now the OVERVIEW, not a dashboard: the plan
-    # tree, today-ticket list, review-count and chat are gone from it. The overview
-    # degrades an unstructured brief — the whole blob renders inside Brief Take, the
-    # other slots stay quiet.
+    # A boundary judgment pass FILLS the day's four overview fields (fake adapter,
+    # keyed off the planning date). The Day is now the OVERVIEW, not a dashboard: the
+    # plan tree, today-ticket list, review-count and chat are gone from it. Each field
+    # renders straight into its slot — no markdown parse, no degrade branch.
     r = _set_now(api, server, NOW_0501)
     assert r["planning_date"] == DAY_CUR, r
 
@@ -168,8 +166,11 @@ def test_e28_day_boundary_accept_all(server, context_factory, open_page, cli, ap
     )
     page.wait_for_selector("[data-day-take-body]", timeout=WAIT_MS)
 
-    # Degrade path: the unstructured brief renders as markdown in Brief Take (its <h1>).
-    assert page.inner_text('[data-day-take-body] h1') == FAKE_BRIEF_H1
+    # The four fields the boundary filled render in their slots.
+    assert page.inner_text('[data-day-focus]') == FAKE_FOCUS
+    assert page.inner_text('[data-day-take-body]') == FAKE_TAKE
+    assert page.inner_text('[data-day-watch-body]') == FAKE_WATCH
+    assert page.inner_text('[data-day-lands-body]') == FAKE_LANDS
     # The date orients the read (planning date 2026-07-05). text_content, not
     # inner_text: the date label is text-transform:uppercase, and inner_text would
     # return the rendered "JULY 5" while text_content keeps the raw DOM text.
@@ -185,9 +186,19 @@ def test_e28_day_boundary_accept_all(server, context_factory, open_page, cli, ap
 def test_e29_day_overview_structured_and_edit(
     server, context_factory, open_page, cli, api
 ):
-    # Seed a STRUCTURED brief on the current planning day (baseline 2026-07-04). The
-    # overview parses the focus line + the three H2 sections into their four slots.
-    api.human_patch(server, f"/api/day/{DAY_PREV}", {"brief": E29_BRIEF})
+    # Seed the four overview fields on the current planning day (baseline 2026-07-04)
+    # in one PATCH, then amend two of them in place — a scalar (focus) and a markdown
+    # body (watchout) — each editing on its own, no whole-blob re-serialize.
+    api.human_patch(
+        server,
+        f"/api/day/{DAY_PREV}",
+        {
+            "focus": E29_FOCUS,
+            "brief_take": E29_TAKE,
+            "watchout": E29_WATCH,
+            "if_today_lands": E29_LANDS,
+        },
+    )
 
     page = open_page(
         context_factory(), server, "#/day", "[data-day-overview]", settled=True
@@ -200,34 +211,39 @@ def test_e29_day_overview_structured_and_edit(
     assert page.inner_text('[data-day-lands-body]') == E29_LANDS
     assert "July 4" in page.text_content('[data-day-date]')  # raw DOM (label uppercases)
 
-    # Inline edit round-trip: amend the focus in place. inlineEdit seeds the raw scalar
-    # on focus and commits on blur → human PATCH re-serializes the whole brief → the
-    # WS flush re-renders. Driven deterministically (focus, overwrite, blur).
-    f0 = page.evaluate("window.__plannerDebug.flushes")
-    page.evaluate(
-        "(t) => { const el = document.querySelector('[data-day-focus]');"
-        " el.focus(); el.textContent = t; el.blur(); }",
-        E29_FOCUS_EDIT,
-    )
-    page.wait_for_function(
-        "(f0) => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS
-    )
-    page.wait_for_function(
-        "(t) => { const el = document.querySelector('[data-day-focus]');"
-        " return !!el && el.textContent === t; }",
-        arg=E29_FOCUS_EDIT,
-        timeout=WAIT_MS,
-    )
+    # inlineEdit seeds the raw value on focus and commits on blur → per-field PATCH →
+    # the WS flush re-renders. Driven deterministically (focus, overwrite, blur).
+    def edit_field(selector, text):
+        f0 = page.evaluate("window.__plannerDebug.flushes")
+        page.evaluate(
+            "(a) => { const el = document.querySelector(a.sel);"
+            " el.focus(); el.textContent = a.text; el.blur(); }",
+            {"sel": selector, "text": text},
+        )
+        page.wait_for_function(
+            "(f0) => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS
+        )
+        page.wait_for_function(
+            "(a) => { const el = document.querySelector(a.sel);"
+            " return !!el && el.innerText.trim() === a.text; }",
+            arg={"sel": selector, "text": text},
+            timeout=WAIT_MS,
+        )
 
-    # The edit persisted, and re-serialization preserved the three section bodies.
+    edit_field('[data-day-focus]', E29_FOCUS_EDIT)       # scalar
+    edit_field('[data-day-watch-body]', E29_WATCH_EDIT)  # markdown body
+
+    # Both edits landed; the fields nobody touched are unchanged (no re-serialize).
+    assert page.inner_text('[data-day-focus]') == E29_FOCUS_EDIT
+    assert page.inner_text('[data-day-watch-body]') == E29_WATCH_EDIT
     assert page.inner_text('[data-day-take-body]') == E29_TAKE
-    assert page.inner_text('[data-day-watch-body]') == E29_WATCH
     assert page.inner_text('[data-day-lands-body]') == E29_LANDS
 
-    brief = api.get(server, "/api/day/today")["brief"]
-    assert E29_FOCUS_EDIT in brief, brief
-    assert "## Brief Take" in brief and E29_TAKE in brief, brief
-    assert E29_WATCH in brief and E29_LANDS in brief, brief
+    d = api.get(server, "/api/day/today")
+    assert d["focus"] == E29_FOCUS_EDIT, d
+    assert d["watchout"] == E29_WATCH_EDIT, d
+    assert d["brief_take"] == E29_TAKE, d
+    assert d["if_today_lands"] == E29_LANDS, d
 
 
 def test_e30_dispatcher_e2e_to_done(server, context_factory, open_page, cli, api):
@@ -369,7 +385,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     expected_b = {"title": E31_TITLE, "pend": 1, "claim": 1}
     assert before_b == after_b == expected_b, (before_b, after_b)
 
-    # Day surface — the overview renders the (unstructured) brief; a reload restores it.
+    # Day surface — the overview renders the boundary-filled fields; a reload restores.
     ready_d = '[data-day-take-body]'
     page_d = open_page(context_factory(), server, "#/day", ready_d, settled=True)
     page_d.wait_for_selector(ready_d, timeout=WAIT_MS)
@@ -378,7 +394,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     _reload_settle(page_d, ready_d)
     page_d.wait_for_selector(ready_d, timeout=WAIT_MS)
     after_d = _snap_day(page_d)
-    expected_d = {"brief": FAKE_BRIEF_H1}
+    expected_d = {"take": FAKE_TAKE}
     assert before_d == after_d == expected_d, (before_d, after_d)
 
 

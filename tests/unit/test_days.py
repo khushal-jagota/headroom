@@ -22,6 +22,7 @@ from planner.days.data import (
     list_day_tickets,
     load_plan,
     materialize_day,
+    read_day,
     remove_day_ticket,
     store_plan,
 )
@@ -54,8 +55,8 @@ def _mk_ticket(
 @dataclass
 class RecordingBoundaryAdapter:
     """A recording fake (no OS/network): records method names AND the received
-    BoundaryInputs, and builds a proposed tree from inputs.carryover exactly like
-    the shared FakeBoundaryAdapter."""
+    BoundaryInputs, and fills the four overview fields keyed off the planning date
+    exactly like the shared FakeBoundaryAdapter."""
 
     calls: list[str] = field(default_factory=list)
     received: list[BoundaryInputs] = field(default_factory=list)
@@ -63,18 +64,11 @@ class RecordingBoundaryAdapter:
     def judgment(self, inputs: BoundaryInputs) -> BoundaryJudgment:
         self.calls.append("judgment")
         self.received.append(inputs)
-        children = [
-            PlanNode(
-                ticket_id=entry.get("id"),
-                note=str(entry.get("title", "")),
-                status=NodeStatus.proposed,
-                position=index,
-            )
-            for index, entry in enumerate(inputs.carryover)
-        ]
         return BoundaryJudgment(
-            brief_markdown=f"# Brief for {inputs.planning_date}",
-            plan_tree=PlanTree(root=PlanRoot(focus="Recorded focus"), children=children),
+            focus=f"Focus for {inputs.planning_date}",
+            brief_take=f"Take for {inputs.planning_date}",
+            watchout=f"Watch for {inputs.planning_date}",
+            if_today_lands=f"Lands for {inputs.planning_date}",
         )
 
     def replan_root(self, day_id: str, inputs: BoundaryInputs) -> PlanTree:
@@ -230,17 +224,22 @@ def test_a18_boundary_job(tmp_db: Connection, fake_clock: TestClock, cfg: Config
     ]
     assert len(closed) == 1
     assert closed[0].payload == {"done_count": 1, "not_done_count": 1}
-    # Proposed plan stored on the new day, built from carryover (one child, t_prog).
-    proposed = [
+    # The four overview fields the boundary filled are stored on the new day.
+    day05 = read_day(conn, "day_2026-07-05", 1)
+    assert day05.focus == "Focus for 2026-07-05"
+    assert day05.brief_take == "Take for 2026-07-05"
+    assert day05.watchout == "Watch for 2026-07-05"
+    assert day05.if_today_lands == "Lands for 2026-07-05"
+    # No plan is proposed anymore (retired from the boundary); the overview write emits
+    # exactly one day_updated {field: "overview"} as the WS refetch signal.
+    assert not [e for e in events if e.kind == EventKind.plan_proposed.value]
+    overview = [
         e
         for e in events
-        if e.kind == EventKind.plan_proposed.value and e.entity_id == "day_2026-07-05"
+        if e.kind == EventKind.day_updated.value and e.entity_id == "day_2026-07-05"
     ]
-    assert len(proposed) == 1
-    plan = load_plan(conn, "day_2026-07-05")
-    assert plan is not None
-    assert len(plan.children) == 1
-    assert plan.children[0].ticket_id == "t_prog"
+    assert len(overview) == 1
+    assert overview[0].payload == {"field": "overview", "cause": "boundary"}
     run_row = conn.execute(
         "SELECT judgment FROM boundary_runs WHERE planning_date = '2026-07-05'"
     ).fetchone()

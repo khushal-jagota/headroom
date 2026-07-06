@@ -57,18 +57,11 @@ class FakeBoundaryAdapter:
             raise RuntimeError("fake boundary failure")
         if self.judgment_result is not None:
             return self.judgment_result
-        children = [
-            PlanNode(
-                ticket_id=entry.get("id"),
-                note=str(entry.get("title", "")),
-                status=NodeStatus.proposed,
-                position=index,
-            )
-            for index, entry in enumerate(inputs.carryover)
-        ]
-        tree = PlanTree(root=PlanRoot(focus="Fake focus"), children=children)
         return BoundaryJudgment(
-            brief_markdown=f"# Brief for {inputs.planning_date}", plan_tree=tree
+            focus=f"Focus for {inputs.planning_date}",
+            brief_take=f"Brief take for {inputs.planning_date}",
+            watchout=f"Watchout for {inputs.planning_date}",
+            if_today_lands=f"If today lands for {inputs.planning_date}",
         )
 
     def replan_root(self, day_id: str, inputs: BoundaryInputs) -> PlanTree:

@@ -227,13 +227,13 @@ def test_patch_day_agent_is_forbidden_human_succeeds(tmp_path: Path) -> None:
     app, _db_path = _make_app(tmp_path)
     with TestClient(app) as client:
         agent = client.patch(
-            "/api/day/2026-07-05", json={"brief": "Agent brief"}, headers=_AGENT
+            "/api/day/2026-07-05", json={"focus": "Agent focus"}, headers=_AGENT
         )
         assert agent.status_code == 400
         assert agent.json()["error"]["code"] == "agent_forbidden"
-        human = client.patch("/api/day/2026-07-05", json={"brief": "Human brief"})
+        human = client.patch("/api/day/2026-07-05", json={"focus": "Human focus"})
     assert human.status_code == 200
-    assert human.json()["brief"] == "Human brief"
+    assert human.json()["focus"] == "Human focus"
 
 
 # --- POST /sprints/{id}/addenda: human-only (§3.1/§8) ---------------------------

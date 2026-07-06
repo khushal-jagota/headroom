@@ -37,11 +37,14 @@ class PlanTree:                    # days.plan JSON column: {root, children}
 
 
 @dataclass
-class Day:                         # §3.4
+class Day:                         # §3.4 — overview = four structured fields the boundary fills
     id: str                        # day_YYYY-MM-DD (planning date)
-    brief: str
+    focus: str                     # the one-line hero (plain text)
+    brief_take: str                # markdown
+    watchout: str                  # markdown
+    if_today_lands: str            # markdown
     notes: str
-    plan: PlanTree | None
+    plan: PlanTree | None          # dormant: boundary no longer proposes a plan; /plan only
     chat_session_key: str | None
     created_at: int
     updated_at: int
@@ -60,8 +63,11 @@ class DayTicket:                   # day_tickets row (§3.4)
 # shapes; a null or wrong-typed value raises ErrorCode.validation.
 
 
-class DayPatchBody(TypedDict, total=False):       # PATCH /day/{date}
-    brief: str | None              # absent/null = leave unchanged
+class DayPatchBody(TypedDict, total=False):       # PATCH /day/{date} — each field edits alone
+    focus: str | None              # absent/null = leave unchanged
+    brief_take: str | None         # absent/null = leave unchanged
+    watchout: str | None           # absent/null = leave unchanged
+    if_today_lands: str | None     # absent/null = leave unchanged
     notes: str | None              # absent/null = leave unchanged
 
 

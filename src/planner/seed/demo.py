@@ -238,10 +238,16 @@ def _insert_day(
         ],
     }
     conn.execute(
-        "INSERT INTO days (id, brief, notes, plan, chat_session_key, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO days (id, focus, brief_take, watchout, if_today_lands, notes, "
+        "plan, chat_session_key, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            did, "Demo day: ship the feature slice and clear the review queue.", "",
+            did,
+            "Ship the demo feature slice and clear the review queue.",
+            "Yesterday landed the flag; today is about the slice behind it.",
+            "The login test is still flaky — stabilise it before review.",
+            "The feature slice is live behind the flag and the review queue is empty.",
+            "",
             json.dumps(plan_tree), None, now, now,
         ),
     )

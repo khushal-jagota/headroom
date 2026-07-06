@@ -1,8 +1,8 @@
 """The boundary job (§6.2). Runs once per planning date, guarded by the
 boundary_runs table. Deterministic pass (materialize the day, carryover, overdue,
 approvals, close yesterday) then one adapter judgment call wrapped in a
-caller-owned timeout. On failure/timeout the day survives with empty brief and no
-plan. Judgment is skipped entirely when the human already planned the day."""
+caller-owned timeout. On failure/timeout the day survives with an empty overview.
+Judgment is skipped entirely when the human already planned the day."""
 
 from __future__ import annotations
 
@@ -28,7 +28,6 @@ from planner.days.logic.carryover import (
     overdue_list,
 )
 from planner.days.logic.dates import planning_date
-from planner.days.logic.tree import as_proposed, tree_to_dict
 
 
 def run_boundary(
@@ -84,9 +83,14 @@ def run_boundary(
         _record_boundary(conn, piso, now, "failed")
         return
 
-    proposed = as_proposed(judgment.plan_tree)  # §6.2 stored as a PROPOSED plan
-    store_judgment(conn, ndid, judgment.brief_markdown, proposed, now)
-    append_event(conn, ndid, EventKind.plan_proposed, {"tree": tree_to_dict(proposed)}, now)
+    store_judgment(
+        conn, ndid, judgment.focus, judgment.brief_take, judgment.watchout,
+        judgment.if_today_lands, now,
+    )
+    # The overview was authored — one day_updated so an open Day page refetches.
+    append_event(
+        conn, ndid, EventKind.day_updated, {"field": "overview", "cause": "boundary"}, now
+    )
     _record_boundary(conn, piso, now, "ok")
 
 

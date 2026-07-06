@@ -99,6 +99,39 @@ def item_rollup(conn: sqlite3.Connection, item_id: str) -> dict[str, int]:
     return rollup
 
 
+def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
+    """Per-item ticket rows for the tracking-page disclosure: id/title/state/priority,
+    ordered created_at, id (matching the loose-ticket ordering). A light projection —
+    not full ticket_json — since the disclosure only lists rows that link to the ticket."""
+    rows = conn.execute(
+        "SELECT id, title, state, priority FROM tickets WHERE sprint_item_id = ? "
+        "ORDER BY created_at, id",
+        (item_id,),
+    ).fetchall()
+    return [
+        {
+            "id": str(r["id"]),
+            "title": str(r["title"]),
+            "state": str(r["state"]),
+            "priority": str(r["priority"]),
+        }
+        for r in rows
+    ]
+
+
+def blocked_by_titles(conn: sqlite3.Connection, blocked_by: list[str]) -> list[str]:
+    """Resolve an item's blocked_by ticket ids (§3.2 stores ids) to titles, order
+    preserved, unknown ids dropped — so the Blocked chip can name the blocker."""
+    titles: list[str] = []
+    for ticket_id in blocked_by:
+        row = conn.execute(
+            "SELECT title FROM tickets WHERE id = ?", (ticket_id,)
+        ).fetchone()
+        if row is not None:
+            titles.append(str(row["title"]))
+    return titles
+
+
 def _item_row_key(row: sqlite3.Row) -> tuple[int, int, str]:
     return (_prio_rank(str(row["priority"])), int(row["created_at"]), str(row["id"]))
 
@@ -215,6 +248,8 @@ def sprint_current_view(conn: sqlite3.Connection, today_iso: str, now: int) -> J
                 **item_json(read.item),
                 "blockers_cleared": read.blockers_cleared,
                 "rollup": item_rollup(conn, str(row["id"])),
+                "tickets": item_tickets(conn, str(row["id"])),
+                "blocked_by_titles": blocked_by_titles(conn, list(read.item.blocked_by)),
             }
         )
     loose_rows = conn.execute(

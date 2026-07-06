@@ -142,14 +142,16 @@ class RealBoundaryAdapter:
     def judgment(self, inputs: BoundaryInputs) -> BoundaryJudgment:
         prompt = (
             "You are the planning boundary judgment. Reply with exactly one JSON "
-            'object {"brief_markdown": string, "plan_tree": {"root": {"focus", '
-            '"status"}, "children": [...]}} and nothing else. Inputs: '
+            'object {"focus": string, "brief_take": string, "watchout": string, '
+            '"if_today_lands": string} and nothing else. Inputs: '
             + json.dumps(asdict(inputs))
         )
         payload = _parse_json_object(self._invoke(prompt))
         return BoundaryJudgment(
-            brief_markdown=str(payload["brief_markdown"]),
-            plan_tree=tree_from_dict(payload["plan_tree"]),
+            focus=str(payload["focus"]),
+            brief_take=str(payload["brief_take"]),
+            watchout=str(payload["watchout"]),
+            if_today_lands=str(payload["if_today_lands"]),
         )
 
     def replan_root(self, day_id: str, inputs: BoundaryInputs) -> PlanTree:

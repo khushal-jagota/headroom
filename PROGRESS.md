@@ -30,8 +30,8 @@ sub-agent also runs it — e2e contention flakes the browser tests ([[concurrent
 
 **Design mockups settled (owner-approved, `orchestration/`):** ticket, today (flat, no recessed/
 lines), sprint = **2 pages**: **Sprint Overview** (Kickoff → Mid-sprint Review → Sprint Review, all
-headed inline-editable content, Freeze on Kickoff + Sprint Review only; Mid-sprint Review = 3 sub-
-fields Where-we-stand / What's-changed / What-to-adjust, no add/log) + **Sprint Tracking** (items,
+headed inline-editable content, NO freeze/amber/sprint-number, 2-week dates; Mid-sprint Review = 3
+sub-fields Where-we-stand / What's-changed / What-to-adjust, no add/log) + **Sprint Tracking** (items,
 progressive disclosure). Nav = "Sprint Overview · Sprint Tracking" tab pair; arc removed.
 
 **Owner-locked decisions:** Drop UI deferred; plan-tree UI retired; **Day overview → real structured
@@ -39,10 +39,16 @@ fields the agent fills** (focus/brief_take/watchout/if_today_lands), NOT a parse
 PENDING; Mid-sprint Review = a set of markdown fields (not `weekly_addenda`) — BUILD PENDING; mid-
 sprint depth flat.
 
-**Pending build triggers (awaiting owner go):** (1) **Day-fields build** (structured day fields +
-boundary adapter fills them + screen reads fields + e2e). (2) **Sprint Tracking build** into
-`screens-sprint.js` (plan at `orchestration/sprint-redesign/plan.md`); Sprint Overview build later.
-(3) **Commit** the milestone. (4) prune dead CSS.
+**Landed (committed):** **Sprint Tracking** (`screens-sprint.js` + `sprints/views.py` embeds item→
+tickets + `app.js` router `#/sprint/{tracking,overview}` + sprint CSS; old kickoff/review relocated
+to `#/sprint/overview` AS-IS, interim). **Day = structured fields** (`focus/brief_take/watchout/
+if_today_lands` replace `brief`; boundary adapter fills them; plan-tree dropped from boundary,
+dormant). `./verify` PASS. Codex now invoked via the `/codex-cli` skill (CLAUDE.md).
+
+**Pending build triggers:** (1) **Sprint Overview build** — the redesigned Kickoff / Mid-sprint
+Review / Sprint Review page (no freeze/amber/number, structured fields) to REPLACE the interim old
+panels at `#/sprint/overview`. (2) prune dead CSS. (3) small confirms: sprint phase marks (gone vs
+neutral), sprint name static-vs-editable.
 
 **Agents (all idle):** ticket-fix, day-build, sprint-design, sprint-impl-plan. NOTE: sub-agents'
 plain-text finals don't reach the lead — they report via SendMessage; an idle notification ≠ done,

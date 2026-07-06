@@ -4,18 +4,17 @@
  * Review owns approvals, so the plan-tree, today-ticket-list, review-count and chat
  * are all DROPPED here (their backend endpoints stay; they just have no Day home).
  *
- * Content lives in day.brief, one markdown field. The structure is a convention the
- * boundary agent (§6.2) is meant to emit: a leading focus line, then the fixed H2s
- * "## Brief Take" / "## Watchout" / "## If Today Lands". This screen parses those to
- * slot the sections and lift the focus. Graceful degrade: an unstructured or empty
- * brief (today's default) never crashes — the whole brief renders in Brief Take, the
- * other slots fall back to quiet placeholders, focus empty.
+ * The overview is four structured fields the boundary agent (§6.2) fills — focus,
+ * brief_take, watchout, if_today_lands — not one markdown blob this screen parses.
+ * The screen reads each field straight off /api/day/today and renders it in its slot.
+ * An unfilled field (today's default, before the boundary or a human writes it) is
+ * empty and shows the slot's quiet placeholder — no crash, no degrade branch.
  *
- * Editing: the brief is boundary-authored but human-amendable in place. Focus and the
- * three bodies are inline-editable (the shared inlineEdit hook, no affordance). Any
- * edit re-serializes the whole model back to canonical structured markdown and PATCHes
- * /api/day/{date} {brief} — the human-only brief writer (days/api.py, reject_agents).
- * No optimistic UI: a saved edit is reflected only by the WS-flush re-render.
+ * Editing: each field is human-amendable in place, on its own. Focus is a plain
+ * scalar; the three bodies are markdown. The shared inlineEdit hook commits on blur →
+ * PATCH /api/day/{date} with just that one field → the human-only per-field writer
+ * (days/api.py, reject_agents). No optimistic UI: a saved edit is reflected only by
+ * the WS-flush re-render, which re-reads all four fields.
  *
  * Stateless render over /api/day/today. Classic script: IIFE + "use strict", var/
  * function style, createElement only. Registers the real "day" screen over app.js's
@@ -33,14 +32,13 @@
     "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
   ];
 
-  // The three fixed section headings (case-insensitive, whitespace-tolerant around
-  // the ## marker), in page order. `re` matches a heading line; `heading` is what we
-  // write back on serialize.
+  // The three markdown sections, in page order. `field` is the day JSON key the slot
+  // reads/writes; `key` names the DOM hooks ([data-day-<key>], [data-day-<key>-body])
+  // and the CSS class; `label` is the shown caption.
   var SECTIONS = [
-    { key: "take", heading: "Brief Take", label: "Brief take", re: /^##\s+brief take\s*$/i },
-    { key: "watch", heading: "Watchout", label: "Watchout", re: /^##\s+watchout\s*$/i },
-    { key: "lands", heading: "If Today Lands", label: "If today lands",
-      re: /^##\s+if today lands\s*$/i }
+    { field: "brief_take", key: "take", label: "Brief take" },
+    { field: "watchout", key: "watch", label: "Watchout" },
+    { field: "if_today_lands", key: "lands", label: "If today lands" }
   ];
 
   function el(tag, className, text) {
@@ -72,67 +70,6 @@
     return { weekday: WEEKDAYS[dt.getDay()], monthday: MONTHS[m - 1] + " " + d };
   }
 
-  // Parse day.brief → {structured, focus, take, watch, lands}. The leading text
-  // (before the first recognized H2) is the focus; a leading "# " marker is stripped
-  // so a focus authored as a heading still reads as a plain hero line. If no section
-  // heading is present the brief is legacy/unstructured: the whole blob becomes the
-  // Brief Take (the read stays visible) and focus/watch/lands are empty.
-  function parseBrief(brief) {
-    var text = brief === null || brief === undefined ? "" : String(brief);
-    var lines = text.split("\n");
-    var buckets = { focus: [], take: [], watch: [], lands: [] };
-    var current = "focus";
-    var sawHeading = false;
-
-    lines.forEach(function (line) {
-      var matched = null;
-      var trimmed = line.trim();
-      SECTIONS.forEach(function (s) {
-        if (s.re.test(trimmed)) {
-          matched = s.key;
-        }
-      });
-      if (matched) {
-        current = matched;
-        sawHeading = true;
-      } else {
-        buckets[current].push(line);
-      }
-    });
-
-    function joined(key) {
-      return buckets[key].join("\n").trim();
-    }
-
-    if (!sawHeading) {
-      return { structured: false, focus: "", take: text.trim(), watch: "", lands: "" };
-    }
-    var focus = joined("focus").replace(/^#{1,6}\s+/, "").trim();
-    return {
-      structured: true,
-      focus: focus,
-      take: joined("take"),
-      watch: joined("watch"),
-      lands: joined("lands")
-    };
-  }
-
-  // model → canonical structured markdown. Focus (if any) leads; all three headings
-  // are always emitted so the shape round-trips (an empty section keeps its heading,
-  // parsing back to structured with an empty body → quiet placeholder).
-  function serializeBrief(model) {
-    var out = [];
-    var focus = (model.focus || "").trim();
-    if (focus) {
-      out.push(focus);
-    }
-    SECTIONS.forEach(function (s) {
-      var body = (model[s.key] || "").trim();
-      out.push(body ? "## " + s.heading + "\n\n" + body : "## " + s.heading);
-    });
-    return out.join("\n\n") + "\n";
-  }
-
   function render(root) {
     root.setAttribute("data-screen", "day");
     Planner.api.fetchJson("/api/day/today").then(
@@ -148,13 +85,12 @@
   function build(root, day) {
     // Mutating routes use the server's canonical date, never the browser clock.
     var date = day.id.slice(4);
-    var model = parseBrief(day.brief);
 
-    function saveBrief() {
-      return Planner.api.fetchJson("/api/day/" + date, {
-        method: "PATCH",
-        body: { brief: serializeBrief(model) }
-      });
+    // PATCH exactly one field; the WS flush re-renders from the saved value.
+    function saveField(field, raw) {
+      var body = {};
+      body[field] = raw;
+      return Planner.api.fetchJson("/api/day/" + date, { method: "PATCH", body: body });
     }
 
     var doc = el("div", "doc");
@@ -178,8 +114,8 @@
     var focusEl = el("div", "focus");
     focusEl.setAttribute("data-day-focus", "");
     c.inlineEdit(focusEl, {
-      getValue: function () { return model.focus; },
-      onSave: function (raw) { model.focus = raw; return saveBrief(); },
+      getValue: function () { return day.focus; },
+      onSave: function (raw) { return saveField("focus", raw); },
       placeholder: "(no focus set)"
     });
     col.appendChild(focusEl);
@@ -194,8 +130,8 @@
       var body = el("div", "body");
       body.setAttribute("data-day-" + s.key + "-body", "");
       c.inlineEdit(body, {
-        getValue: function () { return model[s.key]; },
-        onSave: function (raw) { model[s.key] = raw; return saveBrief(); },
+        getValue: function () { return day[s.field]; },
+        onSave: function (raw) { return saveField(s.field, raw); },
         markdown: true,
         multiline: true,
         placeholder: "(none)"

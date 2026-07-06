@@ -1,6 +1,6 @@
 """The day data layer. Materializes a day on first read/write (no "missing day"
 state), owns the ordered day-ticket list (contiguous positions from 0), plan JSON
-storage, brief/notes writes, and applies the logic layer's plan-tree effects.
+storage, overview-field/notes writes, and applies the logic layer's plan-tree effects.
 Every state transition here appends exactly one canonical event. No FastAPI/
 pydantic; times come in as unix-second ints from the caller's clock."""
 
@@ -24,14 +24,15 @@ from planner.days.logic.tree import tree_from_dict, tree_to_dict
 
 
 def materialize_day(conn: sqlite3.Connection, day_id: str, now_unix: int) -> None:
-    """§3.4: create the day row if absent (brief='', notes='', plan=NULL,
-    chat_session_key=NULL, created_at=updated_at=now_unix) and append a
+    """§3.4: create the day row if absent (all overview fields + notes = '',
+    plan=NULL, chat_session_key=NULL, created_at=updated_at=now_unix) and append a
     day_created event. Idempotent: a present day → no write, no event."""
     if conn.execute("SELECT 1 FROM days WHERE id = ?", (day_id,)).fetchone() is not None:
         return
     conn.execute(
-        "INSERT INTO days (id, brief, notes, plan, chat_session_key, created_at, updated_at) "
-        "VALUES (?, '', '', NULL, NULL, ?, ?)",
+        "INSERT INTO days (id, focus, brief_take, watchout, if_today_lands, notes, "
+        "plan, chat_session_key, created_at, updated_at) "
+        "VALUES (?, '', '', '', '', '', NULL, NULL, ?, ?)",
         (day_id, now_unix, now_unix),
     )
     append_event(conn, day_id, EventKind.day_created, {}, now_unix)
@@ -42,7 +43,8 @@ def read_day(conn: sqlite3.Connection, day_id: str, now_unix: int) -> Day:
     SELECTs the row and builds a Day (plan parsed via tree_from_dict when set)."""
     materialize_day(conn, day_id, now_unix)
     row = conn.execute(
-        "SELECT id, brief, notes, plan, chat_session_key, created_at, updated_at "
+        "SELECT id, focus, brief_take, watchout, if_today_lands, notes, plan, "
+        "chat_session_key, created_at, updated_at "
         "FROM days WHERE id = ?",
         (day_id,),
     ).fetchone()
@@ -50,7 +52,10 @@ def read_day(conn: sqlite3.Connection, day_id: str, now_unix: int) -> Day:
     plan_json = row["plan"]
     return Day(
         id=row["id"],
-        brief=row["brief"],
+        focus=row["focus"],
+        brief_take=row["brief_take"],
+        watchout=row["watchout"],
+        if_today_lands=row["if_today_lands"],
         notes=row["notes"],
         plan=tree_from_dict(json.loads(plan_json)) if plan_json is not None else None,
         chat_session_key=row["chat_session_key"],
@@ -93,14 +98,21 @@ def store_plan(
 
 
 def store_judgment(
-    conn: sqlite3.Connection, day_id: str, brief: str, tree: PlanTree, now_unix: int
+    conn: sqlite3.Connection,
+    day_id: str,
+    focus: str,
+    brief_take: str,
+    watchout: str,
+    if_today_lands: str,
+    now_unix: int,
 ) -> None:
-    """Boundary success path: write days.brief + days.plan (serialized) +
-    updated_at in one UPDATE. No day_updated event (that kind is reserved for
-    manual edits); the boundary emits plan_proposed separately."""
+    """Boundary success path: write the four overview fields the boundary filled +
+    updated_at in one UPDATE. The plan is retired from the boundary return, so it is
+    left untouched here. No event; run_boundary emits the day_updated signal."""
     conn.execute(
-        "UPDATE days SET brief = ?, plan = ?, updated_at = ? WHERE id = ?",
-        (brief, json.dumps(tree_to_dict(tree)), now_unix, day_id),
+        "UPDATE days SET focus = ?, brief_take = ?, watchout = ?, if_today_lands = ?, "
+        "updated_at = ? WHERE id = ?",
+        (focus, brief_take, watchout, if_today_lands, now_unix, day_id),
     )
 
 
@@ -162,24 +174,25 @@ def remove_day_ticket(
     conn.execute("UPDATE days SET updated_at = ? WHERE id = ?", (now_unix, day_id))
 
 
-def set_brief(conn: sqlite3.Connection, day_id: str, brief: str, now_unix: int) -> None:
-    """Manual brief edit: materialize, UPDATE brief + updated_at, append
-    day_updated {field: "brief"}."""
-    materialize_day(conn, day_id, now_unix)
-    conn.execute(
-        "UPDATE days SET brief = ?, updated_at = ? WHERE id = ?", (brief, now_unix, day_id)
-    )
-    append_event(conn, day_id, EventKind.day_updated, {"field": "brief"}, now_unix)
+# The human-editable day text fields (the four overview fields + notes). The api
+# validates the field name against this set before calling set_day_field, so the
+# column name is safe to interpolate.
+DAY_TEXT_FIELDS = ("focus", "brief_take", "watchout", "if_today_lands", "notes")
 
 
-def set_notes(conn: sqlite3.Connection, day_id: str, notes: str, now_unix: int) -> None:
-    """Manual notes edit: materialize, UPDATE notes + updated_at, append
-    day_updated {field: "notes"}."""
+def set_day_field(
+    conn: sqlite3.Connection, day_id: str, field: str, value: str, now_unix: int
+) -> None:
+    """Manual per-field edit of one day text field (§3.4): materialize, UPDATE that
+    column + updated_at, append day_updated {field}. `field` must be one of
+    DAY_TEXT_FIELDS (api-validated) — the guard keeps the interpolated column safe."""
+    if field not in DAY_TEXT_FIELDS:
+        raise ValueError(f"not a day text field: {field}")
     materialize_day(conn, day_id, now_unix)
     conn.execute(
-        "UPDATE days SET notes = ?, updated_at = ? WHERE id = ?", (notes, now_unix, day_id)
+        f"UPDATE days SET {field} = ?, updated_at = ? WHERE id = ?", (value, now_unix, day_id)
     )
-    append_event(conn, day_id, EventKind.day_updated, {"field": "notes"}, now_unix)
+    append_event(conn, day_id, EventKind.day_updated, {"field": field}, now_unix)
 
 
 def apply_plan_effects(

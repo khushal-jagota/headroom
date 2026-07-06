@@ -81,9 +81,12 @@ CREATE INDEX IF NOT EXISTS idx_tickets_state ON tickets(state);
 
 CREATE TABLE IF NOT EXISTS days (
   id               TEXT PRIMARY KEY,                 -- day_YYYY-MM-DD (planning date, §3.4)
-  brief            TEXT NOT NULL DEFAULT '',
+  focus            TEXT NOT NULL DEFAULT '',         -- overview: the one-line hero (plain text)
+  brief_take       TEXT NOT NULL DEFAULT '',         -- overview: Brief Take (markdown)
+  watchout         TEXT NOT NULL DEFAULT '',         -- overview: Watchout (markdown)
+  if_today_lands   TEXT NOT NULL DEFAULT '',         -- overview: If Today Lands (markdown)
   notes            TEXT NOT NULL DEFAULT '',
-  plan             TEXT,                             -- JSON PlanTree | NULL
+  plan             TEXT,                             -- JSON PlanTree | NULL (dormant: /plan endpoints only)
   chat_session_key TEXT,
   created_at       INTEGER NOT NULL,
   updated_at       INTEGER NOT NULL

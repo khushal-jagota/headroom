@@ -42,12 +42,21 @@
     var params = {};
     if (name === "ticket") {
       params.id = segments[1];
+    } else if (name === "sprint") {
+      params.sub = segments[1];   // undefined for bare #/sprint (screen defaults to tracking)
     }
     var known = Object.prototype.hasOwnProperty.call(registry, name);
-    // Exact route shapes only: #/<screen> or #/ticket/<id> — no trailing extras.
-    var badShape = name === "ticket"
-      ? segments.length !== 2 || !params.id
-      : segments.length !== 1;
+    // Exact route shapes only: #/<screen>, #/ticket/<id>, or #/sprint[/<tracking|overview>].
+    var badShape;
+    if (name === "ticket") {
+      badShape = segments.length !== 2 || !params.id;
+    } else if (name === "sprint") {
+      badShape = segments.length === 1
+        ? false
+        : segments.length !== 2 || (params.sub !== "tracking" && params.sub !== "overview");
+    } else {
+      badShape = segments.length !== 1;
+    }
     if (!known || badShape) {
       shell.setActiveNav(null);
       shell.content.replaceChildren(quietLine("no such screen"));

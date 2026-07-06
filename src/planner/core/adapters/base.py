@@ -49,9 +49,11 @@ class BoundaryInputs:              # §6.2 deterministic-pass outputs, DB-intern
 
 
 @dataclass(frozen=True)
-class BoundaryJudgment:
-    brief_markdown: str
-    plan_tree: PlanTree
+class BoundaryJudgment:              # §6.2 — the four overview fields the boundary fills
+    focus: str                      # the one-line hero (plain text)
+    brief_take: str                 # markdown
+    watchout: str                   # markdown
+    if_today_lands: str             # markdown
 
 
 class BoundaryAdapter(Protocol):

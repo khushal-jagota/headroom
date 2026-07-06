@@ -19,7 +19,7 @@ from planner.core.config import Config
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days import data as days_data
-from planner.days.contracts import AddDayTicketBody, DayPatchBody, PlanNodeBody, PlanTree
+from planner.days.contracts import AddDayTicketBody, PlanNodeBody, PlanTree
 from planner.days.logic import tree as plan_tree
 from planner.days.logic.dates import planning_date
 from planner.days.scheduler import submit_replan
@@ -66,7 +66,10 @@ def _day_view(conn: sqlite3.Connection, did: str, now: int) -> JsonDict:
     dts = days_data.list_day_tickets(conn, did)
     return {
         "id": day.id,
-        "brief": day.brief,
+        "focus": day.focus,
+        "brief_take": day.brief_take,
+        "watchout": day.watchout,
+        "if_today_lands": day.if_today_lands,
         "notes": day.notes,
         "plan": plan_tree.tree_to_dict(day.plan) if day.plan is not None else None,
         "chat_session_key": day.chat_session_key,
@@ -110,18 +113,20 @@ async def get_day(date: str, conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
 @router.patch("/day/{date}")
 async def patch_day(date: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
                     clk: Clk) -> JsonDict:
-    reject_agents(ctx)  # §8: brief/notes are human-only; the boundary adapter writes them
-    body = DayPatchBody(brief=body_opt_str(raw, "brief"), notes=body_opt_str(raw, "notes"))
+    reject_agents(ctx)  # §8: overview fields + notes are human-only; the boundary writes its own
     did = resolve_day_id(date, clk, cfg)
     now = clk.now_unix()
-    if body["brief"] is None and body["notes"] is None:
+    # Each overview field (and notes) edits on its own — no whole-blob re-serialize.
+    edits: dict[str, str] = {}
+    for field in days_data.DAY_TEXT_FIELDS:
+        value = body_opt_str(raw, field)
+        if value is not None:
+            edits[field] = value
+    if not edits:
         raise PlannerError(ErrorCode.validation, "no day fields to update", {})
-    if body["brief"] is not None:
+    for field, value in edits.items():
         with txn(conn):
-            days_data.set_brief(conn, did, body["brief"], now)
-    if body["notes"] is not None:
-        with txn(conn):
-            days_data.set_notes(conn, did, body["notes"], now)
+            days_data.set_day_field(conn, did, field, value, now)
     return _day_view(conn, did, now)
 
 
