@@ -30,8 +30,6 @@ from planner.core.authctx import (
     reject_agent_fields,
     reject_agents,
     request_context,
-    require_claim,
-    validate_carried_claim,
 )
 from planner.core.clock import Clock
 from planner.core.config import Config
@@ -39,7 +37,6 @@ from planner.core.contracts import EventKind, JsonDict, LinkKind, Priority, Proj
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event
 from planner.days.logic.dates import planning_date
-from planner.dispatch import data as dispatch_data
 from planner.sprints import views as sprints_views
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
@@ -288,7 +285,6 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
         raise PlannerError(ErrorCode.validation, "no ticket fields to update", {})
     reject_agent_fields(ctx, body, _TICKET_HUMAN_ONLY_FIELDS)
     now = clk.now_unix()
-    validate_carried_claim(conn, ctx, ticket_id, now)
     if "title" in body:
         _set_title(conn, ticket_id, body["title"], title_max_chars=TITLE_MAX_CHARS, now=now)
     if "priority" in body:
@@ -313,8 +309,6 @@ async def propose_field(ticket_id: str, field: str, raw: dict[str, Any], conn: D
     body = ProposeBody(body=body_str(raw, "body"))
     field_enum = parse_enum(FieldName, field, "field")
     now = clk.now_unix()
-    if ctx.is_claimed_agent:
-        require_claim(conn, ctx, ticket_id, now)
     ticket = tickets_data.file_proposal(
         conn, ticket_id, field=field_enum, body=body["body"], actor=ctx.actor, now=now
     )
@@ -357,8 +351,6 @@ async def put_notes(ticket_id: str, field: str, raw: dict[str, Any], conn: DbCon
     body = NoteBody(note=body_opt_str(raw, "note"))
     field_enum = parse_enum(FieldName, field, "field")
     now = clk.now_unix()
-    if ctx.is_claimed_agent:
-        require_claim(conn, ctx, ticket_id, now)
     ticket = tickets_data.set_note(
         conn, ticket_id, field=field_enum, note=body["note"], actor=ctx.actor, now=now
     )
@@ -370,8 +362,6 @@ async def put_recap(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                     clk: Clk) -> JsonDict:
     body = RecapBody(body=body_str(raw, "body"))
     now = clk.now_unix()
-    if ctx.is_claimed_agent:
-        require_claim(conn, ctx, ticket_id, now)
     ticket = tickets_data.write_recap(conn, ticket_id, body=body["body"], actor=ctx.actor, now=now)
     return tickets_views.ticket_json(ticket, now)
 
@@ -440,57 +430,15 @@ async def drop_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonD
     return tickets_views.ticket_json(ticket, now)
 
 
-@router.post("/tickets/{ticket_id}/unblock")
-async def unblock_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
-    reject_agents(ctx)
-    now = clk.now_unix()
-    with txn(conn):
-        dispatch_data.clear_auto_block(conn, ticket_id, now)
-    return tickets_views.ticket_json(tickets_data.read_ticket(conn, ticket_id), now)
-
-
 @router.get("/tickets/{ticket_id}/events")
 async def ticket_events(ticket_id: str, conn: DbConn, cfg: Cfg) -> JsonDict:
     tickets_data.read_ticket(conn, ticket_id)
     return {"events": tickets_views.list_events_for_entity(conn, ticket_id, cfg.events_read_limit)}
 
 
-@router.get("/tickets/{ticket_id}/runs")
-async def ticket_runs(ticket_id: str, conn: DbConn) -> JsonDict:
-    tickets_data.read_ticket(conn, ticket_id)
-    return {"runs": tickets_views.runs_for_ticket(conn, ticket_id)}
-
-
 @router.get("/tickets/{ticket_id}/copy-text", response_class=PlainTextResponse)
 async def ticket_copy_text(ticket_id: str, conn: DbConn) -> str:
     return tickets_views.copy_text(conn, ticket_id)
-
-
-def _validate_link_claim(conn: sqlite3.Connection, ctx: RequestContext,
-                         from_id: str, to_id: str, now: int) -> None:
-    """§7.6 for link writes: a claim-carrying request must hold the active claim on a
-    ticket endpoint of the link (either side — an agent may link its own ticket in
-    both directions). Non-ticket endpoints have no claim to validate against; a claim
-    matching neither ticket endpoint is rejected naming the from-side mismatch."""
-    if not ctx.is_claimed_agent:
-        return None
-    ticket_ids = [
-        entity_id
-        for entity_id in (from_id, to_id)
-        if conn.execute("SELECT 1 FROM tickets WHERE id = ?", (entity_id,)).fetchone()
-        is not None
-    ]
-    first_error: PlannerError | None = None
-    for ticket_id in ticket_ids:
-        try:
-            require_claim(conn, ctx, ticket_id, now)
-            return None
-        except PlannerError as exc:
-            if first_error is None:
-                first_error = exc
-    if first_error is not None:
-        raise first_error
-    return None
 
 
 @router.post("/links")
@@ -502,7 +450,6 @@ async def add_link(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> Jso
     )
     kind = parse_enum(LinkKind, body["kind"], "kind")
     now = clk.now_unix()
-    _validate_link_claim(conn, ctx, body["from_id"], body["to_id"], now)
     with txn(conn):
         core_links.add_link(conn, body["from_id"], body["to_id"], kind, now)
     return {"from_id": body["from_id"], "to_id": body["to_id"], "kind": kind.value}
@@ -513,7 +460,6 @@ async def remove_link(conn: DbConn, ctx: Ctx, clk: Clk, from_id: str, to_id: str
                       kind: str) -> JsonDict:
     kind_enum = parse_enum(LinkKind, kind, "kind")
     now = clk.now_unix()
-    _validate_link_claim(conn, ctx, from_id, to_id, now)
     with txn(conn):
         core_links.remove_link(conn, from_id, to_id, kind_enum, now)
     return {"ok": True}

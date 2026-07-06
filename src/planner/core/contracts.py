@@ -42,7 +42,6 @@ class EventKind(StrEnum):
     proposal_superseded = "proposal_superseded"      # §4.4.1 {field, replaced_body}
     day_ticket_removed = "day_ticket_removed"        # §3.4 {ticket_id}
     day_closed = "day_closed"                        # §6.2 {done_count, not_done_count}
-    auto_blocked = "auto_blocked"                    # §7.5 {consecutive_failures}
 
     # --- supplemental: creation, one per entity ---
     ticket_created = "ticket_created"
@@ -69,12 +68,8 @@ class EventKind(StrEnum):
     day_ticket_added = "day_ticket_added"            # {ticket_id, position, cause}
     boundary_failed = "boundary_failed"              # §6.2 adapter failure/timeout {error}
 
-    # --- supplemental: runs and claims ---
-    run_started = "run_started"                      # {run_id, pid}
-    run_closed = "run_closed"                        # {run_id, status, summary}
-    claim_heartbeat = "claim_heartbeat"              # {run_id, claim_expires}
-    claim_reclaimed = "claim_reclaimed"              # {run_id, reason: "expired"|"dead_pid"}
-    auto_block_cleared = "auto_block_cleared"        # human unblock action
+    # --- supplemental: run status (System B is the sole writer) ---
+    ticket_status_changed = "ticket_status_changed"  # {status, worker}
 
     # --- supplemental: links, chat ---
     link_added = "link_added"                        # {from_id, to_id, kind}

@@ -31,15 +31,10 @@ def _url(path: str) -> str:
 
 
 def _headers() -> dict[str, str]:
-    # X-Plan-Actor is always sent (default "agent"); run/claim only when set & non-empty.
-    headers = {"X-Plan-Actor": os.environ.get("PLAN_ACTOR", "").strip() or "agent"}
-    run_id = os.environ.get("PLAN_RUN_ID", "").strip()
-    if run_id:
-        headers["X-Plan-Run-Id"] = run_id
-    claim = os.environ.get("PLAN_CLAIM", "").strip()
-    if claim:
-        headers["X-Plan-Claim"] = claim
-    return headers
+    # X-Plan-Actor is always sent (default "agent"): it classifies the request as an
+    # agent (vs the header-less human). The old run/claim headers are gone — the
+    # ticket's code-owned status is the lock now.
+    return {"X-Plan-Actor": os.environ.get("PLAN_ACTOR", "").strip() or "agent"}
 
 
 def send(

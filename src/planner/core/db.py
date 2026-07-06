@@ -8,7 +8,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Final
 
-SCHEMA_VERSION: Final = 2
+SCHEMA_VERSION: Final = 3
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS sprints (
@@ -65,13 +65,12 @@ CREATE TABLE IF NOT EXISTS tickets (
                        CHECK (ceiling IN ('needs_success','needs_approach','needs_plan',
                                           'in_progress','needs_review','done')),
   at_cap               TEXT NOT NULL DEFAULT 'propose' CHECK (at_cap IN ('stop','propose')),
-  auto_blocked         INTEGER NOT NULL DEFAULT 0,
-  consecutive_failures INTEGER NOT NULL DEFAULT 0,   -- §7.5
-  chat_session_key     TEXT,
-  alias                TEXT,                         -- migration "Ticket ID:" (§12)
+  status               TEXT NOT NULL DEFAULT 'empty'  -- code-owned run status (System B is the writer)
+                       CHECK (status IN ('empty','agent_working','awaiting_approval','errored')),
+  worker               TEXT,                         -- who/what is working it; NULL unless agent_working
+  chat_session_key     TEXT,                         -- the ticket-mind's durable Hermes session_key
+  alias                TEXT,                         -- migration "Ticket ID:" (seed importer dedup)
   fields               TEXT NOT NULL DEFAULT '{"success":{"value":null,"proposal":null,"notes":null},"approach":{"value":null,"proposal":null,"notes":null},"plan":{"value":null,"proposal":null,"notes":null},"result":{"value":null,"proposal":null,"notes":null}}',
-  claim_lock           TEXT,                         -- §7.3 claim token; NULL = unclaimed
-  claim_expires        INTEGER,
   created_at           INTEGER NOT NULL,
   updated_at           INTEGER NOT NULL
 );
@@ -125,19 +124,6 @@ CREATE TABLE IF NOT EXISTS events (                  -- §3, append-only
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_entity ON events(entity_id, id);
-
-CREATE TABLE IF NOT EXISTS runs (                    -- §7.3
-  id         TEXT PRIMARY KEY,                       -- run_<slug>
-  ticket_id  TEXT NOT NULL REFERENCES tickets(id),
-  status     TEXT NOT NULL
-             CHECK (status IN ('running','done','blocked','crashed','timed_out','reclaimed','spawn_failed')),
-  started_at INTEGER NOT NULL,
-  ended_at   INTEGER,
-  summary    TEXT,
-  error      TEXT,
-  pid        INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_runs_ticket ON runs(ticket_id, started_at);
 """
 
 

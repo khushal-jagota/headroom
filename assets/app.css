@@ -323,7 +323,7 @@ textarea {
   border-color: var(--accent-bright);
 }
 
-.chip--running-claim {
+.chip--agent-working {
   background: var(--surface-overlay);
   color: var(--text-strong);
   border-color: var(--text-muted);
@@ -335,7 +335,7 @@ textarea {
   border-color: var(--text-muted);
 }
 
-.chip--auto-blocked {
+.chip--errored {
   background: var(--accent-surface);
   color: var(--accent-text);
   border-color: var(--accent-bright);

@@ -233,7 +233,8 @@ here), not empirical unknowns — reserve spikes for "will this even work."
   mechanism, not a contradiction of propose → approve).
 - **REMOVE · Old-model claim columns.** `claim_lock`, `claim_expires` — replaced by the
   code-owned run-status field.
-  - **OPEN · `alias`** (migration leftover) → review separately.
+  - **DECIDED · `alias` — KEEP** (W3a). Not a dead migration leftover — it's load-bearing for the
+    seed-importer cutover idempotency. Kept with its index.
 - **REMOVE · `runs` table.** The ticket carries its run-status; drop the separate `runs` table
   (no keep-as-history). Its CLI counterpart, the `run` group, → *CLI*.
 
@@ -432,7 +433,7 @@ only what no subsystem owns.*
 - **OPEN** · runless-orphan fallback → *Tickets*
 - *(resolved → **DECIDED** ticket proposal model = bundle, in Tickets)*
 - **OPEN** · ticket body / details → *Tickets*
-- **OPEN** · `alias` column (review separately) → *Tickets*
+- *(resolved → **DECIDED** `alias` KEEP — load-bearing for seed cutover, W3a)*
 - *(resolved → **DECIDED** one CLI, scope via naming, in CLI)*
 - **OPEN** · bodies inline vs file/stdin → *CLI*
 - **OPEN** · `note` verb → *CLI*

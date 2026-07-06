@@ -1,45 +1,14 @@
-"""In-memory fakes for the three adapters. Tests use these; they never touch the
-OS or the network. Each records its calls and behaves deterministically."""
+"""In-memory fakes for the boundary and gateway adapters. Tests use these; they
+never touch the OS or the network. Each records its calls and behaves
+deterministically."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 from planner.chat.contracts import ChatSendResult, GatewayStatus
-from planner.core.adapters.base import (
-    BoundaryInputs,
-    BoundaryJudgment,
-    SpawnRequest,
-    SpawnResult,
-)
+from planner.core.adapters.base import BoundaryInputs, BoundaryJudgment
 from planner.core.errors import ErrorCode, PlannerError
-
-_FIRST_FAKE_PID = 90001
-
-
-@dataclass
-class FakeSpawnAdapter:
-    calls: list[SpawnRequest] = field(default_factory=list)
-    results: list[SpawnResult] = field(default_factory=list)  # scripted, popped FIFO
-    next_pid: int = _FIRST_FAKE_PID
-
-    def spawn(self, request: SpawnRequest) -> SpawnResult:
-        self.calls.append(request)
-        if self.results:
-            return self.results.pop(0)
-        pid = self.next_pid
-        self.next_pid += 1
-        return SpawnResult(ok=True, pid=pid)
-
-    def is_pid_alive(self, _pid: int) -> bool:
-        # Fakes never spawn a real process, so a fake pid is always "alive". The
-        # dispatcher's test-mode path uses _pid_alive_always regardless (§7.4); this
-        # only exists so the fake satisfies the SpawnAdapter protocol.
-        return True
-
-    def reap_finished_children(self) -> None:
-        # Nothing was ever really spawned, so there is nothing to reap.
-        return None
 
 
 @dataclass

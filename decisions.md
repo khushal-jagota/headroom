@@ -422,3 +422,30 @@ Verify: **VERIFY: PASS** — 5 gates, 106 unit + 17 e2e (2 new backlog/ideas flo
   boundary/rollover skill; not W2-owned, not verify-blocking). Tracked follow-up.
 - **Migration = fresh-build only.** No ALTER/migration runner; dev/test DB under `data/` is
   discarded + rebuilt at v2; production cutover creates a fresh DB via `python -m planner.seed`.
+
+## 2026-07-06 · W3a (status field + System B) — implemented + integrated (VERIFY: PASS)
+
+- **W3a landed via a single Opus lead** (`w3a-lead`); the orchestrator-spawning model was dropped
+  after the W2 chaos. Full `./verify` PASS (ruff/mypy/unit+e2e 107/0 skips). Committed to main. The
+  whole `src/planner/dispatch/` package removed; new `src/planner/runtime/` (System B).
+- **Ticket status field.** `SCHEMA_VERSION` 2→3: dropped `claim_lock`/`claim_expires`/`auto_blocked`/
+  `consecutive_failures` + the `runs` table; added `status` (empty/agent_working/awaiting_approval/
+  errored) + `worker`. `tickets/data.set_run_status` = single-door writer: ONE atomic UPDATE
+  (status+worker together — dissolves the runless orphan) + one `ticket_status_changed` event; System
+  B is the sole caller. Spot-checked.
+- **System B (dormant in W3a).** `set_off(ticket_id, ...)` → `MindQueue` keyed on **`ticket_id`**
+  (stable), resolving the current `session_key` from the DB at execution time — because the durable
+  key ROTATES via auto-compression (spike 01). This **reverses the plan-review's session_key-keying
+  preference on spike evidence**, satisfies the W1 carry-forward, and subsumes kickoff serialization.
+  Proposal-present invariant = "state advanced OR the gating field now has a proposal" (robust to
+  auto-accept); the end write always fires (never stuck at `agent_working`). Codex confirming pass
+  validated production correctness.
+- **`alias` — KEEP (resolves the open question).** Load-bearing for seed-importer cutover
+  idempotency; not a dead migration leftover.
+- **Deferred:** inert dispatcher config knobs (`claim_ttl_seconds`, `max_runs`, `failure_limit`,
+  `run_max_seconds`, `dispatcher_lock_path`, `dispatch_enabled`) left in place → config-knob cleanup
+  ledger item; W3b's System A may reuse the master switch.
+- Also removed: the spawn-adapter subsystem, claim/run auth (`X-Plan-*` headers, `require_claim`), the
+  `run` CLI group, the dispatcher loop, `/test/tick-dispatcher`, 6 run/claim/breaker EventKinds
+  (+`ticket_status_changed`). `e30` kept + rewritten (anchor + approve coverage); `board_view` DRY.
+  No dangling refs.

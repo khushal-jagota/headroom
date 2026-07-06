@@ -3,7 +3,7 @@
  * (detail + sprints + chat status + current sprint). Top → bottom:
  *   header (inlineEdit title, then a pill row: priority / due / project / sprint —
  *   sprint reads "current" when it is the current sprint — a copy affordance, and the
- *   running-claim/auto-blocked/blocked markers) → Recap (inlineEdit, offered only
+ *   agent-working/errored/blocked run-status markers) → Recap (inlineEdit, offered only
  *   past needs_success) → THE Approval (a single approvalBlock, gating-pending or
  *   needs_review by state; it carries the grant pair) → collapsible field sections
  *   (success/approach/plan/result, driven by field_is_passed). Chat is a side rail.
@@ -342,29 +342,16 @@
       }));
     }
 
-    // Markers — in the header, visible (never tucked).
-    if (detail.claim_active) {
-      meta.appendChild(marker("running-claim"));
+    // Markers — in the header, visible (never tucked). Run status is the code-owned
+    // "lock": agent_working while a mind runs, errored when a run left nothing to approve.
+    if (detail.status === "agent_working") {
+      meta.appendChild(marker("agent-working"));
     }
-    if (detail.auto_blocked) {
-      meta.appendChild(marker("auto-blocked"));
+    if (detail.status === "errored") {
+      meta.appendChild(marker("errored"));
     }
     if (detail.blocked) {
       meta.appendChild(marker("blocked"));
-    }
-
-    // Unblock control (§10.4 state control): offered only when auto_blocked ->
-    // POST /unblock. On success the WS flush re-renders (the marker + button leave).
-    if (detail.auto_blocked) {
-      var unblock = el("button", "button ticket-unblock", "Unblock");
-      unblock.type = "button";
-      unblock.setAttribute("data-unblock", "");
-      unblock.addEventListener("click", function () {
-        submit(unblock, headErr, function () {
-          return api.fetchJson("/api/tickets/" + id + "/unblock", { method: "POST" });
-        });
-      });
-      meta.appendChild(unblock);
     }
 
     // Copy — a small header affordance (not a disclosure row).

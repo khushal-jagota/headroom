@@ -2,15 +2,12 @@
 
 One test per acceptance item, its name carrying the ``test_eNN_`` anchor the verify
 scorer matches: exactly one anchored match per item across the whole e2e suite, so no
-parametrize and every shared helper below has a non-``test_`` name. Boundary/dispatch
-ticks are driven synchronously through /api/test/*; time through /api/test/set-now.
-Assertions use the SPEC's exact values (planning dates, fake-adapter strings, node
-statuses, ticket states); every wait carries an explicit timeout and precedes its
-assert — no sleeps."""
+parametrize and every shared helper below has a non-``test_`` name. The boundary tick is
+driven synchronously through /api/test/*; time through /api/test/set-now. Assertions use
+exact values (planning dates, fake-adapter strings, ticket states); every wait carries an
+explicit timeout and precedes its assert — no sleeps."""
 
 from __future__ import annotations
-
-import sqlite3
 
 from playwright.sync_api import Page
 
@@ -85,22 +82,6 @@ def _tick_boundary(api, server):
     return api.human_post(server, "/api/test/tick-boundary", {})
 
 
-def _tick_dispatcher(api, server):
-    return api.human_post(server, "/api/test/tick-dispatcher", {})
-
-
-def _read_claim(server, ticket_id):
-    conn = sqlite3.connect(str(server.db_path))
-    try:
-        row = conn.execute(
-            "SELECT claim_lock FROM tickets WHERE id=?", (ticket_id,)
-        ).fetchone()
-    finally:
-        conn.close()
-    assert row is not None and row[0], row
-    return str(row[0])
-
-
 def _grant_and_advance(server, api, cli, tid, ceiling, bodies):
     # Human grant (header-less → human; grant_ticket rejects agents, tickets/api.py:359).
     g = api.human_post(
@@ -136,7 +117,6 @@ def _snap_ticket(p: Page):
         "state": p.get_attribute('section[data-screen="ticket"]', "data-state"),
         "meta": p.inner_text('[data-approval-block] .proposal-meta'),
         "body": p.inner_text('[data-approval-block] .approval-draft .markdown-block'),
-        "claim": p.eval_on_selector_all('[data-marker="running-claim"]', "e=>e.length"),
     }
 
 
@@ -145,7 +125,6 @@ def _snap_board(p: Page, mid):
     return {
         "title": p.inner_text(f"{card} .entity-row-title"),
         "pend": p.eval_on_selector_all(f'{card} [data-marker="pending-proposal"]', "e=>e.length"),
-        "claim": p.eval_on_selector_all(f'{card} [data-marker="running-claim"]', "e=>e.length"),
     }
 
 
@@ -255,7 +234,10 @@ def test_e29_day_overview_structured_and_edit(
     assert d["if_today_lands"] == E29_LANDS, d
 
 
-def test_e30_dispatcher_e2e_to_done(server, context_factory, open_page, cli, api):
+def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api):
+    # A ticket advanced to needs_review through claimless CLI proposals (the worker's
+    # normal path now — no dispatcher, no claim): the result auto-accepts at ceiling
+    # needs_review and PARKS at needs_review, then a human approves via the Review card.
     mid = cli(server, "ticket", "create", "--title", E30_TITLE)["id"]
     _grant_and_advance(
         server, api, cli, mid, "needs_review",
@@ -265,36 +247,13 @@ def test_e30_dispatcher_e2e_to_done(server, context_factory, open_page, cli, api
     ready = f'section[data-screen="ticket"][data-ticket-id="{mid}"]'
     page = open_page(context_factory(), server, f"#/ticket/{mid}", ready, settled=True)
     assert page.get_attribute('section[data-screen="ticket"]', "data-state") == "in_progress"
-    assert page.query_selector('[data-marker="running-claim"]') is None
-    assert api.get(server, f"/api/tickets/{mid}/runs")["runs"] == []
+    assert page.query_selector('[data-marker="agent-working"]') is None   # nothing running it
 
-    rep = _tick_dispatcher(api, server)
-    assert set(rep) == {"skipped", "reclaimed", "timed_out", "spawned", "spawn_failed"}, rep
-    assert rep["skipped"] is None, rep
-    assert rep["reclaimed"] == [], rep
-    assert rep["timed_out"] == [], rep
-    assert rep["spawn_failed"] == [], rep
-    [spawn] = rep["spawned"]
-    assert spawn["ticket_id"] == mid, rep
-    assert spawn["pid"] == 90001, rep   # first fake pid, fresh server per test (fakes.py:18)
-    run_id = spawn["run_id"]
-    assert run_id, rep
-
-    # Run starts, no reload — the WS flush from run_started re-renders the ticket and
-    # the running-claim marker appears in the header. Run history now lives on the API.
-    page.wait_for_selector('[data-marker="running-claim"]', timeout=WAIT_MS)
-    runs = api.get(server, f"/api/tickets/{mid}/runs")["runs"]
-    assert runs[0]["status"] == "running", runs
-    assert runs[0]["id"] == run_id, runs
-
-    # Worker files the result WITH the claim env read from the server's temp DB.
-    token = _read_claim(server, mid)
-    r = cli(
-        server, "propose", "result", "--body-file", "-",
-        ticket_id=mid, run_id=run_id, claim=token, stdin=E30_RESULT,
-    )
+    # Worker files the result claimless; ceiling needs_review ⇒ it auto-accepts to
+    # needs_review (the accepted value is stored, no pending proposal remains).
+    r = cli(server, "propose", "result", "--body-file", "-", ticket_id=mid, stdin=E30_RESULT)
     assert r["state"] == "needs_review", r
-    assert r["fields"]["result"]["value"] == E30_RESULT, r      # auto-accept stored the body
+    assert r["fields"]["result"]["value"] == E30_RESULT, r
     assert r["fields"]["result"]["proposal"] is None, r
 
     # Ticket page flips without reload.
@@ -304,24 +263,10 @@ def test_e30_dispatcher_e2e_to_done(server, context_factory, open_page, cli, api
         timeout=WAIT_MS,
     )
 
-    # Worker closes the run (claim still active — nothing between claim and close cleared it).
-    c = cli(server, "run", "close", "--outcome", "done", run_id=run_id, claim=token)
-    assert c["run"]["status"] == "done", c
-    assert c["run"]["id"] == run_id, c
-    assert api.get(server, f"/api/tickets/{mid}")["state"] == "needs_review", "close leaves state"
-
-    # run_closed is a logged event → the claim marker leaves the header (the run is
-    # now done, verified above via the CLI close + the API).
-    page.wait_for_function(
-        "() => document.querySelector('[data-marker=\"running-claim\"]') === null",
-        timeout=WAIT_MS,
-    )
-
     # Approval queue + approve via the Review "review" card.
     card = f'[data-review-card][data-entity-id="{mid}"]'
     rpage = open_page(context_factory(), server, "#/review", card, settled=True)
     assert rpage.get_attribute(card, "data-kind") == "review"
-    # The review card renders the accepted result value (components.js reviewCard).
     assert rpage.inner_text(f"{card} .markdown-block") == E30_RESULT
     approvals = api.get(server, "/api/queues")["approvals"]
     assert len(approvals) == 1, approvals
@@ -340,7 +285,8 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
         {"success": E31_SUCCESS, "approach": E31_APPROACH, "plan": E31_PLAN},
     )
 
-    # A pending plan tree on Day (root-only: no 2026-07-04 day-tickets → empty carryover).
+    # Roll the day so the Day overview renders the boundary-filled fields (for the third
+    # reload-restore surface below).
     _set_now(api, server, NOW_0501)
     rep = _tick_boundary(api, server)
     assert rep == {
@@ -349,17 +295,8 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
         "judgment": "ok",
     }, rep
 
-    rep = _tick_dispatcher(api, server)
-    assert set(rep) == {"skipped", "reclaimed", "timed_out", "spawned", "spawn_failed"}, rep
-    assert rep["skipped"] is None, rep
-    assert rep["reclaimed"] == [], rep
-    assert rep["timed_out"] == [], rep
-    assert rep["spawn_failed"] == [], rep
-    [spawn] = rep["spawned"]
-    assert spawn["ticket_id"] == mid, rep
-    assert spawn["pid"] == 90001, rep   # first fake pid, fresh server per test (fakes.py:18)
-
-    # Worker files the result claimless (§7.6); ceiling in_progress ⇒ it PARKS pending.
+    # Worker files the result claimless; ceiling in_progress ⇒ it PARKS pending (nothing
+    # auto-accepts past the ceiling), leaving a gating-pending proposal to reload-restore.
     r = cli(server, "propose", "result", "--body-file", "-", ticket_id=mid, stdin=E31_RESULT)
     assert r["state"] == "in_progress", r
     assert r["fields"]["result"]["proposal"]["body"] == E31_RESULT, r
@@ -377,7 +314,6 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
         "state": "in_progress",
         "meta": "proposed by agent",
         "body": E31_RESULT,
-        "claim": 1,
     }
     assert before_t == after_t == expected_t, (before_t, after_t)
 
@@ -390,7 +326,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     _reload_settle(page_b, ready_b)
     page_b.wait_for_selector(mid_b, timeout=WAIT_MS)
     after_b = _snap_board(page_b, mid)
-    expected_b = {"title": E31_TITLE, "pend": 1, "claim": 1}
+    expected_b = {"title": E31_TITLE, "pend": 1}
     assert before_b == after_b == expected_b, (before_b, after_b)
 
     # Day surface — the overview renders the boundary-filled fields; a reload restores.

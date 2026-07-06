@@ -203,8 +203,6 @@ def cli() -> Callable[..., dict]:
         *args: str,
         ticket_id: str | None = None,
         actor: str | None = None,
-        run_id: str | None = None,
-        claim: str | None = None,
         stdin: str | None = None,
     ) -> dict:
         env = _scrubbed_env()
@@ -213,10 +211,6 @@ def cli() -> Callable[..., dict]:
             env["PLAN_TICKET_ID"] = ticket_id
         if actor is not None:
             env["PLAN_ACTOR"] = actor
-        if run_id is not None:
-            env["PLAN_RUN_ID"] = run_id
-        if claim is not None:
-            env["PLAN_CLAIM"] = claim
         proc = subprocess.run(
             [str(PLAN_BIN), *args, "--json"],
             input=stdin,

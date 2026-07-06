@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from planner.core import ids
-from planner.core.authctx import reject_agents, validate_carried_claim
+from planner.core.authctx import reject_agents
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.contracts import JsonDict
@@ -92,24 +92,22 @@ async def patch_day(date: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg:
 
 
 @router.post("/day/{date}/tickets")
-async def add_day_ticket(date: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
+async def add_day_ticket(date: str, raw: dict[str, Any], conn: DbConn,
                          cfg: Cfg, clk: Clk) -> JsonDict:
     body = AddDayTicketBody(ticket_id=body_str(raw, "ticket_id"))
     did = resolve_day_id(date, clk, cfg)
     now = clk.now_unix()
     read_ticket(conn, body["ticket_id"])  # existence guard (avoids a raw FK 500)
-    validate_carried_claim(conn, ctx, body["ticket_id"], now)
     with txn(conn):
         days_data.add_day_ticket(conn, did, body["ticket_id"], now)
     return _day_view(conn, did, now)
 
 
 @router.delete("/day/{date}/tickets/{ticket_id}")
-async def remove_day_ticket(date: str, ticket_id: str, conn: DbConn, ctx: Ctx, cfg: Cfg,
+async def remove_day_ticket(date: str, ticket_id: str, conn: DbConn, cfg: Cfg,
                             clk: Clk) -> JsonDict:
     did = resolve_day_id(date, clk, cfg)
     now = clk.now_unix()
-    validate_carried_claim(conn, ctx, ticket_id, now)
     with txn(conn):
         days_data.remove_day_ticket(conn, did, ticket_id, now)
     return _day_view(conn, did, now)

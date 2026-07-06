@@ -37,7 +37,7 @@
       card.deadline ? C.chip("deadline", card.deadline) : null,
       card.project ? C.chip("project", card.project) : null,
       card.has_pending_proposal ? marker("pending-proposal") : null,
-      card.has_running_claim ? marker("running-claim") : null
+      card.status === "agent_working" ? marker("agent-working") : null
     ];
     var anchor = C.entityRow({
       href: config.ROUTES.ticketPrefix + card.id,

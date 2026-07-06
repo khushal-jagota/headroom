@@ -142,9 +142,9 @@
   // human is needed; everything else stays achromatic.
   var CHIP_MARKERS = {
     "pending-proposal": "proposal pending",
-    "running-claim": "● running",
+    "agent-working": "● working",
     "blockers-cleared": "blockers cleared",
-    "auto-blocked": "auto-blocked",
+    "errored": "errored",
     "frozen": "frozen"
   };
 
@@ -853,28 +853,6 @@
     return wrap;
   }
 
-  // D11 #15: run history — runs as served (newest first), rendered in order.
-  function runHistory(runs) {
-    var wrap = make("div", "run-history");
-    wrap.setAttribute("data-run-history", "");
-    if (!runs || !runs.length) {
-      wrap.appendChild(quietLine("(no runs)"));
-      return wrap;
-    }
-    runs.forEach(function (run) {
-      var row = make("div", "run-history-row");
-      row.setAttribute("data-run-row", "");
-      row.setAttribute("data-run-status", run.status);
-      row.appendChild(make("span", "run-history-status", run.status));
-      var times = formatUnix(run.started_at) +
-        (run.ended_at ? " – " + formatUnix(run.ended_at) : "");
-      row.appendChild(make("span", "run-history-times", times));
-      row.appendChild(make("span", "run-history-detail", run.summary || run.error || ""));
-      wrap.appendChild(row);
-    });
-    return wrap;
-  }
-
   // ------------------------------------------------------------------------
   // T3 additions (ticket redesign — SPEC §10.4). The shared interaction
   // primitives the T4 ticket screen consumes: one inline-edit hook, the two-mode
@@ -1239,7 +1217,6 @@
     stateControl: stateControl,
     grantControl: grantControl,
     eventLog: eventLog,
-    runHistory: runHistory,
     inlineEdit: inlineEdit,
     approvalBlock: approvalBlock,
     collapsibleField: collapsibleField,

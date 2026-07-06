@@ -52,13 +52,19 @@ with an agent. Commits await explicit owner instruction.
   `planner-main.md`) DEFERRED to the rollover-rebuild wave** (tracked follow-up). Boundary-math
   spot-checked; **§14.4 edge accepted** (pre-planning next day skips that boundary's deterministic
   pass). **Full `./verify` PASS** (ruff/mypy/unit 120/build/e2e 14). Committed to main.
-- **W3 (rewire) — ticket DRAFTED** (`orchestration/tickets/W3-runtime-rewire/ticket.md`), dispatch
-  HELD until W2 verifies green (W3 plans against the stable post-W2 schema/tests — `SCHEMA_VERSION`
-  2→3). **Opus orchestrator** (not Fable — load-bearing interlock: status field ↔ System A ↔ System
-  B ↔ gate; and the Fable orchestrators stalled after long steps). One coherent ticket; planner
-  produces a phased plan (schema+status → System B → System A → gate → CLI). Home-provisioning +
-  worker skill are an out-of-band sub-part (validated via smoke, not hermetic verify). Carries the
-  W1 constraint: System B serializes kickoff + resolves current `session_key` at execution time.
+- **W3 (rewire) — split into W3a + W3b; W3a DONE ✓.** (Run as single Opus leads, NOT the
+  orchestrator-spawning model that caused the W2 chaos.)
+  - **W3a (status field + System B) — DONE**, committed to main. `w3a-lead` (single Opus lead): the
+    `dispatch/` package removed, new `runtime/system_b.py` + `status`/`worker` columns
+    (`SCHEMA_VERSION` 2→3). `set_run_status` single-door atomic writer. System B keyed on `ticket_id`,
+    resolves the rotating `session_key` at exec time (spike-01 evidence; codex confirming pass
+    validated production correctness). **Dormant** until W3b wires System A. `./verify` PASS (unit+e2e
+    107). `alias` resolved → KEEP. System-B + `set_run_status` spot-checked.
+  - **W3b — NEXT.** System A (readiness poll + fast path → `SystemB.set_off`) + the bundled
+    propose→approve gate + one-CLI rework (`run` group already gone; add `--sprint-item`, `list
+    --day`, drop `queue pickup`) + wiring System B into the server (`loops`). Planner-home + worker
+    skill = out-of-band (smoke, not hermetic verify). Seams left by W3a in `runtime/` (lock.py,
+    `_pickup()→[]`). Run as a single Opus lead.
 
 ## Prior work (2026-07-06): UI redesign live-wired — SPEC RETIRED, iterating by mockup
 

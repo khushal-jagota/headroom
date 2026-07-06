@@ -46,6 +46,13 @@ class AtCap(StrEnum):              # §4.3
     propose = "propose"
 
 
+class TicketStatus(StrEnum):       # code-owned run status (the reframed "lock"); System B writes it
+    empty = "empty"                # nothing started
+    agent_working = "agent_working"
+    awaiting_approval = "awaiting_approval"
+    errored = "errored"
+
+
 # §4.2 table — gating field per pre-terminal state. needs_review has none (human approve).
 GATING_FIELD: Final[dict[TicketState, FieldName]] = {
     TicketState.needs_success: FieldName.success,
@@ -164,12 +171,10 @@ class Ticket:                      # §3.3 — column names match exactly
     recap: str                     # writable only past needs_success
     ceiling: TicketState           # default needs_success (R2); restricted to STATE_ORDER
     at_cap: AtCap                  # default propose (R2)
-    auto_blocked: bool
-    consecutive_failures: int      # §7.5
-    chat_session_key: str | None
+    status: TicketStatus           # code-owned run status; System B is the sole writer
+    worker: str | None             # who/what is working it; NULL unless agent_working
+    chat_session_key: str | None   # the ticket-mind's durable Hermes session_key
     alias: str | None              # migration "Ticket ID:" (§12), unique when present
     fields: TicketFields
-    claim_lock: str | None         # §7.3 claim token; NULL = unclaimed
-    claim_expires: int | None
     created_at: int
     updated_at: int

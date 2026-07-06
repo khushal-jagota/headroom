@@ -77,12 +77,4 @@ def build_test_router(
         report = fn(conn_factory, config, clock, adapters)
         return JSONResponse(status_code=200, content=report)
 
-    @router.post("/test/tick-dispatcher")
-    async def tick_dispatcher() -> JSONResponse:
-        fn = _lazy("planner.dispatch.runtime", "run_tick")
-        if fn is None:
-            return _not_wired()
-        report = fn(conn_factory, config, clock, adapters)
-        return JSONResponse(status_code=200, content=report)
-
     return router

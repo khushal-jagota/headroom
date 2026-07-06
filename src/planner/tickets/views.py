@@ -13,16 +13,9 @@ import sqlite3
 from planner.core import links as core_links
 from planner.core.contracts import JsonDict, Project
 from planner.days.logic.carryover import approvals_digest, overdue_list
-from planner.dispatch import data as dispatch_data
-from planner.dispatch.logic import (
-    gating_field_pending,
-    has_active_claim,
-    is_eligible,
-    ordering_key,
-)
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import STATE_ORDER, Ticket, TicketState
-from planner.tickets.logic import fields_codec
+from planner.tickets.logic import fields_codec, machine
 
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
@@ -36,8 +29,8 @@ def _prio_rank(priority: str) -> int:
 
 
 def ticket_json(ticket: Ticket, now: int) -> JsonDict:
-    """§3.3 ticket. claim_lock is deliberately omitted (never echo the stored token);
-    the derived claim_active carries lease liveness instead."""
+    """§3.3 ticket. The code-owned run status/worker are the reframed "lock": the UI
+    reads this one field (System B is the sole writer)."""
     return {
         "id": ticket.id,
         "title": ticket.title,
@@ -50,28 +43,13 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "recap": ticket.recap,
         "ceiling": ticket.ceiling.value,
         "at_cap": ticket.at_cap.value,
-        "auto_blocked": ticket.auto_blocked,
-        "consecutive_failures": ticket.consecutive_failures,
+        "status": ticket.status.value,
+        "worker": ticket.worker,
         "chat_session_key": ticket.chat_session_key,
         "alias": ticket.alias,
         "fields": json.loads(fields_codec.fields_to_json(ticket.fields)),
-        "claim_expires": ticket.claim_expires,
-        "claim_active": has_active_claim(ticket.claim_lock, ticket.claim_expires, now),
         "created_at": ticket.created_at,
         "updated_at": ticket.updated_at,
-    }
-
-
-def run_json(row: sqlite3.Row) -> JsonDict:
-    return {
-        "id": str(row["id"]),
-        "ticket_id": str(row["ticket_id"]),
-        "status": str(row["status"]),
-        "started_at": int(row["started_at"]),
-        "ended_at": int(row["ended_at"]) if row["ended_at"] is not None else None,
-        "summary": str(row["summary"]) if row["summary"] is not None else None,
-        "error": str(row["error"]) if row["error"] is not None else None,
-        "pid": int(row["pid"]) if row["pid"] is not None else None,
     }
 
 
@@ -129,18 +107,6 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
     day_rows = conn.execute(
         "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id ASC", (ticket_id,)
     ).fetchall()
-    total = int(
-        conn.execute(
-            "SELECT COUNT(*) AS n FROM runs WHERE ticket_id = ?", (ticket_id,)
-        ).fetchone()["n"]
-    )
-    running = conn.execute(
-        "SELECT 1 FROM runs WHERE ticket_id = ? AND status = 'running' LIMIT 1", (ticket_id,)
-    ).fetchone()
-    latest = conn.execute(
-        "SELECT * FROM runs WHERE ticket_id = ? ORDER BY started_at DESC, id DESC LIMIT 1",
-        (ticket_id,),
-    ).fetchone()
     detail.update(
         {
             "blocked": core_links.is_blocked(conn, ticket_id),
@@ -150,26 +116,9 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
                 for r in link_rows
             ],
             "day_ids": [str(r["day_id"]) for r in day_rows],
-            "run_summary": {
-                "total": total,
-                "running": running is not None,
-                "latest": run_json(latest) if latest is not None else None,
-            },
         }
     )
     return detail
-
-
-def runs_for_ticket(conn: sqlite3.Connection, ticket_id: str) -> list[JsonDict]:
-    rows = conn.execute(
-        "SELECT * FROM runs WHERE ticket_id = ? ORDER BY started_at DESC, id DESC", (ticket_id,)
-    ).fetchall()
-    return [run_json(r) for r in rows]
-
-
-def get_run(conn: sqlite3.Connection, run_id: str) -> JsonDict | None:
-    row = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
-    return run_json(row) if row is not None else None
 
 
 def list_events_for_entity(conn: sqlite3.Connection, entity_id: str, limit: int) -> list[JsonDict]:
@@ -223,8 +172,8 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
 
 def board_view(conn: sqlite3.Connection, now: int) -> JsonDict:
     rows = conn.execute(
-        "SELECT id, title, state, priority, deadline, project, fields, claim_lock, "
-        "claim_expires, created_at FROM tickets WHERE state != 'dropped'"
+        "SELECT id, title, state, priority, deadline, project, fields, status, "
+        "created_at FROM tickets WHERE state != 'dropped'"
     ).fetchall()
     by_state: dict[str, list[tuple[tuple[int, int, str, int], JsonDict]]] = {
         s.value: [] for s in STATE_ORDER
@@ -233,17 +182,15 @@ def board_view(conn: sqlite3.Connection, now: int) -> JsonDict:
         state = str(row["state"])
         priority = str(row["priority"])
         deadline = str(row["deadline"]) if row["deadline"] is not None else None
-        fields = json.loads(str(row["fields"]))
-        claim_lock = str(row["claim_lock"]) if row["claim_lock"] is not None else None
-        claim_expires = int(row["claim_expires"]) if row["claim_expires"] is not None else None
+        fields = fields_codec.fields_from_json(str(row["fields"]))
         card: JsonDict = {
             "id": str(row["id"]),
             "title": str(row["title"]),
             "priority": priority,
             "deadline": deadline,
             "project": str(row["project"]) if row["project"] is not None else None,
-            "has_pending_proposal": gating_field_pending(TicketState(state), fields),
-            "has_running_claim": has_active_claim(claim_lock, claim_expires, now),
+            "has_pending_proposal": machine.has_pending_gating_proposal(TicketState(state), fields),
+            "status": str(row["status"]),
         }
         sort_key = (
             _prio_rank(priority),
@@ -326,27 +273,11 @@ def _approvals(conn: sqlite3.Connection, item_approval_rows: list[JsonDict]) -> 
 
 
 def _pickup(conn: sqlite3.Connection, now: int) -> list[JsonDict]:
-    candidates = dispatch_data.load_candidates(conn, now)
-    eligible = [c for c in candidates if is_eligible(c)]
-    eligible.sort(key=ordering_key)
-    if not eligible:
-        return []
-    ids = [c.ticket_id for c in eligible]
-    placeholders = ",".join("?" for _ in ids)
-    rows = conn.execute(
-        f"SELECT id, title FROM tickets WHERE id IN ({placeholders})", tuple(ids)
-    ).fetchall()
-    title_by_id = {str(r["id"]): str(r["title"]) for r in rows}
-    return [
-        {
-            "ticket_id": c.ticket_id,
-            "title": title_by_id.get(c.ticket_id, ""),
-            "state": c.state.value,
-            "priority": c.priority.value,
-            "deadline": c.deadline,
-        }
-        for c in eligible
-    ]
+    # Readiness (which tickets are ready to be worked) is System A — W3b. The old
+    # claim/eligibility candidate scan is removed with the dispatcher; until System A
+    # lands, the pickup section is empty (the board's per-ticket status shows what is
+    # running). The key is kept so /api/queues + `queue pickup` keep their shape.
+    return []
 
 
 def _overdue(

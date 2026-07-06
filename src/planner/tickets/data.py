@@ -10,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Final
 
 from planner.core.contracts import EventKind, Priority, Project
 from planner.core.errors import ErrorCode, PlannerError
@@ -23,9 +24,18 @@ from planner.tickets.contracts import (
     Ticket,
     TicketFields,
     TicketState,
+    TicketStatus,
 )
 from planner.tickets.logic import admission, fields_codec, resolution
 from planner.tickets.logic.decisions import Decision
+
+
+class _Unset:
+    """Typed sentinel for set_run_status: distinguishes 'leave chat_session_key untouched'
+    from 'set it to None'."""
+
+
+_UNSET: Final = _Unset()
 
 
 @contextmanager
@@ -54,13 +64,11 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         recap=row["recap"],
         ceiling=TicketState(row["ceiling"]),
         at_cap=AtCap(row["at_cap"]),
-        auto_blocked=bool(row["auto_blocked"]),
-        consecutive_failures=row["consecutive_failures"],
+        status=TicketStatus(row["status"]),
+        worker=row["worker"],
         chat_session_key=row["chat_session_key"],
         alias=row["alias"],
         fields=fields_codec.fields_from_json(row["fields"]),
-        claim_lock=row["claim_lock"],
-        claim_expires=row["claim_expires"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -138,9 +146,9 @@ def create_ticket(
                 )
         conn.execute(
             "INSERT INTO tickets (id, title, state, priority, deadline, project, sprint_item_id, "
-            "sprint_id, recap, ceiling, at_cap, auto_blocked, consecutive_failures, "
-            "chat_session_key, alias, fields, claim_lock, claim_expires, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, 0, 0, NULL, NULL, ?, NULL, NULL, ?, ?)",
+            "sprint_id, recap, ceiling, at_cap, status, worker, "
+            "chat_session_key, alias, fields, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -152,6 +160,7 @@ def create_ticket(
                 sprint_id,
                 TicketState.needs_success.value,
                 AtCap.propose.value,
+                TicketStatus.empty.value,
                 empty_fields,
                 now,
                 now,
@@ -176,6 +185,42 @@ def get_effective_sprint_id(conn: sqlite3.Connection, ticket_id: str) -> str | N
         return None
     sprint_id: str | None = row["sprint_id"]
     return sprint_id
+
+
+def set_run_status(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    status: TicketStatus,
+    worker: str | None,
+    session_key: str | None | _Unset = _UNSET,
+    error: str | None = None,
+    now: int,
+) -> Ticket:
+    """The single door for the ticket's code-owned run status (System B is the only caller).
+    Writes status + worker together in ONE atomic UPDATE — dissolving the runless orphan (there is
+    no second write to crash between) — optionally advancing the mind's durable chat_session_key,
+    then appends one ticket_status_changed event. Passing session_key=None clears the key; leaving
+    it as the _UNSET sentinel leaves the stored key untouched. `error` is surfaced in the event
+    payload only (it never affects the row), so an errored run's reason lands in the debug log."""
+    with _txn(conn):
+        _load_ticket(conn, ticket_id)  # existence guard -> not_found
+        if isinstance(session_key, _Unset):
+            conn.execute(
+                "UPDATE tickets SET status = ?, worker = ?, updated_at = ? WHERE id = ?",
+                (status.value, worker, now, ticket_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE tickets SET status = ?, worker = ?, chat_session_key = ?, updated_at = ? "
+                "WHERE id = ?",
+                (status.value, worker, session_key, now, ticket_id),
+            )
+        payload: dict[str, object] = {"status": status.value, "worker": worker}
+        if error is not None:
+            payload["error"] = error
+        append_event(conn, ticket_id, EventKind.ticket_status_changed, payload, now)
+        return _load_ticket(conn, ticket_id)
 
 
 def file_proposal(

@@ -24,6 +24,7 @@ from planner.tickets.contracts import (
     Ticket,
     TicketFields,
     TicketState,
+    TicketStatus,
 )
 from planner.tickets.logic import resolution
 
@@ -59,13 +60,11 @@ def _ticket(
         recap="",
         ceiling=ceiling,
         at_cap=AtCap.propose,
-        auto_blocked=False,
-        consecutive_failures=0,
+        status=TicketStatus.empty,
+        worker=None,
         chat_session_key=None,
         alias=None,
         fields=fields,
-        claim_lock=None,
-        claim_expires=None,
         created_at=0,
         updated_at=0,
     )

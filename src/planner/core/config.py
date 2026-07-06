@@ -45,7 +45,6 @@ class Config:
     events_read_limit: int
     db_busy_timeout_ms: int
     # adapter selection (registry §9.4)
-    spawn_adapter: str
     boundary_adapter: str
     gateway_adapter: str
     # test mode — ENV ONLY, never in config.yaml
@@ -157,7 +156,6 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         db_busy_timeout_ms=_int_value(
             cfg, env, "db_busy_timeout_ms", "PLAN_DB_BUSY_TIMEOUT_MS", 5000
         ),
-        spawn_adapter=_str_value(cfg, env, "spawn_adapter", "PLAN_SPAWN_ADAPTER", "auto"),
         boundary_adapter=_str_value(cfg, env, "boundary_adapter", "PLAN_BOUNDARY_ADAPTER", "auto"),
         gateway_adapter=_str_value(cfg, env, "gateway_adapter", "PLAN_GATEWAY_ADAPTER", "auto"),
         test_mode=test_mode,

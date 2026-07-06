@@ -1,7 +1,6 @@
 """The `plan` CLI (§8). A single entry point speaking HTTP to the server. The CLI
 is for agents and developer debugging; the human operates through the UI. No
-resolution verbs exist here (accept/approve/grant/unblock/day-plan are UI/API
-only).
+resolution verbs exist here (accept/approve/grant are UI/API only).
 
 Every verb supports --json (machine output; exit codes 0 success, 1
 validation/domain error, 2 connection error). Long text arrives via
@@ -93,13 +92,6 @@ def _drop_none(d: dict[str, Any]) -> dict[str, Any]:
 
 def _lines(rows: list[Any], fmt: Callable[[Any], str]) -> str:
     return "\n".join(fmt(r) for r in rows) if rows else "(none)"
-
-
-def _require_run_id(as_json: bool) -> str:
-    rid = os.environ.get("PLAN_RUN_ID", "").strip()
-    if not rid:
-        http.fail_validation("run id required: set PLAN_RUN_ID", as_json)
-    return rid
 
 
 def json_option(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -529,38 +521,6 @@ def link_rm(from_id: str, to_id: str, kind: str, as_json: bool) -> None:
         params={"from_id": from_id, "to_id": to_id, "kind": kind},
     )
     http.emit(data, as_json, f"unlinked {from_id} -{kind}-> {to_id}")
-
-
-# --- run group ---
-
-
-@main.group("run")
-def run() -> None:
-    """Run verbs (claim env from $PLAN_RUN_ID / $PLAN_CLAIM)."""
-
-
-@run.command("heartbeat")
-@json_option
-def run_heartbeat(as_json: bool) -> None:
-    """Extend the claim by one TTL."""
-    rid = _require_run_id(as_json)
-    data = http.send("POST", f"/api/runs/{rid}/heartbeat", as_json=as_json)
-    http.emit(data, as_json, f"heartbeat: claim_expires {data['claim_expires']}")
-
-
-@run.command("close")
-@click.option("--outcome", type=click.Choice(["done", "blocked"]), required=True)
-@click.option("--summary", default=None, help="Path to the summary body, or - for stdin.")
-@json_option
-def run_close(outcome: str, summary: str | None, as_json: bool) -> None:
-    """Close the run with a terminal outcome."""
-    rid = _require_run_id(as_json)
-    summary_text = _read_source(summary, as_json) if summary is not None else None
-    data = http.send(
-        "POST", f"/api/runs/{rid}/close",
-        as_json=as_json, json_body={"outcome": outcome, "summary": summary_text},
-    )
-    http.emit(data, as_json, f"run closed {data['run']['status']}")
 
 
 # --- queue group ---

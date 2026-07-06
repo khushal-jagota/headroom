@@ -230,12 +230,12 @@ def _import_tickets(
         }
         conn.execute(
             "INSERT INTO tickets (id, title, state, priority, deadline, project, sprint_item_id, "
-            "sprint_id, recap, ceiling, at_cap, auto_blocked, consecutive_failures, "
+            "sprint_id, recap, ceiling, at_cap, "
             "chat_session_key, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ticket_id, ticket.title, ticket.state.value, ticket.priority.value, None, None,
-                sprint_item_id, row_sprint_id, "", ticket.state.value, "propose", 0, 0,
+                sprint_item_id, row_sprint_id, "", ticket.state.value, "propose",
                 ticket.chat_session_key, ticket.alias, json.dumps(fields), now, now,
             ),
         )
