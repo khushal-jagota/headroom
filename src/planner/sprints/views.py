@@ -37,7 +37,6 @@ def item_json(item: SprintItem) -> JsonDict:
         "priority": item.priority.value,
         "deadline": item.deadline,
         "project": item.project.value,
-        "current_state_note": item.current_state_note,
         "sprint_id": item.sprint_id,
         "blocked_by": list(item.blocked_by),
         "status_proposal": None if proposal is None else {
@@ -64,14 +63,11 @@ def sprint_json(sprint: Sprint) -> JsonDict:
         "mid_where_we_stand": sprint.mid_where_we_stand,
         "mid_whats_changed": sprint.mid_whats_changed,
         "mid_what_to_adjust": sprint.mid_what_to_adjust,
-        "weekly_addenda": [{"date": a.date, "text": a.text} for a in sprint.weekly_addenda],
-        "kickoff_frozen_at": sprint.kickoff_frozen_at,
         "outcomes": sprint.outcomes,
         "solo_reflection": sprint.solo_reflection,
         "joint_discussion": sprint.joint_discussion,
         "updates_to_thinking": sprint.updates_to_thinking,
         "carry_forward": sprint.carry_forward,
-        "review_frozen_at": sprint.review_frozen_at,
         "created_at": sprint.created_at,
         "updated_at": sprint.updated_at,
     }

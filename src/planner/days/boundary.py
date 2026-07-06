@@ -1,8 +1,9 @@
-"""The boundary job (§6.2). Runs once per planning date, guarded by the
-boundary_runs table. Deterministic pass (materialize the day, carryover, overdue,
-approvals, close yesterday) then one adapter judgment call wrapped in a
-caller-owned timeout. On failure/timeout the day survives with an empty overview.
-Judgment is skipped entirely when the human already planned the day."""
+"""The boundary job (§6.2). Runs once per planning date, guarded by whether the
+new day is already materialized. Deterministic pass (materialize the day,
+carryover, overdue, approvals, close yesterday) then one adapter judgment call
+wrapped in a caller-owned timeout. On failure/timeout the day survives with an
+empty overview. Judgment is skipped entirely when the human already planned the
+day."""
 
 from __future__ import annotations
 
@@ -19,8 +20,7 @@ from planner.core.config import Config
 from planner.core.contracts import EventKind
 from planner.core.events import append_event
 from planner.core.ids import day_id
-from planner.days.contracts import NodeStatus
-from planner.days.data import load_plan, materialize_day, store_judgment
+from planner.days.data import materialize_day, store_judgment
 from planner.days.logic.carryover import (
     approvals_digest,
     carryover_candidates,
@@ -32,19 +32,22 @@ from planner.days.logic.dates import planning_date
 
 def run_boundary(
     conn: sqlite3.Connection, clock: Clock, config: Config, adapter: BoundaryAdapter
-) -> None:
-    """One boundary tick. Idempotent per planning date via the boundary_runs
-    guard, so the stage-4 scheduler may call it every tick — only the first tick
-    that advances the planning date does work (planning_date only becomes the new
-    date at/after boundary_hour, satisfying §6.2 'first tick at/after the boundary
-    hour')."""
+) -> str | None:
+    """One boundary tick. Idempotent per planning date via the next-day-materialized
+    guard, so the stage-4 scheduler may call it every tick — only the first tick that
+    finds the new day absent does work (planning_date only becomes the new date
+    at/after boundary_hour, satisfying §6.2 'first tick at/after the boundary hour').
+
+    Returns the outcome: None on a guarded skip (the next day is already
+    materialized), "skipped" when a human already planned the day, "failed" on
+    judgment failure/timeout, "ok" on success."""
     pd = planning_date(clock.now(), config.boundary_hour)
     piso = pd.isoformat()
-    if _boundary_ran(conn, piso):
-        return
+    ndid = day_id(pd)
+    if _next_day_materialized(conn, ndid):
+        return None
 
     now = clock.now_unix()
-    ndid = day_id(pd)
     yid = day_id(pd - timedelta(days=1))
 
     # Deterministic pass — always runs on a first tick.
@@ -66,8 +69,7 @@ def run_boundary(
 
     # Skip check (§6.2 last paragraph): a human already planned this day.
     if _human_planned(conn, ndid):
-        _record_boundary(conn, piso, now, "skipped")
-        return
+        return "skipped"
 
     # Judgment pass — one adapter call under a caller-owned timeout.
     inputs = BoundaryInputs(
@@ -80,8 +82,7 @@ def run_boundary(
         append_event(
             conn, ndid, EventKind.boundary_failed, {"error": _error_text(exc, timeout_s)}, now
         )
-        _record_boundary(conn, piso, now, "failed")
-        return
+        return "failed"
 
     store_judgment(
         conn, ndid, judgment.focus, judgment.brief_take, judgment.watchout,
@@ -91,20 +92,17 @@ def run_boundary(
     append_event(
         conn, ndid, EventKind.day_updated, {"field": "overview", "cause": "boundary"}, now
     )
-    _record_boundary(conn, piso, now, "ok")
+    return "ok"
 
 
-def _boundary_ran(conn: sqlite3.Connection, pd_iso: str) -> bool:
+def _next_day_materialized(conn: sqlite3.Connection, new_day_id: str) -> bool:
+    """True iff the new planning day's row already exists. Replaces the boundary_runs
+    dedup guard: the deterministic pass materializes the day as its first step, so a
+    present day means the boundary already ran for this date — once-per-date
+    idempotence without a side table."""
     return conn.execute(
-        "SELECT 1 FROM boundary_runs WHERE planning_date = ?", (pd_iso,)
+        "SELECT 1 FROM days WHERE id = ?", (new_day_id,)
     ).fetchone() is not None
-
-
-def _record_boundary(conn: sqlite3.Connection, pd_iso: str, now_unix: int, judgment: str) -> None:
-    conn.execute(
-        "INSERT INTO boundary_runs (planning_date, ran_at, judgment) VALUES (?, ?, ?)",
-        (pd_iso, now_unix, judgment),
-    )
 
 
 def _read_yesterday_tickets(conn: sqlite3.Connection, yesterday_id: str) -> list[dict[str, Any]]:
@@ -172,18 +170,13 @@ def _read_approval_candidates(
 
 
 def _human_planned(conn: sqlite3.Connection, new_day_id: str) -> bool:
-    """True iff a day-ticket exists on the new day OR the stored plan has the root
-    accepted or any child accepted (§6.2 'any day-ticket or accepted plan')."""
-    if conn.execute(
+    """True iff a day-ticket already sits on the new day (§6.2: a human-placed
+    day-ticket skips the judgment pass). NOTE: adding a day-ticket also materializes
+    its day, so the _next_day_materialized top guard trips first in that case (the
+    accepted edge, removal-plan §14.4); this stays as the documented skip check."""
+    return conn.execute(
         "SELECT 1 FROM day_tickets WHERE day_id = ? LIMIT 1", (new_day_id,)
-    ).fetchone() is not None:
-        return True
-    tree = load_plan(conn, new_day_id)
-    if tree is None:
-        return False
-    if tree.root.status == NodeStatus.accepted:
-        return True
-    return any(child.status == NodeStatus.accepted for child in tree.children)
+    ).fetchone() is not None
 
 
 def _judgment_with_timeout(

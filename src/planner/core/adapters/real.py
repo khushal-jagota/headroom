@@ -1,5 +1,5 @@
 """Real adapters: subprocess spawn of the hermes worker (§7.4), non-interactive
-hermes boundary/replan invocation (best-effort — live use is §18.4), and the guarded
+hermes boundary invocation (best-effort — live use is §18.4), and the guarded
 tui_gateway chat gateway (§11). Never imported into a test's execution path except
 construction and the echo-script smoke."""
 
@@ -20,8 +20,6 @@ from planner.core.adapters.base import (
     SpawnResult,
 )
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days.contracts import NodeStatus, PlanNode, PlanTree
-from planner.days.logic.tree import tree_from_dict
 
 if TYPE_CHECKING:
     from planner.core.config import Config
@@ -152,36 +150,6 @@ class RealBoundaryAdapter:
             brief_take=str(payload["brief_take"]),
             watchout=str(payload["watchout"]),
             if_today_lands=str(payload["if_today_lands"]),
-        )
-
-    def replan_root(self, day_id: str, inputs: BoundaryInputs) -> PlanTree:
-        prompt = (
-            f"Replan the full day plan for {day_id}. Reply with exactly one JSON "
-            'object {"plan_tree": {"root": {"focus", "status"}, "children": [...]}} '
-            "and nothing else. Inputs: " + json.dumps(asdict(inputs))
-        )
-        payload = _parse_json_object(self._invoke(prompt))
-        return tree_from_dict(payload["plan_tree"])
-
-    def replan_child(self, day_id: str, child: PlanNode, inputs: BoundaryInputs) -> PlanNode:
-        prompt = (
-            f"Replan a single plan child for {day_id}. Reply with exactly one JSON "
-            'object {"child": {"ticket_id": string|null, "note": string}} and nothing '
-            "else. Child: "
-            + json.dumps(
-                {"ticket_id": child.ticket_id, "note": child.note, "position": child.position}
-            )
-            + " Inputs: "
-            + json.dumps(asdict(inputs))
-        )
-        payload = _parse_json_object(self._invoke(prompt))
-        node = payload["child"]
-        ticket_id = node["ticket_id"]
-        return PlanNode(
-            ticket_id=str(ticket_id) if ticket_id is not None else None,
-            note=str(node["note"]),
-            status=NodeStatus.proposed,
-            position=child.position,
         )
 
 

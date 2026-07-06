@@ -10,6 +10,11 @@ from typing import Final, Literal, TypedDict
 
 from planner.core.contracts import Priority, Project
 
+# §3.3 ticket title length cap. The DDL carries the matching literal
+# `CHECK (length(title) <= 200)` as the DB-level backstop; this constant is the
+# single enforcement source the write paths pass to admission.validate_title.
+TITLE_MAX_CHARS: Final = 200
+
 
 class TicketState(StrEnum):        # §4.1, exact order
     needs_success = "needs_success"
@@ -149,7 +154,7 @@ class LinkBody(TypedDict, total=False):           # POST /links (ticket-anchored
 @dataclass
 class Ticket:                      # §3.3 — column names match exactly
     id: str
-    title: str                     # <= title_max_chars (200), every write path
+    title: str                     # <= TITLE_MAX_CHARS (200), every write path
     state: TicketState
     priority: Priority             # default P3
     deadline: str | None           # ISO date

@@ -1,5 +1,5 @@
-"""Stage-4 runtime tests: dispatcher tick, boundary tick, replan queue, real
-adapters, background loops. Ticks are driven DIRECTLY as functions on a temp DB with
+"""Stage-4 runtime tests: dispatcher tick, boundary tick, real adapters,
+background loops. Ticks are driven DIRECTLY as functions on a temp DB with
 fakes and TestClock — never through HTTP, never spawning any process (the real spawn
 adapter is exercised against a recording subprocess.Popen stub, per §7.4). Descriptive
 names, no aNN anchors — no §18.3 checklist item is owned here; e2e items 28–30
@@ -26,7 +26,6 @@ import pytest
 
 from planner.core.adapters.base import (
     BoundaryAdapter,
-    BoundaryInputs,
     SpawnAdapter,
     SpawnRequest,
     SpawnResult,
@@ -47,16 +46,7 @@ from planner.core.contracts import EventKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.loops import start_background_loops
-from planner.days.contracts import NodeStatus, PlanNode, PlanRoot, PlanTree
-from planner.days.data import load_plan, store_plan
-from planner.days.logic.effects import ReplanChild, ReplanRoot
-from planner.days.logic.tree import tree_to_dict
-from planner.days.scheduler import (
-    process_pending_replan,
-    reset_replan_queue,
-    run_boundary_tick,
-    submit_replan,
-)
+from planner.days.scheduler import run_boundary_tick
 from planner.dispatch import data
 from planner.dispatch.runtime import (
     _LOCK_FDS,
@@ -133,24 +123,10 @@ def _test_cfg(cfg: Config, tmp_path: Path, **overrides: object) -> Config:
 
 @pytest.fixture(autouse=True)
 def _isolate_runtime_state() -> Iterator[None]:
-    """The replan queue and the dispatcher-lock cache are module state; isolate every
-    test from both."""
-    reset_replan_queue()
+    """The dispatcher-lock cache is module state; isolate every test from it."""
     yield
-    reset_replan_queue()
     for path in list(_LOCK_FDS):
         release_dispatcher_lock(path)
-
-
-class ResubmittingBoundary(FakeBoundaryAdapter):
-    """First replan_root resubmits a newer request mid-flight (latest-wins)."""
-
-    def replan_root(self, day_id: str, inputs: BoundaryInputs) -> PlanTree:
-        self.calls.append("replan_root")
-        if self.calls.count("replan_root") == 1:
-            submit_replan(day_id, ReplanRoot())
-            return PlanTree(root=PlanRoot(focus="first result"), children=[])
-        return PlanTree(root=PlanRoot(focus="second result"), children=[])
 
 
 # --- dispatcher tick ---
@@ -492,7 +468,7 @@ def test_expired_and_overtime_run_is_reclaimed_not_timed_out(
     )
 
 
-# --- boundary tick + replan queue ---
+# --- boundary tick ---
 
 
 def test_boundary_tick_runs_once_per_planning_date(
@@ -504,7 +480,7 @@ def test_boundary_tick_runs_once_per_planning_date(
     adapters = _adapters(boundary=boundary)
 
     report = run_boundary_tick(factory, cfg, fake_clock, adapters)
-    assert report == {"planning_date": "2026-07-05", "ran": True, "judgment": "ok", "replan": None}
+    assert report == {"planning_date": "2026-07-05", "ran": True, "judgment": "ok"}
 
     day = tmp_db.execute("SELECT * FROM days WHERE id='day_2026-07-05'").fetchone()
     assert day is not None
@@ -512,99 +488,13 @@ def test_boundary_tick_runs_once_per_planning_date(
     assert day["brief_take"] == "Brief take for 2026-07-05"
     assert day["watchout"] == "Watchout for 2026-07-05"
     assert day["if_today_lands"] == "If today lands for 2026-07-05"
-    # The boundary no longer proposes a plan (retired); the plan column stays NULL.
-    assert load_plan(tmp_db, "day_2026-07-05") is None
-    rows = tmp_db.execute("SELECT judgment FROM boundary_runs").fetchall()
-    assert len(rows) == 1
-    assert rows[0]["judgment"] == "ok"
     assert boundary.calls == ["judgment"]
 
+    # Second tick same date: the next day is already materialized, so the guard skips —
+    # ran=False, judgment=None, and no second judgment call.
     report2 = run_boundary_tick(factory, cfg, fake_clock, adapters)
-    assert report2 == {
-        "planning_date": "2026-07-05", "ran": False, "judgment": "ok", "replan": None
-    }
-    assert tmp_db.execute("SELECT COUNT(*) AS n FROM boundary_runs").fetchone()["n"] == 1
+    assert report2 == {"planning_date": "2026-07-05", "ran": False, "judgment": None}
     assert boundary.calls == ["judgment"]
-
-
-def test_replan_latest_wins_discards_stale_result(
-    tmp_db: Connection, cfg: Config, fake_clock: TestClock
-) -> None:
-    old = PlanTree(root=PlanRoot(focus="original", status=NodeStatus.proposed), children=[])
-    store_plan(tmp_db, "day_2026-07-04", old, fake_clock.now_unix())
-    adapter = ResubmittingBoundary()
-    submit_replan("day_2026-07-04", ReplanRoot())
-    report = process_pending_replan(tmp_db, cfg, fake_clock, _adapters(boundary=adapter))
-
-    assert adapter.calls == ["replan_root", "replan_root"]  # first result discarded
-    assert report == {
-        "attempts": [
-            {"day_id": "day_2026-07-04", "scope": "root", "node": "root", "outcome": "discarded"},
-            {"day_id": "day_2026-07-04", "scope": "root", "node": "root", "outcome": "stored"},
-        ]
-    }
-    tree = load_plan(tmp_db, "day_2026-07-04")
-    assert tree is not None
-    assert tree.root.focus == "second result"
-    assert tree.root.status == NodeStatus.proposed
-    assert _events(tmp_db, "day_2026-07-04", EventKind.plan_replanned) == [
-        {"old_tree": tree_to_dict(old), "scope": "root", "node": "root"}
-    ]
-    assert process_pending_replan(tmp_db, cfg, fake_clock, _adapters(boundary=adapter)) is None
-
-
-def test_replan_child_splices_only_target_node(
-    tmp_db: Connection, cfg: Config, fake_clock: TestClock
-) -> None:
-    seeded = PlanTree(
-        root=PlanRoot(focus="root focus", status=NodeStatus.accepted),
-        children=[
-            PlanNode("t_keep", "keep me", NodeStatus.accepted, 0),
-            PlanNode("t_redo", "old note", NodeStatus.invalidated, 1),
-        ],
-    )
-    store_plan(tmp_db, "day_2026-07-04", seeded, fake_clock.now_unix())
-    adapter = FakeBoundaryAdapter()
-    submit_replan("day_2026-07-04", ReplanChild(1))
-    report = process_pending_replan(tmp_db, cfg, fake_clock, _adapters(boundary=adapter))
-
-    assert report is not None
-    assert report["attempts"] == [
-        {"day_id": "day_2026-07-04", "scope": "child", "node": 1, "outcome": "stored"}
-    ]
-    tree = load_plan(tmp_db, "day_2026-07-04")
-    assert tree is not None
-    assert tree.root.status == NodeStatus.accepted
-    assert tree.root.focus == "root focus"
-    assert tree.children[0] == PlanNode("t_keep", "keep me", NodeStatus.accepted, 0)
-    assert tree.children[1] == PlanNode("t_redo", "Fake replanned child", NodeStatus.proposed, 1)
-    assert _events(tmp_db, "day_2026-07-04", EventKind.plan_replanned) == [
-        {"old_tree": tree_to_dict(seeded), "scope": "child", "node": 1}
-    ]
-    assert adapter.calls == ["replan_child"]
-
-
-def test_replan_failure_emits_boundary_failed_and_consumes(
-    tmp_db: Connection, cfg: Config, fake_clock: TestClock
-) -> None:
-    seeded = PlanTree(root=PlanRoot(focus="original", status=NodeStatus.proposed), children=[])
-    store_plan(tmp_db, "day_2026-07-04", seeded, fake_clock.now_unix())
-    adapter = FakeBoundaryAdapter(fail=True)
-    submit_replan("day_2026-07-04", ReplanRoot())
-    report = process_pending_replan(tmp_db, cfg, fake_clock, _adapters(boundary=adapter))
-
-    assert report is not None
-    assert report["attempts"] == [
-        {"day_id": "day_2026-07-04", "scope": "root", "node": "root", "outcome": "failed"}
-    ]
-    tree = load_plan(tmp_db, "day_2026-07-04")
-    assert tree is not None
-    assert tree_to_dict(tree) == tree_to_dict(seeded)
-    assert _events(tmp_db, "day_2026-07-04", EventKind.boundary_failed) == [
-        {"error": "fake boundary failure"}
-    ]
-    assert _events(tmp_db, "day_2026-07-04", EventKind.plan_replanned) == []
-    assert process_pending_replan(tmp_db, cfg, fake_clock, _adapters(boundary=adapter)) is None
 
 
 # --- real adapters ---

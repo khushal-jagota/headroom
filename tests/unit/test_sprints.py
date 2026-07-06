@@ -9,10 +9,9 @@ Item 10 — sprint-item permissions: agent todo->active succeeds; agent direct
 active->done write rejected; done via proposal + accept succeeds; blocked_by
 stored and blockers_cleared computed when all blockers done.
 
-Item 20 — freeze (DORMANT, rev6) + overlap: freeze is retired, so freeze_kickoff /
-freeze_review are inert no-ops (no flag, no event) and kickoff/review fields stay
-always-editable; weekly_addenda append still works; sprint overlap rejected
-(inclusive ranges).
+Item 20 — sprint overlap: freeze and weekly_addenda are retired (rev6), so every
+sprint text field is always-editable and nothing latches; the remaining rule is
+sprint overlap rejection (inclusive ranges).
 """
 
 from __future__ import annotations
@@ -24,19 +23,15 @@ import pytest
 from planner.core.contracts import Project
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import read_events_since
-from planner.sprints.contracts import Addendum, ItemStatus
+from planner.sprints.contracts import ItemStatus
 from planner.sprints.data import (
     accept_item_status,
-    add_addendum,
     create_item,
     create_sprint,
-    freeze_kickoff,
-    freeze_review,
     propose_item_status,
     read_item,
     read_sprint,
     transition_item_status,
-    update_sprint_field,
 )
 from planner.sprints.logic import DateRange, current_sprint_id
 
@@ -149,56 +144,17 @@ def test_a10_sprint_item_permissions(tmp_db, fake_clock) -> None:
     assert read_item(tmp_db, item4.id).blockers_cleared is True
 
 
-# --- item 20: freeze rules + overlap (single anchored test) -----------------------
+# --- item 20: sprint overlap (single anchored test) -------------------------------
 
 
-def test_a20_freeze_rules_and_overlap(tmp_db, fake_clock) -> None:
-    # Leg 1 — freeze is DORMANT (rev6): freeze_kickoff is an inert no-op (no flag
-    # latched, no event) and the kickoff field is editable before AND after the call.
+def test_a20_sprint_overlap(tmp_db, fake_clock) -> None:
+    # Freeze + weekly_addenda are retired (rev6): every sprint text field is
+    # always-editable and nothing latches, so the only rule left to assert is sprint
+    # overlap rejection — interior overlap, inclusive boundary (candidate start ==
+    # existing end), and the adjacent day succeeds.
     sp = create_sprint(
         tmp_db, name="S", date_start="2026-07-01", date_end="2026-07-14", clock=fake_clock
     )
-    updated = update_sprint_field(tmp_db, sp.id, "primary_bet", "x", clock=fake_clock)
-    assert updated.primary_bet == "x"
-    assert _events(tmp_db, sp.id, "sprint_updated") == [
-        {"field": "primary_bet", "from": "", "to": "x"},
-    ]
-    frozen = freeze_kickoff(tmp_db, sp.id, clock=fake_clock)
-    assert frozen.kickoff_frozen_at is None                 # inert: nothing latched
-    assert _events(tmp_db, sp.id, "kickoff_frozen") == []   # inert: no event
-    # Still writable after the freeze call — nothing in a sprint locks.
-    still = update_sprint_field(tmp_db, sp.id, "primary_bet", "y", clock=fake_clock)
-    assert still.primary_bet == "y"
-    assert read_sprint(tmp_db, sp.id).primary_bet == "y"
-
-    # Leg 2 — weekly_addenda append still works (dormant in the UI, functional at the API).
-    with_addendum = add_addendum(
-        tmp_db, sp.id, date="2026-07-05", text="note", clock=fake_clock
-    )
-    assert len(with_addendum.weekly_addenda) == 1
-    assert with_addendum.weekly_addenda[0] == Addendum(date="2026-07-05", text="note")
-    assert _events(tmp_db, sp.id, "addendum_added") == [
-        {"date": "2026-07-05", "text": "note"},
-    ]
-
-    # Leg 3 — review fields: freeze_review is inert too; review fields stay editable.
-    reviewed = update_sprint_field(tmp_db, sp.id, "outcomes", "o", clock=fake_clock)
-    assert reviewed.outcomes == "o"
-    sp2 = create_sprint(
-        tmp_db, name="R", date_start="2026-08-01", date_end="2026-08-14", clock=fake_clock
-    )
-    ok = update_sprint_field(tmp_db, sp2.id, "outcomes", "r1", clock=fake_clock)
-    assert ok.outcomes == "r1"
-    frozen2 = freeze_review(tmp_db, sp2.id, clock=fake_clock)
-    assert frozen2.review_frozen_at is None                  # inert: nothing latched
-    assert _events(tmp_db, sp2.id, "review_frozen") == []    # inert: no event
-    r2 = update_sprint_field(tmp_db, sp2.id, "outcomes", "r2", clock=fake_clock)
-    assert r2.outcomes == "r2"                               # editable after the call
-    still_ok = update_sprint_field(tmp_db, sp2.id, "primary_bet", "bet", clock=fake_clock)
-    assert still_ok.primary_bet == "bet"
-
-    # Leg 4 — sprint overlap rejected: interior overlap, inclusive boundary
-    # (candidate start == existing end), and the adjacent day succeeds.
     with pytest.raises(PlannerError) as ei3:
         create_sprint(
             tmp_db, name="B", date_start="2026-07-10", date_end="2026-07-20", clock=fake_clock

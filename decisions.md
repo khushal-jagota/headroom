@@ -400,3 +400,25 @@ Verify: **VERIFY: PASS** — 5 gates, 106 unit + 17 e2e (2 new backlog/ideas flo
   folded into notes.md. Sprint-item change model takes the same one-act shape when its layer is
   built. Deferred to their layers (not near-term): agent day-composition approval, ticket
   body/details, links/blocking semantics.
+
+## 2026-07-06 · W2 (removals) — implemented + integrated (VERIFY: PASS)
+
+- **W2 landed via a single Opus implementer** (`w2-impl`) after the codex-xhigh attempt was aborted
+  (it edited out-of-scope frontend files and its orchestrator respawned it after kills). Full
+  `./verify` PASS (ruff/mypy/unit 120/build/e2e 14). Committed to main.
+- **Boundary guard replacement (plan §3/§14.4).** `boundary_runs` table → `_next_day_materialized(
+  conn, ndid)` — the deterministic pass materializes the day first, so a present day = already ran.
+  A module `threading.Lock` (`_TICK_MUTEX`) serializes `run_boundary_tick` for read-then-work TOCTOU
+  safety. `run_boundary` → `str|None`; tick report → `{planning_date, ran, judgment}` (replan gone).
+- **Accepted §14.4 edge.** Adding a day-ticket materializes its day, so a human pre-planning the
+  next day trips the top materialize-guard (whole boundary skips) before `_human_planned` — that
+  "skipped" path is now effectively dead (kept + documented). Consequence: pre-planning skips that
+  date's deterministic pass (mainly a missed yesterday `day_closed` event). Low-impact; superseded
+  by the rollover-rebuild wave. Spot-checked + accepted.
+- **A3 (codex): removed orphaned `ErrorCode.frozen_write`** — a plan-§7 enumeration gap; dead + part
+  of the removed freeze surface. Accepted.
+- **A1/A2 (codex): stale `skills/planning-boundary.md` + `planner-main.md`** (reference removed
+  plan-tree/replan/day-plan) → DEFERRED to the **rollover-rebuild wave** (owns + rewrites the
+  boundary/rollover skill; not W2-owned, not verify-blocking). Tracked follow-up.
+- **Migration = fresh-build only.** No ALTER/migration runner; dev/test DB under `data/` is
+  discarded + rebuilt at v2; production cutover creates a fresh DB via `python -m planner.seed`.

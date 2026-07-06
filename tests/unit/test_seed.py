@@ -1,22 +1,18 @@
 """Acceptance item 19 for the seed domain: importing the synthetic fixture
 yields the exact counts, spot-checked mappings, the designed skip list, and
-idempotent re-runs. Plus supporting tests for the demo dataset and the pure
-parser helpers. The reason strings below are an independent oracle — hard-coded
-here, never imported from the parsers."""
+idempotent re-runs. Plus supporting tests for the pure parser helpers. The reason
+strings below are an independent oracle — hard-coded here, never imported from the
+parsers."""
 
 from __future__ import annotations
 
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from sqlite3 import Connection
 
-import pytest
-
 from planner.core.contracts import Priority
-from planner.core.errors import ErrorCode, PlannerError
 from planner.seed.contracts import SkippedSection
-from planner.seed.demo import seed_demo
 from planner.seed.importer import seed_from_source
 from planner.seed.logic.fieldmap import resolve_priority
 from planner.seed.logic.latest import pick_latest_daily
@@ -25,10 +21,9 @@ from planner.seed.logic.workspace import match_item_title, parse_workspace
 
 FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "planning-md"
 
-# Seeding takes the caller's clock; tests pin one. Noon UTC keeps the demo's
+# Seeding takes the caller's clock; tests pin one. Noon UTC keeps the import's
 # planning date (boundary hour 5) at 2026-07-04 for any sane local timezone.
 _FIXED_NOW = int(datetime(2026, 7, 4, 12, 0, tzinfo=UTC).timestamp())
-_DEMO_TODAY = date(2026, 7, 4)
 
 _REASON_DAILY = "not the latest daily folder; only the latest day's workspace.md is imported (R6)"
 _REASON_FILE = "file has no migration mapping (only workspace.md is imported from a daily folder)"
@@ -272,76 +267,6 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert _count(tmp_db, "ideas") == 3
     assert _count(tmp_db, "links") == 1
     assert _count(tmp_db, "events") == 18
-
-
-def test_seed_demo_requires_empty_db(tmp_db: Connection) -> None:
-    tmp_db.execute(
-        "INSERT INTO ideas (id, title, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-        ("idea_seed", "a stray idea", "", 0, 0),
-    )
-    with pytest.raises(PlannerError) as excinfo:
-        seed_demo(tmp_db, _FIXED_NOW, boundary_hour=5)
-    assert excinfo.value.code == ErrorCode.db_not_empty
-
-
-def test_seed_demo_dataset_shape(tmp_db: Connection) -> None:
-    seed_demo(tmp_db, _FIXED_NOW, boundary_hour=5)
-    today = _DEMO_TODAY
-
-    states = sorted(row["state"] for row in tmp_db.execute("SELECT state FROM tickets").fetchall())
-    assert states == sorted(
-        [
-            "needs_success", "needs_approach", "needs_plan", "in_progress",
-            "in_progress", "needs_review", "done", "dropped",
-        ]
-    )
-    assert _count(tmp_db, "tickets") == 8
-
-    ceilings = [row["ceiling"] for row in tmp_db.execute("SELECT ceiling FROM tickets").fetchall()]
-    assert "dropped" not in ceilings
-
-    blocks = tmp_db.execute("SELECT from_id, to_id FROM links WHERE kind = 'blocks'").fetchall()
-    assert len(blocks) == 1
-    blocked_state = tmp_db.execute(
-        "SELECT state FROM tickets WHERE id = ?", (blocks[0]["to_id"],)
-    ).fetchone()["state"]
-    assert blocked_state == "needs_review"
-
-    parent_id = tmp_db.execute(
-        "SELECT id FROM sprint_items WHERE title = 'Ship the demo feature end to end.'"
-    ).fetchone()["id"]
-    children = tmp_db.execute(
-        "SELECT from_id FROM links WHERE to_id = ? AND kind = 'belongs_to'", (parent_id,)
-    ).fetchall()
-    assert len(children) == 2
-    for child in children:
-        row = tmp_db.execute(
-            "SELECT sprint_item_id, project, sprint_id FROM tickets WHERE id = ?",
-            (child["from_id"],),
-        ).fetchone()
-        assert row["sprint_item_id"] == parent_id
-        assert row["project"] is None
-        assert row["sprint_id"] is None
-
-    sprint = tmp_db.execute("SELECT date_start, date_end FROM sprints").fetchone()
-    assert sprint["date_start"] <= today.isoformat() <= sprint["date_end"]
-
-    day = tmp_db.execute("SELECT id, plan FROM days").fetchone()
-    assert day["id"] == f"day_{today.isoformat()}"
-
-    positions = [
-        row["position"]
-        for row in tmp_db.execute("SELECT position FROM day_tickets ORDER BY position").fetchall()
-    ]
-    assert positions == [0, 1, 2]
-
-    plan = json.loads(day["plan"])
-    assert plan["root"]["focus"]
-    assert len(plan["children"]) == 2
-
-    with pytest.raises(PlannerError) as excinfo:
-        seed_demo(tmp_db, _FIXED_NOW, boundary_hour=5)
-    assert excinfo.value.code == ErrorCode.db_not_empty
 
 
 def test_match_item_title_ambiguity() -> None:

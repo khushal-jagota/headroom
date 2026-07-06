@@ -176,11 +176,11 @@ def _import_items(
         item_id = new_id(ID_PREFIXES["sprint_item"])
         conn.execute(
             "INSERT INTO sprint_items (id, title, body, status, priority, deadline, project, "
-            "current_state_note, sprint_id, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "sprint_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 item_id, item.title, item.body, item.status.value, item.priority.value,
-                item.deadline, item.project.value, "", sprint_id, now, now,
+                item.deadline, item.project.value, sprint_id, now, now,
             ),
         )
         append_event(

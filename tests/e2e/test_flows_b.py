@@ -168,7 +168,6 @@ def test_e28_day_boundary_accept_all(server, context_factory, open_page, cli, ap
         "planning_date": DAY_CUR,
         "ran": True,
         "judgment": "ok",
-        "replan": None,
     }, rep
 
     page = open_page(
@@ -348,7 +347,6 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
         "planning_date": DAY_CUR,
         "ran": True,
         "judgment": "ok",
-        "replan": None,
     }, rep
 
     rep = _tick_dispatcher(api, server)

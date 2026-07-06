@@ -95,21 +95,6 @@ def _lines(rows: list[Any], fmt: Callable[[Any], str]) -> str:
     return "\n".join(fmt(r) for r in rows) if rows else "(none)"
 
 
-def _seed_human(data: Any) -> str:
-    lines = [
-        f"seed: {data['sprints']} sprint(s), {data['sprint_items']} item(s), "
-        f"{data['deferred_items']} deferred, {data['tickets']} ticket(s), "
-        f"{data['ideas']} idea(s), {data['links']} link(s), "
-        f"{data['duplicates_skipped']} duplicate(s)"
-    ]
-    skipped = data["skipped"]
-    if skipped:
-        lines.append(f"skipped: {len(skipped)}")
-        for s in skipped:
-            lines.append(f"  - {s['source_file']} [{s['heading']}]: {s['reason']}")
-    return "\n".join(lines)
-
-
 def _require_run_id(as_json: bool) -> str:
     rid = os.environ.get("PLAN_RUN_ID", "").strip()
     if not rid:
@@ -163,27 +148,6 @@ def serve(as_json: bool) -> None:
 
     app = create_app(config, clock, adapters, conn_factory)
     uvicorn.run(app, host=HOST, port=config.port)
-
-
-# --- seed ---
-
-
-@main.command("seed")
-@click.option("--source", default=None, help="Path to a markdown planning directory.")
-@click.option("--demo", is_flag=True, default=False, help="Create the deterministic demo dataset.")
-@json_option
-def seed(source: str | None, demo: bool, as_json: bool) -> None:
-    """Import a markdown planning directory, or create a demo dataset (§12)."""
-    if (source is None) == (not demo):
-        http.fail_validation("provide exactly one of --source or --demo", as_json)
-    body: dict[str, Any]
-    if demo:
-        body = {"demo": True}
-    else:
-        assert source is not None
-        body = {"source_dir": os.path.abspath(source)}  # server resolves in ITS cwd
-    data = http.send("POST", "/api/seed", as_json=as_json, json_body=body)
-    http.emit(data, as_json, _seed_human(data))
 
 
 # --- top-level proposal/recap/note verbs ---

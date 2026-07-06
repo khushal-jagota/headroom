@@ -30,7 +30,6 @@ from planner.core.testmode import build_test_router
 from planner.core.ws import tail_events
 from planner.days.api import router as days_router
 from planner.dispatch.api import router as dispatch_router
-from planner.seed.api import router as seed_router
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
 
@@ -83,12 +82,6 @@ def create_app(
     adapters: Adapters,
     conn_factory: Callable[[], sqlite3.Connection],
 ) -> FastAPI:
-    # The DDL carries the literal 200 title cap; the config value is what write
-    # paths enforce. Guard that they agree (amendment 11). Factory time is startup
-    # and strictly earlier than any request, so this fires even for TestClient apps
-    # that never enter the lifespan.
-    assert config.title_max_chars == 200, "title_max_chars must equal the DDL literal (200)"
-
     @asynccontextmanager
     async def _lifespan(app_: FastAPI) -> AsyncIterator[None]:
         Path(config.db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -123,7 +116,6 @@ def create_app(
         sprints_router,
         days_router,
         dispatch_router,
-        seed_router,
         chat_router,
     ):
         app.include_router(domain_router, prefix="/api")

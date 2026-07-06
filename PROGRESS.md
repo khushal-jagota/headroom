@@ -38,11 +38,20 @@ with an agent. Commits await explicit owner instruction.
   + fixed a queue-key bug (now keyed on the durable `session_key`); diff-review APPROVE (lone
   `__pycache__` finding refuted). Integrator spot-check (frame router / `run_step` mapping / queue
   single-in-flight invariant) PASS. **Full `./verify` PASS** (ruff / mypy / unit 134 / build / e2e
-  17). Not committed (awaiting owner). **W3 carry-forward:** System B must serialize kickoff itself
+  17). **Committed to `main` @ `63152e5`** (the redesign commits to main as each wave lands — no
+  branch). **W3 carry-forward:** System B must serialize kickoff itself
   and resolve the mind's CURRENT `session_key` at execution time — the queue can't serialize step-0
   (both have no key yet). See `src/planner/minds/queue.py` docstring + the W1 report.
-- **W2 (removals) — planning in parallel** (`w2-orchestrator`, background, plan-only). On plan
-  ready → greenlight codex-xhigh implementation (serialized after W1).
+- **W2 (removals) — DONE ✓.** Implemented by a single **Opus implementer `w2-impl`** (the
+  codex-xhigh attempt was aborted for editing out-of-scope frontend + being uncontrollable; its
+  frontend §10 diff was correct and kept, the rest reverted). Deleted tree.py/effects.py/seed
+  api+demo/freeze.py + dogfood/seed-e2e tests; `boundary_runs` → `_next_day_materialized` guard +
+  `_TICK_MUTEX`; standalone `python -m planner.seed`; dormant columns + freeze/addenda +
+  title_max_chars gone; `SCHEMA_VERSION` 1→2. W3 exclusion list verified untouched. Codex
+  diff-review: A3 (orphan error code) fixed; **A1/A2 (stale `skills/planning-boundary.md` +
+  `planner-main.md`) DEFERRED to the rollover-rebuild wave** (tracked follow-up). Boundary-math
+  spot-checked; **§14.4 edge accepted** (pre-planning next day skips that boundary's deterministic
+  pass). **Full `./verify` PASS** (ruff/mypy/unit 120/build/e2e 14). Committed to main.
 - **W3 (rewire) — ticket DRAFTED** (`orchestration/tickets/W3-runtime-rewire/ticket.md`), dispatch
   HELD until W2 verifies green (W3 plans against the stable post-W2 schema/tests — `SCHEMA_VERSION`
   2→3). **Opus orchestrator** (not Fable — load-bearing interlock: status field ↔ System A ↔ System

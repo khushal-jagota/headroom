@@ -22,7 +22,6 @@ from planner.sprints.contracts import (
     MID_SPRINT_FIELDS,
     PROPOSAL_ONLY_STATUSES,
     REVIEW_FIELDS,
-    Addendum,
     ItemStatus,
     ItemStatusProposal,
     Sprint,
@@ -44,7 +43,7 @@ class ItemRead(NamedTuple):
 
 
 _ITEM_PLAIN_FIELDS: frozenset[str] = frozenset(
-    {"title", "body", "priority", "deadline", "project", "current_state_note"}
+    {"title", "body", "priority", "deadline", "project"}
 )
 _SPRINT_TEXT_FIELDS: frozenset[str] = frozenset(
     KICKOFF_FIELDS + REVIEW_FIELDS + MID_SPRINT_FIELDS + ("name",)
@@ -76,14 +75,11 @@ def _row_to_sprint(row: sqlite3.Row) -> Sprint:
         mid_where_we_stand=row["mid_where_we_stand"],
         mid_whats_changed=row["mid_whats_changed"],
         mid_what_to_adjust=row["mid_what_to_adjust"],
-        weekly_addenda=[Addendum(**a) for a in json.loads(row["weekly_addenda"])],
-        kickoff_frozen_at=row["kickoff_frozen_at"],
         outcomes=row["outcomes"],
         solo_reflection=row["solo_reflection"],
         joint_discussion=row["joint_discussion"],
         updates_to_thinking=row["updates_to_thinking"],
         carry_forward=row["carry_forward"],
-        review_frozen_at=row["review_frozen_at"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -121,7 +117,6 @@ def _row_to_item(row: sqlite3.Row) -> SprintItem:
         priority=Priority(row["priority"]),
         deadline=row["deadline"],
         project=Project(row["project"]),
-        current_state_note=row["current_state_note"],
         sprint_id=row["sprint_id"],
         blocked_by=json.loads(row["blocked_by"]),
         status_proposal=_proposal_from_json(row["status_proposal"]),
@@ -184,10 +179,9 @@ def create_sprint(
         conn.execute(
             "INSERT INTO sprints ("
             "id, name, date_start, date_end, limiting_factor, primary_bet, supports, "
-            "premortem, weekly_addenda, kickoff_frozen_at, outcomes, solo_reflection, "
-            "joint_discussion, updates_to_thinking, carry_forward, review_frozen_at, "
-            "created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, '', '', '', '', '', NULL, ?, ?)",
+            "premortem, outcomes, solo_reflection, joint_discussion, updates_to_thinking, "
+            "carry_forward, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', '', '', '', '', ?, ?)",
             (
                 sprint_id,
                 name,
@@ -221,8 +215,7 @@ def update_sprint_field(
             {"field": field},
         )
     # Freeze retired (rev6): nothing in a sprint locks, so every text field
-    # (kickoff / mid-sprint / review / name) is always editable regardless of the
-    # dormant kickoff_frozen_at / review_frozen_at columns. No admissibility gate.
+    # (kickoff / mid-sprint / review / name) is always editable. No admissibility gate.
     sprint = _load_sprint(conn, sprint_id)
     now = clock.now_unix()
     prev = getattr(sprint, field)
@@ -241,45 +234,6 @@ def update_sprint_field(
     return _load_sprint(conn, sprint_id)
 
 
-def freeze_kickoff(conn: sqlite3.Connection, sprint_id: str, *, clock: Clock) -> Sprint:
-    """DORMANT (rev6): freeze is retired — nothing in a sprint locks. Inert no-op,
-    kept present (reversible): it never latches kickoff_frozen_at and emits no event,
-    so kickoff fields stay always-editable. Validates existence only (404 on unknown
-    id); `clock` is accepted for signature stability but unused."""
-    return _load_sprint(conn, sprint_id)
-
-
-def freeze_review(conn: sqlite3.Connection, sprint_id: str, *, clock: Clock) -> Sprint:
-    """DORMANT (rev6): review freeze retired — inert no-op, see freeze_kickoff. Never
-    latches review_frozen_at, emits no event; review fields stay always-editable."""
-    return _load_sprint(conn, sprint_id)
-
-
-def add_addendum(
-    conn: sqlite3.Connection, sprint_id: str, *, date: str, text: str, clock: Clock
-) -> Sprint:
-    if not date:
-        raise PlannerError(ErrorCode.validation, "addendum date is required", {})
-    if not text:
-        raise PlannerError(ErrorCode.validation, "addendum text is required", {})
-    sprint = _load_sprint(conn, sprint_id)
-    updated = sprint.weekly_addenda + [Addendum(date=date, text=text)]
-    now = clock.now_unix()
-    with _tx(conn):
-        conn.execute(
-            "UPDATE sprints SET weekly_addenda = ?, updated_at = ? WHERE id = ?",
-            (
-                json.dumps([{"date": a.date, "text": a.text} for a in updated]),
-                now,
-                sprint_id,
-            ),
-        )
-        append_event(
-            conn, sprint_id, EventKind.addendum_added, {"date": date, "text": text}, now
-        )
-    return _load_sprint(conn, sprint_id)
-
-
 # --- sprint-item writers --------------------------------------------------------
 
 
@@ -291,7 +245,6 @@ def create_item(
     body: str = "",
     priority: Priority = Priority.P3,
     deadline: str | None = None,
-    current_state_note: str = "",
     sprint_id: str | None = None,
     clock: Clock,
 ) -> SprintItem:
@@ -302,9 +255,9 @@ def create_item(
     with _tx(conn):
         conn.execute(
             "INSERT INTO sprint_items ("
-            "id, title, body, status, priority, deadline, project, current_state_note, "
+            "id, title, body, status, priority, deadline, project, "
             "sprint_id, blocked_by, status_proposal, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, ?, ?)",
             (
                 item_id,
                 title,
@@ -313,7 +266,6 @@ def create_item(
                 priority.value,
                 deadline,
                 project.value,
-                current_state_note,
                 sprint_id,
                 now,
                 now,

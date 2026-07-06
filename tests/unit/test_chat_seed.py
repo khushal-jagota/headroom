@@ -1,7 +1,7 @@
-"""T13 acceptance: the chat send/status routes and the seed route, driven through
-a TestClient over create_app with fake adapters. Covers echo persistence + one
-event, key reuse, day materialization, not_found/validation/offline error codes,
-the guarded first-reply race, and the demo/fixture migration reports."""
+"""T13 acceptance: the chat send/status routes, driven through a TestClient over
+create_app with fake adapters. Covers echo persistence + one event, key reuse, day
+materialization, not_found/validation/offline error codes, and the guarded
+first-reply race."""
 
 from __future__ import annotations
 
@@ -19,8 +19,6 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets.data import create_ticket
-
-FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "planning-md"
 
 
 def _make_app(tmp_path: Path, gateway: str = "fake") -> tuple[object, Path]:
@@ -154,98 +152,6 @@ def test_chat_status_echo_true(tmp_path: Path) -> None:
         response = client.get("/api/chat/t_anything/status")
     assert response.status_code == 200
     assert response.json() == {"available": True}
-
-
-def test_seed_demo_counts(tmp_path: Path) -> None:
-    app, _ = _make_app(tmp_path)
-    with TestClient(app) as client:
-        response = client.post("/api/seed", json={"demo": True})
-    assert response.status_code == 200
-    assert response.json() == {
-        "sprints": 1,
-        "sprint_items": 3,
-        "deferred_items": 0,
-        "tickets": 8,
-        "ideas": 0,
-        "links": 2,
-        "duplicates_skipped": 0,
-        "skipped": [],
-    }
-
-
-def test_seed_demo_twice_is_db_not_empty(tmp_path: Path) -> None:
-    app, _ = _make_app(tmp_path)
-    with TestClient(app) as client:
-        first = client.post("/api/seed", json={"demo": True})
-        assert first.status_code == 200
-        second = client.post("/api/seed", json={"demo": True})
-    assert second.status_code == 400
-    assert second.json()["error"]["code"] == "db_not_empty"
-
-
-def test_seed_source_dir_imports_fixture(tmp_path: Path) -> None:
-    app, _ = _make_app(tmp_path)
-    with TestClient(app) as client:
-        response = client.post("/api/seed", json={"source_dir": str(FIXTURE)})
-    assert response.status_code == 200
-    body = response.json()
-    counts = {
-        key: body[key]
-        for key in (
-            "sprints",
-            "sprint_items",
-            "deferred_items",
-            "tickets",
-            "ideas",
-            "links",
-            "duplicates_skipped",
-        )
-    }
-    assert counts == {
-        "sprints": 1,
-        "sprint_items": 6,
-        "deferred_items": 3,
-        "tickets": 4,
-        "ideas": 3,
-        "links": 1,
-        "duplicates_skipped": 0,
-    }
-    assert len(body["skipped"]) == 6
-    assert set(body["skipped"][0]) == {"source_file", "heading", "reason", "excerpt"}
-
-
-def test_seed_missing_dir_is_validation(tmp_path: Path) -> None:
-    app, _ = _make_app(tmp_path)
-    with TestClient(app) as client:
-        response = client.post("/api/seed", json={"source_dir": str(tmp_path / "nope")})
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "validation"
-
-
-def test_seed_file_not_dir_is_validation(tmp_path: Path) -> None:
-    app, _ = _make_app(tmp_path)
-    target = tmp_path / "a.md"
-    target.write_text("not a directory")
-    with TestClient(app) as client:
-        response = client.post("/api/seed", json={"source_dir": str(target)})
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "validation"
-
-
-def test_seed_neither_key_is_validation(tmp_path: Path) -> None:
-    app, _ = _make_app(tmp_path)
-    with TestClient(app) as client:
-        response = client.post("/api/seed", json={})
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "validation"
-
-
-def test_seed_both_keys_is_validation(tmp_path: Path) -> None:
-    app, _ = _make_app(tmp_path)
-    with TestClient(app) as client:
-        response = client.post("/api/seed", json={"source_dir": str(FIXTURE), "demo": True})
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "validation"
 
 
 def test_chat_send_malformed_day_id_rejected_no_materialization(tmp_path: Path) -> None:

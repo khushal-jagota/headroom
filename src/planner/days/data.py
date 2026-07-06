@@ -1,38 +1,28 @@
 """The day data layer. Materializes a day on first read/write (no "missing day"
-state), owns the ordered day-ticket list (contiguous positions from 0), plan JSON
-storage, overview-field/notes writes, and applies the logic layer's plan-tree effects.
-Every state transition here appends exactly one canonical event. No FastAPI/
-pydantic; times come in as unix-second ints from the caller's clock."""
+state), owns the ordered day-ticket list (contiguous positions from 0), and the
+overview-field/notes writes. Every state transition here appends exactly one
+canonical event. No FastAPI/pydantic; times come in as unix-second ints from the
+caller's clock."""
 
 from __future__ import annotations
 
-import json
 import sqlite3
 
 from planner.core.contracts import EventKind
 from planner.core.events import append_event
-from planner.days.contracts import Day, DayTicket, PlanTree
-from planner.days.logic.effects import (
-    AddTicketToDay,
-    Effect,
-    EmitEvent,
-    ReplanChild,
-    ReplanRequest,
-    ReplanRoot,
-)
-from planner.days.logic.tree import tree_from_dict, tree_to_dict
+from planner.days.contracts import Day, DayTicket
 
 
 def materialize_day(conn: sqlite3.Connection, day_id: str, now_unix: int) -> None:
     """§3.4: create the day row if absent (all overview fields + notes = '',
-    plan=NULL, chat_session_key=NULL, created_at=updated_at=now_unix) and append a
+    chat_session_key=NULL, created_at=updated_at=now_unix) and append a
     day_created event. Idempotent: a present day → no write, no event."""
     if conn.execute("SELECT 1 FROM days WHERE id = ?", (day_id,)).fetchone() is not None:
         return
     conn.execute(
         "INSERT INTO days (id, focus, brief_take, watchout, if_today_lands, notes, "
-        "plan, chat_session_key, created_at, updated_at) "
-        "VALUES (?, '', '', '', '', '', NULL, NULL, ?, ?)",
+        "chat_session_key, created_at, updated_at) "
+        "VALUES (?, '', '', '', '', '', NULL, ?, ?)",
         (day_id, now_unix, now_unix),
     )
     append_event(conn, day_id, EventKind.day_created, {}, now_unix)
@@ -40,16 +30,15 @@ def materialize_day(conn: sqlite3.Connection, day_id: str, now_unix: int) -> Non
 
 def read_day(conn: sqlite3.Connection, day_id: str, now_unix: int) -> Day:
     """§3.4 'reading a nonexistent day materializes it empty'. Materializes, then
-    SELECTs the row and builds a Day (plan parsed via tree_from_dict when set)."""
+    SELECTs the row and builds a Day."""
     materialize_day(conn, day_id, now_unix)
     row = conn.execute(
-        "SELECT id, focus, brief_take, watchout, if_today_lands, notes, plan, "
+        "SELECT id, focus, brief_take, watchout, if_today_lands, notes, "
         "chat_session_key, created_at, updated_at "
         "FROM days WHERE id = ?",
         (day_id,),
     ).fetchone()
     assert row is not None
-    plan_json = row["plan"]
     return Day(
         id=row["id"],
         focus=row["focus"],
@@ -57,7 +46,6 @@ def read_day(conn: sqlite3.Connection, day_id: str, now_unix: int) -> Day:
         watchout=row["watchout"],
         if_today_lands=row["if_today_lands"],
         notes=row["notes"],
-        plan=tree_from_dict(json.loads(plan_json)) if plan_json is not None else None,
         chat_session_key=row["chat_session_key"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -76,27 +64,6 @@ def list_day_tickets(conn: sqlite3.Connection, day_id: str) -> list[DayTicket]:
     ]
 
 
-def load_plan(conn: sqlite3.Connection, day_id: str) -> PlanTree | None:
-    """Parse days.plan JSON → PlanTree, or None (absent day or NULL plan)."""
-    row = conn.execute("SELECT plan FROM days WHERE id = ?", (day_id,)).fetchone()
-    if row is None or row["plan"] is None:
-        return None
-    return tree_from_dict(json.loads(row["plan"]))
-
-
-def store_plan(
-    conn: sqlite3.Connection, day_id: str, tree: PlanTree | None, now_unix: int
-) -> None:
-    """Materialize, then write days.plan = tree_to_dict(tree) JSON (or NULL) and
-    bump updated_at. No event here (callers emit the specific plan_* event)."""
-    materialize_day(conn, day_id, now_unix)
-    plan_json = json.dumps(tree_to_dict(tree)) if tree is not None else None
-    conn.execute(
-        "UPDATE days SET plan = ?, updated_at = ? WHERE id = ?",
-        (plan_json, now_unix, day_id),
-    )
-
-
 def store_judgment(
     conn: sqlite3.Connection,
     day_id: str,
@@ -107,8 +74,7 @@ def store_judgment(
     now_unix: int,
 ) -> None:
     """Boundary success path: write the four overview fields the boundary filled +
-    updated_at in one UPDATE. The plan is retired from the boundary return, so it is
-    left untouched here. No event; run_boundary emits the day_updated signal."""
+    updated_at in one UPDATE. No event; run_boundary emits the day_updated signal."""
     conn.execute(
         "UPDATE days SET focus = ?, brief_take = ?, watchout = ?, if_today_lands = ?, "
         "updated_at = ? WHERE id = ?",
@@ -193,28 +159,3 @@ def set_day_field(
         f"UPDATE days SET {field} = ?, updated_at = ? WHERE id = ?", (value, now_unix, day_id)
     )
     append_event(conn, day_id, EventKind.day_updated, {"field": field}, now_unix)
-
-
-def apply_plan_effects(
-    conn: sqlite3.Connection,
-    day_id: str,
-    new_tree: PlanTree | None,
-    effects: list[Effect],
-    now_unix: int,
-) -> list[ReplanRequest]:
-    """Persist the transform result and apply its effects. (1) store_plan writes
-    days.plan (or NULL for reject-all). (2) For each effect in order:
-    AddTicketToDay → add_day_ticket(cause="plan_accept") (idempotent);
-    EmitEvent → append_event; ReplanRoot/ReplanChild → collected. (3) Return the
-    collected replan requests for the stage-4 runtime to serialize + execute (R5).
-    At stage 3 no adapter is called here."""
-    store_plan(conn, day_id, new_tree, now_unix)
-    replans: list[ReplanRequest] = []
-    for effect in effects:
-        if isinstance(effect, AddTicketToDay):
-            add_day_ticket(conn, day_id, effect.ticket_id, now_unix, cause="plan_accept")
-        elif isinstance(effect, EmitEvent):
-            append_event(conn, day_id, effect.kind, effect.payload, now_unix)
-        elif isinstance(effect, (ReplanRoot, ReplanChild)):
-            replans.append(effect)
-    return replans

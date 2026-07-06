@@ -262,23 +262,6 @@ def test_patch_day_agent_is_forbidden_human_succeeds(tmp_path: Path) -> None:
     assert human.json()["focus"] == "Human focus"
 
 
-# --- POST /sprints/{id}/addenda: human-only (§3.1/§8) ---------------------------
-
-
-def test_addendum_agent_is_forbidden_human_succeeds(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    sid = _sprint(db_path)
-    entry = {"date": "2026-07-05", "text": "Mid-sprint note"}
-    with TestClient(app) as client:
-        agent = client.post(f"/api/sprints/{sid}/addenda", json=entry, headers=_AGENT)
-        assert agent.status_code == 400
-        assert agent.json()["error"]["code"] == "agent_forbidden"
-        assert _col(db_path, "sprints", sid, "weekly_addenda") == "[]"  # nothing appended
-        human = client.post(f"/api/sprints/{sid}/addenda", json=entry)
-    assert human.status_code == 200
-    assert human.json()["weekly_addenda"] == [entry]
-
-
 # --- POST /chat/{id}/send: human-only (§8/§11) ----------------------------------
 
 

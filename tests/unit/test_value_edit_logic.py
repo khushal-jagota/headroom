@@ -16,6 +16,7 @@ from planner.core.events import read_events_since
 from planner.tickets import data
 from planner.tickets.contracts import (
     NO_FURTHER,
+    TITLE_MAX_CHARS,
     AtCap,
     FieldName,
     FieldSlot,
@@ -84,7 +85,7 @@ def _passed_ticket(conn: Connection, cfg: Config, clock: TestClock) -> Ticket:
     plan the current gating field (unset)."""
     now = clock.now_unix()
     t = data.create_ticket(
-        conn, title="T", actor="human", now=now, title_max_chars=cfg.title_max_chars
+        conn, title="T", actor="human", now=now, title_max_chars=TITLE_MAX_CHARS
     )
     t = data.change_grant(
         conn, t.id, ceiling=TicketState.needs_plan, at_cap=AtCap.propose, actor="human", now=now
@@ -212,7 +213,7 @@ def test_accept_dropped_ticket_with_pending_proposal_rejected(
     # pre-guard this wrote value with no state change; the guard now rejects it.
     now = fake_clock.now_unix()
     t = data.create_ticket(
-        tmp_db, title="T", actor="human", now=now, title_max_chars=cfg.title_max_chars
+        tmp_db, title="T", actor="human", now=now, title_max_chars=TITLE_MAX_CHARS
     )
     t = data.change_grant(
         tmp_db, t.id, ceiling=TicketState.needs_plan, at_cap=AtCap.propose, actor="human", now=now

@@ -40,7 +40,6 @@ class Config:
     ui_debounce_ms: int
     run_max_seconds: int
     boundary_timeout_seconds: int
-    title_max_chars: int
     dispatcher_lock_path: str
     logs_dir: str
     events_read_limit: int
@@ -150,7 +149,6 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         boundary_timeout_seconds=_int_value(
             cfg, env, "boundary_timeout_seconds", "PLAN_BOUNDARY_TIMEOUT_SECONDS", 60
         ),
-        title_max_chars=_int_value(cfg, env, "title_max_chars", "PLAN_TITLE_MAX_CHARS", 200),
         dispatcher_lock_path=_str_value(
             cfg, env, "dispatcher_lock_path", "PLAN_DISPATCHER_LOCK_PATH", "data/dispatcher.lock"
         ),

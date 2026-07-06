@@ -552,71 +552,6 @@
     return card;
   }
 
-  // --- D11 item 9: day-plan tree ---------------------------------------------
-  // node is "root" (string) or the child position (NUMBER — the server rejects
-  // string positions, days/api.py:83-91). No local status mutation: the four
-  // routes append events, so the WS flush re-render shows the new tree.
-  function planTree(plan, handlers) {
-    var wrap = make("div", "plan-tree");
-    var actions = make("div", "plan-tree-actions");
-
-    var acceptAll = make("button", "button button--primary", "Accept all");
-    acceptAll.type = "button";
-    acceptAll.setAttribute("data-accept-all", "");
-    bindMutating(acceptAll, actions, function () {
-      return handlers.acceptAll();
-    });
-    var rejectAll = make("button", "button", "Reject all");
-    rejectAll.type = "button";
-    rejectAll.setAttribute("data-reject-all", "");
-    bindMutating(rejectAll, actions, function () {
-      return handlers.rejectAll();
-    });
-    actions.appendChild(acceptAll);
-    actions.appendChild(rejectAll);
-    wrap.appendChild(actions);
-
-    function makeNode(ref, isRoot, label, status, ticketId) {
-      var node = make("div", isRoot ? "plan-node plan-node--root" : "plan-node plan-node--child");
-      node.setAttribute("data-node", isRoot ? "root" : String(ref));
-      node.setAttribute("data-status", status);
-      node.appendChild(make("span", "plan-node-status", status));
-      node.appendChild(make("span", isRoot ? "plan-node-focus" : "plan-node-note", label));
-      if (!isRoot && ticketId) {
-        var link = make("a", "plan-node-ticket", "open");
-        link.setAttribute("href", "#/ticket/" + ticketId);
-        node.appendChild(link);
-      }
-      var nodeActions = make("span", "plan-node-actions");
-      if (status !== "accepted") {   // Accept only offered on a not-yet-accepted node
-        var acceptNode = make("button", "button", "Accept");
-        acceptNode.type = "button";
-        acceptNode.setAttribute("data-accept", "");
-        bindMutating(acceptNode, actions, function () {
-          return handlers.accept(ref);
-        });
-        nodeActions.appendChild(acceptNode);
-      }
-      var invalidate = make("button", "button", "Invalidate");
-      invalidate.type = "button";
-      invalidate.setAttribute("data-invalidate", "");
-      bindMutating(invalidate, actions, function () {
-        return handlers.invalidate(ref);
-      });
-      nodeActions.appendChild(invalidate);
-      node.appendChild(nodeActions);
-      return node;
-    }
-
-    wrap.appendChild(makeNode("root", true, plan.root.focus, plan.root.status, null));
-    (plan.children || []).forEach(function (child) {
-      wrap.appendChild(
-        makeNode(child.position, false, child.note || child.ticket_id, child.status, child.ticket_id)
-      );
-    });
-    return wrap;
-  }
-
   // --- D11 item 10: chat panel -----------------------------------------------
   // entityId is the SERVER-provided chat id (day.id / ticket.id), never built
   // client-side. Rebuilds its message list from the module-scope transcript, which
@@ -1299,7 +1234,6 @@
     STATE_ORDER: STATE_ORDER,
     proposalCard: proposalCard,
     grantPairPicker: grantPairPicker,
-    planTree: planTree,
     chatPanel: chatPanel,
     reviewCard: reviewCard,
     stateControl: stateControl,

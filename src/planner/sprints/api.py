@@ -28,7 +28,6 @@ from planner.sprints.contracts import (
     KICKOFF_FIELDS,
     MID_SPRINT_FIELDS,
     REVIEW_FIELDS,
-    AddendumBody,
     CreateIdeaBody,
     CreateItemBody,
     CreateSprintBody,
@@ -41,7 +40,7 @@ from planner.tickets.api import Cfg, Clk, Ctx, DbConn, body_opt_str, body_str, p
 router = APIRouter()
 
 _SPRINT_TEXT_FIELDS = ("name",) + KICKOFF_FIELDS + MID_SPRINT_FIELDS + REVIEW_FIELDS
-_ITEM_PLAIN_FIELDS = ("title", "body", "priority", "deadline", "project", "current_state_note")
+_ITEM_PLAIN_FIELDS = ("title", "body", "priority", "deadline", "project")
 
 
 # --- request-body marshallers (contract shapes in sprints/contracts.py) ---------
@@ -54,7 +53,6 @@ def _marshal_create_item(raw: JsonDict) -> CreateItemBody:
         body=body_str(raw, "body"),
         priority=body_opt_str(raw, "priority"),
         deadline=body_opt_str(raw, "deadline"),
-        current_state_note=body_str(raw, "current_state_note"),
         sprint_id=body_opt_str(raw, "sprint_id"),
     )
 
@@ -186,7 +184,6 @@ async def create_item(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
         body=body["body"],
         priority=priority,
         deadline=body["deadline"],
-        current_state_note=body["current_state_note"],
         sprint_id=body["sprint_id"],
         clock=clk,
     )
@@ -323,33 +320,6 @@ async def patch_sprint(sprint_id: str, body: dict[str, Any], conn: DbConn, ctx: 
             clock=clk,
         )
     return sprints_views.sprint_json(sprints_data.read_sprint(conn, sprint_id))
-
-
-# Freeze + addenda routes below are DORMANT (rev6): the redesigned Sprint Overview
-# retired freeze and the weekly-addenda UI. Kept (not deleted) so the §5 freeze /
-# §3.1 addenda backends stay reversible; nothing in the live UI calls them now, so
-# kickoff/review fields (and the new mid-sprint fields) stay always-editable.
-@router.post("/sprints/{sprint_id}/freeze-kickoff")
-async def freeze_kickoff(sprint_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
-    reject_agents(ctx)
-    return sprints_views.sprint_json(sprints_data.freeze_kickoff(conn, sprint_id, clock=clk))
-
-
-@router.post("/sprints/{sprint_id}/freeze-review")
-async def freeze_review(sprint_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
-    reject_agents(ctx)
-    return sprints_views.sprint_json(sprints_data.freeze_review(conn, sprint_id, clock=clk))
-
-
-@router.post("/sprints/{sprint_id}/addenda")
-async def add_addendum(sprint_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                       clk: Clk) -> JsonDict:
-    reject_agents(ctx)  # §3.1/§8: weekly_addenda is an append-only canonical sprint field.
-    body = AddendumBody(date=body_str(raw, "date"), text=body_str(raw, "text"))
-    sprint = sprints_data.add_addendum(
-        conn, sprint_id, date=body["date"], text=body["text"], clock=clk
-    )
-    return sprints_views.sprint_json(sprint)
 
 
 @router.get("/sprint/current")

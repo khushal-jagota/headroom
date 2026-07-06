@@ -31,23 +31,18 @@ PROPOSAL_ONLY_STATUSES: Final[frozenset[ItemStatus]] = frozenset({
     ItemStatus.done, ItemStatus.deferred_next_sprint,
 })
 
-# Freeze groups (§3.1): frozen-write checks compare against these tuples.
+# Sprint text-field groups: the kickoff and review sub-fields. Freeze is retired,
+# so these no longer gate writes — they only enumerate the always-editable sprint
+# text fields (reused by _SPRINT_TEXT_FIELDS in data.py + api.py).
 KICKOFF_FIELDS: Final[tuple[str, ...]] = ("limiting_factor", "primary_bet", "supports", "premortem")
 REVIEW_FIELDS: Final[tuple[str, ...]] = (
     "outcomes", "solo_reflection", "joint_discussion", "updates_to_thinking", "carry_forward",
 )
 # Mid-sprint Review (rev6): three headed markdown sub-fields on the sprint, edited
-# per-field in place. NOT weekly_addenda and NOT freeze-grouped — frozen_group()
-# returns None for these, so they stay always-editable (freeze is dormant/retired).
+# per-field in place. Always-editable, like every sprint text field.
 MID_SPRINT_FIELDS: Final[tuple[str, ...]] = (
     "mid_where_we_stand", "mid_whats_changed", "mid_what_to_adjust",
 )
-
-
-@dataclass(frozen=True)
-class Addendum:                    # §3.1 weekly_addenda entry
-    date: str                      # ISO date
-    text: str
 
 
 @dataclass(frozen=True)
@@ -71,14 +66,11 @@ class Sprint:                      # §3.1
     mid_where_we_stand: str = ""            # Mid-sprint Review sub-fields (rev6)
     mid_whats_changed: str = ""
     mid_what_to_adjust: str = ""
-    weekly_addenda: list[Addendum] = field(default_factory=list)   # append-only; dormant (rev6)
-    kickoff_frozen_at: int | None = None
     outcomes: str = ""
     solo_reflection: str = ""
     joint_discussion: str = ""
     updates_to_thinking: str = ""
     carry_forward: str = ""
-    review_frozen_at: int | None = None
     created_at: int = 0
     updated_at: int = 0
 
@@ -92,7 +84,6 @@ class SprintItem:                  # §3.2
     priority: Priority
     deadline: str | None
     project: Project
-    current_state_note: str
     sprint_id: str | None          # NULL = backlog/deferred
     blocked_by: list[str] = field(default_factory=list)   # ticket ids; non-empty iff blocked
     status_proposal: ItemStatusProposal | None = None
@@ -113,7 +104,6 @@ class CreateItemBody(TypedDict, total=False):     # POST /items
     body: str                      # default ""
     priority: str | None           # Priority value; default P3
     deadline: str | None           # ISO date
-    current_state_note: str        # default ""
     sprint_id: str | None          # null/absent = backlog
 
 
@@ -130,11 +120,6 @@ class CreateSprintBody(TypedDict, total=False):   # POST /sprints
     primary_bet: str               # default ""
     supports: str                  # default ""
     premortem: str                 # default ""
-
-
-class AddendumBody(TypedDict, total=False):       # POST /sprints/{id}/addenda
-    date: str                      # ISO date; default ""
-    text: str                      # default ""
 
 
 class CreateIdeaBody(TypedDict, total=False):     # POST /ideas

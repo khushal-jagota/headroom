@@ -45,6 +45,7 @@ from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
 from planner.tickets.contracts import (
     NO_FURTHER,
+    TITLE_MAX_CHARS,
     AcceptBody,
     AtCap,
     CreateTicketBody,
@@ -243,7 +244,7 @@ async def create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
         title=body["title"],
         actor=ctx.actor,
         now=now,
-        title_max_chars=cfg.title_max_chars,
+        title_max_chars=TITLE_MAX_CHARS,
         project=project,
         priority=priority,
         deadline=body["deadline"],
@@ -289,7 +290,7 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
     now = clk.now_unix()
     validate_carried_claim(conn, ctx, ticket_id, now)
     if "title" in body:
-        _set_title(conn, ticket_id, body["title"], title_max_chars=cfg.title_max_chars, now=now)
+        _set_title(conn, ticket_id, body["title"], title_max_chars=TITLE_MAX_CHARS, now=now)
     if "priority" in body:
         priority = parse_enum(Priority, body["priority"], "priority")
         tickets_data.set_priority(conn, ticket_id, priority=priority, actor=ctx.actor, now=now)

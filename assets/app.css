@@ -550,7 +550,7 @@ textarea {
   margin-top: var(--space-3);
 }
 
-/* --- Day screen — legacy surfaces (plan-tree, today-list, review-count) ----
+/* --- Day screen — legacy surfaces (today-list, review-count) ----
    Dropped from the Day UI in the Overview redesign; kept pending the owner's
    call to re-home them (Board) or retire. */
 
@@ -601,71 +601,6 @@ textarea {
   background: transparent;
   color: var(--text-faint);
   border-color: var(--text-faint);
-}
-
-/* --- Plan tree (T15) ----------------------------------------------------- */
-
-.plan-tree {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.plan-tree-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2);
-}
-
-.plan-node {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  padding: var(--space-1) 0;
-}
-
-.plan-node--root .plan-node-focus {
-  color: var(--text-strong);
-  font-weight: 600;
-}
-
-.plan-node-status {
-  font-size: var(--type-xs);
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-pill);
-  background: var(--surface-overlay);
-  color: var(--text-muted);
-}
-
-.plan-node[data-status="proposed"] .plan-node-status {
-  background: var(--accent-surface);
-  color: var(--accent-text);
-  border: var(--border-hairline) solid var(--accent-bright);
-}
-
-.plan-node[data-status="invalidated"] .plan-node-status {
-  background: transparent;
-  color: var(--text-faint);
-}
-
-.plan-node-note {
-  color: var(--text-default);
-}
-
-.plan-node-ticket {
-  font-size: var(--type-sm);
-  color: var(--text-muted);
-}
-
-.plan-node-ticket:hover {
-  color: var(--text-strong);
-}
-
-.plan-node-actions {
-  margin-left: auto;
-  display: flex;
-  gap: var(--space-1);
 }
 
 /* --- Chat panel (T15) ---------------------------------------------------- */

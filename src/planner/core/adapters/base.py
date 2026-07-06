@@ -1,5 +1,5 @@
 """Adapter protocols and their request/result shapes: the three external
-boundaries (spawn subprocess, boundary/replan agent, chat gateway). Stdlib only.
+boundaries (spawn subprocess, boundary agent, chat gateway). Stdlib only.
 The dependency arrow is core-adapters -> domain-contracts, never the reverse."""
 
 from __future__ import annotations
@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from planner.chat.contracts import ChatSendResult, GatewayStatus
-from planner.days.contracts import PlanNode, PlanTree
 
 
 @dataclass(frozen=True)
@@ -60,8 +59,6 @@ class BoundaryAdapter(Protocol):
     # Timeout (boundary_timeout_seconds, 60s) is owned by the CALLER — the boundary
     # scheduler wraps calls; adapters just do the work or raise.
     def judgment(self, inputs: BoundaryInputs) -> BoundaryJudgment: ...
-    def replan_root(self, day_id: str, inputs: BoundaryInputs) -> PlanTree: ...
-    def replan_child(self, day_id: str, child: PlanNode, inputs: BoundaryInputs) -> PlanNode: ...
 
 
 class GatewayAdapter(Protocol):

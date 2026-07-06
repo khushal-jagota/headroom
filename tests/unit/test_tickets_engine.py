@@ -15,7 +15,7 @@ from planner.core.contracts import EventKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import read_events_since
 from planner.tickets import data
-from planner.tickets.contracts import NO_FURTHER, AtCap, FieldName, TicketState
+from planner.tickets.contracts import NO_FURTHER, TITLE_MAX_CHARS, AtCap, FieldName, TicketState
 from planner.tickets.logic import machine
 
 if TYPE_CHECKING:
@@ -33,7 +33,7 @@ def _create(conn: Connection, cfg: Config, clock: TestClock, **kw: Any) -> Ticke
         title=kw.pop("title", "Test ticket"),
         actor="human",
         now=clock.now_unix(),
-        title_max_chars=cfg.title_max_chars,
+        title_max_chars=TITLE_MAX_CHARS,
         **kw,
     )
 

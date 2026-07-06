@@ -8,7 +8,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Final
 
-SCHEMA_VERSION: Final = 1
+SCHEMA_VERSION: Final = 2
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS sprints (
@@ -23,14 +23,11 @@ CREATE TABLE IF NOT EXISTS sprints (
   mid_where_we_stand  TEXT NOT NULL DEFAULT '',      -- Mid-sprint Review (rev6): headed markdown sub-fields
   mid_whats_changed   TEXT NOT NULL DEFAULT '',
   mid_what_to_adjust  TEXT NOT NULL DEFAULT '',
-  weekly_addenda      TEXT NOT NULL DEFAULT '[]',    -- JSON list[Addendum]; dormant (rev6 retired the addenda UI)
-  kickoff_frozen_at   INTEGER,                        -- dormant (rev6 retired freeze; nothing sets this now)
   outcomes            TEXT NOT NULL DEFAULT '',
   solo_reflection     TEXT NOT NULL DEFAULT '',
   joint_discussion    TEXT NOT NULL DEFAULT '',
   updates_to_thinking TEXT NOT NULL DEFAULT '',
   carry_forward       TEXT NOT NULL DEFAULT '',
-  review_frozen_at    INTEGER,                        -- dormant (rev6 retired freeze; nothing sets this now)
   created_at          INTEGER NOT NULL,
   updated_at          INTEGER NOT NULL,
   CHECK (date_start <= date_end)
@@ -45,7 +42,6 @@ CREATE TABLE IF NOT EXISTS sprint_items (
   priority            TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
   deadline            TEXT,
   project             TEXT NOT NULL CHECK (project IN ('Vylo','Tribe','Learning','Other')),
-  current_state_note  TEXT NOT NULL DEFAULT '',
   sprint_id           TEXT REFERENCES sprints(id),   -- NULL = backlog/deferred
   blocked_by          TEXT NOT NULL DEFAULT '[]',    -- JSON list[str] of ticket ids
   status_proposal     TEXT,                          -- JSON ItemStatusProposal | NULL
@@ -89,7 +85,6 @@ CREATE TABLE IF NOT EXISTS days (
   watchout         TEXT NOT NULL DEFAULT '',         -- overview: Watchout (markdown)
   if_today_lands   TEXT NOT NULL DEFAULT '',         -- overview: If Today Lands (markdown)
   notes            TEXT NOT NULL DEFAULT '',
-  plan             TEXT,                             -- JSON PlanTree | NULL (dormant: /plan endpoints only)
   chat_session_key TEXT,
   created_at       INTEGER NOT NULL,
   updated_at       INTEGER NOT NULL
@@ -143,12 +138,6 @@ CREATE TABLE IF NOT EXISTS runs (                    -- §7.3
   pid        INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_runs_ticket ON runs(ticket_id, started_at);
-
-CREATE TABLE IF NOT EXISTS boundary_runs (           -- §6.2: never twice per date
-  planning_date TEXT PRIMARY KEY,                    -- ISO date
-  ran_at        INTEGER NOT NULL,
-  judgment      TEXT NOT NULL CHECK (judgment IN ('ok','skipped','failed'))
-);
 """
 
 

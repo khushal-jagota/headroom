@@ -65,13 +65,7 @@ class EventKind(StrEnum):
     day_updated = "day_updated"                      # notes/brief manual edits
     item_status_changed = "item_status_changed"      # {from, to, cause} incl. agent todo<->active
 
-    # --- supplemental: day plan lifecycle ---
-    plan_proposed = "plan_proposed"                  # boundary judgment stored {tree}
-    plan_node_accepted = "plan_node_accepted"        # {node} ("root" | child position)
-    plan_accepted_all = "plan_accepted_all"
-    plan_node_invalidated = "plan_node_invalidated"  # {node}
-    plan_replanned = "plan_replanned"                # §6.3 {old_tree, scope: "root"|"child", node}
-    plan_rejected = "plan_rejected"                  # reject-all {old_tree}
+    # --- supplemental: day lifecycle ---
     day_ticket_added = "day_ticket_added"            # {ticket_id, position, cause}
     boundary_failed = "boundary_failed"              # §6.2 adapter failure/timeout {error}
 
@@ -82,10 +76,7 @@ class EventKind(StrEnum):
     claim_reclaimed = "claim_reclaimed"              # {run_id, reason: "expired"|"dead_pid"}
     auto_block_cleared = "auto_block_cleared"        # human unblock action
 
-    # --- supplemental: freeze, links, chat ---
-    kickoff_frozen = "kickoff_frozen"
-    review_frozen = "review_frozen"
-    addendum_added = "addendum_added"                # {date, text}
+    # --- supplemental: links, chat ---
     link_added = "link_added"                        # {from_id, to_id, kind}
     link_removed = "link_removed"
     chat_session_created = "chat_session_created"    # {session_key}
@@ -114,7 +105,6 @@ class Link:                                  # SPEC §3.6 links row
 
 
 class ErrorCode(StrEnum):
-    frozen_write = "frozen_write"                  # §5 kickoff/review writes after freeze
     at_cap_stop = "at_cap_stop"                    # §4.3 agent proposal at ceiling with stop
     grant_missing = "grant_missing"                # §4.4.7 accept without the full pair
     grant_invalid = "grant_invalid"                # next_ceiling before the new state / unknown
@@ -128,7 +118,6 @@ class ErrorCode(StrEnum):
     item_transition_forbidden = "item_transition_forbidden"  # §3.2 agent direct done/deferred
     agent_forbidden = "agent_forbidden"            # claim/agent request hits a human-only action
     gateway_offline = "gateway_offline"            # §11
-    db_not_empty = "db_not_empty"                  # §12 seed --demo on a non-empty DB
     not_found = "not_found"
     validation = "validation"                      # generic input validation
 

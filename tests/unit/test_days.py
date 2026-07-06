@@ -1,7 +1,7 @@
 """Days domain acceptance tests — items 1 (planning date §6.1), 12 (day-ticket
-removal §3.4), 17 (plan tree §6.3), 18 (boundary job §6.2). The external boundary
-is a local recording fake (no OS/network). Exactly one test per acceptance item
-so the verify scorer's one-match rule stays satisfied."""
+removal §3.4), 18 (boundary job §6.2). The external boundary is a local recording
+fake (no OS/network). Exactly one test per acceptance item so the verify scorer's
+one-match rule stays satisfied."""
 
 from __future__ import annotations
 
@@ -15,20 +15,13 @@ from planner.core.config import Config
 from planner.core.contracts import EventKind
 from planner.core.events import read_events_since
 from planner.days.boundary import run_boundary
-from planner.days.contracts import NodeStatus, PlanNode, PlanRoot, PlanTree
 from planner.days.data import (
     add_day_ticket,
-    apply_plan_effects,
     list_day_tickets,
-    load_plan,
-    materialize_day,
     read_day,
     remove_day_ticket,
-    store_plan,
 )
 from planner.days.logic.dates import planning_date
-from planner.days.logic.effects import AddTicketToDay, EmitEvent, ReplanChild, ReplanRoot
-from planner.days.logic.tree import accept_all, invalidate_child, invalidate_root
 
 if TYPE_CHECKING:
     from planner.core.clock import TestClock
@@ -70,14 +63,6 @@ class RecordingBoundaryAdapter:
             watchout=f"Watch for {inputs.planning_date}",
             if_today_lands=f"Lands for {inputs.planning_date}",
         )
-
-    def replan_root(self, day_id: str, inputs: BoundaryInputs) -> PlanTree:
-        self.calls.append("replan_root")
-        return PlanTree(root=PlanRoot(focus="Recorded replan"), children=[])
-
-    def replan_child(self, day_id: str, child: PlanNode, inputs: BoundaryInputs) -> PlanNode:
-        self.calls.append("replan_child")
-        return child
 
 
 def test_a01_planning_date(cfg: Config) -> None:
@@ -128,63 +113,6 @@ def test_a12_day_ticket_removal(tmp_db: Connection) -> None:
     assert removed[0].payload == {"ticket_id": "t1"}
 
 
-def test_a17_plan_tree(tmp_db: Connection) -> None:
-    conn = tmp_db
-    tree = PlanTree(
-        root=PlanRoot("focus", NodeStatus.proposed),
-        children=[
-            PlanNode("t_a", "", NodeStatus.proposed, 0),
-            PlanNode("t_b", "", NodeStatus.proposed, 1),
-            PlanNode(None, "note", NodeStatus.proposed, 2),
-        ],
-    )
-
-    # Root invalidation → root + all children invalidated, exactly one replan (root).
-    nt, eff = invalidate_root(tree)
-    assert nt.root.status == NodeStatus.invalidated
-    assert all(child.status == NodeStatus.invalidated for child in nt.children)
-    assert EmitEvent(EventKind.plan_node_invalidated, {"node": "root"}) in eff
-    replans = [e for e in eff if isinstance(e, (ReplanRoot, ReplanChild))]
-    assert replans == [ReplanRoot()]
-
-    # Child invalidation replaces only that child; other nodes keep status.
-    nt2, eff2 = invalidate_child(tree, 1)
-    assert nt2.children[1].status == NodeStatus.invalidated
-    assert nt2.root.status == NodeStatus.proposed
-    assert nt2.children[0].status == NodeStatus.proposed
-    assert nt2.children[2].status == NodeStatus.proposed
-    replans2 = [e for e in eff2 if isinstance(e, (ReplanRoot, ReplanChild))]
-    assert replans2 == [ReplanChild(1)]
-    assert EmitEvent(EventKind.plan_node_invalidated, {"node": 1}) in eff2
-
-    # Accept-all + exactly-once day-list add (idempotent).
-    _mk_ticket(conn, "t_a", state="needs_success", title="TA")
-    _mk_ticket(conn, "t_b", state="needs_success", title="TB")
-    now = 2000
-    materialize_day(conn, "day_2026-07-05", now)
-    add_day_ticket(conn, "day_2026-07-05", "t_b", now)  # pre-existing: [t_b@0]
-
-    nt_all, eff_all = accept_all(tree)
-    assert nt_all.root.status == NodeStatus.accepted
-    assert all(child.status == NodeStatus.accepted for child in nt_all.children)
-    assert EmitEvent(EventKind.plan_accepted_all, {}) in eff_all
-    # Both ticket children add; the ticket_id=None child does NOT.
-    adds = [e for e in eff_all if isinstance(e, AddTicketToDay)]
-    assert adds == [AddTicketToDay("t_a"), AddTicketToDay("t_b")]
-
-    apply_plan_effects(conn, "day_2026-07-05", nt_all, eff_all, now)
-
-    # t_b appears exactly once (not re-added); t_a appended; positions contiguous.
-    assert [(dt.ticket_id, dt.position) for dt in list_day_tickets(conn, "day_2026-07-05")] == [
-        ("t_b", 0),
-        ("t_a", 1),
-    ]
-    loaded = load_plan(conn, "day_2026-07-05")
-    assert loaded is not None
-    assert loaded.root.status == NodeStatus.accepted
-    assert all(child.status == NodeStatus.accepted for child in loaded.children)
-
-
 def test_a18_boundary_job(tmp_db: Connection, fake_clock: TestClock, cfg: Config) -> None:
     conn = tmp_db
 
@@ -198,7 +126,7 @@ def test_a18_boundary_job(tmp_db: Connection, fake_clock: TestClock, cfg: Config
     add_day_ticket(conn, "day_2026-07-04", "t_prog", 100)
     fake_clock.set(datetime(2026, 7, 5, 5, 1).astimezone())
     adapter1 = RecordingBoundaryAdapter()
-    run_boundary(conn, fake_clock, cfg, adapter1)
+    assert run_boundary(conn, fake_clock, cfg, adapter1) == "ok"
 
     assert conn.execute("SELECT 1 FROM days WHERE id = 'day_2026-07-05'").fetchone() is not None
     events = read_events_since(conn, 0, 1000)
@@ -230,9 +158,8 @@ def test_a18_boundary_job(tmp_db: Connection, fake_clock: TestClock, cfg: Config
     assert day05.brief_take == "Take for 2026-07-05"
     assert day05.watchout == "Watch for 2026-07-05"
     assert day05.if_today_lands == "Lands for 2026-07-05"
-    # No plan is proposed anymore (retired from the boundary); the overview write emits
-    # exactly one day_updated {field: "overview"} as the WS refetch signal.
-    assert not [e for e in events if e.kind == EventKind.plan_proposed.value]
+    # The overview write emits exactly one day_updated {field: "overview"} as the WS
+    # refetch signal.
     overview = [
         e
         for e in events
@@ -240,52 +167,26 @@ def test_a18_boundary_job(tmp_db: Connection, fake_clock: TestClock, cfg: Config
     ]
     assert len(overview) == 1
     assert overview[0].payload == {"field": "overview", "cause": "boundary"}
-    run_row = conn.execute(
-        "SELECT judgment FROM boundary_runs WHERE planning_date = '2026-07-05'"
-    ).fetchone()
-    assert run_row is not None
-    assert run_row["judgment"] == "ok"
     assert adapter1.calls == ["judgment"]
 
-    # Part 2 — second tick same date does nothing (guarded).
+    # Part 2 — second tick same date is a guarded no-op: the next day is already
+    # materialized, so run_boundary returns None and appends no events.
     n_events = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]
-    n_runs = conn.execute("SELECT COUNT(*) AS n FROM boundary_runs").fetchone()["n"]
-    run_boundary(conn, fake_clock, cfg, adapter1)
+    assert run_boundary(conn, fake_clock, cfg, adapter1) is None
     assert conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"] == n_events
-    assert conn.execute("SELECT COUNT(*) AS n FROM boundary_runs").fetchone()["n"] == n_runs
     assert adapter1.calls == ["judgment"]
 
-    # Part 3 — explicit prior planning (a day-ticket) skips the judgment pass.
+    # Part 3 — a human-placed day-ticket materializes the new day, so the next tick
+    # hits the materialization guard first (removal-plan §14.4): run_boundary returns
+    # None and never calls judgment. day_2026-07-05 is not re-closed.
     fake_clock.set(datetime(2026, 7, 6, 5, 1).astimezone())
     add_day_ticket(conn, "day_2026-07-06", "t_prog", fake_clock.now_unix())
     adapter3 = RecordingBoundaryAdapter()
-    run_boundary(conn, fake_clock, cfg, adapter3)
+    assert run_boundary(conn, fake_clock, cfg, adapter3) is None
     assert adapter3.calls == []
-    run_row3 = conn.execute(
-        "SELECT judgment FROM boundary_runs WHERE planning_date = '2026-07-06'"
-    ).fetchone()
-    assert run_row3 is not None
-    assert run_row3["judgment"] == "skipped"
-    # The deterministic pass still ran: yesterday (day_2026-07-05) is closed.
     closed_05 = [
         e
         for e in read_events_since(conn, 0, 1000)
         if e.kind == EventKind.day_closed.value and e.entity_id == "day_2026-07-05"
     ]
-    assert len(closed_05) == 1
-
-    # Part 4 (A5) — an ACCEPTED plan node (no day-tickets) also skips judgment.
-    fake_clock.set(datetime(2026, 7, 7, 5, 1).astimezone())
-    accepted_tree = PlanTree(
-        root=PlanRoot("focus", NodeStatus.proposed),
-        children=[PlanNode("t_prog", "", NodeStatus.accepted, 0)],
-    )
-    store_plan(conn, "day_2026-07-07", accepted_tree, fake_clock.now_unix())
-    adapter4 = RecordingBoundaryAdapter()
-    run_boundary(conn, fake_clock, cfg, adapter4)
-    assert adapter4.calls == []
-    run_row4 = conn.execute(
-        "SELECT judgment FROM boundary_runs WHERE planning_date = '2026-07-07'"
-    ).fetchone()
-    assert run_row4 is not None
-    assert run_row4["judgment"] == "skipped"
+    assert closed_05 == []
