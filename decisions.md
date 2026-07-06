@@ -177,3 +177,98 @@ The new finding: §7.6 claim validation is not applied on `PATCH /api/items/{id}
 A merit-neutral belt-and-suspenders hardening exists (reject claim-carrying/`is_claimed_agent` requests on the two item write routes, since dispatched ticket-workers never legitimately manage items), and can be added on owner request — but it changes no outcome: `AUDIT: PASS` is unreachable regardless because the owner-accepted §12 snapshot always stands as a violation, so no code change to item routes moves the verdict. Per the owner's ruling to stop looping (D23), the finding is refuted here rather than chased through another fix/dogfood/verify/audit round.
 
 Final state stands: `./verify` 36/36 PASS at cb77521; the audit's only findings are the owner-accepted snapshot (D23) and this refuted item-claim over-reach; all genuine code violations across rounds 1–5 fixed; concerns dispositioned (D24). This decisions.md addition is doc-only and does not change the code-level audit result.
+
+## D26 — Ticket-redesign build: human field-value edit (Decision B) extends the §4/§9 write surface
+
+Implementing the ticket-redesign plan (`orchestration/ticket-redesign/plan.md`, T2). A new
+human-only write capability is added and recorded here as a documented extension of the §4/§9
+human write surface:
+
+- **New route** `PUT /api/tickets/{id}/value/{field}` (human-only, `reject_agents`) lets the human
+  edit an already-*settled, passed* field value directly. It is routed through the resolution
+  engine (`resolution.decide_edit_value`) and applied via the sole appender
+  `data._apply_decision` — so `fields.*.value` is **still written only by the resolution engine**
+  (one-canonical-writer, §4.4.6). Agents cannot reach it; they file proposals as before.
+- `decide_edit_value` is tightly guarded (check order: require_human → validate_body → reject
+  `dropped` → reject unset value → reject live proposal → reject a not-yet-*passed* field). A field
+  is *passed* iff the state it gates strictly precedes the current state in `STATE_ORDER`
+  (`machine.field_is_passed`), which forbids editing the current gating field or any future field
+  and correctly still allows editing a settled `result` in `needs_review`/`done`.
+- **New event kind** `field_value_edited {field, body}` in `core/contracts.py` `EventKind`
+  (contracts-first, §14) — NOT a reuse of `proposal_accepted` (that means "a pending proposal was
+  accepted"; reusing it would make the event log lie). New request shape `ValueEditBody` in
+  `tickets/contracts.py`.
+- **Bugfix, same slice:** `decide_accept` now rejects a `dropped` ticket *before* the
+  proposal/gating-field branches — previously a dropped ticket carrying a pending non-gating
+  proposal could still be accepted (writing `value` with no state change). Closed with a regression
+  test.
+
+Delegated judgment calls (per CLAUDE.md, logged here): (1) the two new unit files
+(`tests/unit/test_value_edit_logic.py`, `test_value_edit_api.py`) are new supporting surface, not
+part of the item 1–36 §18.3 fence — named to avoid `test_aNN` collisions, no skips. (2) T1 token
+re-theme kept every existing token name (rename = broken consumers) and stayed at exactly five type
+sizes (PRINCIPLES), widening `--text-*` to five roles and adding `--accent-ink`/`--accent-done`/
+`--border-color`. Verification: lead spot-checked the resolution diff directly; Codex diff review of
+the T2 slice returned NO VIOLATIONS; `./verify` 36/36 PASS with T1+T2 landed.
+
+## D27 — Ticket-redesign component inventory (T3, SPEC §10 / PRINCIPLES)
+
+Four primitives added to `assets/components.js` for the redesigned ticket screen; every prior
+component and export is kept (other screens still use them):
+
+- `inlineEdit(el, {getValue, onSave, markdown, multiline, placeholder})` — the ONE contenteditable
+  edit hook (no affordance). Markdown fields render at rest, swap to a raw source editor on focus,
+  seeded from `getValue()` (raw JSON, never DOM-reconstructed); blur / ⌘·Ctrl+Enter saves, Esc
+  reverts, unchanged is a no-op; a rejected save keeps the raw surface open + shows `errorLine`.
+  Realizes §10.4 inline editing of recap/notes/title/settled values (§3.3/§4.2).
+- `approvalBlock({mode, field, whatLabel, proposalBody, note, newState, onApprove, onNoteSave})` —
+  the single, two-mode approval (§10.4/§4.4). gating-pending: local draft body (raw-seeded, persists
+  only on Approve `[data-accept]`) + recessed inline-editable Note (persists on blur) + reused
+  `grantPairPicker`; sends `edited_body` only when the draft differs. needs_review: read-only result
+  value + editable review-notes + Approve `[data-approve]` (no grant, terminal).
+- `collapsibleField({mark, name, body})` — native `<details>` field section (mark ✓/●/○ + name +
+  chevron, body not inset, seam only between rows). Realizes §10.4 four-fields-as-sections.
+- `enumPill({value, options, onChange, variant, key})` — pill (background only) + transparent native
+  `<select>` for fixed-enum metadata (state/priority/project). Realizes §10.4 metadata pills.
+
+Also: `eventLog`/`eventSummary` render the new `field_value_edited` kind; the chat restyle
+(plain-text agent, bubble human) is CSS-only and preserves every `data-chat*` attribute. No
+ticket-only `background+border` CSS rule existed to neutralize (the current ticket screen boxes come
+from the SHARED `.panel`, which T4 stops using); shared classes (`.panel`/`.button`/`.chip`/
+`.form-control`/`.field-editor`/`.board-column`/`.review-entry`) left byte-identical so the other
+screens' e2e stays green. Only `.chat-msg--planner` restyled (background removed — never adds
+bg+border). `node --check` + CSS gate clean.
+
+## D28 — Ticket-redesign: Codex T4 findings fixed + T5 e2e realignment (behavior-affecting notes)
+
+**Codex diff review of T4** (the screen rewrite) returned two GENUINE findings, both fixed inline
+(small §10.4/plan-fidelity repairs, per CLAUDE.md's "small integration repairs written directly"):
+1. **Unblock control was dropped.** The rewrite moved state jump/drop onto the `enumPill` but lost
+   the `POST /tickets/{id}/unblock` control the old `stateControl` carried (§10.4 state control /
+   the interaction map's "Unblock (if auto_blocked)"). Fix: a header `[data-unblock]` button, shown
+   only when `auto_blocked`, posting `/unblock`.
+2. **needs_review result value was not editable.** The plan says the settled `result` value edit
+   lives in the approval block in `needs_review` (result is a *passed* field under Decision B), but
+   it rendered read-only both in the approval and in the field mirror. Fix: `approvalBlock`'s
+   needs_review mode now takes an optional `onValueSave` and renders the value via `inlineEdit`
+   (markdown at rest) when supplied; the ticket screen passes `onValueSave` → `PUT /value/result`.
+   The result field section stays the read-only mirror (single editable home preserved).
+Codex T2 review had returned NO VIOLATIONS earlier.
+
+**T5 e2e realignment** (`tests/e2e/test_flows_a.py`, `test_flows_b.py`) — only selectors/read-methods
+moved to the redesigned DOM; every §18.3 asserted VALUE is unchanged, EXCEPT one flagged
+substitution. Changes that alter HOW (not what) is asserted:
+- **Item 23 value-empty check (WHAT-source changed):** the old `[data-field="success"] .quiet-line`
+  DOM element no longer exists (the gating field now renders a proposal mirror, not an empty-value
+  quiet-line). Replaced with the same ground truth read from the API — `fields.success.value is
+  None` (added the `api` fixture). Same assertion ("did not advance, value empty"), different source.
+- **Item 23 raw-body read (method changed):** the proposal body is now a contenteditable draft in
+  `[data-approval-block] .approval-draft` (rendered markdown at rest, raw on focus), not a textarea.
+  Read via `focus` + `text_content`; the rendered-structure reads were moved before the focus to
+  avoid the rendered→raw swap. MD_BODY asserted byte-for-byte, unchanged.
+- **Items 25/30 (visibility):** elements now inside collapsed `<details>` → `inner_text`→
+  `text_content`, `wait_for_selector`→`state="attached"`. Values unchanged.
+- **Item 31 `_snap_ticket` (relocation):** the result gating proposal moved from
+  `[data-field="result"] .proposal-card` to the visible `[data-approval-block]` (meta =
+  `.proposal-meta`, body = `.approval-draft .markdown-block`); `mid_t` retargeted to
+  `[data-approval-block][data-mode="gating-pending"]`. `expected_t` values unchanged.

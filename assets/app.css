@@ -514,7 +514,93 @@ textarea {
   outline: none;
 }
 
-/* --- Day screen (T15) ---------------------------------------------------- */
+/* --- Day = Overview (redesign) ------------------------------------------- */
+/* Today is a calm strategic READ: one centered document column — date → focus
+   hero → Brief Take / Watchout / If Today Lands. No rail, no boxes, no seams;
+   hierarchy is spacing + the tint ladder + two colored labels. Scoped to the day
+   screen; the .ed inline-edit surface (above) is reused. Values via tokens.css,
+   except the reading measure (680px) and the read's generous bottom rhythm. */
+
+[data-screen="day"] .doc {
+  width: 100%;
+}
+
+[data-screen="day"] .col {
+  max-width: 680px;                 /* a tight reading measure — this is a read */
+  margin: 0 auto;
+  padding: var(--space-7) var(--space-4) 128px;
+}
+
+[data-screen="day"] .date {
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+[data-screen="day"] .date .dim {
+  color: var(--text-faintest);
+}
+
+[data-screen="day"] .focus {
+  margin-top: var(--space-4);
+  font-size: var(--type-xl);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text-strong);
+}
+
+[data-screen="day"] .label {
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faintest);
+  margin-bottom: var(--space-3);
+}
+
+[data-screen="day"] .take {
+  margin-top: var(--space-6);
+}
+
+[data-screen="day"] .take .body {
+  font-size: var(--type-md);
+  line-height: 1.66;
+  color: var(--text-default);
+}
+
+[data-screen="day"] .block {
+  margin-top: var(--space-7);
+}
+
+[data-screen="day"] .watch .label {
+  color: var(--accent-bright);
+}
+
+[data-screen="day"] .watch .body {
+  font-size: var(--type-md);
+  line-height: 1.62;
+  color: var(--text-muted);
+}
+
+[data-screen="day"] .lands .label {
+  color: var(--accent-done);
+}
+
+[data-screen="day"] .lands .body {
+  font-size: var(--type-md);
+  line-height: 1.62;
+  color: var(--text-default);
+}
+
+[data-screen="day"] .body .markdown-block p + p {
+  margin-top: var(--space-3);
+}
+
+/* --- Day screen — legacy surfaces (plan-tree, today-list, review-count) ----
+   Dropped from the Day UI in the Overview redesign; kept pending the owner's
+   call to re-home them (Board) or retire. */
 
 .day-grid {
   display: grid;
@@ -653,6 +739,7 @@ textarea {
   max-width: 85%;
 }
 
+/* Human = a bubble (surface-overlay); agent = plain text, no bubble/fill (T3). */
 .chat-msg--you {
   align-self: flex-end;
   background: var(--surface-overlay);
@@ -661,7 +748,10 @@ textarea {
 
 .chat-msg--planner {
   align-self: flex-start;
-  background: var(--surface-sunken);
+  background: none;
+  padding: 0;
+  max-width: 100%;
+  color: var(--text-default);
 }
 
 .chat-offline {
@@ -944,4 +1034,319 @@ select {
   gap: var(--space-2);
   flex-wrap: wrap;
   margin-top: var(--space-2);
+}
+
+/* --- Ticket redesign primitives (T3, SPEC §10.4) -------------------------- */
+/* Surface rule everywhere below: background OR border, never both; no vertical
+ * lines; no insets. All values resolve through tokens.css. */
+
+/* The one inline-edit surface: contenteditable in place, no box, no affordance. */
+.ed {
+  outline: none;
+  border-radius: var(--radius-sm);
+  caret-color: var(--accent-bright);
+  cursor: text;
+}
+
+.ed:empty::before {
+  content: attr(data-ph);
+  color: var(--text-faintest);
+  font-style: italic;
+}
+
+/* THE APPROVAL — a raised surface (background, no border). */
+.approval {
+  background: var(--surface-raised);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+}
+
+.approval-what {
+  font-size: var(--type-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: var(--space-3);
+}
+
+.approval-draft,
+.approval-result {
+  font-size: var(--type-md);
+  line-height: 1.6;
+  color: var(--text-strong);
+}
+
+.approval-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+}
+
+/* The amber Approve button — dark ink on the one accent (background, no border). */
+.approval-approve {
+  font-weight: 600;
+  background: var(--accent-bright);
+  color: var(--accent-ink);
+  border: 0;
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-5);
+  cursor: pointer;
+  transition: filter var(--motion-fast) var(--motion-ease);
+}
+
+.approval-approve:hover {
+  filter: brightness(1.08);
+}
+
+.approval-approve:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* THE NOTE — a recessed surface (background, no border). */
+.note {
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.note-head {
+  font-size: var(--type-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-faintest);
+  margin-bottom: var(--space-2);
+}
+
+.note-body {
+  font-size: var(--type-sm);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* Collapsible field sections — hairline seam ONLY between rows; body not inset. */
+details.fsec + details.fsec {
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+details.fsec > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  color: var(--text-muted);
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+details.fsec > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.fsec > summary:hover {
+  color: var(--text-strong);
+}
+
+.fsec-mark {
+  flex: none;
+  text-align: center;
+  font-size: var(--type-sm);
+}
+
+.fsec-mark--done {
+  color: var(--accent-done);
+}
+
+.fsec-mark--now {
+  color: var(--accent-bright);
+}
+
+.fsec-mark--todo {
+  color: var(--text-faintest);
+}
+
+.fsec-name {
+  flex: 1;
+  font-size: var(--type-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+details.fsec[open] > summary .fsec-name {
+  color: var(--text-default);
+}
+
+/* Chevron via CSS content — collapsed points right, open points down (no angle
+ * literals; the disclosure glyph swaps on [open]). */
+.fsec-chev::before {
+  content: "\203A";
+  color: var(--text-faintest);
+  font-size: var(--type-sm);
+}
+
+details.fsec[open] > summary .fsec-chev::before {
+  content: "\2304";
+}
+
+.fsec-body {
+  padding: 0 0 var(--space-4);
+  font-size: var(--type-md);
+  line-height: 1.6;
+  color: var(--text-default);
+}
+
+.fsec-body .note {
+  margin-top: var(--space-1);
+}
+
+/* Enum pill — background only, no border; a transparent native <select> overlay. */
+.pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--type-xs);
+  color: var(--text-muted);
+  background: var(--surface-overlay);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+.pill:hover {
+  color: var(--text-strong);
+}
+
+.pill--state {
+  color: var(--text-strong);
+  background: var(--accent-surface);
+}
+
+.pill-key {
+  color: var(--text-faintest);
+  margin-right: var(--space-1);
+}
+
+.pill select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* Chat rail — defined by its left seam (border-left), no separate fill. It fills
+ * the grid row and scrolls within itself so the document column beside it scrolls
+ * independently. */
+.chat-rail {
+  border-left: var(--border-hairline) solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4);
+}
+
+/* --- Ticket page layout (T4 redesign — mockup .page / .doc / .col) --------- */
+/* The two-column page: a scrolling document centered to a readable measure, and a
+ * fixed chat rail on the right. The ticket screen claims the whole area below the
+ * nav and owns its own scroll, so the shell chrome yields its content padding and
+ * a height chain runs from the shell down to the grid. :has scopes this to the
+ * ticket screen alone — every other screen keeps the padded, flowing shell. */
+.shell:has(.ticket-screen) {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.shell:has(.ticket-screen) .shell-content {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+}
+
+.shell:has(.ticket-screen) .screen {
+  height: 100%;
+}
+
+.ticket-screen {
+  height: 100%;
+}
+
+.ticket-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) calc(var(--space-6) * 10);
+  height: 100%;
+  min-height: 0;
+}
+
+/* The document column scrolls; the rail stays put. */
+.ticket-doc {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Header and body share one centered readable measure (~768px). */
+.ticket-head {
+  max-width: calc(var(--space-7) * 16);
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-7) var(--space-4);
+  border-bottom: var(--border-hairline) solid var(--border-color);
+}
+
+.ticket-title {
+  font-size: var(--type-lg);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text-strong);
+  margin-bottom: var(--space-3);
+}
+
+/* The metadata pill row sits BELOW the title, left-aligned. */
+.ticket-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ticket-col {
+  max-width: calc(var(--space-7) * 16);
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-7) calc(var(--space-7) * 3);
+}
+
+/* Narrow: one column, no rail (mockup @960). The breakpoint is a raw px — media
+ * features can't read custom properties. */
+@media (max-width: 960px) {
+  .ticket-page {
+    grid-template-columns: 1fr;
+  }
+  .chat-rail {
+    display: none;
+  }
+}
+
+/* Due pill — a transparent native date input overlays the pill face (which shows a
+ * bare "due" placeholder when empty), so a click lands on the picker. */
+.ticket-deadline-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border: 0;
+  cursor: pointer;
+}
+
+/* Copy — a pill rendered as a button (no native chrome). */
+.pill-button {
+  border: 0;
 }

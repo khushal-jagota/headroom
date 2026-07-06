@@ -25,17 +25,25 @@ DAY_CUR = "2026-07-05"
 
 # fake boundary adapter literals (core/adapters/fakes.py:44-83) — DEFAULT behaviors,
 # unscriptable from a test (the fake lives in the server process):
-FAKE_FOCUS = "Fake focus"                # judgment root focus (fakes.py:59)
 FAKE_BRIEF_H1 = "Brief for 2026-07-05"   # brief "# Brief for <date>" → <h1> text
-FAKE_REPLAN_FOCUS = "Fake replanned focus"  # replan_root root focus (fakes.py:70)
-FAKE_REPLAN_CHILD = "Fake replanned child"  # replan_child note (fakes.py:82)
 
-# item 28
-E28_TITLE = "E28 carryover ticket"
+# item 28 — the boundary writes an UNSTRUCTURED brief; the Day overview degrades it
+# into the Brief Take slot (no focus/watchout/lands headings present to parse).
 
-# item 29 (two carryover children so a sibling proves "others keep status")
-E29_A_TITLE = "E29 child A"
-E29_B_TITLE = "E29 child B"
+# item 29 — a STRUCTURED brief (a leading focus line + the three fixed H2s), seeded
+# through the human brief PATCH, then amended in place. Each body is a single
+# paragraph so its slot's inner_text is exactly the source line.
+E29_FOCUS = "E29 ship the waitlist funnel to real traffic."
+E29_TAKE = "E29 yesterday closed at sixty-two percent completion."
+E29_WATCH = "E29 the hero still does not say what Vylo is in one line."
+E29_LANDS = "E29 real visitors are in the waitlist table by tonight."
+E29_FOCUS_EDIT = "E29 signal today, not polish."
+E29_BRIEF = (
+    E29_FOCUS + "\n\n"
+    "## Brief Take\n\n" + E29_TAKE + "\n\n"
+    "## Watchout\n\n" + E29_WATCH + "\n\n"
+    "## If Today Lands\n\n" + E29_LANDS + "\n"
+)
 
 # item 30 (ceiling needs_review so accepted result parks AT needs_review, §4.4.5)
 E30_TITLE = "E30 dispatch ticket"
@@ -84,15 +92,6 @@ def _read_claim(server, ticket_id):
     return str(row[0])
 
 
-def _wait_node_note(page: Page, node, text):
-    page.wait_for_function(
-        "a => { const n = document.querySelector('[data-node=\"'+a.node+'\"] .plan-node-note');"
-        " return !!n && n.textContent === a.text; }",
-        arg={"node": str(node), "text": text},
-        timeout=WAIT_MS,
-    )
-
-
 def _grant_and_advance(server, api, cli, tid, ceiling, bodies):
     # Human grant (header-less → human; grant_ticket rejects agents, tickets/api.py:359).
     g = api.human_post(
@@ -126,12 +125,9 @@ def _reload_settle(page: Page, ready_selector):
 def _snap_ticket(p: Page):
     return {
         "state": p.get_attribute('section[data-screen="ticket"]', "data-state"),
-        "meta": p.inner_text('[data-field="result"] .proposal-card .proposal-meta'),
-        "body": p.inner_text('[data-field="result"] .proposal-card .markdown-block'),
+        "meta": p.inner_text('[data-approval-block] .proposal-meta'),
+        "body": p.inner_text('[data-approval-block] .approval-draft .markdown-block'),
         "claim": p.eval_on_selector_all('[data-marker="running-claim"]', "e=>e.length"),
-        "run": p.eval_on_selector_all(
-            '[data-run-history] [data-run-row][data-run-status="running"]', "e=>e.length"
-        ),
     }
 
 
@@ -145,19 +141,17 @@ def _snap_board(p: Page, mid):
 
 
 def _snap_day(p: Page):
-    return {
-        "focus": p.inner_text('[data-node="root"] .plan-node-focus'),
-        "status": p.get_attribute('[data-node="root"]', "data-status"),
-        "brief": p.inner_text('.day-main .markdown-block h1'),
-    }
+    # The Day overview renders the (unstructured, fake-adapter) brief in the Brief
+    # Take slot; its <h1> is the state that must survive a reload unchanged.
+    return {"brief": p.inner_text('[data-day-take-body] h1')}
 
 
 def test_e28_day_boundary_accept_all(server, context_factory, open_page, cli, api):
-    tid = cli(server, "ticket", "create", "--title", E28_TITLE)["id"]
-    # Yesterday's day-ticket (planning date 2026-07-04 at baseline): a carryover
-    # candidate, NOT a plan of 2026-07-05, so the §6.2 human-planned skip is not tripped.
-    cli(server, "day", "add-ticket", tid, DAY_PREV)
-
+    # A boundary judgment pass writes the day's brief (fake adapter: "# Brief for
+    # <date>", unstructured). The Day is now the OVERVIEW, not a dashboard: the plan
+    # tree, today-ticket list, review-count and chat are gone from it. The overview
+    # degrades an unstructured brief — the whole blob renders inside Brief Take, the
+    # other slots stay quiet.
     r = _set_now(api, server, NOW_0501)
     assert r["planning_date"] == DAY_CUR, r
 
@@ -170,107 +164,70 @@ def test_e28_day_boundary_accept_all(server, context_factory, open_page, cli, ap
     }, rep
 
     page = open_page(
-        context_factory(), server, "#/day", '.plan-tree [data-node="0"]', settled=True
+        context_factory(), server, "#/day", "[data-day-overview]", settled=True
     )
+    page.wait_for_selector("[data-day-take-body]", timeout=WAIT_MS)
 
-    # Brief: the stored "# Brief for 2026-07-05" markdown → the day-main's only <h1>.
-    assert page.inner_text('.day-main .markdown-block h1') == FAKE_BRIEF_H1
+    # Degrade path: the unstructured brief renders as markdown in Brief Take (its <h1>).
+    assert page.inner_text('[data-day-take-body] h1') == FAKE_BRIEF_H1
+    # The date orients the read (planning date 2026-07-05). text_content, not
+    # inner_text: the date label is text-transform:uppercase, and inner_text would
+    # return the rendered "JULY 5" while text_content keeps the raw DOM text.
+    assert "July 5" in page.text_content('[data-day-date]')
 
-    # Proposed tree: root focus + carryover child, both proposed.
-    assert page.inner_text('.plan-tree [data-node="root"] .plan-node-focus') == FAKE_FOCUS
-    assert page.get_attribute('.plan-tree [data-node="root"]', "data-status") == "proposed"
-    assert page.inner_text('.plan-tree [data-node="0"] .plan-node-note') == E28_TITLE
-    assert page.get_attribute('.plan-tree [data-node="0"]', "data-status") == "proposed"
-
-    # Accept-all: the child ticket reaches the Today panel only via a WS-flush re-render.
-    f0 = page.evaluate("window.__plannerDebug.flushes")
-    page.click('[data-accept-all]')
-
-    row = f'.day-ticket-row[data-ticket-id="{tid}"]'
-    page.wait_for_selector(row, timeout=WAIT_MS)
-    assert page.eval_on_selector_all(row, "els => els.length") == 1
-    assert page.evaluate("window.__plannerDebug.flushes") > f0
-
-    d = api.get(server, "/api/day/today")
-    assert [t["id"] for t in d["tickets"]].count(tid) == 1, d
-    assert d["plan"]["root"]["status"] == "accepted", d
-    assert d["plan"]["children"][0]["status"] == "accepted", d
+    # The dropped surfaces have NO Day home anymore (backend endpoints untouched).
+    assert page.query_selector(".plan-tree") is None
+    assert page.query_selector("[data-review-entry]") is None
+    assert page.query_selector("[data-chat-panel]") is None
+    assert page.query_selector(".day-ticket-row") is None
 
 
-def test_e29_invalidation_root_and_child(server, context_factory, open_page, cli, api):
-    a = cli(server, "ticket", "create", "--title", E29_A_TITLE)["id"]
-    b = cli(server, "ticket", "create", "--title", E29_B_TITLE)["id"]
-    cli(server, "day", "add-ticket", a, DAY_PREV)
-    cli(server, "day", "add-ticket", b, DAY_PREV)
-
-    _set_now(api, server, NOW_0501)
-    rep = _tick_boundary(api, server)
-    assert rep == {
-        "planning_date": DAY_CUR,
-        "ran": True,
-        "judgment": "ok",
-        "replan": None,
-    }, rep
+def test_e29_day_overview_structured_and_edit(
+    server, context_factory, open_page, cli, api
+):
+    # Seed a STRUCTURED brief on the current planning day (baseline 2026-07-04). The
+    # overview parses the focus line + the three H2 sections into their four slots.
+    api.human_patch(server, f"/api/day/{DAY_PREV}", {"brief": E29_BRIEF})
 
     page = open_page(
-        context_factory(), server, "#/day", '.plan-tree [data-node="1"]', settled=True
+        context_factory(), server, "#/day", "[data-day-overview]", settled=True
     )
-    assert page.inner_text('.plan-tree [data-node="0"] .plan-node-note') == E29_A_TITLE
-    assert page.inner_text('.plan-tree [data-node="1"] .plan-node-note') == E29_B_TITLE
-    assert page.get_attribute('.plan-tree [data-node="0"]', "data-status") == "proposed"
-    assert page.get_attribute('.plan-tree [data-node="1"]', "data-status") == "proposed"
-    assert page.inner_text('.plan-tree [data-node="root"] .plan-node-focus') == FAKE_FOCUS
-    assert page.get_attribute('.plan-tree [data-node="root"]', "data-status") == "proposed"
+    page.wait_for_selector("[data-day-take-body]", timeout=WAIT_MS)
 
-    # Child invalidate (node 0, an int): mark-invalidated + enqueue; the tick drains it.
-    api.human_post(server, f"/api/day/{DAY_CUR}/plan/invalidate", {"node": 0})
-    rep = _tick_boundary(api, server)
-    assert rep == {
-        "planning_date": DAY_CUR,   # second tick same date: idempotent, judgment kept
-        "ran": False,
-        "judgment": "ok",
-        "replan": {
-            "attempts": [
-                {"day_id": f"day_{DAY_CUR}", "scope": "child", "node": 0, "outcome": "stored"}
-            ]
-        },
-    }, rep
+    assert page.inner_text('[data-day-focus]') == E29_FOCUS
+    assert page.inner_text('[data-day-take-body]') == E29_TAKE
+    assert page.inner_text('[data-day-watch-body]') == E29_WATCH
+    assert page.inner_text('[data-day-lands-body]') == E29_LANDS
+    assert "July 4" in page.text_content('[data-day-date]')  # raw DOM (label uppercases)
 
-    _wait_node_note(page, 0, FAKE_REPLAN_CHILD)
-    assert page.inner_text('.plan-tree [data-node="0"] .plan-node-note') == FAKE_REPLAN_CHILD
-    assert page.get_attribute('.plan-tree [data-node="0"]', "data-status") == "proposed"
-    # Sibling and root untouched.
-    assert page.inner_text('.plan-tree [data-node="1"] .plan-node-note') == E29_B_TITLE
-    assert page.get_attribute('.plan-tree [data-node="1"]', "data-status") == "proposed"
-    assert page.inner_text('.plan-tree [data-node="root"] .plan-node-focus') == FAKE_FOCUS
-    assert page.get_attribute('.plan-tree [data-node="root"]', "data-status") == "proposed"
-
-    # Root invalidate ("root", a str): marks root + every child, enqueues one ReplanRoot.
-    api.human_post(server, f"/api/day/{DAY_CUR}/plan/invalidate", {"node": "root"})
-    rep = _tick_boundary(api, server)
-    assert rep == {
-        "planning_date": DAY_CUR,
-        "ran": False,
-        "judgment": "ok",
-        "replan": {
-            "attempts": [
-                {"day_id": f"day_{DAY_CUR}", "scope": "root", "node": "root", "outcome": "stored"}
-            ]
-        },
-    }, rep
-
+    # Inline edit round-trip: amend the focus in place. inlineEdit seeds the raw scalar
+    # on focus and commits on blur → human PATCH re-serializes the whole brief → the
+    # WS flush re-renders. Driven deterministically (focus, overwrite, blur).
+    f0 = page.evaluate("window.__plannerDebug.flushes")
+    page.evaluate(
+        "(t) => { const el = document.querySelector('[data-day-focus]');"
+        " el.focus(); el.textContent = t; el.blur(); }",
+        E29_FOCUS_EDIT,
+    )
     page.wait_for_function(
-        "() => { const f = document.querySelector('[data-node=\"root\"] .plan-node-focus');"
-        " return !!f && f.textContent === '" + FAKE_REPLAN_FOCUS + "'"
-        " && document.querySelectorAll('.plan-tree .plan-node--child').length === 0; }",
+        "(f0) => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS
+    )
+    page.wait_for_function(
+        "(t) => { const el = document.querySelector('[data-day-focus]');"
+        " return !!el && el.textContent === t; }",
+        arg=E29_FOCUS_EDIT,
         timeout=WAIT_MS,
     )
-    assert page.inner_text('[data-node="root"] .plan-node-focus') == FAKE_REPLAN_FOCUS
-    assert page.eval_on_selector_all('.plan-tree .plan-node--child', "els=>els.length") == 0
 
-    plan = api.get(server, "/api/day/today")["plan"]
-    assert plan["root"]["focus"] == FAKE_REPLAN_FOCUS, plan
-    assert plan["children"] == [], plan
+    # The edit persisted, and re-serialization preserved the three section bodies.
+    assert page.inner_text('[data-day-take-body]') == E29_TAKE
+    assert page.inner_text('[data-day-watch-body]') == E29_WATCH
+    assert page.inner_text('[data-day-lands-body]') == E29_LANDS
+
+    brief = api.get(server, "/api/day/today")["brief"]
+    assert E29_FOCUS_EDIT in brief, brief
+    assert "## Brief Take" in brief and E29_TAKE in brief, brief
+    assert E29_WATCH in brief and E29_LANDS in brief, brief
 
 
 def test_e30_dispatcher_e2e_to_done(server, context_factory, open_page, cli, api):
@@ -284,7 +241,7 @@ def test_e30_dispatcher_e2e_to_done(server, context_factory, open_page, cli, api
     page = open_page(context_factory(), server, f"#/ticket/{mid}", ready, settled=True)
     assert page.get_attribute('section[data-screen="ticket"]', "data-state") == "in_progress"
     assert page.query_selector('[data-marker="running-claim"]') is None
-    assert "(no runs)" in page.inner_text('[data-run-history]')
+    assert api.get(server, f"/api/tickets/{mid}/runs")["runs"] == []
 
     rep = _tick_dispatcher(api, server)
     assert set(rep) == {"skipped", "reclaimed", "timed_out", "spawned", "spawn_failed"}, rep
@@ -298,10 +255,8 @@ def test_e30_dispatcher_e2e_to_done(server, context_factory, open_page, cli, api
     run_id = spawn["run_id"]
     assert run_id, rep
 
-    # Run visible on Ticket, no reload — the WS flush from run_started re-renders it.
-    page.wait_for_selector(
-        '[data-run-history] [data-run-row][data-run-status="running"]', timeout=WAIT_MS
-    )
+    # Run starts, no reload — the WS flush from run_started re-renders the ticket and
+    # the running-claim marker appears in the header. Run history now lives on the API.
     page.wait_for_selector('[data-marker="running-claim"]', timeout=WAIT_MS)
     runs = api.get(server, f"/api/tickets/{mid}/runs")["runs"]
     assert runs[0]["status"] == "running", runs
@@ -330,10 +285,8 @@ def test_e30_dispatcher_e2e_to_done(server, context_factory, open_page, cli, api
     assert c["run"]["id"] == run_id, c
     assert api.get(server, f"/api/tickets/{mid}")["state"] == "needs_review", "close leaves state"
 
-    # run_closed is a logged event → the run flips to done and the claim marker leaves.
-    page.wait_for_selector(
-        '[data-run-history] [data-run-row][data-run-status="done"]', timeout=WAIT_MS
-    )
+    # run_closed is a logged event → the claim marker leaves the header (the run is
+    # now done, verified above via the CLI close + the API).
     page.wait_for_function(
         "() => document.querySelector('[data-marker=\"running-claim\"]') === null",
         timeout=WAIT_MS,
@@ -389,7 +342,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
 
     # Ticket surface.
     ready_t = f'section[data-screen="ticket"][data-ticket-id="{mid}"]'
-    mid_t = '[data-field="result"] .proposal-card'
+    mid_t = '[data-approval-block][data-mode="gating-pending"]'
     page_t = open_page(context_factory(), server, f"#/ticket/{mid}", ready_t, settled=True)
     page_t.wait_for_selector(mid_t, timeout=WAIT_MS)
     before_t = _snap_ticket(page_t)
@@ -401,7 +354,6 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
         "meta": "proposed by agent",
         "body": E31_RESULT,
         "claim": 1,
-        "run": 1,
     }
     assert before_t == after_t == expected_t, (before_t, after_t)
 
@@ -417,15 +369,16 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     expected_b = {"title": E31_TITLE, "pend": 1, "claim": 1}
     assert before_b == after_b == expected_b, (before_b, after_b)
 
-    # Day surface.
-    ready_d = '.plan-tree [data-node="root"]'
+    # Day surface — the overview renders the (unstructured) brief; a reload restores it.
+    ready_d = '[data-day-take-body]'
     page_d = open_page(context_factory(), server, "#/day", ready_d, settled=True)
     page_d.wait_for_selector(ready_d, timeout=WAIT_MS)
+    assert "July 5" in page_d.text_content('[data-day-date]')  # raw DOM (label uppercases)
     before_d = _snap_day(page_d)
     _reload_settle(page_d, ready_d)
     page_d.wait_for_selector(ready_d, timeout=WAIT_MS)
     after_d = _snap_day(page_d)
-    expected_d = {"focus": FAKE_FOCUS, "status": "proposed", "brief": FAKE_BRIEF_H1}
+    expected_d = {"brief": FAKE_BRIEF_H1}
     assert before_d == after_d == expected_d, (before_d, after_d)
 
 

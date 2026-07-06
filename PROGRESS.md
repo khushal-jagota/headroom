@@ -2,6 +2,78 @@
 
 Read this first after any context compaction. It is the build's memory.
 
+## CURRENT WORK (2026-07-06): UI redesign live-wired — SPEC RETIRED, iterating by mockup
+
+**Big pivot (owner):** SPEC.md is no longer law. Deleted `SPEC.md`, `codex-audit.md`,
+`GOAL-CONDITION.md` (git-recoverable). Kept `PRINCIPLES.md` (design/eng rules still bind) + `DOCS.md`.
+`CLAUDE.md` + `PRINCIPLES.md` edited spec-neutral. Design intent now lives in the redesign mockups
+under `orchestration/*-redesign/`; backend correctness = the code + its tests.
+
+**Verify de-ceremonied:** the 36-item registry is GONE (`scripts/verify.py` + `verify_lib.py`
+rewritten; `test_instrument.py` untouched — it only tested scan+css). `./verify` now prints
+`VERIFY: PASS` / `VERIFY: FAIL`, gated purely on 5 gates (ruff/mypy/unit/build/e2e) + skip-scan.
+Rewrite tests freely now. **Current: `VERIFY: PASS`.** CAUTION: never run `./verify` while a
+sub-agent also runs it — e2e contention flakes the browser tests ([[concurrent-verify-contention]]).
+
+**Built + green in the working tree (NOT committed):**
+- **Ticket page** (`screens-ticket.js`, `app.css`, `components.js`, + Decision B backend): layout
+  fixed (`.ticket-page` grid = doc + ~320px chat rail — the original build never wrote this CSS, so
+  chat had stacked at the bottom); header = **title + [priority · due · project · sprint] + Copy**
+  (state/links/day pills gone; due-empty = bare "due"; sprint = "current" when current); Runs/Events/
+  Grant disclosures cut → recap → approval → fields → chat. Decision B intact (`PUT /value/{field}`,
+  `field_value_edited`, decide_accept dropped-guard). **Drop/state-jump have NO UI home (owner: leave).**
+- **Today = Overview** (`screens-day.js` + day CSS in `app.css`): date → focus → Brief Take / Watchout
+  / If Today Lands. Plan-tree/today-list/review-count/chat dropped (retired; plan-tree backend
+  dormant). Parses `day.brief` markdown, degrades on unstructured. e28/e29/e31 rewritten.
+- **Panels** name + favicon (`server.py` title + `/static` mount + `static/favicon.*`; wordmark in
+  `components.js`).
+
+**Design mockups settled (owner-approved, `orchestration/`):** ticket, today (flat, no recessed/
+lines), sprint = **2 pages**: **Sprint Overview** (Kickoff → Mid-sprint Review → Sprint Review, all
+headed inline-editable content, Freeze on Kickoff + Sprint Review only; Mid-sprint Review = 3 sub-
+fields Where-we-stand / What's-changed / What-to-adjust, no add/log) + **Sprint Tracking** (items,
+progressive disclosure). Nav = "Sprint Overview · Sprint Tracking" tab pair; arc removed.
+
+**Owner-locked decisions:** Drop UI deferred; plan-tree UI retired; **Day overview → real structured
+fields the agent fills** (focus/brief_take/watchout/if_today_lands), NOT a parsed blob — BUILD
+PENDING; Mid-sprint Review = a set of markdown fields (not `weekly_addenda`) — BUILD PENDING; mid-
+sprint depth flat.
+
+**Pending build triggers (awaiting owner go):** (1) **Day-fields build** (structured day fields +
+boundary adapter fills them + screen reads fields + e2e). (2) **Sprint Tracking build** into
+`screens-sprint.js` (plan at `orchestration/sprint-redesign/plan.md`); Sprint Overview build later.
+(3) **Commit** the milestone. (4) prune dead CSS.
+
+**Agents (all idle):** ticket-fix, day-build, sprint-design, sprint-impl-plan. NOTE: sub-agents'
+plain-text finals don't reach the lead — they report via SendMessage; an idle notification ≠ done,
+verify state yourself.
+
+### Original build (superseded header below): Ticket UI redesign — IMPLEMENTING
+
+The original build is done (see "Current stage" below). New work: rebuild the ticket detail
+screen to the redesigned structure and wire it into the live app.
+
+- **Plan (treat as done):** `orchestration/ticket-redesign/plan.md`. Codex-reviewed ~17 rounds;
+  it confirmed all substance (endpoint map, the resolution-engine slice, guards, the new event
+  kind, PRINCIPLES, implementability) but never printed the literal "PLAN OK" — asymptotic
+  document-review drift, not an unsound plan. **Do not re-loop plan review.** Implement it.
+- **Mockup (structural source of truth):** `orchestration/ticket-redesign/mockup.html`.
+- **Locked decisions:** (1) Structure = recap → ONE approval (edit-in-place; Approve carries the
+  onward grant) → collapsible fields → chat rail; §10.4-required bits (runs/events/links/day-
+  sprint/grant/copy) kept but **tucked in collapsed disclosures** (e2e item 30 asserts runs).
+  (2) **Decision B** = editing settled field values via a NEW human route `PUT /value/{field}`
+  routed through the resolution engine (`decide_edit_value`, guarded to *passed* fields) + a NEW
+  `field_value_edited` event kind + a `dropped` guard in `decide_accept`. (3) ONE shared inline-
+  edit hook (contenteditable; raw markdown from JSON, not DOM; draft-until-Approve for the
+  approval body). (4) Token re-theme in `tokens.css` (warm, still 5 type roles). (5) Wholesale
+  re-render is DEFERRED (task #9) — no editing guard. (6) `./verify` must stay 36/36.
+- **Build order (Opus implementers, per-ticket codex diff reviews):** T1 tokens · T2 backend
+  slice (B) — lead spot-checks the resolution change · T3 primitives (inlineEdit, approvalBlock,
+  collapsibleField, enumPill, chat restyle) in `components.js` + `app.css` · T4 rewrite
+  `screens-ticket.js` · T5 e2e (`test_flows_a/b.py`). Then Codex reviews the implementation diff
+  until clean. Only `screens-ticket.js` / two e2e files touch the ticket screen.
+- **Next step:** cut the 5 contract-scoped tickets and dispatch T1 + T2 in parallel.
+
 ## Current stage
 
 **COMPLETE (per D23 owner ruling).** `./verify` 36/36 PASS; all seven §18 stages done in

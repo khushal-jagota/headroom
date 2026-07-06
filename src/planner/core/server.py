@@ -48,7 +48,9 @@ _SHELL = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>planner</title>
+<title>Panels</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="shortcut icon" href="/static/favicon.ico">
 <link rel="stylesheet" href="/assets/tokens.css">
 <link rel="stylesheet" href="/assets/app.css">
 </head>
@@ -149,4 +151,5 @@ def create_app(
         )
 
     app.mount("/assets", StaticFiles(directory="assets"), name="assets")
+    app.mount("/static", StaticFiles(directory="static"), name="static")
     return app

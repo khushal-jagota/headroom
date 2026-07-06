@@ -79,7 +79,7 @@ def test_e22_cli_create_live_board(server, context_factory, open_page, cli):
     assert "T18 board ticket" in page_a.inner_text(card)
 
 
-def test_e23_env_pinned_propose(server, context_factory, open_page, cli):
+def test_e23_env_pinned_propose(server, context_factory, open_page, cli, api):
     tid = cli(server, "ticket", "create", "--title", "T18 propose ticket")["id"]
     # PLAN_TICKET_ID resolves the ticket (no positional id); stdin carries the body.
     cli(server, "propose", "success", "--body-file", "-", ticket_id=tid, stdin=MD_BODY)
@@ -87,11 +87,9 @@ def test_e23_env_pinned_propose(server, context_factory, open_page, cli):
     ready = f'section[data-screen="ticket"][data-ticket-id="{tid}"]'
     page = open_page(context_factory(), server, f"#/ticket/{tid}", ready, settled=True)
 
-    # Intact: the edit textarea carries the proposal body byte-for-byte.
-    assert page.input_value('[data-field="success"] [data-edit]') == MD_BODY
-
-    # Rendered: the proposal's markdown structure, with exact texts.
-    b = '[data-field="success"] .proposal-card .markdown-block'
+    # Rendered: the proposal's markdown structure, with exact texts. Read the draft's
+    # rendered markdown AT REST first — focusing it (below) swaps it to raw source.
+    b = '[data-approval-block] .approval-draft .markdown-block'
     assert page.inner_text(f"{b} h1") == "Success criteria"
     assert page.eval_on_selector_all(
         f"{b} ul li", "els => els.map(e => e.textContent)"
@@ -104,9 +102,14 @@ def test_e23_env_pinned_propose(server, context_factory, open_page, cli):
     assert len(paras) == 2, paras
     assert paras[-1] == "Done when verify flips items 22-27."
 
-    # Did not advance: still needs_success, and the value slot is still empty.
+    # Intact: focusing the contenteditable draft swaps it to the RAW markdown source,
+    # which carries the proposal body byte-for-byte.
+    page.focus('[data-approval-block] .approval-draft')
+    assert page.text_content('[data-approval-block] .approval-draft') == MD_BODY
+
+    # Did not advance: still needs_success, and the value is still unset.
     assert page.get_attribute(ready, "data-state") == "needs_success"
-    assert page.query_selector('[data-field="success"] .quiet-line') is not None
+    assert api.get(server, f"/api/tickets/{tid}")["fields"]["success"]["value"] is None
 
 
 def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
@@ -186,7 +189,7 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
         'section[data-screen="ticket"][data-state="needs_approach"]',
         settled=True,
     )
-    assert "Human-edited success criteria." in ticket_page.inner_text(
+    assert "Human-edited success criteria." in ticket_page.text_content(
         '[data-field="success"] .markdown-block'
     )
 

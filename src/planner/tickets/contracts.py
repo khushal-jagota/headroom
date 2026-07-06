@@ -127,6 +127,10 @@ class RecapBody(TypedDict, total=False):          # PUT /tickets/{id}/recap
     body: str                      # default ""
 
 
+class ValueEditBody(TypedDict, total=False):      # PUT /tickets/{id}/value/{field}
+    body: str                      # default ""
+
+
 class GrantBody(TypedDict, total=False):          # POST /tickets/{id}/grant
     ceiling: str | None            # TicketState value; route requires it (grant_missing)
     at_cap: str | None             # AtCap value; route requires it (grant_missing)

@@ -1,6 +1,6 @@
 # Engineering & Design Principles
 
-These are standing rules. They apply to any project unless the spec explicitly overrides them.
+These are standing rules. They apply unless a live owner decision overrides them.
 
 ## Codebase structure
 - Top level is organised by semantic domain (e.g. rooms/, sharing/, billing/, games/<game>/). Within every domain, organise by kind of work: logic/algorithms together, data layer together, components together, views together. Layers within domains — never feature-slices within domains, never one flat pile.
@@ -34,7 +34,7 @@ These are standing rules. They apply to any project unless the spec explicitly o
 - Prefer making the design system carry function over bolting on widgets (e.g. a border draining as a timer rather than a countdown number). Structural elements doing double duty beats added chrome.
 - Plan the component inventory for the whole flow before writing components. Build few, reuse hard. No near-duplicates.
 
-## Spec and test discipline
-- Specs are written in imperatives. Qualifiers ("perhaps", "some form of") are converted to decisions or explicitly delegated with criteria ("you choose X; it must satisfy Y"). Silent ambiguity is a bug in the spec.
-- Acceptance tests assert specific stated values, never vibes. Tests are part of the specification: they map 1:1 to requirements by name, and changing one after first writing requires a logged justification.
+## Test discipline
+- Requirements and design decisions are stated concretely — decisions with criteria, never vibes or open qualifiers.
+- Acceptance tests assert specific stated values, never vibes. Tests evolve deliberately with the design; when one changes, the change is intentional and noted in decisions.md, never a silent weakening.
 - Verification means running the check fresh and showing full output. Results are never asserted from memory.

@@ -56,6 +56,7 @@ class EventKind(StrEnum):
     note_updated = "note_updated"                    # §4.2 notes slot {field}
     recap_updated = "recap_updated"                  # §3.3
     grant_changed = "grant_changed"                  # {ceiling, at_cap, cause}
+    field_value_edited = "field_value_edited"        # {field, body}
 
     # --- supplemental: plain field updates (§3.2 "event-logged" updates) ---
     ticket_updated = "ticket_updated"                # {field, from, to} plain edits

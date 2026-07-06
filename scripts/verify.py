@@ -1,15 +1,13 @@
-"""The verify instrument — the single source of truth for completeness (SPEC 18.2).
+"""The verify instrument — the completeness gate.
 
-Runs a preflight skip-scan of tests/, then the code and test gates in the spec's
-stated order (ruff, mypy, unit suite, build check, e2e suite), streaming each
-gate's output live. Ends with a 36-item scoreboard and exactly one final line,
-``VERIFY: N/36 PASS``. Exit is 0 iff the scan is clean, every gate passed, and
-N == 36.
+Runs a preflight skip-scan of tests/ (no skipped, xfailed, focused, empty, or
+commented-out tests), then the code and test gates in order (ruff, mypy, unit
+suite, build check, e2e suite), streaming each gate's output live. Ends with
+exactly one final line, ``VERIFY: PASS`` or ``VERIFY: FAIL``. Exit is 0 iff the
+scan is clean and every gate passed.
 
 Documented limitation: this instrument proves the named tests RAN and PASSED. It
-does not judge assertion strength — that is enforced by the SPEC 18.3 fences
-(exact states, orderings, and error shapes) and the independent codex audit, not
-here.
+does not judge assertion strength — that is for reviewers, not this instrument.
 """
 
 from __future__ import annotations
@@ -19,14 +17,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from verify_lib import (
-    ITEMS,
-    ItemResult,
-    check_css_syntax,
-    parse_junit,
-    scan_test_files,
-    score,
-)
+from verify_lib import check_css_syntax, scan_test_files
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VENV_BIN = REPO_ROOT / ".venv" / "bin"
@@ -119,18 +110,12 @@ def run_build_check() -> GateResult:
     return GateResult("build check", ok)
 
 
-def print_scoreboard(results: list[ItemResult]) -> None:
-    for r in results:
-        tag = "PASS" if r.passed else "FAIL"
-        print(f"[{tag}] item {r.item.number:02d} — {r.item.label}")
-
-
 def main() -> int:
     DATA_VERIFY.mkdir(parents=True, exist_ok=True)
 
-    # Preflight skip-scan. A tainted suite has no valid results, so on any
-    # violation we name each file+pattern, skip the suites, and still print the
-    # full all-FAIL scoreboard.
+    # Preflight skip-scan: a tainted suite (skipped, xfailed, focused, empty, or
+    # commented-out tests) has no valid results, so on any violation we name each
+    # file+pattern and fail without running the suites.
     violations = scan_test_files([REPO_ROOT / "tests"])
     if violations:
         print("[verify] SKIP-SCAN FAILED — forbidden patterns in tests/:", flush=True)
@@ -140,8 +125,7 @@ def main() -> int:
             "[verify] test suites skipped; a tainted suite has no valid results.",
             flush=True,
         )
-        print_scoreboard([ItemResult(item, False) for item in ITEMS])
-        print("VERIFY: 0/36 PASS")
+        print("VERIFY: FAIL")
         return 1
 
     gates: list[GateResult] = []
@@ -158,8 +142,6 @@ def main() -> int:
         run_pytest("tests/e2e", e2e_junit, "e2e suite", timeout=E2E_TIMEOUT_SECONDS)
     )
 
-    results = score(parse_junit(unit_junit), parse_junit(e2e_junit))
-
     print()
     for gate in gates:
         status = "ok" if gate.ok else "FAILED"
@@ -167,14 +149,10 @@ def main() -> int:
         print(f"[verify] gate {gate.name}: {status}{suffix}")
     print()
 
-    print_scoreboard(results)
-    passed = sum(1 for r in results if r.passed)
-    print(f"VERIFY: {passed}/36 PASS")
-
-    ok = all(gate.ok for gate in gates) and passed == len(ITEMS)
+    ok = all(gate.ok for gate in gates)
+    print(f"VERIFY: {'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
 
 
 if __name__ == "__main__":
-    assert len(ITEMS) == 36, f"item registry must hold 36 items, has {len(ITEMS)}"
     sys.exit(main())

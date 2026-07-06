@@ -1,0 +1,319 @@
+<meta charset="utf-8">
+<title>Sprint Tracking</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<!--
+  Sprint — the TRACKING view (rev 2). Applies the decoded design system's *principle* —
+  progressive disclosure, calm at rest — not the ticket's appearance.
+
+  What changed from rev 1 (owner review):
+   · No "Needs you" approval band, no "needs you"/"unblock"/accept controls on items. A
+     sprint item in the sprint view is NOT an approval surface. (Approvals live on Review
+     and the Ticket page.) That was appearance-aping the ticket; removed entirely.
+   · Progressive disclosure is the spine. The page is calm at rest: sprint items are the
+     primary rows, collapsed; expanding an item reveals its tickets and their states.
+     Nothing about tickets is flattened onto the page.
+   · No scaffolding. No "Items" umbrella header. Status grouping (required by §5/§10.5) is
+     carried by a whisper label + rhythm, and settled groups (done/deferred) are themselves
+     collapsed disclosures — structure comes from disclosure, not a header on everything.
+   · Hierarchy made literal: sprint → sprint items → tickets.
+
+  This is the Sprint Tracking page — one of the sprint's two pages. The other is the
+  Sprint Overview page (Kickoff / Mid-sprint Review / Sprint Review). Nav between them is
+  the two-item tab pair at the top (Sprint Overview · Sprint Tracking). The kickoff/review
+  writing and the weekly check-ins all live on the Overview page.
+
+  Kept: the bet stated once as the frame; a single centered column, no chat (a sprint has
+  no chat session, §11); tokens shared with the ticket + Today mockups.
+-->
+<style>
+:root{
+  --bg:#1b1917; --sunk:#141210; --raise:#24211b; --line:rgba(230,210,175,.11);
+  --fg1:#f4f1ea; --fg2:#dcd8cf; --fg3:#b4b0a6; --fg4:#8a867c; --fg5:#66625a;
+  --amber:#e7a742; --amber-ink:#1c1406; --done:#7fa564;
+  --f:"Inter",-apple-system,system-ui,sans-serif; --dur:130ms;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg2);font:500 15px/1.6 var(--f);-webkit-font-smoothing:antialiased}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+
+.doc{height:100dvh;overflow-y:auto}
+.col{max-width:760px;margin:0 auto;padding:0 44px 160px}
+.ed{outline:none;border-radius:4px;caret-color:var(--amber);cursor:text}
+
+/* header — name + a couple of quiet pills (background only, P4) */
+.head{border-bottom:1px solid var(--line);padding:22px 44px 16px;max-width:760px;margin:0 auto}
+.head .row{display:flex;align-items:flex-start;gap:16px}
+.name{font-size:20px;font-weight:600;line-height:1.3;color:var(--fg1);flex:1}
+.meta{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;padding-top:2px}
+.pill{font-size:12px;color:var(--fg3);background:#26221c;border-radius:6px;padding:5px 10px;white-space:nowrap}
+.pill .k{color:var(--fg5);margin-right:5px}
+
+/* two-page nav — a small tab pair (Sprint Overview · Sprint Tracking); current filled */
+.tabs{display:flex;gap:6px;padding:20px 0 2px}
+.tab{font-size:12px;font-weight:600;letter-spacing:.02em;padding:6px 12px;border-radius:7px;text-decoration:none;color:var(--fg4);transition:color var(--dur),background var(--dur)}
+.tab:hover{color:var(--fg1)}
+.tab.cur{color:var(--fg1);background:#2a251c}
+
+/* the bet, stated once — the frame everything is tracked against (echoed here; the
+   canonical, editable copy is the Primary bet field on the Sprint Overview page) */
+.frame{padding:22px 0 20px}
+.frame .lead{font-size:16px;line-height:1.62;color:var(--fg2)}
+.frame .lead b{color:var(--fg1);font-weight:600}
+.frame .health{margin-top:14px;font-size:13px;color:var(--fg5)}
+
+/* status group — a whisper label (not a panel header); rhythm carries the rest */
+.grp{margin-top:26px}
+.grp .glabel{font-size:11px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--fg5);display:flex;align-items:center;gap:8px;padding:2px 0 4px}
+.grp .glabel .n{color:var(--fg5);font-weight:600}
+
+/* item = the primary row, collapsed by default; expand reveals its tickets. Lines only
+   between rows; body not inset (P4). Kept simple. */
+details.item{border-top:1px solid var(--line)}
+.grp .item:first-of-type{border-top:0}
+details.item>summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;gap:12px;padding:13px 0;transition:color var(--dur)}
+details.item>summary::-webkit-details-marker{display:none}
+.item .chev{color:var(--fg5);font-size:12px;flex:none;align-self:center;transition:transform var(--dur)}
+details.item[open]>summary .chev{transform:rotate(90deg)}
+.item .it{font-size:15px;font-weight:500;color:var(--fg2);flex:1;transition:color var(--dur)}
+details.item>summary:hover .it{color:var(--fg1)}
+details.item[open]>summary .it{color:var(--fg1)}
+.item .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:baseline}
+.chip{font-size:12px;color:var(--fg4);background:#221f19;border-radius:5px;padding:3px 8px;white-space:nowrap}
+.chip .k{color:var(--fg5);margin-right:4px}
+.chip.cleared{color:var(--done);background:#1c231a}
+.item .count{font-size:12px;color:var(--fg5);white-space:nowrap;align-self:center}
+
+/* settled + parked items read quieter */
+.grp.settled .item .it{color:var(--fg3)}
+
+/* tickets — revealed inside an open item. simple rows: state + title + priority. not
+   inset; separated from the summary by a hairline. navigate-only (edits live on Ticket). */
+.item .tkts{padding:2px 0 16px}
+.tk{display:flex;align-items:baseline;gap:10px;text-decoration:none;color:inherit;padding:9px 10px;margin:0 -10px;border-radius:7px;transition:background var(--dur)}
+.tk:hover{background:#211e18}
+.tk .st{font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--fg4);white-space:nowrap;min-width:104px}
+.tk .st.review{color:var(--fg2)} .tk .st.done{color:var(--done)}
+.tk .tt{font-size:14px;color:var(--fg3);flex:1;transition:color var(--dur)}
+.tk:hover .tt{color:var(--fg1)}
+.tk .pr{font-size:12px;color:var(--fg5)}
+.tkts .none{font-size:13px;color:var(--fg5);font-style:italic;padding:4px 0 2px}
+
+/* settled group = a collapsed disclosure at the group level (done / deferred / loose).
+   summary shares the whisper-label look + a chevron. */
+details.sett{margin-top:24px}
+details.sett>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;padding:4px 0;color:var(--fg5);transition:color var(--dur)}
+details.sett>summary::-webkit-details-marker{display:none}
+details.sett>summary:hover{color:var(--fg3)}
+details.sett .glabel2{font-size:11px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;flex:1}
+details.sett .gchev{font-size:12px;transition:transform var(--dur)}
+details.sett[open]>summary .gchev{transform:rotate(90deg)}
+</style>
+
+<div class="doc">
+  <header class="head">
+    <div class="row">
+      <div class="name ed" contenteditable="true">Waitlist to first cohort</div>
+      <div class="meta">
+        <span class="pill"><span class="k">dates</span>Jul 1 – Jul 14</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="col">
+
+    <!-- two-page nav — Sprint Overview · Sprint Tracking (this page) -->
+    <nav class="tabs">
+      <a class="tab" href="#/sprint/overview">Sprint Overview</a>
+      <a class="tab cur" href="#/sprint/tracking">Sprint Tracking</a>
+    </nav>
+
+    <!-- the bet, stated once — the frame -->
+    <section class="frame">
+      <div class="lead"><b>The bet:</b> get 100 real people onto the waitlist and convert the first cohort to activated accounts. Everything that isn't user signal waits until next sprint.</div>
+      <div class="health">1 of 12 done</div>
+    </section>
+
+    <!-- ACTIVE — live work, visible at rest (items collapsed) -->
+    <div class="grp">
+      <div class="glabel">Active <span class="n">· 4</span></div>
+
+      <details class="item">
+        <summary>
+          <span class="chev">›</span>
+          <span class="it">Ship the waitlist capture flow</span>
+          <span class="chips"><span class="chip">P1</span><span class="chip">Vylo</span><span class="chip"><span class="k">due</span>Jul 9</span></span>
+          <span class="count">4 tickets</span>
+        </summary>
+        <div class="tkts">
+          <a class="tk" href="#/ticket/t_1"><span class="st review">needs review</span><span class="tt">Double opt-in wiring</span><span class="pr">P1</span></a>
+          <a class="tk" href="#/ticket/t_2"><span class="st">in progress</span><span class="tt">Capture form component</span><span class="pr">P1</span></a>
+          <a class="tk" href="#/ticket/t_3"><span class="st">in progress</span><span class="tt">Confirmation screen</span><span class="pr">P2</span></a>
+          <a class="tk" href="#/ticket/t_4"><span class="st done">done</span><span class="tt">Analytics events</span><span class="pr">P2</span></a>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <span class="chev">›</span>
+          <span class="it">Landing hero rewrite — say what Vylo is in one line</span>
+          <span class="chips"><span class="chip">P0</span><span class="chip">Vylo</span><span class="chip"><span class="k">due</span>Jul 7</span></span>
+          <span class="count">2 tickets</span>
+        </summary>
+        <div class="tkts">
+          <a class="tk" href="#/ticket/t_5"><span class="st">in progress</span><span class="tt">Hero copy + layout</span><span class="pr">P0</span></a>
+          <a class="tk" href="#/ticket/t_6"><span class="st">needs plan</span><span class="tt">Hero A/B scaffold</span><span class="pr">P2</span></a>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <span class="chev">›</span>
+          <span class="it">Double opt-in + consent copy</span>
+          <span class="chips"><span class="chip">P1</span><span class="chip">Vylo</span></span>
+          <span class="count">1 ticket</span>
+        </summary>
+        <div class="tkts">
+          <a class="tk" href="#/ticket/t_7"><span class="st">in progress</span><span class="tt">Consent copy — legal pass</span><span class="pr">P1</span></a>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <span class="chev">›</span>
+          <span class="it">Activation dashboard</span>
+          <span class="chips"><span class="chip">P1</span><span class="chip">Vylo</span><span class="chip cleared">blockers cleared</span></span>
+          <span class="count">3 tickets</span>
+        </summary>
+        <div class="tkts">
+          <a class="tk" href="#/ticket/t_8"><span class="st">needs approach</span><span class="tt">Activation schema</span><span class="pr">P1</span></a>
+          <a class="tk" href="#/ticket/t_9"><span class="st">needs approach</span><span class="tt">Query layer</span><span class="pr">P2</span></a>
+          <a class="tk" href="#/ticket/t_10"><span class="st">needs plan</span><span class="tt">Dashboard UI</span><span class="pr">P2</span></a>
+        </div>
+      </details>
+    </div>
+
+    <!-- TODO — next up -->
+    <div class="grp">
+      <div class="glabel">Todo <span class="n">· 5</span></div>
+
+      <details class="item">
+        <summary>
+          <span class="chev">›</span>
+          <span class="it">Weekly cohort email</span>
+          <span class="chips"><span class="chip">P2</span><span class="chip">Vylo</span></span>
+          <span class="count">1 ticket</span>
+        </summary>
+        <div class="tkts">
+          <a class="tk" href="#/ticket/t_11"><span class="st">needs success</span><span class="tt">Cohort email template</span><span class="pr">P2</span></a>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <span class="chev">›</span>
+          <span class="it">Instrument the funnel in PostHog</span>
+          <span class="chips"><span class="chip">P1</span><span class="chip">Vylo</span></span>
+          <span class="count">no tickets yet</span>
+        </summary>
+        <div class="tkts"><div class="none">No tickets on this item yet.</div></div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <span class="chev">›</span>
+          <span class="it">Cohort segmentation rules</span>
+          <span class="chips"><span class="chip">P2</span><span class="chip">Tribe</span></span>
+          <span class="count">1 ticket</span>
+        </summary>
+        <div class="tkts">
+          <a class="tk" href="#/ticket/t_12"><span class="st">needs success</span><span class="tt">Segmentation rule set</span><span class="pr">P2</span></a>
+        </div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <span class="chev">›</span>
+          <span class="it">Onboarding email sequence</span>
+          <span class="chips"><span class="chip">P3</span><span class="chip">Vylo</span></span>
+          <span class="count">no tickets yet</span>
+        </summary>
+        <div class="tkts"><div class="none">No tickets on this item yet.</div></div>
+      </details>
+
+      <details class="item">
+        <summary>
+          <span class="chev">›</span>
+          <span class="it">Waitlist admin view</span>
+          <span class="chips"><span class="chip">P3</span><span class="chip">Other</span></span>
+          <span class="count">no tickets yet</span>
+        </summary>
+        <div class="tkts"><div class="none">No tickets on this item yet.</div></div>
+      </details>
+    </div>
+
+    <!-- BLOCKED — live, so visible; shown as a plain status (no "unblock" action here) -->
+    <div class="grp">
+      <div class="glabel">Blocked <span class="n">· 1</span></div>
+
+      <details class="item">
+        <summary>
+          <span class="chev">›</span>
+          <span class="it">Referral loop spike</span>
+          <span class="chips"><span class="chip">P3</span><span class="chip">Vylo</span><span class="chip"><span class="k">blocked by</span>Landing hero rewrite</span></span>
+          <span class="count">1 ticket</span>
+        </summary>
+        <div class="tkts">
+          <a class="tk" href="#/ticket/t_13"><span class="st">needs approach</span><span class="tt">Referral mechanic sketch</span><span class="pr">P3</span></a>
+        </div>
+      </details>
+    </div>
+
+    <!-- SETTLED — done / deferred are tucked behind group-level disclosure (calm at rest) -->
+    <details class="sett">
+      <summary><span class="glabel2" style="color:var(--done)">Done · 1</span><span class="gchev">›</span></summary>
+      <div class="grp settled">
+        <details class="item">
+          <summary>
+            <span class="chev">›</span>
+            <span class="it">Ship waitlist mechanics</span>
+            <span class="chips"><span class="chip">P1</span><span class="chip">Vylo</span></span>
+            <span class="count">2 tickets</span>
+          </summary>
+          <div class="tkts">
+            <a class="tk" href="#/ticket/t_14"><span class="st done">done</span><span class="tt">Waitlist table + write path</span><span class="pr">P1</span></a>
+            <a class="tk" href="#/ticket/t_15"><span class="st done">done</span><span class="tt">Resend opt-in adapter</span><span class="pr">P2</span></a>
+          </div>
+        </details>
+      </div>
+    </details>
+
+    <details class="sett">
+      <summary><span class="glabel2" style="color:var(--fg5)">Deferred → next sprint · 1</span><span class="gchev">›</span></summary>
+      <div class="grp settled">
+        <details class="item">
+          <summary>
+            <span class="chev">›</span>
+            <span class="it">Tribe import v2</span>
+            <span class="chips"><span class="chip">P3</span><span class="chip">Tribe</span></span>
+            <span class="count">no tickets</span>
+          </summary>
+          <div class="tkts"><div class="none">No tickets on this item.</div></div>
+        </details>
+      </div>
+    </details>
+
+    <!-- LOOSE TICKETS — tickets on the sprint with no item parent (§5). tucked; tickets direct. -->
+    <details class="sett">
+      <summary><span class="glabel2" style="color:var(--fg5)">Loose tickets · 2</span><span class="gchev">›</span></summary>
+      <div class="tkts" style="padding-top:8px">
+        <a class="tk" href="#/ticket/t_16"><span class="st">needs plan</span><span class="tt">mic-publish — record + publish the launch clip</span><span class="pr">P2</span></a>
+        <a class="tk" href="#/ticket/t_17"><span class="st">needs plan</span><span class="tt">app-typography pass</span><span class="pr">P3</span></a>
+      </div>
+    </details>
+
+  </div>
+</div>

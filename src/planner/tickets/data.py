@@ -204,6 +204,21 @@ def accept_proposal(
         return _apply_decision(conn, ticket, decision, now)
 
 
+def edit_field_value(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    field: FieldName,
+    new_body: str,
+    actor: str,
+    now: int,
+) -> Ticket:
+    with _txn(conn):
+        ticket = _load_ticket(conn, ticket_id)
+        decision = resolution.decide_edit_value(ticket, field, new_body, actor)
+        return _apply_decision(conn, ticket, decision, now)
+
+
 def approve_review(conn: sqlite3.Connection, ticket_id: str, *, actor: str, now: int) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)

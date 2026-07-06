@@ -59,7 +59,7 @@
       linkEls[name] = anchor;
       links.appendChild(anchor);
     });
-    nav.appendChild(make("span", "shell-brand", "planner"));
+    nav.appendChild(make("span", "shell-brand", "Panels"));
     nav.appendChild(links);
     var content = make("main", "shell-content");
     shell.appendChild(nav);
@@ -804,6 +804,9 @@
     if (kind === "ticket_updated") {
       return String(payload.field);
     }
+    if (kind === "field_value_edited") {   // Decision B: {field, body}
+      return String(payload.field) + " · edited";
+    }
     return "";
   }
 
@@ -936,6 +939,350 @@
     return wrap;
   }
 
+  // ------------------------------------------------------------------------
+  // T3 additions (ticket redesign — SPEC §10.4). The shared interaction
+  // primitives the T4 ticket screen consumes: one inline-edit hook, the two-mode
+  // approval, collapsible field sections, and the enum pill. Additive: nothing
+  // above this line is touched. Every write still flows through fetchJson -> the
+  // WS-flush re-render; no optimistic UI, no client-side store (SPEC §9).
+  // ------------------------------------------------------------------------
+
+  // The ONE inline-edit hook (no affordance). Markdown fields render at rest via
+  // markdownBlock and swap to a raw source editor on focus; plain scalars (title)
+  // show/edit textContent. In BOTH the editor is seeded from getValue() — the raw
+  // JSON string, NEVER reconstructed from the rendered DOM (rendered markdown can't
+  // round-trip links/code/lists). Save on blur or Cmd/Ctrl+Enter -> onSave(raw);
+  // Esc reverts; unchanged is a no-op; re-renders on save. A rejected save keeps the
+  // raw surface open and surfaces errorLine(err) (the fieldEditor reject contract).
+  function inlineEdit(el, opts) {
+    opts = opts || {};
+    var markdown = !!opts.markdown;
+    var multiline = !!opts.multiline;
+    var editing = false;
+    var reverting = false;
+    var inFlight = false;
+
+    el.classList.add("ed");
+    el.setAttribute("contenteditable", "true");
+    if (opts.placeholder) {
+      el.setAttribute("data-ph", opts.placeholder);
+    }
+
+    function rawValue() {
+      var v = opts.getValue();
+      return v === null || v === undefined ? "" : String(v);
+    }
+
+    function clearError() {
+      var next = el.nextSibling;
+      if (next && next.nodeType === 1 && next.classList.contains("error-line")) {
+        next.parentNode.removeChild(next);
+      }
+    }
+
+    // Paint the rested view: rendered markdown (or plain text), or truly empty so
+    // the :empty placeholder shows.
+    function paint(raw) {
+      clearError();
+      editing = false;
+      var text = raw === null || raw === undefined ? "" : String(raw);
+      if (markdown) {
+        if (text.trim()) {
+          el.replaceChildren(markdownBlock(text));
+        } else {
+          el.replaceChildren();
+        }
+      } else {
+        el.textContent = text;
+      }
+    }
+
+    function enterEdit() {
+      if (editing || inFlight) {
+        return;
+      }
+      editing = true;
+      clearError();
+      el.textContent = rawValue();   // seed raw from JSON, never from the DOM
+    }
+
+    function commit() {
+      if (!editing || inFlight) {
+        return;
+      }
+      var raw = el.textContent;
+      if (raw === rawValue()) {
+        paint(raw);   // unchanged: revert to the rested render, no request
+        return;
+      }
+      inFlight = true;
+      Promise.resolve(opts.onSave(raw)).then(
+        function () {
+          inFlight = false;
+          paint(raw);   // re-render the rested view from the saved raw text
+        },
+        function (err) {
+          inFlight = false;   // keep the raw surface open; show the structured error
+          clearError();
+          el.insertAdjacentElement("afterend", errorLine(err));
+        }
+      );
+    }
+
+    el.addEventListener("focus", enterEdit);
+    el.addEventListener("blur", function () {
+      if (reverting) {
+        reverting = false;
+        return;
+      }
+      commit();
+    });
+    el.addEventListener("keydown", function (e) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        el.blur();   // blur commits
+        return;
+      }
+      if (!multiline && e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        el.blur();
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        reverting = true;
+        paint(rawValue());
+        el.blur();
+      }
+    });
+
+    paint(opts.getValue());
+    return el;
+  }
+
+  // A local markdown DRAFT surface (used by approvalBlock). Same preview<->raw swap
+  // as inlineEdit, but it NEVER auto-persists: the raw text lives in this closure,
+  // seeded raw from initialRaw (never DOM-derived), read only when Approve asks.
+  function markdownDraft(initialRaw) {
+    var node = make("div", "ed approval-draft");
+    node.setAttribute("contenteditable", "true");
+    node.setAttribute("data-edit", "");
+    var raw = initialRaw === null || initialRaw === undefined ? "" : String(initialRaw);
+    var editing = false;
+
+    function preview() {
+      editing = false;
+      if (raw.trim()) {
+        node.replaceChildren(markdownBlock(raw));
+      } else {
+        node.replaceChildren();
+      }
+    }
+    node.addEventListener("focus", function () {
+      if (editing) {
+        return;
+      }
+      editing = true;
+      node.textContent = raw;   // seed raw from the stored draft string
+    });
+    node.addEventListener("input", function () {
+      if (editing) {
+        raw = node.textContent;
+      }
+    });
+    node.addEventListener("blur", function () {
+      raw = node.textContent;   // sync before re-rendering the preview
+      preview();
+    });
+    preview();
+    return {
+      node: node,
+      getRaw: function () {
+        return editing ? node.textContent : raw;
+      }
+    };
+  }
+
+  // The recessed Note surface: a header + an inline-editable markdown body that
+  // persists on blur (a note, not a draft) via onNoteSave -> PUT /notes/{field}.
+  function noteSurface(noteValue, onNoteSave, heading, placeholder) {
+    var box = make("div", "note");
+    box.appendChild(make("div", "note-head", heading));
+    var body = make("div", "note-body");
+    inlineEdit(body, {
+      getValue: function () {
+        return noteValue;
+      },
+      onSave: onNoteSave,
+      markdown: true,
+      multiline: true,
+      placeholder: placeholder
+    });
+    box.appendChild(body);
+    return box;
+  }
+
+  // The approval — a single instance, two modes (SPEC §10.4, §4.4).
+  //  gating-pending: the body is a LOCAL draft (raw-seeded from proposalBody, markdown
+  //    preview<->raw on focus); a recessed Note editable inline (persists on blur);
+  //    Approve + the reused grant-pair picker. onApprove receives
+  //    {next_ceiling, at_cap, edited_body?} — edited_body ONLY when the draft differs
+  //    from the original (matching proposalCard so proposal_accepted.edited stays honest).
+  //  needs_review: the settled result value (read-only markdown) + editable review
+  //    notes; Approve (no grant, terminal) -> onApprove({}).
+  function approvalBlock(opts) {
+    opts = opts || {};
+    var wrap = make("div", "approval");
+    wrap.setAttribute("data-approval-block", "");
+    wrap.setAttribute("data-mode", opts.mode);
+    if (opts.field) {
+      wrap.setAttribute("data-field", opts.field);
+    }
+
+    wrap.appendChild(make("div", "approval-what",
+      opts.whatLabel || (opts.field ? stateLabel(opts.field) : "")));
+
+    var actions = make("div", "approval-actions");
+
+    if (opts.mode === "needs_review") {
+      var result = make("div", "approval-result");
+      if (opts.onValueSave) {
+        // The settled result value edit lives HERE in needs_review (Decision B:
+        // result is a passed field). inlineEdit renders it as markdown at rest.
+        inlineEdit(result, {
+          getValue: function () { return opts.proposalBody; },
+          onSave: opts.onValueSave,
+          markdown: true,
+          multiline: true,
+          placeholder: "Result…"
+        });
+      } else {
+        result.appendChild(markdownBlock(opts.proposalBody));
+      }
+      wrap.appendChild(result);
+      wrap.appendChild(noteSurface(
+        opts.note, opts.onNoteSave, "Review notes",
+        "Things to check before you approve the result…"
+      ));
+
+      var approve = make("button", "approval-approve", "Approve");
+      approve.type = "button";
+      approve.setAttribute("data-approve", "");
+      bindMutating(approve, actions, function () {
+        return opts.onApprove({});
+      });
+      actions.appendChild(approve);
+      wrap.appendChild(actions);
+      return wrap;
+    }
+
+    // gating-pending
+    var draft = markdownDraft(opts.proposalBody);
+    wrap.appendChild(draft.node);
+    wrap.appendChild(noteSurface(opts.note, opts.onNoteSave, "Note", null));
+
+    var origBody = opts.proposalBody === null || opts.proposalBody === undefined
+      ? "" : String(opts.proposalBody);
+    var accept = make("button", "approval-approve", "Approve");
+    accept.type = "button";
+    accept.setAttribute("data-accept", "");
+    var inFlight = false;
+    var resolved = false;
+
+    function sync() {
+      accept.disabled = inFlight || resolved || picker.getGrant() === null;
+    }
+
+    var picker = grantPairPicker(opts.newState, sync);
+
+    accept.addEventListener("click", function () {
+      var prior = actions.querySelector(".error-line");
+      if (prior) {
+        actions.removeChild(prior);
+      }
+      var grant = picker.getGrant();
+      var payload = { next_ceiling: grant.next_ceiling, at_cap: grant.at_cap };
+      var edited = draft.getRaw();
+      if (edited !== origBody) {   // send raw edited_body only when it actually differs
+        payload.edited_body = edited;
+      }
+      inFlight = true;
+      sync();
+      Promise.resolve(opts.onApprove(payload)).then(
+        function () {
+          resolved = true;   // A3: stay disabled after a successful approve
+          inFlight = false;
+          sync();
+        },
+        function (err) {
+          inFlight = false;
+          actions.prepend(errorLine(err));
+          sync();
+        }
+      );
+    });
+    actions.appendChild(accept);
+    actions.appendChild(picker);
+    wrap.appendChild(actions);
+    sync();   // disabled until BOTH grant halves are chosen
+    return wrap;
+  }
+
+  // Collapsible field section — native <details>: summary = mark + name + chevron,
+  // body directly below (not inset). The hairline seam lives ONLY between rows
+  // (CSS: details.fsec + details.fsec), so the first row has no top border.
+  var MARK_KIND = { "✓": "done", "●": "now", "○": "todo" };
+
+  function collapsibleField(opts) {
+    opts = opts || {};
+    var details = make("details", "fsec");
+    var summary = make("summary", null);
+    var kind = opts.markKind || MARK_KIND[opts.mark] || "";
+    summary.appendChild(make("span", "fsec-mark" + (kind ? " fsec-mark--" + kind : ""), opts.mark));
+    summary.appendChild(make("span", "fsec-name", opts.name));
+    summary.appendChild(make("span", "fsec-chev"));   // glyph is CSS ::before (swaps on [open])
+    details.appendChild(summary);
+    var body = make("div", "fsec-body");
+    appendChildren(body, opts.body);
+    details.appendChild(body);
+    return details;
+  }
+
+  // Enum pill — background only, no border; a transparent native <select> overlay,
+  // for the fixed-enum metadata (state / priority / project). onChange(newValue)
+  // fires on change; no optimistic UI — the WS-flush re-render reflects the value.
+  function enumPill(opts) {
+    opts = opts || {};
+    var pill = make("span", "pill" + (opts.variant ? " pill--" + opts.variant : ""));
+    if (opts.key) {
+      pill.appendChild(make("span", "pill-key", opts.key));
+    }
+    var options = opts.options || [];
+    var currentLabel = null;
+    options.forEach(function (o) {
+      if (o.value === opts.value) {
+        currentLabel = o.label;
+      }
+    });
+    pill.appendChild(document.createTextNode(
+      currentLabel === null ? String(opts.value) : currentLabel
+    ));
+    var select = make("select", null);
+    options.forEach(function (o) {
+      var option = make("option", null, o.label);
+      option.value = o.value;
+      select.appendChild(option);
+    });
+    if (opts.value !== undefined && opts.value !== null) {
+      select.value = opts.value;
+    }
+    select.addEventListener("change", function () {
+      opts.onChange(select.value);
+    });
+    pill.appendChild(select);
+    return pill;
+  }
+
   Planner.components = {
     appShell: appShell,
     panel: panel,
@@ -957,7 +1304,11 @@
     stateControl: stateControl,
     grantControl: grantControl,
     eventLog: eventLog,
-    runHistory: runHistory
+    runHistory: runHistory,
+    inlineEdit: inlineEdit,
+    approvalBlock: approvalBlock,
+    collapsibleField: collapsibleField,
+    enumPill: enumPill
   };
 
   // The pluggable chat-input registry (SPEC §14 audio seam). A later audio script

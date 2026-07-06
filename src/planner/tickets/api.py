@@ -58,6 +58,7 @@ from planner.tickets.contracts import (
     StateBody,
     Ticket,
     TicketState,
+    ValueEditBody,
 )
 from planner.tickets.logic import admission
 
@@ -371,6 +372,19 @@ async def put_recap(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
     if ctx.is_claimed_agent:
         require_claim(conn, ctx, ticket_id, now)
     ticket = tickets_data.write_recap(conn, ticket_id, body=body["body"], actor=ctx.actor, now=now)
+    return tickets_views.ticket_json(ticket, now)
+
+
+@router.put("/tickets/{ticket_id}/value/{field}")
+async def put_value(ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
+                    clk: Clk) -> JsonDict:
+    body = ValueEditBody(body=body_str(raw, "body"))
+    reject_agents(ctx)
+    field_enum = parse_enum(FieldName, field, "field")
+    now = clk.now_unix()
+    ticket = tickets_data.edit_field_value(
+        conn, ticket_id, field=field_enum, new_body=body["body"], actor=ctx.actor, now=now
+    )
     return tickets_views.ticket_json(ticket, now)
 
 

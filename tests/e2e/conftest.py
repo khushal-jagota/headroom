@@ -248,4 +248,11 @@ def api() -> SimpleNamespace:
         assert resp.status_code < 300, f"POST {path} -> {resp.status_code}: {resp.text}"
         return resp.json()
 
-    return SimpleNamespace(get=get, human_post=human_post)
+    def human_patch(server: ServerHandle, path: str, json_body: dict) -> dict:
+        # Header-less PATCH → the human. The day brief writer is human-only
+        # (days/api.py reject_agents), so this is how a test seeds/edits a brief.
+        resp = httpx.patch(server.base + path, json=json_body, timeout=10.0)
+        assert resp.status_code < 300, f"PATCH {path} -> {resp.status_code}: {resp.text}"
+        return resp.json()
+
+    return SimpleNamespace(get=get, human_post=human_post, human_patch=human_patch)

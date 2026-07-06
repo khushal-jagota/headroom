@@ -150,6 +150,10 @@ def decide_accept(
     if edited_body is not None:
         admission.validate_body(edited_body, "edit-accept text")
     edited = edited_body is not None
+    if ticket.state is TicketState.dropped:
+        raise PlannerError(
+            ErrorCode.validation, "dropped tickets cannot be accepted", {"state": "dropped"}
+        )
     slot = fields_codec.get_slot(ticket.fields, field)
     if slot.proposal is None:
         raise PlannerError(
@@ -184,6 +188,44 @@ def decide_accept(
         ),
     )
     return Decision(events=events, new_fields=new_fields)
+
+
+def decide_edit_value(
+    ticket: Ticket, field: FieldName, new_body: str, actor: str
+) -> Decision:
+    """§4.2 human edit of an already-*passed* settled value. The value stays written
+    solely by the resolution engine; this is a tightly-guarded human write path that
+    never touches state/ceiling. It rejects dropped tickets, an unset value, a field
+    carrying a live proposal, and the current gating or any future field."""
+    admission.require_human(actor, "edit_field_value")
+    admission.validate_body(new_body, "field value")
+    if ticket.state is TicketState.dropped:
+        raise PlannerError(
+            ErrorCode.validation, "dropped tickets cannot be edited", {"state": "dropped"}
+        )
+    slot = fields_codec.get_slot(ticket.fields, field)
+    if slot.value is None:
+        raise PlannerError(
+            ErrorCode.validation, "field has no settled value to edit", {"field": field.value}
+        )
+    if slot.proposal is not None:
+        raise PlannerError(
+            ErrorCode.validation, "field has a pending proposal", {"field": field.value}
+        )
+    if not machine.field_is_passed(field, ticket.state):
+        raise PlannerError(
+            ErrorCode.validation,
+            "field is not yet passed",
+            {"field": field.value, "state": ticket.state.value},
+        )
+    new_slot = FieldSlot(value=new_body, proposal=None, notes=slot.notes)
+    new_fields = fields_codec.with_slot(ticket.fields, field, new_slot)
+    return Decision(
+        events=(
+            EventSpec(EventKind.field_value_edited, {"field": field.value, "body": new_body}),
+        ),
+        new_fields=new_fields,
+    )
 
 
 def decide_approve(ticket: Ticket, actor: str) -> Decision:

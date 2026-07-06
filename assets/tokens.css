@@ -1,26 +1,29 @@
 /* The single token file. The app's entire personality is tunable here — no other
  * file hardcodes a colour, radius, duration, spacing step, border width, size, or
- * font. Stage-5 values: restrained neutral-dark surfaces, one deliberate amber
+ * font. Stage-5 values: restrained warm-dark surfaces, one deliberate amber
  * accent meaning "needs the human", a closed five-size type scale. No new
  * categories without evidence of need (PRINCIPLES.md, SPEC §10). */
 
 :root {
-  /* Surfaces — achromatic neutrals so the accent is the only hue on screen */
-  --surface-base: #111214;
-  --surface-raised: #191b1e;
-  --surface-overlay: #22252a;
-  --surface-sunken: #0b0c0e;
+  /* Surfaces — warm near-black neutrals so the amber accent stays the emphasis */
+  --surface-base: #1b1917;
+  --surface-raised: #24211b;
+  --surface-overlay: #26221c;
+  --surface-sunken: #141210;
 
   /* Text tokens — descending emphasis */
-  --text-strong: #f2f3f5;
-  --text-default: #c6cad0;
-  --text-muted: #8d939b;
-  --text-faint: #5d636b;
+  --text-strong: #f4f1ea;
+  --text-default: #dcd8cf;
+  --text-muted: #b4b0a6;
+  --text-faint: #8a867c;
+  --text-faintest: #66625a;
 
   /* Accent — THE one accent (warm amber). Means "needs the human". */
-  --accent-bright: #e2a33e;
-  --accent-surface: #33270f;
+  --accent-bright: #e7a742;
+  --accent-surface: #33291a;
   --accent-text: #f4e3bd;
+  --accent-ink: #1c1406;   /* dark text on the amber fill (e.g. Approve) */
+  --accent-done: #7fa564;  /* the green done marks */
 
   /* Radius scale — even 4/8/12 progression */
   --radius-sm: 4px;
@@ -43,9 +46,10 @@
   --space-6: 32px;
   --space-7: 48px;
 
-  /* Border widths */
+  /* Borders — widths plus the hairline seam colour */
   --border-hairline: 1px;
   --border-strong: 2px;
+  --border-color: rgba(230, 210, 175, 0.11);
 
   /* Type — two font stacks plus the closed five-size scale */
   --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -53,6 +57,6 @@
   --type-xs: 11px;
   --type-sm: 13px;
   --type-md: 15px;
-  --type-lg: 19px;
+  --type-lg: 20px;
   --type-xl: 24px;
 }

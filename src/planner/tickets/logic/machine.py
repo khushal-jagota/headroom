@@ -4,6 +4,8 @@ resolution. Pure: contracts + fields_codec only."""
 
 from __future__ import annotations
 
+from typing import Final
+
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import (
     ADVANCE_TARGET,
@@ -18,6 +20,15 @@ from planner.tickets.contracts import (
     TicketState,
 )
 from planner.tickets.logic import fields_codec
+
+# §4.2 inverse of GATING_FIELD: the state each field gates. A field is "passed"
+# once the ticket has advanced strictly beyond the state that field gates.
+FIELD_GATES: Final[dict[FieldName, TicketState]] = {
+    FieldName.success: TicketState.needs_success,
+    FieldName.approach: TicketState.needs_approach,
+    FieldName.plan: TicketState.needs_plan,
+    FieldName.result: TicketState.in_progress,
+}
 
 
 def state_index(state: TicketState) -> int:
@@ -35,6 +46,14 @@ def is_terminal(state: TicketState) -> bool:
 
 def gating_field(state: TicketState) -> FieldName | None:
     return GATING_FIELD.get(state)
+
+
+def field_is_passed(field: FieldName, state: TicketState) -> bool:
+    """A field is *passed* iff the state it gates strictly precedes the current
+    state in STATE_ORDER. dropped is not in STATE_ORDER, so state_index(dropped)
+    raises validation; the decide_edit_value check order rejects dropped explicitly
+    before this is reached."""
+    return state_index(state) > state_index(FIELD_GATES[field])
 
 
 def advance_target(state: TicketState, ceiling: TicketState) -> TicketState:
