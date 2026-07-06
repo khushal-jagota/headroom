@@ -373,3 +373,30 @@ Built the redesigned Backlog and NEW Ideas screens to the owner-approved mockups
 
 Verify: **VERIFY: PASS** — 5 gates, 106 unit + 17 e2e (2 new backlog/ideas flow tests,
 `test_e33` updated to the split).
+
+## 2026-07-06 · Runtime redesign — spike 01 + design rulings
+
+- **Spike 01 (Hermes linkage) adopted.** Fable spike proved Option 3 end-to-end against the real
+  gateway. Folded into notes.md: child-per-run gateway topology; role skills via
+  `HERMES_TUI_SKILLS` child env (per-process granularity → role = one child per run); `run_step()`
+  primitive for System B; per-session queue reclassified as load-bearing correctness (gateway
+  busy-guard is per-process only). Evidence + full plan in `spikes/01-hermes-linkage.md`; I
+  spot-checked the keystone claim (`build_preloaded_skills_prompt` at `agent/skill_commands.py:564`,
+  injected at `tui_gateway/server.py:3755`) against real source before adopting.
+- **Mechanical Scheduling OPENs decided** (owner authorized me to drive remaining decisions): poll
+  queries candidate rows only (not full-table rescan); fast path added alongside the timer
+  backstop; "can't proceed yet" is a code readiness call (poll doesn't start the agent), no agent
+  stop-condition. Design detail for the System A pass.
+- **Pending owner rulings** (surfaced via AskUserQuestion, not defaulted — they change what we
+  build): dedicated planner `HERMES_HOME` vs default home; ticket proposal model (bundle change
+  into proposal vs separate before/after diff); agent day-composition approval (bundled into
+  day-approval vs per-ticket); one CLI vs two. Implementation of the primitive does NOT depend on
+  these — it starts first.
+- **Three owner rulings received (2026-07-06):** (1) **dedicated planner `HERMES_HOME`** — planner
+  minds isolated from the owner's real `~/.hermes`, costs a one-time provisioning step; (2) **ticket
+  proposal model = bundle** — a content change rides the agent's end-of-step proposal (one
+  approve-act), not a separate before/after diff; (3) **one CLI** — single `plan` binary, scope by
+  naming, not two binaries (clarity over enforcement; agents trusted, single-user local). All three
+  folded into notes.md. Sprint-item change model takes the same one-act shape when its layer is
+  built. Deferred to their layers (not near-term): agent day-composition approval, ticket
+  body/details, links/blocking semantics.

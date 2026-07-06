@@ -2,7 +2,56 @@
 
 Read this first after any context compaction. It is the build's memory.
 
-## CURRENT WORK (2026-07-06): UI redesign live-wired — SPEC RETIRED, iterating by mockup
+## CURRENT WORK (2026-07-06): Runtime redesign — spike 01 done, driving to implementation
+
+We are in the **runtime redesign** phase. Authoritative fix-spec:
+`orchestration/runtime-redesign/notes.md` (what v2 got wrong, what we fix, how). Method: hand each
+load-bearing *empirical* OPEN to a Fable **spike** that touches the real thing and writes a
+decisive plan to `spikes/NN-*.md`; adopted findings fold into notes.md. Design/taste OPENs are
+settled with the owner, not spiked.
+
+**Spike 01 — Hermes linkage — DONE** (`spikes/01-hermes-linkage.md`). Proved Option 3 end-to-end
+against the real gateway: stdio JSON-RPC child (`venv/bin/python -m tui_gateway.entry`), session
+create/resume across process restarts, role skills at kickoff via `HERMES_TUI_SKILLS` child env
+(per-process → role = one child per run, kanban-shaped), slash-command catalog for the UI, and a
+code-side run/approval boundary (single `message.complete` per run; per-session queue reclassified
+as load-bearing correctness). The one big empirical risk is retired. Folded into notes.md
+(*Agent runtime*, *Scheduling & runs*).
+
+**Next:** most remaining OPENs are design/taste rulings, not spikes — implementation is largely
+unblocked. First wave = the agent-operation primitive (GatewayChild + `run_step` + per-session
+queue, against a fake-gateway double), which depends on none of the open design questions. Owner
+rulings pending on: dedicated planner `HERMES_HOME`, ticket proposal model (bundle vs before/after
+diff), agent day-composition approval, one-CLI-vs-two. Then cut tickets.
+
+**Orchestration tiering (owner-set):** per-ticket **Fable** orchestrator = coordination +
+sense-checking + *light* plan review (the judgment layer, not the substance). **Opus** = the
+workhorse — deep planning AND implementation. **Codex** = heavy independent review (plan + diff),
+and for **W2 removals codex-xhigh doubles as the implementer** (write-enabled; thorough at
+mechanical deletion + reference repair). Every orchestrator brief states "all working sub-agents
+are Opus" explicitly. Verify runs serially (integrator only) after each wave — never concurrently
+with an agent. Commits await explicit owner instruction.
+
+**Wave status:**
+- **W1 (`minds/` primitive) — DONE ✓.** 8 additive files in `src/planner/minds/` (gateway / runner
+  / queue / fake / config / smoke + `tests/unit/test_minds.py`, 28 tests). Codex plan-review caught
+  + fixed a queue-key bug (now keyed on the durable `session_key`); diff-review APPROVE (lone
+  `__pycache__` finding refuted). Integrator spot-check (frame router / `run_step` mapping / queue
+  single-in-flight invariant) PASS. **Full `./verify` PASS** (ruff / mypy / unit 134 / build / e2e
+  17). Not committed (awaiting owner). **W3 carry-forward:** System B must serialize kickoff itself
+  and resolve the mind's CURRENT `session_key` at execution time — the queue can't serialize step-0
+  (both have no key yet). See `src/planner/minds/queue.py` docstring + the W1 report.
+- **W2 (removals) — planning in parallel** (`w2-orchestrator`, background, plan-only). On plan
+  ready → greenlight codex-xhigh implementation (serialized after W1).
+- **W3 (rewire) — ticket DRAFTED** (`orchestration/tickets/W3-runtime-rewire/ticket.md`), dispatch
+  HELD until W2 verifies green (W3 plans against the stable post-W2 schema/tests — `SCHEMA_VERSION`
+  2→3). **Opus orchestrator** (not Fable — load-bearing interlock: status field ↔ System A ↔ System
+  B ↔ gate; and the Fable orchestrators stalled after long steps). One coherent ticket; planner
+  produces a phased plan (schema+status → System B → System A → gate → CLI). Home-provisioning +
+  worker skill are an out-of-band sub-part (validated via smoke, not hermetic verify). Carries the
+  W1 constraint: System B serializes kickoff + resolves current `session_key` at execution time.
+
+## Prior work (2026-07-06): UI redesign live-wired — SPEC RETIRED, iterating by mockup
 
 **Big pivot (owner):** SPEC.md is no longer law. Deleted `SPEC.md`, `codex-audit.md`,
 `GOAL-CONDITION.md` (git-recoverable). Kept `PRINCIPLES.md` (design/eng rules still bind) + `DOCS.md`.
