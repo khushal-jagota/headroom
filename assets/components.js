@@ -353,6 +353,20 @@
     return GATING_FIELD[state] || null;
   }
 
+  // Centralized scope options: the ceiling states a selector may offer — the floor
+  // state (the current state, or the state being advanced to) and every state after
+  // it, never an earlier stage. One source for the approval grant picker and the
+  // header scope control, so neither can offer "approve back past where we are".
+  function ceilingOptions(floorState) {
+    var start = STATE_ORDER.indexOf(floorState);
+    if (start < 0) {
+      start = 0;
+    }
+    return STATE_ORDER.slice(start).map(function (state) {
+      return { value: state, label: stateLabel(state) };
+    });
+  }
+
   function quietLine(text) {
     return make("div", "quiet-line", text);
   }
@@ -669,13 +683,9 @@
     var noFurther = make("option", null, "No further");
     noFurther.value = "none";
     select.appendChild(noFurther);
-    var start = STATE_ORDER.indexOf(newState);
-    if (start < 0) {
-      start = 0;
-    }
-    STATE_ORDER.slice(start).forEach(function (state) {
-      var option = make("option", null, state.replace(/_/g, " "));
-      option.value = state;
+    ceilingOptions(newState).forEach(function (opt) {
+      var option = make("option", null, opt.label);
+      option.value = opt.value;
       select.appendChild(option);
     });
     select.addEventListener("change", onChange);
@@ -1527,6 +1537,7 @@
     quietLine: quietLine,
     advanceTarget: advanceTarget,
     gatingField: gatingField,
+    ceilingOptions: ceilingOptions,
     STATE_ORDER: STATE_ORDER,
     proposalCard: proposalCard,
     grantPairPicker: grantPairPicker,

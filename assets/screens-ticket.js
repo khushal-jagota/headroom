@@ -66,6 +66,10 @@
     return api.fetchJson("/api/tickets/" + id, { method: "PATCH", body: body });
   }
 
+  function grant(id, body) {
+    return api.fetchJson("/api/tickets/" + id + "/grant", { method: "POST", body: body });
+  }
+
   // Plain-text fetch for copy-text: fetchJson would JSON.parse the text body and
   // reject. The reject shape only needs .code/.message for errorLine.
   function fetchText(path) {
@@ -358,6 +362,47 @@
     meta.appendChild(headerCopy(id, headErr));
 
     head.appendChild(meta);
+
+    // Scope (the employee's grant): how far it may advance without approval, and what
+    // it does at the cap. Human-editable anytime (POST /grant); the WS flush re-renders
+    // — no optimistic UI. Options are the current state and beyond, never an earlier
+    // stage (C.ceilingOptions). Hidden on done — nothing left to advance.
+    if (C.STATE_ORDER.indexOf(detail.state) >= 0 && detail.state !== "done") {
+      var scope = el("div", "ticket-scope");
+      scope.appendChild(el("span", "scope-key", "approved until"));
+      var ceilingSel = el("select", "scope-ceiling");
+      ceilingSel.setAttribute("data-scope-ceiling", "");
+      C.ceilingOptions(detail.state).forEach(function (opt) {
+        var option = el("option", null, opt.label);
+        option.value = opt.value;
+        if (opt.value === detail.ceiling) {
+          option.selected = true;
+        }
+        ceilingSel.appendChild(option);
+      });
+      scope.appendChild(ceilingSel);
+      scope.appendChild(el("span", "scope-sep", "then"));
+      var atcapSel = el("select", "scope-atcap");
+      atcapSel.setAttribute("data-scope-atcap", "");
+      [["stop", "stop"], ["propose", "propose"]].forEach(function (pair) {
+        var option = el("option", null, pair[1]);
+        option.value = pair[0];
+        if (pair[0] === detail.at_cap) {
+          option.selected = true;
+        }
+        atcapSel.appendChild(option);
+      });
+      scope.appendChild(atcapSel);
+      var scopePush = function () {
+        headSave(function () {
+          return grant(id, { ceiling: ceilingSel.value, at_cap: atcapSel.value });
+        });
+      };
+      ceilingSel.addEventListener("change", scopePush);
+      atcapSel.addEventListener("change", scopePush);
+      head.appendChild(scope);
+    }
+
     head.appendChild(headErr);
     return head;
   }
