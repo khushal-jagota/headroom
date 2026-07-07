@@ -204,3 +204,42 @@ def test_chat_send_lost_race_adopts_winner_key_no_event(tmp_path: Path) -> None:
     assert result.session_key == "winner-key"
     assert _stored_key(db_path, "tickets", tid) == "winner-key"
     assert _events(db_path, tid, "chat_session_created") == []
+
+
+def test_chat_send_stale_session_remints_and_repersists(tmp_path: Path) -> None:
+    """A stored key the gateway no longer has: the real adapter mints a fresh session
+    (4007 -> create) and returns a new key. The service must replace the stale key and
+    log the new one, so the dead key is never resumed again (the 'Gateway Offline' bug)."""
+    db_path = tmp_path / "planning-test.db"
+    boot = connect(str(db_path))
+    create_schema(boot)
+    boot.close()
+    tid = _ticket(db_path)
+
+    seed = connect(str(db_path))  # a prior session the gateway has since forgotten
+    try:
+        seed.execute("BEGIN IMMEDIATE")
+        seed.execute("UPDATE tickets SET chat_session_key = ? WHERE id = ?", ("stale-key", tid))
+        seed.execute("COMMIT")
+    finally:
+        seed.close()
+
+    class ReMintGateway:
+        """Returns a fresh key for the stale one — as the real adapter does after 4007."""
+
+        def status(self) -> GatewayStatus:
+            return GatewayStatus(available=True)
+
+        def send(self, session_key: str | None, entity_id: str, text: str) -> ChatSendResult:
+            assert session_key == "stale-key"  # the stale key is passed through
+            return ChatSendResult(reply_text="echo: x", session_key="fresh-key")
+
+    conn = connect(str(db_path))
+    try:
+        result = service.send(conn, ReMintGateway(), tid, "x", 0)
+    finally:
+        conn.close()
+
+    assert result.session_key == "fresh-key"
+    assert _stored_key(db_path, "tickets", tid) == "fresh-key"
+    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fresh-key"}]

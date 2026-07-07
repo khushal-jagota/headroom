@@ -112,6 +112,31 @@ class RealGatewayAdapter:
             return GatewayStatus(available=True)
         return GatewayStatus(available=False, detail=f"hermes interpreter not found: {python}")
 
+    def _resume_or_create(self, child: Any, session_key: str | None) -> tuple[str, str]:
+        """Resume the entity's mind; if the gateway no longer has that session (rpc 4007
+        — it was restarted or the session expired) or there is no key yet, mint a fresh
+        one. Returns (live_session_id, stored_session_key). The stored key differs from
+        the one passed in exactly when a new session was created; the caller re-persists
+        it (chat/service.py) so the dead key is never resumed again."""
+        from planner.minds.gateway import GatewayRpcError
+
+        if session_key:
+            try:
+                resumed = child.request("session.resume", {"session_id": session_key})
+                return (
+                    str(resumed.get("session_id") or ""),
+                    str(resumed.get("resumed") or session_key),
+                )
+            except GatewayRpcError as exc:
+                if exc.code != 4007:  # a real resume error, not "session not found"
+                    raise
+                # fall through: the stored key is stale — mint a fresh session
+        created = child.request("session.create", {"source": "planner-chat", "cols": 100})
+        return (
+            str(created.get("session_id") or ""),
+            str(created.get("stored_session_id") or ""),
+        )
+
     def send(self, session_key: str | None, entity_id: str, text: str) -> ChatSendResult:
         from planner.minds.config import resolve_hermes_python
         from planner.minds.gateway import GatewayChild, GatewayError
@@ -120,14 +145,7 @@ class RealGatewayAdapter:
         child = GatewayChild(str(python), self._env(python))
         try:
             child.wait_ready()
-            if session_key:
-                resumed = child.request("session.resume", {"session_id": session_key})
-                live_sid = str(resumed.get("session_id") or "")
-                stored = str(resumed.get("resumed") or session_key)
-            else:
-                created = child.request("session.create", {"source": "planner-chat", "cols": 100})
-                live_sid = str(created.get("session_id") or "")
-                stored = str(created.get("stored_session_id") or "")
+            live_sid, stored = self._resume_or_create(child, session_key)
             child.request("prompt.submit", {"session_id": live_sid, "text": text})
             reply = ""
             while True:
@@ -191,14 +209,7 @@ class RealGatewayAdapter:
         child = GatewayChild(str(python), self._env(python))
         try:
             child.wait_ready()
-            if session_key:
-                resumed = child.request("session.resume", {"session_id": session_key})
-                live_sid = str(resumed.get("session_id") or "")
-                stored = str(resumed.get("resumed") or session_key)
-            else:
-                created = child.request("session.create", {"source": "planner-chat", "cols": 100})
-                live_sid = str(created.get("session_id") or "")
-                stored = str(created.get("stored_session_id") or "")
+            live_sid, stored = self._resume_or_create(child, session_key)
             name, arg = self._split_command(command)
             try:
                 result = child.request("slash.exec", {"session_id": live_sid, "command": command})

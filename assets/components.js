@@ -1062,6 +1062,20 @@
     if (kind === "state_changed") {
       return String(payload.from) + " → " + String(payload.to);
     }
+    // Run outcome — the errored case carries the reason (agent init / crash / no
+    // proposal). Surfacing it here is what makes a failed run debuggable at all.
+    if (kind === "ticket_status_changed") {
+      if (payload.error) {
+        return String(payload.status) + " — " + String(payload.error);
+      }
+      return String(payload.status) + (payload.worker ? " · " + String(payload.worker) : "");
+    }
+    if (kind === "grant_changed") {
+      return "approved until " + String(payload.ceiling) + " · " + String(payload.at_cap);
+    }
+    if (kind === "chat_session_created") {
+      return String(payload.session_key || "");
+    }
     if (kind === "proposal_accepted") {
       return String(payload.field) + " · " + String(payload.resolved_by);
     }
@@ -1170,7 +1184,9 @@
       return wrap;
     }
     events.forEach(function (ev) {
-      var row = make("div", "event-log-row");
+      var payload = ev.payload || {};
+      var isError = ev.kind === "ticket_status_changed" && payload.status === "errored";
+      var row = make("div", "event-log-row" + (isError ? " event-log-row--error" : ""));
       row.setAttribute("data-event-row", "");
       row.setAttribute("data-event-kind", ev.kind);
       row.appendChild(make("span", "event-log-kind", ev.kind));

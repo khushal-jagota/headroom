@@ -66,34 +66,49 @@ def _resolve(conn: sqlite3.Connection, entity_id: str, now: int) -> tuple[str, s
     raise PlannerError(ErrorCode.not_found, "no chattable entity for id", {"entity_id": entity_id})
 
 
-def _persist_first_key(
-    conn: sqlite3.Connection, kind: str, entity_id: str, minted_key: str, now: int
+def _persist_key(
+    conn: sqlite3.Connection,
+    kind: str,
+    entity_id: str,
+    stored_key: str | None,
+    minted_key: str,
+    now: int,
 ) -> str:
-    """First reply only: persist the minted session key onto the entity and log one
-    chat_session_created event, in a single transaction. On a lost race (a concurrent
-    first reply won the write lock) no event is logged and the winner's key is adopted.
-    Returns the effective key. Shared by send and run_command."""
+    """Persist a (re)minted session key onto the entity and log one chat_session_created
+    event, in a single transaction. Two cases: the first reply (stored_key is None), and a
+    re-mint — the adapter created a fresh session because the stored key was stale (gateway
+    restarted) or rotated, so stored_key is set but the returned key differs. Persisting the
+    re-mint is what stops the dead key being resumed forever. On a lost first-write race no
+    event is logged and the winner's key is adopted. Returns the effective key."""
     table = "tickets" if kind == "ticket" else "days"  # fixed map, never request input
     with _txn(conn):
-        cursor = conn.execute(
-            f"UPDATE {table} SET chat_session_key = ?, updated_at = ? "
-            "WHERE id = ? AND chat_session_key IS NULL",
+        if stored_key is None:
+            cursor = conn.execute(
+                f"UPDATE {table} SET chat_session_key = ?, updated_at = ? "
+                "WHERE id = ? AND chat_session_key IS NULL",
+                (minted_key, now, entity_id),
+            )
+            if cursor.rowcount == 1:
+                append_event(
+                    conn, entity_id, EventKind.chat_session_created,
+                    {"session_key": minted_key}, now,
+                )
+                return minted_key
+            row = conn.execute(
+                f"SELECT chat_session_key FROM {table} WHERE id = ?", (entity_id,)
+            ).fetchone()
+            winner: str = row["chat_session_key"]
+            return winner
+        # re-mint: replace the known-stale key with the fresh one (the old session is gone).
+        conn.execute(
+            f"UPDATE {table} SET chat_session_key = ?, updated_at = ? WHERE id = ?",
             (minted_key, now, entity_id),
         )
-        if cursor.rowcount == 1:
-            append_event(
-                conn,
-                entity_id,
-                EventKind.chat_session_created,
-                {"session_key": minted_key},
-                now,
-            )
-            return minted_key
-        row = conn.execute(
-            f"SELECT chat_session_key FROM {table} WHERE id = ?", (entity_id,)
-        ).fetchone()
-        winner: str = row["chat_session_key"]
-        return winner
+        append_event(
+            conn, entity_id, EventKind.chat_session_created,
+            {"session_key": minted_key}, now,
+        )
+        return minted_key
 
 
 def send(
@@ -113,9 +128,9 @@ def send(
         raise PlannerError(
             ErrorCode.gateway_offline, "gateway unavailable", {"cause": str(exc)}
         ) from exc
-    if stored_key is None:  # first reply → persist the key and log one event
-        effective = _persist_first_key(conn, kind, entity_id, result.session_key, now)
-        if effective != result.session_key:  # lost the race; adopt the winner's key
+    if result.session_key != stored_key:  # first reply, OR a re-minted (stale/rotated) key
+        effective = _persist_key(conn, kind, entity_id, stored_key, result.session_key, now)
+        if effective != result.session_key:  # lost the first-write race; adopt the winner
             result = ChatSendResult(reply_text=result.reply_text, session_key=effective)
     return result
 
@@ -143,8 +158,8 @@ def run_command(
         raise PlannerError(
             ErrorCode.gateway_offline, "gateway unavailable", {"cause": str(exc)}
         ) from exc
-    if stored_key is None:
-        effective = _persist_first_key(conn, kind, entity_id, result.session_key, now)
+    if result.session_key != stored_key:
+        effective = _persist_key(conn, kind, entity_id, stored_key, result.session_key, now)
         if effective != result.session_key:
             result = CommandRunResult(
                 reply_text=result.reply_text, session_key=effective, kind=result.kind

@@ -1056,6 +1056,19 @@ select {
   color: var(--text-default);
 }
 
+/* Errored run — the one event that must not be missed. Amber marker (needs the
+ * human), the reason bright and allowed to wrap however long it is. */
+.event-log-row--error .event-log-kind {
+  color: var(--accent-bright);
+}
+
+.event-log-row--error .event-log-summary {
+  color: var(--text-strong);
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* --- Links / day / sprint (T16) ------------------------------------------ */
 
 .ticket-links,
