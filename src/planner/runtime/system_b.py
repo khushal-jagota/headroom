@@ -47,7 +47,7 @@ from planner.tickets.logic import fields_codec, machine
 _log = logging.getLogger(__name__)
 
 # An optional execution-time readiness re-check (runtime.readiness.is_runnable): the poll
-# read and the queued run are not atomic, so a human drop / grant-stop / park / block in the
+# read and the queued run are not atomic, so a human drop / scope-stop / park / block in the
 # gap must not run a stale prompt. Kept as an injected guard so System B owns no readiness
 # logic and W3a's bare-set_off tests (guard=None) are unchanged.
 RunGuard = Callable[[sqlite3.Connection, Ticket], bool]
@@ -153,7 +153,7 @@ class SystemB:
         try:
             now = self._clock.now_unix()
             # (0+1) atomic guarded start: re-read + readiness re-check + the agent_working start
-            # write happen in ONE immediate transaction, so a human drop / grant-stop / block /
+            # write happen in ONE immediate transaction, so a human drop / scope-stop / block /
             # park committed in the poll->run gap cannot slip a stale start-write + spawn past the
             # guard. Returns None (nothing written) => no longer runnable, so skip cleanly. Absent
             # guard (W3a bare set_off) => an unconditional start, exactly as before.

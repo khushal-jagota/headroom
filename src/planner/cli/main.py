@@ -1,6 +1,6 @@
 """The `plan` CLI (§8). A single entry point speaking HTTP to the server. The CLI
 is for agents and developer debugging; the human operates through the UI. No
-resolution verbs exist here (accept/approve/grant are UI/API only).
+resolution verbs exist here (accept/approve/scope are UI/API only).
 
 Every verb supports --json (machine output; exit codes 0 success, 1
 validation/domain error, 2 connection error). Long text arrives via
@@ -280,7 +280,7 @@ def ticket_set(
     sprint: str | None,
     as_json: bool,
 ) -> None:
-    """Set priority / deadline / day / sprint (no ceiling or at_cap — grants are human)."""
+    """Set priority / deadline / day / sprint (no ceiling or at_cap — scopes are human)."""
     tid = resolve_ticket_id(ticket_id, as_json)
     patch: dict[str, Any] = {}
     if priority is not None:

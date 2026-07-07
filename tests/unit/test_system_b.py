@@ -109,7 +109,7 @@ def _new_ticket(db_path: str, *, ceiling: TicketState | None = None) -> str:
             conn, title="T", actor="human", now=0, title_max_chars=200
         )
         if ceiling is not None:
-            tickets_data.change_grant(
+            tickets_data.change_scope(
                 conn, ticket.id, ceiling=ceiling, at_cap=AtCap.propose, actor="human", now=0
             )
         return ticket.id

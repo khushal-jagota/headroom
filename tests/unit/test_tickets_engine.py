@@ -38,10 +38,10 @@ def _create(conn: Connection, cfg: Config, clock: TestClock, **kw: Any) -> Ticke
     )
 
 
-def _grant(
+def _scope(
     conn: Connection, t: Ticket, ceiling: TicketState, at_cap: AtCap, clock: TestClock
 ) -> Ticket:
-    return data.change_grant(
+    return data.change_scope(
         conn, t.id, ceiling=ceiling, at_cap=at_cap, actor="human", now=clock.now_unix()
     )
 
@@ -60,7 +60,7 @@ def test_a02_gating_chain_one_state_per_accept(
 ) -> None:
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
-    _grant(tmp_db, t, TicketState.needs_review, AtCap.propose, fake_clock)
+    _scope(tmp_db, t, TicketState.needs_review, AtCap.propose, fake_clock)
 
     t = data.file_proposal(
         tmp_db, t.id, field=FieldName.success, body="success body", actor="agent", now=now
@@ -108,7 +108,7 @@ def test_a03_ceiling_auto_accept_until_cap_then_pending(
 ) -> None:
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
-    _grant(tmp_db, t, TicketState.needs_plan, AtCap.propose, fake_clock)
+    _scope(tmp_db, t, TicketState.needs_plan, AtCap.propose, fake_clock)
 
     t = data.file_proposal(tmp_db, t.id, field=FieldName.success, body="s", actor="agent", now=now)
     assert t.state is TicketState.needs_approach
@@ -136,10 +136,10 @@ def test_a04_at_cap_stop_vs_propose(
 ) -> None:
     now = fake_clock.now_unix()
     a = _create(tmp_db, cfg, fake_clock)
-    _grant(tmp_db, a, TicketState.needs_approach, AtCap.propose, fake_clock)
+    _scope(tmp_db, a, TicketState.needs_approach, AtCap.propose, fake_clock)
     a = data.file_proposal(tmp_db, a.id, field=FieldName.success, body="s", actor="agent", now=now)
     assert a.state is TicketState.needs_approach
-    _grant(tmp_db, a, TicketState.needs_approach, AtCap.stop, fake_clock)
+    _scope(tmp_db, a, TicketState.needs_approach, AtCap.stop, fake_clock)
     count_at_stop = len(_events(tmp_db, cfg, a.id))
 
     with pytest.raises(PlannerError) as exc_gating:
@@ -156,7 +156,7 @@ def test_a04_at_cap_stop_vs_propose(
     assert a.fields.approach.proposal is None
     assert len(_events(tmp_db, cfg, a.id)) == count_at_stop
 
-    _grant(tmp_db, a, TicketState.needs_approach, AtCap.propose, fake_clock)
+    _scope(tmp_db, a, TicketState.needs_approach, AtCap.propose, fake_clock)
     a = data.file_proposal(
         tmp_db, a.id, field=FieldName.approach, body="approach draft", actor="agent", now=now
     )
@@ -174,9 +174,9 @@ def test_a04_at_cap_stop_vs_propose(
     assert len(_events(tmp_db, cfg, a.id)) == count_before
 
     b = _create(tmp_db, cfg, fake_clock)
-    _grant(tmp_db, b, TicketState.needs_plan, AtCap.stop, fake_clock)
+    _scope(tmp_db, b, TicketState.needs_plan, AtCap.stop, fake_clock)
     c = _create(tmp_db, cfg, fake_clock)
-    _grant(tmp_db, c, TicketState.needs_plan, AtCap.propose, fake_clock)
+    _scope(tmp_db, c, TicketState.needs_plan, AtCap.propose, fake_clock)
 
     b = data.file_proposal(tmp_db, b.id, field=FieldName.success, body="s", actor="agent", now=now)
     c = data.file_proposal(tmp_db, c.id, field=FieldName.success, body="s", actor="agent", now=now)
@@ -261,11 +261,11 @@ def test_a06_edit_accept_stores_edited_text(
     }
     assert t.ceiling is TicketState.needs_approach
     assert t.at_cap is AtCap.propose
-    grant = _events(tmp_db, cfg, t.id, EventKind.grant_changed)
-    assert grant[-1].payload == {
+    scope = _events(tmp_db, cfg, t.id, EventKind.scope_changed)
+    assert scope[-1].payload == {
         "ceiling": "needs_approach",
         "at_cap": "propose",
-        "cause": "onward_grant",
+        "cause": "onward_scope",
     }
 
 
@@ -275,7 +275,7 @@ def test_a07_result_routing(
     now = fake_clock.now_unix()
 
     t1 = _create(tmp_db, cfg, fake_clock)
-    _grant(tmp_db, t1, TicketState.needs_review, AtCap.propose, fake_clock)
+    _scope(tmp_db, t1, TicketState.needs_review, AtCap.propose, fake_clock)
     for f, body in [(FieldName.success, "s"), (FieldName.approach, "a"), (FieldName.plan, "p")]:
         t1 = data.file_proposal(tmp_db, t1.id, field=f, body=body, actor="agent", now=now)
     assert t1.state is TicketState.in_progress
@@ -295,7 +295,7 @@ def test_a07_result_routing(
     assert t1.at_cap is AtCap.propose
 
     t2 = _create(tmp_db, cfg, fake_clock)
-    _grant(tmp_db, t2, TicketState.done, AtCap.propose, fake_clock)
+    _scope(tmp_db, t2, TicketState.done, AtCap.propose, fake_clock)
     for f, body in [
         (FieldName.success, "s"),
         (FieldName.approach, "a"),
@@ -316,7 +316,7 @@ def test_a07_result_routing(
     ]
 
     t3 = _create(tmp_db, cfg, fake_clock)
-    _grant(tmp_db, t3, TicketState.in_progress, AtCap.propose, fake_clock)
+    _scope(tmp_db, t3, TicketState.in_progress, AtCap.propose, fake_clock)
     for f, body in [(FieldName.success, "s"), (FieldName.approach, "a"), (FieldName.plan, "p")]:
         t3 = data.file_proposal(tmp_db, t3.id, field=f, body=body, actor="agent", now=now)
     assert t3.state is TicketState.in_progress
@@ -324,7 +324,7 @@ def test_a07_result_routing(
     assert t3.state is TicketState.in_progress
     assert t3.fields.result.proposal is not None
 
-    _grant(tmp_db, t3, TicketState.done, AtCap.propose, fake_clock)
+    _scope(tmp_db, t3, TicketState.done, AtCap.propose, fake_clock)
     t3 = data.accept_proposal(
         tmp_db,
         t3.id,
@@ -348,7 +348,7 @@ def test_a08_recap_rules(
     assert exc_early.value.code is ErrorCode.recap_too_early
     assert data.read_ticket(tmp_db, t.id).recap == ""
 
-    _grant(tmp_db, t, TicketState.needs_approach, AtCap.propose, fake_clock)
+    _scope(tmp_db, t, TicketState.needs_approach, AtCap.propose, fake_clock)
     t = data.file_proposal(tmp_db, t.id, field=FieldName.success, body="s", actor="agent", now=now)
     assert t.state is TicketState.needs_approach
 
@@ -404,7 +404,7 @@ def test_a13_sprint_assignment_rules(
     assert data.get_effective_sprint_id(tmp_db, standalone.id) == "sp_test"
 
 
-def test_a36_onward_grant(
+def test_a36_onward_scope(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
@@ -421,13 +421,13 @@ def test_a36_onward_grant(
             tmp_db, t.id, field=FieldName.success, actor="human", now=now,
             next_ceiling=None, at_cap=AtCap.stop,
         )
-    assert e_missing_ceiling.value.code is ErrorCode.grant_missing
+    assert e_missing_ceiling.value.code is ErrorCode.scope_missing
     with pytest.raises(PlannerError) as e_missing_at_cap:
         data.accept_proposal(
             tmp_db, t.id, field=FieldName.success, actor="human", now=now,
             next_ceiling=NO_FURTHER, at_cap=None,
         )
-    assert e_missing_at_cap.value.code is ErrorCode.grant_missing
+    assert e_missing_at_cap.value.code is ErrorCode.scope_missing
 
     t = data.read_ticket(tmp_db, t.id)
     assert t.state is TicketState.needs_success
@@ -443,13 +443,13 @@ def test_a36_onward_grant(
             tmp_db, t.id, field=FieldName.success, actor="human", now=now,
             next_ceiling=TicketState.needs_success, at_cap=AtCap.propose,
         )
-    assert e_before.value.code is ErrorCode.grant_invalid
+    assert e_before.value.code is ErrorCode.scope_invalid
     with pytest.raises(PlannerError) as e_dropped:
         data.accept_proposal(
             tmp_db, t.id, field=FieldName.success, actor="human", now=now,
             next_ceiling=TicketState.dropped, at_cap=AtCap.propose,
         )
-    assert e_dropped.value.code is ErrorCode.grant_invalid
+    assert e_dropped.value.code is ErrorCode.scope_invalid
     assert data.read_ticket(tmp_db, t.id).state is TicketState.needs_success
     assert len(_events(tmp_db, cfg, t.id)) == count
 
@@ -496,17 +496,17 @@ def test_a36_onward_grant(
         next_ceiling=TicketState.needs_plan, at_cap=AtCap.propose,
     )
     assert t3.ceiling is TicketState.needs_plan
-    grant_count_before = len(_events(tmp_db, cfg, t3.id, EventKind.grant_changed))
+    scope_count_before = len(_events(tmp_db, cfg, t3.id, EventKind.scope_changed))
     t3 = data.file_proposal(
         tmp_db, t3.id, field=FieldName.approach, body="a", actor="agent", now=now
     )
     assert t3.state is TicketState.needs_plan
     assert t3.ceiling is TicketState.needs_plan
     assert t3.at_cap is AtCap.propose
-    assert len(_events(tmp_db, cfg, t3.id, EventKind.grant_changed)) == grant_count_before
+    assert len(_events(tmp_db, cfg, t3.id, EventKind.scope_changed)) == scope_count_before
 
     t4 = _create(tmp_db, cfg, fake_clock)
-    _grant(tmp_db, t4, TicketState.needs_review, AtCap.propose, fake_clock)
+    _scope(tmp_db, t4, TicketState.needs_review, AtCap.propose, fake_clock)
     for f, body in [
         (FieldName.success, "s"),
         (FieldName.approach, "a"),
@@ -517,9 +517,9 @@ def test_a36_onward_grant(
     assert t4.state is TicketState.needs_review
     ceiling_before = t4.ceiling
     at_cap_before = t4.at_cap
-    grants_before = len(_events(tmp_db, cfg, t4.id, EventKind.grant_changed))
+    scopes_before = len(_events(tmp_db, cfg, t4.id, EventKind.scope_changed))
     t4 = data.approve_review(tmp_db, t4.id, actor="human", now=now)
     assert t4.state is TicketState.done
     assert t4.ceiling is ceiling_before
     assert t4.at_cap is at_cap_before
-    assert len(_events(tmp_db, cfg, t4.id, EventKind.grant_changed)) == grants_before
+    assert len(_events(tmp_db, cfg, t4.id, EventKind.scope_changed)) == scopes_before

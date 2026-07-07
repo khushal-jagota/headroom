@@ -5,7 +5,7 @@
  *   sprint reads "current" when it is the current sprint — a copy affordance, and the
  *   agent-working/errored/blocked run-status markers) → Recap (inlineEdit, offered only
  *   past needs_success) → THE Approval (a single approvalBlock, gating-pending or
- *   needs_review by state; it carries the grant pair) → collapsible field sections
+ *   needs_review by state; it carries the scope pair) → collapsible field sections
  *   (success/approach/plan/result, driven by field_is_passed). Chat is a side rail.
  * Every mutation calls fetchJson and relies on the WS flush -> route() re-render;
  * no optimistic UI. The lone direct DOM tweak is the copy button's "Copied" flash
@@ -66,8 +66,8 @@
     return api.fetchJson("/api/tickets/" + id, { method: "PATCH", body: body });
   }
 
-  function grant(id, body) {
-    return api.fetchJson("/api/tickets/" + id + "/grant", { method: "POST", body: body });
+  function saveScope(id, body) {
+    return api.fetchJson("/api/tickets/" + id + "/scope", { method: "POST", body: body });
   }
 
   // Plain-text fetch for copy-text: fetchJson would JSON.parse the text body and
@@ -183,11 +183,11 @@
   }
 
   // A resolvable proposal card for a NON-gating pending proposal (§4.4.4): accept /
-  // edit with no grant pair (only the gating field requires the grant pair).
+  // edit with no scope pair (only the gating field requires the scope pair).
   function resolvableProposal(id, detail, name, slot) {
     return C.proposalCard({
       proposal: slot.proposal,
-      requireGrant: false,
+      requireScope: false,
       newState: C.advanceTarget(detail.state, detail.ceiling),
       onAccept: function (payload) {
         return api.fetchJson("/api/tickets/" + id + "/accept/" + name, {
@@ -363,22 +363,22 @@
 
     head.appendChild(meta);
 
-    // Scope (the employee's grant): how far it may advance without approval, and what it
-    // does at the cap. Human-editable anytime (POST /grant); the WS flush re-renders — no
+    // Scope (the employee's authority ceiling): how far it may advance without approval, and
+    // what it does at the cap. Human-editable anytime (POST /scope); the WS flush re-renders — no
     // optimistic UI. Rendered with the SAME enumPill as the meta row so it reads as one of
     // the header's pills ("approved until X" · "then stop/propose"). Ceiling options are
     // the current state and beyond, never earlier (C.ceilingOptions). Hidden on done.
     if (C.STATE_ORDER.indexOf(detail.state) >= 0 && detail.state !== "done") {
       var scope = el("div", "ticket-scope");
-      var scopeGrant = { ceiling: detail.ceiling, at_cap: detail.at_cap };
+      var scopeBody = { ceiling: detail.ceiling, at_cap: detail.at_cap };
       var scopePush = function () {
-        headSave(function () { return grant(id, scopeGrant); });
+        headSave(function () { return saveScope(id, scopeBody); });
       };
       var ceilingPill = C.enumPill({
         key: "approved until",
         value: detail.ceiling,
         options: C.ceilingOptions(detail.state),
-        onChange: function (v) { scopeGrant.ceiling = v; scopePush(); }
+        onChange: function (v) { scopeBody.ceiling = v; scopePush(); }
       });
       ceilingPill.setAttribute("data-scope-ceiling", "");
       scope.appendChild(ceilingPill);
@@ -386,7 +386,7 @@
         key: "then",
         value: detail.at_cap,
         options: [{ value: "stop", label: "stop" }, { value: "propose", label: "propose" }],
-        onChange: function (v) { scopeGrant.at_cap = v; scopePush(); }
+        onChange: function (v) { scopeBody.at_cap = v; scopePush(); }
       });
       atcapPill.setAttribute("data-scope-atcap", "");
       scope.appendChild(atcapPill);

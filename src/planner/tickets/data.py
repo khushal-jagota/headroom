@@ -235,7 +235,7 @@ def start_run_if_runnable(
     BEGIN IMMEDIATE txn: re-read the ticket, apply `guard` (System A's readiness) against that
     fresh, lock-consistent view, and only if it passes write status=agent_working + worker and
     append one ticket_status_changed event; otherwise write nothing and return None. This closes
-    the poll->run TOCTOU — a human drop/grant-stop/block/park committed in the gap is either seen
+    the poll->run TOCTOU — a human drop/scope-stop/block/park committed in the gap is either seen
     by the re-read (guard skips) or blocked until this commits — while keeping System B the sole
     status writer. `guard=None` => an unconditional start (W3a's bare set_off path)."""
     with _txn(conn):
@@ -320,7 +320,7 @@ def drop_ticket(conn: sqlite3.Connection, ticket_id: str, *, actor: str, now: in
         return _apply_decision(conn, ticket, decision, now)
 
 
-def change_grant(
+def change_scope(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
@@ -331,7 +331,7 @@ def change_grant(
 ) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
-        decision = resolution.decide_grant_change(ticket, ceiling, at_cap, actor)
+        decision = resolution.decide_scope_change(ticket, ceiling, at_cap, actor)
         return _apply_decision(conn, ticket, decision, now)
 
 

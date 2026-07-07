@@ -1,5 +1,5 @@
 """State-machine math for §4.2/§4.3/§4.4: linear order indexing, gating and
-advance tables, the auto-accept condition, ceiling comparison, and onward-grant
+advance tables, the auto-accept condition, ceiling comparison, and onward-scope
 resolution. Pure: contracts + fields_codec only."""
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ from planner.tickets.contracts import (
     STATE_ORDER,
     AtCap,
     FieldName,
-    GrantPair,
     NextCeiling,
+    ScopePair,
     TicketFields,
     TicketState,
 )
@@ -87,13 +87,13 @@ def at_or_beyond_ceiling(state: TicketState, ceiling: TicketState) -> bool:
 def validate_ceiling(ceiling: TicketState) -> None:
     if ceiling not in STATE_ORDER:
         raise PlannerError(
-            ErrorCode.grant_invalid, "ceiling must be a linear state", {"ceiling": ceiling.value}
+            ErrorCode.scope_invalid, "ceiling must be a linear state", {"ceiling": ceiling.value}
         )
 
 
-def resolve_grant(
+def resolve_scope(
     new_state: TicketState, next_ceiling: NextCeiling | None, at_cap: AtCap | None
-) -> GrantPair:
+) -> ScopePair:
     if next_ceiling is None or at_cap is None:
         missing: list[str] = []
         if next_ceiling is None:
@@ -101,22 +101,22 @@ def resolve_grant(
         if at_cap is None:
             missing.append("at_cap")
         raise PlannerError(
-            ErrorCode.grant_missing, "accept requires the onward grant pair", {"missing": missing}
+            ErrorCode.scope_missing, "accept requires the onward scope pair", {"missing": missing}
         )
     if next_ceiling == NO_FURTHER:
         # the ceiling becomes exactly the newly entered state
-        return GrantPair(next_ceiling=new_state, at_cap=at_cap)
+        return ScopePair(next_ceiling=new_state, at_cap=at_cap)
     if not isinstance(next_ceiling, TicketState):
         raise PlannerError(
-            ErrorCode.grant_invalid, "unknown next_ceiling", {"next_ceiling": str(next_ceiling)}
+            ErrorCode.scope_invalid, "unknown next_ceiling", {"next_ceiling": str(next_ceiling)}
         )
     if next_ceiling not in STATE_ORDER or state_index(next_ceiling) < state_index(new_state):
         raise PlannerError(
-            ErrorCode.grant_invalid,
+            ErrorCode.scope_invalid,
             "next_ceiling must be at or beyond the new state",
             {"next_ceiling": next_ceiling.value, "new_state": new_state.value},
         )
-    return GrantPair(next_ceiling=next_ceiling, at_cap=at_cap)
+    return ScopePair(next_ceiling=next_ceiling, at_cap=at_cap)
 
 
 def has_pending_gating_proposal(state: TicketState, fields: TicketFields) -> bool:

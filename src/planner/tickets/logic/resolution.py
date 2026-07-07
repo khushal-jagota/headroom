@@ -13,9 +13,9 @@ from planner.tickets.contracts import (
     AtCap,
     FieldName,
     FieldSlot,
-    GrantPair,
     NextCeiling,
     Proposal,
+    ScopePair,
     Ticket,
     TicketState,
 )
@@ -27,8 +27,8 @@ CAUSE_HUMAN_ACCEPT: Final[str] = "human_accept"
 CAUSE_REVIEW_APPROVE: Final[str] = "review_approve"
 CAUSE_HUMAN_STATE_JUMP: Final[str] = "human_state_jump"
 CAUSE_DROP: Final[str] = "drop"
-CAUSE_ONWARD_GRANT: Final[str] = "onward_grant"
-CAUSE_HUMAN_GRANT: Final[str] = "human_grant"
+CAUSE_ONWARD_SCOPE: Final[str] = "onward_scope"
+CAUSE_HUMAN_SCOPE: Final[str] = "human_scope"
 RESOLVED_BY_AUTO: Final[str] = "auto"
 RESOLVED_BY_HUMAN: Final[str] = "human"
 
@@ -43,7 +43,7 @@ def _accept_gating_proposal(
     stored_body: str,
     resolved_by: str,
     edited: bool,
-    grant: GrantPair | None,
+    scope: ScopePair | None,
     cause: str,
     superseded_body: str | None = None,
 ) -> Decision:
@@ -73,18 +73,18 @@ def _accept_gating_proposal(
     events.append(_state_change(ticket.state, new_state, cause))
     new_ceiling: TicketState | None = None
     new_at_cap: AtCap | None = None
-    if grant is not None:
-        ceiling = grant.next_ceiling
-        assert isinstance(ceiling, TicketState)  # resolve_grant always yields a concrete state
+    if scope is not None:
+        ceiling = scope.next_ceiling
+        assert isinstance(ceiling, TicketState)  # resolve_scope always yields a concrete state
         new_ceiling = ceiling
-        new_at_cap = grant.at_cap
+        new_at_cap = scope.at_cap
         events.append(
             EventSpec(
-                EventKind.grant_changed,
+                EventKind.scope_changed,
                 {
                     "ceiling": ceiling.value,
-                    "at_cap": grant.at_cap.value,
-                    "cause": CAUSE_ONWARD_GRANT,
+                    "at_cap": scope.at_cap.value,
+                    "cause": CAUSE_ONWARD_SCOPE,
                 },
             )
         )
@@ -111,7 +111,7 @@ def decide_file_proposal(
             stored_body=body,
             resolved_by=RESOLVED_BY_AUTO,
             edited=False,
-            grant=None,
+            scope=None,
             cause=CAUSE_AUTO_ACCEPT,
             superseded_body=superseded_body,
         )
@@ -164,14 +164,14 @@ def decide_accept(
     stored_body = edited_body if edited_body is not None else slot.proposal.body
     if field is machine.gating_field(ticket.state):
         new_state = machine.advance_target(ticket.state, ticket.ceiling)
-        grant = machine.resolve_grant(new_state, next_ceiling, at_cap)
+        scope = machine.resolve_scope(new_state, next_ceiling, at_cap)
         return _accept_gating_proposal(
             ticket,
             field,
             stored_body=stored_body,
             resolved_by=RESOLVED_BY_HUMAN,
             edited=edited,
-            grant=grant,
+            scope=scope,
             cause=CAUSE_HUMAN_ACCEPT,
         )
     new_slot = FieldSlot(value=stored_body, proposal=None, notes=slot.notes)
@@ -266,15 +266,15 @@ def decide_drop(ticket: Ticket, actor: str) -> Decision:
     return Decision(events=events, new_state=TicketState.dropped)
 
 
-def decide_grant_change(
+def decide_scope_change(
     ticket: Ticket, ceiling: TicketState, at_cap: AtCap, actor: str
 ) -> Decision:
-    admission.require_human(actor, "change_grant")
+    admission.require_human(actor, "change_scope")
     machine.validate_ceiling(ceiling)
     events = (
         EventSpec(
-            EventKind.grant_changed,
-            {"ceiling": ceiling.value, "at_cap": at_cap.value, "cause": CAUSE_HUMAN_GRANT},
+            EventKind.scope_changed,
+            {"ceiling": ceiling.value, "at_cap": at_cap.value, "cause": CAUSE_HUMAN_SCOPE},
         ),
     )
     return Decision(events=events, new_ceiling=ceiling, new_at_cap=at_cap)

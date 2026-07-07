@@ -826,13 +826,13 @@ textarea {
   .chat-dots i { animation: none; }
 }
 
-/* --- Proposal / grant / review (T15) ------------------------------------- */
+/* --- Proposal / scope / review (T15) ------------------------------------- */
 
 select {
   font: inherit;
 }
 
-.grant-ceiling {
+.scope-ceiling {
   background: var(--surface-sunken);
   color: var(--text-default);
   border: var(--border-hairline) solid var(--text-faint);
@@ -840,7 +840,7 @@ select {
   padding: var(--space-1) var(--space-2);
 }
 
-.grant-picker {
+.scope-picker {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -850,7 +850,7 @@ select {
   padding: var(--space-2) var(--space-3);
 }
 
-.grant-label {
+.scope-label {
   display: flex;
   align-items: center;
   gap: var(--space-1);
@@ -858,12 +858,12 @@ select {
   color: var(--accent-text);
 }
 
-.grant-atcap {
+.scope-atcap {
   display: flex;
   gap: var(--space-3);
 }
 
-.grant-atcap label {
+.scope-atcap label {
   display: flex;
   align-items: center;
   gap: var(--space-1);
@@ -871,7 +871,7 @@ select {
   color: var(--accent-text);
 }
 
-.grant-atcap input {
+.scope-atcap input {
   accent-color: var(--accent-bright);
 }
 
@@ -993,7 +993,7 @@ select {
 }
 
 .state-control-error,
-.grant-control-error,
+.scope-control-error,
 .ticket-copy-error,
 .ticket-links-error,
 .ticket-day-error,
@@ -1003,16 +1003,16 @@ select {
   gap: var(--space-1);
 }
 
-/* --- Grant control (T16) ------------------------------------------------- */
+/* --- Scope control (T16) ------------------------------------------------- */
 
-.grant-control {
+.scope-control {
   display: flex;
   align-items: center;
   gap: var(--space-3);
   flex-wrap: wrap;
 }
 
-.grant-control-current {
+.scope-control-current {
   font-family: var(--font-mono);
   font-size: var(--type-xs);
   color: var(--text-muted);
@@ -1387,7 +1387,7 @@ details.fsec[open] > summary .fsec-chev::before {
   gap: var(--space-2);
 }
 
-/* Scope row — the employee's grant as a second header row: the same enum pills as the
+/* Scope row — the employee's scope as a second header row: the same enum pills as the
  * meta row above, reading "approved until X" · "then stop/propose". */
 .ticket-scope {
   display: flex;

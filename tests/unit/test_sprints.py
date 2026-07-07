@@ -121,7 +121,7 @@ def test_a10_sprint_item_permissions(tmp_db, fake_clock) -> None:
     assert {"from": "active", "to": "done", "cause": "accept"} in _events(
         tmp_db, item3.id, "item_status_changed"
     )
-    # §4.4.7 guard: item accepts carry no onward-grant pair.
+    # §4.4.7 guard: item accepts carry no onward-scope pair.
     params = inspect.signature(accept_item_status).parameters
     assert "next_ceiling" not in params
     assert "at_cap" not in params

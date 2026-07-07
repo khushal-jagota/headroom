@@ -54,7 +54,7 @@ class EventKind(StrEnum):
     proposal_filed = "proposal_filed"                # {field, body, proposed_by}
     note_updated = "note_updated"                    # §4.2 notes slot {field}
     recap_updated = "recap_updated"                  # §3.3
-    grant_changed = "grant_changed"                  # {ceiling, at_cap, cause}
+    scope_changed = "scope_changed"                  # {ceiling, at_cap, cause}
     field_value_edited = "field_value_edited"        # {field, body}
 
     # --- supplemental: plain field updates (§3.2 "event-logged" updates) ---
@@ -101,8 +101,8 @@ class Link:                                  # SPEC §3.6 links row
 
 class ErrorCode(StrEnum):
     at_cap_stop = "at_cap_stop"                    # §4.3 agent proposal at ceiling with stop
-    grant_missing = "grant_missing"                # §4.4.7 accept without the full pair
-    grant_invalid = "grant_invalid"                # next_ceiling before the new state / unknown
+    scope_missing = "scope_missing"                # §4.4.7 accept without the full pair
+    scope_invalid = "scope_invalid"                # next_ceiling before the new state / unknown
     stale_claim = "stale_claim"                    # §7.6 stale/foreign claim; detail names it
     recap_too_early = "recap_too_early"            # §3.3 recap write at needs_success
     title_too_long = "title_too_long"              # §3.3 > title_max_chars

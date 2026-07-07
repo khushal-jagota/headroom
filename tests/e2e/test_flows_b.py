@@ -82,10 +82,10 @@ def _tick_boundary(api, server):
     return api.human_post(server, "/api/test/tick-boundary", {})
 
 
-def _grant_and_advance(server, api, cli, tid, ceiling, bodies):
-    # Human grant (header-less → human; grant_ticket rejects agents, tickets/api.py:359).
+def _scope_and_advance(server, api, cli, tid, ceiling, bodies):
+    # Human scope (header-less → human; scope_ticket rejects agents, tickets/api.py:359).
     g = api.human_post(
-        server, f"/api/tickets/{tid}/grant", {"ceiling": ceiling, "at_cap": "propose"}
+        server, f"/api/tickets/{tid}/scope", {"ceiling": ceiling, "at_cap": "propose"}
     )
     assert g["ceiling"] == ceiling and g["at_cap"] == "propose", g
     # Claimless CLI proposals auto-accept up the chain to in_progress (like flows_a e27).
@@ -239,7 +239,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     # normal path now — no dispatcher, no claim): the result auto-accepts at ceiling
     # needs_review and PARKS at needs_review, then a human approves via the Review card.
     mid = cli(server, "ticket", "create", "--title", E30_TITLE)["id"]
-    _grant_and_advance(
+    _scope_and_advance(
         server, api, cli, mid, "needs_review",
         {"success": E30_SUCCESS, "approach": E30_APPROACH, "plan": E30_PLAN},
     )
@@ -280,7 +280,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
 
 def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api):
     mid = cli(server, "ticket", "create", "--title", E31_TITLE)["id"]
-    _grant_and_advance(
+    _scope_and_advance(
         server, api, cli, mid, "in_progress",
         {"success": E31_SUCCESS, "approach": E31_APPROACH, "plan": E31_PLAN},
     )

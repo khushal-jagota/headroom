@@ -64,7 +64,7 @@ def _new_ticket(
             conn, title="T", actor="human", now=0, title_max_chars=200
         )
         if ceiling is not None or at_cap is not AtCap.propose:
-            tickets_data.change_grant(
+            tickets_data.change_scope(
                 conn,
                 ticket.id,
                 ceiling=ceiling if ceiling is not None else TicketState.needs_success,
@@ -103,10 +103,10 @@ def _file_proposal(db: str, tid: str, field: str, body: str) -> None:
         conn.close()
 
 
-def _grant(db: str, tid: str, ceiling: TicketState, at_cap: AtCap) -> None:
+def _scope(db: str, tid: str, ceiling: TicketState, at_cap: AtCap) -> None:
     conn = connect(db)
     try:
-        tickets_data.change_grant(conn, tid, ceiling=ceiling, at_cap=at_cap, actor="human", now=0)
+        tickets_data.change_scope(conn, tid, ceiling=ceiling, at_cap=at_cap, actor="human", now=0)
     finally:
         conn.close()
 
@@ -223,7 +223,7 @@ def _wait_until(predicate: Callable[[], bool], timeout: float = 10.0) -> bool:
 # --- is_runnable predicate (no threads) ---------------------------------------
 
 
-def test_is_runnable_fresh_empty_default_grant(tmp_path: Path) -> None:
+def test_is_runnable_fresh_empty_default_scope(tmp_path: Path) -> None:
     db = _db(tmp_path)
     tid = _new_ticket(db)  # needs_success, empty, ceiling=needs_success, at_cap=propose
     conn = connect(db)

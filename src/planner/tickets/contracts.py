@@ -1,4 +1,4 @@
-"""Ticket domain shapes: the state machine order, the four fields, the grant pair,
+"""Ticket domain shapes: the state machine order, the four fields, the scope pair,
 and the ticket row. Stdlib only; Priority/Project are imported from core (shared
 vocabulary), never redeclared."""
 
@@ -94,13 +94,13 @@ class TicketFields:                # tickets.fields JSON column, exactly four ke
     result: FieldSlot = field(default_factory=FieldSlot)
 
 
-# --- the grant pair (§4.4.7) ---
+# --- the scope pair (§4.4.7) ---
 NO_FURTHER: Final = "none"                     # wire sentinel: ceiling = the newly entered state
 NextCeiling = TicketState | Literal["none"]    # valid TicketState values are STATE_ORDER members
 
 
 @dataclass(frozen=True)
-class GrantPair:                   # required on every human accept/edit-accept
+class ScopePair:                   # required on every human accept/edit-accept
     next_ceiling: NextCeiling
     at_cap: AtCap
 
@@ -127,8 +127,8 @@ class ProposeBody(TypedDict, total=False):        # POST /tickets/{id}/propose/{
 
 class AcceptBody(TypedDict, total=False):         # POST /tickets/{id}/accept/{field}
     edited_body: str | None        # human edit applied before resolution
-    next_ceiling: str | None       # TicketState value or NO_FURTHER; grant pair (§4.4.7)
-    at_cap: str | None             # AtCap value; grant pair (§4.4.7)
+    next_ceiling: str | None       # TicketState value or NO_FURTHER; scope pair (§4.4.7)
+    at_cap: str | None             # AtCap value; scope pair (§4.4.7)
 
 
 class NoteBody(TypedDict, total=False):           # PUT /tickets/{id}/notes/{field}
@@ -143,9 +143,9 @@ class ValueEditBody(TypedDict, total=False):      # PUT /tickets/{id}/value/{fie
     body: str                      # default ""
 
 
-class GrantBody(TypedDict, total=False):          # POST /tickets/{id}/grant
-    ceiling: str | None            # TicketState value; route requires it (grant_missing)
-    at_cap: str | None             # AtCap value; route requires it (grant_missing)
+class ScopeBody(TypedDict, total=False):          # POST /tickets/{id}/scope
+    ceiling: str | None            # TicketState value; route requires it (scope_missing)
+    at_cap: str | None             # AtCap value; route requires it (scope_missing)
 
 
 class StateBody(TypedDict, total=False):          # POST /tickets/{id}/state

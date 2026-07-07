@@ -86,7 +86,7 @@ def _passed_ticket(conn: Connection, cfg: Config, clock: TestClock) -> Ticket:
     t = data.create_ticket(
         conn, title="T", actor="human", now=now, title_max_chars=TITLE_MAX_CHARS
     )
-    t = data.change_grant(
+    t = data.change_scope(
         conn, t.id, ceiling=TicketState.needs_plan, at_cap=AtCap.propose, actor="human", now=now
     )
     t = data.file_proposal(conn, t.id, field=FieldName.success, body="success v1", actor="agent",
@@ -214,7 +214,7 @@ def test_accept_dropped_ticket_with_pending_proposal_rejected(
     t = data.create_ticket(
         tmp_db, title="T", actor="human", now=now, title_max_chars=TITLE_MAX_CHARS
     )
-    t = data.change_grant(
+    t = data.change_scope(
         tmp_db, t.id, ceiling=TicketState.needs_plan, at_cap=AtCap.propose, actor="human", now=now
     )
     t = data.file_proposal(tmp_db, t.id, field=FieldName.success, body="s", actor="agent", now=now)

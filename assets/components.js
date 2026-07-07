@@ -309,11 +309,11 @@
   // T15 additions (D11 items 7, 8, 9, 10, 16) — Day + Review composites, the
   // pluggable chat-input registry, and the small state-machine mirrors the two
   // screens share. Additive: nothing above this line is touched. The server
-  // re-validates every grant (machine.py:75-100); these mirrors only pick which
-  // grant options to OFFER, never gate a write.
+  // re-validates every scope (machine.py:75-100); these mirrors only pick which
+  // scope options to OFFER, never gate a write.
   // ------------------------------------------------------------------------
 
-  // §4.1 linear order + §4.2 tables, mirrored for grant-option math only.
+  // §4.1 linear order + §4.2 tables, mirrored for scope-option math only.
   var STATE_ORDER = [
     "needs_success", "needs_approach", "needs_plan",
     "in_progress", "needs_review", "done"
@@ -355,7 +355,7 @@
 
   // Centralized scope options: the ceiling states a selector may offer — the floor
   // state (the current state, or the state being advanced to) and every state after
-  // it, never an earlier stage. One source for the approval grant picker and the
+  // it, never an earlier stage. One source for the approval scope picker and the
   // header scope control, so neither can offer "approve back past where we are".
   function ceilingOptions(floorState) {
     var start = STATE_ORDER.indexOf(floorState);
@@ -697,16 +697,16 @@
     return box;
   }
 
-  // --- D11 item 8: grant-pair picker -----------------------------------------
-  // getGrant() returns null until BOTH halves are explicitly chosen. The ceiling
-  // options are exactly the states resolve_grant accepts (machine.py:94-99): the
+  // --- D11 item 8: scope-pair picker -----------------------------------------
+  // getScope() returns null until BOTH halves are explicitly chosen. The ceiling
+  // options are exactly the states resolve_scope accepts (machine.py:94-99): the
   // NO_FURTHER sentinel plus every STATE_ORDER state at or beyond newState.
-  function grantPairPicker(newState, onChange) {
-    var wrap = make("div", "grant-picker");
-    var label = make("label", "grant-label");
+  function scopePairPicker(newState, onChange) {
+    var wrap = make("div", "scope-picker");
+    var label = make("label", "scope-label");
     label.appendChild(make("span", null, "how far"));
-    var select = make("select", "grant-ceiling");
-    select.setAttribute("data-grant-ceiling", "");
+    var select = make("select", "scope-ceiling");
+    select.setAttribute("data-scope-ceiling", "");
     var placeholder = make("option", null, "");
     placeholder.value = "";
     placeholder.disabled = true;
@@ -725,8 +725,8 @@
     label.appendChild(select);
     wrap.appendChild(label);
 
-    var atcap = make("span", "grant-atcap");
-    atcap.setAttribute("data-grant-atcap", "");
+    var atcap = make("span", "scope-atcap");
+    atcap.setAttribute("data-scope-atcap", "");
     var groupName = "atcap-" + String((_atcapSeq += 1));
     var inputs = [];
     [["stop", "Stop"], ["propose", "Propose"]].forEach(function (pair) {
@@ -743,7 +743,7 @@
     });
     wrap.appendChild(atcap);
 
-    wrap.getGrant = function () {
+    wrap.getScope = function () {
       if (select.value === "") {
         return null;
       }
@@ -764,7 +764,7 @@
   // --- D11 item 7: proposal card ---------------------------------------------
   // edited_body is included iff the textarea differs (strict string) from the
   // proposal body from this render's fetch (resolution.py:151-161). When
-  // requireGrant, Accept is unfireable until the picker yields both halves.
+  // requireScope, Accept is unfireable until the picker yields both halves.
   function proposalCard(opts) {
     var card = make("div", "proposal-card");
     card.appendChild(make("div", "proposal-meta", "proposed by " + opts.proposal.proposed_by));
@@ -785,11 +785,11 @@
 
     function sync() {
       accept.disabled = inFlight || resolved ||
-        (opts.requireGrant && (picker === null || picker.getGrant() === null));
+        (opts.requireScope && (picker === null || picker.getScope() === null));
     }
 
-    if (opts.requireGrant) {
-      picker = grantPairPicker(opts.newState, sync);
+    if (opts.requireScope) {
+      picker = scopePairPicker(opts.newState, sync);
       card.appendChild(picker);
     }
 
@@ -802,10 +802,10 @@
       if (textarea.value !== opts.proposal.body) {
         payload.edited_body = textarea.value;
       }
-      if (opts.requireGrant) {
-        var grant = picker.getGrant();
-        payload.next_ceiling = grant.next_ceiling;
-        payload.at_cap = grant.at_cap;
+      if (opts.requireScope) {
+        var scope = picker.getScope();
+        payload.next_ceiling = scope.next_ceiling;
+        payload.at_cap = scope.at_cap;
       }
       inFlight = true;
       sync();
@@ -825,7 +825,7 @@
 
     actions.appendChild(accept);
     card.appendChild(actions);
-    sync();   // Accept starts disabled when a grant is required (nothing picked)
+    sync();   // Accept starts disabled when a scope is required (nothing picked)
     return card;
   }
 
@@ -1008,7 +1008,7 @@
       content.push(head);
       content.push(proposalCard({
         proposal: detail.fields[kind].proposal,
-        requireGrant: true,
+        requireScope: true,
         newState: advanceTarget(detail.state, detail.ceiling),
         onAccept: opts.onAccept
       }));
@@ -1071,9 +1071,9 @@
   }
 
   // ------------------------------------------------------------------------
-  // T16 additions (D11 items 11, 12, 14, 15) — State control, Grant control,
+  // T16 additions (D11 items 11, 12, 14, 15) — State control, Scope control,
   // Event log, Run history. Additive: nothing above this line is touched. These
-  // reuse the T15 grant-pair picker and the shared bindMutating discipline; the
+  // reuse the T15 scope-pair picker and the shared bindMutating discipline; the
   // server re-validates every write, so the pickers only choose what to OFFER.
   // ------------------------------------------------------------------------
 
@@ -1103,7 +1103,7 @@
       }
       return String(payload.status) + (payload.worker ? " · " + String(payload.worker) : "");
     }
-    if (kind === "grant_changed") {
+    if (kind === "scope_changed") {
       return "approved until " + String(payload.ceiling) + " · " + String(payload.at_cap);
     }
     if (kind === "chat_session_created") {
@@ -1170,38 +1170,38 @@
     return wrap;
   }
 
-  // D11 #12: grant control — plain ceiling/at-cap pickers via the T15 grant-pair
+  // D11 #12: scope control — plain ceiling/at-cap pickers via the T15 scope-pair
   // picker (no dial). Save is disabled until BOTH picker halves are chosen. "No
   // further" (next_ceiling === "none") means the ceiling becomes exactly the
-  // current state (resolve_grant, machine.py:87-89).
-  function grantControl(opts) {
-    var wrap = make("div", "grant-control");
-    wrap.setAttribute("data-grant-control", "");
+  // current state (resolve_scope, machine.py:87-89).
+  function scopeControl(opts) {
+    var wrap = make("div", "scope-control");
+    wrap.setAttribute("data-scope-control", "");
 
-    // Raw values (not stateLabel'd) so the persisted grant is asserted verbatim.
+    // Raw values (not stateLabel'd) so the persisted scope is asserted verbatim.
     var current = make(
-      "div", "grant-control-current",
+      "div", "scope-control-current",
       "ceiling: " + opts.ceiling + " · at-cap: " + opts.atCap
     );
-    current.setAttribute("data-grant-current", "");
+    current.setAttribute("data-scope-current", "");
     wrap.appendChild(current);
 
-    var errorHost = make("div", "grant-control-error");
+    var errorHost = make("div", "scope-control-error");
 
     var save = make("button", "button button--primary", "Save");
     save.type = "button";
-    save.setAttribute("data-grant-save", "");
+    save.setAttribute("data-scope-save", "");
     save.disabled = true;
 
-    var picker = grantPairPicker(opts.state, function () {
-      save.disabled = picker.getGrant() === null;
+    var picker = scopePairPicker(opts.state, function () {
+      save.disabled = picker.getScope() === null;
     });
     wrap.appendChild(picker);
 
     bindMutating(save, errorHost, function () {
-      var grant = picker.getGrant();
-      var ceiling = grant.next_ceiling === "none" ? opts.state : grant.next_ceiling;
-      return opts.onSave(ceiling, grant.at_cap);
+      var scope = picker.getScope();
+      var ceiling = scope.next_ceiling === "none" ? opts.state : scope.next_ceiling;
+      return opts.onSave(ceiling, scope.at_cap);
     });
     wrap.appendChild(save);
     wrap.appendChild(errorHost);
@@ -1416,11 +1416,11 @@
   // The approval — a single instance, two modes (SPEC §10.4, §4.4).
   //  gating-pending: the body is a LOCAL draft (raw-seeded from proposalBody, markdown
   //    preview<->raw on focus); a recessed Note editable inline (persists on blur);
-  //    Approve + the reused grant-pair picker. onApprove receives
+  //    Approve + the reused scope-pair picker. onApprove receives
   //    {next_ceiling, at_cap, edited_body?} — edited_body ONLY when the draft differs
   //    from the original (matching proposalCard so proposal_accepted.edited stays honest).
   //  needs_review: the settled result value (read-only markdown) + editable review
-  //    notes; Approve (no grant, terminal) -> onApprove({}).
+  //    notes; Approve (no scope, terminal) -> onApprove({}).
   function approvalBlock(opts) {
     opts = opts || {};
     var wrap = make("div", "approval");
@@ -1481,18 +1481,18 @@
     var resolved = false;
 
     function sync() {
-      accept.disabled = inFlight || resolved || picker.getGrant() === null;
+      accept.disabled = inFlight || resolved || picker.getScope() === null;
     }
 
-    var picker = grantPairPicker(opts.newState, sync);
+    var picker = scopePairPicker(opts.newState, sync);
 
     accept.addEventListener("click", function () {
       var prior = actions.querySelector(".error-line");
       if (prior) {
         actions.removeChild(prior);
       }
-      var grant = picker.getGrant();
-      var payload = { next_ceiling: grant.next_ceiling, at_cap: grant.at_cap };
+      var scope = picker.getScope();
+      var payload = { next_ceiling: scope.next_ceiling, at_cap: scope.at_cap };
       var edited = draft.getRaw();
       if (edited !== origBody) {   // send raw edited_body only when it actually differs
         payload.edited_body = edited;
@@ -1515,7 +1515,7 @@
     actions.appendChild(accept);
     actions.appendChild(picker);
     wrap.appendChild(actions);
-    sync();   // disabled until BOTH grant halves are chosen
+    sync();   // disabled until BOTH scope halves are chosen
     return wrap;
   }
 
@@ -1589,11 +1589,11 @@
     ceilingOptions: ceilingOptions,
     STATE_ORDER: STATE_ORDER,
     proposalCard: proposalCard,
-    grantPairPicker: grantPairPicker,
+    scopePairPicker: scopePairPicker,
     chatPanel: chatPanel,
     reviewCard: reviewCard,
     stateControl: stateControl,
-    grantControl: grantControl,
+    scopeControl: scopeControl,
     eventLog: eventLog,
     inlineEdit: inlineEdit,
     approvalBlock: approvalBlock,

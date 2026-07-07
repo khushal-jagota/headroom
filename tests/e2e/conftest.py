@@ -237,7 +237,7 @@ def api() -> SimpleNamespace:
 
     def human_post(server: ServerHandle, path: str, json_body: dict) -> dict:
         # No X-Plan-* headers: authctx classifies a header-less request as the human,
-        # which is what /grant and /accept require.
+        # which is what /scope and /accept require.
         resp = httpx.post(server.base + path, json=json_body, timeout=10.0)
         assert resp.status_code < 300, f"POST {path} -> {resp.status_code}: {resp.text}"
         return resp.json()

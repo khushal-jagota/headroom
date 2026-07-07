@@ -4,7 +4,7 @@ stated).
 One test per acceptance item, its name carrying the ``test_eNN_`` anchor the verify
 scorer matches: exactly one anchored match per item may exist across the whole e2e
 suite, so there is no parametrize and every shared helper below has a non-``test_``
-name. Assertions use the SPEC's exact values (states, ceilings, grant pairs, the
+name. Assertions use the SPEC's exact values (states, ceilings, scope pairs, the
 minted session key, rendered markdown structure) — never weakened approximations.
 """
 
@@ -131,9 +131,9 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
 
     # Accept-impossible ladder: nothing picked -> ceiling only -> both halves.
     assert page_a.is_disabled(f"{card} [data-accept]")
-    page_a.select_option(f"{card} [data-grant-ceiling]", "none")
+    page_a.select_option(f"{card} [data-scope-ceiling]", "none")
     assert page_a.is_disabled(f"{card} [data-accept]")
-    page_a.check(f'{card} [data-grant-atcap] input[value="stop"]')
+    page_a.check(f'{card} [data-scope-atcap] input[value="stop"]')
     _wait_enabled(page_a, f"{card} [data-accept]")
     page_a.click(f"{card} [data-accept]")
 
@@ -167,8 +167,8 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
     assert page.input_value(f"{card} [data-edit]") == E25_ORIG
 
     page.fill(f"{card} [data-edit]", E25_EDIT)
-    page.select_option(f"{card} [data-grant-ceiling]", "needs_plan")
-    page.check(f'{card} [data-grant-atcap] input[value="propose"]')
+    page.select_option(f"{card} [data-scope-ceiling]", "needs_plan")
+    page.check(f'{card} [data-scope-atcap] input[value="propose"]')
     _wait_enabled(page, f"{card} [data-accept]")
     page.click(f"{card} [data-accept]")
 
@@ -250,9 +250,9 @@ def test_e26_chat_panel_echo_and_offline(
 def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
     tid = cli(server, "ticket", "create", "--title", "T18 chain ticket")["id"]
 
-    # Human grant (no headers -> /grant accepts it): ceiling needs_plan, at_cap propose.
+    # Human scope (no headers -> /scope accepts it): ceiling needs_plan, at_cap propose.
     g = api.human_post(
-        server, f"/api/tickets/{tid}/grant", {"ceiling": "needs_plan", "at_cap": "propose"}
+        server, f"/api/tickets/{tid}/scope", {"ceiling": "needs_plan", "at_cap": "propose"}
     )
     assert g["ceiling"] == "needs_plan", g
     assert g["at_cap"] == "propose", g

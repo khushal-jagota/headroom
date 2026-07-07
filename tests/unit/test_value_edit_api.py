@@ -18,7 +18,7 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets.contracts import AtCap, FieldName, TicketState
-from planner.tickets.data import change_grant, create_ticket, file_proposal
+from planner.tickets.data import change_scope, create_ticket, file_proposal
 
 _AGENT = {"X-Plan-Actor": "agent"}  # a plain (non-dispatched) agent context
 
@@ -50,7 +50,7 @@ def _passed_ticket(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
         ticket = create_ticket(conn, title="Edit me.", actor="human", now=0, title_max_chars=200)
-        change_grant(
+        change_scope(
             conn, ticket.id, ceiling=TicketState.needs_plan, at_cap=AtCap.propose, actor="human",
             now=0,
         )

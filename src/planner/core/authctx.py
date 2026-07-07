@@ -6,7 +6,7 @@ The old claim mechanism (X-Plan-Run-Id / X-Plan-Claim + per-request claim
 validation against a ticket lease) is gone: the ticket's code-owned `status` field
 is the lock now, and agents are trusted on this single-user local planner (no hard
 claim barrier). What survives is the invisible-approval boundary — agents still may
-not perform human-only actions (accept/approve/grant/state/drop, human-only fields).
+not perform human-only actions (accept/approve/scope/state/drop, human-only fields).
 
 FastAPI appears here because this is part of the server shell (the server.py
 family), not a logic or data module."""

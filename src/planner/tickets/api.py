@@ -48,12 +48,12 @@ from planner.tickets.contracts import (
     AtCap,
     CreateTicketBody,
     FieldName,
-    GrantBody,
     LinkBody,
     NextCeiling,
     NoteBody,
     ProposeBody,
     RecapBody,
+    ScopeBody,
     StateBody,
     Ticket,
     TicketState,
@@ -171,7 +171,7 @@ def _marshal_accept(raw: JsonDict) -> AcceptBody:
     )
 
 
-# --- grant marshallers ---------------------------------------------------------
+# --- scope marshallers ---------------------------------------------------------
 
 
 def _parse_next_ceiling(raw: str | None) -> NextCeiling | None:
@@ -183,17 +183,17 @@ def _parse_next_ceiling(raw: str | None) -> NextCeiling | None:
         return TicketState(raw)
     except ValueError:
         raise PlannerError(
-            ErrorCode.grant_invalid, "unknown next_ceiling", {"next_ceiling": raw}
+            ErrorCode.scope_invalid, "unknown next_ceiling", {"next_ceiling": raw}
         ) from None
 
 
-def _parse_grant_at_cap(raw: str | None) -> AtCap | None:
+def _parse_scope_at_cap(raw: str | None) -> AtCap | None:
     if raw is None:
         return None
     try:
         return AtCap(raw)
     except ValueError:
-        raise PlannerError(ErrorCode.grant_invalid, "unknown at_cap", {"at_cap": raw}) from None
+        raise PlannerError(ErrorCode.scope_invalid, "unknown at_cap", {"at_cap": raw}) from None
 
 
 # --- private gap-fill writers (D2; A1: writer-shaped for relocation) ------------
@@ -343,7 +343,7 @@ async def accept_field(ticket_id: str, field: str, raw: dict[str, Any], conn: Db
     field_enum = parse_enum(FieldName, field, "field")
     now = clk.now_unix()
     next_ceiling = _parse_next_ceiling(body["next_ceiling"])
-    at_cap = _parse_grant_at_cap(body["at_cap"])
+    at_cap = _parse_scope_at_cap(body["at_cap"])
     ticket = tickets_data.accept_proposal(
         conn,
         ticket_id,
@@ -401,10 +401,10 @@ async def put_value(ticket_id: str, field: str, raw: dict[str, Any], conn: DbCon
     return tickets_views.ticket_json(ticket, now)
 
 
-@router.post("/tickets/{ticket_id}/grant")
-async def grant_ticket(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
+@router.post("/tickets/{ticket_id}/scope")
+async def scope_ticket(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                        clk: Clk, sa: Sa) -> JsonDict:
-    body = GrantBody(ceiling=body_opt_str(raw, "ceiling"), at_cap=body_opt_str(raw, "at_cap"))
+    body = ScopeBody(ceiling=body_opt_str(raw, "ceiling"), at_cap=body_opt_str(raw, "at_cap"))
     reject_agents(ctx)
     now = clk.now_unix()
     ceiling_raw = body["ceiling"]
@@ -413,21 +413,21 @@ async def grant_ticket(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: C
         missing = [name for name, value in (("ceiling", ceiling_raw), ("at_cap", at_cap_raw))
                    if value is None]
         raise PlannerError(
-            ErrorCode.grant_missing, "grant requires ceiling and at_cap", {"missing": missing}
+            ErrorCode.scope_missing, "scope requires ceiling and at_cap", {"missing": missing}
         )
     try:
         ceiling = TicketState(ceiling_raw)
     except ValueError:
         raise PlannerError(
-            ErrorCode.grant_invalid, "unknown ceiling", {"ceiling": ceiling_raw}
+            ErrorCode.scope_invalid, "unknown ceiling", {"ceiling": ceiling_raw}
         ) from None
     try:
         at_cap = AtCap(at_cap_raw)
     except ValueError:
         raise PlannerError(
-            ErrorCode.grant_invalid, "unknown at_cap", {"at_cap": at_cap_raw}
+            ErrorCode.scope_invalid, "unknown at_cap", {"at_cap": at_cap_raw}
         ) from None
-    ticket = tickets_data.change_grant(
+    ticket = tickets_data.change_scope(
         conn, ticket_id, ceiling=ceiling, at_cap=at_cap, actor=ctx.actor, now=now
     )
     _poke(sa)  # a raised ceiling may unblock the next auto-advance

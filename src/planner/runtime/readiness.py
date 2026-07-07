@@ -19,7 +19,7 @@ from planner.tickets.logic import fields_codec, machine
 def is_runnable(conn: sqlite3.Connection, ticket: Ticket) -> bool:
     """True iff the ticket's next agent step should run: not terminal; has a gating field
     (``needs_review`` is human-approve-only, no agent step); no proposal already parked on
-    the gating field awaiting a human; the grant permits a proposal (not at/beyond the
+    the gating field awaiting a human; the scope permits a proposal (not at/beyond the
     ceiling with ``at_cap=stop`` — mirrors ``admission.check_agent_proposal``); and not
     blocked by an open ``blocks`` link."""
     if machine.is_terminal(ticket.state):
@@ -30,7 +30,7 @@ def is_runnable(conn: sqlite3.Connection, ticket: Ticket) -> bool:
     if fields_codec.get_slot(ticket.fields, gating).proposal is not None:
         return False  # parked awaiting a human decision
     if machine.at_or_beyond_ceiling(ticket.state, ticket.ceiling) and ticket.at_cap is AtCap.stop:
-        return False  # the grant says stop here
+        return False  # the scope says stop here
     if core_links.is_blocked(conn, ticket.id):
         return False
     return True
