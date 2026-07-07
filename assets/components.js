@@ -338,6 +338,7 @@
   // only route() re-runs, and each re-render rebuilds the panel from these.
   var chatTranscripts = {};   // entity_id -> [{who: "you"|"planner", text: string}]
   var chatDrafts = {};        // entity_id -> string (pending, unsent input text)
+  var chatPending = {};       // entity_id -> bool (a send is in flight -> thinking dots)
   var _atcapSeq = 0;          // per-instance unique radio-group names
 
   function advanceTarget(state, ceiling) {
@@ -383,37 +384,72 @@
   // is the preserved draft; ctx.onInput(text) reports pending text so the panel
   // can preserve the draft across re-renders.
   function makeTextInputSource(ctx) {
-    var wrap = make("div", "chat-input");
-    var textarea = make("textarea", "field-editor-input chat-input-text");
+    // A single recessed field: the container IS the input. A tiny "/" trigger and a
+    // send button (arrow, amber when there's text) sit in a footer. Enter sends,
+    // Shift+Enter is a newline. The "/" menu (gateway command catalog) wires in later.
+    var box = make("div", "chat-box");
+    var textarea = make("textarea", "chat-ta");
     textarea.setAttribute("data-chat-input", "");
-    textarea.rows = 2;
+    textarea.rows = 1;
+    textarea.placeholder = "Message the employee…";
     textarea.value = ctx.initialText || "";
-    textarea.addEventListener("input", function () {
-      ctx.onInput(textarea.value);
-    });
-    var send = make("button", "button button--primary", "Send");
+
+    var foot = make("div", "chat-foot");
+    var slash = make("button", "chat-slash", "/");
+    slash.type = "button";
+    slash.title = "Commands";
+    slash.setAttribute("data-chat-slash", "");
+    var send = make("button", "chat-send", "↑");
     send.type = "button";
+    send.title = "Send";
     send.setAttribute("data-chat-send", "");
-    send.addEventListener("click", function () {
+
+    function grow() {
+      textarea.style.height = "auto";
+      textarea.style.height = Math.min(textarea.scrollHeight, 110) + "px";
+    }
+    function syncSend() {
+      if (textarea.value.trim()) {
+        send.classList.add("on");
+      } else {
+        send.classList.remove("on");
+      }
+    }
+    function doSend() {
       var text = textarea.value.trim();
       if (!text) {
         return;
       }
       send.disabled = true;
       textarea.value = "";
+      grow();
+      syncSend();
       ctx.onInput("");
       Promise.resolve(ctx.submit(text)).then(
-        function () {
-          send.disabled = false;
-        },
-        function () {
-          send.disabled = false;
-        }
+        function () { send.disabled = false; },
+        function () { send.disabled = false; }
       );
+    }
+    textarea.addEventListener("input", function () {
+      ctx.onInput(textarea.value);
+      grow();
+      syncSend();
     });
-    wrap.appendChild(textarea);
-    wrap.appendChild(send);
-    return wrap;
+    textarea.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        doSend();
+      }
+    });
+    send.addEventListener("click", doSend);
+
+    foot.appendChild(slash);
+    foot.appendChild(send);
+    box.appendChild(textarea);
+    box.appendChild(foot);
+    grow();
+    syncSend();
+    return box;
   }
 
   // --- D11 item 8: grant-pair picker -----------------------------------------
@@ -556,35 +592,72 @@
   // entityId is the SERVER-provided chat id (day.id / ticket.id), never built
   // client-side. Rebuilds its message list from the module-scope transcript, which
   // the WS flush does not touch — that is the survival mechanism.
+  // The ticket's chat with its EMPLOYEE (the durable agent working the ticket).
+  // Message history + input, nothing else: one user pill, bubble-less employee prose,
+  // a thinking-dots row while a reply is in flight, a whisper header (presence + label),
+  // no dividers. Offline -> a calm two-line notice, no composer.
   function chatPanel(entityId, opts) {
     var panelEl = make("div", "chat-panel");
     panelEl.setAttribute("data-chat-panel", "");
-    var messages = make("div", "chat-messages");
-    messages.setAttribute("data-chat-messages", "");
-    panelEl.appendChild(messages);
+
+    var head = make("div", "chat-head");
+    head.appendChild(
+      make("span", "chat-dot " + (opts.available ? "chat-dot--on" : "chat-dot--off"))
+    );
+    head.appendChild(make("span", "chat-lbl", opts.available ? "employee" : "employee · offline"));
+    panelEl.appendChild(head);
+
+    var thread = make("div", "chat-thread");
+    thread.setAttribute("data-chat-messages", "");
+    panelEl.appendChild(thread);
 
     function paint() {
-      messages.replaceChildren();
-      (chatTranscripts[entityId] || []).forEach(function (msg) {
+      thread.replaceChildren();
+      if (!opts.available) {
+        var off = make("div", "chat-off");
+        off.setAttribute("data-chat-offline", "");
+        off.appendChild(make("div", null, "The employee is offline."));
+        off.appendChild(make("div", "chat-off-sub", "Your draft is saved."));
+        thread.appendChild(off);
+        return;
+      }
+      var msgs = chatTranscripts[entityId] || [];
+      if (msgs.length === 0 && !chatPending[entityId]) {
+        var empty = make("div", "chat-empty");
+        empty.appendChild(make("div", "chat-empty-eb", "employee"));
+        empty.appendChild(make("h2", "chat-empty-h", "What do you need?"));
+        empty.appendChild(
+          make("p", "chat-empty-p", "It has read the ticket. Ask it to take the next step.")
+        );
+        thread.appendChild(empty);
+        return;
+      }
+      msgs.forEach(function (msg) {
         if (msg.who === "you") {
-          var you = make("div", "chat-msg chat-msg--you", msg.text);
+          var you = make("div", "chat-u", msg.text);
           you.setAttribute("data-chat-msg", "you");
-          messages.appendChild(you);
+          thread.appendChild(you);
         } else {
-          var reply = make("div", "chat-msg chat-msg--planner");
+          var reply = make("div", "chat-a");
           reply.setAttribute("data-chat-msg", "planner");
           reply.appendChild(markdownBlock(msg.text));
-          messages.appendChild(reply);
+          thread.appendChild(reply);
         }
       });
+      if (chatPending[entityId]) {
+        var dots = make("div", "chat-dots");
+        dots.setAttribute("data-chat-pending", "");
+        dots.appendChild(make("i"));
+        dots.appendChild(make("i"));
+        dots.appendChild(make("i"));
+        thread.appendChild(dots);
+      }
+      thread.scrollTop = thread.scrollHeight;
     }
     paint();
 
     if (!opts.available) {
-      var offline = make("div", "chat-offline", "gateway offline");
-      offline.setAttribute("data-chat-offline", "");
-      panelEl.appendChild(offline);
-      return panelEl;   // §11 notice; no input source rendered when offline
+      return panelEl;   // §11: no composer when the employee is offline
     }
 
     var source;
@@ -599,12 +672,14 @@
         }
         chatTranscripts[entityId].push({ who: "you", text: text });
         delete chatDrafts[entityId];
+        chatPending[entityId] = true;
         paint();
         return Planner.api.fetchJson("/api/chat/" + entityId + "/send", {
           method: "POST",
           body: { text: text }
         }).then(
           function (res) {
+            chatPending[entityId] = false;
             chatTranscripts[entityId].push({ who: "planner", text: res.reply_text });
             if (panelEl.isConnected) {   // a flush may have replaced the panel mid-flight
               paint();
@@ -612,9 +687,13 @@
             return res;
           },
           function (err) {
+            chatPending[entityId] = false;
+            if (panelEl.isConnected) {
+              paint();
+            }
             var prior = panelEl.querySelector(".error-line");
             if (prior) {
-              panelEl.removeChild(prior);
+              prior.remove();
             }
             panelEl.insertBefore(errorLine(err), source);
             return Promise.reject(err);

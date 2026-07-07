@@ -603,57 +603,167 @@ textarea {
   border-color: var(--text-faint);
 }
 
-/* --- Chat panel (T15) ---------------------------------------------------- */
+/* --- Chat panel (v2 — the ticket's employee; Vylo restraint) ------------- */
+/* Message history + input. No dividers: the thread fades into a whisper header and
+ * a recessed composer. One user pill; the employee is bubble-less prose. */
 
 .chat-panel {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
 }
 
-.chat-messages {
+.chat-head {
+  flex: none;
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: var(--space-2);
-  max-height: 50vh;
+  padding: var(--space-2) var(--space-1) var(--space-1);
+}
+
+.chat-dot { width: 7px; height: 7px; border-radius: var(--radius-pill); flex: none; }
+.chat-dot--on { background: var(--accent-done); }
+.chat-dot--off { background: var(--text-faintest); }
+
+.chat-lbl {
+  font-size: var(--type-xs);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  letter-spacing: 0.03em;
+}
+
+.chat-thread {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-3) var(--space-1) var(--space-4);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 16px), transparent 100%);
+          mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 16px), transparent 100%);
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
 }
+.chat-thread:hover { scrollbar-color: var(--border-color) transparent; }
+.chat-thread::-webkit-scrollbar { width: 7px; }
+.chat-thread::-webkit-scrollbar-thumb { background: transparent; border-radius: var(--radius-pill); }
+.chat-thread:hover::-webkit-scrollbar-thumb { background: var(--border-color); }
 
-.chat-msg {
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  font-size: var(--type-sm);
-  max-width: 85%;
-}
-
-/* Human = a bubble (surface-overlay); agent = plain text, no bubble/fill (T3). */
-.chat-msg--you {
+/* user = the only bubble */
+.chat-u {
   align-self: flex-end;
+  max-width: 82%;
   background: var(--surface-overlay);
   color: var(--text-strong);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--type-sm);
 }
-
-.chat-msg--planner {
-  align-self: flex-start;
-  background: none;
-  padding: 0;
-  max-width: 100%;
+/* employee = bubble-less prose */
+.chat-a {
+  align-self: stretch;
   color: var(--text-default);
-}
-
-.chat-offline {
-  color: var(--text-muted);
   font-size: var(--type-sm);
 }
 
-.chat-input {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-2);
+/* thinking = three bubble-less dots in the employee's spot */
+.chat-dots { align-self: flex-start; display: inline-flex; gap: 5px; padding: var(--space-1) 0; }
+.chat-dots i {
+  width: 6px; height: 6px; border-radius: var(--radius-pill);
+  background: var(--text-faint);
+  animation: chat-bounce 1.3s var(--motion-ease) infinite;
+}
+.chat-dots i:nth-child(2) { animation-delay: 0.16s; }
+.chat-dots i:nth-child(3) { animation-delay: 0.32s; }
+@keyframes chat-bounce {
+  0%, 70%, 100% { opacity: 0.35; transform: translateY(0); }
+  35% { opacity: 1; transform: translateY(-3px); }
 }
 
-.chat-input-text {
-  flex: 1;
+.chat-off {
+  margin: auto;
+  color: var(--text-faint);
+  font-size: var(--type-sm);
+  text-align: center;
+  padding: 0 var(--space-4);
+}
+.chat-off-sub { color: var(--text-faintest); margin-top: var(--space-1); }
+
+.chat-empty { margin: auto 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.chat-empty-eb {
+  color: var(--accent-bright);
+  font-size: var(--type-xs);
+  font-family: var(--font-mono);
+  letter-spacing: 0.05em;
+}
+.chat-empty-h {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--type-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+.chat-empty-p { margin: 0; color: var(--text-faint); font-size: var(--type-sm); }
+
+/* composer = one recessed field; the container IS the input */
+.chat-box {
+  flex: none;
+  background: var(--surface-sunken);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  padding: var(--space-2) var(--space-2) var(--space-1) var(--space-3);
+  transition: border-color var(--motion-base) var(--motion-ease);
+}
+.chat-box:focus-within { border-color: rgba(231, 167, 66, 0.4); }
+.chat-ta {
+  width: 100%;
+  background: none;
+  border: none;
+  resize: none;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--type-sm);
+  line-height: 1.5;
+  outline: none;
+  max-height: 110px;
+  display: block;
+}
+.chat-ta::placeholder { color: var(--text-faintest); }
+.chat-foot { display: flex; align-items: center; justify-content: space-between; margin-top: var(--space-1); }
+.chat-slash {
+  background: none;
+  border: none;
+  color: var(--text-faintest);
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+  cursor: pointer;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  line-height: 1.2;
+}
+.chat-slash:hover { color: var(--text-muted); background: var(--surface-overlay); }
+.chat-send {
+  width: 26px; height: 26px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--surface-overlay);
+  color: var(--text-faintest);
+  cursor: pointer;
+  font-size: var(--type-md);
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  transition: background var(--motion-base) var(--motion-ease), color var(--motion-base) var(--motion-ease);
+}
+.chat-send.on { background: var(--accent-bright); color: var(--accent-ink); }
+.chat-send:disabled { opacity: 0.5; cursor: default; }
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-dots i { animation: none; }
 }
 
 /* --- Proposal / grant / review (T15) ------------------------------------- */
@@ -1136,8 +1246,8 @@ details.fsec[open] > summary .fsec-chev::before {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow-y: auto;
-  padding: var(--space-4);
+  overflow: hidden;
+  padding: var(--space-3) var(--space-3) var(--space-4);
 }
 
 /* --- Ticket page layout (T4 redesign — mockup .page / .doc / .col) --------- */
