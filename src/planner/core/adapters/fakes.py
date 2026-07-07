@@ -26,6 +26,7 @@ CANNED_CATALOG: CommandCatalog = CommandCatalog(
             (("/status", "Show session status"), ("/model", "Pick the model")),
         ),
         CommandCategory("Info", (("/help", "List the commands"),)),
+        CommandCategory("Exit", (("/quit", "Exit the session"),)),
     ),
     skills=(("/writing-plans", "Draft a plan"), ("/xurl", "Fetch a URL as markdown")),
     canon={"/st": "/status", "/wp": "/writing-plans"},
@@ -90,6 +91,12 @@ class EchoGatewayAdapter:
             return CommandRunResult(
                 reply_text=f"skill {name} loaded", session_key=session_key, kind="assistant"
             )
+        if name == "/compress":
+            # /compress's real feedback rides in slash.exec's `warning`; the real adapter
+            # combines output + warning (real.py). Model that combined system line here.
+            output, warning = "(no output)", "compressed 40 → 8 messages"
+            reply = (output + "\n" + warning).strip() if warning else output
+            return CommandRunResult(reply_text=reply, session_key=session_key, kind="system")
         # everything else -> slash.exec display output (no model turn)
         return CommandRunResult(
             reply_text=f"exec: {command.strip()}", session_key=session_key, kind="system"

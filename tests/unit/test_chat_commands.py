@@ -250,3 +250,63 @@ def test_command_lost_race_adopts_winner_key_no_event(tmp_path: Path) -> None:
     assert result.reply_text == "skill loaded"
     assert _stored_key(db_path, tid) == "winner-key"
     assert _events(db_path, tid, "chat_session_created") == []
+
+
+def test_command_compress_surfaces_warning_as_system(tmp_path: Path) -> None:
+    # /compress's meaningful feedback rides in slash.exec's `warning`; the real adapter
+    # combines output + warning, and the fake models that combined system line. The
+    # service must surface both, not just the (empty) output.
+    app, db_path, _ = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    with TestClient(app) as client:
+        response = client.post(f"/api/chat/{tid}/command", json={"command": "/compress"})
+    assert response.status_code == 200
+    assert response.json() == {
+        "reply_text": "(no output)\ncompressed 40 → 8 messages",
+        "session_key": "fake-sess-1",
+        "kind": "system",
+    }
+
+
+def test_command_rotated_key_remints_and_repersists(tmp_path: Path) -> None:
+    """/compress rotates the gateway's session key, but slash.exec does not return it —
+    it self-heals on the NEXT message, when session.resume follows the continuation chain
+    and the adapter returns a key differing from the stored one. The service's re-mint
+    branch must replace the stale key and log exactly one chat_session_created (owner #3)."""
+    db_path = tmp_path / "planning-test.db"
+    boot = connect(str(db_path))
+    create_schema(boot)
+    boot.close()
+    tid = _ticket(db_path)
+
+    seed = connect(str(db_path))  # the pre-compress key, now the stale head of a chain
+    try:
+        seed.execute("BEGIN IMMEDIATE")
+        seed.execute("UPDATE tickets SET chat_session_key = ? WHERE id = ?", ("pre-compress", tid))
+        seed.execute("COMMIT")
+    finally:
+        seed.close()
+
+    class RotatedKeyGateway:
+        """Resumes the stored key and returns the rotated continuation tip — as the real
+        adapter does on the message after a /compress (session.resume follows the chain)."""
+
+        def run_command(
+            self, session_key: str | None, entity_id: str, command: str
+        ) -> CommandRunResult:
+            assert session_key == "pre-compress"  # the stale key is passed through
+            return CommandRunResult(
+                reply_text="exec: /status", session_key="post-compress", kind="system"
+            )
+
+    conn = connect(str(db_path))
+    try:
+        result = service.run_command(conn, RotatedKeyGateway(), tid, "/status", 0)  # type: ignore[arg-type]
+    finally:
+        conn.close()
+
+    assert result.session_key == "post-compress"
+    assert result.reply_text == "exec: /status"
+    assert result.kind == "system"
+    assert _stored_key(db_path, tid) == "post-compress"
+    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "post-compress"}]

@@ -473,6 +473,35 @@
       }
       return false;
     }
+    function categoryOf(name) {
+      // The category object whose pairs contain the canonical `/name`, else null.
+      var cats = (catalog && catalog.categories) || [];
+      for (var i = 0; i < cats.length; i += 1) {
+        var pairs = cats[i].pairs || [];
+        for (var j = 0; j < pairs.length; j += 1) {
+          if (pairs[j][0] === name) { return cats[i]; }
+        }
+      }
+      return null;
+    }
+    function commandKind(name) {
+      // Classify a canonical "/name" against the catalog so the composer knows how to
+      // act on it. Order matters: a sub-command (e.g. "/model") also lives in a normal
+      // category, so "sub" must win over "command"; Exit members are runnable-in-catalog
+      // but we never fire them (§2). Returns:
+      //   "skill"   -> run immediately (a model turn)
+      //   "exit"    -> not runnable here (hidden from the menu; typed -> plain chat)
+      //   "sub"     -> takes an enumerated subcommand; insert "/name " so args can be added
+      //   "command" -> run immediately (display/config; a system line)
+      //   null      -> not in the catalog at all
+      if (!catalog) { return null; }
+      if (isSkill(name)) { return "skill"; }
+      var cat = categoryOf(name);
+      if (cat && cat.name === "Exit") { return "exit"; }
+      if (catalog.sub && Object.prototype.hasOwnProperty.call(catalog.sub, name)) { return "sub"; }
+      if (cat) { return "command"; }
+      return null;
+    }
 
     // --- the "/" menu ------------------------------------------------------
     function menuOpen() { return !menu.hidden; }
@@ -499,11 +528,13 @@
     }
     function selectItem(rec) {
       closeMenu();
-      if (rec.skill && canRun()) {
+      var kind = commandKind(rec.name);
+      if ((kind === "skill" || kind === "command") && canRun()) {
+        // skills and display/config commands fire on pick — the owner's one-click gesture
         clearComposer();
         runSlash(rec.name);
       } else {
-        // a command (or a skill with no runner): insert "/name " for args + Send
+        // a sub-command (needs an arg), or no runner: insert "/name " for args + Send
         textarea.value = rec.name + " ";
         grow();
         syncSend();
@@ -547,6 +578,7 @@
         });
       }
       (catalog.categories || []).forEach(function (cat) {
+        if (cat.name === "Exit") { return; }  // a web chat can't quit the mind; keep it out of reach
         addSection(cat.name, cat.pairs, false);
       });
       addSection("Skills", catalog.skills, true);
@@ -581,14 +613,15 @@
       send.disabled = true;
       Promise.resolve(ctx.runCommand(command)).then(reenable, reenable);
     }
-    function skillCommandFor(text) {
-      // The canonical command string if `text` runs a known skill, else null. A
-      // leading "/" is inert to a normal send, so only skills route to runCommand
-      // in this slice; other "/" text sends as plain chat.
+    function commandFor(text) {
+      // The canonical command string if `text` runs a known catalog command — a skill,
+      // a display/config command, or a sub-command — else null. A leading "/" is inert to
+      // a normal send, so Exit and unknown "/" text return null and post as plain chat.
       if (text.charAt(0) !== "/" || !catalog || !canRun()) { return null; }
       var firstTok = text.split(/\s+/)[0];
       var name = (catalog.canon && catalog.canon[firstTok.toLowerCase()]) || firstTok;
-      if (!isSkill(name)) { return null; }
+      var kind = commandKind(name);
+      if (kind !== "skill" && kind !== "command" && kind !== "sub") { return null; }
       return name + text.slice(firstTok.length);  // canonical name + preserved args
     }
     function doSend() {
@@ -609,9 +642,9 @@
       routeSend(text);
     }
     function routeSend(text) {
-      var skillCmd = skillCommandFor(text);
-      if (skillCmd !== null) {
-        Promise.resolve(ctx.runCommand(skillCmd)).then(reenable, reenable);
+      var cmd = commandFor(text);
+      if (cmd !== null) {
+        Promise.resolve(ctx.runCommand(cmd)).then(reenable, reenable);
       } else {
         Promise.resolve(ctx.submit(text)).then(reenable, reenable);
       }

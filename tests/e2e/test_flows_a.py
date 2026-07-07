@@ -333,3 +333,54 @@ def test_slash_menu_runs_skill(server, context_factory, open_page, cli, api):
         " return false; }",
         timeout=WAIT_MS,
     )
+
+
+def test_slash_menu_runs_display_command(server, context_factory, open_page, cli, api):
+    # A non-skill display command (/status) executes on the ticket's own mind via POST
+    # /command and renders as a system line — on BOTH the menu-pick and the typed-Send
+    # path. The Exit category stays out of the menu (a web chat can't quit the mind).
+    tid = cli(server, "ticket", "create", "--title", "T18 display ticket")["id"]
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{tid}",
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]',
+        settled=True,
+    )
+
+    # Warmup send mints the session and fires the one-and-only chat flush, so the command
+    # runs below (key reused -> no event -> no flush) can't race the reply re-render.
+    f0 = page.evaluate("window.__plannerDebug.flushes")
+    page.fill('[data-chat] [data-chat-input]', "warmup")
+    page.click('[data-chat] [data-chat-send]')
+    page.wait_for_function("f => window.__plannerDebug.flushes > f", arg=f0, timeout=WAIT_MS)
+    page.wait_for_selector('[data-chat] [data-chat-input]', timeout=WAIT_MS)
+
+    # Typing "/" opens the catalog popover; /status is present and Exit is hidden.
+    page.fill('[data-chat] [data-chat-input]', "/")
+    page.wait_for_selector(
+        '[data-chat] [data-chat-menu] [data-chat-cmd="/status"]', timeout=WAIT_MS
+    )
+    assert page.query_selector('[data-chat-menu] [data-chat-cmd="/quit"]') is None
+
+    # (i) Menu pick: /status runs and draws a system line with the fake's exec output.
+    page.click('[data-chat-menu] [data-chat-cmd="/status"]')
+    page.wait_for_function(
+        "() => { const els = document.querySelectorAll('[data-chat-msg=\"system\"]');"
+        " for (const el of els) {"
+        " if (el.textContent.indexOf('exec: /status') !== -1) return true; }"
+        " return false; }",
+        timeout=WAIT_MS,
+    )
+
+    # (ii) Typed-Send: the same command via the send button also runs (routeSend ->
+    # commandFor -> runCommand) — a second system line, not a plain-chat echo.
+    page.fill('[data-chat] [data-chat-input]', "/status")
+    page.click('[data-chat] [data-chat-send]')
+    page.wait_for_function(
+        "() => { const els = document.querySelectorAll('[data-chat-msg=\"system\"]');"
+        " let n = 0; for (const el of els) {"
+        " if (el.textContent.indexOf('exec: /status') !== -1) n += 1; }"
+        " return n >= 2; }",
+        timeout=WAIT_MS,
+    )

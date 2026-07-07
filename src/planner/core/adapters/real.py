@@ -227,9 +227,12 @@ class RealGatewayAdapter:
             if result.get("type"):
                 reply, kind = self._interpret(child, live_sid, result, arg)
                 return CommandRunResult(reply_text=reply, session_key=stored, kind=kind)
-            return CommandRunResult(
-                reply_text=str(result.get("output") or ""), session_key=stored, kind="system"
-            )
+            # A plain display command returns {output, warning}. The meaningful feedback for
+            # /compress and /model x lives in warning (server.py:10146-10151), so surface both.
+            output = str(result.get("output") or "")
+            warning = str(result.get("warning") or "")
+            reply = (output + "\n" + warning).strip() if warning else output
+            return CommandRunResult(reply_text=reply, session_key=stored, kind="system")
         except GatewayError as exc:
             raise PlannerError(
                 ErrorCode.gateway_offline, "chat gateway command failed", {"detail": str(exc)}
