@@ -29,8 +29,7 @@ def _prio_rank(priority: str) -> int:
 
 
 def ticket_json(ticket: Ticket, now: int) -> JsonDict:
-    """§3.3 ticket. The code-owned run status/worker are the reframed "lock": the UI
-    reads this one field (System B is the sole writer)."""
+    """§3.3 ticket serializer."""
     return {
         "id": ticket.id,
         "title": ticket.title,
@@ -43,8 +42,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "recap": ticket.recap,
         "ceiling": ticket.ceiling.value,
         "at_cap": ticket.at_cap.value,
-        "status": ticket.status.value,
-        "worker": ticket.worker,
+        "ticket_status": ticket.ticket_status.value,
         "chat_session_key": ticket.chat_session_key,
         "alias": ticket.alias,
         "fields": json.loads(fields_codec.fields_to_json(ticket.fields)),
@@ -176,7 +174,7 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
 
 def board_view(conn: sqlite3.Connection, now: int) -> JsonDict:
     rows = conn.execute(
-        "SELECT id, title, state, priority, deadline, project, fields, status, "
+        "SELECT id, title, state, priority, deadline, project, fields, ticket_status, "
         "created_at FROM tickets WHERE state != 'dropped'"
     ).fetchall()
     by_state: dict[str, list[tuple[tuple[int, int, str, int], JsonDict]]] = {
@@ -194,7 +192,7 @@ def board_view(conn: sqlite3.Connection, now: int) -> JsonDict:
             "deadline": deadline,
             "project": str(row["project"]) if row["project"] is not None else None,
             "has_pending_proposal": machine.has_pending_gating_proposal(TicketState(state), fields),
-            "status": str(row["status"]),
+            "ticket_status": str(row["ticket_status"]),
         }
         sort_key = (
             _prio_rank(priority),

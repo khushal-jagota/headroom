@@ -8,7 +8,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Final
 
-SCHEMA_VERSION: Final = 3
+SCHEMA_VERSION: Final = 4
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS sprints (
@@ -65,9 +65,9 @@ CREATE TABLE IF NOT EXISTS tickets (
                        CHECK (ceiling IN ('needs_success','needs_approach','needs_plan',
                                           'in_progress','needs_review','done')),
   at_cap               TEXT NOT NULL DEFAULT 'propose' CHECK (at_cap IN ('stop','propose')),
-  status               TEXT NOT NULL DEFAULT 'empty'  -- code-owned run status (System B is the writer)
-                       CHECK (status IN ('empty','agent_working','awaiting_approval','errored')),
-  worker               TEXT,                         -- who/what is working it; NULL unless agent_working
+  ticket_status        TEXT NOT NULL DEFAULT 'empty'  -- durable ticket state-of-control
+                       CHECK (ticket_status IN ('empty','agent_running_step',
+                                                'awaiting_approval','user_takeover','errored')),
   chat_session_key     TEXT,                         -- the ticket-mind's durable Hermes session_key
   alias                TEXT,                         -- migration "Ticket ID:" (seed importer dedup)
   fields               TEXT NOT NULL DEFAULT '{"success":{"value":null,"proposal":null,"notes":null},"approach":{"value":null,"proposal":null,"notes":null},"plan":{"value":null,"proposal":null,"notes":null},"result":{"value":null,"proposal":null,"notes":null}}',

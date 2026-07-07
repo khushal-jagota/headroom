@@ -38,6 +38,7 @@ _log = logging.getLogger("planner.server")
 _STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.not_found: 404,
     ErrorCode.stale_claim: 409,
+    ErrorCode.already_running: 409,
     ErrorCode.gateway_offline: 503,
 }
 
@@ -87,14 +88,33 @@ def create_app(
         Path(config.db_path).parent.mkdir(parents=True, exist_ok=True)
         Path(config.logs_dir).mkdir(parents=True, exist_ok=True)
         loops: Any = None
+        shared_gateway: Any = None
         if not config.test_mode:  # D6: background loops never run in test mode
             try:
                 module = importlib.import_module("planner.core.loops")
                 start = module.start_background_loops
+                from planner.minds.config import resolve_hermes_python, resolve_planner_home
+                from planner.minds.shared_gateway import SharedGateway
             except (ImportError, AttributeError):
                 _log.warning("planner.core.loops unavailable; running without background loops")
             else:
-                loops = start(config, clock, adapters, conn_factory)
+                shared_gateway = SharedGateway(
+                    hermes_python=resolve_hermes_python(),
+                    home=resolve_planner_home(),
+                    worker_role=config.worker_skill,
+                )
+                app_.state.shared_gateway = shared_gateway
+                app_.state.adapters = Adapters(
+                    boundary=adapters.boundary,
+                    gateway=shared_gateway,
+                )
+                loops = start(
+                    config,
+                    clock,
+                    app_.state.adapters,
+                    conn_factory,
+                    shared_gateway=shared_gateway,
+                )
                 # Expose System A for the API poke seam (readiness-changing endpoints wake it).
                 # None in test mode (loops never start) -> the poke is a null-guarded no-op.
                 app_.state.system_a = loops.system_a
@@ -103,6 +123,8 @@ def create_app(
         finally:
             if loops is not None:
                 await loops.stop()
+            if shared_gateway is not None:
+                shared_gateway.shutdown()
 
     app = FastAPI(title="planner", version="2.0.0", lifespan=_lifespan)
     app.state.config = config
@@ -110,6 +132,7 @@ def create_app(
     app.state.adapters = adapters
     app.state.conn_factory = conn_factory
     app.state.system_a = None  # set by the lifespan when background loops start (non-test only)
+    app.state.shared_gateway = None
     # GET /api/chat/commands TTL cache: (CommandCatalog, expiry_monotonic) | None, plus a
     # lock so concurrent cache misses spawn at most one gateway child (chat/api.py).
     app.state.chat_command_catalog = None

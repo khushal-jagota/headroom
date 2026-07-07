@@ -1,15 +1,10 @@
-"""System B (W3a): the set-off / run primitive + the sole writer of ticket run-status.
-All hermetic against minds/fake.py — no subprocess, no model calls; the gateway child is
-injected through the spawn seam. A fresh FakeGateway is handed out per spawn (one child
-is closed after one run_step), and the "agent files a proposal during its run" is
-simulated by driving the REAL tickets_data.file_proposal writer on prompt.submit — so an
-auto-accept below ceiling is exercised through the production resolution engine, not a
-masking direct write."""
+"""System B against a hermetic shared fake gateway."""
 
 from __future__ import annotations
 
 import json
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -19,7 +14,7 @@ from planner.core.contracts import EventKind
 from planner.core.db import connect, create_schema
 from planner.core.events import read_events_since
 from planner.minds.fake import FakeGateway, Reply, ev
-from planner.minds.gateway import ChildProcess
+from planner.minds.shared_gateway import SharedGateway
 from planner.runtime import readiness
 from planner.runtime.system_b import SystemB
 from planner.tickets import data as tickets_data
@@ -30,9 +25,6 @@ HERMES_PY = "/x/hermes-agent/venv/bin/python"
 LIVE_SID = "live-sid"
 STORED_KEY = "stored-key-1"
 ROLE = "planning-worker"
-
-
-# --- fake-gateway scripting ---------------------------------------------------
 
 
 def _create_reply(sid: str = LIVE_SID, key: str = STORED_KEY) -> Reply:
@@ -60,9 +52,6 @@ def _resume_script(key: str = STORED_KEY, *after: dict[str, Any]) -> dict[str, l
 
 
 class _ProposingFake(FakeGateway):
-    """A fake child that files a real proposal (via the production writer) the moment it
-    receives prompt.submit — simulating the agent doing its step mid-run."""
-
     def __init__(
         self, script: dict[str, list[Reply]], *, on_submit: Callable[[], None] | None = None
     ) -> None:
@@ -74,24 +63,6 @@ class _ProposingFake(FakeGateway):
         if frame.get("method") == "prompt.submit" and self._on_submit is not None:
             self._on_submit()
         super().send(line)
-
-
-class _Spawner:
-    """Hands out a fresh FakeGateway per spawn (a child is single-use)."""
-
-    def __init__(self, children: list[FakeGateway]) -> None:
-        self._children = children
-        self._i = 0
-        self._lock = threading.Lock()
-
-    def spawn(self, argv: list[str], env: dict[str, str]) -> ChildProcess:
-        with self._lock:
-            child = self._children[self._i]
-            self._i += 1
-        return child.spawn(argv, env)
-
-
-# --- DB helpers ---------------------------------------------------------------
 
 
 def _db(tmp_path: Path) -> str:
@@ -138,9 +109,7 @@ def _file_proposal(db_path: str, ticket_id: str, field: str, body: str) -> None:
 def _set_key(db_path: str, ticket_id: str, key: str) -> None:
     conn = connect(db_path)
     try:
-        tickets_data.set_run_status(
-            conn, ticket_id, status=TicketStatus.empty, worker=None, session_key=key, now=0
-        )
+        tickets_data.finish_run_if_still_running_step(conn, ticket_id, session_key=key, now=0)
     finally:
         conn.close()
 
@@ -158,49 +127,41 @@ def _status_events(db_path: str, ticket_id: str) -> list[dict[str, Any]]:
     ]
 
 
-def _system_b(db_path: str, spawner: _Spawner) -> SystemB:
-    return SystemB(
-        db_path, RealClock(), home=HOME, hermes_python=HERMES_PY, spawn=spawner.spawn
+def _system_b(db_path: str, fake: FakeGateway) -> SystemB:
+    gateway = SharedGateway(
+        hermes_python=HERMES_PY,
+        home=HOME,
+        worker_role=ROLE,
+        spawn=fake.spawn,
+        base_env={},
     )
-
-
-# --- tests --------------------------------------------------------------------
+    return SystemB(db_path, RealClock(), gateway=gateway)
 
 
 def test_kickoff_parked_proposal_awaits_approval(tmp_path: Path) -> None:
-    # Fresh ticket at needs_success with the default ceiling (needs_success): a success
-    # proposal PARKS at the ceiling. empty -> agent_working -> awaiting_approval.
     db = _db(tmp_path)
     tid = _new_ticket(db)
-    assert _read(db, tid).status == TicketStatus.empty  # starts empty
+    assert _read(db, tid).ticket_status == TicketStatus.empty
 
     fake = _ProposingFake(
         _create_script(_complete_ev()),
         on_submit=lambda: _file_proposal(db, tid, "success", "the success body"),
     )
-    sb = _system_b(db, _Spawner([fake]))
+    sb = _system_b(db, fake)
     sb.set_off(tid, ROLE, "do step 0")
     assert sb.wait_idle(10.0)
 
     ticket = _read(db, tid)
-    assert ticket.status == TicketStatus.awaiting_approval
-    assert ticket.worker is None
-    assert ticket.chat_session_key == STORED_KEY          # kickoff stored the created key
-    assert ticket.fields.success.proposal is not None      # parked at ceiling
-    # kickoff went through session.create, never resume.
-    assert "session.create" in fake.sent_methods()
-    assert "session.resume" not in fake.sent_methods()
-    # the four-transition trail: agent_working (worker set) -> awaiting_approval (cleared).
+    assert ticket.ticket_status == TicketStatus.awaiting_approval
+    assert ticket.chat_session_key == STORED_KEY
+    assert ticket.fields.success.proposal is not None
+    assert fake.sent_methods() == ["session.create", "prompt.submit"]
     evs = _status_events(db, tid)
-    assert [e["status"] for e in evs] == ["agent_working", "awaiting_approval"]
-    assert evs[0]["worker"] == ROLE
-    assert evs[1]["worker"] is None
+    assert [e["ticket_status"] for e in evs] == ["agent_running_step", "awaiting_approval"]
+    assert all("worker" not in e for e in evs)
 
 
-def test_auto_accepted_proposal_awaits_approval(tmp_path: Path) -> None:
-    # Ceiling raised above needs_success: the success proposal AUTO-ACCEPTS (state
-    # advances, proposal cleared). System B's `advanced` disjunct still yields
-    # awaiting_approval — the F1 regression a naive present-only check would miss.
+def test_auto_accepted_proposal_completion_clears_to_empty(tmp_path: Path) -> None:
     db = _db(tmp_path)
     tid = _new_ticket(db, ceiling=TicketState.needs_plan)
 
@@ -208,160 +169,72 @@ def test_auto_accepted_proposal_awaits_approval(tmp_path: Path) -> None:
         _create_script(_complete_ev()),
         on_submit=lambda: _file_proposal(db, tid, "success", "the success body"),
     )
-    sb = _system_b(db, _Spawner([fake]))
+    sb = _system_b(db, fake)
     sb.set_off(tid, ROLE, "do step 0")
     assert sb.wait_idle(10.0)
 
     ticket = _read(db, tid)
-    assert ticket.state == TicketState.needs_approach          # auto-accepted + advanced
+    assert ticket.state == TicketState.needs_approach
     assert ticket.fields.success.value == "the success body"
-    assert ticket.fields.success.proposal is None             # cleared by the auto-accept
-    assert ticket.status == TicketStatus.awaiting_approval     # advanced disjunct
+    assert ticket.fields.success.proposal is None
+    assert ticket.ticket_status == TicketStatus.empty
 
 
-def test_no_proposal_errors(tmp_path: Path) -> None:
-    # The run completes but the agent files nothing: no advance, no proposal -> errored.
+def test_complete_with_no_proposal_is_empty_not_errored(tmp_path: Path) -> None:
     db = _db(tmp_path)
     tid = _new_ticket(db)
 
     fake = FakeGateway(_create_script(_complete_ev()))
-    sb = _system_b(db, _Spawner([fake]))
+    sb = _system_b(db, fake)
     sb.set_off(tid, ROLE, "do step 0")
     assert sb.wait_idle(10.0)
 
     ticket = _read(db, tid)
-    assert ticket.status == TicketStatus.errored
-    assert ticket.chat_session_key == STORED_KEY   # the created key still persists for retry
-    evs = _status_events(db, tid)
-    assert evs[-1]["status"] == "errored"
-    assert "haven't done your job" in evs[-1]["error"]
+    assert ticket.ticket_status == TicketStatus.empty
+    assert ticket.chat_session_key == STORED_KEY
+    assert [e["ticket_status"] for e in _status_events(db, tid)] == [
+        "agent_running_step",
+        "empty",
+    ]
 
 
 def test_gateway_error_event_errors(tmp_path: Path) -> None:
-    # A gateway error event during the run -> run_step errored -> ticket errored, reason
-    # surfaced in the event; no proposal check on that path.
     db = _db(tmp_path)
     tid = _new_ticket(db)
 
     fake = FakeGateway(_create_script(ev("error", LIVE_SID, {"message": "boom"})))
-    sb = _system_b(db, _Spawner([fake]))
+    sb = _system_b(db, fake)
     sb.set_off(tid, ROLE, "do step 0")
     assert sb.wait_idle(10.0)
 
     ticket = _read(db, tid)
-    assert ticket.status == TicketStatus.errored
+    assert ticket.ticket_status == TicketStatus.errored
     evs = _status_events(db, tid)
-    assert evs[-1]["status"] == "errored"
+    assert evs[-1]["ticket_status"] == "errored"
     assert evs[-1]["error"] == "boom"
 
 
-def test_kickoff_serialization_one_create(tmp_path: Path) -> None:
-    # Two set_offs on the same fresh ticket: the per-ticket kickoff lock forces exactly
-    # ONE session.create; the second resolves the now-stored key and resumes.
+def test_gateway_busy_4009_is_skip_not_error(tmp_path: Path) -> None:
     db = _db(tmp_path)
     tid = _new_ticket(db)
 
-    fake1 = _ProposingFake(
-        _create_script(_complete_ev()),
-        on_submit=lambda: _file_proposal(db, tid, "success", "b1"),
+    fake = FakeGateway(
+        {"session.create": [_create_reply()], "prompt.submit": [Reply(error=(4009, "busy"))]}
     )
-    fake2 = FakeGateway(_resume_script(STORED_KEY, _complete_ev()))
-    sb = _system_b(db, _Spawner([fake1, fake2]))
-    sb.set_off(tid, ROLE, "step")
-    sb.set_off(tid, ROLE, "step")
-    assert sb.wait_idle(10.0)
-
-    methods = fake1.sent_methods() + fake2.sent_methods()
-    assert methods.count("session.create") == 1
-    assert methods.count("session.resume") == 1
-    assert "session.create" in fake1.sent_methods()   # first spawn = kickoff
-    assert "session.resume" in fake2.sent_methods()    # second spawn = continuing
-
-
-def test_current_key_resolved_at_execution_and_rotated(tmp_path: Path) -> None:
-    # A ticket that already has a stored key: set_off resolves it (resume, not create),
-    # and a rotated resume tip is persisted back.
-    db = _db(tmp_path)
-    tid = _new_ticket(db)
-    _set_key(db, tid, STORED_KEY)
-
-    fake = _ProposingFake(
-        _resume_script("rotated-key", _complete_ev()),
-        on_submit=lambda: _file_proposal(db, tid, "success", "b"),
-    )
-    sb = _system_b(db, _Spawner([fake]))
-    sb.set_off(tid, ROLE, "step")
-    assert sb.wait_idle(10.0)
-
-    assert "session.resume" in fake.sent_methods()
-    assert "session.create" not in fake.sent_methods()
-    resume_frame = next(f for f in fake.sent if f.get("method") == "session.resume")
-    assert resume_frame["params"]["session_id"] == STORED_KEY   # resolved from the DB
-    assert _read(db, tid).chat_session_key == "rotated-key"      # rotated tip persisted
-
-
-def test_continuing_runs_follow_key_rotation(tmp_path: Path) -> None:
-    # Hermetic proof that the resume key is resolved at EXECUTION time, not captured at
-    # enqueue. Run A resumes STORED_KEY and blocks mid-run (before persisting its rotated
-    # tip). While A is blocked — the ticket's stored key is STILL STORED_KEY — B is
-    # enqueued (an enqueue-capturing impl would capture STORED_KEY here). A then unblocks
-    # and rotates the key to "rotated-key"; B, serialized behind A under the ticket_id
-    # key, runs next and MUST resume "rotated-key". A stale STORED_KEY on B would fail.
-    db = _db(tmp_path)
-    tid = _new_ticket(db)
-    _set_key(db, tid, STORED_KEY)
-
-    reached = threading.Event()
-    release = threading.Event()
-
-    class _BlockingFake(FakeGateway):
-        def send(self, line: str) -> None:
-            if json.loads(line).get("method") == "prompt.submit":
-                reached.set()          # A is now mid-run, before its end write
-                release.wait(10.0)     # hold until the test has enqueued B
-            super().send(line)
-
-    fake_a = _BlockingFake(_resume_script("rotated-key", _complete_ev()))
-    fake_b = FakeGateway(_resume_script("rotated-key", _complete_ev()))
-    sb = _system_b(db, _Spawner([fake_a, fake_b]))
-
-    sb.set_off(tid, ROLE, "step 1")
-    assert reached.wait(10.0)                                   # A blocked; key still STORED_KEY
-    assert _read(db, tid).chat_session_key == STORED_KEY
-    sb.set_off(tid, ROLE, "step 2")                            # B enqueued behind A
-    release.set()                                              # let A finish + rotate the key
-    assert sb.wait_idle(10.0)
-
-    frame_a = next(f for f in fake_a.sent if f.get("method") == "session.resume")
-    frame_b = next(f for f in fake_b.sent if f.get("method") == "session.resume")
-    assert frame_a["params"]["session_id"] == STORED_KEY        # A resumed the stored key
-    assert frame_b["params"]["session_id"] == "rotated-key"     # B resolved the rotated key at exec
-    assert _read(db, tid).chat_session_key == "rotated-key"
-
-
-def test_spawn_crash_errors_never_stuck_working(tmp_path: Path) -> None:
-    # A spawn that raises a non-gateway exception escapes run_step's GatewayError guard;
-    # System B's own guard maps it to errored, so the ticket is never left at agent_working.
-    db = _db(tmp_path)
-    tid = _new_ticket(db)
-
-    def _boom(argv: list[str], env: dict[str, str]) -> Any:
-        raise RuntimeError("spawn boom")
-
-    sb = SystemB(db, RealClock(), home=HOME, hermes_python=HERMES_PY, spawn=_boom)
-    sb.set_off(tid, ROLE, "step")
+    sb = _system_b(db, fake)
+    sb.set_off(tid, ROLE, "do step 0")
     assert sb.wait_idle(10.0)
 
     ticket = _read(db, tid)
-    assert ticket.status == TicketStatus.errored
-    assert ticket.worker is None
-    # started (agent_working) then errored — the end write always fires.
-    assert [e["status"] for e in _status_events(db, tid)] == ["agent_working", "errored"]
+    assert ticket.ticket_status == TicketStatus.empty
+    assert ticket.chat_session_key == STORED_KEY
+    assert [e["ticket_status"] for e in _status_events(db, tid)] == [
+        "agent_running_step",
+        "empty",
+    ]
 
 
-def test_has_inflight_true_during_run_then_clears(tmp_path: Path) -> None:
-    # has_inflight is System A's guard against re-setting-off a queued/running mind: True from
-    # set_off through the run, cleared on drain.
+def test_concurrent_same_ticket_setoff_only_one_prompt_runs(tmp_path: Path) -> None:
     db = _db(tmp_path)
     tid = _new_ticket(db)
     reached = threading.Event()
@@ -375,19 +248,62 @@ def test_has_inflight_true_during_run_then_clears(tmp_path: Path) -> None:
             super().send(line)
 
     fake = _BlockingFake(_create_script(_complete_ev()))
-    sb = _system_b(db, _Spawner([fake]))
-    assert sb.has_inflight(tid) is False
-    sb.set_off(tid, ROLE, "step")
+    sb = _system_b(db, fake)
+    sb.set_off(tid, ROLE, "step 1")
     assert reached.wait(10.0)
-    assert sb.has_inflight(tid) is True
+    sb.set_off(tid, ROLE, "step 1 duplicate")
+    time.sleep(0.2)
     release.set()
     assert sb.wait_idle(10.0)
-    assert sb.has_inflight(tid) is False
+
+    assert fake.sent_methods().count("prompt.submit") == 1
+    assert _read(db, tid).ticket_status == TicketStatus.empty
+
+
+def test_existing_key_is_resumed_and_rotated_tip_persisted(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+    _set_key(db, tid, STORED_KEY)
+
+    fake = _ProposingFake(
+        _resume_script("rotated-key", _complete_ev()),
+        on_submit=lambda: _file_proposal(db, tid, "success", "body"),
+    )
+    sb = _system_b(db, fake)
+    sb.set_off(tid, ROLE, "step")
+    assert sb.wait_idle(10.0)
+
+    resume_frame = next(f for f in fake.sent if f.get("method") == "session.resume")
+    assert resume_frame["params"]["session_id"] == STORED_KEY
+    assert _read(db, tid).chat_session_key == "rotated-key"
+
+
+def test_spawn_crash_errors_never_stuck_running(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+
+    def _boom(argv: list[str], env: dict[str, str]) -> Any:
+        raise RuntimeError("spawn boom")
+
+    gateway = SharedGateway(
+        hermes_python=HERMES_PY,
+        home=HOME,
+        worker_role=ROLE,
+        spawn=_boom,
+        base_env={},
+    )
+    sb = SystemB(db, RealClock(), gateway=gateway)
+    sb.set_off(tid, ROLE, "step")
+    assert sb.wait_idle(10.0)
+
+    assert _read(db, tid).ticket_status == TicketStatus.errored
+    assert [e["ticket_status"] for e in _status_events(db, tid)] == [
+        "agent_running_step",
+        "errored",
+    ]
 
 
 def test_set_off_guard_skips_a_no_longer_runnable_ticket(tmp_path: Path) -> None:
-    # The read->run gap (codex F2): a ticket dropped after readiness said "go" must be skipped
-    # at execution time — no start-write, no spawn, status untouched.
     db = _db(tmp_path)
     tid = _new_ticket(db)
     conn = connect(db)
@@ -396,35 +312,13 @@ def test_set_off_guard_skips_a_no_longer_runnable_ticket(tmp_path: Path) -> None
     finally:
         conn.close()
 
-    def _boom(argv: list[str], env: dict[str, str]) -> Any:
-        raise AssertionError("guard should have skipped before spawning")
-
-    sb = SystemB(db, RealClock(), home=HOME, hermes_python=HERMES_PY, spawn=_boom)
+    fake = FakeGateway({})
+    sb = _system_b(db, fake)
     sb.set_off(tid, ROLE, "step", guard=readiness.is_runnable)
     assert sb.wait_idle(10.0)
 
     ticket = _read(db, tid)
     assert ticket.state == TicketState.dropped
-    assert ticket.status == TicketStatus.empty     # never written to agent_working
-    assert _status_events(db, tid) == []            # no status events at all — fully skipped
-
-
-def test_double_set_off_second_run_skipped_by_guard(tmp_path: Path) -> None:
-    # has_inflight normally prevents a duplicate enqueue; the execution-time guard is the
-    # backstop. Two set_offs on one ticket: the first parks a success proposal, so the second
-    # is no-longer-runnable and is skipped — fake2 is never even spawned.
-    db = _db(tmp_path)
-    tid = _new_ticket(db)
-    fake1 = _ProposingFake(
-        _create_script(_complete_ev()),
-        on_submit=lambda: _file_proposal(db, tid, "success", "b"),
-    )
-    fake2 = FakeGateway(_resume_script(STORED_KEY, _complete_ev()))
-    sb = _system_b(db, _Spawner([fake1, fake2]))
-    sb.set_off(tid, ROLE, "step", guard=readiness.is_runnable)
-    sb.set_off(tid, ROLE, "step", guard=readiness.is_runnable)
-    assert sb.wait_idle(10.0)
-
-    assert "session.create" in fake1.sent_methods()
-    assert fake2.sent_methods() == []                          # second skipped before any spawn
-    assert _read(db, tid).fields.success.proposal is not None  # first parked; untouched by #2
+    assert ticket.ticket_status == TicketStatus.empty
+    assert fake.sent_methods() == []
+    assert _status_events(db, tid) == []

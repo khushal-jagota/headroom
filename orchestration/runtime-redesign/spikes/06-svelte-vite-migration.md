@@ -167,30 +167,31 @@ In Svelte, usage should look conceptually like:
 
 ### Event-to-key mapping
 
-Initial mapper: `keysForEvent(event): string[]`.
+**Decision A (settled).** Propagation is `events → keyed invalidation → targeted refetch`; Svelte runes do the render-granularity half. Reactive queries (option B) were weighed against this and rejected: for a single-user local app the reactive-query runtime is overbuilt, and it does not remove the dependency-mapping burden for our aggregate views (board, queues, current sprint) — it just relocates it server-side with more moving parts. See the independent decision in `decisions.md`.
 
-Use `entity_id`, `kind`, and selected payload fields.
+The one live risk of A is rot: a new event kind or resource added without wiring its invalidation, silently leaving the UI stale. The mapping below is structured specifically so that cannot happen quietly.
 
-Base rules:
+Mapper: `keysForEvent(event): string[]`, kept in one file.
 
-- Always update `window.__plannerDebug.cursor` when cursor advances.
-- `kind === "chat_session_created"` invalidates `ticket:<id>` or `day:<id>` if the entity is chattable, but not the local chat transcript.
-- `entity_id` starting `t_` invalidates `ticket:<id>`, `board`, and `queues`.
-- `entity_id` starting `i_` invalidates `item:<id>`, `items:backlog`, `sprint:current`, `board`, and `queues`.
-- `entity_id` starting `s_` invalidates `sprint:<id>`, `sprint:current`, and `sprints`.
-- `entity_id` starting `day_` invalidates `day:<date>` and `day:today` when the date is today’s planning date or when the resource is the today alias.
-- `entity_id` starting `idea_` invalidates `ideas`.
+**Primary rule — the `entity_id` prefix, and it must be complete on its own.** Every event carries an `entity_id`; its prefix names the entity type, and the entity type fixes the resource plus the aggregates that entity appears in. This rule alone fully covers the normal case, so **adding a new event kind about an existing entity needs no mapping change** — the prefix already routes it. Fold every "aggregate also touched" into the prefix set here; do not restate it per kind.
 
-Kind-specific refinements:
+- `t_*` (ticket) → `ticket:<id>`, `board`, `queues`, `sprint:current`
+- `i_*` (sprint item) → `item:<id>`, `items:backlog`, `sprint:current`, `board`, `queues`
+- `s_*` (sprint) → `sprint:<id>`, `sprint:current`, `sprints`
+- `day_*` → `day:<date>` (and `day:today` when the date is today's planning date / the today alias)
+- `idea_*` → `ideas`
 
-- `ticket_created`, `ticket_updated`, `ticket_status_changed`, `state_changed`, `proposal_filed`, `proposal_accepted`, `proposal_superseded`, `note_updated`, `recap_updated`, `scope_changed`, `field_value_edited`: invalidate `ticket:<id>`, `board`, `queues`, and `sprint:current`.
-- `link_added` / `link_removed`: invalidate `board`, `queues`, `sprint:current`, and any `ticket:<from_id>`, `ticket:<to_id>`, `item:<from_id>`, or `item:<to_id>` named in payload.
-- `sprint_item_created`, `item_updated`, `item_status_changed`: invalidate `item:<id>`, `items:backlog`, `sprint:current`, `board`, and `queues`.
-- `sprint_created`, `sprint_updated`: invalidate `sprints`, `sprint:current`, and `sprint:<id>`.
-- `idea_created`: invalidate `ideas`.
-- `day_created`, `day_updated`, `day_closed`, `day_ticket_added`, `day_ticket_removed`, `boundary_failed`: invalidate the relevant `day:*` resource. If payload includes `ticket_id`, also invalidate that `ticket:<id>` and `board`.
+Over-invalidating an aggregate (`board`, `sprint:current`) is fine; re-rendering a whole route is not.
 
-Keep the mapper table in one file and add unit tests for it. The important invariant: every backend event kind has an explicit mapping decision, even if the decision is “aggregate only.”
+**Kind-specific entries exist ONLY for events the prefix rule cannot express** — never to repeat what the prefix already covers:
+
+- `link_added` / `link_removed`: the change touches two entities named in the payload, not just `entity_id` — invalidate `ticket:`/`item:` for *both* endpoints, plus `board`, `queues`, `sprint:current`.
+- `chat_session_created`: invalidate the chattable entity's resource, but never the local chat transcript.
+- `day_*` carrying a payload `ticket_id`: also invalidate that `ticket:<id>` and `board`.
+
+If a new event's correct invalidation *is* its entity's prefix set, add nothing. Add a kind-specific entry only when the prefix set is genuinely wrong or incomplete for that event, and state why.
+
+**Anti-rot backstop — a completeness test.** A unit test iterates every event kind the backend can emit (the canonical event-kind list) and asserts `keysForEvent` returns at least one key for each; it also rejects any `entity_id` whose prefix is unknown to the primary rule. A new backend event kind that maps to nothing — or a new entity prefix nobody taught the mapper — fails `./verify` rather than going silently stale. This test plus the canonical event-kind list are the single forcing function; keep them in sync. This is a required item of Phase 2, not optional.
 
 ## 3. Streaming chat
 

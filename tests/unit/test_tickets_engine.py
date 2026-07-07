@@ -15,7 +15,14 @@ from planner.core.contracts import EventKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import read_events_since
 from planner.tickets import data
-from planner.tickets.contracts import NO_FURTHER, TITLE_MAX_CHARS, AtCap, FieldName, TicketState
+from planner.tickets.contracts import (
+    NO_FURTHER,
+    TITLE_MAX_CHARS,
+    AtCap,
+    FieldName,
+    TicketState,
+    TicketStatus,
+)
 from planner.tickets.logic import machine
 
 if TYPE_CHECKING:
@@ -53,6 +60,86 @@ def _events(
     return [
         e for e in rows if e.entity_id == ticket_id and (kind is None or e.kind == kind.value)
     ]
+
+
+def test_ticket_status_transitions(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    t = _create(tmp_db, cfg, fake_clock)
+    assert t.ticket_status is TicketStatus.empty
+
+    guard_calls = 0
+
+    def guard(conn: Connection, ticket: Ticket) -> bool:
+        nonlocal guard_calls
+        guard_calls += 1
+        return True
+
+    started = data.start_run_if_runnable(tmp_db, t.id, guard=guard, now=now)
+    assert started is not None
+    assert started.ticket_status is TicketStatus.agent_running_step
+    assert guard_calls == 1
+
+    skipped = data.start_run_if_runnable(tmp_db, t.id, guard=guard, now=now)
+    assert skipped is None
+    assert guard_calls == 1  # non-empty status skips before the readiness guard
+
+    t = data.finish_run_if_still_running_step(tmp_db, t.id, session_key="sess-1", now=now)
+    assert t.ticket_status is TicketStatus.empty
+    assert t.chat_session_key == "sess-1"
+
+    t = data.start_run_if_runnable(tmp_db, t.id, guard=None, now=now)
+    assert t is not None
+    t = data.file_proposal(
+        tmp_db, t.id, field=FieldName.success, body="parked", actor="agent", now=now
+    )
+    assert t.ticket_status is TicketStatus.awaiting_approval
+    t = data.finish_run_if_still_running_step(tmp_db, t.id, session_key="sess-2", now=now)
+    assert t.ticket_status is TicketStatus.awaiting_approval
+    assert t.chat_session_key == "sess-2"
+
+    t = data.accept_proposal(
+        tmp_db,
+        t.id,
+        field=FieldName.success,
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
+    )
+    assert t.ticket_status is TicketStatus.empty
+
+    t = data.take_over_ticket(tmp_db, t.id, now=now)
+    assert t.ticket_status is TicketStatus.user_takeover
+    skipped = data.start_run_if_runnable(tmp_db, t.id, guard=guard, now=now)
+    assert skipped is None
+    assert guard_calls == 1
+
+    t = data.release_ticket(tmp_db, t.id, now=now)
+    assert t.ticket_status is TicketStatus.empty
+    t = data.mark_run_errored(tmp_db, t.id, error="boom", session_key="sess-3", now=now)
+    assert t.ticket_status is TicketStatus.errored
+    assert t.chat_session_key == "sess-3"
+
+    status_events = _events(tmp_db, cfg, t.id, EventKind.ticket_status_changed)
+    assert all("worker" not in e.payload for e in status_events)
+    assert status_events[-1].payload == {"ticket_status": "errored", "error": "boom"}
+
+
+def test_auto_accepted_proposal_does_not_park_status(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    t = _create(tmp_db, cfg, fake_clock)
+    _scope(tmp_db, t, TicketState.needs_plan, AtCap.propose, fake_clock)
+    t = data.file_proposal(
+        tmp_db, t.id, field=FieldName.success, body="success", actor="agent", now=now
+    )
+    assert t.state is TicketState.needs_approach
+    assert t.ticket_status is TicketStatus.empty
+    status_events = _events(tmp_db, cfg, t.id, EventKind.ticket_status_changed)
+    assert status_events == []
 
 
 def test_a02_gating_chain_one_state_per_accept(

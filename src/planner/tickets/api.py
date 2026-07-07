@@ -451,7 +451,24 @@ async def drop_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa) 
     reject_agents(ctx)
     now = clk.now_unix()
     ticket = tickets_data.drop_ticket(conn, ticket_id, actor=ctx.actor, now=now)
-    _poke(sa)  # a drop retires the ticket; the guard skips any stale queued run
+    _poke(sa)  # a drop retires the ticket; the runnable guard skips any stale wake
+    return tickets_views.ticket_json(ticket, now)
+
+
+@router.post("/tickets/{ticket_id}/takeover")
+async def take_over_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+    reject_agents(ctx)
+    now = clk.now_unix()
+    ticket = tickets_data.take_over_ticket(conn, ticket_id, now=now)
+    return tickets_views.ticket_json(ticket, now)
+
+
+@router.post("/tickets/{ticket_id}/release")
+async def release_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa) -> JsonDict:
+    reject_agents(ctx)
+    now = clk.now_unix()
+    ticket = tickets_data.release_ticket(conn, ticket_id, now=now)
+    _poke(sa)
     return tickets_views.ticket_json(ticket, now)
 
 

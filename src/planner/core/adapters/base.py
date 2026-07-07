@@ -2,9 +2,8 @@
 (boundary agent, chat gateway). Stdlib only. The dependency arrow is core-adapters
 -> domain-contracts, never the reverse.
 
-(The old subprocess-spawn boundary — how the dispatcher launched a hermes worker —
-is removed with the dispatcher; System B drives minds via the W1 gateway primitive
-now, not this adapter.)"""
+Production chat uses the app-state SharedGateway singleton; fakes remain injectable
+through this protocol in tests."""
 
 from __future__ import annotations
 

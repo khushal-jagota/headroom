@@ -31,8 +31,7 @@ from planner.tickets.logic.decisions import Decision
 
 
 class _Unset:
-    """Typed sentinel for set_run_status: distinguishes 'leave chat_session_key untouched'
-    from 'set it to None'."""
+    """Typed sentinel for status helpers: leave chat_session_key untouched."""
 
 
 _UNSET: Final = _Unset()
@@ -64,8 +63,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         recap=row["recap"],
         ceiling=TicketState(row["ceiling"]),
         at_cap=AtCap(row["at_cap"]),
-        status=TicketStatus(row["status"]),
-        worker=row["worker"],
+        ticket_status=TicketStatus(row["ticket_status"]),
         chat_session_key=row["chat_session_key"],
         alias=row["alias"],
         fields=fields_codec.fields_from_json(row["fields"]),
@@ -103,6 +101,38 @@ def _apply_decision(
     for spec in decision.events:
         append_event(conn, ticket.id, spec.kind, spec.payload, now)
     return _load_ticket(conn, ticket.id)
+
+
+def _write_ticket_status(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    ticket_status: TicketStatus,
+    now: int,
+    *,
+    error: str | None = None,
+) -> None:
+    conn.execute(
+        "UPDATE tickets SET ticket_status = ?, updated_at = ? WHERE id = ?",
+        (ticket_status.value, now, ticket_id),
+    )
+    payload: dict[str, object] = {"ticket_status": ticket_status.value}
+    if error is not None:
+        payload["error"] = error
+    append_event(conn, ticket_id, EventKind.ticket_status_changed, payload, now)
+
+
+def _persist_ticket_chat_session_key(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    session_key: str | None | _Unset,
+    now: int,
+) -> None:
+    if isinstance(session_key, _Unset):
+        return
+    conn.execute(
+        "UPDATE tickets SET chat_session_key = ?, updated_at = ? WHERE id = ?",
+        (session_key, now, ticket_id),
+    )
 
 
 def create_ticket(
@@ -146,9 +176,9 @@ def create_ticket(
                 )
         conn.execute(
             "INSERT INTO tickets (id, title, state, priority, deadline, project, sprint_item_id, "
-            "sprint_id, recap, ceiling, at_cap, status, worker, "
+            "sprint_id, recap, ceiling, at_cap, ticket_status, "
             "chat_session_key, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -187,72 +217,51 @@ def get_effective_sprint_id(conn: sqlite3.Connection, ticket_id: str) -> str | N
     return sprint_id
 
 
-def set_run_status(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    status: TicketStatus,
-    worker: str | None,
-    session_key: str | None | _Unset = _UNSET,
-    error: str | None = None,
-    now: int,
-) -> Ticket:
-    """The single door for the ticket's code-owned run status (System B is the only caller).
-    Writes status + worker together in ONE atomic UPDATE — dissolving the runless orphan (there is
-    no second write to crash between) — optionally advancing the mind's durable chat_session_key,
-    then appends one ticket_status_changed event. Passing session_key=None clears the key; leaving
-    it as the _UNSET sentinel leaves the stored key untouched. `error` is surfaced in the event
-    payload only (it never affects the row), so an errored run's reason lands in the debug log."""
-    with _txn(conn):
-        _load_ticket(conn, ticket_id)  # existence guard -> not_found
-        if isinstance(session_key, _Unset):
-            conn.execute(
-                "UPDATE tickets SET status = ?, worker = ?, updated_at = ? WHERE id = ?",
-                (status.value, worker, now, ticket_id),
-            )
-        else:
-            conn.execute(
-                "UPDATE tickets SET status = ?, worker = ?, chat_session_key = ?, updated_at = ? "
-                "WHERE id = ?",
-                (status.value, worker, session_key, now, ticket_id),
-            )
-        payload: dict[str, object] = {"status": status.value, "worker": worker}
-        if error is not None:
-            payload["error"] = error
-        append_event(conn, ticket_id, EventKind.ticket_status_changed, payload, now)
-        return _load_ticket(conn, ticket_id)
-
-
 def start_run_if_runnable(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    worker: str | None,
     guard: Callable[[sqlite3.Connection, Ticket], bool] | None,
     now: int,
 ) -> Ticket | None:
-    """The atomic guarded start transition (System B's only start-write door). In ONE
-    BEGIN IMMEDIATE txn: re-read the ticket, apply `guard` (System A's readiness) against that
-    fresh, lock-consistent view, and only if it passes write status=agent_working + worker and
-    append one ticket_status_changed event; otherwise write nothing and return None. This closes
-    the poll->run TOCTOU — a human drop/scope-stop/block/park committed in the gap is either seen
-    by the re-read (guard skips) or blocked until this commits — while keeping System B the sole
-    status writer. `guard=None` => an unconditional start (W3a's bare set_off path)."""
+    """Start a run only from empty after the injected readiness guard passes."""
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
+        if ticket.ticket_status is not TicketStatus.empty:
+            return None
         if guard is not None and not guard(conn, ticket):
             return None
-        conn.execute(
-            "UPDATE tickets SET status = ?, worker = ?, updated_at = ? WHERE id = ?",
-            (TicketStatus.agent_working.value, worker, now, ticket_id),
-        )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.ticket_status_changed,
-            {"status": TicketStatus.agent_working.value, "worker": worker},
-            now,
-        )
+        _write_ticket_status(conn, ticket_id, TicketStatus.agent_running_step, now)
+        return _load_ticket(conn, ticket_id)
+
+
+def finish_run_if_still_running_step(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    session_key: str | None | _Unset = _UNSET,
+    now: int,
+) -> Ticket:
+    with _txn(conn):
+        ticket = _load_ticket(conn, ticket_id)
+        _persist_ticket_chat_session_key(conn, ticket_id, session_key, now)
+        if ticket.ticket_status is TicketStatus.agent_running_step:
+            _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
+        return _load_ticket(conn, ticket_id)
+
+
+def mark_run_errored(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    error: str,
+    session_key: str | None | _Unset = _UNSET,
+    now: int,
+) -> Ticket:
+    with _txn(conn):
+        _load_ticket(conn, ticket_id)
+        _persist_ticket_chat_session_key(conn, ticket_id, session_key, now)
+        _write_ticket_status(conn, ticket_id, TicketStatus.errored, now, error=error)
         return _load_ticket(conn, ticket_id)
 
 
@@ -262,7 +271,11 @@ def file_proposal(
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
         decision = resolution.decide_file_proposal(ticket, field, body, actor, now)
-        return _apply_decision(conn, ticket, decision, now)
+        updated = _apply_decision(conn, ticket, decision, now)
+        if any(spec.kind is EventKind.proposal_filed for spec in decision.events):
+            _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
+            updated = _load_ticket(conn, ticket_id)
+        return updated
 
 
 def accept_proposal(
@@ -279,7 +292,23 @@ def accept_proposal(
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
         decision = resolution.decide_accept(ticket, field, actor, edited_body, next_ceiling, at_cap)
-        return _apply_decision(conn, ticket, decision, now)
+        _apply_decision(conn, ticket, decision, now)
+        _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
+        return _load_ticket(conn, ticket_id)
+
+
+def take_over_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Ticket:
+    with _txn(conn):
+        _load_ticket(conn, ticket_id)
+        _write_ticket_status(conn, ticket_id, TicketStatus.user_takeover, now)
+        return _load_ticket(conn, ticket_id)
+
+
+def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Ticket:
+    with _txn(conn):
+        _load_ticket(conn, ticket_id)
+        _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
+        return _load_ticket(conn, ticket_id)
 
 
 def edit_field_value(

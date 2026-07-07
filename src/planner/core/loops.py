@@ -25,8 +25,7 @@ from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.contracts import JsonDict
 from planner.days.scheduler import run_boundary_tick
-from planner.minds.config import resolve_hermes_python, resolve_planner_home
-from planner.minds.gateway import spawn_popen
+from planner.minds.shared_gateway import SharedGateway
 from planner.runtime.lock import ensure_machine_lock, release_machine_lock
 from planner.runtime.system_a import SystemA
 from planner.runtime.system_b import SystemB
@@ -86,7 +85,7 @@ class BackgroundLoops:
 _active: BackgroundLoops | None = None
 
 
-def _start_system_a(config: Config, clock: Clock) -> SystemA | None:
+def _start_system_a(config: Config, clock: Clock, gateway: SharedGateway) -> SystemA | None:
     """Construct + start System A when enabled and this process wins the machine lock. Any
     construction failure logs, releases the lock, and degrades to boundary-only (never kills
     the server)."""
@@ -100,9 +99,7 @@ def _start_system_a(config: Config, clock: Clock) -> SystemA | None:
         system_b = SystemB(
             config.db_path,
             clock,
-            home=resolve_planner_home(),
-            hermes_python=resolve_hermes_python(),
-            spawn=spawn_popen,
+            gateway=gateway,
         )
         system_a = SystemA(
             config.db_path, clock, system_b,
@@ -118,7 +115,12 @@ def _start_system_a(config: Config, clock: Clock) -> SystemA | None:
 
 
 def start_background_loops(
-    config: Config, clock: Clock, adapters: Adapters, conn_factory: ConnFactory
+    config: Config,
+    clock: Clock,
+    adapters: Adapters,
+    conn_factory: ConnFactory,
+    *,
+    shared_gateway: SharedGateway,
 ) -> BackgroundLoops:
     """Start the boundary loop + (when enabled) System A. At most one live instance per
     process."""
@@ -132,7 +134,7 @@ def start_background_loops(
             config.tick_seconds,
         )
     )
-    system_a = _start_system_a(config, clock)
+    system_a = _start_system_a(config, clock, shared_gateway)
     lock_path = config.dispatcher_lock_path if system_a is not None else None
     loops = BackgroundLoops([boundary], system_a, lock_path)
     _active = loops

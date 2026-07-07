@@ -142,10 +142,11 @@
   // human is needed; everything else stays achromatic.
   var CHIP_MARKERS = {
     "pending-proposal": "proposal pending",
-    "agent-working": "● working",
+    "agent-running-step": "running step",
     "blockers-cleared": "blockers cleared",
     "errored": "errored",
-    "frozen": "frozen"
+    "frozen": "frozen",
+    "user-takeover": "user takeover"
   };
 
   function chip(variant, value, opts) {
@@ -1098,10 +1099,11 @@
     // Run outcome — the errored case carries the reason (agent init / crash / no
     // proposal). Surfacing it here is what makes a failed run debuggable at all.
     if (kind === "ticket_status_changed") {
+      var ticketStatus = payload.ticket_status;
       if (payload.error) {
-        return String(payload.status) + " — " + String(payload.error);
+        return String(ticketStatus) + " — " + String(payload.error);
       }
-      return String(payload.status) + (payload.worker ? " · " + String(payload.worker) : "");
+      return String(ticketStatus);
     }
     if (kind === "scope_changed") {
       return "approved until " + String(payload.ceiling) + " · " + String(payload.at_cap);
@@ -1218,7 +1220,7 @@
     }
     events.forEach(function (ev) {
       var payload = ev.payload || {};
-      var isError = ev.kind === "ticket_status_changed" && payload.status === "errored";
+      var isError = ev.kind === "ticket_status_changed" && payload.ticket_status === "errored";
       var row = make("div", "event-log-row" + (isError ? " event-log-row--error" : ""));
       row.setAttribute("data-event-row", "");
       row.setAttribute("data-event-kind", ev.kind);

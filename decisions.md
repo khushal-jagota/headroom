@@ -494,3 +494,30 @@ The per-ticket runtime is now wired end-to-end over the real gateway (commits `c
    picker (floor = new state): it offers the current stage and every later one, never an earlier
    one — so no control can offer approving back past where the ticket already is. Chosen over two
    independent option lists to guarantee they cannot drift apart.
+
+## 2026-07-07 · Gateway topology + frontend propagation (judgment calls)
+
+1. **One shared persistent gateway child — not per-send, not per-ticket.** The runtime spawned a
+   fresh Hermes gateway child per send (per step *and* per chat message) — finer than per-ticket.
+   The reason on record (per-run env for role/context, "kanban-shaped") did not survive scrutiny:
+   there is one worker role, ticket context rides the prompt not env, and a durable-employee model
+   argues *for* persistence. Spike 07 pinned the facts — one gateway process holds many sessions and
+   runs their turns concurrently (a daemon thread per turn, no global lock), and the `4009 session
+   busy` guard is per-session, in-process memory. So the planner now runs ONE persistent shared
+   worker child holding every ticket's durable session; the gateway's own per-session `4009` is the
+   sole collision guard (no app flag, send registry, or MindQueue). Chosen over per-ticket children
+   (more lifecycle for no gain) and over Convex-scale machinery. Required `GatewayChild` to demux
+   events by `session_id` for concurrent turns (built, spot-checked). Real-gateway concurrency is
+   still owed a manual smoke (`python -m planner.minds.smoke --concurrency`) before it is trusted.
+
+2. **Frontend propagation: events + keyed invalidation (A), not reactive queries (B).** For the
+   Svelte rebuild, chose `events → keyed invalidation → targeted refetch` over a Convex-style
+   reactive-query layer. An independent codex — given both options neutrally, with no house lean and
+   none of our opinions — picked A: reactive queries add a custom runtime (subscription tracking,
+   rerun scheduling, push, reconnect, multi-tab cleanup) *and* do not remove the dependency-mapping
+   burden for our aggregate views (board, queues, current sprint) — table-level tracking
+   over-refreshes, predicate-level is hand-maintained, so B just relocates the map server-side with
+   more moving parts. A's one rot risk (a new event kind that forgets its invalidation) is contained
+   structurally: the `entity_id`-prefix rule is primary and complete (new kinds about an existing
+   entity are auto-covered), with a completeness test as the backstop (a missed mapping fails
+   `./verify`). Recorded in spike 06 + CLAUDE.md.

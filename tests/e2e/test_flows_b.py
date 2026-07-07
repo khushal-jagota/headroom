@@ -235,7 +235,7 @@ def test_e29_day_overview_structured_and_edit(
 
 
 def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api):
-    # A ticket advanced to needs_review through claimless CLI proposals (the worker's
+    # A ticket advanced to needs_review through claimless CLI proposals (the agent's
     # normal path now — no dispatcher, no claim): the result auto-accepts at ceiling
     # needs_review and PARKS at needs_review, then a human approves via the Review card.
     mid = cli(server, "ticket", "create", "--title", E30_TITLE)["id"]
@@ -247,7 +247,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     ready = f'section[data-screen="ticket"][data-ticket-id="{mid}"]'
     page = open_page(context_factory(), server, f"#/ticket/{mid}", ready, settled=True)
     assert page.get_attribute('section[data-screen="ticket"]', "data-state") == "in_progress"
-    assert page.query_selector('[data-marker="agent-working"]') is None   # nothing running it
+    assert page.query_selector('[data-marker="agent-running-step"]') is None
 
     # Worker files the result claimless; ceiling needs_review ⇒ it auto-accepts to
     # needs_review (the accepted value is stored, no pending proposal remains).

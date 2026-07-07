@@ -1,8 +1,6 @@
 """Ticket readiness — the pure predicate System A polls and System B re-checks at
 execution time. ``is_runnable(conn, ticket)`` answers "should the agent run the next step
-of this ticket right now?" from ticket state alone; it carries NO run-queue knowledge
-(``has_inflight`` is System A's concern, and at execution time the ticket is inflight by
-definition — so the execution-time guard must not consult it).
+of this ticket right now?" from ticket state, fields, scope, and blockers alone.
 
 Kept in its own module so both ``system_a`` and ``system_b`` import it with no cycle — it
 reaches only into ``tickets.logic`` + ``core.links``, never into either system."""

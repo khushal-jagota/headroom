@@ -62,12 +62,19 @@ class EchoGatewayAdapter:
     command_calls: list[tuple[str | None, str, str]] = field(default_factory=list)
     catalog_calls: int = 0                # counts real catalog() work (cache-miss proof)
     next_session: int = 1
+    busy: bool = False
 
     def status(self) -> GatewayStatus:
         return GatewayStatus(available=True)
 
     def send(self, session_key: str | None, entity_id: str, text: str) -> ChatSendResult:
         self.calls.append((session_key, entity_id, text))
+        if self.busy:
+            raise PlannerError(
+                ErrorCode.already_running,
+                "an agent is already running on this ticket",
+                {"entity_id": entity_id, "session_key": session_key},
+            )
         if session_key is None:
             session_key = f"fake-sess-{self.next_session}"
             self.next_session += 1
@@ -81,6 +88,12 @@ class EchoGatewayAdapter:
         self, session_key: str | None, entity_id: str, command: str
     ) -> CommandRunResult:
         self.command_calls.append((session_key, entity_id, command))
+        if self.busy:
+            raise PlannerError(
+                ErrorCode.already_running,
+                "an agent is already running on this ticket",
+                {"entity_id": entity_id, "session_key": session_key},
+            )
         if session_key is None:
             session_key = f"fake-sess-{self.next_session}"
             self.next_session += 1

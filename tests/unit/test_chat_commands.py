@@ -13,12 +13,13 @@ from sqlite3 import Connection
 from fastapi.testclient import TestClient
 
 from planner.chat import service
-from planner.chat.contracts import CommandRunResult
+from planner.chat.contracts import CommandRunResult, GatewayStatus
 from planner.core.adapters.fakes import CANNED_CATALOG, EchoGatewayAdapter
 from planner.core.adapters.registry import Adapters, build_adapters
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
+from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
 from planner.tickets.data import create_ticket
 
@@ -310,3 +311,28 @@ def test_command_rotated_key_remints_and_repersists(tmp_path: Path) -> None:
     assert result.kind == "system"
     assert _stored_key(db_path, tid) == "post-compress"
     assert _events(db_path, tid, "chat_session_created") == [{"session_key": "post-compress"}]
+
+
+def test_command_busy_is_409_already_running(tmp_path: Path) -> None:
+    app, db_path, adapters = _make_app(tmp_path)
+    tid = _ticket(db_path)
+
+    class BusyGateway:
+        def status(self) -> GatewayStatus:
+            return GatewayStatus(available=True)
+
+        def run_command(
+            self, session_key: str | None, entity_id: str, command: str
+        ) -> CommandRunResult:
+            raise PlannerError(
+                ErrorCode.already_running,
+                "an agent is already running on this ticket",
+                {"entity_id": entity_id},
+            )
+
+    app.state.adapters = Adapters(boundary=adapters.boundary, gateway=BusyGateway())  # type: ignore[arg-type]
+    with TestClient(app) as client:
+        response = client.post(f"/api/chat/{tid}/command", json={"command": "/status"})
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "already_running"

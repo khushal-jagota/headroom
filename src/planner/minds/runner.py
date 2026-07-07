@@ -97,52 +97,53 @@ def run_step(
             live_sid = str(resumed.get("session_id") or "")  # NEW live handle
             tip = resumed.get("resumed")  # durable key, maybe rotated tip
             resolved_key = str(tip) if tip else session_key  # server.py:4612-4619, 4633
-        child.request(
-            "prompt.submit",
-            {"session_id": live_sid, "text": prompt_text},
-            timeout=request_timeout,
-        )  # {"status":"streaming"} — value unused
-        while True:  # D5: no deadline
-            event = child.next_event()
-            if event is None:
-                return RunResult(
-                    "errored",
-                    "",
-                    None,
-                    resolved_key,
-                    f"gateway child died mid-run; stderr: {child.stderr_tail()!r}",
-                )
-            _notify(on_event, event)  # D8: forward everything, guarded
-            etype = str(event.get("type") or "")
-            if etype == "error":
-                raw = event.get("payload")
-                payload = raw if isinstance(raw, dict) else {}
-                return RunResult(
-                    "errored",
-                    "",
-                    None,
-                    resolved_key,
-                    str(payload.get("message") or "gateway error event"),
-                )
-            if etype == "message.complete":
-                raw = event.get("payload")
-                payload = raw if isinstance(raw, dict) else {}
-                text = str(payload.get("text") or "")
-                usage_raw = payload.get("usage")
-                usage = usage_raw if isinstance(usage_raw, dict) else None
-                gw_status = str(payload.get("status") or "complete")
-                if gw_status == "complete":
-                    return RunResult("complete", text, usage, resolved_key, None)
-                if gw_status == "interrupted":
-                    return RunResult("interrupted", text, usage, resolved_key, None)
-                return RunResult(
-                    "errored",
-                    text,
-                    usage,
-                    resolved_key,
-                    text or "run ended with status=error",
-                )
-            # any other event type: forwarded above, otherwise ignored — keep draining
+        with child.open_session_events(live_sid) as events:
+            child.request(
+                "prompt.submit",
+                {"session_id": live_sid, "text": prompt_text},
+                timeout=request_timeout,
+            )  # {"status":"streaming"} — value unused
+            while True:  # D5: no deadline
+                event = events.next_event()
+                if event is None:
+                    return RunResult(
+                        "errored",
+                        "",
+                        None,
+                        resolved_key,
+                        f"gateway child died mid-run; stderr: {child.stderr_tail()!r}",
+                    )
+                _notify(on_event, event)  # D8: forward everything, guarded
+                etype = str(event.get("type") or "")
+                if etype == "error":
+                    raw = event.get("payload")
+                    payload = raw if isinstance(raw, dict) else {}
+                    return RunResult(
+                        "errored",
+                        "",
+                        None,
+                        resolved_key,
+                        str(payload.get("message") or "gateway error event"),
+                    )
+                if etype == "message.complete":
+                    raw = event.get("payload")
+                    payload = raw if isinstance(raw, dict) else {}
+                    text = str(payload.get("text") or "")
+                    usage_raw = payload.get("usage")
+                    usage = usage_raw if isinstance(usage_raw, dict) else None
+                    gw_status = str(payload.get("status") or "complete")
+                    if gw_status == "complete":
+                        return RunResult("complete", text, usage, resolved_key, None)
+                    if gw_status == "interrupted":
+                        return RunResult("interrupted", text, usage, resolved_key, None)
+                    return RunResult(
+                        "errored",
+                        text,
+                        usage,
+                        resolved_key,
+                        text or "run ended with status=error",
+                    )
+                # any other event type: forwarded above, otherwise ignored — keep draining
     except GatewayRpcError as exc:
         return RunResult("errored", "", None, resolved_key, str(exc))
     except GatewayError as exc:

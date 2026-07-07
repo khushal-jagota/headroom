@@ -1,6 +1,6 @@
 """Scriptable fake gateway child (test double). Implements the ChildProcess
-protocol so runner/queue/gateway tests exercise the real frame router with
-no subprocess and no model calls."""
+protocol so runner/gateway tests exercise the real frame router with no
+subprocess and no model calls."""
 
 from __future__ import annotations
 

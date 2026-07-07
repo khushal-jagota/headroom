@@ -13,11 +13,13 @@ from fastapi.testclient import TestClient
 
 from planner.chat import service
 from planner.chat.contracts import ChatSendResult, GatewayStatus
-from planner.core.adapters.registry import build_adapters
+from planner.core.adapters.registry import Adapters, build_adapters
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
+from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
+from planner.tickets.contracts import TicketStatus
 from planner.tickets.data import create_ticket
 
 
@@ -50,6 +52,32 @@ def _ticket(db_path: Path) -> str:
     finally:
         conn.close()
     return ticket.id
+
+
+def _replace_gateway(app: object, gateway: object) -> None:
+    adapters = app.state.adapters
+    app.state.adapters = Adapters(boundary=adapters.boundary, gateway=gateway)  # type: ignore[arg-type]
+
+
+def _ticket_status(db_path: Path, ticket_id: str) -> str:
+    conn = connect(str(db_path))
+    try:
+        row = conn.execute(
+            "SELECT ticket_status FROM tickets WHERE id = ?", (ticket_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return str(row["ticket_status"])
+
+
+def _set_ticket_status(db_path: Path, ticket_id: str, status: TicketStatus) -> None:
+    conn = connect(str(db_path))
+    try:
+        conn.execute(
+            "UPDATE tickets SET ticket_status = ? WHERE id = ?", (status.value, ticket_id)
+        )
+    finally:
+        conn.close()
 
 
 def _events(db_path: Path, entity_id: str, kind: str) -> list[dict[str, object]]:
@@ -243,3 +271,47 @@ def test_chat_send_stale_session_remints_and_repersists(tmp_path: Path) -> None:
     assert result.session_key == "fresh-key"
     assert _stored_key(db_path, "tickets", tid) == "fresh-key"
     assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fresh-key"}]
+
+
+def test_ticket_chat_does_not_change_ticket_status(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    statuses = [
+        TicketStatus.empty,
+        TicketStatus.awaiting_approval,
+        TicketStatus.user_takeover,
+    ]
+    tids: list[str] = []
+    for status in statuses:
+        tid = _ticket(db_path)
+        _set_ticket_status(db_path, tid, status)
+        tids.append(tid)
+
+    with TestClient(app) as client:
+        for tid, status in zip(tids, statuses, strict=True):
+            response = client.post(f"/api/chat/{tid}/send", json={"text": "hello"})
+            assert response.status_code == 200
+            assert _ticket_status(db_path, tid) == status.value
+
+
+def test_chat_send_busy_is_409_already_running(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+
+    class BusyGateway:
+        def status(self) -> GatewayStatus:
+            return GatewayStatus(available=True)
+
+        def send(self, session_key: str | None, entity_id: str, text: str) -> ChatSendResult:
+            raise PlannerError(
+                ErrorCode.already_running,
+                "an agent is already running on this ticket",
+                {"entity_id": entity_id},
+            )
+
+    _replace_gateway(app, BusyGateway())
+    with TestClient(app) as client:
+        response = client.post(f"/api/chat/{tid}/send", json={"text": "hello"})
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "already_running"
+    assert _ticket_status(db_path, tid) == TicketStatus.empty.value

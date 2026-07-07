@@ -32,8 +32,7 @@ def _url(path: str) -> str:
 
 def _headers() -> dict[str, str]:
     # X-Plan-Actor is always sent (default "agent"): it classifies the request as an
-    # agent (vs the header-less human). The old run/claim headers are gone — the
-    # ticket's code-owned status is the lock now.
+    # agent (vs the header-less human). The old run/claim headers are gone.
     return {"X-Plan-Actor": os.environ.get("PLAN_ACTOR", "").strip() or "agent"}
 
 

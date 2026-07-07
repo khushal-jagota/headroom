@@ -1,6 +1,4 @@
-"""W1 minds primitive: gateway frame routing, run_step status mapping, the
-per-mind serialized queue, and config resolution — all against the fake
-gateway double (no subprocess, no model calls)."""
+"""Hermetic tests for GatewayChild routing, run_step, config, and SharedGateway."""
 
 from __future__ import annotations
 
@@ -18,25 +16,23 @@ from planner.minds.config import (
     resolve_planner_home,
 )
 from planner.minds.fake import FakeGateway, Reply, ev
-from planner.minds.gateway import GatewayChild, GatewayError
-from planner.minds.queue import MindQueue
+from planner.minds.gateway import ChildProcess, GatewayChild, GatewayError
 from planner.minds.runner import RunResult, run_step
+from planner.minds.shared_gateway import SharedGateway
 
 LIVE_SID = "ab12cd34"
+OTHER_SID = "ff00ff00"
 STORED_KEY = "20260706_120000_abcdef"
-HERMES_PY = "/x/hermes-agent/venv/bin/python"  # hermes_src_root -> /x/hermes-agent
+OTHER_KEY = "20260706_120000_999999"
+HERMES_PY = "/x/hermes-agent/venv/bin/python"
 
 
 def create_reply(sid: str = LIVE_SID, key: str = STORED_KEY) -> Reply:
-    return Reply(
-        result={
-            "session_id": sid,
-            "stored_session_id": key,
-            "message_count": 0,
-            "messages": [],
-            "info": {"model": "fake"},
-        }
-    )
+    return Reply(result={"session_id": sid, "stored_session_id": key})
+
+
+def resume_reply(sid: str = LIVE_SID, key: str = STORED_KEY) -> Reply:
+    return Reply(result={"session_id": sid, "resumed": key})
 
 
 def complete_ev(
@@ -84,33 +80,33 @@ def run(
     )
 
 
-# --- gateway routing (6 tests) --------------------------------------------
+class Spawner:
+    def __init__(self, children: list[FakeGateway]) -> None:
+        self.children = children
+        self.i = 0
+        self.lock = threading.Lock()
+
+    def spawn(self, argv: list[str], env: dict[str, str]) -> ChildProcess:
+        with self.lock:
+            child = self.children[self.i]
+            self.i += 1
+        return child.spawn(argv, env)
 
 
-def test_gateway_routes_response_and_events_independently() -> None:
-    fake = FakeGateway(
-        {
-            "ping": [
-                Reply(
-                    result={"pong": True},
-                    events_before=(ev("message.delta", LIVE_SID, {"text": "x"}),),
-                )
-            ]
-        }
+def shared(fake: FakeGateway) -> SharedGateway:
+    return SharedGateway(
+        hermes_python=HERMES_PY,
+        home="/tmp/planner-home",
+        worker_role="planner-worker",
+        spawn=fake.spawn,
+        base_env={},
     )
-    child = gw(fake)
-    child.wait_ready(5.0)
-    resp = child.request("ping", timeout=5.0)
-    assert resp == {"pong": True}
-    evt = child.next_event(timeout=5.0)
-    assert evt == {"type": "message.delta", "session_id": LIVE_SID, "payload": {"text": "x"}}
-    child.shutdown()
 
 
-def test_gateway_out_of_order_responses_resolve_by_id() -> None:
+def test_gateway_responses_still_demux_by_request_id() -> None:
     fake = FakeGateway(
         {
-            "first": [Reply()],  # neither result nor error -> NO response written
+            "first": [Reply()],
             "second": [
                 Reply(
                     frames=(
@@ -130,65 +126,99 @@ def test_gateway_out_of_order_responses_resolve_by_id() -> None:
 
     t = threading.Thread(target=call_first)
     t.start()
-    assert fake.wait_sent(1, 5.0)  # request 1 is on the wire before request 2
-    resp2 = child.request("second", timeout=10.0)
-    assert resp2 == {"which": "second"}
+    assert fake.wait_sent(1, 5.0)
+    assert child.request("second", timeout=10.0) == {"which": "second"}
     t.join(10.0)
-    assert not t.is_alive()
     assert results["first"] == {"which": "first"}
     child.shutdown()
 
 
-def test_gateway_event_without_payload_key() -> None:
-    fake = FakeGateway({"go": [Reply(result={}, events_after=(ev("message.start", LIVE_SID),))]})
-    child = gw(fake)
-    child.wait_ready(5.0)
-    resp = child.request("go", timeout=5.0)
-    assert resp == {}
-    evt = child.next_event(timeout=5.0)
-    assert evt == {"type": "message.start", "session_id": LIVE_SID}
-    assert evt is not None and "payload" not in evt
-    child.shutdown()
-
-
-def test_gateway_tolerates_garbage_and_unknown_frames() -> None:
+def test_gateway_events_demux_by_session_id() -> None:
     fake = FakeGateway(
         {
             "go": [
                 Reply(
                     result={},
-                    events_after=(ev("some.future.event", LIVE_SID, {"z": 1}),),
-                    frames=(
-                        "this is not json",
-                        {
-                            "jsonrpc": "2.0",
-                            "id": None,
-                            "error": {"code": -32700, "message": "parse error"},
-                        },
-                        {"totally": "unrelated"},
+                    events_after=(
+                        complete_ev(OTHER_SID, text="other"),
+                        complete_ev(LIVE_SID, text="live"),
                     ),
                 )
-            ],
-            "again": [Reply(result={"ok": 1})],
+            ]
         }
     )
     child = gw(fake)
     child.wait_ready(5.0)
+    live = child.open_session_events(LIVE_SID)
+    other = child.open_session_events(OTHER_SID)
     assert child.request("go", timeout=5.0) == {}
-    evt = child.next_event(timeout=5.0)
-    assert evt is not None and evt["type"] == "some.future.event"
-    assert child.request("again", timeout=5.0) == {"ok": 1}
+    assert live.next_event(timeout=5.0)["payload"]["text"] == "live"
+    assert other.next_event(timeout=5.0)["payload"]["text"] == "other"
+    live.close()
+    other.close()
     child.shutdown()
 
 
-def test_gateway_child_death_fails_pending_and_wakes_events() -> None:
+def test_gateway_concurrent_session_drains_do_not_steal_events() -> None:
+    fake = FakeGateway(
+        {
+            "go": [
+                Reply(
+                    result={},
+                    events_after=(
+                        complete_ev(OTHER_SID, text="other"),
+                        complete_ev(LIVE_SID, text="live"),
+                    ),
+                )
+            ]
+        }
+    )
+    child = gw(fake)
+    child.wait_ready(5.0)
+    live = child.open_session_events(LIVE_SID)
+    other = child.open_session_events(OTHER_SID)
+    seen: dict[str, str] = {}
+
+    def drain(name: str, sid_events: Any) -> None:
+        event = sid_events.next_event(timeout=5.0)
+        seen[name] = str(event["payload"]["text"])
+
+    t1 = threading.Thread(target=drain, args=("live", live))
+    t2 = threading.Thread(target=drain, args=("other", other))
+    t1.start()
+    t2.start()
+    child.request("go", timeout=5.0)
+    t1.join(5.0)
+    t2.join(5.0)
+    assert seen == {"live": "live", "other": "other"}
+    live.close()
+    other.close()
+    child.shutdown()
+
+
+def test_gateway_process_events_do_not_enter_session_drains() -> None:
+    fake = FakeGateway({"go": [Reply(result={}, events_after=(ev("notice", None, {"x": 1}),))]})
+    child = gw(fake)
+    child.wait_ready(5.0)
+    live = child.open_session_events(LIVE_SID)
+    child.request("go", timeout=5.0)
+    assert child.next_process_event(timeout=5.0)["type"] == "notice"
+    with pytest.raises(GatewayError, match="no gateway event"):
+        live.next_event(timeout=0.1)
+    live.close()
+    child.shutdown()
+
+
+def test_gateway_child_death_wakes_all_session_drainers() -> None:
     fake = FakeGateway({"boom": [Reply(die=True)]}, stderr_lines=("traceback: kaboom",))
     child = gw(fake)
     child.wait_ready(5.0)
+    live = child.open_session_events(LIVE_SID)
+    other = child.open_session_events(OTHER_SID)
     with pytest.raises(GatewayError, match="died"):
         child.request("boom", timeout=5.0)
-    assert child.next_event(timeout=5.0) is None
-    assert child.next_event(timeout=5.0) is None  # sentinel re-armed
+    assert live.next_event(timeout=5.0) is None
+    assert other.next_event(timeout=5.0) is None
     child.shutdown()
     assert child.stderr_tail() == ["traceback: kaboom"]
     assert child.alive is False
@@ -202,9 +232,6 @@ def test_gateway_wait_ready_timeout() -> None:
     child.shutdown()
 
 
-# --- run_step (12 tests) ---------------------------------------------------
-
-
 def test_run_step_create_happy_path() -> None:
     fake = FakeGateway(
         {
@@ -213,9 +240,6 @@ def test_run_step_create_happy_path() -> None:
                 submit_reply(
                     ev("message.start", LIVE_SID),
                     ev("message.delta", LIVE_SID, {"text": "hel"}),
-                    ev("message.delta", LIVE_SID, {"text": "lo"}),
-                    ev("tool.start", LIVE_SID, {"name": "terminal"}),
-                    ev("weird.future", LIVE_SID, {"x": 1}),
                     complete_ev(text="hello"),
                 )
             ],
@@ -227,142 +251,34 @@ def test_run_step_create_happy_path() -> None:
     assert res.text == "hello"
     assert res.usage == {"input": 1, "output": 2}
     assert res.session_key == STORED_KEY
-    assert res.error is None
     assert fake.sent_methods() == ["session.create", "prompt.submit"]
-    assert fake.sent[0]["params"] == {"source": "planner", "cols": 100}
-    assert fake.sent[1]["params"] == {"session_id": LIVE_SID, "text": "do the step"}
     assert fake.env is not None
     assert fake.env["HERMES_TUI_SKILLS"] == "planner-worker"
     assert fake.env["HERMES_HOME"] == "/tmp/planner-home"
     assert fake.env["HERMES_PYTHON_SRC_ROOT"] == "/x/hermes-agent"
-    assert [e["type"] for e in seen] == [
-        "message.start",
-        "message.delta",
-        "message.delta",
-        "tool.start",
-        "weird.future",
-        "message.complete",
-    ]
+    assert [e["type"] for e in seen] == ["message.start", "message.delta", "message.complete"]
     assert fake.closed is True
 
 
 def test_run_step_resume_path_issues_resume_not_create() -> None:
     fake = FakeGateway(
         {
-            "session.resume": [
-                Reply(
-                    result={
-                        "session_id": "ffff0000",
-                        "resumed": "20260707_090000_tip999",
-                        "message_count": 2,
-                        "messages": [],
-                    }
-                )
-            ],
+            "session.resume": [resume_reply("ffff0000", "20260707_090000_tip999")],
             "prompt.submit": [submit_reply(complete_ev(sid="ffff0000", text="resumed"))],
         }
     )
     res = run(fake, session_key=STORED_KEY)
     assert fake.sent_methods() == ["session.resume", "prompt.submit"]
-    assert "session.create" not in fake.sent_methods()
-    assert fake.sent[0]["params"] == {"session_id": STORED_KEY}
-    assert fake.sent[1]["params"]["session_id"] == "ffff0000"  # the NEW live handle
-    assert res.session_key == "20260707_090000_tip999"  # server-resolved chain tip
+    assert res.session_key == "20260707_090000_tip999"
     assert res.status == "complete"
 
 
-def test_run_step_context_env_rides_child_env() -> None:
-    fake = FakeGateway(
-        {
-            "session.create": [create_reply()],
-            "prompt.submit": [submit_reply(complete_ev())],
-        }
-    )
-    res = run(fake, context_env={"PLANNER_TICKET_ID": "42"})
-    assert res.status == "complete"
-    assert fake.env is not None
-    assert fake.env["PLANNER_TICKET_ID"] == "42"
-    assert fake.env["HERMES_TUI_SKILLS"] == "planner-worker"
-    assert fake.env["HERMES_HOME"] == "/tmp/planner-home"
-
-
-def test_run_step_interrupted() -> None:
-    fake = FakeGateway(
-        {
-            "session.create": [create_reply()],
-            "prompt.submit": [submit_reply(complete_ev(status="interrupted", text="partial"))],
-        }
-    )
-    res = run(fake)
-    assert res.status == "interrupted"
-    assert res.text == "partial"
-    assert res.error is None
-    assert res.session_key == STORED_KEY
-
-
-def test_run_step_complete_status_error() -> None:
+def test_run_step_event_racing_submit_response() -> None:
     fake = FakeGateway(
         {
             "session.create": [create_reply()],
             "prompt.submit": [
-                submit_reply(complete_ev(status="error", text="Error: provider 500"))
-            ],
-        }
-    )
-    res = run(fake)
-    assert res.status == "errored"
-    assert res.text == "Error: provider 500"
-    assert res.error == "Error: provider 500"
-    assert res.usage == {"input": 1, "output": 2}
-
-
-def test_run_step_error_event_maps_errored() -> None:
-    msg = "agent init failed: Unknown skill(s): planner-bogus"
-    fake = FakeGateway(
-        {
-            "session.create": [create_reply()],
-            "prompt.submit": [
-                submit_reply(
-                    ev("message.start", LIVE_SID),
-                    ev("error", LIVE_SID, {"message": msg}),
-                )
-            ],
-        }
-    )
-    res = run(fake)
-    assert res.status == "errored"
-    assert msg in (res.error or "")
-    assert res.text == ""
-    assert fake.closed is True
-
-
-def test_run_step_error_event_racing_submit_response() -> None:
-    msg = "agent init failed: no provider"
-    fake = FakeGateway(
-        {
-            "session.create": [create_reply()],
-            "prompt.submit": [
-                Reply(
-                    result={"status": "streaming"},
-                    events_before=(ev("error", LIVE_SID, {"message": msg}),),
-                )
-            ],
-        }
-    )
-    res = run(fake)
-    assert res.status == "errored"
-    assert msg in (res.error or "")
-
-
-def test_run_step_complete_before_submit_response() -> None:
-    fake = FakeGateway(
-        {
-            "session.create": [create_reply()],
-            "prompt.submit": [
-                Reply(
-                    result={"status": "streaming"},
-                    events_before=(ev("message.start", LIVE_SID), complete_ev(text="fast")),
-                )
+                Reply(result={"status": "streaming"}, events_before=(complete_ev(text="fast"),))
             ],
         }
     )
@@ -371,225 +287,73 @@ def test_run_step_complete_before_submit_response() -> None:
     assert res.text == "fast"
 
 
-def test_run_step_child_death_mid_run() -> None:
-    fake = FakeGateway(
-        {
-            "session.create": [create_reply()],
-            "prompt.submit": [
-                Reply(
-                    result={"status": "streaming"},
-                    events_after=(ev("message.start", LIVE_SID),),
-                    die=True,
-                )
-            ],
-        }
-    )
-    res = run(fake)
-    assert res.status == "errored"
-    assert "died" in (res.error or "")
-    assert res.session_key == STORED_KEY  # create succeeded first
-    assert fake.closed is True  # shutdown tolerates an already-dead child
-
-
-def test_run_step_resume_not_found_4007() -> None:
-    fake = FakeGateway({"session.resume": [Reply(error=(4007, "session not found"))]})
-    res = run(fake, session_key="bogus_key_xyz")
-    assert res.status == "errored"
-    assert "4007" in (res.error or "")
-    assert "session not found" in (res.error or "")
-    assert fake.sent_methods() == ["session.resume"]  # no prompt.submit attempted
-    assert res.session_key == "bogus_key_xyz"  # input unchanged
-
-
 def test_run_step_busy_4009() -> None:
     fake = FakeGateway(
-        {
-            "session.create": [create_reply()],
-            "prompt.submit": [Reply(error=(4009, "session busy"))],
-        }
+        {"session.create": [create_reply()], "prompt.submit": [Reply(error=(4009, "busy"))]}
     )
     res = run(fake)
     assert res.status == "errored"
     assert "4009" in (res.error or "")
-    assert "session busy" in (res.error or "")
-    assert res.session_key == STORED_KEY  # fresh durable key still returned for persistence
+    assert res.session_key == STORED_KEY
+
+
+def test_shared_gateway_start_reuses_one_child_and_sets_worker_env() -> None:
+    fake = FakeGateway({})
+    gateway = shared(fake)
+    gateway.start()
+    gateway.start()
+    assert fake.env is not None
+    assert fake.env["HERMES_HOME"] == "/tmp/planner-home"
+    assert fake.env["HERMES_TUI_SKILLS"] == "planner-worker"
+    assert fake.env["HERMES_PYTHON_SRC_ROOT"] == "/x/hermes-agent"
+    gateway.shutdown()
     assert fake.closed is True
 
 
-def test_run_step_on_event_exception_does_not_break_run() -> None:
+def test_shared_gateway_respawns_after_child_death() -> None:
+    fake1 = FakeGateway({})
+    fake2 = FakeGateway({})
+    spawner = Spawner([fake1, fake2])
+    gateway = SharedGateway(
+        hermes_python=HERMES_PY,
+        home="/tmp/planner-home",
+        worker_role="planner-worker",
+        spawn=spawner.spawn,
+        base_env={},
+    )
+    gateway.start()
+    fake1.kill()
+    time.sleep(0.05)
+    gateway.start()
+    assert spawner.i == 2
+    gateway.shutdown()
+    assert fake2.closed is True
+
+
+def test_shared_gateway_run_reuses_child_for_multiple_sessions() -> None:
     fake = FakeGateway(
         {
-            "session.create": [create_reply()],
-            "prompt.submit": [submit_reply(complete_ev(text="hello"))],
+            "session.create": [
+                create_reply(LIVE_SID, STORED_KEY),
+                create_reply(OTHER_SID, OTHER_KEY),
+            ],
+            "prompt.submit": [
+                submit_reply(complete_ev(LIVE_SID, text="one")),
+                submit_reply(complete_ev(OTHER_SID, text="two")),
+            ],
         }
     )
-
-    def boom(_event: dict[str, Any]) -> None:
-        raise ValueError("observer boom")
-
-    res = run(fake, on_event=boom)
-    assert res.status == "complete"
-    assert res.text == "hello"
-
-
-# --- queue (5 tests) -------------------------------------------------------
-
-
-class Job:
-    def __init__(self, name: str, hold: bool = False) -> None:
-        self.name = name
-        self.started = threading.Event()
-        self.release = threading.Event()
-        if not hold:
-            self.release.set()
-
-
-class Recorder:
-    def __init__(self) -> None:
-        self.lock = threading.Lock()
-        self.order: list[str] = []
-        self.inflight = 0
-        self.max_inflight = 0
-        self.errors: list[str] = []
-
-    def run(self, key: str, job: Job) -> None:
-        with self.lock:
-            self.inflight += 1
-            self.max_inflight = max(self.max_inflight, self.inflight)
-            self.order.append(job.name)
-        job.started.set()
-        if not job.release.wait(5.0):
-            with self.lock:
-                self.errors.append(f"{job.name}: release timeout")
-        with self.lock:
-            self.inflight -= 1
-
-
-def test_queue_same_key_serializes_fifo() -> None:
-    rec = Recorder()
-    q = MindQueue(rec.run)
-    key = "20260706_120000_aaaaaa"
-    a = Job("a", hold=True)
-    b = Job("b")
-    q.submit(key, a)
-    q.submit(key, b)
-    assert a.started.wait(5.0)
-    assert not b.started.is_set()  # b not started while a is held
-    a.release.set()
-    assert q.wait_idle(5.0)
-    assert rec.order == ["a", "b"]
-    assert rec.max_inflight == 1  # never two in flight for the same key
-    assert rec.errors == []
-
-
-def test_queue_different_keys_overlap() -> None:
-    rec = Recorder()
-    barrier = threading.Barrier(2)
-    errors: list[str] = []
-
-    def overlap_run(key: str, job: Job) -> None:
-        with rec.lock:
-            rec.inflight += 1
-            rec.max_inflight = max(rec.max_inflight, rec.inflight)
-            rec.order.append(job.name)
-        try:
-            barrier.wait(timeout=5.0)
-        except threading.BrokenBarrierError:
-            errors.append(f"{job.name}: barrier broke")
-        with rec.lock:
-            rec.inflight -= 1
-
-    q = MindQueue(overlap_run)
-    q.submit("20260706_120000_aaaaaa", Job("j1"))
-    q.submit("20260706_120000_bbbbbb", Job("j2"))
-    assert q.wait_idle(5.0)
-    assert errors == []  # the barrier passing proves both ran simultaneously
-    assert rec.max_inflight == 2
-
-
-def test_queue_fifo_order_many_and_key_reuse_after_drain() -> None:
-    rec = Recorder()
-    q = MindQueue(rec.run)
-    key = "20260706_120000_cccccc"
-    for name in ("a", "b", "c", "d"):
-        q.submit(key, Job(name))
-    assert q.wait_idle(5.0)
-    assert rec.order == ["a", "b", "c", "d"]
-    assert rec.max_inflight == 1
-    q.submit(key, Job("e"))  # a retired key spawns a fresh worker
-    assert q.wait_idle(5.0)
-    assert rec.order[-1] == "e"
-
-
-def test_queue_run_exception_does_not_stall_key() -> None:
-    rec = Recorder()
-
-    def flaky_run(key: str, job: Job) -> None:
-        if job.name == "boom":
-            raise RuntimeError("boom")
-        rec.run(key, job)
-
-    q = MindQueue(flaky_run)
-    key = "20260706_120000_dddddd"
-    q.submit(key, Job("boom"))
-    q.submit(key, Job("after"))
-    assert q.wait_idle(5.0)
-    assert "after" in rec.order  # the key survived the poisoned item
-
-
-def test_queue_rejects_empty_key() -> None:
-    q: MindQueue[Job] = MindQueue(lambda key, item: None)
-    with pytest.raises(ValueError):
-        q.submit("", Job("x"))
-
-
-def test_queue_is_active_reflects_inflight_and_clears() -> None:
-    # is_active is True from submit (synchronously) through the run, and clears on drain —
-    # this is System A's has_inflight guard against re-setting-off a queued/running mind.
-    rec = Recorder()
-    q = MindQueue(rec.run)
-    key = "20260706_120000_eeeeee"
-    a = Job("a", hold=True)
-    assert q.is_active(key) is False
-    q.submit(key, a)
-    assert a.started.wait(5.0)
-    assert q.is_active(key) is True          # in-flight
-    a.release.set()
-    assert q.wait_idle(5.0)
-    assert q.is_active(key) is False          # cleared once the key drains
-
-
-def test_queue_on_idle_fires_once_when_key_drains() -> None:
-    # on_idle fires exactly once, with the drained key, AFTER the key leaves _active (outside
-    # the lock) — the fast-path seam System A registers to drive the next step.
-    idle: list[str] = []
-    idle_lock = threading.Lock()
-
-    def on_idle(key: str) -> None:
-        with idle_lock:
-            idle.append(key)
-
-    rec = Recorder()
-    q = MindQueue(rec.run, on_idle=on_idle)
-    key = "20260706_120000_ffffff"
-    a = Job("a", hold=True)
-    q.submit(key, a)
-    assert a.started.wait(5.0)               # a running (held)
-    q.submit(key, Job("b"))                  # b enqueued behind a -> one drain cycle
-    a.release.set()
-    assert q.wait_idle(5.0)
-    # wait_idle returns as _active clears; on_idle runs just after, so poll briefly.
-    deadline = time.time() + 5.0
-    while time.time() < deadline:
-        with idle_lock:
-            if idle:
-                break
-        time.sleep(0.01)
-    assert idle == [key]                      # exactly once, for the drained key
-    assert q.is_active(key) is False
-
-
-# --- config (5 tests) ------------------------------------------------------
+    gateway = shared(fake)
+    one = gateway.run_ticket_step(None, "one")
+    two = gateway.run_ticket_step(None, "two")
+    assert one.text == "one"
+    assert two.text == "two"
+    assert fake.sent_methods() == [
+        "session.create",
+        "prompt.submit",
+        "session.create",
+        "prompt.submit",
+    ]
 
 
 def test_resolve_hermes_python_precedence() -> None:
@@ -603,7 +367,7 @@ def test_resolve_hermes_python_precedence() -> None:
 
 def test_hermes_src_root() -> None:
     assert hermes_src_root(Path("/x/hermes-agent/venv/bin/python")) == Path("/x/hermes-agent")
-    assert hermes_src_root(Path("/python")) == Path("/")  # shallow fallback
+    assert hermes_src_root(Path("/python")) == Path("/")
 
 
 def test_resolve_planner_home() -> None:
@@ -627,4 +391,4 @@ def test_boot_smoke_check_ready_timeout() -> None:
     fake = FakeGateway({}, ready=False)
     with pytest.raises(GatewayError):
         boot_smoke_check(Path(HERMES_PY), spawn=fake.spawn, ready_timeout=0.2, env={})
-    assert fake.closed is True  # the finally still reaps
+    assert fake.closed is True

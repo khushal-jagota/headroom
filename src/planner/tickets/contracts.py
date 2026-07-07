@@ -46,10 +46,11 @@ class AtCap(StrEnum):              # §4.3
     propose = "propose"
 
 
-class TicketStatus(StrEnum):       # code-owned run status (the reframed "lock"); System B writes it
-    empty = "empty"                # nothing started
-    agent_working = "agent_working"
+class TicketStatus(StrEnum):       # durable state-of-control, written by data-layer transitions
+    empty = "empty"
+    agent_running_step = "agent_running_step"
     awaiting_approval = "awaiting_approval"
+    user_takeover = "user_takeover"
     errored = "errored"
 
 
@@ -171,8 +172,7 @@ class Ticket:                      # §3.3 — column names match exactly
     recap: str                     # writable only past needs_success
     ceiling: TicketState           # default needs_success (R2); restricted to STATE_ORDER
     at_cap: AtCap                  # default propose (R2)
-    status: TicketStatus           # code-owned run status; System B is the sole writer
-    worker: str | None             # who/what is working it; NULL unless agent_working
+    ticket_status: TicketStatus    # durable state-of-control; transition functions write it
     chat_session_key: str | None   # the ticket-mind's durable Hermes session_key
     alias: str | None              # migration "Ticket ID:" (§12), unique when present
     fields: TicketFields

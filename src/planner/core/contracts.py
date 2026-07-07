@@ -68,8 +68,8 @@ class EventKind(StrEnum):
     day_ticket_added = "day_ticket_added"            # {ticket_id, position, cause}
     boundary_failed = "boundary_failed"              # §6.2 adapter failure/timeout {error}
 
-    # --- supplemental: run status (System B is the sole writer) ---
-    ticket_status_changed = "ticket_status_changed"  # {status, worker}
+    # --- supplemental: durable ticket runtime/parking status ---
+    ticket_status_changed = "ticket_status_changed"  # {ticket_status, optional error}
 
     # --- supplemental: links, chat ---
     link_added = "link_added"                        # {from_id, to_id, kind}
@@ -113,6 +113,7 @@ class ErrorCode(StrEnum):
     item_transition_forbidden = "item_transition_forbidden"  # §3.2 agent direct done/deferred
     agent_forbidden = "agent_forbidden"            # claim/agent request hits a human-only action
     gateway_offline = "gateway_offline"            # §11
+    already_running = "already_running"            # Hermes 4009 session busy
     not_found = "not_found"
     validation = "validation"                      # generic input validation
 
