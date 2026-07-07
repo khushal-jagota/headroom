@@ -363,43 +363,33 @@
 
     head.appendChild(meta);
 
-    // Scope (the employee's grant): how far it may advance without approval, and what
-    // it does at the cap. Human-editable anytime (POST /grant); the WS flush re-renders
-    // — no optimistic UI. Options are the current state and beyond, never an earlier
-    // stage (C.ceilingOptions). Hidden on done — nothing left to advance.
+    // Scope (the employee's grant): how far it may advance without approval, and what it
+    // does at the cap. Human-editable anytime (POST /grant); the WS flush re-renders — no
+    // optimistic UI. Rendered with the SAME enumPill as the meta row so it reads as one of
+    // the header's pills ("approved until X" · "then stop/propose"). Ceiling options are
+    // the current state and beyond, never earlier (C.ceilingOptions). Hidden on done.
     if (C.STATE_ORDER.indexOf(detail.state) >= 0 && detail.state !== "done") {
       var scope = el("div", "ticket-scope");
-      scope.appendChild(el("span", "scope-key", "approved until"));
-      var ceilingSel = el("select", "scope-ceiling");
-      ceilingSel.setAttribute("data-scope-ceiling", "");
-      C.ceilingOptions(detail.state).forEach(function (opt) {
-        var option = el("option", null, opt.label);
-        option.value = opt.value;
-        if (opt.value === detail.ceiling) {
-          option.selected = true;
-        }
-        ceilingSel.appendChild(option);
-      });
-      scope.appendChild(ceilingSel);
-      scope.appendChild(el("span", "scope-sep", "then"));
-      var atcapSel = el("select", "scope-atcap");
-      atcapSel.setAttribute("data-scope-atcap", "");
-      [["stop", "stop"], ["propose", "propose"]].forEach(function (pair) {
-        var option = el("option", null, pair[1]);
-        option.value = pair[0];
-        if (pair[0] === detail.at_cap) {
-          option.selected = true;
-        }
-        atcapSel.appendChild(option);
-      });
-      scope.appendChild(atcapSel);
+      var scopeGrant = { ceiling: detail.ceiling, at_cap: detail.at_cap };
       var scopePush = function () {
-        headSave(function () {
-          return grant(id, { ceiling: ceilingSel.value, at_cap: atcapSel.value });
-        });
+        headSave(function () { return grant(id, scopeGrant); });
       };
-      ceilingSel.addEventListener("change", scopePush);
-      atcapSel.addEventListener("change", scopePush);
+      var ceilingPill = C.enumPill({
+        key: "approved until",
+        value: detail.ceiling,
+        options: C.ceilingOptions(detail.state),
+        onChange: function (v) { scopeGrant.ceiling = v; scopePush(); }
+      });
+      ceilingPill.setAttribute("data-scope-ceiling", "");
+      scope.appendChild(ceilingPill);
+      var atcapPill = C.enumPill({
+        key: "then",
+        value: detail.at_cap,
+        options: [{ value: "stop", label: "stop" }, { value: "propose", label: "propose" }],
+        onChange: function (v) { scopeGrant.at_cap = v; scopePush(); }
+      });
+      atcapPill.setAttribute("data-scope-atcap", "");
+      scope.appendChild(atcapPill);
       head.appendChild(scope);
     }
 

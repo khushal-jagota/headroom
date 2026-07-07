@@ -1387,39 +1387,14 @@ details.fsec[open] > summary .fsec-chev::before {
   gap: var(--space-2);
 }
 
-/* Scope row — the employee's grant, a second header row. Settled, not a gate: quiet
- * (no amber), two inline selects reading "approved until X then stop/propose". */
+/* Scope row — the employee's grant as a second header row: the same enum pills as the
+ * meta row above, reading "approved until X" · "then stop/propose". */
 .ticket-scope {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   margin-top: var(--space-2);
-  font-size: var(--type-sm);
-  color: var(--text-faint);
-}
-
-.scope-ceiling,
-.scope-atcap {
-  background: var(--surface-sunken);
-  color: var(--text-default);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-sm);
-  padding: 2px var(--space-2);
-  font: inherit;
-  font-size: var(--type-sm);
-  cursor: pointer;
-}
-
-.scope-ceiling:hover,
-.scope-atcap:hover {
-  border-color: var(--text-faint);
-}
-
-.scope-ceiling:focus,
-.scope-atcap:focus {
-  border-color: var(--accent-bright);
-  outline: none;
 }
 
 .ticket-col {
