@@ -535,3 +535,27 @@ The per-ticket runtime is now wired end-to-end over the real gateway (commits `c
    item 4). Rather than design it speculatively now, it is designated the *first ticket the planner
    works on itself* once the `planning-worker` skill + dedicated planner home exist — i.e. the first
    end-to-end exercise of the core loop is building its own errored-recovery capability.
+
+## 2026-07-08 · Agent identity + gateway topology confirmed
+
+1. **Gateway topology stays shared — per-ticket reconsidered and rejected.** We revisited running one
+   gateway child per ticket (each its own process, giving a kanban-style per-process identity stamp)
+   instead of the one shared child we built. Rejected: the identity dig (spike 09) showed identity in
+   the SHARED model is cheap. Hermes binds the durable `HERMES_SESSION_KEY` per *turn* via ContextVars
+   (not per process) — precisely so many sessions run in one process without clobbering each other — so
+   a tool/shell inside a turn always sees the current ticket's session key. The only reason to pay for a
+   per-ticket process pool (spawn / keep-warm / reap / restart) was "identity is a fight otherwise," and
+   it isn't. Shared keeps the simple one-process lifecycle AND gets cheap identity; no rework.
+
+2. **Agent identity = a CLI tool lookup, prompted by the worker skill — not birth injection.** How a
+   worker agent learns which ticket it is: a `panels` CLI command reads `HERMES_SESSION_KEY` (bound
+   per-turn, correct for whoever's turn is running) and asks the planner "which ticket owns this session
+   key?" (a reverse lookup on the ticket's stored `chat_session_key`), returning the full ticket. The
+   `panels-worker` skill prompt carries the instruction: "if you don't know who you are, use this part
+   of the CLI." Chosen over the birth-injection options (spike 09 §5): a seed message fades on
+   compaction; a `source` stamp overloads a Hermes field with compaction caveats; a durable
+   system-prompt line would need extending Hermes. The tool is the durable, always-correct,
+   available-now mechanism — the session key is always present, so identity is re-derivable every turn
+   rather than pushed once. Caveat for build time: the session key can rotate on compaction, so the
+   lookup must track the current key (we already re-persist rotated keys) or resolve child→parent
+   lineage via `parent_session_id`.
