@@ -39,8 +39,8 @@ here), not empirical unknowns — reserve spikes for "will this even work."
 - **DECIDED · Skills own the intelligence; code holds the gates and storage.** How to *do*
   things — work a ticket, roll over a day, orchestrate the board — lives in Hermes **skills**
   loaded per role at kickoff, as v1 did. The server holds only the structural spine: the gates
-  (propose → human approves), storage (the DB), and the run/connect mechanism that spawns a
-  mind. Very little "how to do things" should live in the server — when something is judgment,
+  (propose → human approves), storage (the DB), and the run/connect mechanism that spawns an
+  employee. Very little "how to do things" should live in the server — when something is judgment,
   it belongs in a skill, not Python.
   - *Caveat — system prompts.* Skills are the primary home for intelligence, but the per-agent
     **system prompt** (set at kickoff) may be a secondary lever for role framing and lightweight
@@ -50,7 +50,7 @@ here), not empirical unknowns — reserve spikes for "will this even work."
 - **DECIDED · Approval machinery is invisible to the model.** The model only ever "does the next
   step." Approval, "how far it may go," gates, and stopping are all code-side and **invisible**
   to it. It may know its step awaits approval; it must never know the approval machinery
-  (who/what approves, the rules, the grant). The only inputs it ever receives are next-step
+  (who/what approves, the rules, the scope). The only inputs it ever receives are next-step
   prompts and the human's free-form chat. Approval never travels to it as a message.
 - **DECIDED · Code owns all state stamps; agents propose, one door writes.** Stamping state is
   not the agent's concern. The code owns and writes the ticket's status/worker stamp (System B →
@@ -64,9 +64,9 @@ here), not empirical unknowns — reserve spikes for "will this even work."
 > **NON-CANONICAL** — a 30-second map; the sections below are canonical. Nothing here is a
 > decision source.
 
-- Each ticket has **one durable agent** ("mind" = one Hermes session), reached via the Hermes
+- Each ticket has **one durable employee** (one Hermes session), reached via the Hermes
   gateway as a stdio subprocess (Option 3), fed by a per-session serialized queue. → *Agent runtime*
-- The same mind is who the human chats with (per-ticket chat); a separate **global chat** talks
+- The same employee is who the human chats with (per-ticket chat); a separate **global chat** talks
   to the main agent about the whole board. → *Agent runtime*
 - Two code-side systems drive work: **System A** decides what is *ready*; **System B** *sets off*
   an agent on a step and owns the ticket's run-status. Kickoff is just "step 0." → *Scheduling & runs*
@@ -81,11 +81,11 @@ here), not empirical unknowns — reserve spikes for "will this even work."
 
 ## Agent runtime
 
-*Minds, chat, and the run primitive are one subsystem.*
+*Employees, chat, and the run primitive are one subsystem.*
 
-- **DECIDED · One mind per ticket.** One durable Hermes session (`session_key`), resumed for
-  each step. The same session is who the human chats with — chat and worker are the same agent.
-- **DECIDED · Connection: Option 3.** Reach the mind via the Hermes gateway run as a **stdio
+- **DECIDED · One employee per ticket.** One durable Hermes session (`session_key`), resumed for
+  each step. The same session is who the human chats with — chat and worker are the same employee.
+- **DECIDED · Connection: Option 3.** Reach the employee via the Hermes gateway run as a **stdio
   subprocess** (JSON-RPC: `session.create` / `resume` / `prompt.submit`, streamed replies).
   Child runs on Hermes's own interpreter, so no venv coupling to our server; structured
   start/finish/error events. Not in-process (the old planner's mistake — it re-execs itself into
@@ -104,7 +104,7 @@ here), not empirical unknowns — reserve spikes for "will this even work."
     (`4009 session busy`) is **per-process only**; with the child-per-run topology (below) two
     children could resume the same `session_key` concurrently. Our per-session queue is the only
     thing preventing that — it is load-bearing correctness.
-- **DECIDED · Agent-operation primitive + role skills.** One primitive for how a mind is run: it
+- **DECIDED · Agent-operation primitive + role skills.** One primitive for how an employee is run: it
   loads a **role-scoped Hermes skill** at kickoff (+ system prompt — see the caveat in
   *Principles* — + tool/CLI surface), parameterized by role; the intelligence lives in the skill,
   not the server. Skills: a **worker skill** (ticket agents — work a ticket, propose the next
@@ -125,7 +125,7 @@ here), not empirical unknowns — reserve spikes for "will this even work."
     + per-run env (kanban's `HERMES_KANBAN_*` pattern). Slash menu for the UI =
     `commands.catalog` (135 commands + categories + alias map). Details + follow-up tickets in
     `spikes/01-hermes-linkage.md`.
-- **DECIDED · Dedicated planner `HERMES_HOME`.** Planner minds run in a dedicated Hermes home,
+- **DECIDED · Dedicated planner `HERMES_HOME`.** Planner employees run in a dedicated Hermes home,
   isolated from the owner's real `~/.hermes` (own `state.db` / `skills/` / config). Keeps planner
   sessions out of the personal session list and lets us pin model / role skills / system prompt
   for planner agents without touching the personal config. Costs a one-time provisioning step
@@ -133,15 +133,15 @@ here), not empirical unknowns — reserve spikes for "will this even work."
   sub-Q1). Proven in spike 01: a fresh home fully isolates and fails loudly until creds are
   provisioned; the v2 role skills install here.
 - **DECIDED · Per-ticket chat + global chat.**
-  - Per-ticket chat is the same one-mind session (above).
+  - Per-ticket chat is the same one-employee session (above).
   - **Global chat** is a planner-wide surface where you talk to the **main agent** about the
     whole system (reorganize a sprint, broad orchestration), NOT scoped to one ticket/day. Today
     chat is per-entity only (tickets, days); there is no global chat. It's the natural home for
     the **rollover mini-review** and the **next-day-direction** exchange (both planner-level →
-    *Days & rollover*). Mechanically the same one-mind/chat model as ticket chat (Option 3 stdio
+    *Days & rollover*). Mechanically the same one-employee/chat model as ticket chat (Option 3 stdio
     gateway + per-session queue), just a **global session** (the main agent) instead of a
     per-ticket one.
-- Every mind receives only next-step prompts + human chat; the approval machinery stays
+- Every employee receives only next-step prompts + human chat; the approval machinery stays
   **invisible** to it (→ *Principles*).
 
 ---
@@ -157,7 +157,7 @@ here), not empirical unknowns — reserve spikes for "will this even work."
 - **DECIDED · Kickoff = step 0 (approving).** Don't treat starting a ticket as special — it's just
   "step 0 approved." Both kickoff and approval feed System B: "set off step N of ticket X"; System
   B never special-cases fresh vs continuing. Whether a fresh ticket auto-runs its first step or
-  waits for the human is governed by the **grant** (step 0 is the first advance), same as any later
+  waits for the human is governed by the **scope** (step 0 is the first advance), same as any later
   step — no separate kickoff concept.
 - **DECIDED · System B is the writer; structured events bound each run.** System B launches the
   agent (→ `agent_working`) and observes it end (→ `awaiting_approval` / `errored`); it never
@@ -228,7 +228,7 @@ here), not empirical unknowns — reserve spikes for "will this even work."
   elsewhere" feature that might relax that is a separate future thing.
 - **OPEN · Ticket body / details.** Tickets have no body today; they'll likely need somewhere for
   details (a body of some sort). Form TBD. → resolved when the ticket-content shape is decided.
-- **DECIDED · Grant / ceiling — KEEP.** `ceiling` / `at_cap` stay — that's the grant, which is
+- **DECIDED · Scope (ceiling/at_cap) — KEEP.** `ceiling` / `at_cap` stay — that's the scope, which is
   wanted: the code's auto-approve-up-to-a-ceiling policy (the "code sometimes auto-approves"
   mechanism, not a contradiction of propose → approve).
 - **REMOVE · Old-model claim columns.** `claim_lock`, `claim_expires` — replaced by the
@@ -285,7 +285,7 @@ checkpoint. v2's current boundary is a thin deterministic slice (close yesterday
 one agent call that writes only the overview blurb; places no tickets, reconciles nothing).
 Rebuild it as the staged flow on the DB.
 
-- **DECIDED · Orchestration: one mind + the rollover skill drives it.** The staging and
+- **DECIDED · Orchestration: one employee + the rollover skill drives it.** The staging and
   reconciliation logic lives in the **skill**, not the server. Cron / autonomous path: the agent
   drives it to completion. User-in-the-loop path: it drives and pauses at the human checkpoint (a
   gate), then continues. The server provides only the gate + storage.
@@ -416,7 +416,7 @@ only what no subsystem owns.*
 - **REWORK** · client-side state-machine copy → *UI & data flow*
 - **REWORK** · duplicate frontend helpers → *UI & data flow*
 - **DECIDED (KEEP)** · dispatcher machine-lock → *Scheduling & runs*
-- **DECIDED (KEEP)** · grant / ceiling (`ceiling` / `at_cap`) → *Tickets*
+- **DECIDED (KEEP)** · scope (`ceiling` / `at_cap`) → *Tickets*
 - **DECIDED** · `serve` split (server-ops entry) → *CLI*
 - **DECIDED** · drop `queue pickup` → *CLI*
 - **DECIDED** · projects table → *Data model*
