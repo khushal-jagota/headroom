@@ -5,6 +5,7 @@ gateway double (no subprocess, no model calls)."""
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -540,6 +541,52 @@ def test_queue_rejects_empty_key() -> None:
     q: MindQueue[Job] = MindQueue(lambda key, item: None)
     with pytest.raises(ValueError):
         q.submit("", Job("x"))
+
+
+def test_queue_is_active_reflects_inflight_and_clears() -> None:
+    # is_active is True from submit (synchronously) through the run, and clears on drain —
+    # this is System A's has_inflight guard against re-setting-off a queued/running mind.
+    rec = Recorder()
+    q = MindQueue(rec.run)
+    key = "20260706_120000_eeeeee"
+    a = Job("a", hold=True)
+    assert q.is_active(key) is False
+    q.submit(key, a)
+    assert a.started.wait(5.0)
+    assert q.is_active(key) is True          # in-flight
+    a.release.set()
+    assert q.wait_idle(5.0)
+    assert q.is_active(key) is False          # cleared once the key drains
+
+
+def test_queue_on_idle_fires_once_when_key_drains() -> None:
+    # on_idle fires exactly once, with the drained key, AFTER the key leaves _active (outside
+    # the lock) — the fast-path seam System A registers to drive the next step.
+    idle: list[str] = []
+    idle_lock = threading.Lock()
+
+    def on_idle(key: str) -> None:
+        with idle_lock:
+            idle.append(key)
+
+    rec = Recorder()
+    q = MindQueue(rec.run, on_idle=on_idle)
+    key = "20260706_120000_ffffff"
+    a = Job("a", hold=True)
+    q.submit(key, a)
+    assert a.started.wait(5.0)               # a running (held)
+    q.submit(key, Job("b"))                  # b enqueued behind a -> one drain cycle
+    a.release.set()
+    assert q.wait_idle(5.0)
+    # wait_idle returns as _active clears; on_idle runs just after, so poll briefly.
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        with idle_lock:
+            if idle:
+                break
+        time.sleep(0.01)
+    assert idle == [key]                      # exactly once, for the drained key
+    assert q.is_active(key) is False
 
 
 # --- config (5 tests) ------------------------------------------------------

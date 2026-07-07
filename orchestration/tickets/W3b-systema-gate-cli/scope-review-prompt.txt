@@ -1,0 +1,26 @@
+You are the independent reviewer of a small follow-up DIFF, not an implementer. Read-only.
+Repo: /Users/khushaljagota/.hermes/planning-v2. Baseline: my committed-in-working-tree W3b (System A
+readiness poll). This follow-up scopes System A's candidate set to TODAY's day only (owner ruling):
+backlog tickets and tickets on other days must NOT be auto-started.
+
+Run `git --no-pager diff` to see the working-tree changes; focus ONLY on the today-scoping delta in:
+- src/planner/runtime/system_a.py (candidate SQL now JOINs day_tickets on today's day_id; new
+  boundary_hour ctor param; poll_once resolves today via days.logic.dates.resolve_day_id("today",
+  clock.now(), boundary_hour))
+- src/planner/core/loops.py (passes config.boundary_hour to SystemA)
+- tests/unit/test_system_a.py (today-scoping tests + existing integration tests now put their
+  ticket on today's day; pinned TestClock so "today" is deterministic)
+
+Verify, citing file:line, flag concrete defects (severity + minimal fix):
+1. Correctness: does the JOIN correctly restrict candidates to tickets whose day_tickets row is
+   today's planning day, while KEEPING the status/terminal filter and the is_runnable refinement?
+   Is "today" resolved correctly (planning_date via boundary_hour)? Any ticket on multiple days
+   (incl. today) still a candidate exactly once? A backlog ticket (no day_tickets row) excluded?
+2. Does this preserve the intended flow: a today ticket at default grant self-starts on a poll;
+   approve-on-today -> poke -> re-derive readiness -> set_off the next step?
+3. Any regression risk in the day_tickets join (perf, NULL, duplicate rows), or in threading the
+   boundary_hour through loops.py? Any hermetic-safety change (still no real gateway in tests)?
+4. Test soundness: do the new tests actually prove scope (backlog excluded, other-day excluded,
+   on-today set off) hermetically? Any flake risk from the pinned clock vs the day helper?
+
+Keep it tight — this is a small delta. End with a verdict: APPROVE / APPROVE-WITH-FIXES / REPLAN.

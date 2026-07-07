@@ -5,12 +5,10 @@ materialize-on-read is spec'd (§3.4)."""
 from __future__ import annotations
 
 import sqlite3
-from datetime import date
 from typing import Any
 
 from fastapi import APIRouter
 
-from planner.core import ids
 from planner.core.authctx import reject_agents
 from planner.core.clock import Clock
 from planner.core.config import Config
@@ -18,7 +16,7 @@ from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days import data as days_data
 from planner.days.contracts import AddDayTicketBody
-from planner.days.logic.dates import planning_date
+from planner.days.logic import dates
 from planner.tickets.api import Cfg, Clk, Ctx, DbConn, body_opt_str, body_str, txn
 from planner.tickets.data import read_ticket
 from planner.tickets.views import ticket_json
@@ -30,16 +28,10 @@ router = APIRouter()
 
 
 def resolve_day_id(date_seg: str, clock: Clock, config: Config) -> str:
-    """Amendment 10: `today` resolves through the planning date. A6: the ISO branch
-    parses then re-formats via ids.day_id, so compact forms ('20260704') still yield
-    canonical day_2026-07-04 ids — the raw segment is never string-formatted."""
-    if date_seg == "today":
-        return ids.day_id(planning_date(clock.now(), config.boundary_hour))
-    try:
-        parsed = date.fromisoformat(date_seg)
-    except ValueError:
-        raise PlannerError(ErrorCode.validation, "invalid date", {"date": date_seg}) from None
-    return ids.day_id(parsed)
+    """`today` resolves through the planning date; any ISO date is parsed then re-formatted
+    canonically. Delegates to the shared pure ``dates.resolve_day_id`` (one home, also used by
+    the ticket ``--day`` filter) so the rule is not implemented twice."""
+    return dates.resolve_day_id(date_seg, clock.now(), config.boundary_hour)
 
 
 def _day_view(conn: sqlite3.Connection, did: str, now: int) -> JsonDict:

@@ -36,7 +36,8 @@ from planner.core.config import Config
 from planner.core.contracts import EventKind, JsonDict, LinkKind, Priority, Project
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event
-from planner.days.logic.dates import planning_date
+from planner.days.logic.dates import planning_date, resolve_day_id
+from planner.runtime.system_a import SystemA
 from planner.sprints import views as sprints_views
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
@@ -86,10 +87,25 @@ async def db_conn(request: Request) -> AsyncIterator[sqlite3.Connection]:
         conn.close()
 
 
+def get_system_a(request: Request) -> SystemA | None:
+    """The running System A (readiness poll), or None in test mode / before startup. The
+    readiness-changing endpoints poke it so an approval / unblock / create drives the next
+    step immediately instead of waiting a poll tick."""
+    system_a: SystemA | None = getattr(request.app.state, "system_a", None)
+    return system_a
+
+
 DbConn = Annotated[sqlite3.Connection, Depends(db_conn)]
 Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
 Clk = Annotated[Clock, Depends(get_clock)]
+Sa = Annotated[SystemA | None, Depends(get_system_a)]
+
+
+def _poke(system_a: SystemA | None) -> None:
+    """Null-guarded fast-path wake (no-op in test mode where System A never runs)."""
+    if system_a is not None:
+        system_a.poke()
 
 
 @contextmanager
@@ -229,7 +245,7 @@ def _set_project(conn: sqlite3.Connection, ticket_id: str, project: Project | No
 
 @router.post("/tickets")
 async def create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
-                        clk: Clk) -> JsonDict:
+                        clk: Clk, sa: Sa) -> JsonDict:
     body = _marshal_create_ticket(raw)
     now = clk.now_unix()
     priority = parse_enum(Priority, body["priority"], "priority") \
@@ -248,15 +264,18 @@ async def create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
         sprint_id=body["sprint_id"],
         sprint_item_id=body["sprint_item_id"],
     )
+    _poke(sa)  # a fresh empty ticket may be ready at once — don't wait a poll tick
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.get("/tickets")
-async def list_tickets(conn: DbConn, clk: Clk, state: str | None = None,
+async def list_tickets(conn: DbConn, cfg: Cfg, clk: Clk, state: str | None = None,
                        project: str | None = None, sprint_id: str | None = None,
-                       sprint_item_id: str | None = None) -> JsonDict:
+                       sprint_item_id: str | None = None, day: str | None = None) -> JsonDict:
     state_enum = parse_enum(TicketState, state, "state") if state is not None else None
     project_enum = parse_enum(Project, project, "project") if project is not None else None
+    # `day` ('today' | ISO) scopes the list to one day's board via the day_tickets join.
+    day_id = resolve_day_id(day, clk.now(), cfg.boundary_hour) if day is not None else None
     return {
         "tickets": tickets_views.list_tickets(
             conn,
@@ -265,6 +284,7 @@ async def list_tickets(conn: DbConn, clk: Clk, state: str | None = None,
             project=project_enum,
             sprint_id=sprint_id,
             sprint_item_id=sprint_item_id,
+            day_id=day_id,
         )
     }
 
@@ -317,7 +337,7 @@ async def propose_field(ticket_id: str, field: str, raw: dict[str, Any], conn: D
 
 @router.post("/tickets/{ticket_id}/accept/{field}")
 async def accept_field(ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                       clk: Clk) -> JsonDict:
+                       clk: Clk, sa: Sa) -> JsonDict:
     body = _marshal_accept(raw)
     reject_agents(ctx)
     field_enum = parse_enum(FieldName, field, "field")
@@ -334,14 +354,16 @@ async def accept_field(ticket_id: str, field: str, raw: dict[str, Any], conn: Db
         next_ceiling=next_ceiling,
         at_cap=at_cap,
     )
+    _poke(sa)  # the approve gate: set off the next step (bundled propose->approve)
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/approve")
-async def approve_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+async def approve_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa) -> JsonDict:
     reject_agents(ctx)
     now = clk.now_unix()
     ticket = tickets_data.approve_review(conn, ticket_id, actor=ctx.actor, now=now)
+    _poke(sa)
     return tickets_views.ticket_json(ticket, now)
 
 
@@ -381,7 +403,7 @@ async def put_value(ticket_id: str, field: str, raw: dict[str, Any], conn: DbCon
 
 @router.post("/tickets/{ticket_id}/grant")
 async def grant_ticket(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                       clk: Clk) -> JsonDict:
+                       clk: Clk, sa: Sa) -> JsonDict:
     body = GrantBody(ceiling=body_opt_str(raw, "ceiling"), at_cap=body_opt_str(raw, "at_cap"))
     reject_agents(ctx)
     now = clk.now_unix()
@@ -408,25 +430,28 @@ async def grant_ticket(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: C
     ticket = tickets_data.change_grant(
         conn, ticket_id, ceiling=ceiling, at_cap=at_cap, actor=ctx.actor, now=now
     )
+    _poke(sa)  # a raised ceiling may unblock the next auto-advance
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/state")
 async def set_state(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                    clk: Clk) -> JsonDict:
+                    clk: Clk, sa: Sa) -> JsonDict:
     body = StateBody(to=body_str(raw, "to"))
     reject_agents(ctx)
     now = clk.now_unix()
     to_state = parse_enum(TicketState, body["to"], "state")
     ticket = tickets_data.set_state(conn, ticket_id, new_state=to_state, actor=ctx.actor, now=now)
+    _poke(sa)
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/drop")
-async def drop_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+async def drop_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa) -> JsonDict:
     reject_agents(ctx)
     now = clk.now_unix()
     ticket = tickets_data.drop_ticket(conn, ticket_id, actor=ctx.actor, now=now)
+    _poke(sa)  # a drop retires the ticket; the guard skips any stale queued run
     return tickets_views.ticket_json(ticket, now)
 
 
@@ -456,12 +481,13 @@ async def add_link(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> Jso
 
 
 @router.delete("/links")
-async def remove_link(conn: DbConn, ctx: Ctx, clk: Clk, from_id: str, to_id: str,
+async def remove_link(conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa, from_id: str, to_id: str,
                       kind: str) -> JsonDict:
     kind_enum = parse_enum(LinkKind, kind, "kind")
     now = clk.now_unix()
     with txn(conn):
         core_links.remove_link(conn, from_id, to_id, kind_enum, now)
+    _poke(sa)  # removing a blocks link can make the target ready (unblock -> poke)
     return {"ok": True}
 
 

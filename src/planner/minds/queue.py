@@ -37,10 +37,19 @@ _log = logging.getLogger(__name__)
 
 
 class MindQueue[T]:
-    """FIFO-per-key serialized runner: one worker thread per active key."""
+    """FIFO-per-key serialized runner: one worker thread per active key.
 
-    def __init__(self, run: Callable[[str, T], None]) -> None:
+    ``on_idle(key)`` (optional) fires once a key's queue has fully drained and the key
+    has been removed from ``_active`` — the moment that mind is free again. It runs
+    OUTSIDE the lock, so a callback that re-submits (or pokes a poller that will) cannot
+    deadlock. This is the fast-path seam W3b's System A registers so a finished step
+    immediately drives the next one instead of waiting a full tick."""
+
+    def __init__(
+        self, run: Callable[[str, T], None], *, on_idle: Callable[[str], None] | None = None
+    ) -> None:
         self._run = run
+        self._on_idle = on_idle
         self._lock = threading.Lock()
         self._idle = threading.Condition(self._lock)
         self._pending: dict[str, deque[T]] = {}
@@ -58,16 +67,32 @@ class MindQueue[T]:
             target=self._drain, args=(key,), name=f"mind-queue-{key}", daemon=True
         ).start()
 
+    def is_active(self, key: str) -> bool:
+        """Whether a run is enqueued or in-flight for this key. ``submit`` adds the key
+        to ``_active`` synchronously before returning, so a caller that just submitted
+        sees True — this closes the enqueue->start-write window a status-only readiness
+        check would miss (W3b System A's has_inflight guard)."""
+        with self._lock:
+            return key in self._active
+
     def _drain(self, key: str) -> None:
         while True:
+            item: T | None = None  # None is the idle sentinel; no caller ever enqueues None
             with self._lock:
                 dq = self._pending.get(key)
                 if not dq:
                     self._pending.pop(key, None)
                     self._active.discard(key)
                     self._idle.notify_all()
-                    return
-                item = dq.popleft()
+                else:
+                    item = dq.popleft()
+            if item is None:
+                if self._on_idle is not None:
+                    try:
+                        self._on_idle(key)  # key already free; safe to re-submit from here
+                    except Exception:
+                        _log.exception("mind on_idle failed (key=%s)", key)
+                return
             try:
                 self._run(key, item)
             except Exception:

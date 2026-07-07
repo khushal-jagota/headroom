@@ -94,6 +94,9 @@ def create_app(
                 _log.warning("planner.core.loops unavailable; running without background loops")
             else:
                 loops = start(config, clock, adapters, conn_factory)
+                # Expose System A for the API poke seam (readiness-changing endpoints wake it).
+                # None in test mode (loops never start) -> the poke is a null-guarded no-op.
+                app_.state.system_a = loops.system_a
         try:
             yield
         finally:
@@ -105,6 +108,7 @@ def create_app(
     app.state.clock = clock
     app.state.adapters = adapters
     app.state.conn_factory = conn_factory
+    app.state.system_a = None  # set by the lifespan when background loops start (non-test only)
 
     @app.exception_handler(PlannerError)
     async def handle_planner_error(request: Request, exc: PlannerError) -> JSONResponse:

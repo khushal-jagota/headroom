@@ -20,6 +20,7 @@ from planner.core.db import connect, create_schema
 from planner.core.events import read_events_since
 from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.gateway import ChildProcess
+from planner.runtime import readiness
 from planner.runtime.system_b import SystemB
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, FieldName, TicketState, TicketStatus
@@ -356,3 +357,74 @@ def test_spawn_crash_errors_never_stuck_working(tmp_path: Path) -> None:
     assert ticket.worker is None
     # started (agent_working) then errored — the end write always fires.
     assert [e["status"] for e in _status_events(db, tid)] == ["agent_working", "errored"]
+
+
+def test_has_inflight_true_during_run_then_clears(tmp_path: Path) -> None:
+    # has_inflight is System A's guard against re-setting-off a queued/running mind: True from
+    # set_off through the run, cleared on drain.
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+    reached = threading.Event()
+    release = threading.Event()
+
+    class _BlockingFake(FakeGateway):
+        def send(self, line: str) -> None:
+            if json.loads(line).get("method") == "prompt.submit":
+                reached.set()
+                release.wait(10.0)
+            super().send(line)
+
+    fake = _BlockingFake(_create_script(_complete_ev()))
+    sb = _system_b(db, _Spawner([fake]))
+    assert sb.has_inflight(tid) is False
+    sb.set_off(tid, ROLE, "step")
+    assert reached.wait(10.0)
+    assert sb.has_inflight(tid) is True
+    release.set()
+    assert sb.wait_idle(10.0)
+    assert sb.has_inflight(tid) is False
+
+
+def test_set_off_guard_skips_a_no_longer_runnable_ticket(tmp_path: Path) -> None:
+    # The read->run gap (codex F2): a ticket dropped after readiness said "go" must be skipped
+    # at execution time — no start-write, no spawn, status untouched.
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+    conn = connect(db)
+    try:
+        tickets_data.drop_ticket(conn, tid, actor="human", now=0)
+    finally:
+        conn.close()
+
+    def _boom(argv: list[str], env: dict[str, str]) -> Any:
+        raise AssertionError("guard should have skipped before spawning")
+
+    sb = SystemB(db, RealClock(), home=HOME, hermes_python=HERMES_PY, spawn=_boom)
+    sb.set_off(tid, ROLE, "step", guard=readiness.is_runnable)
+    assert sb.wait_idle(10.0)
+
+    ticket = _read(db, tid)
+    assert ticket.state == TicketState.dropped
+    assert ticket.status == TicketStatus.empty     # never written to agent_working
+    assert _status_events(db, tid) == []            # no status events at all — fully skipped
+
+
+def test_double_set_off_second_run_skipped_by_guard(tmp_path: Path) -> None:
+    # has_inflight normally prevents a duplicate enqueue; the execution-time guard is the
+    # backstop. Two set_offs on one ticket: the first parks a success proposal, so the second
+    # is no-longer-runnable and is skipped — fake2 is never even spawned.
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+    fake1 = _ProposingFake(
+        _create_script(_complete_ev()),
+        on_submit=lambda: _file_proposal(db, tid, "success", "b"),
+    )
+    fake2 = FakeGateway(_resume_script(STORED_KEY, _complete_ev()))
+    sb = _system_b(db, _Spawner([fake1, fake2]))
+    sb.set_off(tid, ROLE, "step", guard=readiness.is_runnable)
+    sb.set_off(tid, ROLE, "step", guard=readiness.is_runnable)
+    assert sb.wait_idle(10.0)
+
+    assert "session.create" in fake1.sent_methods()
+    assert fake2.sent_methods() == []                          # second skipped before any spawn
+    assert _read(db, tid).fields.success.proposal is not None  # first parked; untouched by #2

@@ -8,7 +8,7 @@ clock arrives as now (unix seconds) and the title limit as an argument."""
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Final
 
@@ -220,6 +220,39 @@ def set_run_status(
         if error is not None:
             payload["error"] = error
         append_event(conn, ticket_id, EventKind.ticket_status_changed, payload, now)
+        return _load_ticket(conn, ticket_id)
+
+
+def start_run_if_runnable(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    worker: str | None,
+    guard: Callable[[sqlite3.Connection, Ticket], bool] | None,
+    now: int,
+) -> Ticket | None:
+    """The atomic guarded start transition (System B's only start-write door). In ONE
+    BEGIN IMMEDIATE txn: re-read the ticket, apply `guard` (System A's readiness) against that
+    fresh, lock-consistent view, and only if it passes write status=agent_working + worker and
+    append one ticket_status_changed event; otherwise write nothing and return None. This closes
+    the poll->run TOCTOU — a human drop/grant-stop/block/park committed in the gap is either seen
+    by the re-read (guard skips) or blocked until this commits — while keeping System B the sole
+    status writer. `guard=None` => an unconditional start (W3a's bare set_off path)."""
+    with _txn(conn):
+        ticket = _load_ticket(conn, ticket_id)
+        if guard is not None and not guard(conn, ticket):
+            return None
+        conn.execute(
+            "UPDATE tickets SET status = ?, worker = ?, updated_at = ? WHERE id = ?",
+            (TicketStatus.agent_working.value, worker, now, ticket_id),
+        )
+        append_event(
+            conn,
+            ticket_id,
+            EventKind.ticket_status_changed,
+            {"status": TicketStatus.agent_working.value, "worker": worker},
+            now,
+        )
         return _load_ticket(conn, ticket_id)
 
 

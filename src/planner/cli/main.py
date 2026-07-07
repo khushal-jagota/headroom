@@ -201,7 +201,7 @@ def ticket() -> None:
 @click.option("--deadline", default=None, help="ISO date.")
 @click.option("--project", default=None, help="Vylo | Tribe | Learning | Other.")
 @click.option("--sprint", default=None, help="Sprint id (standalone tickets only).")
-@click.option("--item", default=None, help="Sprint item id to parent under.")
+@click.option("--sprint-item", "sprint_item", default=None, help="Sprint item id to parent under.")
 @json_option
 def ticket_create(
     title: str,
@@ -209,7 +209,7 @@ def ticket_create(
     deadline: str | None,
     project: str | None,
     sprint: str | None,
-    item: str | None,
+    sprint_item: str | None,
     as_json: bool,
 ) -> None:
     """Create a ticket."""
@@ -221,9 +221,9 @@ def ticket_create(
     if project is not None:
         body["project"] = project
     if sprint is not None:
-        body["sprint_id"] = sprint       # --sprint -> sprint_id
-    if item is not None:
-        body["sprint_item_id"] = item    # --item   -> sprint_item_id
+        body["sprint_id"] = sprint              # --sprint      -> sprint_id
+    if sprint_item is not None:
+        body["sprint_item_id"] = sprint_item    # --sprint-item -> sprint_item_id
     data = http.send("POST", "/api/tickets", as_json=as_json, json_body=body)
     http.emit(data, as_json, f"{data['id']} {data['state']}")
 
@@ -242,10 +242,21 @@ def ticket_show(ticket_id: str | None, as_json: bool) -> None:
 @click.option("--state", default=None)
 @click.option("--project", default=None)
 @click.option("--sprint", default=None)
+@click.option("--day", default=None, help="Filter to a day's tickets: 'today' or an ISO date.")
+@click.option("--date", default=None, help="ISO-date alias of --day.")
 @json_option
-def ticket_list(state: str | None, project: str | None, sprint: str | None, as_json: bool) -> None:
-    """List tickets."""
-    params = _drop_none({"state": state, "project": project, "sprint_id": sprint})
+def ticket_list(
+    state: str | None,
+    project: str | None,
+    sprint: str | None,
+    day: str | None,
+    date: str | None,
+    as_json: bool,
+) -> None:
+    """List tickets (optionally scoped to one day's board)."""
+    params = _drop_none(
+        {"state": state, "project": project, "sprint_id": sprint, "day": day or date}
+    )
     data = http.send("GET", "/api/tickets", as_json=as_json, params=params)
     http.emit(
         data,
@@ -541,19 +552,6 @@ def queue_approvals(as_json: bool) -> None:
         {"approvals": section},
         as_json,
         _lines(section, lambda e: f"{e['entity_type']} {e['entity_id']} {e['kind']} {e['title']}"),
-    )
-
-
-@queue.command("pickup")
-@json_option
-def queue_pickup(as_json: bool) -> None:
-    """Dispatcher-eligible tickets (§7.2)."""
-    data = http.send("GET", "/api/queues", as_json=as_json)
-    section = data["pickup"]
-    http.emit(
-        {"pickup": section},
-        as_json,
-        _lines(section, lambda e: f"{e['ticket_id']} {e['state']} {e['priority']} {e['title']}"),
     )
 
 

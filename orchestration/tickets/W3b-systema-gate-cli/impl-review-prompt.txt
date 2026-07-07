@@ -1,0 +1,58 @@
+You are the independent reviewer of an implementation DIFF, not an implementer. Read-only.
+
+Repo: /Users/khushaljagota/.hermes/planning-v2 (Python 3.14 / FastAPI / SQLite). The baseline is
+committed W3a on `main`; my W3b changes are UNCOMMITTED in the working tree. Run `git --no-pager
+diff` (and `git status`) yourself to see exactly what changed, and read the new files in full:
+- src/planner/runtime/readiness.py (new), src/planner/runtime/system_a.py (new)
+- tests/unit/test_system_a.py (new), tests/e2e/test_cli_verbs.py (new)
+Changed: src/planner/runtime/system_b.py, src/planner/minds/queue.py, src/planner/core/loops.py,
+src/planner/core/server.py, src/planner/tickets/api.py, src/planner/tickets/views.py,
+src/planner/days/api.py, src/planner/days/logic/dates.py, src/planner/cli/main.py,
+tests/unit/test_system_b.py, tests/unit/test_minds.py.
+
+Design intent to check against:
+- orchestration/tickets/W3b-systema-gate-cli/plan.md (the reviewed plan)
+- orchestration/tickets/W3b-systema-gate-cli/plan-review.md (the 4 accepted codex fixes F1–F4)
+- orchestration/runtime-redesign/notes.md (Scheduling & runs / Tickets / CLI / Principles)
+- The W3a carry-forwards in src/planner/runtime/system_b.py + src/planner/minds/queue.py docstrings.
+
+Verify, citing file:line, and flag concrete defects (severity blocker/should-fix/nit + minimal fix):
+
+1. Plan-review fixes actually landed correctly:
+   - F1: is the on_idle/poke arity fixed (SystemA.poke accepts the ticket_id the MindQueue idle
+     callback passes AND the arg-less API pokes)? Any TypeError path left?
+   - F2: is the read->run stale-set-off race closed by the injected guard? Confirm System B
+     re-reads and re-checks readiness.is_runnable BEFORE the agent_working start-write, writes
+     NOTHING and does NOT spawn on a skip, and that guard defaults None so W3a's bare-set_off
+     tests are unaffected. Is readiness.is_runnable free of has_inflight (correct — the ticket is
+     inflight at exec time)?
+   - F3: does POST /tickets poke System A?
+   - F4: candidate query wording — is the SQL genuinely candidate-only (status IN (empty,
+     awaiting_approval) AND non-terminal), respecting status so agent_working/errored are excluded?
+
+2. Readiness correctness: does is_runnable match the intended semantics against machine.py /
+   admission.check_agent_proposal / resolution.decide_file_proposal (parked-vs-auto-accepted via
+   the gating field's proposal; grant stop at/beyond ceiling; blocked; needs_review has no step)?
+   Does System A NEVER write tickets.status (System B sole writer — notes.md Principles)?
+
+3. Fast-path concurrency: MindQueue.on_idle fires after _active.discard, OUTSIDE the lock — any
+   deadlock, missed on_idle, or double-fire? SystemA._run_loop poke/wait/clear — any lost-wake?
+   is_active/has_inflight synchronization. SystemA.stop join/shutdown ordering.
+
+4. Hermetic safety: can the pytest suite (PLAN_TEST_MODE) or e2e `plan serve` ever spawn a REAL
+   gateway child? Confirm loops start only when not test_mode (server.py lifespan), System A's real
+   spawn_popen is only reachable via loops.py, and app.state.system_a is null-guarded on every API
+   poke. Unit tests must use minds/fake.py only.
+
+5. Server wiring (loops.py): master switch (dispatch_enabled) + machine lock acquire/release on
+   start-failure and on stop; System A thread join on shutdown; boundary loop still correct.
+
+6. The CLI/day-filter/pickup changes: --item->--sprint-item, list --day/--date, dropped queue
+   pickup + _pickup + the pickup queue key — any dangling reference? The shared days.dates
+   resolve_day_id refactor (days/api delegates) — behavior preserved, no import cycle?
+
+7. mypy --strict / ruff / import-cycle risks introduced by tickets/api.py importing
+   runtime.system_a and the Annotated[SystemA | None, Depends] dependency.
+
+For each finding: severity, exact location, why, minimal fix. If an axis is sound, say so briefly.
+End with an overall verdict: APPROVE / APPROVE-WITH-FIXES / REPLAN.

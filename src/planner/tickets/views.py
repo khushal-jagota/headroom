@@ -74,6 +74,7 @@ def list_tickets(
     project: Project | None,
     sprint_id: str | None,
     sprint_item_id: str | None,
+    day_id: str | None = None,
 ) -> list[JsonDict]:
     clauses: list[str] = []
     params: list[str] = []
@@ -89,6 +90,9 @@ def list_tickets(
     if sprint_item_id is not None:
         clauses.append("sprint_item_id = ?")
         params.append(sprint_item_id)
+    if day_id is not None:  # scope to one day's board via the day_tickets join
+        clauses.append("id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?)")
+        params.append(day_id)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = conn.execute(
         "SELECT id FROM tickets" + where + " ORDER BY created_at ASC, id", tuple(params)
@@ -272,14 +276,6 @@ def _approvals(conn: sqlite3.Connection, item_approval_rows: list[JsonDict]) -> 
     return result
 
 
-def _pickup(conn: sqlite3.Connection, now: int) -> list[JsonDict]:
-    # Readiness (which tickets are ready to be worked) is System A — W3b. The old
-    # claim/eligibility candidate scan is removed with the dispatcher; until System A
-    # lands, the pickup section is empty (the board's per-ticket status shows what is
-    # running). The key is kept so /api/queues + `queue pickup` keep their shape.
-    return []
-
-
 def _overdue(
     conn: sqlite3.Connection, today_iso: str, item_overdue_rows: list[JsonDict]
 ) -> list[JsonDict]:
@@ -328,6 +324,5 @@ def queues_view(
 ) -> JsonDict:
     return {
         "approvals": _approvals(conn, item_approval_rows),
-        "pickup": _pickup(conn, now),
         "overdue": _overdue(conn, today_iso, item_overdue_rows),
     }
