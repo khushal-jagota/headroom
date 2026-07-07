@@ -283,3 +283,53 @@ def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
     card = f'[data-review-card][data-entity-id="{tid}"]'
     page = open_page(context_factory(), server, "#/review", card, settled=True)
     assert page.get_attribute(card, "data-kind") == "plan"
+
+
+def test_slash_menu_runs_skill(server, context_factory, open_page, cli, api):
+    # The "/" menu is a read of the gateway command catalog; selecting a Skill runs
+    # it on the ticket's own mind via POST /command (fake gateway -> a scripted reply).
+    tid = cli(server, "ticket", "create", "--title", "T18 slash ticket")["id"]
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{tid}",
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]',
+        settled=True,
+    )
+
+    # Warmup send mints the session and fires the one-and-only chat flush, so the skill
+    # run below (key reused -> no event -> no flush) can't race the reply re-render.
+    f0 = page.evaluate("window.__plannerDebug.flushes")
+    page.fill('[data-chat] [data-chat-input]', "warmup")
+    page.click('[data-chat] [data-chat-send]')
+    page.wait_for_function("f => window.__plannerDebug.flushes > f", arg=f0, timeout=WAIT_MS)
+    page.wait_for_selector('[data-chat] [data-chat-input]', timeout=WAIT_MS)
+
+    # Typing "/" opens the catalog popover; the Skills row is present (fetched, grouped).
+    page.fill('[data-chat] [data-chat-input]', "/")
+    page.wait_for_selector(
+        '[data-chat] [data-chat-menu] [data-chat-skill][data-chat-cmd="/writing-plans"]',
+        timeout=WAIT_MS,
+    )
+
+    # Typing an alias ("/wp") keeps its canonical skill row visible (canon-aware filter).
+    page.fill('[data-chat] [data-chat-input]', "/wp")
+    page.wait_for_selector(
+        '[data-chat] [data-chat-menu] [data-chat-skill][data-chat-cmd="/writing-plans"]',
+        timeout=WAIT_MS,
+    )
+
+    # Selecting the skill runs it; the fake returns an assistant turn on this session.
+    page.click('[data-chat-menu] [data-chat-cmd="/writing-plans"]')
+    page.wait_for_function(
+        "() => { const els = document.querySelectorAll('[data-chat-msg=\"you\"]');"
+        " return els.length > 0 && els[els.length - 1].textContent === '/writing-plans'; }",
+        timeout=WAIT_MS,
+    )
+    page.wait_for_function(
+        "() => { const els = document.querySelectorAll('[data-chat-msg=\"planner\"]');"
+        " for (const el of els) {"
+        " if (el.textContent.indexOf('skill /writing-plans loaded') !== -1) return true; }"
+        " return false; }",
+        timeout=WAIT_MS,
+    )

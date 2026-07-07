@@ -6,9 +6,33 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from planner.chat.contracts import ChatSendResult, GatewayStatus
+from planner.chat.contracts import (
+    ChatSendResult,
+    CommandCatalog,
+    CommandCategory,
+    CommandRunResult,
+    GatewayStatus,
+)
 from planner.core.adapters.base import BoundaryInputs, BoundaryJudgment
 from planner.core.errors import ErrorCode, PlannerError
+
+# One canned catalog for the whole test suite — two grouped categories plus a
+# Skills group. Shape mirrors the live gateway (skills are absent from categories;
+# canon keys are lowercased). No child is ever spawned to build it.
+CANNED_CATALOG: CommandCatalog = CommandCatalog(
+    categories=(
+        CommandCategory(
+            "Session",
+            (("/status", "Show session status"), ("/model", "Pick the model")),
+        ),
+        CommandCategory("Info", (("/help", "List the commands"),)),
+    ),
+    skills=(("/writing-plans", "Draft a plan"), ("/xurl", "Fetch a URL as markdown")),
+    canon={"/st": "/status", "/wp": "/writing-plans"},
+    sub={"/model": ["list", "set"]},
+)
+
+_CANNED_SKILL_NAMES = frozenset(name for name, _ in CANNED_CATALOG.skills)
 
 
 @dataclass
@@ -34,6 +58,8 @@ class FakeBoundaryAdapter:
 @dataclass
 class EchoGatewayAdapter:
     calls: list[tuple[str | None, str, str]] = field(default_factory=list)
+    command_calls: list[tuple[str | None, str, str]] = field(default_factory=list)
+    catalog_calls: int = 0                # counts real catalog() work (cache-miss proof)
     next_session: int = 1
 
     def status(self) -> GatewayStatus:
@@ -46,6 +72,29 @@ class EchoGatewayAdapter:
             self.next_session += 1
         return ChatSendResult(reply_text=f"echo: {text}", session_key=session_key)
 
+    def catalog(self) -> CommandCatalog:
+        self.catalog_calls += 1
+        return CANNED_CATALOG
+
+    def run_command(
+        self, session_key: str | None, entity_id: str, command: str
+    ) -> CommandRunResult:
+        self.command_calls.append((session_key, entity_id, command))
+        if session_key is None:
+            session_key = f"fake-sess-{self.next_session}"
+            self.next_session += 1
+        parts = command.strip().split(maxsplit=1)
+        token = parts[0].lower() if parts else ""
+        name = CANNED_CATALOG.canon.get(token, token)
+        if name in _CANNED_SKILL_NAMES:  # skill -> command.dispatch -> prompt.submit (a model turn)
+            return CommandRunResult(
+                reply_text=f"skill {name} loaded", session_key=session_key, kind="assistant"
+            )
+        # everything else -> slash.exec display output (no model turn)
+        return CommandRunResult(
+            reply_text=f"exec: {command.strip()}", session_key=session_key, kind="system"
+        )
+
 
 @dataclass
 class OfflineGatewayAdapter:
@@ -53,4 +102,12 @@ class OfflineGatewayAdapter:
         return GatewayStatus(available=False, detail="gateway offline")
 
     def send(self, session_key: str | None, entity_id: str, text: str) -> ChatSendResult:
+        raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
+
+    def catalog(self) -> CommandCatalog:
+        raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
+
+    def run_command(
+        self, session_key: str | None, entity_id: str, command: str
+    ) -> CommandRunResult:
         raise PlannerError(ErrorCode.gateway_offline, "gateway offline")

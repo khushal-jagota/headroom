@@ -378,21 +378,44 @@
     });
   }
 
+  // Fetch-once cache of the gateway command catalog (spike 02 §2): one GET per page
+  // load, shared across every composer via the Planner namespace. A failed fetch
+  // clears the cache so the next "/" retries; the menu just doesn't show until it
+  // resolves. The catalog is a transient view — not a client state store.
+  function commandCatalog() {
+    if (!Planner._commandCatalog) {
+      Planner._commandCatalog = Planner.api.fetchJson("/api/chat/commands").then(
+        function (cat) { return cat; },
+        function (err) {
+          Planner._commandCatalog = null;
+          return Promise.reject(err);
+        }
+      );
+    }
+    return Planner._commandCatalog;
+  }
+
   // --- the pluggable chat-input source (SPEC §14 audio seam) -----------------
   // A source is factory(ctx) -> HTMLElement. ctx.submit(text) -> Promise is the
   // only way a source delivers input (the panel owns transport); ctx.initialText
   // is the preserved draft; ctx.onInput(text) reports pending text so the panel
-  // can preserve the draft across re-renders.
+  // can preserve the draft across re-renders. ctx.runCommand(command) -> Promise
+  // runs a gateway /command on the ticket's own mind (skills; spike 02 §3).
   function makeTextInputSource(ctx) {
     // A single recessed field: the container IS the input. A tiny "/" trigger and a
     // send button (arrow, amber when there's text) sit in a footer. Enter sends,
-    // Shift+Enter is a newline. The "/" menu (gateway command catalog) wires in later.
+    // Shift+Enter is a newline. When the text starts with "/" a popover of the
+    // gateway's command catalog (categories then Skills) opens above the composer.
     var box = make("div", "chat-box");
     var textarea = make("textarea", "chat-ta");
     textarea.setAttribute("data-chat-input", "");
     textarea.rows = 1;
     textarea.placeholder = "Message the employee…";
     textarea.value = ctx.initialText || "";
+
+    var menu = make("div", "chat-menu");
+    menu.setAttribute("data-chat-menu", "");
+    menu.hidden = true;
 
     var foot = make("div", "chat-foot");
     var slash = make("button", "chat-slash", "/");
@@ -403,6 +426,11 @@
     send.type = "button";
     send.title = "Send";
     send.setAttribute("data-chat-send", "");
+
+    var catalog = null;       // the fetched CommandCatalog (or null until first "/")
+    var loading = false;      // a catalog fetch is in flight
+    var items = [];           // [{name, skill, el}] in menu order, for keyboard nav
+    var highlight = 0;
 
     function grow() {
       textarea.style.height = "auto";
@@ -415,40 +443,210 @@
         send.classList.remove("on");
       }
     }
-    function doSend() {
-      var text = textarea.value.trim();
-      if (!text) {
-        return;
-      }
-      send.disabled = true;
+    function clearComposer() {
       textarea.value = "";
       grow();
       syncSend();
       ctx.onInput("");
-      Promise.resolve(ctx.submit(text)).then(
-        function () { send.disabled = false; },
-        function () { send.disabled = false; }
+    }
+    function reenable() { send.disabled = false; }
+    function canRun() { return typeof ctx.runCommand === "function"; }
+
+    function isSkill(name) {
+      if (!catalog || !catalog.skills) { return false; }
+      for (var i = 0; i < catalog.skills.length; i += 1) {
+        if (catalog.skills[i][0] === name) { return true; }
+      }
+      return false;
+    }
+
+    // --- the "/" menu ------------------------------------------------------
+    function menuOpen() { return !menu.hidden; }
+    function closeMenu() {
+      menu.hidden = true;
+      menu.replaceChildren();
+      items = [];
+      highlight = 0;
+    }
+    function setHighlight(i) {
+      if (items.length === 0) { return; }
+      if (i < 0) { i = 0; }
+      if (i > items.length - 1) { i = items.length - 1; }
+      items.forEach(function (rec, idx) {
+        if (idx === i) { rec.el.classList.add("on"); } else { rec.el.classList.remove("on"); }
+      });
+      highlight = i;
+      items[i].el.scrollIntoView({ block: "nearest" });
+    }
+    function move(delta) {
+      if (items.length === 0) { return; }
+      var n = items.length;
+      setHighlight((highlight + delta + n) % n);
+    }
+    function selectItem(rec) {
+      closeMenu();
+      if (rec.skill && canRun()) {
+        clearComposer();
+        runSlash(rec.name);
+      } else {
+        // a command (or a skill with no runner): insert "/name " for args + Send
+        textarea.value = rec.name + " ";
+        grow();
+        syncSend();
+        ctx.onInput(textarea.value);
+        textarea.focus();
+      }
+    }
+    function selectHighlighted() {
+      if (items.length > 0) { selectItem(items[highlight]); }
+    }
+    function matches(pair, query) {
+      if (!query) { return true; }
+      if (pair[0].toLowerCase().indexOf(query) !== -1) { return true; }
+      if (pair[1].toLowerCase().indexOf(query) !== -1) { return true; }
+      // an exact alias of this row (e.g. "/wp" -> "/writing-plans") stays visible
+      return !!(catalog.canon && catalog.canon["/" + query] === pair[0]);
+    }
+    function renderMenu(query) {
+      menu.replaceChildren();
+      items = [];
+      var frag = document.createDocumentFragment();
+      function addSection(title, pairs, isSkillSec) {
+        var shown = (pairs || []).filter(function (p) { return matches(p, query); });
+        if (shown.length === 0) { return; }
+        frag.appendChild(make("div", "chat-menu-hd", title));
+        shown.forEach(function (p) {
+          var item = make("button", "chat-menu-item");
+          item.type = "button";
+          item.setAttribute("data-chat-cmd", p[0]);
+          if (isSkillSec) { item.setAttribute("data-chat-skill", ""); }
+          item.appendChild(make("span", "chat-menu-name", p[0]));
+          item.appendChild(make("span", "chat-menu-desc", p[1]));
+          var rec = { name: p[0], skill: isSkillSec, el: item };
+          var idx = items.length;
+          items.push(rec);
+          // preventDefault on mousedown keeps focus on the textarea through the click
+          item.addEventListener("mousedown", function (e) { e.preventDefault(); });
+          item.addEventListener("mouseenter", function () { setHighlight(idx); });
+          item.addEventListener("click", function () { selectItem(rec); });
+          frag.appendChild(item);
+        });
+      }
+      (catalog.categories || []).forEach(function (cat) {
+        addSection(cat.name, cat.pairs, false);
+      });
+      addSection("Skills", catalog.skills, true);
+      menu.appendChild(frag);
+      if (items.length === 0) {
+        menu.hidden = true;
+        return;
+      }
+      menu.hidden = false;
+      setHighlight(0);
+    }
+    function updateMenu() {
+      var v = textarea.value;
+      if (!/^\/\S*$/.test(v)) { closeMenu(); return; }  // slash + no space yet
+      var query = v.slice(1).toLowerCase();
+      if (catalog) { renderMenu(query); return; }
+      if (loading) { return; }
+      loading = true;
+      commandCatalog().then(
+        function (cat) {
+          loading = false;
+          catalog = cat;
+          var cur = textarea.value;
+          if (/^\/\S*$/.test(cur)) { renderMenu(cur.slice(1).toLowerCase()); }
+        },
+        function () { loading = false; }  // silent: the menu just won't show
       );
     }
+
+    // --- send / run --------------------------------------------------------
+    function runSlash(command) {
+      send.disabled = true;
+      Promise.resolve(ctx.runCommand(command)).then(reenable, reenable);
+    }
+    function skillCommandFor(text) {
+      // The canonical command string if `text` runs a known skill, else null. A
+      // leading "/" is inert to a normal send, so only skills route to runCommand
+      // in this slice; other "/" text sends as plain chat.
+      if (text.charAt(0) !== "/" || !catalog || !canRun()) { return null; }
+      var firstTok = text.split(/\s+/)[0];
+      var name = (catalog.canon && catalog.canon[firstTok.toLowerCase()]) || firstTok;
+      if (!isSkill(name)) { return null; }
+      return name + text.slice(firstTok.length);  // canonical name + preserved args
+    }
+    function doSend() {
+      var text = textarea.value.trim();
+      if (!text) { return; }
+      closeMenu();
+      send.disabled = true;
+      clearComposer();  // synchronous clear so a second Enter can't double-send
+      // A leading "/" is inert to a normal send; if the catalog has not loaded yet we
+      // must resolve it before deciding, or a fast type-and-send would lose a skill.
+      if (text.charAt(0) === "/" && !catalog && canRun()) {
+        commandCatalog().then(
+          function (cat) { catalog = cat; routeSend(text); },
+          function () { routeSend(text); }  // no catalog -> treat as plain chat
+        );
+        return;
+      }
+      routeSend(text);
+    }
+    function routeSend(text) {
+      var skillCmd = skillCommandFor(text);
+      if (skillCmd !== null) {
+        Promise.resolve(ctx.runCommand(skillCmd)).then(reenable, reenable);
+      } else {
+        Promise.resolve(ctx.submit(text)).then(reenable, reenable);
+      }
+    }
+
     textarea.addEventListener("input", function () {
       ctx.onInput(textarea.value);
       grow();
       syncSend();
+      updateMenu();
     });
     textarea.addEventListener("keydown", function (e) {
+      if (menuOpen()) {
+        if (e.key === "ArrowDown") { e.preventDefault(); move(1); return; }
+        if (e.key === "ArrowUp") { e.preventDefault(); move(-1); return; }
+        if (e.key === "Escape") { e.preventDefault(); closeMenu(); return; }
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); selectHighlighted(); return; }
+      }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         doSend();
       }
     });
+    textarea.addEventListener("blur", function () {
+      window.setTimeout(closeMenu, 100);  // let a menu click land before dismissing
+    });
     send.addEventListener("click", doSend);
+    // preventDefault keeps focus on the textarea so the click doesn't blur it (which
+    // would schedule the close below and kill the menu this same click opens).
+    slash.addEventListener("mousedown", function (e) { e.preventDefault(); });
+    slash.addEventListener("click", function () {
+      if (textarea.value.charAt(0) !== "/") {
+        textarea.value = "/" + textarea.value;
+      }
+      textarea.focus();
+      ctx.onInput(textarea.value);
+      grow();
+      syncSend();
+      updateMenu();
+    });
 
     foot.appendChild(slash);
     foot.appendChild(send);
     box.appendChild(textarea);
     box.appendChild(foot);
+    box.appendChild(menu);
     grow();
     syncSend();
+    updateMenu();  // a preserved "/draft" reopens the menu after a re-render
     return box;
   }
 
@@ -624,11 +822,7 @@
       var msgs = chatTranscripts[entityId] || [];
       if (msgs.length === 0 && !chatPending[entityId]) {
         var empty = make("div", "chat-empty");
-        empty.appendChild(make("div", "chat-empty-eb", "employee"));
         empty.appendChild(make("h2", "chat-empty-h", "What do you need?"));
-        empty.appendChild(
-          make("p", "chat-empty-p", "It has read the ticket. Ask it to take the next step.")
-        );
         thread.appendChild(empty);
         return;
       }
@@ -637,6 +831,11 @@
           var you = make("div", "chat-u", msg.text);
           you.setAttribute("data-chat-msg", "you");
           thread.appendChild(you);
+        } else if (msg.who === "system") {
+          // display output from a slash command (status/exec) — bare monospace, no bubble
+          var sys = make("div", "chat-sys", msg.text);
+          sys.setAttribute("data-chat-msg", "system");
+          thread.appendChild(sys);
         } else {
           var reply = make("div", "chat-a");
           reply.setAttribute("data-chat-msg", "planner");
@@ -682,6 +881,46 @@
             chatPending[entityId] = false;
             chatTranscripts[entityId].push({ who: "planner", text: res.reply_text });
             if (panelEl.isConnected) {   // a flush may have replaced the panel mid-flight
+              paint();
+            }
+            return res;
+          },
+          function (err) {
+            chatPending[entityId] = false;
+            if (panelEl.isConnected) {
+              paint();
+            }
+            var prior = panelEl.querySelector(".error-line");
+            if (prior) {
+              prior.remove();
+            }
+            panelEl.insertBefore(errorLine(err), source);
+            return Promise.reject(err);
+          }
+        );
+      },
+      runCommand: function (command) {
+        // Run a gateway /command (a skill) on this ticket's mind. Same transport
+        // discipline as submit: optimistic "you" echo, thinking dots, then either an
+        // assistant turn or a system display line by res.kind.
+        if (!chatTranscripts[entityId]) {
+          chatTranscripts[entityId] = [];
+        }
+        chatTranscripts[entityId].push({ who: "you", text: command });
+        delete chatDrafts[entityId];
+        chatPending[entityId] = true;
+        paint();
+        return Planner.api.fetchJson("/api/chat/" + entityId + "/command", {
+          method: "POST",
+          body: { command: command }
+        }).then(
+          function (res) {
+            chatPending[entityId] = false;
+            chatTranscripts[entityId].push({
+              who: res.kind === "system" ? "system" : "planner",
+              text: res.reply_text
+            });
+            if (panelEl.isConnected) {
               paint();
             }
             return res;

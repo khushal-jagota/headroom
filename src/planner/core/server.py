@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib
 import logging
 import sqlite3
+import threading
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -109,6 +110,10 @@ def create_app(
     app.state.adapters = adapters
     app.state.conn_factory = conn_factory
     app.state.system_a = None  # set by the lifespan when background loops start (non-test only)
+    # GET /api/chat/commands TTL cache: (CommandCatalog, expiry_monotonic) | None, plus a
+    # lock so concurrent cache misses spawn at most one gateway child (chat/api.py).
+    app.state.chat_command_catalog = None
+    app.state.chat_command_catalog_lock = threading.Lock()
 
     @app.exception_handler(PlannerError)
     async def handle_planner_error(request: Request, exc: PlannerError) -> JSONResponse:

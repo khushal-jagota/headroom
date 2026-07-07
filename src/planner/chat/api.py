@@ -1,21 +1,42 @@
-"""Chat routes (§9): send a message, read gateway availability."""
+"""Chat routes (§9): send a message, run a /command, read the command catalog and
+gateway availability."""
 
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, FastAPI, Request
 
 from planner.chat import service
+from planner.chat.contracts import CommandCatalog
 from planner.core import authctx
+from planner.core.adapters.base import GatewayAdapter
 from planner.core.adapters.registry import Adapters
 from planner.core.clock import Clock
 from planner.core.errors import ErrorCode, PlannerError
 
 router = APIRouter()
+
+# The catalog is gateway-wide and near-static (it only changes when skills/commands
+# change on disk), so it is memoized in app.state with a short TTL — cheap insurance
+# against a child spawn per keystroke while still picking up a change within minutes.
+_CATALOG_TTL_SECONDS = 300.0
+
+
+def _cached_catalog(app: FastAPI, gateway: GatewayAdapter, refresh: bool) -> CommandCatalog:
+    lock = app.state.chat_command_catalog_lock
+    with lock:  # serialize concurrent misses so at most one child spawns
+        entry = app.state.chat_command_catalog  # (CommandCatalog, expiry_monotonic) | None
+        now = time.monotonic()
+        if not refresh and entry is not None and entry[1] > now:
+            return entry[0]  # type: ignore[no-any-return]
+        catalog = service.catalog(gateway)  # a real child spawn happens here (non-test)
+        app.state.chat_command_catalog = (catalog, now + _CATALOG_TTL_SECONDS)
+        return catalog
 
 
 @router.post("/chat/{entity_id}/send")
@@ -35,6 +56,38 @@ async def send_message(
     finally:
         conn.close()
     return asdict(result)
+
+
+@router.post("/chat/{entity_id}/command")
+async def run_chat_command(
+    entity_id: str, body: dict[str, Any], request: Request
+) -> dict[str, Any]:
+    authctx.reject_agents(authctx.request_context(request))  # §11/§8: chat is human-only.
+    command = body.get("command")
+    if not isinstance(command, str) or not command.strip():
+        raise PlannerError(ErrorCode.validation, "command is required")
+    clock: Clock = request.app.state.clock
+    adapters: Adapters = request.app.state.adapters
+    conn_factory: Callable[[], sqlite3.Connection] = request.app.state.conn_factory
+    conn = conn_factory()
+    try:
+        result = service.run_command(
+            conn, adapters.gateway, entity_id, command, clock.now_unix()
+        )
+    finally:
+        conn.close()
+    return asdict(result)
+
+
+@router.get("/chat/commands")
+async def chat_commands(request: Request) -> dict[str, Any]:
+    # The gateway command/skill catalog for the "/" menu. Human-only, gateway-wide,
+    # and cached (never a child spawn per request); ?refresh=1 busts the cache.
+    authctx.reject_agents(authctx.request_context(request))
+    adapters: Adapters = request.app.state.adapters
+    refresh = request.query_params.get("refresh") == "1"
+    catalog = _cached_catalog(request.app, adapters.gateway, refresh)
+    return asdict(catalog)
 
 
 @router.get("/chat/{entity_id}/status")

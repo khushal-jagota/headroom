@@ -11,7 +11,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from planner.chat.contracts import ChatSendResult, GatewayStatus
+from planner.chat.contracts import (
+    ChatSendResult,
+    CommandCatalog,
+    CommandRunResult,
+    GatewayStatus,
+)
 
 
 @dataclass(frozen=True)
@@ -39,3 +44,10 @@ class BoundaryAdapter(Protocol):
 class GatewayAdapter(Protocol):
     def status(self) -> GatewayStatus: ...
     def send(self, session_key: str | None, entity_id: str, text: str) -> ChatSendResult: ...
+    # The gateway's own command/skill registry — stateless, gateway-wide, cached above.
+    def catalog(self) -> CommandCatalog: ...
+    # Run a /command on the entity's own session (the ticket's mind), mirroring send's
+    # resume/create + drain shape. Skills run via command.dispatch -> prompt.submit.
+    def run_command(
+        self, session_key: str | None, entity_id: str, command: str
+    ) -> CommandRunResult: ...
