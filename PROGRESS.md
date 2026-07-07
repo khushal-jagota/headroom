@@ -75,5 +75,5 @@ one ticket runs a step end-to-end through the live employee.
   fix, how).
 - `orchestration/runtime-redesign/spikes/01-hermes-linkage.md` — proved the gateway linkage;
   `spikes/02-slash-commands-in-chat.md` — the slash-commands spike.
-- `DESIGN.md` — the visual language. `decisions.md` — every judgment call. `DOCS.md` — plain-language
-  documentation of what exists.
+- `DESIGN.md` — the visual language. `decisions.md` — every judgment call. `docs/` — plain-language
+  documentation of what exists (`docs/README.md` is the map).

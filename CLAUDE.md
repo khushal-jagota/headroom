@@ -9,7 +9,7 @@ This repo is the v2 planning system (Python/FastAPI + SQLite + no-build JS). It 
 ## Memory
 - **PROGRESS.md** — update every work cycle: current build stage, what just passed, current hypothesis, next step, blockers. After any context compaction, read it first — it is your memory, not the conversation.
 - **decisions.md** — every delegated or judgment call, briefly justified.
-- **DOCS.md** — plain-language documentation of what exists and how it works, written progressively as work completes, never retrofitted. Simple sentences, no jargon. A smart non-engineer must be able to read it. If a section can't be understood without reading the code, rewrite the section.
+- **docs/** — plain-language documentation of what exists and how it works, split by system (`docs/README.md` is the map; `docs/CLAUDE.md` holds the conventions). Simple sentences, no jargon — a smart non-engineer must be able to read it; if a section can't be understood without reading the code, rewrite the section. Kept **current, not frozen**: written as work completes, and corrected in the same breath when a feature changes or is removed — a doc still describing deleted machinery is a bug, not history. History is git's; the live build snapshot is PROGRESS.md's.
 
 ## Verification
 - `./verify` is the only source of truth for completeness. Run it fresh before any claim of progress and show the full output. Never assert results from memory or quote an earlier run.
