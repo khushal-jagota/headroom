@@ -320,39 +320,24 @@ A tiny Svelte route parser is enough. Do not add a routing framework unless the 
    - `ideas` over `/api/ideas` (`assets/screens-ideas.js:26-27`, `assets/screens-ideas.js:252-261`).
    - Capture form remains local state; list refresh comes from invalidation.
 
-## 5. Coexistence and cutover
+## 5. Build then swap (no coexistence)
 
-### Coexistence approach
+**Decision (settled): build the Svelte app fully in isolation, then swap it in once.** Do NOT run legacy and Svelte side by side in production, and do NOT port route-by-route into a live shell. A single-user, 7-screen app does not earn a coexistence layer (`/legacy` + `/ui`, per-route e2e migration, fallback nav links) — that machinery is cost without benefit here, and a shared route loop would reintroduce the global-rebuild problem it is meant to avoid.
 
-Run old and new frontends side by side during migration:
+During the build:
 
-- Keep the legacy no-build app available at `/legacy`.
-- Serve the Svelte app at `/ui` during migration.
-- Vite dev server serves the Svelte app in development.
-- Production FastAPI can serve both `web/dist` and the legacy shell until cutover.
+- The legacy no-build app stays live at `/` and is not touched until the swap. There is no `/ui` in production and no `/legacy` fallback linking.
+- The Svelte app is developed against the Vite dev server (proxying `/api`, `/api/events`, `/assets`) and validated by its **own** e2e run against the Vite production build (`web/dist`), served for tests by `vite preview` (or an equivalent static serve) — not by a FastAPI `/ui` route alongside legacy.
+- All screens are built in the new stack before cutover. The two e2e suites (legacy at `/`, Svelte against its build) both stay green through the build.
 
-This avoids embedding Svelte inside the legacy `route()` loop, which would immediately reintroduce the global rebuild problem.
+The swap — one step, only when every screen is ported and e2e is green against the built Svelte app:
 
-During migration:
+1. `/` serves the Vite `index.html` + `web/dist`.
+2. Delete `assets/app.js` and the `Planner.bus` route-invalidation model.
+3. Delete the legacy `screens-*.js` and the classic script tags from the server shell.
+4. Keep `assets/tokens.css` (the single design-token source) and `assets/markdown.js` (the single markdown renderer — do not create a second sanitizer).
 
-- Ported screens exist in `/ui#/<route>`.
-- Unported screens remain usable in `/legacy#/<route>`.
-- The Svelte shell can link unported nav items to `/legacy#/...` until each route is ported.
-- E2E tests move screen by screen from legacy root to `/ui`.
-
-### Final cutover
-
-When all screens are ported and e2e is green against the built Svelte app:
-
-1. Change `/` to serve the Vite `index.html`.
-2. Keep `/legacy` for one release only if needed.
-3. Remove legacy script loading from the production shell.
-4. Delete `assets/app.js` and the `Planner.bus` route invalidation model.
-5. Delete legacy `screens-*.js` after their Svelte equivalents and tests are complete.
-6. Keep `assets/tokens.css`.
-7. Keep or port `assets/markdown.js` only as the single markdown renderer; do not create a second sanitizer.
-
-The cutover is complete only when no backend event can call route-level re-rendering.
+The swap is complete only when no backend event can trigger route-level re-rendering, and no `/legacy` remains anywhere.
 
 ## 6. Phased, gated commits
 
@@ -364,14 +349,14 @@ Deliver:
 
 - `web/` Svelte 5 + Vite scaffold.
 - Vite dev proxy for `/api`, `/api/events`, `/assets`, `/static`.
-- FastAPI support for serving `web/dist` at `/ui` and `/_app`.
+- Vite production build (`web/dist`) served for e2e via `vite preview`; legacy stays at `/` (no FastAPI `/ui` route).
 - `./verify` frontend build gate before e2e.
 - Compatibility `window.__plannerDebug` shape in the new app, even before screens are ported.
 
 Prove:
 
 - `npm --prefix web run build` produces deployable assets.
-- `plan serve` can serve legacy root and Svelte `/ui`.
+- `plan serve` still serves the legacy root unchanged; the Svelte build runs and is testable via `vite preview`.
 - Existing legacy e2e remains green.
 - Verify no production CORS requirement.
 
@@ -459,7 +444,7 @@ Prove:
 Deliver:
 
 - `/` serves built Svelte app.
-- `/legacy` removed or retained behind an explicit temporary flag.
+- No `/legacy` route: the single swap replaces the shell outright.
 - Legacy route invalidation deleted.
 - Obsolete no-build screen files removed after e2e coverage is moved.
 - Server shell no longer embeds classic script tags.
@@ -474,10 +459,10 @@ Prove:
 ## 7. Risks and mitigations
 
 - **Build/e2e interplay:** e2e currently assumes legacy assets and debug counters. Mitigate by adding the frontend build gate early and keeping `window.__plannerDebug` compatible until tests are updated.
-- **Streaming endpoint reality:** the gateway currently drains to `message.complete`. Mitigate with a stable SSE contract that can emit one final token now and true deltas later.
+- **Streaming endpoint reality:** RESOLVED — the real gateway emits `message.delta` events (confirmed by the concurrency smoke), so the SSE endpoint can stream real deltas, not just a final token. Keep the SSE contract stable regardless.
 - **Event mapping drift:** backend event kinds may gain payloads or new meanings. Mitigate with an exhaustive mapper test over `EventKind`.
 - **Over-invalidation of aggregates:** broad invalidation of `board`, `queues`, or `sprint:current` can cause extra fetches. Accept this initially; optimize only after correctness.
 - **Retiring the no-store doctrine:** the app will now have a canonical frontend cache. Keep it small, resource-keyed, non-optimistic by default, and fed by typed WS invalidation.
-- **Two frontends during coexistence:** avoid sharing one route loop. Keep legacy at `/legacy` and Svelte at `/ui` until final cutover.
+- **Build-then-swap, not coexistence:** the Svelte app is built and e2e-validated against its own Vite build while legacy stays live at `/`; one swap replaces it. No `/legacy` + `/ui` dual-serving, no shared route loop.
 - **CSS fragmentation:** Svelte scoped styles can drift. Enforce `tokens.css` variables as the only design primitives.
 - **Markdown safety regression:** do not use Svelte `{@html}` except inside the dedicated markdown component backed by the existing renderer logic.

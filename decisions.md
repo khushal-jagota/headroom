@@ -521,3 +521,17 @@ The per-ticket runtime is now wired end-to-end over the real gateway (commits `c
    structurally: the `entity_id`-prefix rule is primary and complete (new kinds about an existing
    entity are auto-covered), with a completeness test as the backstop (a missed mapping fails
    `./verify`). Recorded in spike 06 + CLAUDE.md.
+
+3. **Svelte migration is build-then-swap, not coexistence.** Spike 06 originally ran legacy (`/legacy`)
+   and Svelte (`/ui`) side by side, porting route-by-route. Cut: a single-user 7-screen app does not
+   earn that machinery. Instead, build the Svelte app fully in isolation (Vite dev + its own e2e
+   against the Vite build), leave the legacy app live at `/` untouched, and swap once at the end
+   (delete the legacy shell/screens/route loop). Streaming chat is confirmed viable for the swap —
+   the real gateway emits `message.delta` (seen in the concurrency smoke), so SSE can stream real
+   deltas. Recorded in spike 06 §5.
+
+4. **Errored recovery becomes the first real test ticket, after the skill/core-loop work.** There is
+   still no way to retry or clear an `errored` ticket (see the 2026-07-07 employee-runtime section,
+   item 4). Rather than design it speculatively now, it is designated the *first ticket the planner
+   works on itself* once the `planning-worker` skill + dedicated planner home exist — i.e. the first
+   end-to-end exercise of the core loop is building its own errored-recovery capability.
