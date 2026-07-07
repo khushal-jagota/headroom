@@ -449,3 +449,48 @@ Verify: **VERIFY: PASS** — 5 gates, 106 unit + 17 e2e (2 new backlog/ideas flo
   `run` CLI group, the dispatcher loop, `/test/tick-dispatcher`, 6 run/claim/breaker EventKinds
   (+`ticket_status_changed`). `e30` kept + rewritten (anchor + approve coverage); `board_view` DRY.
   No dangling refs.
+
+## 2026-07-07 · Employee runtime online — chat, slash, scope, errors (judgment calls)
+
+The per-ticket runtime is now wired end-to-end over the real gateway (commits `c5b65ba`, `ae0936d`,
+`e43ac37`, `29fd53d`, `6ed409b`). Judgment calls made during this arc, logged per CLAUDE.md:
+
+1. **Reframe: "mind" → "employee", "grant" → "scope".** The per-ticket agent is now called an
+   **employee** taking on the task, and its **scope** is how far it may go without approval (the
+   grant/ceiling). Rationale: the owner's mental model is managing a worker, not operating a "mind";
+   employee/scope reads as plain management language in the UI copy. Captured in DESIGN.md
+   ("Framing"). This is a UI/copy-level rename — the code identifiers (`session_key`, the grant/
+   ceiling fields, `MindQueue`, `src/planner/minds/`) are unchanged, and
+   `orchestration/runtime-redesign/notes.md` still says "one mind per ticket" — a pending copy
+   sweep, not a behavior change.
+
+2. **Slash menu runs skills only in this first slice.** Typing `/` in the chat exposes the gateway's
+   full catalogue (135 commands + 62 skills), but only **skills** execute (skill →
+   `command.dispatch` → `prompt.submit` into the ticket's employee). Built-in display/exec commands
+   are insert-only — they drop `/name` into the composer. Rationale: skills are the load-bearing
+   case (they teach the employee a job on this ticket); wiring every command class through the run
+   path is deferred until there is a need. Logged so the deferral is a decision, not an omission.
+
+3. **Chat stale-session recovery: mint fresh on rpc 4007, then re-persist.** The chat's "Gateway
+   Offline" was not the gateway being down — it was rpc **4007** (session not found): the ticket
+   held a `session_key` from before the gateway restarted, and `session.resume` failed instead of
+   recovering. Fix: `RealGatewayAdapter` mints a fresh session on 4007 (for both `send` and
+   `run_command`), and the chat service re-persists the new key whenever it differs from the stored
+   one (logging `chat_session_created`), so a stale or rotated key is replaced and never resumed
+   again. Chosen over surfacing the raw 4007 to the human because a rotated/stale key is recoverable
+   state, not a real outage.
+
+4. **Errored recovery is a real gap (flagged, not fixed).** Making run errors visible in the event
+   log (`6ed409b`) makes a failed run *debuggable*, but there is still no way to retry or clear an
+   errored ticket — it stays errored. This is acknowledged as a genuine missing capability, deferred
+   behind the core-loop blocker (the `planning-worker` skill + a dedicated planner Hermes home).
+   Recorded so it is not mistaken for done.
+
+5. **Scope control lives in the ticket header; `ceilingOptions` is centralized.** The editable
+   "approved until [stage] then [stop/propose]" row was placed in the ticket's own header (as
+   meta-row enum pills), not only inside an approval, so the employee's scope is visible and
+   changeable anytime → `POST /grant` (already human-only) → poke System A. A single
+   `C.ceilingOptions(floorState)` feeds both this row (floor = current state) and the approval grant
+   picker (floor = new state): it offers the current stage and every later one, never an earlier
+   one — so no control can offer approving back past where the ticket already is. Chosen over two
+   independent option lists to guarantee they cannot drift apart.
