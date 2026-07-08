@@ -14,8 +14,8 @@ from planner.core.clock import RealClock
 from planner.core.contracts import EventKind
 from planner.core.db import connect, create_schema
 from planner.core.events import read_events_since
+from planner.minds.contracts import OnEvent, RunResult
 from planner.minds.fake import FakeGateway, Reply, ev
-from planner.minds.runner import OnEvent, RunResult
 from planner.minds.shared_gateway import SharedGateway
 from planner.runtime import readiness
 from planner.runtime.system_b import SystemB

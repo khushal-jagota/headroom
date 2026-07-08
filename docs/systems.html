@@ -893,47 +893,20 @@
           <details open>
             <summary>
               <span class="number">01</span>
-              <span><strong>Some canonical writers live outside expected writer modules.</strong><span>API and chat service exceptions weaken the module rule.</span></span>
+              <span><strong>Chat session-key ownership is a special writer exception.</strong><span>Most mutations now live behind domain writers.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                Ideas and sprint-date edits live in <code>src/planner/sprints/api.py</code>.
-                Ticket title and project edits live in <code>src/planner/tickets/api.py</code>.
                 Chat session-key writes live in <code>src/planner/chat/service.py</code>
-                because they coordinate with the gateway.
+                because they coordinate with the gateway during live conversation setup.
+                The usual rule still holds elsewhere: domain mutations go through
+                canonical writer functions.
               </p>
             </div>
           </details>
           <details>
             <summary>
               <span class="number">02</span>
-              <span><strong>Configuration still carries retired runtime ideas.</strong><span>Loaded knobs imply machinery that no longer exists.</span></span>
-            </summary>
-            <div class="detail-body">
-              <p>
-                <code>claim_ttl_seconds</code>, <code>max_runs</code>,
-                <code>failure_limit</code>, and <code>run_max_seconds</code> remain
-                in config, but the runtime no longer has claims, run rows, a failure
-                breaker, or a per-run wall-clock failure.
-              </p>
-            </div>
-          </details>
-          <details>
-            <summary>
-              <span class="number">03</span>
-              <span><strong>There are two Hermes run primitives.</strong><span>Production uses one; tests still cover another.</span></span>
-            </summary>
-            <div class="detail-body">
-              <p>
-                Production uses <code>SharedGateway</code>. <code>minds/runner.py</code>
-                still implements a per-run child primitive. It should be marked as a
-                smoke/test primitive or retired.
-              </p>
-            </div>
-          </details>
-          <details>
-            <summary>
-              <span class="number">04</span>
               <span><strong>Blocking exists in two shapes.</strong><span>Runtime tickets and sprint items model blockage differently.</span></span>
             </summary>
             <div class="detail-body">
@@ -946,7 +919,7 @@
           </details>
           <details>
             <summary>
-              <span class="number">05</span>
+              <span class="number">03</span>
               <span><strong>The frontend copies ticket state-machine constants.</strong><span>Useful for rendering, but a drift risk.</span></span>
             </summary>
             <div class="detail-body">
@@ -959,7 +932,7 @@
           </details>
           <details>
             <summary>
-              <span class="number">06</span>
+              <span class="number">04</span>
               <span><strong>Gateway bootstrap is indirect.</strong><span>The registry shape does not show the production owner directly.</span></span>
             </summary>
             <div class="detail-body">
@@ -967,19 +940,6 @@
                 The adapter registry returns a real adapter placeholder. Production
                 startup replaces app-state adapters with <code>SharedGateway</code>.
                 This keeps tests clean, but it is not obvious from the registry.
-              </p>
-            </div>
-          </details>
-          <details>
-            <summary>
-              <span class="number">07</span>
-              <span><strong>The dispatcher switch reads more dynamic than it is.</strong><span>It is checked at System A startup.</span></span>
-            </summary>
-            <div class="detail-body">
-              <p>
-                <code>dispatch_enabled</code> is loaded and checked when System A
-                starts. The helper and comments imply per-tick re-reading, but the
-                current runtime has no live caller for that helper.
               </p>
             </div>
           </details>

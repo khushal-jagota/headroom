@@ -3,7 +3,40 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
-## Current work cycle (2026-07-08): today tickets stopped at needs-success
+## Current work cycle (2026-07-08): system-friction cleanup implementation
+
+Owner request: implement and review the first four system-friction cleanup
+tickets from `orchestration/system-friction-cleanup/plan.md`.
+
+Result:
+
+- SF1 moved obvious API-local writers into canonical sprint/ticket data writer
+  modules: idea creation, sprint date edits, ticket title edits, and ticket
+  project edits.
+- SF2 removed retired claim/run/breaker runtime knobs from live config while
+  preserving compatibility for stale local yaml/env keys by ignoring them.
+- SF3 made `dispatch_enabled` explicitly a System A startup switch in code,
+  comments, config, and tests.
+- SF4 moved shared Hermes run contracts to `planner.minds.contracts`, kept
+  production on `SharedGateway`, and left `run_step` as a smoke/helper primitive
+  instead of a package-level export.
+- Live systems docs and the HTML artifact now show only the remaining system
+  frictions: chat session-key ownership, the two blocking shapes, frontend
+  state-machine copies, and indirect gateway bootstrap.
+- The two blocking shapes stay out of scope for the later owner discussion.
+
+Review status:
+
+- Codex CLI read-only review of SF1 reported `NO VIOLATIONS`.
+- Codex CLI read-only review of SF4 reported `NO VIOLATIONS`.
+
+Verification status: first post-implementation `./verify` passed on 2026-07-08:
+ruff, mypy over 80 source files, 159 unit tests, compile/static checks,
+frontend check/build/test, and 19 e2e tests. Known warnings remain the existing
+Svelte initial-value warnings in `TicketRoute.svelte` and Pytest's `TestClock`
+collection warnings.
+
+## Prior work cycle (2026-07-08): today tickets stopped at needs-success
 
 Owner request: correct today's imported tickets so they all sit on today's day at
 `needs_success` with `at_cap=stop`, and stop the accidental worker activity for
@@ -28,22 +61,6 @@ Verification status: direct DB checks passed: 6 tickets remain on
 `day_2026-07-08`; 0 today tickets violate the requested
 `needs_success`/`needs_success`/`stop`/`empty`/no-proposal shape. No `./verify`
 run because this was a live DB data repair, not a code change.
-
-## Prior work cycle (2026-07-08): system-friction cleanup implementation
-
-Owner request: implement and review the first four system-friction cleanup
-tickets from `orchestration/system-friction-cleanup/plan.md`.
-
-Current approach:
-
-- Implement serially: SF1 writer relocation, SF2 retired config removal, SF3
-  startup-only dispatcher switch semantics, then SF4 Hermes path/type cleanup.
-- Keep the two blocking shapes out of scope for the later owner discussion.
-- Run Codex CLI read-only reviews after SF1 and SF4, then run full `./verify`.
-- Preserve unrelated workspace changes already present in docs, migration
-  scripts, board redesign planning, and ticket-attempt bookkeeping.
-
-Verification status: pending implementation.
 
 ## Prior work cycle (2026-07-08): top-down Board redesign
 

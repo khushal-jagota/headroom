@@ -8,6 +8,7 @@ from planner.minds.config import (
     resolve_hermes_python,
     resolve_planner_home,
 )
+from planner.minds.contracts import RunResult, RunStatus
 from planner.minds.gateway import (
     ChildProcess,
     GatewayChild,
@@ -16,7 +17,6 @@ from planner.minds.gateway import (
     SpawnFn,
     spawn_popen,
 )
-from planner.minds.runner import RunResult, RunStatus, run_step
 from planner.minds.shared_gateway import SharedGateway, SharedGatewayBusy
 
 __all__ = [
@@ -33,6 +33,5 @@ __all__ = [
     "hermes_src_root",
     "resolve_hermes_python",
     "resolve_planner_home",
-    "run_step",
     "spawn_popen",
 ]

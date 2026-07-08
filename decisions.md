@@ -788,6 +788,21 @@ sprint or sprint item, but it should not grow `sprint create-ticket` as a second
 surface. `ticket create` may still accept optional `--sprint` and `--sprint-item` fields as placement
 metadata at creation time.
 
+## D48 — CLI setters use explicit fields and day ticket listing is first-class
+
+The CLI should be consistent about field writes: `set` commands take an entity, a field name, and a
+value/body source rather than every surface inventing a different flag shape. `day show` may show the
+day's ticket list as part of the full day view, but listing the tickets for a day is important enough
+to be an explicit command such as `day list-tickets`.
+
+## D49 — A worker proposal carries the recap with it
+
+Worker writes should not be made field-shaped just to match entity `set` commands. The worker action
+is simply `propose`: it proposes the next field of work. The recap is not a separate worker field and
+not a sibling of success/approach/plan/result. When a worker proposes something, it should also send
+the updated recap as part of that same action, and the backend should overwrite the ticket recap in
+the same operation.
+
 ## D47 — `create_idea` row typing is an integration repair
 
 The first post-Board `./verify` run failed only on mypy: `create_idea` in the already-dirty
@@ -806,3 +821,15 @@ repair therefore sets every ticket on `day_2026-07-08` to
 `ticket_status=empty`; clears accidental worker session keys and parked proposals; and leaves day
 membership/order intact. This is a data correction, not a change to System A: at ceiling plus stop is
 already the readiness rule that prevents automatic work.
+
+## D49 — System-friction tickets 1-4 are boundary cleanup, not behavior change
+
+The first four system-friction fixes were implemented as a narrow boundary cleanup: obvious
+API-local writers moved into the sprint/ticket data writer modules; retired claim/run/breaker config
+knobs were removed instead of kept as inert compatibility fields; `dispatch_enabled` is documented
+and tested as a System A startup switch; and shared Hermes run types moved to
+`planner.minds.contracts` so production `SharedGateway` no longer depends on the smoke/helper
+`run_step` primitive. Chat session-key writes remain in `chat/service.py` because they coordinate
+live gateway session ownership, and the two blocking shapes stay out of scope for the owner
+discussion. Codex read-only reviews were used on the writer relocation and Hermes contract/export
+cleanup because those are the architectural seams most likely to drift.

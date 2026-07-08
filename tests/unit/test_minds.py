@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+import planner.minds as minds
 from planner.minds.config import (
     boot_smoke_check,
     hermes_src_root,
@@ -16,9 +17,10 @@ from planner.minds.config import (
     resolve_hermes_python,
     resolve_planner_home,
 )
+from planner.minds.contracts import RunResult
 from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.gateway import ChildProcess, GatewayChild, GatewayError
-from planner.minds.runner import RunResult, run_step
+from planner.minds.runner import run_step
 from planner.minds.shared_gateway import CHAT_SOURCE, SESSION_COLS, SharedGateway
 
 LIVE_SID = "ab12cd34"
@@ -102,6 +104,11 @@ def shared(fake: FakeGateway) -> SharedGateway:
         spawn=fake.spawn,
         base_env={},
     )
+
+
+def test_minds_package_exports_shared_contracts_not_run_step() -> None:
+    assert minds.RunResult is RunResult
+    assert not hasattr(minds, "run_step")
 
 
 def test_gateway_responses_still_demux_by_request_id() -> None:

@@ -965,38 +965,6 @@ select {
   margin: 0 auto;
 }
 
-.board-summary {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--space-5);
-  margin-bottom: var(--space-5);
-}
-
-.board-kicker {
-  font-size: var(--type-xs);
-  color: var(--text-faint);
-  text-transform: uppercase;
-}
-
-.board-title {
-  margin: var(--space-1) 0 0;
-  font-size: var(--type-xl);
-  line-height: 1.1;
-  color: var(--text-strong);
-}
-
-.board-total {
-  flex-shrink: 0;
-  font-family: var(--font-mono);
-  font-size: var(--type-sm);
-  color: var(--text-muted);
-}
-
-.board-empty {
-  padding-top: var(--space-4);
-}
-
 .board {
   display: flex;
   flex-direction: column;
@@ -1004,14 +972,18 @@ select {
 
 .board-column {
   display: grid;
-  grid-template-columns: calc(var(--space-7) * 2) minmax(0, 1fr);
+  grid-template-columns: calc(var(--space-7) * 3) minmax(0, 1fr);
   gap: var(--space-5);
-  padding: var(--space-4) 0;
+  padding: var(--space-3) 0;
   border-top: var(--border-hairline) solid var(--border-color);
 }
 
 .board-column:last-child {
   border-bottom: var(--border-hairline) solid var(--border-color);
+}
+
+.board-column--empty {
+  padding: var(--space-2) 0;
 }
 
 .board-column-head {
@@ -1032,7 +1004,6 @@ select {
 
 .board-column-name {
   color: var(--text-default);
-  text-transform: uppercase;
 }
 
 .board-column-count {
@@ -1528,11 +1499,6 @@ details.fsec[open] > summary .fsec-chev::before {
   }
   .chat-rail {
     display: none;
-  }
-  .board-summary {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: var(--space-2);
   }
   .board-column {
     grid-template-columns: 1fr;

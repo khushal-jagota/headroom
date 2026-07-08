@@ -183,44 +183,27 @@ few places where truth can change.
 These are not local style issues. They are places where the system boundaries are
 less clean than the rest.
 
-1. **Some canonical writers live outside the expected writer modules.** Ideas and
-   sprint-date edits are written by private functions in `src/planner/sprints/api.py`,
-   and ticket title/project edits are written by private functions in
-   `src/planner/tickets/api.py`. Chat session-key ownership also lives in
-   `src/planner/chat/service.py` because it must coordinate with the gateway. These
-   all work, but a cold reader cannot rely on "all mutations live in data.py."
+1. **Chat session-key ownership is a special writer exception.** Most mutations now
+   live behind domain `data.py` writers. Chat session-key writes still live in
+   `src/planner/chat/service.py` because they coordinate with the gateway during
+   live conversation setup. That is intentional, but it is still an exception a
+   cold reader has to know.
 
-2. **Configuration still carries retired runtime ideas.** `claim_ttl_seconds`,
-   `max_runs`, `failure_limit`, and `run_max_seconds` are loaded and documented in
-   `config.yaml`, but the current runtime no longer has claims, run rows, a failure
-   breaker, or a per-run wall-clock failure. Those knobs make the live system look
-   more complicated than it is.
-
-3. **There are two Hermes run primitives.** Production uses `SharedGateway`.
-   `minds/runner.py` still implements a per-run child primitive and is covered by
-   tests, but it is not the current production path. Either mark it clearly as a
-   smoke/test primitive or retire it.
-
-4. **Blocking exists in two shapes.** Tickets use `links.kind='blocks'` for runtime
+2. **Blocking exists in two shapes.** Tickets use `links.kind='blocks'` for runtime
    readiness. Sprint items also have a `blocked_by` JSON list when their item status
    is `blocked`. Both are logical in isolation, but a reader has to learn two ways
    to say "blocked."
 
-5. **The frontend copies some ticket state-machine constants.** The server owns the
+3. **The frontend copies some ticket state-machine constants.** The server owns the
    ticket state machine, but `web/src/lib/ui.ts` repeats `STATE_ORDER`, gating fields,
    and advance targets so the UI can render controls. That is acceptable as a view
    projection, but it is a drift risk. A shared generated contract or server-provided
    metadata would make the boundary cleaner.
 
-6. **Gateway bootstrap is indirect.** The adapter registry returns a real adapter
+4. **Gateway bootstrap is indirect.** The adapter registry returns a real adapter
    placeholder, then production startup replaces app-state adapters with
    `SharedGateway`. This keeps tests clean, but it is not obvious from the registry
    alone.
-
-7. **The dispatcher switch is described more dynamically than it is.**
-   `dispatch_enabled` is loaded and checked when System A starts. The config helper
-   and comments imply a per-tick re-read, but the current runtime has no live caller
-   for that helper.
 
 ## Deferred
 
