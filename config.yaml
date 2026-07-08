@@ -12,7 +12,7 @@ failure_limit: 2                   # consecutive failures before auto-block (§7
 dispatch_enabled: true             # dispatcher master switch; re-read every tick (§7.1)
 hermes_bin: hermes                 # hermes executable (System B home is separate)
 hermes_profile: default            # hermes profile (R3)
-worker_skill: planning-worker      # worker-agent role skill (System B, wired in W3b)
+worker_skill: panels-worker        # worker-agent role skill (System B, wired in W3b)
 ws_poll_ms: 300                    # server-side event-tail poll interval (§9)
 ui_debounce_ms: 250                # UI refetch debounce, served via /api/meta (§9)
 run_max_seconds: 1800              # per-run max runtime, 30 minutes (§7.3)

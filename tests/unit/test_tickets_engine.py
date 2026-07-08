@@ -610,3 +610,15 @@ def test_a36_onward_scope(
     assert t4.ceiling is ceiling_before
     assert t4.at_cap is at_cap_before
     assert len(_events(tmp_db, cfg, t4.id, EventKind.scope_changed)) == scopes_before
+
+
+def test_read_ticket_by_session_key(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    """A worker resolves its own ticket from its live session key; unknown key -> not_found."""
+    t = _create(tmp_db, cfg, fake_clock)
+    tmp_db.execute("UPDATE tickets SET chat_session_key = ? WHERE id = ?", ("sess_abc", t.id))
+    assert data.read_ticket_by_session_key(tmp_db, "sess_abc").id == t.id
+    with pytest.raises(PlannerError) as exc:
+        data.read_ticket_by_session_key(tmp_db, "no_such_session")
+    assert exc.value.code is ErrorCode.not_found

@@ -204,6 +204,19 @@ def read_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
     return _load_ticket(conn, ticket_id)
 
 
+def read_ticket_by_session_key(conn: sqlite3.Connection, session_key: str) -> Ticket:
+    """The ticket whose durable chat_session_key matches — how a worker agent resolves
+    'my ticket' from its live HERMES_SESSION_KEY (the shared child binds it per turn)."""
+    row = conn.execute(
+        "SELECT * FROM tickets WHERE chat_session_key = ?", (session_key,)
+    ).fetchone()
+    if row is None:
+        raise PlannerError(
+            ErrorCode.not_found, "no ticket owns this session", {"session_key": session_key}
+        )
+    return _row_to_ticket(row)
+
+
 def get_effective_sprint_id(conn: sqlite3.Connection, ticket_id: str) -> str | None:
     ticket = _load_ticket(conn, ticket_id)
     if ticket.sprint_item_id is None:

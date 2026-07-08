@@ -307,6 +307,27 @@ def ticket_set(
     http.emit(data, as_json, human)
 
 
+# --- worker group (identity) ---
+
+
+@main.group("worker")
+def worker() -> None:
+    """Worker-agent verbs."""
+
+
+@worker.command("my-ticket")
+@json_option
+def worker_my_ticket(as_json: bool) -> None:
+    """The ticket you're working, resolved from your Hermes session."""
+    key = os.environ.get("HERMES_SESSION_KEY", "").strip()
+    if not key:
+        http.fail_validation(
+            "no HERMES_SESSION_KEY in env; not running as a ticket worker", as_json
+        )
+    data = http.send("GET", f"/api/tickets/by-session/{key}", as_json=as_json)
+    http.emit(data, as_json, f"{data['id']} {data['state']} {data['priority']} {data['title']}")
+
+
 # --- item group ---
 
 

@@ -139,7 +139,7 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         dispatch_enabled=_bool_value(cfg, env, "dispatch_enabled", "PLAN_DISPATCH_ENABLED", True),
         hermes_bin=_str_value(cfg, env, "hermes_bin", "PLAN_HERMES_BIN", "hermes"),
         hermes_profile=_str_value(cfg, env, "hermes_profile", "PLAN_HERMES_PROFILE", "default"),
-        worker_skill=_str_value(cfg, env, "worker_skill", "PLAN_WORKER_SKILL", "planning-worker"),
+        worker_skill=_str_value(cfg, env, "worker_skill", "PLAN_WORKER_SKILL", "panels-worker"),
         ws_poll_ms=_int_value(cfg, env, "ws_poll_ms", "PLAN_WS_POLL_MS", 300),
         ui_debounce_ms=_int_value(cfg, env, "ui_debounce_ms", "PLAN_UI_DEBOUNCE_MS", 250),
         run_max_seconds=_int_value(cfg, env, "run_max_seconds", "PLAN_RUN_MAX_SECONDS", 1800),

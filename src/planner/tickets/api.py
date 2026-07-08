@@ -289,6 +289,13 @@ async def list_tickets(conn: DbConn, cfg: Cfg, clk: Clk, state: str | None = Non
     }
 
 
+@router.get("/tickets/by-session/{session_key}")
+async def get_my_ticket(session_key: str, conn: DbConn, clk: Clk) -> JsonDict:
+    """A worker agent's own ticket, resolved from its Hermes session key."""
+    ticket = tickets_data.read_ticket_by_session_key(conn, session_key)
+    return tickets_views.ticket_detail(conn, ticket.id, clk.now_unix())
+
+
 @router.get("/tickets/{ticket_id}")
 async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk) -> JsonDict:
     return tickets_views.ticket_detail(conn, ticket_id, clk.now_unix())
