@@ -42,37 +42,20 @@ _STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.gateway_offline: 503,
 }
 
-_SHELL = """<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark">
-<title>Panels</title>
-<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-<link rel="shortcut icon" href="/static/favicon.ico">
-<link rel="stylesheet" href="/assets/tokens.css">
-<link rel="stylesheet" href="/assets/app.css">
-</head>
-<body>
-<div id="app"></div>
-<script src="/assets/config.js"></script>
-<script src="/assets/api.js"></script>
-<script src="/assets/markdown.js"></script>
-<script src="/assets/components.js"></script>
-<script src="/assets/app.js"></script>
-<script src="/assets/screens-day.js"></script>
-<script src="/assets/screens-review.js"></script>
-<script src="/assets/screens-board.js"></script>
-<script src="/assets/screens-sprint.js"></script>
-<script src="/assets/screens-backlog.js"></script>
-<script src="/assets/screens-ideas.js"></script>
-<script src="/assets/screens-ticket.js"></script>
-</body>
-</html>
-"""
-
 _WEB_DIST = Path("web/dist")
+_WEB_INDEX = _WEB_DIST / "index.html"
+
+
+def svelte_index_html() -> str:
+    if _WEB_INDEX.is_file():
+        return _WEB_INDEX.read_text(encoding="utf-8")
+    return (
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<title>Panels</title></head><body>"
+        "<div id=\"app\" data-svelte-app>"
+        "web/dist is missing; run npm --prefix web run build."
+        "</div></body></html>"
+    )
 
 
 def http_status_for(code: ErrorCode) -> int:
@@ -163,13 +146,13 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
-        return _SHELL
+        return svelte_index_html()
 
     if config.test_mode:
         app.include_router(build_test_router(config, clock), prefix="/api")
 
     if _WEB_DIST.is_dir():
-        app.mount("/_app", StaticFiles(directory=_WEB_DIST), name="vite_app")
+        app.mount("/_app", StaticFiles(directory=_WEB_DIST, html=True), name="vite_app")
     app.mount("/assets", StaticFiles(directory="assets"), name="assets")
     app.mount("/static", StaticFiles(directory="static"), name="static")
     return app

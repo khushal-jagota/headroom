@@ -17,7 +17,8 @@
     onAccept: (payload: Record<string, unknown>) => Promise<unknown>;
   } = $props();
 
-  let draft = $state(proposal.body || "");
+  let draft = $state("");
+  let lastProposalBody = $state<string | null>(null);
   let scope = $state<ScopePair | null>(null);
   let inFlight = $state(false);
   let resolved = $state(false);
@@ -42,6 +43,16 @@
       inFlight = false;
     }
   }
+
+  $effect(() => {
+    const incoming = proposal.body || "";
+    if (incoming !== lastProposalBody) {
+      lastProposalBody = incoming;
+      draft = incoming;
+      scope = null;
+      resolved = false;
+    }
+  });
 </script>
 
 <div class="proposal-card">

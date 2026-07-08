@@ -44,7 +44,8 @@ bubble-less assistant, recessed composer).
 
 ## Applied so far
 
-- **Ticket chat** (`assets/components.js` `chatPanel`, chat styles in `app.css`) — one
+- **Ticket chat** (`web/src/components/ChatPanel.svelte`,
+  `web/src/components/ChatComposer.svelte`, chat styles in `assets/app.css`) — one
   right-aligned user pill (the only bubble), bubble-less **employee** prose, no dividers, a recessed
   composer with a `/` trigger for the gateway command catalog, thinking dots.
 

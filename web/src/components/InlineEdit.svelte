@@ -7,6 +7,7 @@
     multiline = false,
     placeholder = "",
     className = "",
+    dataAttr = "",
     onSave
   }: {
     value?: unknown;
@@ -14,6 +15,7 @@
     multiline?: boolean;
     placeholder?: string;
     className?: string;
+    dataAttr?: "day-focus" | "day-take-body" | "day-watch-body" | "day-lands-body" | "";
     onSave: (raw: string) => Promise<unknown>;
   } = $props();
 
@@ -111,6 +113,10 @@
   aria-multiline={multiline}
   tabindex="0"
   data-ph={placeholder || undefined}
+  data-day-focus={dataAttr === "day-focus" ? "" : undefined}
+  data-day-take-body={dataAttr === "day-take-body" ? "" : undefined}
+  data-day-watch-body={dataAttr === "day-watch-body" ? "" : undefined}
+  data-day-lands-body={dataAttr === "day-lands-body" ? "" : undefined}
   onfocus={enterEdit}
   onblur={() => {
     if (reverting) {

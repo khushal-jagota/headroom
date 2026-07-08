@@ -46,6 +46,10 @@
     if (project) payload.project = project;
     try {
       await mutateJson("/api/ideas", { method: "POST", body: payload }, ["ideas"]);
+      title = "";
+      detail = "";
+      project = null;
+      creating = false;
     } catch (err) {
       createError = err;
       creating = false;

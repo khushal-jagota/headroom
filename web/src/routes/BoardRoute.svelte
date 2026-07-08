@@ -28,13 +28,19 @@
           <div class="board-column-cards">
             {#if column.cards.length}
               {#each column.cards as card}
-                <EntityRow href={`#/ticket/${card.id}`} title={card.title}>
+                <EntityRow href={`#/ticket/${card.id}`} title={card.title} card ticketId={card.id}>
                   <Chip variant="priority" value={card.priority} />
                   {#if card.deadline}<Chip variant="deadline" value={card.deadline} />{/if}
                   {#if card.project}<Chip variant="project" value={card.project} />{/if}
-                  {#if card.has_pending_proposal}<Chip variant="pending-proposal" />{/if}
-                  {#if card.ticket_status === "agent_running_step"}<Chip variant="agent-running-step" />{/if}
-                  {#if card.ticket_status === "user_takeover"}<Chip variant="user-takeover" />{/if}
+                  {#if card.has_pending_proposal}
+                    <span data-marker="pending-proposal"><Chip variant="pending-proposal" /></span>
+                  {/if}
+                  {#if card.ticket_status === "agent_running_step"}
+                    <span data-marker="agent-running-step"><Chip variant="agent-running-step" /></span>
+                  {/if}
+                  {#if card.ticket_status === "user_takeover"}
+                    <span data-marker="user-takeover"><Chip variant="user-takeover" /></span>
+                  {/if}
                 </EntityRow>
               {/each}
             {:else}

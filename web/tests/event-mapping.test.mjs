@@ -41,7 +41,7 @@ function sampleEvent(kind) {
     kind === "item_updated" ||
     kind === "item_status_changed"
   ) {
-    return { id: 1, entity_id: "i_demo", kind, payload: {}, created_at: 1 };
+    return { id: 1, entity_id: "si_demo", kind, payload: {}, created_at: 1 };
   }
   if (kind === "idea_created") {
     return { id: 1, entity_id: "idea_demo", kind, payload: {}, created_at: 1 };
@@ -62,7 +62,7 @@ function sampleEvent(kind) {
       id: 1,
       entity_id: "t_demo",
       kind,
-      payload: { from_id: "t_demo", to_id: "i_demo", kind: "relates" },
+      payload: { from_id: "t_demo", to_id: "si_demo", kind: "relates" },
       created_at: 1
     };
   }
@@ -93,8 +93,8 @@ assert.deepEqual(
     id: 1,
     entity_id: "t_left",
     kind: "link_added",
-    payload: { from_id: "t_left", to_id: "i_right", kind: "relates" },
+    payload: { from_id: "t_left", to_id: "si_right", kind: "relates" },
     created_at: 1
   }).sort(),
-  ["board", "item:i_right", "queues", "sprint:current", "ticket:t_left"].sort()
+  ["board", "item:si_right", "queues", "sprint:current", "ticket:t_left"].sort()
 );

@@ -1,4 +1,4 @@
-const ENTITY_PREFIXES = new Set(["t", "i", "s", "day", "idea"]);
+const ENTITY_PREFIXES = new Set(["t", "si", "s", "day", "idea"]);
 
 /**
  * @typedef {{id: number, entity_id: string, kind: string, payload: Record<string, unknown>, created_at: number}} PlannerEvent
@@ -38,7 +38,7 @@ function keysForEntity(entityId, options = {}) {
   if (prefix === "t") {
     return [`ticket:${entityId}`, "board", "queues", "sprint:current"];
   }
-  if (prefix === "i") {
+  if (prefix === "si") {
     return [`item:${entityId}`, "items:backlog", "sprint:current", "board", "queues"];
   }
   if (prefix === "s") {
@@ -62,7 +62,7 @@ function keysForEntity(entityId, options = {}) {
 function endpointEntityKeys(entityId) {
   const prefix = String(entityId).split("_", 1)[0];
   if (prefix === "t") return [`ticket:${entityId}`];
-  if (prefix === "i") return [`item:${entityId}`];
+  if (prefix === "si") return [`item:${entityId}`];
   if (prefix === "s") return [`sprint:${entityId}`];
   if (prefix === "day") return [`day:${suffixAfter(String(entityId), "day")}`];
   if (prefix === "idea") return ["ideas"];

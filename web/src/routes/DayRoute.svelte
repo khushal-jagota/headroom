@@ -25,10 +25,18 @@
     "December"
   ];
   const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  const sections = [
-    { field: "brief_take", key: "take", label: "Brief take" },
-    { field: "watchout", key: "watch", label: "Watchout" },
-    { field: "if_today_lands", key: "lands", label: "If today lands" }
+  type DayBodyField = "brief_take" | "watchout" | "if_today_lands";
+  type DayBodyAttr = "day-take-body" | "day-watch-body" | "day-lands-body";
+
+  const sections: {
+    field: DayBodyField;
+    key: "take" | "watch" | "lands";
+    label: string;
+    dataAttr: DayBodyAttr;
+  }[] = [
+    { field: "brief_take", key: "take", label: "Brief take", dataAttr: "day-take-body" },
+    { field: "watchout", key: "watch", label: "Watchout", dataAttr: "day-watch-body" },
+    { field: "if_today_lands", key: "lands", label: "If today lands", dataAttr: "day-lands-body" }
   ];
 
   function dateSegment(): string {
@@ -76,6 +84,7 @@
         </div>
         <InlineEdit
           className="focus"
+          dataAttr="day-focus"
           value={day.data.focus}
           placeholder="(no focus set)"
           onSave={(raw) => saveField("focus", raw)}
@@ -83,15 +92,14 @@
         {#each sections as section}
           <section class={section.key === "take" ? "take" : `block ${section.key}`} data-day-take={section.key === "take" ? "" : undefined} data-day-watch={section.key === "watch" ? "" : undefined} data-day-lands={section.key === "lands" ? "" : undefined}>
             <div class="label">{section.label}</div>
-            <div class="body" data-day-take-body={section.key === "take" ? "" : undefined} data-day-watch-body={section.key === "watch" ? "" : undefined} data-day-lands-body={section.key === "lands" ? "" : undefined}>
-              <InlineEdit
-                value={day.data[section.field as keyof DayResponse]}
-                markdown
-                multiline
-                placeholder="(none)"
-                onSave={(raw) => saveField(section.field, raw)}
-              />
-            </div>
+            <div class="body"><InlineEdit
+              dataAttr={section.dataAttr}
+              value={day.data[section.field as keyof DayResponse]}
+              markdown
+              multiline
+              placeholder="(none)"
+              onSave={(raw) => saveField(section.field, raw)}
+            /></div>
           </section>
         {/each}
       </div>

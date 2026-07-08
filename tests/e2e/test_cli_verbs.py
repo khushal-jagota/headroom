@@ -1,4 +1,4 @@
-"""E2E for the W3b one-CLI rework — real `plan serve` subprocess, CLI over HTTP. Non-anchored
+"""E2E for the W3b one-CLI rework — real `panels serve` subprocess, CLI over HTTP. Non-anchored
 names (the test_eNN_ anchors are reserved for the SPEC acceptance items). No browser: these
 drive the CLI + API surfaces only. System A never runs here (PLAN_TEST_MODE) — no real gateway."""
 

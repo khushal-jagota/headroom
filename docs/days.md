@@ -1,7 +1,7 @@
 # Days
 
-A day is one page per day: a morning brief, a plan for the day, the day's ticket
-list, and the day's chat. It is the surface you actually plan and work on. The day
+A day is one page per day: the small overview you use to orient the day. It has four
+editable fields — focus, brief take, watchout, and what makes the day land. The day
 has a deliberate quirk — it flips at **5am, not midnight** — so a late night still
 belongs to the day it felt like.
 
@@ -10,51 +10,43 @@ belongs to the day it felt like.
    ──────────────────
    close yesterday      count what got done, note what didn't
         │
-   carry forward        the unfinished tickets become today's candidates
+   carry forward        unfinished work becomes today's raw material
         │
-   ask the brief-writer a morning brief + a proposed plan
-        │               (skipped entirely if you already planned the day)
+   future rollover      may draft the overview
+        │               (not wired yet)
         ▼
-   you wake to a brief and a suggested plan
-   accept it line by line · accept it all · or throw it out and plan by hand
+   you read or edit the day's four fields
 ```
 
 ## How a day flows
 
-At the 5am boundary the system closes yesterday — counting what got done, noting what
-didn't, and carrying the unfinished tickets forward as candidates — then asks the
-brief-writer for a morning brief and a proposed plan for the new day. If you'd
-already planned the day yourself, it doesn't presume: the proposal step is skipped.
-Through the day, employees work whatever tickets their scope allows, filing proposals
-that either advance automatically or queue for your morning approval walk.
+The current Day page is an overview, not a dashboard. It does not show the plan tree,
+today's ticket list, the Review queue, or chat. Each field saves independently when
+you edit it, and a refresh restores the same values from the server. Crossing the
+5am boundary creates the new day record, but it stays empty until a human or a future
+rollover worker writes it.
 
 ## Quick capture
 
-Loose capture works through the day's chat. The system provides the chat panel and
-the command-line verbs for creating tickets and ideas; the day-chat worker's own
-instructions tell it to file anything you toss in that sounds like work as a ticket
-or an idea right away, at the lowest priority, for later sorting. The filing is the
-worker doing its instructed job through the command-line tool — it is not something
-the server does on its own.
+Loose capture is not in the Day UI right now. Tickets, backlog items, and ideas are
+created through their own surfaces or the command-line tool.
 
-_Code paths:_ `src/planner/days/` (the day, its boundary, and the ticket list).
+_Code paths:_ `src/planner/days/` (the day record and 5am planning date),
+`web/src/routes/DayRoute.svelte` (the overview fields).
 
 ## Handoffs
 
 - **Tickets & the gates** (`tickets-and-gates.md`) — the tickets a day lists and the
   scope that governs whether the day's work advances on its own.
-- **Chat** (`chat.md`) — the day chat panel quick capture runs through.
+- **Chat** (`chat.md`) — ticket chat is separate from the Day page.
 - **Backlog & Ideas** (`backlog-and-ideas.md`) — where a captured idea lands.
 
 ## Deferred
 
-- **Automatic rollover isn't wired yet.** The 5am boundary that closes yesterday and
-  rebuilds today does not run on its own; the day isn't auto-generated. The two role
-  skills that would drive it — `planning-boundary` (writing the brief and plan) and
-  `planner-main` (the day-chat worker) — still describe the removed dispatcher flow
-  and are being rewritten. Trigger: the boundary-rebuild work lands. See
-  `employee-runtime.md`.
+- **Automatic rollover writing isn't wired yet.** A new planning date can be
+  materialized, but no worker writes the next day's overview. Trigger: the
+  boundary-rebuild work lands. See `employee-runtime.md`.
 
 ---
 
-_Last verified: 2026-07-07._
+_Last verified: 2026-07-08._

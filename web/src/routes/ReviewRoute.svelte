@@ -16,6 +16,7 @@
   let skipped = $state<Record<string, boolean>>({});
   let detailResource = $state<ResourceHandle<AnyRecord> | null>(null);
   let detailError = $state<unknown>(null);
+  const staleRefreshRequests = new Set<string>();
 
   function entryKey(entry: QueueEntry): string {
     return `${entry.entity_id}:${entry.kind}`;
@@ -25,13 +26,7 @@
   let currentEntry = $derived.by<QueueEntry | null>(() => {
     if (!entries.length) return null;
     const live = entries.filter((entry) => !skipped[entryKey(entry)]);
-    return live[0] || entries[0] || null;
-  });
-
-  $effect(() => {
-    if (entries.length && entries.every((entry) => skipped[entryKey(entry)])) {
-      skipped = {};
-    }
+    return live[0] || null;
   });
 
   $effect(() => {
@@ -59,8 +54,14 @@
   }
 
   $effect(() => {
-    if (currentEntry && detailResource?.data && isStale(currentEntry, detailResource.data)) {
-      skipped = { ...skipped, [entryKey(currentEntry)]: true };
+    const entry = currentEntry;
+    const detail = detailResource?.data;
+    if (entry && detail && isStale(entry, detail)) {
+      const key = entryKey(entry);
+      if (!staleRefreshRequests.has(key)) {
+        staleRefreshRequests.add(key);
+        void queues.refresh().catch(() => undefined);
+      }
     }
     if (detailResource?.error) detailError = detailResource.error;
   });
@@ -69,28 +70,34 @@
     skipped = { ...skipped, [entryKey(entry)]: true };
   }
 
+  async function refreshQueuesAfter<T>(operation: Promise<T>): Promise<T> {
+    const result = await operation;
+    await queues.refresh().catch(() => undefined);
+    return result;
+  }
+
   function accept(entry: QueueEntry, payload: Record<string, unknown>): Promise<unknown> {
-    return mutateJson(
+    return refreshQueuesAfter(mutateJson(
       `/api/tickets/${entry.entity_id}/accept/${entry.kind}`,
       { method: "POST", body: payload },
       ["queues", `ticket:${entry.entity_id}`, "board", "sprint:current"]
-    );
+    ));
   }
 
   function approve(entry: QueueEntry): Promise<unknown> {
-    return mutateJson(
+    return refreshQueuesAfter(mutateJson(
       `/api/tickets/${entry.entity_id}/approve`,
       { method: "POST", body: {} },
       ["queues", `ticket:${entry.entity_id}`, "board", "sprint:current"]
-    );
+    ));
   }
 
   function acceptStatus(entry: QueueEntry): Promise<unknown> {
-    return mutateJson(
+    return refreshQueuesAfter(mutateJson(
       `/api/items/${entry.entity_id}/accept-status`,
       { method: "POST", body: {} },
       ["queues", `item:${entry.entity_id}`, "items:backlog", "sprint:current", "board"]
-    );
+    ));
   }
 
   onDestroy(() => {
@@ -123,52 +130,58 @@
       <div class="quiet-line">Loading approval...</div>
     {:else if detailResource?.data}
       {@const detail = detailResource.data as TicketDetail & AnyRecord}
-      <section
-        class="panel"
-        data-review-card
-        data-entity-id={entry.entity_id}
-        data-kind={entry.kind}
-        data-field={["success", "approach", "plan", "result"].includes(entry.kind) ? entry.kind : undefined}
-      >
-        <h2 class="panel-title">{entry.title}</h2>
-        <div class="panel-body">
-          {#if ["success", "approach", "plan", "result"].includes(entry.kind)}
-            <div class="review-card-head">
-              <Chip variant="state" value={detail.state} />
-              <Chip variant="pending-proposal" />
-            </div>
-            <ProposalCard
-              proposal={detail.fields[entry.kind].proposal || { body: "", proposed_by: "" }}
-              requireScope
-              newState={advanceTarget(detail.state, detail.ceiling)}
-              onAccept={(payload) => accept(entry, payload)}
-            />
-          {:else if entry.kind === "review"}
-            <div class="review-card-head"><Chip variant="state" value={detail.state} /></div>
-            <MarkdownBlock text={detail.fields.result.value} />
-            {#if detail.fields.result.notes}
-              <div class="review-note"><MarkdownBlock text={detail.fields.result.notes} /></div>
+      {#if isStale(entry, detail)}
+        <div class="quiet-line">Loading approval...</div>
+      {:else}
+        <section
+          class="panel"
+          data-review-card
+          data-entity-id={entry.entity_id}
+          data-kind={entry.kind}
+          data-field={["success", "approach", "plan", "result"].includes(entry.kind) ? entry.kind : undefined}
+        >
+          <h2 class="panel-title">{entry.title}</h2>
+          <div class="panel-body">
+            {#if ["success", "approach", "plan", "result"].includes(entry.kind)}
+              <div class="review-card-head">
+                <Chip variant="state" value={detail.state} />
+                <Chip variant="pending-proposal" />
+              </div>
+              <ProposalCard
+                proposal={detail.fields[entry.kind].proposal!}
+                requireScope
+                newState={advanceTarget(detail.state, detail.ceiling)}
+                onAccept={(payload) => accept(entry, payload)}
+              />
+            {:else if entry.kind === "review"}
+              <div class="review-card-head"><Chip variant="state" value={detail.state} /></div>
+              <MarkdownBlock text={detail.fields.result.value} />
+              {#if detail.fields.result.notes}
+                <div class="review-note"><MarkdownBlock text={detail.fields.result.notes} /></div>
+              {/if}
+              <div class="review-card-actions">
+                <button type="button" class="button button--primary" data-approve onclick={() => void approve(entry)}>Approve</button>
+                <button type="button" class="button" data-skip onclick={() => skip(entry)}>Skip</button>
+                <a class="review-open" data-open-ticket href={`#/ticket/${entry.entity_id}`}>open ticket</a>
+              </div>
+            {:else if entry.kind === "status"}
+              <div class="review-card-head">
+                <Chip value={detail.status} />
+                <Chip value={`→ ${detail.status_proposal?.to_status || ""}`} />
+              </div>
+              {#if detail.status_proposal?.note}
+                <div class="review-note">{detail.status_proposal.note}</div>
+              {/if}
+              <div class="review-card-actions">
+                <button type="button" class="button button--primary" data-accept-status onclick={() => void acceptStatus(entry)}>Accept</button>
+                <button type="button" class="button" data-skip onclick={() => skip(entry)}>Skip</button>
+              </div>
             {/if}
-            <div class="review-card-actions">
-              <button type="button" class="button button--primary" data-approve onclick={() => void approve(entry)}>Approve</button>
-              <button type="button" class="button" data-skip onclick={() => skip(entry)}>Skip</button>
-              <a class="review-open" data-open-ticket href={`#/ticket/${entry.entity_id}`}>open ticket</a>
-            </div>
-          {:else if entry.kind === "status"}
-            <div class="review-card-head">
-              <Chip value={detail.status} />
-              <Chip value={`→ ${detail.status_proposal?.to_status || ""}`} />
-            </div>
-            {#if detail.status_proposal?.note}
-              <div class="review-note">{detail.status_proposal.note}</div>
-            {/if}
-            <div class="review-card-actions">
-              <button type="button" class="button button--primary" data-accept-status onclick={() => void acceptStatus(entry)}>Accept</button>
-              <button type="button" class="button" data-skip onclick={() => skip(entry)}>Skip</button>
-            </div>
-          {/if}
-        </div>
-      </section>
+          </div>
+        </section>
+      {/if}
     {/if}
+  {:else}
+    <div class="quiet-line" data-review-empty>nothing waiting</div>
   {/if}
 </section>

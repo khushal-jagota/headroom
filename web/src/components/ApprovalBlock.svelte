@@ -30,11 +30,58 @@
     onValueSave?: (raw: string) => Promise<unknown>;
   } = $props();
 
-  let draft = $state(proposalBody || "");
+  let draft = $state("");
+  let draftEl = $state<HTMLDivElement | null>(null);
+  let draftEditing = $state(false);
+  let lastProposalBody = $state<string | null>(null);
   let scope = $state<ScopePair | null>(null);
   let inFlight = $state(false);
   let resolved = $state(false);
   let error = $state<unknown>(null);
+
+  function paintDraft(): void {
+    const el = draftEl;
+    if (!el) return;
+    el.replaceChildren();
+    if (!draft.trim()) return;
+    const rendered = window.Planner?.markdown?.render(draft);
+    if (rendered) {
+      rendered.classList.add("markdown-block");
+      el.appendChild(rendered);
+    } else {
+      el.textContent = draft;
+    }
+  }
+
+  function enterDraftEdit(): void {
+    const el = draftEl;
+    if (!el || draftEditing || inFlight) return;
+    draftEditing = true;
+    el.textContent = draft;
+  }
+
+  function commitDraft(): void {
+    const el = draftEl;
+    if (!el || !draftEditing) return;
+    draft = el.textContent || "";
+    draftEditing = false;
+    paintDraft();
+  }
+
+  function draftKeydown(event: KeyboardEvent): void {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      draftEl?.blur();
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      draft = proposalBody || "";
+      draftEditing = false;
+      paintDraft();
+      draftEl?.blur();
+    }
+  }
 
   async function approve(): Promise<void> {
     const payload: Record<string, unknown> = {};
@@ -55,6 +102,17 @@
       inFlight = false;
     }
   }
+
+  $effect(() => {
+    const incoming = proposalBody || "";
+    if (incoming !== lastProposalBody) {
+      lastProposalBody = incoming;
+      draft = incoming;
+      scope = null;
+      resolved = false;
+    }
+    if (!draftEditing) paintDraft();
+  });
 </script>
 
 <div class="approval" data-approval-block data-mode={mode} data-field={field || undefined}>
@@ -98,7 +156,18 @@
     {#if proposedBy}
       <div class="proposal-meta">proposed by {proposedBy}</div>
     {/if}
-    <div class="ed approval-draft" data-edit contenteditable="true" bind:textContent={draft}></div>
+    <div
+      bind:this={draftEl}
+      class="ed approval-draft"
+      data-edit
+      contenteditable="true"
+      role="textbox"
+      aria-multiline="true"
+      tabindex="0"
+      onfocus={enterDraftEdit}
+      onblur={commitDraft}
+      onkeydown={draftKeydown}
+    ></div>
     {#if onNoteSave}
       <div class="note">
         <div class="note-head">Note</div>

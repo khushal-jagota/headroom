@@ -559,3 +559,28 @@ The per-ticket runtime is now wired end-to-end over the real gateway (commits `c
    rather than pushed once. Caveat for build time: the session key can rotate on compaction, so the
    lookup must track the current key (we already re-persist rotated keys) or resolve child→parent
    lineage via `parent_session_id`.
+
+## 2026-07-08 · Owner ruling: Svelte is canonical from here
+
+The owner directed that the new Svelte app should be treated as canonical for now. Consequence:
+future frontend work should target `web/` and the Svelte route/component/cache model, not the legacy
+no-build shell. At the time of this ruling FastAPI `/` still served the legacy inline shell and the
+Playwright e2e harness still opened `/`; the later root cutover decision below completed that
+integration. The original spike's build-then-swap plan remains useful context, but the product target
+is now the Svelte app.
+
+## 2026-07-08 · Svelte Review stale card is route selection, not cache mapping
+
+The stale Review card after accepting a proposal was caused by `ReviewRoute.svelte` falling back to a
+stale skipped queue entry and resetting skipped state, even after the queues resource had refetched
+empty data. Fix the route to avoid rendering stale entries and refresh queues on stale detail; do not
+rewrite event mapping or the shared resource cache for this specific bug without new evidence.
+
+## 2026-07-08 · Svelte root cutover retires the classic JS path
+
+FastAPI now serves the built Svelte/Vite document from `web/dist/index.html` at `/`. The `/_app`
+mount remains for Vite's hashed JS/CSS chunks because the build uses `base: "/_app/"`; this is a
+chunk path, not a second UI. The old classic route loop (`assets/api.js`, `assets/app.js`,
+`assets/components.js`, and `assets/screens-*.js`) is deleted. Keep `assets/tokens.css`,
+`assets/app.css`, and `assets/markdown.js` because the Svelte document still imports them as shared
+styling and hardened markdown infrastructure.

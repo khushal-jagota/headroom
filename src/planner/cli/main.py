@@ -1,4 +1,4 @@
-"""The `plan` CLI (§8). A single entry point speaking HTTP to the server. The CLI
+"""The `panels` CLI (§8). A single entry point speaking HTTP to the server. The CLI
 is for agents and developer debugging; the human operates through the UI. No
 resolution verbs exist here (accept/approve/scope are UI/API only).
 

@@ -1,6 +1,6 @@
 # The command-line tool
 
-`plan` is the command-line tool. It is for AI workers and for developer debugging;
+`panels` is the command-line tool. It is for AI workers and for developer debugging;
 the human plans through the web page. Every verb speaks to the server over HTTP and
 answers in machine-readable JSON (`--json`). Long text always comes from a file or
 standard input, never as an inline argument.
@@ -52,4 +52,4 @@ step at a time and writes status itself (see `employee-runtime.md`).
 
 ---
 
-_Last verified: 2026-07-07._
+_Last verified: 2026-07-08._

@@ -50,6 +50,10 @@
         "board",
         "queues"
       ]);
+      title = "";
+      deadline = "";
+      body = "";
+      creating = false;
     } catch (err) {
       createError = err;
       creating = false;

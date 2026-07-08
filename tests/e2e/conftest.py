@@ -1,7 +1,7 @@
 """E2E harness fixtures (SPEC §18.3 items 22-27). Standalone: imports nothing from
 tests/unit.
 
-Each test gets a real ``plan serve`` subprocess on an OS-assigned port, backed by a
+Each test gets a real ``panels serve`` subprocess on an OS-assigned port, backed by a
 fresh temp SQLite DB in ``PLAN_TEST_MODE`` with the boundaries faked (echo gateway by
 default; ``server_factory(gateway="offline")`` boots a second instance for the offline
 notice). Browser contexts come from pytest-playwright's session ``browser``; the
@@ -70,7 +70,7 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
         srvdir = tmp_path / f"srv{counter}"
         counter += 1
         # A1: the log file is opened from THIS process before the subprocess exists;
-        # plan serve only creates directories later, inside itself.
+        # panels serve only creates directories later, inside itself.
         srvdir.mkdir(parents=True, exist_ok=True)
 
         port = _free_port()
@@ -112,7 +112,7 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
         while time.time() < deadline:
             if proc.poll() is not None:
                 raise AssertionError(
-                    f"plan serve exited during boot (rc={proc.returncode})\n"
+                    f"panels serve exited during boot (rc={proc.returncode})\n"
                     f"--- server log tail ---\n{_log_tail(log_path)}"
                 )
             try:
@@ -123,14 +123,15 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
                 meta = resp.json()
                 assert meta["test_mode"] is True, meta
                 assert meta["ui_debounce_ms"] == 50, meta
-                assets = httpx.get(f"{base}/assets/api.js", timeout=1.0)
-                assert assets.status_code == 200, assets.status_code
+                root = httpx.get(f"{base}/", timeout=1.0)
+                assert root.status_code == 200, root.status_code
+                assert "data-svelte-app" in root.text
                 return handle
             time.sleep(0.1)
 
         proc.terminate()
         raise AssertionError(
-            f"plan serve did not become ready within {BOOT_BUDGET_S}s\n"
+            f"panels serve did not become ready within {BOOT_BUDGET_S}s\n"
             f"--- server log tail ---\n{_log_tail(log_path)}"
         )
 

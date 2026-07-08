@@ -409,13 +409,13 @@ def test_sprint_overview_fields_and_edit(server, context_factory, open_page, api
     assert page.inner_text('[data-field="primary_bet"] .fval') == SO_BET
     # The three Mid-sprint Review sub-fields exist as inline-edit surfaces (empty here).
     for key in ("mid_where_we_stand", "mid_whats_changed", "mid_what_to_adjust"):
-        assert page.query_selector(f'[data-field="{key}"] .fval.ed') is not None
+        assert page.query_selector(f'[data-field="{key}"] .fval .ed') is not None
 
     # Inline-edit round-trip on the NEW Mid-sprint field: open its section, focus the
     # field, overwrite, blur → PATCH /api/sprints/{id} {mid_where_we_stand} → the WS
     # flush re-renders from the saved value (no optimistic UI). Same driver as e29.
     page.click('[data-phase="mid"] > summary')
-    sel = '[data-field="mid_where_we_stand"] .fval'
+    sel = '[data-field="mid_where_we_stand"] .fval .ed'
     f0 = page.evaluate("window.__plannerDebug.flushes")
     page.evaluate(
         "(a) => { const el = document.querySelector(a.sel);"

@@ -17,7 +17,8 @@
     onSubmit: (text: string, mode: "message" | "command") => Promise<void>;
   } = $props();
 
-  let text = $state(initialText);
+  let text = $state("");
+  let lastInitialText = $state<string | null>(null);
   let menuOpen = $state(false);
   let busy = $state(false);
 
@@ -70,6 +71,13 @@
 
   $effect(() => {
     menuOpen = menuItems.length > 0;
+  });
+
+  $effect(() => {
+    if (initialText !== lastInitialText) {
+      lastInitialText = initialText;
+      text = initialText;
+    }
   });
 
   function inputChanged(): void {

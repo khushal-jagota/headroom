@@ -65,8 +65,9 @@ ones after it, never an earlier one, so you can't hand back ground the ticket ha
 already covered. One shared source of the allowed stages feeds both the header row
 and the approval screen, so the two can never disagree.
 
-_Code paths:_ `assets/screens-ticket.js` (the scope row), `assets/components.js`
-(the shared ceiling options), `assets/screens-review.js` (the approval walk).
+_Code paths:_ `web/src/routes/TicketRoute.svelte` (the scope row),
+`web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`
+(the approval walk).
 
 ## The event log
 
@@ -97,4 +98,4 @@ _Code paths:_ `src/planner/core/events.py`.
 
 ---
 
-_Last verified: 2026-07-07._
+_Last verified: 2026-07-08._

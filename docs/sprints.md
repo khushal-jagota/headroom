@@ -37,7 +37,7 @@ Tracking is the sprint's items and, under each, the tickets that carry it, with 
 progress rollup.
 
 _Code paths:_ `src/planner/sprints/` (the sprint, its items, and the overview
-fields), `assets/screens-sprint.js` (both tabs).
+fields), `web/src/routes/SprintRoute.svelte` (both tabs).
 
 ## Handoffs
 
@@ -54,4 +54,4 @@ fields), `assets/screens-sprint.js` (both tabs).
 
 ---
 
-_Last verified: 2026-07-07._
+_Last verified: 2026-07-08._

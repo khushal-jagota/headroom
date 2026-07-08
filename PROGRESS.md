@@ -3,77 +3,117 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
-## Where we are (2026-07-07): the employee runtime is wired end-to-end, but the core loop can't run yet
+## Where we are (2026-07-08): Svelte is live at `/`; worker-loop smoke is still next
 
-The **runtime redesign** is essentially built. A ticket now has a single durable **employee** (a
-Hermes session) that takes it through its stages; the human's job is to approve and to set how far
-the employee may go on its own (its **scope**). The authoritative fix-spec is
-`orchestration/runtime-redesign/notes.md`; the visual language is `DESIGN.md`.
+Current HEAD is `eed3498` (`cli: rename the agent CLI plan -> panels`). The last two committed
+runtime changes did the work that was blocking the employee loop:
 
-**`./verify` is PASS** (ruff / mypy / unit / build / e2e all green) at the current HEAD.
+- `523d03f` changed the default worker skill from `planning-worker` to `panels-worker`, added
+  `panels worker my-ticket`, and added the reverse lookup from `HERMES_SESSION_KEY` to the owning
+  ticket.
+- `eed3498` renamed the installed CLI entry point from `plan` to `panels`; `.venv/bin/panels`
+  exists and `.venv/bin/plan` has been removed for new processes.
 
-### Built and green
+Both commits record `VERIFY: PASS` in their commit messages. This cycle also ran a fresh `./verify`
+after the Svelte root cutover, e2e move, and legacy path deletion: **VERIFY: PASS**.
 
-- **The runtime rewire — three waves, all committed to main.**
-  - **W1 — the employee primitive** (`63152e5`, `src/planner/minds/`): spawns and talks to a Hermes
-    gateway child, one child per run, with a per-session queue that keeps one step in flight per
-    employee.
-  - **W2 — deletions** (`f2ed748`): removed the old dispatcher/claim machinery's now-dead surface
-    (plan-tree, seed API, freeze columns, dormant columns).
-  - **W3a — ticket status + System B** (`b2bef50`): the whole `dispatch/` package is gone; a ticket
-    carries a `status` (empty / agent_working / awaiting_approval / errored) written through one
-    atomic door (`set_run_status`). System B runs an employee's step.
-  - **W3b — System A + the gate + one CLI** (`6481356`): System A polls today's tickets for ones
-    ready to move and fires the employee; an approval or unblock pokes it immediately (the timer is
-    a backstop). The propose→approve gate wires an approval into the next run. The CLI is a single
-    `plan` binary.
-- **Chat talks to a real employee** (`c5b65ba`): the ticket chat reaches a live Hermes mind over the
-  real gateway subprocess, replacing a broken in-process import that always read "gateway offline".
-  It uses the owner's default Hermes home for now.
-- **Slash commands + skills in the chat** (`ae0936d`): typing `/` in a ticket's chat opens the
-  gateway's own catalogue (135 commands + 62 skills, cached); picking a **skill** runs it into that
-  ticket's employee. Display commands are insert-only for this first slice.
-- **An editable scope row in the ticket header** (`e43ac37`, `29fd53d`): "approved until [stage]
-  then [stop / propose]", rendered as enum pills, changeable anytime — the scope is now visible and
-  settable from the ticket itself, not only inside an approval. A shared `ceilingOptions` feeds both
-  this row and the approval picker, so neither can offer approving back past where the ticket is.
-- **Errors are visible in the event log** (`6ed409b`): an errored run shows its reason (amber-marked,
-  e.g. "agent init failed: Unknown skill(s): planning-worker"), and the chat's spurious "Gateway
-  Offline" is fixed (it was a stale session after a gateway restart; the adapter now mints a fresh
-  session and re-persists the new key).
+The stale pre-rename server process on port 8767 was killed on the owner's instruction. The default
+`data/planning.db` is from an older runtime attempt and should not be reused for the live smoke
+because its schema/status history predates the current `ticket_status` code. Use a fresh isolated
+DB path.
 
-## The one blocker: the core loop can't actually run
+## What was just learned
 
-The employee is spawned with a role skill named **`planning-worker`**, and that skill is not
-installed in the Hermes home. So every real run errors with **"Unknown skill(s): planning-worker."**
-The plumbing is all there — the employee spawns, the gate fires, the error surfaces — but the loop
-does no work.
+The Claude transcript ended immediately after finding the DB-path knob:
 
-**Fixing it needs two things:** (1) a **dedicated planner Hermes home** (so planner employees are
-isolated from the owner's real `~/.hermes`), and (2) the **authored `planning-worker` skill**
-installed in it. This is the top next step.
+- It found `PLAN_DB_PATH` / `PLAN_LOGS_DIR`.
+- It had already committed the `panels` rename.
+- It did not start the 8799 isolated live smoke before hitting the weekly limit.
+
+The server that first showed echo replies on port 8799 was intentionally fake: it was started with
+`PLAN_TEST_MODE=1`, and `gateway_adapter=auto` resolves to the echo fake in test mode. A live
+non-test server on the same port, using `PLAN_DB_PATH=data/dogfood-live-codex.db`,
+`PLAN_HERMES_HOME=~/.hermes`, and `.venv/bin` on `PATH`, proved ticket chat is real Hermes:
+
+- `/api/meta` returned `test_mode:false`.
+- Direct `/api/chat/t_xvemccy4/stream` returned streamed tokens for `live hermes ok` with a real
+  session key, `20260708_032210_fb0a07`.
+- The Svelte ticket chat in the in-app browser returned `browser live ok`.
+
+That live server was stopped at the end of that dogfood turn; no live dogfood server is intentionally
+left running by the current cycle.
+
+The owner's current frontend ruling: treat the Svelte app in `web/` as canonical for UI direction.
+FastAPI `/` now serves `web/dist/index.html`; `/_app` remains only as the Vite chunk mount because
+the build uses `base: "/_app/"`. The Playwright e2e harness opens `/`, so the browser suite now
+asserts the Svelte app directly.
+
+The old classic JS route loop has been removed: `assets/api.js`, `assets/app.js`,
+`assets/components.js`, `assets/config.js`, and `assets/screens-*.js` are deleted. Keep
+`assets/tokens.css`, `assets/app.css`, and `assets/markdown.js`; the Svelte document still imports
+them as shared styling/markdown infrastructure.
+
+The Svelte Review stale-card bug was route-level, not backend/event-mapping:
+
+- Backend accept was correct: `/api/queues` returned `{"approvals":[],"overdue":[]}` and the ticket
+  moved to `needs_approach`, `at_cap=stop`.
+- The queue resource did refetch empty data, but `ReviewRoute.svelte` fell back from the skipped
+  stale entry to `entries[0]`, and another effect reset skip state when every entry was skipped.
+- The fix removes the fallback to skipped stale entries, triggers a guarded queue refresh when
+  ticket detail proves an entry stale, and renders stale detail/entry mismatches as loading instead
+  of a fake empty proposal card.
+- Browser verification against live ticket `t_cmhh5hb5`: accepting the Svelte Review proposal
+  removed the card, cleared the Review badge, and left `/api/queues` empty.
+
+Targeted verification passed in this cycle:
+
+- `npm --prefix web run check` — 0 errors, 3 Svelte warnings, all in `TicketRoute.svelte` capturing
+  the `id` prop at mount.
+- `npm --prefix web run test` — event-mapping test passed.
+- `npm --prefix web run build` — build passed; Vite warns that `/assets/tokens.css`,
+  `/assets/app.css`, and `/assets/markdown.js` are runtime-served, and repeats the 3 TicketRoute
+  warnings.
+- `.venv/bin/pytest tests/e2e -q` — 19 e2e tests passed against Svelte at `/`.
+- `./verify` — ruff, mypy, 123 unit tests, compile/static checks, Svelte check/build/test, and
+  19 e2e tests all passed.
+
+## Current hypothesis
+
+The worker loop wiring is probably sufficient now:
+
+- `SharedGateway` starts one child with `HERMES_HOME=$PLAN_HERMES_HOME` and
+  `HERMES_TUI_SKILLS=panels-worker`.
+- `System A` polls today's empty runnable tickets.
+- `System B` sets `ticket_status=agent_running_step`, sends the next-step prompt through the shared
+  gateway, persists a rotated `chat_session_key`, and clears or parks status when the proposal
+  lands.
+- The symlinked `~/.hermes/skills/panels` and `~/.hermes/skills/panels-worker` point at this repo's
+  skill files.
+
+The most likely remaining failure is not Python wiring but live-agent behavior: whether the worker
+actually follows the skill, finds `panels` on `PATH`, and files the proposal.
 
 ## Immediate next step
 
-Stand up the dedicated planner Hermes home and author the `planning-worker` role skill, then prove
-one ticket runs a step end-to-end through the live employee.
+Run the isolated live worker smoke:
 
-## Also not done (known gaps, none blocking the step above)
+1. Start `panels serve` on port 8799 with a fresh DB/log/lock path, `PLAN_HERMES_HOME=~/.hermes`,
+   and `PATH="$PWD/.venv/bin:$PATH"`.
+2. Create a fresh ticket and add it to today.
+3. Set scope so the first step parks a `success` proposal rather than auto-advancing past the proof.
+4. Wait for System A/B to run.
+5. Inspect the ticket, status events, and server/gateway logs.
+6. If it passes, update this file with the full smoke result and then run fresh `./verify` before
+   claiming progress.
 
-- **Errored has no recovery** — a failed ticket is stuck; there's no retry or clear.
-- **Rollover / daily "today"** auto-generation isn't wired (the boundary-rebuild wave owns this, plus
-  rewriting the stale `skills/planning-boundary.md` / `planner-main.md`).
-- **Chat isn't behind the per-session queue** yet.
-- **Real streaming** of the reply (currently thinking-dots → full reply, no token stream).
-- **Slash display commands** (exec/plugin) — insert-only for now.
-- **The employee/scope rename sweep** — `orchestration/runtime-redesign/notes.md` still says "one
-  mind per ticket"; some code identifiers keep the "mind" name (`src/planner/minds/`, `MindQueue`).
+## Known gaps
 
-## Reference
-
-- `orchestration/runtime-redesign/notes.md` — the authoritative fix-spec (what v2 got wrong, what we
-  fix, how).
-- `orchestration/runtime-redesign/spikes/01-hermes-linkage.md` — proved the gateway linkage;
-  `spikes/02-slash-commands-in-chat.md` — the slash-commands spike.
-- `DESIGN.md` — the visual language. `decisions.md` — every judgment call. `docs/` — plain-language
-  documentation of what exists (`docs/README.md` is the map).
+- The next-step prompt still names the ticket id/title directly, so `panels worker my-ticket` is
+  wired and unit-tested but not forced by the live prompt yet.
+- Errored recovery is still missing; errored tickets cannot be retried or cleared.
+- Rollover / daily boundary agent work is not rebuilt yet.
+- Svelte warnings remain in `TicketRoute.svelte`: ticket resources capture `id` at mount. This is
+  safe while `App.svelte` keeps `{#key route.key}` around the route, so ticket-id navigation remounts
+  the component; clean it up if route keying is ever removed or TicketRoute becomes reusable in-place.
+- The untracked `orchestration/dogfood-report.md` is a prior test-mode/echo-gateway dogfood report,
+  not evidence of the real Hermes worker loop.

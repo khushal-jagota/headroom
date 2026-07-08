@@ -14,7 +14,7 @@ step at a time, and feeds an approval straight back in.
 ```
    System A (the poll)                     System B (one step)
    ───────────────────                     ───────────────────
-   scan today's tickets for ones           spawn a gateway child · resume the
+   scan today's tickets for ones           use the shared gateway · resume the
    READY to move                           ticket's mind · submit one prompt
         │  fire ─────────────────────────► watch the single run end
         │                                  write the ticket's status (the one door)
@@ -28,16 +28,17 @@ step at a time, and feeds an approval straight back in.
 
 **System A** polls today's tickets and picks the ones that are _ready_ — able to
 move and not already in flight — then fires the employee for each. It never touches
-the AI itself. **System B** runs one step: it assembles the worker's environment,
-spawns a gateway child process, resumes (or creates) the ticket's durable session,
-submits one prompt, and watches for the single run to end — then writes the ticket's
-new status through the one door. System B is the _sole_ writer of a ticket's status,
-so "the code owns the state, the worker only proposes" holds even here.
+the AI itself. **System B** runs one step through the shared persistent Hermes
+gateway child: it assembles the prompt, resumes (or creates) the ticket's durable
+session, submits one turn, and watches for the single run to end — then writes the
+ticket's new status through the one door. System B is the _sole_ writer of a
+ticket's status, so "the code owns the state, the worker only proposes" holds even
+here.
 
-One employee is one ticket, so every run of a ticket is serialized: at most one step
-is ever in flight, and each run resumes that ticket's current live session. An
-approval or an unblock from the web page pokes the poll immediately so the ticket
-advances the moment you act; the timer is only a backstop.
+One employee is one ticket session, so Hermes' per-session busy guard keeps one turn
+in flight for that ticket while the shared child can hold many sessions. An approval
+or an unblock from the web page pokes the poll immediately so the ticket advances
+the moment you act; the timer is only a backstop.
 
 _Code paths:_ `src/planner/runtime/system_a.py`, `src/planner/runtime/system_b.py`,
 `src/planner/minds/` (the employee primitive: the gateway child, the per-session
@@ -57,15 +58,17 @@ for example, that a skill the worker needed was not installed — marked in ambe
 stands out, with the full message allowed to wrap so nothing is cut off. That turns a
 stuck ticket from a mystery into something you can debug.
 
-## The one blocker: the core loop can't run yet
+## What is proved, and what is next
 
-The employee is spawned with a role skill named **`planning-worker`**, and that skill
-is **not installed** in the Hermes home the runtime talks to. So every real run
-errors with "Unknown skill(s): planning-worker." All the plumbing works — the
-employee spawns, the poll fires, the gate wires an approval into the next run, the
-error surfaces — but the loop does no work. Clearing it needs two things: a dedicated
-planner Hermes home (so planner employees are isolated from the owner's real
-`~/.hermes`), and the authored `planning-worker` skill installed in it.
+The runtime now points at the **`panels-worker`** role skill, and the CLI entry point
+workers use is **`panels`**. The shared gateway can use `PLAN_HERMES_HOME` so it sees
+the same skills and credentials as the configured Hermes home. Ticket chat has been
+smoked against a non-test server and reached the real Hermes worker.
+
+The remaining proof is the full live worker-loop smoke: start the non-test server
+with a fresh DB, put a ticket on today, let System A fire System B, and confirm the
+employee files the expected proposal through `panels`. Until that passes, the loop is
+wired but not fully proven in live use.
 
 ## Handoffs
 
@@ -80,10 +83,9 @@ planner Hermes home (so planner employees are isolated from the owner's real
 
 - **No recovery from a failed run.** An errored ticket is stuck — there is no retry
   or clear. Trigger: recovery is designed and built.
-- **Automatic daily rollover isn't wired.** The morning boundary that rebuilds
-  "today" doesn't run yet; the `planning-boundary` / `planner-main` role skills that
-  would drive it still describe the removed dispatcher flow and are being rewritten.
-  Trigger: the boundary-rebuild work lands. See `days.md`.
+- **Automatic daily rollover writing isn't wired.** The morning boundary materializes
+  days, but no worker writes the overview yet. Trigger: the boundary-rebuild work
+  lands. See `days.md`.
 - **Chat isn't behind the per-step queue** yet, and the reply arrives whole (thinking
   dots, then the full answer) rather than streaming token by token.
 - **The "mind" → "employee" rename is unfinished** — some code still calls the
@@ -91,4 +93,4 @@ planner Hermes home (so planner employees are isolated from the owner's real
 
 ---
 
-_Last verified: 2026-07-07._
+_Last verified: 2026-07-08._

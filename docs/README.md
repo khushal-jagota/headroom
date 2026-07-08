@@ -15,7 +15,7 @@ that system's doc.
 ```
    THE HUMAN                              THE WORKERS (AI)
    ─────────                              ────────────────
-   the web page                          the `plan` command-line tool
+   the web page                          the `panels` command-line tool
    every decision:                       every action is a proposal:
    approve · grant · drop · plan         draft the next blank, park it
         \                                       /
@@ -45,7 +45,8 @@ describes change, but the history of what happened is never edited or lost.
   every advance. The correctness heart of the system.
 - **The employee runtime** (`employee-runtime.md`) — the single AI worker that
   carries each ticket forward, and the loop that fires it, watches it, and feeds an
-  approval back in. Holds the one blocker that stops the loop running today.
+  approval back in. The wiring is in place; a live end-to-end worker smoke is still
+  the next proof.
 - **Chat** (`chat.md`) — talking to a ticket's worker, and the slash menu of
   commands and skills.
 
@@ -58,9 +59,9 @@ describes change, but the history of what happened is never edited or lost.
 
 **The two interfaces**
 
-- **The front end** (`frontend.md`) — the no-build web app: the screens, the single
-  design-token file, and the refetch-on-signal rule.
-- **The command-line tool** (`cli.md`) — the `plan` tool workers act through, and
+- **The front end** (`frontend.md`) — the Svelte web app: the screens, shared tokens,
+  and keyed invalidation rule.
+- **The command-line tool** (`cli.md`) — the `panels` tool workers act through, and
   why it holds no approval powers.
 
 ## Not built yet
@@ -70,5 +71,5 @@ describes change, but the history of what happened is never edited or lost.
 
 ---
 
-_Last verified: 2026-07-07 · Covers the system landscape; each doc carries its own
+_Last verified: 2026-07-08 · Covers the system landscape; each doc carries its own
 code paths._

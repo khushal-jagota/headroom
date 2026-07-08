@@ -25,8 +25,9 @@ Below, the ideas are listed newest first. An idea with no note is just a line; o
 with a note gets a small arrow you can click to open and read it. A light date on the
 right — "2d", or "Jul 1" for older ones — tells you roughly when it was captured.
 
-_Code paths:_ `assets/screens-backlog.js`, `assets/screens-ideas.js`. Backlog items
-are sprint items with no sprint; ideas are their own list (`src/planner/`).
+_Code paths:_ `web/src/routes/BacklogRoute.svelte`,
+`web/src/routes/IdeasRoute.svelte`. Backlog items are sprint items with no sprint;
+ideas are their own list (`src/planner/`).
 
 ## Handoffs
 
@@ -43,4 +44,4 @@ are sprint items with no sprint; ideas are their own list (`src/planner/`).
 
 ---
 
-_Last verified: 2026-07-07._
+_Last verified: 2026-07-08._
