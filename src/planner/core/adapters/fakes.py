@@ -106,6 +106,7 @@ class EchoGatewayAdapter:
                 session_key=send_result.session_key,
                 kind="assistant",
             )
+        yield ChatStreamChunk(type="session", session_key=result.session_key)
         midpoint = max(1, len(result.reply_text) // 2)
         for token in (result.reply_text[:midpoint], result.reply_text[midpoint:]):
             if token:

@@ -12,10 +12,12 @@ answers in its own words — plain prose, no chat-bubble decoration, with token
 streaming and a few "thinking" dots while it works, because a real round trip takes
 several seconds.
 When you open or return to a ticket, the panel reloads the durable Hermes session
-history for that ticket. This is the full employee trace: human messages, assistant
-replies, system or command output, and worker-step prompts and replies all come
-back into the rail. The browser only keeps a local transcript while an active
-message is streaming; Hermes history is the source for a reopened ticket.
+history for that ticket through a lazy gateway resume, so the read path does not
+build an agent just to display old turns. This is the full employee trace: human
+messages, assistant replies, system or command output, and worker-step prompts
+and replies all come back into the rail. The browser only keeps a local
+transcript while an active message is streaming; Hermes history is the source for
+a reopened ticket.
 
 Earlier the chat could only ever say "Gateway Offline", because it was wired to the
 wrong thing and, after a gateway restart, kept trying to resume a session that no

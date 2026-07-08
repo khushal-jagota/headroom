@@ -210,6 +210,31 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
 def test_e26_chat_panel_echo_and_offline(
     server, server_factory, context_factory, open_page, cli, api
 ):
+    pending_tid = cli(server, "ticket", "create", "--title", "T18 pending chat ticket")["id"]
+    pending_page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{pending_tid}",
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]',
+        settled=True,
+    )
+    pending_page.route(
+        "**/api/chat/*/stream",
+        lambda route: route.fulfill(
+            status=200,
+            headers={"content-type": "text/event-stream"},
+            body=(
+                'event: message_start\n'
+                f'data: {{"entity_id":"{pending_tid}","mode":"message"}}\n\n'
+            ),
+        ),
+    )
+    pending_page.fill('[data-chat] [data-chat-input]', "hold before first token")
+    pending_page.click('[data-chat] [data-chat-send]')
+    pending_page.wait_for_selector('[data-chat] [data-chat-pending]', timeout=WAIT_MS)
+    assert pending_page.query_selector('[data-chat] [data-chat-msg="planner"]') is None
+    assert "(none)" not in pending_page.inner_text("[data-chat] [data-chat-messages]")
+
     # --- echo half (default echo gateway) ---
     tid = cli(server, "ticket", "create", "--title", "T18 chat ticket")["id"]
     page = open_page(

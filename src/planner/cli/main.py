@@ -100,22 +100,25 @@ def json_option(func: Callable[..., Any]) -> Callable[..., Any]:
         "as_json",
         is_flag=True,
         default=False,
-        help="Emit machine-readable JSON (errors as JSON on stderr).",
+        help="Print the full JSON response. Errors are printed as JSON on stderr.",
     )(func)
 
 
 @click.group()
 def main() -> None:
-    """panels — the planner CLI for agents and developer debugging."""
+    """Operate the local planner server.
+
+    Most commands talk to PLAN_SERVER_URL, defaulting to http://127.0.0.1:8767.
+    Use --json when another tool or script needs the full response body.
+    """
 
 
 # --- serve (the one handler that actually works in T01) ---
 
 
 @main.command("serve")
-@json_option
-def serve(as_json: bool) -> None:
-    """Run the server (foreground)."""
+def serve() -> None:
+    """Start the web server and background planner runtime."""
     import os
 
     import uvicorn
@@ -148,10 +151,12 @@ def serve(as_json: bool) -> None:
 @main.command("propose")
 @click.argument("field", type=click.Choice(_FIELDS))
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option("--body-file", default=None, help="Path to the body, or - for stdin.")
+@click.option(
+    "--body-file", default=None, help="Read proposal text from this file, or - for stdin."
+)
 @json_option
 def propose(field: str, ticket_id: str | None, body_file: str | None, as_json: bool) -> None:
-    """File or replace a proposal on a field (agent path)."""
+    """Submit a worker proposal for one ticket field."""
     body = read_body(ticket_id, body_file, as_json)
     tid = resolve_ticket_id(ticket_id, as_json)
     data = http.send(
@@ -162,10 +167,10 @@ def propose(field: str, ticket_id: str | None, body_file: str | None, as_json: b
 
 @main.command("recap")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option("--body-file", default=None, help="Path to the body, or - for stdin.")
+@click.option("--body-file", default=None, help="Read recap text from this file, or - for stdin.")
 @json_option
 def recap(ticket_id: str | None, body_file: str | None, as_json: bool) -> None:
-    """Write a ticket recap (rejected before needs_approach)."""
+    """Write the short recap shown at the top of a ticket."""
     body = read_body(ticket_id, body_file, as_json)
     tid = resolve_ticket_id(ticket_id, as_json)
     data = http.send("PUT", f"/api/tickets/{tid}/recap", as_json=as_json, json_body={"body": body})
@@ -175,10 +180,10 @@ def recap(ticket_id: str | None, body_file: str | None, as_json: bool) -> None:
 @main.command("note")
 @click.argument("field", type=click.Choice(_FIELDS))
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option("--body-file", default=None, help="Path to the body, or - for stdin.")
+@click.option("--body-file", default=None, help="Read note text from this file, or - for stdin.")
 @json_option
 def note(field: str, ticket_id: str | None, body_file: str | None, as_json: bool) -> None:
-    """Write a field's notes slot (human or agent, any time)."""
+    """Write notes for one ticket field."""
     body = read_body(ticket_id, body_file, as_json)
     tid = resolve_ticket_id(ticket_id, as_json)
     data = http.send(
@@ -192,16 +197,16 @@ def note(field: str, ticket_id: str | None, body_file: str | None, as_json: bool
 
 @main.group("ticket")
 def ticket() -> None:
-    """Ticket verbs."""
+    """Create, inspect, and organize tickets."""
 
 
 @ticket.command("create")
 @click.option("--title", required=True, help="Ticket title (<= 200 chars).")
-@click.option("--priority", type=click.Choice(_PRIORITIES), default=None)
-@click.option("--deadline", default=None, help="ISO date.")
-@click.option("--project", default=None, help="Vylo | Tribe | Learning | Other.")
+@click.option("--priority", type=click.Choice(_PRIORITIES), default=None, help="Priority label.")
+@click.option("--deadline", default=None, help="Due date in YYYY-MM-DD form.")
+@click.option("--project", default=None, help="Project name: Vylo, Tribe, Learning, or Other.")
 @click.option("--sprint", default=None, help="Sprint id (standalone tickets only).")
-@click.option("--sprint-item", "sprint_item", default=None, help="Sprint item id to parent under.")
+@click.option("--sprint-item", "sprint_item", default=None, help="Parent sprint item id.")
 @json_option
 def ticket_create(
     title: str,
@@ -212,7 +217,7 @@ def ticket_create(
     sprint_item: str | None,
     as_json: bool,
 ) -> None:
-    """Create a ticket."""
+    """Create a new ticket."""
     body: dict[str, Any] = {"title": title}
     if priority is not None:
         body["priority"] = priority
@@ -232,18 +237,18 @@ def ticket_create(
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @json_option
 def ticket_show(ticket_id: str | None, as_json: bool) -> None:
-    """Show a ticket (defaults to $PLAN_TICKET_ID)."""
+    """Show one ticket by id, defaulting to PLAN_TICKET_ID."""
     tid = resolve_ticket_id(ticket_id, as_json)
     data = http.send("GET", f"/api/tickets/{tid}", as_json=as_json)
     http.emit(data, as_json, f"{data['id']} {data['state']} {data['priority']} {data['title']}")
 
 
 @ticket.command("list")
-@click.option("--state", default=None)
-@click.option("--project", default=None)
-@click.option("--sprint", default=None)
-@click.option("--day", default=None, help="Filter to a day's tickets: 'today' or an ISO date.")
-@click.option("--date", default=None, help="ISO-date alias of --day.")
+@click.option("--state", default=None, help="Only show tickets in this state.")
+@click.option("--project", default=None, help="Only show tickets in this project.")
+@click.option("--sprint", default=None, help="Only show tickets in this sprint.")
+@click.option("--day", default=None, help="Only show tickets assigned to today or YYYY-MM-DD.")
+@click.option("--date", default=None, help="Alias for --day.")
 @json_option
 def ticket_list(
     state: str | None,
@@ -253,7 +258,7 @@ def ticket_list(
     date: str | None,
     as_json: bool,
 ) -> None:
-    """List tickets (optionally scoped to one day's board)."""
+    """List tickets, with optional filters."""
     params = _drop_none(
         {"state": state, "project": project, "sprint_id": sprint, "day": day or date}
     )
@@ -267,9 +272,9 @@ def ticket_list(
 
 @ticket.command("set")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option("--priority", type=click.Choice(_PRIORITIES), default=None)
-@click.option("--deadline", default=None, help="ISO date, or 'none' to clear.")
-@click.option("--day", default=None, help="ISO date or 'today' to assign to a day.")
+@click.option("--priority", type=click.Choice(_PRIORITIES), default=None, help="Set the priority.")
+@click.option("--deadline", default=None, help="Set due date to YYYY-MM-DD, or 'none' to clear.")
+@click.option("--day", default=None, help="Assign to today or YYYY-MM-DD.")
 @click.option("--sprint", default=None, help="Sprint id, or 'none' to clear.")
 @json_option
 def ticket_set(
@@ -280,7 +285,7 @@ def ticket_set(
     sprint: str | None,
     as_json: bool,
 ) -> None:
-    """Set priority / deadline / day / sprint (no ceiling or at_cap — scopes are human)."""
+    """Update a ticket's priority, deadline, sprint, or day placement."""
     tid = resolve_ticket_id(ticket_id, as_json)
     patch: dict[str, Any] = {}
     if priority is not None:
@@ -312,13 +317,13 @@ def ticket_set(
 
 @main.group("worker")
 def worker() -> None:
-    """Worker-agent verbs."""
+    """Commands a Hermes worker can use while running a ticket."""
 
 
 @worker.command("my-ticket")
 @json_option
 def worker_my_ticket(as_json: bool) -> None:
-    """The ticket you're working, resolved from your Hermes session."""
+    """Show the ticket for the current Hermes worker session."""
     key = os.environ.get("HERMES_SESSION_KEY", "").strip()
     if not key:
         http.fail_validation(
@@ -333,15 +338,15 @@ def worker_my_ticket(as_json: bool) -> None:
 
 @main.group("item")
 def item() -> None:
-    """Sprint-item verbs."""
+    """Create, inspect, and update sprint items."""
 
 
 @item.command("create")
-@click.option("--title", required=True)
-@click.option("--project", required=True, help="Vylo | Tribe | Learning | Other.")
-@click.option("--priority", type=click.Choice(_PRIORITIES), default=None)
-@click.option("--deadline", default=None, help="ISO date.")
-@click.option("--sprint", default=None, help="Sprint id.")
+@click.option("--title", required=True, help="Sprint item title.")
+@click.option("--project", required=True, help="Project name: Vylo, Tribe, Learning, or Other.")
+@click.option("--priority", type=click.Choice(_PRIORITIES), default=None, help="Priority label.")
+@click.option("--deadline", default=None, help="Due date in YYYY-MM-DD form.")
+@click.option("--sprint", default=None, help="Sprint id to place this item in.")
 @json_option
 def item_create(
     title: str,
@@ -351,7 +356,7 @@ def item_create(
     sprint: str | None,
     as_json: bool,
 ) -> None:
-    """Create a sprint item."""
+    """Create a new sprint item."""
     body: dict[str, Any] = {"title": title, "project": project}
     if priority is not None:
         body["priority"] = priority
@@ -367,18 +372,18 @@ def item_create(
 @click.argument("item_id")
 @json_option
 def item_show(item_id: str, as_json: bool) -> None:
-    """Show a sprint item."""
+    """Show one sprint item."""
     data = http.send("GET", f"/api/items/{item_id}", as_json=as_json)
     http.emit(data, as_json, f"{data['id']} {data['status']} {data['priority']} {data['title']}")
 
 
 @item.command("list")
-@click.option("--status", default=None)
-@click.option("--project", default=None)
-@click.option("--backlog", is_flag=True, default=False, help="Items with no sprint (backlog).")
+@click.option("--status", default=None, help="Only show items with this status.")
+@click.option("--project", default=None, help="Only show items in this project.")
+@click.option("--backlog", is_flag=True, default=False, help="Only show items with no sprint.")
 @json_option
 def item_list(status: str | None, project: str | None, backlog: bool, as_json: bool) -> None:
-    """List sprint items."""
+    """List sprint items, with optional filters."""
     params = _drop_none({"status": status, "project": project})
     if backlog:
         params["sprint_id"] = "null"        # views.list_items maps "null" -> IS NULL
@@ -392,11 +397,16 @@ def item_list(status: str | None, project: str | None, backlog: bool, as_json: b
 
 @item.command("set")
 @click.argument("item_id")
-@click.option("--status", type=click.Choice(["todo", "active", "blocked"]), default=None)
+@click.option(
+    "--status",
+    type=click.Choice(["todo", "active", "blocked"]),
+    default=None,
+    help="Move the item to todo, active, or blocked.",
+)
 @click.option("--blocked-by", default=None, help="Comma-separated blocker ticket ids.")
 @json_option
 def item_set(item_id: str, status: str | None, blocked_by: str | None, as_json: bool) -> None:
-    """Set an agent-permitted item transition (§3.2)."""
+    """Update item status or blockers."""
     body: dict[str, Any] = {}
     if status is not None:
         body["status"] = status
@@ -411,12 +421,16 @@ def item_set(item_id: str, status: str | None, blocked_by: str | None, as_json: 
 @item.command("propose-status")
 @click.argument("item_id")
 @click.option(
-    "--to", "to_status", type=click.Choice(["done", "deferred_next_sprint"]), required=True
+    "--to",
+    "to_status",
+    type=click.Choice(["done", "deferred_next_sprint"]),
+    required=True,
+    help="Final status to propose for human approval.",
 )
-@click.option("--body-file", default=None, help="Optional rationale body, or - for stdin.")
+@click.option("--body-file", default=None, help="Optional rationale file, or - for stdin.")
 @json_option
 def item_propose_status(item_id: str, to_status: str, body_file: str | None, as_json: bool) -> None:
-    """Propose a done / deferred_next_sprint status for human acceptance."""
+    """Propose done or deferred_next_sprint for review."""
     note = read_optional_body(body_file, as_json)
     data = http.send(
         "POST", f"/api/items/{item_id}/propose-status",
@@ -430,13 +444,13 @@ def item_propose_status(item_id: str, to_status: str, body_file: str | None, as_
 
 @main.group("sprint")
 def sprint() -> None:
-    """Sprint verbs."""
+    """Inspect sprint overview and tracking data."""
 
 
 @sprint.command("show")
 @json_option
 def sprint_show(as_json: bool) -> None:
-    """Show the current sprint view."""
+    """Show the current sprint."""
     data = http.send("GET", "/api/sprint/current", as_json=as_json)
     s = data["sprint"]
     human = (
@@ -452,16 +466,16 @@ def sprint_show(as_json: bool) -> None:
 
 @main.group("idea")
 def idea() -> None:
-    """Idea verbs."""
+    """Capture and list loose ideas."""
 
 
 @idea.command("create")
-@click.option("--title", required=True)
-@click.option("--project", default=None, help="Vylo | Tribe | Learning | Other.")
-@click.option("--body-file", default=None, help="Optional body, or - for stdin.")
+@click.option("--title", required=True, help="Idea title.")
+@click.option("--project", default=None, help="Project name: Vylo, Tribe, Learning, or Other.")
+@click.option("--body-file", default=None, help="Optional body file, or - for stdin.")
 @json_option
 def idea_create(title: str, project: str | None, body_file: str | None, as_json: bool) -> None:
-    """Create an idea."""
+    """Create a new idea."""
     body: dict[str, Any] = {"title": title, "body": read_optional_body(body_file, as_json) or ""}
     if project is not None:
         body["project"] = project
@@ -482,14 +496,14 @@ def idea_list(as_json: bool) -> None:
 
 @main.group("day")
 def day() -> None:
-    """Day verbs."""
+    """Inspect and edit a day's ticket list."""
 
 
 @day.command("show")
 @click.argument("date", required=False)
 @json_option
 def day_show(date: str | None, as_json: bool) -> None:
-    """Show a day (defaults to the current planning date; accepts 'today')."""
+    """Show today's plan or one day by date."""
     seg = date or "today"
     data = http.send("GET", f"/api/day/{seg}", as_json=as_json)
     http.emit(data, as_json, f"day {data['id']}: {len(data['tickets'])} ticket(s)")
@@ -500,7 +514,7 @@ def day_show(date: str | None, as_json: bool) -> None:
 @click.argument("date", required=False)
 @json_option
 def day_add_ticket(ticket_id: str, date: str | None, as_json: bool) -> None:
-    """Add a ticket to a day (accepts 'today')."""
+    """Add a ticket to today or to a specific date."""
     seg = date or "today"
     data = http.send(
         "POST", f"/api/day/{seg}/tickets", as_json=as_json, json_body={"ticket_id": ticket_id}
@@ -513,7 +527,7 @@ def day_add_ticket(ticket_id: str, date: str | None, as_json: bool) -> None:
 @click.argument("date", required=False)
 @json_option
 def day_remove_ticket(ticket_id: str, date: str | None, as_json: bool) -> None:
-    """Remove a ticket from a day (deferring; ticket state untouched)."""
+    """Remove a ticket from a day without changing its state."""
     seg = date or "today"
     data = http.send("DELETE", f"/api/day/{seg}/tickets/{ticket_id}", as_json=as_json)
     http.emit(data, as_json, f"day {data['id']}: {len(data['tickets'])} ticket(s)")
@@ -524,16 +538,16 @@ def day_remove_ticket(ticket_id: str, date: str | None, as_json: bool) -> None:
 
 @main.group("link")
 def link() -> None:
-    """Link verbs."""
+    """Manage relationships between tickets and items."""
 
 
 @link.command("add")
 @click.argument("from_id")
 @click.argument("to_id")
-@click.option("--kind", type=click.Choice(_LINK_KINDS), required=True)
+@click.option("--kind", type=click.Choice(_LINK_KINDS), required=True, help="Relationship type.")
 @json_option
 def link_add(from_id: str, to_id: str, kind: str, as_json: bool) -> None:
-    """Add a link."""
+    """Add a relationship link."""
     data = http.send(
         "POST", "/api/links", as_json=as_json,
         json_body={"from_id": from_id, "to_id": to_id, "kind": kind},
@@ -544,10 +558,10 @@ def link_add(from_id: str, to_id: str, kind: str, as_json: bool) -> None:
 @link.command("rm")
 @click.argument("from_id")
 @click.argument("to_id")
-@click.option("--kind", type=click.Choice(_LINK_KINDS), required=True)
+@click.option("--kind", type=click.Choice(_LINK_KINDS), required=True, help="Relationship type.")
 @json_option
 def link_rm(from_id: str, to_id: str, kind: str, as_json: bool) -> None:
-    """Remove a link."""
+    """Remove a relationship link."""
     data = http.send(
         "DELETE", "/api/links", as_json=as_json,
         params={"from_id": from_id, "to_id": to_id, "kind": kind},
@@ -560,13 +574,13 @@ def link_rm(from_id: str, to_id: str, kind: str, as_json: bool) -> None:
 
 @main.group("queue")
 def queue() -> None:
-    """Derived read-only views (§4.5)."""
+    """Inspect review queues and overdue work."""
 
 
 @queue.command("approvals")
 @json_option
 def queue_approvals(as_json: bool) -> None:
-    """Pending gating-field / status proposals and needs_review, oldest first."""
+    """List pending approvals, oldest first."""
     data = http.send("GET", "/api/queues", as_json=as_json)
     section = data["approvals"]
     http.emit(
@@ -579,7 +593,7 @@ def queue_approvals(as_json: bool) -> None:
 @queue.command("overdue")
 @json_option
 def queue_overdue(as_json: bool) -> None:
-    """Tickets/items past deadline and not done/dropped."""
+    """List unfinished work past its deadline."""
     data = http.send("GET", "/api/queues", as_json=as_json)
     section = data["overdue"]
     http.emit(

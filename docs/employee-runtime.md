@@ -62,8 +62,12 @@ stuck ticket from a mystery into something you can debug.
 
 The runtime now points at the **`panels-worker`** role skill, and the CLI entry point
 workers use is **`panels`**. The shared gateway can use `PLAN_HERMES_HOME` so it sees
-the same skills and credentials as the configured Hermes home. Ticket chat has been
-smoked against a non-test server and reached the real Hermes worker.
+the same skills and credentials as the configured Hermes home. On startup the server
+links this repo's `panels` and `panels-worker` skills into that home, so the role
+skills are present even when the default dedicated home starts empty. Provider/model
+credentials are still home configuration: the dedicated home needs its own `.env` and
+`config.yaml` links or files before a live worker can initialize. Ticket chat has
+been smoked against a non-test server and reached the real Hermes worker.
 
 The remaining proof is the full live worker-loop smoke: start the non-test server
 with a fresh DB, put a ticket on today, let System A fire System B, and confirm the

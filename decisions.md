@@ -595,8 +595,21 @@ and should be visible. Decision: the history endpoint should read the full durab
 history (`session.resume` messages or `session.history`) as the primary source for
 `chat:<entity_id>`. A planner-owned table may still be added later as a cache/index if needed, but
 it must preserve the full trace and must not filter worker prompts out of the ticket chat.
-Implementation choice: use the proven `session.resume` `messages` payload first, without lazy
-resume, because the local Hermes linkage spike demonstrates that exact response shape; keep
-`session.history` as a later adapter option if resume proves too expensive. Ticket-domain events now
-also invalidate `chat:<ticket_id>`, so worker status/proposal events prompt the mounted chat panel to
-refetch the full trace rather than depending on component-local transcript state.
+Implementation choice: use the proven `session.resume` `messages` payload first, with `lazy: true`
+because spike 07 identifies lazy resume as the watch-window attach path with no agent build. This
+keeps history reloads read-only at the gateway layer while still following Hermes' durable transcript
+and key-rotation behavior. Keep `session.history` as a later adapter option if resume proves too
+expensive or Hermes exposes a cleaner full-trace read. Ticket-domain events now also invalidate
+`chat:<ticket_id>`, so worker status/proposal events prompt the mounted chat panel to refetch the
+full trace rather than depending on component-local transcript state. A read-only Codex review caught
+the non-lazy first draft; the fix is to assert `lazy: true` in the shared-gateway unit test.
+
+## D29 — Chat pending indicator hides empty assistant placeholders
+
+The `(none)` text above the ticket chat's three pending dots was not product copy; it was the
+generic `MarkdownBlock` empty-state fallback leaking through an intentionally blank assistant
+message placeholder before the first streamed token arrived. The fix is in the chat component, not
+`MarkdownBlock`: empty markdown placeholders are still useful in fields, but a pending assistant
+turn should render only the thinking indicator until there is real assistant text. Implemented
+directly as a small UI repair and covered by a Playwright regression that freezes the stream at
+`message_start`.

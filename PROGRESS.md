@@ -3,12 +3,65 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
-## Where we are (2026-07-08): Review screen redesigned; Svelte E2E and unit tests passing
+## Current work cycle (2026-07-08): chat pending placeholder cleanup
 
-Current HEAD is `834ef8b` (`review: upgrade look to match redesigned ticket approval block`). Recent changes:
+User-reported issue: the ticket chat showed `(none)`/`(non)` above the three thinking dots while a
+message was pending. Root cause: `ChatPanel.svelte` adds an empty planner reply slot before the
+first streamed token arrives, and that slot rendered through `MarkdownBlock`, whose empty-state
+fallback is `(none)`.
+
+Change is intentionally direct and small rather than ticketed: the chat template now renders a
+planner message only after it has non-whitespace text, so the pre-token state shows only the
+`data-chat-pending` dots. A Playwright regression was added inside the existing chat e2e by
+intercepting `/api/chat/*/stream` and holding the stream at `message_start`, then asserting there is
+no planner message and no `(none)` text while pending.
+
+Verification status: implementation is staged in the worktree; focused e2e and full `./verify` have
+not run yet in this cycle.
+
+## Where we are (2026-07-08): Ticket chat history reload implemented
+
+Current HEAD is `0fc64a8` (`review: upgrade look to match redesigned ticket approval block`), with
+the current work cycle adding the ticket chat history reload fix on top. Recent changes:
 
 - `834ef8b` upgraded the Review page (`ReviewRoute.svelte`) to use `ApprovalBlock` with snippet support for actions. The layout was simplified to a plain-text sequence: Ticket Title -> Recap (plain text) -> Note (plain text), followed by a recessed proposed block enclosing the inline `contenteditable` draft, scope picker, and skip/approve actions.
-- Svelte check, build, unit tests, and Playwright e2e tests all pass under a clean verification run: **VERIFY: PASS**.
+- Ticket chat now reloads the durable Hermes session history when a ticket is opened, revisited, or
+  reloaded. The visible rail is the full employee trace: human messages, assistant replies, system or
+  command output, and worker-step prompts/replies.
+- The history read path uses lazy `session.resume` with `cols` and `source`, so reopening a ticket
+  does not build an agent just to display old turns. Hermes remains the source of truth for the
+  transcript; the planner DB still persists only the durable `chat_session_key`.
+- The Svelte chat panel now hydrates from a `chat:<ticket_id>` resource, forces a fresh reload when
+  a cached panel is remounted, refreshes after streamed `message_done`, and maps ticket-domain events
+  to `chat:<ticket_id>` so worker updates refetch the trace.
+- Tests cover the backend history endpoint, fake-gateway ordered transcript replay, rotated key
+  persistence, offline errors, shared-gateway history normalization, event mapping, and the e2e
+  send -> board -> return -> reload flow.
+- A multi-agent review was attempted but the account usage limit blocked it. A read-only Codex CLI
+  review then found one actionable issue: the first draft used non-lazy resume for history reads.
+  That finding was accepted and fixed by adding `lazy: true` and asserting it in
+  `test_shared_gateway_history_resumes_and_preserves_full_trace`.
+- `panels serve` on the default DB exposed an older on-disk schema with `tickets.status` but no
+  `tickets.ticket_status`. `create_schema` now performs an idempotent compatibility migration:
+  add `ticket_status`, copy old `status` values across, translate `agent_working` to
+  `agent_running_step`, and set `PRAGMA user_version=5`. The local default `data/planning.db` was
+  migrated successfully; `PLAN_PORT=8791 panels serve` started without the System A missing-column
+  exception and was then stopped.
+- CLI help was rewritten to be user-facing: command groups now describe what they do, option help
+  names accepted values and body-file/stdin behavior, internal spec shorthand was removed, and
+  `panels serve` no longer exposes a meaningless `--json` option.
+- The live "Gateway Offline" report on ticket chat was not the web server being down. The first
+  real gateway error was `Unknown skill(s): panels-worker` because `data/hermes-home/skills` was
+  empty. Startup now provisions symlinks for this repo's `skills/panels` and
+  `skills/panels-worker` into the configured Hermes home before the shared gateway starts. The next
+  real error was missing inference provider config in the dedicated home; the local
+  `data/hermes-home/.env` and `data/hermes-home/config.yaml` now symlink to the user's Hermes config
+  files. Those links are under gitignored `data/`.
+- The first chat turn on a ticket exposed an ordering bug: the employee could call
+  `panels worker my-ticket` before the stream persisted the newly created Hermes session key onto
+  the ticket. Streaming gateways now emit an internal session-key chunk immediately after
+  create/resume; `chat.service.stream` persists it before the prompt runs, and filters that internal
+  chunk out of SSE.
 
 The stale pre-rename server process on port 8767 was killed on the owner's instruction. The default
 `data/planning.db` is from an older runtime attempt and should not be reused for the live smoke
@@ -58,38 +111,39 @@ The Svelte Review stale-card bug was route-level, not backend/event-mapping:
 - Browser verification against live ticket `t_cmhh5hb5`: accepting the Svelte Review proposal
   removed the card, cleared the Review badge, and left `/api/queues` empty.
 
-Ticket chat history investigation (owner concern: leaving and returning to a ticket loses the chat):
+Ticket chat history implementation details:
 
-- Current behavior is frontend-local only: `ChatPanel.svelte` owns an in-component `transcript = []`,
-  appends streamed turns there, and never fetches prior turns on mount. Route keying remounts the
-  ticket screen, so the visible chat disappears even though the Hermes session continues.
-- The planner DB currently persists only `chat_session_key` plus `chat_session_created`; it does not
-  persist chat turns. `src/planner/chat/service.py` sends/streams through the gateway and only
-  writes a key when the gateway mints, remints, or rotates it.
-- Local Hermes spike notes are enough; do not read `~/.hermes/hermes-agent/` for this. They prove
-  `session.resume` returns `message_count` and `messages`, and the gateway exposes
-  `session.history`, so a history route can recover existing durable Hermes transcripts.
-- Owner ruling: the ticket chat rail is the **full employee trace**, not just human-origin chat.
-  Worker step prompts and worker replies are useful and should be visible when returning to a
-  ticket.
-- Recommended path: add `GET /api/chat/{entity_id}/history` backed primarily by Hermes durable
-  session history (`session.resume` messages or `session.history`), hydrate `ChatPanel` from a
-  Svelte `chat:<entity_id>` resource, and keep live streaming append behavior for the active turn.
-  A planner projection is optional only as a cache/index if Hermes history proves too slow or too
-  awkward to normalize; it should not filter worker prompts out. E2E must assert send → navigate
-  away → return and reload both preserve the visible turns.
+- `GET /api/chat/{entity_id}/history` is human-only, resolves the chat entity, returns an empty
+  transcript when no session key exists, reads Hermes history through the gateway adapter when a key
+  exists, and persists a rotated key if Hermes reports a newer durable tip.
+- `SharedGateway.history` uses lazy `session.resume` instead of normal resume. It normalizes roles
+  and nested text without filtering worker/system/tool messages, because owner intent is the full
+  trace.
+- `ChatPanel.svelte` treats Hermes history as the source on mount/reopen and keeps local transcript
+  state only for an active in-flight streamed turn.
+- `docs/chat.md`, `docs/frontend.md`, and `decisions.md` now describe this behavior.
 
-Targeted verification passed in this cycle:
+Verification in this cycle:
 
-- `npm --prefix web run check` — 0 errors, 3 Svelte warnings, all in `TicketRoute.svelte` capturing
-  the `id` prop at mount.
-- `npm --prefix web run test` — event-mapping test passed.
-- `npm --prefix web run build` — build passed; Vite warns that `/assets/tokens.css`,
-  `/assets/app.css`, and `/assets/markdown.js` are runtime-served, and repeats the 3 TicketRoute
-  warnings.
-- `.venv/bin/pytest tests/e2e -q` — 19 e2e tests passed against Svelte at `/`.
-- `./verify` — ruff, mypy, 123 unit tests, compile/static checks, Svelte check/build/test, and
-  19 e2e tests all passed.
+- Before the lazy-history review fix, focused chat/minds/frontend tests and full `./verify` passed.
+- After the lazy-history fix, `.venv/bin/pytest
+  tests/unit/test_minds.py::test_shared_gateway_history_resumes_and_preserves_full_trace
+  tests/unit/test_chat_seed.py -q`, `npm --prefix web run test`, and `git diff --check` passed.
+- Fresh `./verify` passed after the lazy-history fix: ruff, mypy, 129 unit tests, compile/static
+  checks, Svelte check/build/test, and 19 e2e tests all passed. The only warnings were the known
+  two Python test warnings and the known three `TicketRoute.svelte` initial-`id` capture warnings.
+- After the schema migration fix, focused DB/System A tests passed and fresh `./verify` passed:
+  ruff, mypy, 130 unit tests, compile/static checks, Svelte check/build/test, and 19 e2e tests all
+  passed. The only warnings were the known two Python test warnings and the known three
+  `TicketRoute.svelte` initial-`id` capture warnings.
+- After the CLI help pass, `panels --help` and representative subcommand help were inspected, and
+  `.venv/bin/python -m compileall -q src/planner/cli` plus
+  `.venv/bin/pytest tests/e2e/test_cli_verbs.py -q` passed. Run fresh `./verify` again before the
+  final claim.
+- After the live gateway fixes, focused chat/minds tests passed for early stream-key persistence and
+  skill provisioning. The restarted local server reports gateway status healthy, and
+  `HERMES_SESSION_KEY=20260708_154053_d4085e panels worker my-ticket --json` resolves
+  `t_0jb9s3sh`. Run fresh `./verify` again before the final claim.
 
 ## Current hypothesis
 
@@ -105,7 +159,9 @@ The worker loop wiring is probably sufficient now:
   skill files.
 
 The most likely remaining failure is not Python wiring but live-agent behavior: whether the worker
-actually follows the skill, finds `panels` on `PATH`, and files the proposal.
+actually follows the skill, finds `panels` on `PATH`, and files the proposal. `panels` is now
+available globally through `/Users/khushaljagota/.local/bin/panels`, a symlink to this repo's
+`.venv/bin/panels`.
 
 ## Immediate next step
 
@@ -129,7 +185,5 @@ Run the isolated live worker smoke:
 - Svelte warnings remain in `TicketRoute.svelte`: ticket resources capture `id` at mount. This is
   safe while `App.svelte` keeps `{#key route.key}` around the route, so ticket-id navigation remounts
   the component; clean it up if route keying is ever removed or TicketRoute becomes reusable in-place.
-- Ticket chat history is not fetched back into the ticket page yet. Owner ruling: the page should
-  reload the full Hermes employee trace, including worker prompts and replies.
 - The untracked `orchestration/dogfood-report.md` is a prior test-mode/echo-gateway dogfood report,
   not evidence of the real Hermes worker loop.

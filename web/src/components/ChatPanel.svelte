@@ -128,7 +128,7 @@
           <div class="chat-u" data-chat-msg="you">{msg.text}</div>
         {:else if msg.who === "system"}
           <div class="chat-sys" data-chat-msg="system">{msg.text}</div>
-        {:else}
+        {:else if msg.text.trim()}
           <div class="chat-a" data-chat-msg="planner"><MarkdownBlock text={msg.text} /></div>
         {/if}
       {/each}

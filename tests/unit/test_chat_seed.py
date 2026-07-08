@@ -6,13 +6,20 @@ first-reply race."""
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from sqlite3 import Connection
 
 from fastapi.testclient import TestClient
 
 from planner.chat import service
-from planner.chat.contracts import ChatHistory, ChatMessage, ChatSendResult, GatewayStatus
+from planner.chat.contracts import (
+    ChatHistory,
+    ChatMessage,
+    ChatSendResult,
+    ChatStreamChunk,
+    GatewayStatus,
+)
 from planner.core.adapters.registry import Adapters, build_adapters
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -229,6 +236,41 @@ def test_chat_stream_echo_persists_key_and_event(tmp_path: Path) -> None:
     ) in body
     assert _stored_key(db_path, "tickets", tid) == "fake-sess-1"
     assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fake-sess-1"}]
+
+
+def test_chat_stream_persists_session_before_first_token(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+
+    class InspectingGateway:
+        def stream(
+            self, session_key: str | None, entity_id: str, text: str, mode: str
+        ) -> Iterator[ChatStreamChunk]:
+            assert session_key is None
+            yield ChatStreamChunk(type="session", session_key="early-key")
+            assert _stored_key(db_path, "tickets", entity_id) == "early-key"
+            yield ChatStreamChunk(type="token", text="ready")
+            yield ChatStreamChunk(
+                type="done",
+                reply_text="ready",
+                session_key="early-key",
+                kind="assistant",
+            )
+
+        def status(self) -> GatewayStatus:
+            return GatewayStatus(available=True)
+
+    _replace_gateway(app, InspectingGateway())
+    with TestClient(app) as client:
+        with client.stream(
+            "POST", f"/api/chat/{tid}/stream", json={"text": "hello", "mode": "message"}
+        ) as response:
+            body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert 'event: token\ndata: {"text":"ready"}' in body
+    assert 'event: message_done\ndata: {"reply_text":"ready","session_key":"early-key"' in body
+    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "early-key"}]
 
 
 def test_chat_stream_command_uses_system_kind(tmp_path: Path) -> None:

@@ -176,20 +176,29 @@ def stream(
 ) -> Iterator[ChatStreamChunk]:
     """Stream a chat message or command and persist the completed session key.
 
-    The gateway owns live token production; this service owns the same first-reply
-    and re-mint persistence rule used by send()/run_command().
+    The gateway owns live token production; this service owns the same session-key
+    persistence rule used by send()/run_command(). A streaming gateway yields an
+    internal ``session`` chunk before the prompt starts so worker tools can resolve
+    their ticket while the turn is still running.
     """
     entity_kind, stored_key = _resolve(conn, entity_id, now)
+    effective_key = stored_key
     try:
         chunks = gateway.stream(stored_key, entity_id, text, mode)
         for chunk in chunks:
+            if chunk.type == "session":
+                if chunk.session_key and chunk.session_key != effective_key:
+                    effective_key = _persist_key(
+                        conn, entity_kind, entity_id, effective_key, chunk.session_key, now
+                    )
+                continue
             if chunk.type != "done":
                 yield chunk
                 continue
             session_key = chunk.session_key
-            if session_key != stored_key:
+            if session_key != effective_key:
                 session_key = _persist_key(
-                    conn, entity_kind, entity_id, stored_key, session_key, now
+                    conn, entity_kind, entity_id, effective_key, session_key, now
                 )
             yield ChatStreamChunk(
                 type="done",

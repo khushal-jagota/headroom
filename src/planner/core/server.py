@@ -78,14 +78,20 @@ def create_app(
             try:
                 module = importlib.import_module("planner.core.loops")
                 start = module.start_background_loops
-                from planner.minds.config import resolve_hermes_python, resolve_planner_home
+                from planner.minds.config import (
+                    provision_planner_home_skills,
+                    resolve_hermes_python,
+                    resolve_planner_home,
+                )
                 from planner.minds.shared_gateway import SharedGateway
             except (ImportError, AttributeError):
                 _log.warning("planner.core.loops unavailable; running without background loops")
             else:
+                planner_home = resolve_planner_home()
+                provision_planner_home_skills(planner_home)
                 shared_gateway = SharedGateway(
                     hermes_python=resolve_hermes_python(),
-                    home=resolve_planner_home(),
+                    home=planner_home,
                     worker_role=config.worker_skill,
                 )
                 app_.state.shared_gateway = shared_gateway

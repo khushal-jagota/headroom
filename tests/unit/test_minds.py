@@ -12,6 +12,7 @@ import pytest
 from planner.minds.config import (
     boot_smoke_check,
     hermes_src_root,
+    provision_planner_home_skills,
     resolve_hermes_python,
     resolve_planner_home,
 )
@@ -310,6 +311,7 @@ def test_shared_gateway_history_resumes_and_preserves_full_trace() -> None:
     assert fake.sent[0]["params"] == {
         "session_id": STORED_KEY,
         "cols": SESSION_COLS,
+        "lazy": True,
         "source": CHAT_SOURCE,
     }
     assert history.session_key == "20260708_090000_rotated"
@@ -424,6 +426,17 @@ def test_resolve_planner_home() -> None:
     assert resolve_planner_home(None, env={"PLAN_HERMES_HOME": "/env"}) == Path("/env")
     expanded = resolve_planner_home(None, env={"PLAN_HERMES_HOME": "~/homey"})
     assert expanded == Path("~/homey").expanduser()
+
+
+def test_provision_planner_home_skills_symlinks_repo_skills(tmp_path: Path) -> None:
+    provision_planner_home_skills(tmp_path)
+
+    panels = tmp_path / "skills" / "panels"
+    worker = tmp_path / "skills" / "panels-worker"
+    assert panels.is_symlink()
+    assert worker.is_symlink()
+    assert (panels / "SKILL.md").exists()
+    assert (worker / "SKILL.md").exists()
 
 
 def test_boot_smoke_check_with_fake() -> None:

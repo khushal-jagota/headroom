@@ -15,6 +15,7 @@ from planner.minds.gateway import READY_TIMEOUT_DEFAULT, GatewayChild, SpawnFn, 
 
 DEFAULT_HERMES_PYTHON: Final = "~/.hermes/hermes-agent/venv/bin/python"
 DEFAULT_PLANNER_HOME: Final = "data/hermes-home"
+PLANNER_SKILL_NAMES: Final = ("panels", "panels-worker")
 
 ENV_HERMES_PYTHON: Final = "PLAN_HERMES_PYTHON"
 ENV_PLANNER_HOME: Final = "PLAN_HERMES_HOME"
@@ -50,6 +51,32 @@ def resolve_planner_home(
     source = env if env is not None else os.environ
     chosen = value or source.get(ENV_PLANNER_HOME) or DEFAULT_PLANNER_HOME
     return Path(chosen).expanduser()
+
+
+def repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def provision_planner_home_skills(
+    home: Path | str,
+    skill_names: tuple[str, ...] = PLANNER_SKILL_NAMES,
+) -> None:
+    """Expose this repo's role skills inside the configured Hermes home."""
+    source_root = repo_root() / "skills"
+    target_root = Path(home).expanduser() / "skills"
+    target_root.mkdir(parents=True, exist_ok=True)
+    for skill_name in skill_names:
+        source = source_root / skill_name
+        if not source.is_dir():
+            raise FileNotFoundError(f"planner skill not found: {source}")
+        target = target_root / skill_name
+        if target.is_symlink():
+            if target.resolve() == source.resolve():
+                continue
+            target.unlink()
+        if target.exists():
+            continue
+        target.symlink_to(source, target_is_directory=True)
 
 
 def boot_smoke_check(

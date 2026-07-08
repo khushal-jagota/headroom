@@ -104,6 +104,7 @@ class SharedGateway:
                 {
                     "session_id": session_key,
                     "cols": SESSION_COLS,
+                    "lazy": True,
                     "source": CHAT_SOURCE,
                 },
                 timeout=self._request_timeout,
@@ -168,6 +169,7 @@ class SharedGateway:
         try:
             child = self._child_or_spawn()
             live_sid, stored = self._resume_or_create(child, session_key, CHAT_SOURCE)
+            yield ChatStreamChunk(type="session", session_key=stored)
             if mode == "command":
                 yield from self._stream_command(child, live_sid, stored, text)
             else:

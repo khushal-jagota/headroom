@@ -8,7 +8,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Final
 
-SCHEMA_VERSION: Final = 4
+SCHEMA_VERSION: Final = 5
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS sprints (
@@ -138,4 +138,31 @@ def connect(db_path: str, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
 
 def create_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(DDL)
+    _migrate_tickets_status_column(conn)
     conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _migrate_tickets_status_column(conn: sqlite3.Connection) -> None:
+    columns = _table_columns(conn, "tickets")
+    if "ticket_status" in columns:
+        return
+    conn.execute(
+        "ALTER TABLE tickets ADD COLUMN ticket_status TEXT NOT NULL DEFAULT 'empty' "
+        "CHECK (ticket_status IN ('empty','agent_running_step',"
+        "'awaiting_approval','user_takeover','errored'))"
+    )
+    if "status" not in columns:
+        return
+    conn.execute(
+        "UPDATE tickets SET ticket_status = CASE status "
+        "WHEN 'agent_working' THEN 'agent_running_step' "
+        "WHEN 'agent_running_step' THEN 'agent_running_step' "
+        "WHEN 'awaiting_approval' THEN 'awaiting_approval' "
+        "WHEN 'user_takeover' THEN 'user_takeover' "
+        "WHEN 'errored' THEN 'errored' "
+        "ELSE 'empty' END"
+    )
