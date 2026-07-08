@@ -19,6 +19,16 @@ and replies all come back into the rail. The browser only keeps a local
 transcript while an active message is streaming; Hermes history is the source for
 a reopened ticket.
 
+System B uses that same durable session for automatic worker steps. When it creates
+or resumes a session, it stores the `chat_session_key` before submitting the prompt,
+so tools inside the worker turn can resolve their ticket immediately and the prompt
+and reply are visible in chat history after the turn.
+
+Human sends and commands follow the same pre-prompt session-key rule. If the ticket
+is already at `agent_running_step`, the send or command returns `already_running`
+instead of creating a competing turn; the history route still reads the existing
+transcript.
+
 Earlier the chat could only ever say "Gateway Offline", because it was wired to the
 wrong thing and, after a gateway restart, kept trying to resume a session that no
 longer existed. It now reaches the actual worker, and if the link is ever lost the
@@ -56,7 +66,9 @@ underlying worker. The commands it does show run on the ticket's own worker:
 
 ## Deferred
 
-- **Chat isn't behind the per-step queue** the runtime uses for a ticket's work.
+- **Chat is not queued behind an active worker step.** Sending chat or running a
+  command while the worker step is active returns `already_running`; history remains
+  readable.
 
 ---
 

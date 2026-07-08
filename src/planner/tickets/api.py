@@ -397,7 +397,7 @@ async def put_recap(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
 
 @router.put("/tickets/{ticket_id}/value/{field}")
 async def put_value(ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                    clk: Clk) -> JsonDict:
+                    clk: Clk, sa: Sa) -> JsonDict:
     body = ValueEditBody(body=body_str(raw, "body"))
     reject_agents(ctx)
     field_enum = parse_enum(FieldName, field, "field")
@@ -405,6 +405,7 @@ async def put_value(ticket_id: str, field: str, raw: dict[str, Any], conn: DbCon
     ticket = tickets_data.edit_field_value(
         conn, ticket_id, field=field_enum, new_body=body["body"], actor=ctx.actor, now=now
     )
+    _poke(sa)
     return tickets_views.ticket_json(ticket, now)
 
 

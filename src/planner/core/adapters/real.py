@@ -7,7 +7,7 @@ placeholder and never owns a GatewayChild.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING
 
 from planner.chat.contracts import (
@@ -48,11 +48,22 @@ class RealGatewayAdapter:
     def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
         raise self._offline()
 
-    def send(self, session_key: str | None, entity_id: str, text: str) -> ChatSendResult:
+    def send(
+        self,
+        session_key: str | None,
+        entity_id: str,
+        text: str,
+        on_session_key: Callable[[str], None] | None = None,
+    ) -> ChatSendResult:
         raise self._offline()
 
     def stream(
-        self, session_key: str | None, entity_id: str, text: str, mode: str
+        self,
+        session_key: str | None,
+        entity_id: str,
+        text: str,
+        mode: str,
+        on_session_key: Callable[[str], None] | None = None,
     ) -> Iterator[ChatStreamChunk]:
         raise self._offline()
 
@@ -60,6 +71,10 @@ class RealGatewayAdapter:
         raise self._offline()
 
     def run_command(
-        self, session_key: str | None, entity_id: str, command: str
+        self,
+        session_key: str | None,
+        entity_id: str,
+        command: str,
+        on_session_key: Callable[[str], None] | None = None,
     ) -> CommandRunResult:
         raise self._offline()

@@ -105,3 +105,24 @@ def test_put_value_logs_field_value_edited_event(tmp_path: Path) -> None:
     matching = [e for e in events if e["kind"] == "field_value_edited"]
     assert len(matching) == 1
     assert matching[0]["payload"] == {"field": "success", "body": "edited success"}
+
+
+def test_put_value_pokes_system_a_after_successful_edit(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _passed_ticket(db_path)
+
+    class FakeSystemA:
+        def __init__(self) -> None:
+            self.pokes = 0
+
+        def poke(self) -> None:
+            self.pokes += 1
+
+    fake_system_a = FakeSystemA()
+    app.state.system_a = fake_system_a
+
+    with TestClient(app) as client:
+        response = client.put(f"/api/tickets/{tid}/value/success", json={"body": "edited success"})
+
+    assert response.status_code == 200, response.json()
+    assert fake_system_a.pokes == 1

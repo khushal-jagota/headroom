@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import threading
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -133,11 +133,14 @@ class SharedGateway:
         session_key: str | None,
         prompt_text: str,
         on_event: OnEvent | None = None,
+        on_session_key: Callable[[str], None] | None = None,
     ) -> RunResult:
         resolved_key = session_key
         try:
             child = self._child_or_spawn()
             live_sid, resolved_key = self._resume_or_create(child, session_key, SESSION_SOURCE)
+            if resolved_key and on_session_key is not None:
+                on_session_key(resolved_key)
             return self._submit_and_drain(child, live_sid, resolved_key, prompt_text, on_event)
         except SharedGatewayBusy:
             raise
@@ -146,10 +149,18 @@ class SharedGateway:
         except GatewayError as exc:
             return RunResult("errored", "", None, resolved_key, str(exc))
 
-    def send(self, session_key: str | None, entity_id: str, text: str) -> ChatSendResult:
+    def send(
+        self,
+        session_key: str | None,
+        entity_id: str,
+        text: str,
+        on_session_key: Callable[[str], None] | None = None,
+    ) -> ChatSendResult:
         try:
             child = self._child_or_spawn()
             live_sid, stored = self._resume_or_create(child, session_key, CHAT_SOURCE)
+            if on_session_key is not None:
+                on_session_key(stored)
             result = self._submit_and_drain(child, live_sid, stored, text, None)
         except SharedGatewayBusy as exc:
             raise PlannerError(
@@ -164,11 +175,18 @@ class SharedGateway:
         return ChatSendResult(reply_text=result.text, session_key=stored)
 
     def stream(
-        self, session_key: str | None, entity_id: str, text: str, mode: str
+        self,
+        session_key: str | None,
+        entity_id: str,
+        text: str,
+        mode: str,
+        on_session_key: Callable[[str], None] | None = None,
     ) -> Iterator[ChatStreamChunk]:
         try:
             child = self._child_or_spawn()
             live_sid, stored = self._resume_or_create(child, session_key, CHAT_SOURCE)
+            if on_session_key is not None:
+                on_session_key(stored)
             yield ChatStreamChunk(type="session", session_key=stored)
             if mode == "command":
                 yield from self._stream_command(child, live_sid, stored, text)
@@ -197,11 +215,17 @@ class SharedGateway:
             ) from exc
 
     def run_command(
-        self, session_key: str | None, entity_id: str, command: str
+        self,
+        session_key: str | None,
+        entity_id: str,
+        command: str,
+        on_session_key: Callable[[str], None] | None = None,
     ) -> CommandRunResult:
         try:
             child = self._child_or_spawn()
             live_sid, stored = self._resume_or_create(child, session_key, CHAT_SOURCE)
+            if on_session_key is not None:
+                on_session_key(stored)
             name, arg = self._split_command(command)
             try:
                 result = child.request(

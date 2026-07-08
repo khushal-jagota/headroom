@@ -6,6 +6,7 @@ a TestClient over create_app with the fake (echo) gateway — no real gateway, e
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from sqlite3 import Connection
@@ -21,6 +22,7 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
+from planner.tickets.contracts import TicketStatus
 from planner.tickets.data import create_ticket
 
 AGENT = {"X-Plan-Actor": "agent"}
@@ -78,6 +80,16 @@ def _stored_key(db_path: Path, entity_id: str) -> object:
     finally:
         conn.close()
     return None if row is None else row["chat_session_key"]
+
+
+def _set_ticket_status(db_path: Path, ticket_id: str, status: TicketStatus) -> None:
+    conn = connect(str(db_path))
+    try:
+        conn.execute(
+            "UPDATE tickets SET ticket_status = ? WHERE id = ?", (status.value, ticket_id)
+        )
+    finally:
+        conn.close()
 
 
 # --- catalog endpoint --------------------------------------------------------
@@ -225,7 +237,11 @@ def test_command_lost_race_adopts_winner_key_no_event(tmp_path: Path) -> None:
         a different (losing) key — the shared first-key persist must adopt the winner."""
 
         def run_command(
-            self, session_key: str | None, entity_id: str, command: str
+            self,
+            session_key: str | None,
+            entity_id: str,
+            command: str,
+            on_session_key: Callable[[str], None] | None = None,
         ) -> CommandRunResult:
             other = connect(str(db_path))
             try:
@@ -250,6 +266,20 @@ def test_command_lost_race_adopts_winner_key_no_event(tmp_path: Path) -> None:
     assert result.session_key == "winner-key"
     assert result.reply_text == "skill loaded"
     assert _stored_key(db_path, tid) == "winner-key"
+    assert _events(db_path, tid, "chat_session_created") == []
+
+
+def test_command_rejects_while_worker_step_running(tmp_path: Path) -> None:
+    app, db_path, _ = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    _set_ticket_status(db_path, tid, TicketStatus.agent_running_step)
+
+    with TestClient(app) as client:
+        response = client.post(f"/api/chat/{tid}/command", json={"command": "/status"})
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "already_running"
+    assert _stored_key(db_path, tid) is None
     assert _events(db_path, tid, "chat_session_created") == []
 
 
@@ -293,9 +323,15 @@ def test_command_rotated_key_remints_and_repersists(tmp_path: Path) -> None:
         adapter does on the message after a /compress (session.resume follows the chain)."""
 
         def run_command(
-            self, session_key: str | None, entity_id: str, command: str
+            self,
+            session_key: str | None,
+            entity_id: str,
+            command: str,
+            on_session_key: Callable[[str], None] | None = None,
         ) -> CommandRunResult:
             assert session_key == "pre-compress"  # the stale key is passed through
+            if on_session_key is not None:
+                on_session_key("post-compress")
             return CommandRunResult(
                 reply_text="exec: /status", session_key="post-compress", kind="system"
             )
@@ -322,7 +358,11 @@ def test_command_busy_is_409_already_running(tmp_path: Path) -> None:
             return GatewayStatus(available=True)
 
         def run_command(
-            self, session_key: str | None, entity_id: str, command: str
+            self,
+            session_key: str | None,
+            entity_id: str,
+            command: str,
+            on_session_key: Callable[[str], None] | None = None,
         ) -> CommandRunResult:
             raise PlannerError(
                 ErrorCode.already_running,

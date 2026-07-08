@@ -6,10 +6,11 @@ first-reply race."""
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from sqlite3 import Connection
 
+import pytest
 from fastapi.testclient import TestClient
 
 from planner.chat import service
@@ -244,9 +245,16 @@ def test_chat_stream_persists_session_before_first_token(tmp_path: Path) -> None
 
     class InspectingGateway:
         def stream(
-            self, session_key: str | None, entity_id: str, text: str, mode: str
+            self,
+            session_key: str | None,
+            entity_id: str,
+            text: str,
+            mode: str,
+            on_session_key: Callable[[str], None] | None = None,
         ) -> Iterator[ChatStreamChunk]:
             assert session_key is None
+            if on_session_key is not None:
+                on_session_key("early-key")
             yield ChatStreamChunk(type="session", session_key="early-key")
             assert _stored_key(db_path, "tickets", entity_id) == "early-key"
             yield ChatStreamChunk(type="token", text="ready")
@@ -400,7 +408,13 @@ def test_chat_send_lost_race_adopts_winner_key_no_event(tmp_path: Path) -> None:
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def send(self, session_key: str | None, entity_id: str, text: str) -> ChatSendResult:
+        def send(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            text: str,
+            on_session_key: Callable[[str], None] | None = None,
+        ) -> ChatSendResult:
             other = connect(str(db_path))
             try:
                 other.execute("BEGIN IMMEDIATE")
@@ -421,6 +435,53 @@ def test_chat_send_lost_race_adopts_winner_key_no_event(tmp_path: Path) -> None:
 
     assert result.session_key == "winner-key"
     assert _stored_key(db_path, "tickets", tid) == "winner-key"
+    assert _events(db_path, tid, "chat_session_created") == []
+
+
+def test_chat_send_rejects_if_worker_claims_before_first_prompt(tmp_path: Path) -> None:
+    db_path = tmp_path / "planning-test.db"
+    boot = connect(str(db_path))
+    create_schema(boot)
+    boot.close()
+    tid = _ticket(db_path)
+
+    class WorkerClaimsGateway:
+        prompted = False
+
+        def status(self) -> GatewayStatus:
+            return GatewayStatus(available=True)
+
+        def send(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            text: str,
+            on_session_key: Callable[[str], None] | None = None,
+        ) -> ChatSendResult:
+            other = connect(str(db_path))
+            try:
+                other.execute(
+                    "UPDATE tickets SET ticket_status = ? WHERE id = ?",
+                    (TicketStatus.agent_running_step.value, entity_id),
+                )
+            finally:
+                other.close()
+            if on_session_key is not None:
+                on_session_key("human-key")
+            self.prompted = True
+            return ChatSendResult(reply_text="echo: x", session_key="human-key")
+
+    gateway = WorkerClaimsGateway()
+    conn = connect(str(db_path))
+    try:
+        with pytest.raises(PlannerError) as exc_info:
+            service.send(conn, gateway, tid, "x", 0)
+    finally:
+        conn.close()
+
+    assert exc_info.value.code == ErrorCode.already_running
+    assert gateway.prompted is False
+    assert _stored_key(db_path, "tickets", tid) is None
     assert _events(db_path, tid, "chat_session_created") == []
 
 
@@ -448,8 +509,16 @@ def test_chat_send_stale_session_remints_and_repersists(tmp_path: Path) -> None:
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def send(self, session_key: str | None, entity_id: str, text: str) -> ChatSendResult:
+        def send(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            text: str,
+            on_session_key: Callable[[str], None] | None = None,
+        ) -> ChatSendResult:
             assert session_key == "stale-key"  # the stale key is passed through
+            if on_session_key is not None:
+                on_session_key("fresh-key")
             return ChatSendResult(reply_text="echo: x", session_key="fresh-key")
 
     conn = connect(str(db_path))
@@ -483,6 +552,40 @@ def test_ticket_chat_does_not_change_ticket_status(tmp_path: Path) -> None:
             assert _ticket_status(db_path, tid) == status.value
 
 
+def test_ticket_chat_send_rejects_while_worker_step_running(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    _set_ticket_status(db_path, tid, TicketStatus.agent_running_step)
+
+    with TestClient(app) as client:
+        response = client.post(f"/api/chat/{tid}/send", json={"text": "hello"})
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "already_running"
+    assert _stored_key(db_path, "tickets", tid) is None
+    assert _events(db_path, tid, "chat_session_created") == []
+
+
+def test_ticket_chat_stream_rejects_while_worker_step_running(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    _set_ticket_status(db_path, tid, TicketStatus.agent_running_step)
+
+    with TestClient(app) as client:
+        with client.stream(
+            "POST", f"/api/chat/{tid}/stream", json={"text": "hello", "mode": "message"}
+        ) as response:
+            body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert (
+        'event: error\ndata: {"code":"already_running",'
+        '"message":"ticket worker is already running"'
+    ) in body
+    assert _stored_key(db_path, "tickets", tid) is None
+    assert _events(db_path, tid, "chat_session_created") == []
+
+
 def test_chat_send_busy_is_409_already_running(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)
@@ -491,7 +594,13 @@ def test_chat_send_busy_is_409_already_running(tmp_path: Path) -> None:
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def send(self, session_key: str | None, entity_id: str, text: str) -> ChatSendResult:
+        def send(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            text: str,
+            on_session_key: Callable[[str], None] | None = None,
+        ) -> ChatSendResult:
             raise PlannerError(
                 ErrorCode.already_running,
                 "an agent is already running on this ticket",

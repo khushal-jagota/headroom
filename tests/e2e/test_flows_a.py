@@ -218,6 +218,7 @@ def test_e26_chat_panel_echo_and_offline(
         'section[data-screen="ticket"] [data-chat] [data-chat-input]',
         settled=True,
     )
+    assert pending_page.text_content('[data-ticket-status="empty"]') == "status empty"
     pending_page.route(
         "**/api/chat/*/stream",
         lambda route: route.fulfill(

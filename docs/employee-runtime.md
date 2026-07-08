@@ -31,9 +31,9 @@ move and not already in flight — then fires the employee for each. It never to
 the AI itself. **System B** runs one step through the shared persistent Hermes
 gateway child: it assembles the prompt, resumes (or creates) the ticket's durable
 session, submits one turn, and watches for the single run to end — then writes the
-ticket's new status through the one door. System B is the _sole_ writer of a
-ticket's status, so "the code owns the state, the worker only proposes" holds even
-here.
+runtime status through the ticket data writers. Proposals, approvals, takeover,
+release, and runtime start/finish/error all use those same writer functions, so
+"the code owns the state, the worker only proposes" holds even here.
 
 One employee is one ticket session, so Hermes' per-session busy guard keeps one turn
 in flight for that ticket while the shared child can hold many sessions. An approval
@@ -41,8 +41,8 @@ or an unblock from the web page pokes the poll immediately so the ticket advance
 the moment you act; the timer is only a backstop.
 
 _Code paths:_ `src/planner/runtime/system_a.py`, `src/planner/runtime/system_b.py`,
-`src/planner/minds/` (the employee primitive: the gateway child, the per-session
-queue that keeps one step in flight).
+`src/planner/minds/` (the employee primitive: the shared gateway child and its
+per-session busy guard).
 
 ## Talking to the employee, and running skills
 
@@ -58,7 +58,7 @@ for example, that a skill the worker needed was not installed — marked in ambe
 stands out, with the full message allowed to wrap so nothing is cut off. That turns a
 stuck ticket from a mystery into something you can debug.
 
-## What is proved, and what is next
+## What is proved
 
 The runtime now points at the **`panels-worker`** role skill, and the CLI entry point
 workers use is **`panels`**. The shared gateway can use `PLAN_HERMES_HOME` so it sees
@@ -69,10 +69,17 @@ credentials are still home configuration: the dedicated home needs its own `.env
 `config.yaml` links or files before a live worker can initialize. Ticket chat has
 been smoked against a non-test server and reached the real Hermes worker.
 
-The remaining proof is the full live worker-loop smoke: start the non-test server
-with a fresh DB, put a ticket on today, let System A fire System B, and confirm the
-employee files the expected proposal through `panels`. Until that passes, the loop is
-wired but not fully proven in live use.
+The full live worker loop has also been smoked against fresh non-test databases.
+A ticket placed on today was picked up by System A, run by System B, and parked at
+`awaiting_approval` after the employee filed a proposal. The same durable Hermes
+session history showed the System B prompt and worker reply in ticket chat.
+
+A second smoke used a long poll interval to prove that a settled success-condition
+edit is a wake event, not just something the timer eventually notices: editing the
+success value poked System A and the employee filed the next approach proposal.
+System B persists a created or resumed `chat_session_key` before submitting the
+prompt, so a worker calling `panels worker my-ticket` during its own turn can resolve
+the current ticket immediately.
 
 ## Handoffs
 
@@ -90,8 +97,10 @@ wired but not fully proven in live use.
 - **Automatic daily rollover writing isn't wired.** The morning boundary materializes
   days, but no worker writes the overview yet. Trigger: the boundary-rebuild work
   lands. See `days.md`.
-- **Chat isn't behind the per-step queue** yet, and the reply arrives whole (thinking
-  dots, then the full answer) rather than streaming token by token.
+- **Chat is not queued behind an active worker step.** If you talk to the same
+  employee while its worker step is already running, the send is rejected as
+  `already_running`; history remains readable. The UI still shows thinking dots,
+  then the full answer, rather than streaming token by token.
 - **The "mind" → "employee" rename is unfinished** — some code still calls the
   employee a "mind" (`src/planner/minds/`, `MindQueue`).
 

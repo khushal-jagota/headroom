@@ -211,6 +211,9 @@
             {#each markerFor(detail) as marker}
               <span data-marker={marker}><Chip variant={marker} value={marker} /></span>
             {/each}
+            <span data-ticket-status={detail.ticket_status || "empty"}>
+              <Chip variant="ticket-status" value={detail.ticket_status || "empty"} />
+            </span>
             <button class="pill pill-button" type="button" data-ticket-takeover-toggle onclick={() => void takeover(detail)}>
               {detail.ticket_status === "user_takeover" ? "Release" : "Take over"}
             </button>

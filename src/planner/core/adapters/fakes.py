@@ -3,7 +3,7 @@ OS or the network. Each records its calls and behaves deterministically."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 
 from planner.chat.contracts import (
@@ -79,7 +79,13 @@ class EchoGatewayAdapter:
             messages=tuple(self.histories.get(session_key, ())), session_key=session_key
         )
 
-    def send(self, session_key: str | None, entity_id: str, text: str) -> ChatSendResult:
+    def send(
+        self,
+        session_key: str | None,
+        entity_id: str,
+        text: str,
+        on_session_key: Callable[[str], None] | None = None,
+    ) -> ChatSendResult:
         self.calls.append((session_key, entity_id, text))
         if self.busy:
             raise PlannerError(
@@ -90,17 +96,24 @@ class EchoGatewayAdapter:
         if session_key is None:
             session_key = f"fake-sess-{self.next_session}"
             self.next_session += 1
+        if on_session_key is not None:
+            on_session_key(session_key)
         reply_text = f"echo: {text}"
         self._append_turn(session_key, text, reply_text, "assistant")
         return ChatSendResult(reply_text=reply_text, session_key=session_key)
 
     def stream(
-        self, session_key: str | None, entity_id: str, text: str, mode: str
+        self,
+        session_key: str | None,
+        entity_id: str,
+        text: str,
+        mode: str,
+        on_session_key: Callable[[str], None] | None = None,
     ) -> Iterator[ChatStreamChunk]:
         if mode == "command":
-            result = self.run_command(session_key, entity_id, text)
+            result = self.run_command(session_key, entity_id, text, on_session_key)
         else:
-            send_result = self.send(session_key, entity_id, text)
+            send_result = self.send(session_key, entity_id, text, on_session_key)
             result = CommandRunResult(
                 reply_text=send_result.reply_text,
                 session_key=send_result.session_key,
@@ -123,7 +136,11 @@ class EchoGatewayAdapter:
         return CANNED_CATALOG
 
     def run_command(
-        self, session_key: str | None, entity_id: str, command: str
+        self,
+        session_key: str | None,
+        entity_id: str,
+        command: str,
+        on_session_key: Callable[[str], None] | None = None,
     ) -> CommandRunResult:
         self.command_calls.append((session_key, entity_id, command))
         if self.busy:
@@ -135,6 +152,8 @@ class EchoGatewayAdapter:
         if session_key is None:
             session_key = f"fake-sess-{self.next_session}"
             self.next_session += 1
+        if on_session_key is not None:
+            on_session_key(session_key)
         parts = command.strip().split(maxsplit=1)
         token = parts[0].lower() if parts else ""
         name = CANNED_CATALOG.canon.get(token, token)
@@ -167,11 +186,22 @@ class OfflineGatewayAdapter:
     def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
         raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
 
-    def send(self, session_key: str | None, entity_id: str, text: str) -> ChatSendResult:
+    def send(
+        self,
+        session_key: str | None,
+        entity_id: str,
+        text: str,
+        on_session_key: Callable[[str], None] | None = None,
+    ) -> ChatSendResult:
         raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
 
     def stream(
-        self, session_key: str | None, entity_id: str, text: str, mode: str
+        self,
+        session_key: str | None,
+        entity_id: str,
+        text: str,
+        mode: str,
+        on_session_key: Callable[[str], None] | None = None,
     ) -> Iterator[ChatStreamChunk]:
         raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
 
@@ -179,6 +209,10 @@ class OfflineGatewayAdapter:
         raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
 
     def run_command(
-        self, session_key: str | None, entity_id: str, command: str
+        self,
+        session_key: str | None,
+        entity_id: str,
+        command: str,
+        on_session_key: Callable[[str], None] | None = None,
     ) -> CommandRunResult:
         raise PlannerError(ErrorCode.gateway_offline, "gateway offline")

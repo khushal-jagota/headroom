@@ -9,11 +9,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from planner.chat import service as chat_service
 from planner.core.clock import RealClock
 from planner.core.contracts import EventKind
 from planner.core.db import connect, create_schema
 from planner.core.events import read_events_since
 from planner.minds.fake import FakeGateway, Reply, ev
+from planner.minds.runner import OnEvent, RunResult
 from planner.minds.shared_gateway import SharedGateway
 from planner.runtime import readiness
 from planner.runtime.system_b import SystemB
@@ -138,6 +140,16 @@ def _system_b(db_path: str, fake: FakeGateway) -> SystemB:
     return SystemB(db_path, RealClock(), gateway=gateway)
 
 
+def _gateway(fake: FakeGateway) -> SharedGateway:
+    return SharedGateway(
+        hermes_python=HERMES_PY,
+        home=HOME,
+        worker_role=ROLE,
+        spawn=fake.spawn,
+        base_env={},
+    )
+
+
 def test_kickoff_parked_proposal_awaits_approval(tmp_path: Path) -> None:
     db = _db(tmp_path)
     tid = _new_ticket(db)
@@ -195,6 +207,189 @@ def test_complete_with_no_proposal_is_empty_not_errored(tmp_path: Path) -> None:
     assert [e["ticket_status"] for e in _status_events(db, tid)] == [
         "agent_running_step",
         "empty",
+    ]
+
+
+def test_worker_step_prompt_and_reply_are_visible_in_chat_history(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+    prompt = "work this ticket now"
+    fake = FakeGateway(
+        {
+            "session.create": [_create_reply()],
+            "prompt.submit": [
+                _submit_reply(
+                    ev(
+                        "message.complete",
+                        LIVE_SID,
+                        {"text": "worker reply", "usage": {}, "status": "complete"},
+                    )
+                )
+            ],
+            "session.resume": [
+                Reply(
+                    result={
+                        "session_id": LIVE_SID,
+                        "resumed": STORED_KEY,
+                        "messages": [
+                            {"role": "user", "content": prompt, "created_at": 1},
+                            {"role": "assistant", "content": "worker reply", "created_at": 2},
+                        ],
+                    }
+                )
+            ],
+        }
+    )
+    gateway = _gateway(fake)
+    sb = SystemB(db, RealClock(), gateway=gateway)
+    try:
+        sb.set_off(tid, ROLE, prompt)
+        assert sb.wait_idle(10.0)
+        conn = connect(db)
+        try:
+            history = chat_service.history(conn, gateway, tid, 0)
+        finally:
+            conn.close()
+    finally:
+        gateway.shutdown()
+
+    submit_frame = next(frame for frame in fake.sent if frame.get("method") == "prompt.submit")
+    assert submit_frame["params"]["text"] == prompt
+    assert _read(db, tid).chat_session_key == STORED_KEY
+    assert [(msg.role, msg.text) for msg in history.messages] == [
+        ("user", prompt),
+        ("assistant", "worker reply"),
+    ]
+
+
+def test_created_session_key_is_queryable_before_prompt_submit(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+
+    class InspectingFake(FakeGateway):
+        def send(self, line: str) -> None:
+            frame = json.loads(line)
+            if frame.get("method") == "prompt.submit":
+                conn = connect(db)
+                try:
+                    assert tickets_data.read_ticket_by_session_key(conn, STORED_KEY).id == tid
+                finally:
+                    conn.close()
+            super().send(line)
+
+    fake = InspectingFake(_create_script(_complete_ev()))
+    sb = _system_b(db, fake)
+
+    sb.set_off(tid, ROLE, "step")
+    assert sb.wait_idle(10.0)
+
+    assert _read(db, tid).chat_session_key == STORED_KEY
+
+
+def test_worker_does_not_prompt_if_session_key_claim_is_lost(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+
+    class ClaimLostGateway:
+        prompted = False
+
+        def run_ticket_step(
+            self,
+            session_key: str | None,
+            prompt_text: str,
+            on_event: OnEvent | None = None,
+            on_session_key: Callable[[str], None] | None = None,
+        ) -> RunResult:
+            conn = connect(db)
+            try:
+                tickets_data.take_over_ticket(conn, tid, now=0)
+            finally:
+                conn.close()
+            if on_session_key is not None:
+                on_session_key(STORED_KEY)
+            self.prompted = True
+            return RunResult("complete", "ok", None, STORED_KEY, None)
+
+    gateway = ClaimLostGateway()
+    sb = SystemB(db, RealClock(), gateway=gateway)  # type: ignore[arg-type]
+    sb.set_off(tid, ROLE, "step")
+    assert sb.wait_idle(10.0)
+
+    ticket = _read(db, tid)
+    assert gateway.prompted is False
+    assert ticket.ticket_status == TicketStatus.user_takeover
+    assert ticket.chat_session_key is None
+
+
+def test_worker_rechecks_existing_session_key_ownership_before_prompt(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+    _set_key(db, tid, STORED_KEY)
+
+    class ClaimLostGateway:
+        prompted = False
+
+        def run_ticket_step(
+            self,
+            session_key: str | None,
+            prompt_text: str,
+            on_event: OnEvent | None = None,
+            on_session_key: Callable[[str], None] | None = None,
+        ) -> RunResult:
+            assert session_key == STORED_KEY
+            conn = connect(db)
+            try:
+                tickets_data.take_over_ticket(conn, tid, now=0)
+            finally:
+                conn.close()
+            if on_session_key is not None:
+                on_session_key(STORED_KEY)
+            self.prompted = True
+            return RunResult("complete", "ok", None, STORED_KEY, None)
+
+    gateway = ClaimLostGateway()
+    sb = SystemB(db, RealClock(), gateway=gateway)  # type: ignore[arg-type]
+    sb.set_off(tid, ROLE, "step")
+    assert sb.wait_idle(10.0)
+
+    ticket = _read(db, tid)
+    assert gateway.prompted is False
+    assert ticket.ticket_status == TicketStatus.user_takeover
+    assert ticket.chat_session_key == STORED_KEY
+
+
+def test_worker_error_does_not_overwrite_lost_ownership(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+
+    class ErrorAfterTakeoverGateway:
+        def run_ticket_step(
+            self,
+            session_key: str | None,
+            prompt_text: str,
+            on_event: OnEvent | None = None,
+            on_session_key: Callable[[str], None] | None = None,
+        ) -> RunResult:
+            if on_session_key is not None:
+                on_session_key(STORED_KEY)
+            conn = connect(db)
+            try:
+                tickets_data.take_over_ticket(conn, tid, now=0)
+            finally:
+                conn.close()
+            return RunResult("errored", "", None, STORED_KEY, "boom")
+
+    gateway = ErrorAfterTakeoverGateway()
+    sb = SystemB(db, RealClock(), gateway=gateway)  # type: ignore[arg-type]
+    sb.set_off(tid, ROLE, "step")
+    assert sb.wait_idle(10.0)
+
+    ticket = _read(db, tid)
+    assert ticket.ticket_status == TicketStatus.user_takeover
+    assert ticket.chat_session_key == STORED_KEY
+    assert [e["ticket_status"] for e in _status_events(db, tid)] == [
+        "agent_running_step",
+        "user_takeover",
     ]
 
 

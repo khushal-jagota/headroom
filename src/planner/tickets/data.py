@@ -135,6 +135,31 @@ def _persist_ticket_chat_session_key(
     )
 
 
+def claim_running_step_chat_session_key(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    session_key: str,
+    now: int,
+) -> Ticket:
+    """Claim the durable Hermes session key for the active worker step."""
+    with _txn(conn):
+        ticket = _load_ticket(conn, ticket_id)
+        if ticket.chat_session_key == session_key:
+            return ticket
+        if ticket.ticket_status is not TicketStatus.agent_running_step:
+            return ticket
+        _persist_ticket_chat_session_key(conn, ticket_id, session_key, now)
+        append_event(
+            conn,
+            ticket_id,
+            EventKind.chat_session_created,
+            {"session_key": session_key},
+            now,
+        )
+        return _load_ticket(conn, ticket_id)
+
+
 def create_ticket(
     conn: sqlite3.Connection,
     *,
@@ -275,6 +300,22 @@ def mark_run_errored(
         _load_ticket(conn, ticket_id)
         _persist_ticket_chat_session_key(conn, ticket_id, session_key, now)
         _write_ticket_status(conn, ticket_id, TicketStatus.errored, now, error=error)
+        return _load_ticket(conn, ticket_id)
+
+
+def mark_run_errored_if_still_running_step(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    error: str,
+    session_key: str | None | _Unset = _UNSET,
+    now: int,
+) -> Ticket:
+    with _txn(conn):
+        ticket = _load_ticket(conn, ticket_id)
+        if ticket.ticket_status is TicketStatus.agent_running_step:
+            _persist_ticket_chat_session_key(conn, ticket_id, session_key, now)
+            _write_ticket_status(conn, ticket_id, TicketStatus.errored, now, error=error)
         return _load_ticket(conn, ticket_id)
 
 

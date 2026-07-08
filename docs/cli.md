@@ -24,7 +24,7 @@ human's web page. A worker can propose and record; it can never resolve.
   remove-ticket`**, **`link add / rm`** — read and edit those objects.
 - **`queue approvals / overdue`** — read-only views of what waits on the human and
   what's past its deadline.
-- **`serve`** — run the server in the foreground.
+- **`serve`** — run the server and background worker runtime in the foreground.
 
 _Code paths:_ `src/planner/cli/main.py` (the verbs), `src/planner/cli/http.py`
 (the HTTP call, output, and exit codes).

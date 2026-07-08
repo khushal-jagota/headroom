@@ -613,3 +613,32 @@ message placeholder before the first streamed token arrived. The fix is in the c
 turn should render only the thinking indicator until there is real assistant text. Implemented
 directly as a small UI repair and covered by a Playwright regression that freezes the stream at
 `message_start`.
+
+## D30 — Worker wakeups and session identity are runtime contracts
+
+Editing a settled field value, including success, is a readiness-changing user action. It should
+poke System A just like approving, changing scope, dropping/releasing takeover, or removing a link;
+the timer is only a backstop, not the main UX. System B must also persist a created or resumed
+`chat_session_key` before it submits the worker prompt, because the worker can call
+`panels worker my-ticket` during that same turn and needs its session key to be queryable already.
+While `ticket_status=agent_running_step`, that worker step owns the ticket session: human chat sends
+and commands return `already_running` rather than creating a parallel first session; history remains
+readable. Finally, the ticket UI should expose durable `ticket_status` directly so the owner can see
+whether a ticket is empty, running, parked for approval, taken over, or errored without reading logs.
+
+## D31 — Worker ownership must be checked at prompt and settle boundaries
+
+System B ownership is not established merely by having a durable session key. The ticket must still
+be at `ticket_status=agent_running_step` at the pre-prompt session callback, even when the gateway
+resumes the exact same stored key. If a user takes over or a proposal parks the ticket before the
+worker settles, System B must not overwrite that status on error; error settlement now uses a guarded
+writer that marks `errored` only while the ticket is still `agent_running_step`. This keeps human
+takeover and parked approval stronger than late worker completion/error cleanup.
+
+## D32 — `panels serve` remains the startup command
+
+The owner clarified that `planner serve` was a misstatement; `panels serve` is the intended startup
+command. Do not install a separate `planner` console script. The `serve` command remains the one
+startup path: it creates the DB and logs directories, builds the FastAPI app, provisions planner
+role skills into `PLAN_HERMES_HOME`, starts the shared gateway-backed runtime in non-test mode, and
+serves the web UI/API.

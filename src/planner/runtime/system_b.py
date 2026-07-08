@@ -18,7 +18,7 @@ from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.minds.shared_gateway import SharedGateway, SharedGatewayBusy
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import Ticket
+from planner.tickets.contracts import Ticket, TicketStatus
 
 _log = logging.getLogger(__name__)
 
@@ -27,6 +27,10 @@ _log = logging.getLogger(__name__)
 # gap must not run a stale prompt. Kept as an injected guard so System B owns no readiness
 # logic and W3a's bare-set_off tests (guard=None) are unchanged.
 RunGuard = Callable[[sqlite3.Connection, Ticket], bool]
+
+
+class _WorkerSessionClaimLost(Exception):
+    """The ticket stopped being the active worker step before the prompt started."""
 
 
 @dataclass
@@ -105,42 +109,59 @@ class SystemB:
             if pre is None:
                 _log.info("system B skipped a no-longer-runnable ticket (ticket=%s)", ticket_id)
                 return
-            try:
-                result = self._gateway.run_ticket_step(pre.chat_session_key, prompt, None)
-            except SharedGatewayBusy as exc:
-                tickets_data.finish_run_if_still_running_step(
-                    conn, ticket_id, session_key=exc.session_key, now=now
+            current_session_key = pre.chat_session_key
+
+            def persist_session_key(session_key: str) -> None:
+                nonlocal current_session_key
+                updated = tickets_data.claim_running_step_chat_session_key(
+                    conn, ticket_id, session_key=session_key, now=now
                 )
+                if (
+                    updated.ticket_status is not TicketStatus.agent_running_step
+                    or updated.chat_session_key != session_key
+                ):
+                    raise _WorkerSessionClaimLost
+                current_session_key = updated.chat_session_key
+
+            def finish_running_step(session_key: str | None) -> None:
+                if session_key is None:
+                    tickets_data.finish_run_if_still_running_step(conn, ticket_id, now=now)
+                else:
+                    tickets_data.finish_run_if_still_running_step(
+                        conn, ticket_id, session_key=session_key, now=now
+                    )
+
+            def mark_errored(error: str, session_key: str | None) -> None:
+                if session_key is None:
+                    tickets_data.mark_run_errored_if_still_running_step(
+                        conn, ticket_id, error=error, now=now
+                    )
+                else:
+                    tickets_data.mark_run_errored_if_still_running_step(
+                        conn, ticket_id, error=error, session_key=session_key, now=now
+                    )
+
+            try:
+                result = self._gateway.run_ticket_step(
+                    pre.chat_session_key, prompt, None, on_session_key=persist_session_key
+                )
+            except SharedGatewayBusy as exc:
+                finish_running_step(exc.session_key or current_session_key)
+                return
+            except _WorkerSessionClaimLost:
+                _log.info("system B skipped an unowned worker session (ticket=%s)", ticket_id)
+                finish_running_step(current_session_key)
                 return
             except Exception as exc:  # never leave the ticket at agent_running_step
                 _log.exception("system B run crashed (ticket=%s)", ticket_id)
-                tickets_data.mark_run_errored(
-                    conn,
-                    ticket_id,
-                    error=f"system B run crashed: {exc}",
-                    session_key=pre.chat_session_key,
-                    now=now,
-                )
+                mark_errored(f"system B run crashed: {exc}", current_session_key)
                 return
+            current_session_key = result.session_key or current_session_key
             if result.status == "complete":
-                tickets_data.finish_run_if_still_running_step(
-                    conn, ticket_id, session_key=result.session_key, now=now
-                )
+                finish_running_step(current_session_key)
             elif result.status == "interrupted":
-                tickets_data.mark_run_errored(
-                    conn,
-                    ticket_id,
-                    error="run interrupted",
-                    session_key=result.session_key,
-                    now=now,
-                )
+                mark_errored("run interrupted", current_session_key)
             else:
-                tickets_data.mark_run_errored(
-                    conn,
-                    ticket_id,
-                    error=result.error or "gateway run failed",
-                    session_key=result.session_key,
-                    now=now,
-                )
+                mark_errored(result.error or "gateway run failed", current_session_key)
         finally:
             conn.close()

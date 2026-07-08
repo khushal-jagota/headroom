@@ -3,7 +3,102 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
-## Current work cycle (2026-07-08): chat pending placeholder cleanup
+## Current work cycle (2026-07-08): worker poll/chat propagation investigation
+
+Owner concern: the worker poll does not appear to drive the intended UX. Changing a settled success
+condition appears to do nothing, and the worker wake message that should be visible in ticket chat
+history is not visible.
+
+The first pass read `docs/employee-runtime.md`, `docs/chat.md`,
+`src/planner/runtime/system_a.py`, `src/planner/runtime/system_b.py`,
+`src/planner/runtime/readiness.py`, `src/planner/tickets/api.py`,
+`src/planner/chat/service.py`, `src/planner/minds/shared_gateway.py`,
+`web/src/components/ChatPanel.svelte`, and the runtime/chat tests.
+
+Current intended-behavior model:
+
+- System A polls only tickets on today's day and only those whose durable `ticket_status` is `empty`.
+- Readiness additionally requires a real next gating field, no parked proposal on that gating field,
+  scope that permits the next proposal, and no open blocker.
+- Readiness-changing human actions should poke System A immediately; the timer is only a backstop.
+- System B re-checks readiness at execution time, writes `agent_running_step`, sends exactly one
+  next-step prompt into the ticket's durable Hermes session, then clears to `empty` or parks at
+  `awaiting_approval` if the worker filed a proposal.
+- The same durable Hermes session is the ticket chat source, so worker-step prompts/replies should
+  appear in `/api/chat/{ticket_id}/history` and therefore in the ticket chat rail after event-driven
+  invalidation/refetch.
+
+Changes made in this cycle:
+
+- `PUT /api/tickets/{id}/value/{field}` now takes `SystemA` and pokes it after a successful settled
+  field edit. This makes success-condition edits wake the worker immediately instead of waiting for
+  the timer.
+- System B now persists a newly created or resumed `chat_session_key` as soon as the gateway has it,
+  before `prompt.submit`. That closes the identity race where a live worker could call
+  `panels worker my-ticket` during the turn and briefly get 404 for its own fresh session key.
+- A read-only Codex review found a second first-session race: a human chat could create a separate
+  ticket session while System B was claiming the worker's first key. Accepted fix: active worker
+  steps own the ticket session, so chat sends and commands now return `already_running` while
+  `ticket_status=agent_running_step`; history remains readable.
+- A follow-up Codex review found two System B ownership holes. Accepted fixes: the worker callback
+  now re-checks ownership even when resuming the same stored session key, and System B error
+  settlement uses a guarded writer that only marks `errored` if the ticket is still
+  `agent_running_step`. A second read-only Codex review reported no violations.
+- The ticket page header now always shows the durable `ticket_status`, so `empty`,
+  `agent_running_step`, `awaiting_approval`, `user_takeover`, and `errored` are visible in the UI.
+- The owner clarified that `planner serve` was a misstatement. `panels serve` remains the only
+  console startup command; packaging now has a regression test that `panels` is installed and
+  `planner` is not. A non-test isolated startup smoke verified that the serve path serves
+  `/api/meta` and `/`, provisions the `panels` and `panels-worker` role skills into
+  `PLAN_HERMES_HOME`, and creates the dispatcher lock for System A. The latest smoke used
+  `.venv/bin/panels serve` directly after reinstalling the package and confirming `.venv/bin/planner`
+  is absent.
+- Tests now cover value-edit wakeups, early session-key lookup, System B prompt/reply visibility
+  through ticket chat history, chat rejection while a worker step is active, worker ownership loss
+  before prompt submit, guarded error settlement, the `panels` console-script contract,
+  and the ticket status chip in the existing chat e2e.
+
+Live non-test smokes:
+
+- Fresh server on port 8892 with an isolated DB: a today ticket advanced from `empty` to
+  `awaiting_approval`; the event log included `agent_running_step`, `chat_session_created`,
+  `proposal_filed`, and the parked status; `/api/chat/{ticket}/history` returned the System B prompt
+  and worker reply.
+- Long-timer server on port 8893 with `PLAN_TICK_SECONDS=120`: adding a ticket to today directly did
+  not fire within five seconds, then editing its settled success value through the API poked System A
+  immediately and produced an approach proposal. The worker's by-session identity lookup returned
+  200 during the active turn.
+
+Verification: focused unit/runtime checks, Svelte check/test/build, ruff on touched files,
+`git diff --check`, two read-only Codex reviews with all findings accepted and fixed, the live
+worker smokes, the isolated non-test serve startup smoke, and the focused
+`test_cli_entrypoints.py` check passed. Final `./verify` passed on 2026-07-08 after removing the
+mistaken `planner` alias: ruff, mypy,
+146 unit tests, compile/build checks, frontend check/build/test, and 19 e2e tests all passed. The
+only remaining diagnostics are the pre-existing three Svelte initial-value warnings in
+`TicketRoute.svelte`.
+
+## Prior work cycle (2026-07-08): verify command review
+
+Owner concern: full `./verify` is too heavy for the way it is being used after every small change.
+No code change has been made in this cycle. The investigation is reading the current verify script,
+the e2e harness, and the latest stored JUnit timings rather than re-running the full gate.
+
+Current finding: `./verify` is still the right completeness claim, but it is the wrong inner-loop
+command. The script is a single serial gate: skip-scan, ruff, mypy, all unit tests, Python/assets
+build check, Svelte check/build/test, then all e2e tests. Last stored timings show unit tests at
+about 2.9s and e2e at about 23s; the e2e harness starts a fresh `panels serve` subprocess and temp
+SQLite DB for each test, which is good isolation but a real fixed cost.
+
+Current hypothesis: keep `./verify` exhaustive and final-only, then add a first-class fast
+verification path for development and ticket implementation. The fast path should run the skip-scan,
+format/static checks, relevant focused tests, and only the frontend/e2e slice touched by the diff.
+Full `./verify` should run after integration or before claiming done, not after every edit.
+
+Immediate next step: agree on the policy and then implement the smallest command/docs change that
+makes the intended workflow obvious.
+
+## Prior work cycle (2026-07-08): chat pending placeholder cleanup
 
 User-reported issue: the ticket chat showed `(none)`/`(non)` above the three thinking dots while a
 message was pending. Root cause: `ChatPanel.svelte` adds an empty planner reply slot before the
@@ -16,8 +111,11 @@ planner message only after it has non-whitespace text, so the pre-token state sh
 intercepting `/api/chat/*/stream` and holding the stream at `message_start`, then asserting there is
 no planner message and no `(none)` text while pending.
 
-Verification status: implementation is staged in the worktree; focused e2e and full `./verify` have
-not run yet in this cycle.
+Verification status: focused
+`.venv/bin/pytest tests/e2e/test_flows_a.py::test_e26_chat_panel_echo_and_offline -q` passed.
+Fresh `./verify` passed after the fix: ruff, mypy, 132 unit tests, compile/static checks,
+Svelte check/build/test, and 19 e2e tests all passed. The remaining Svelte warnings are the known
+three `TicketRoute.svelte` initial-`id` capture warnings.
 
 ## Where we are (2026-07-08): Ticket chat history reload implemented
 

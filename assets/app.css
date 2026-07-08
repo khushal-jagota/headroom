@@ -299,6 +299,25 @@ textarea {
   color: var(--text-muted);
 }
 
+.chip--ticket-status {
+  background: transparent;
+  color: var(--text-muted);
+  border-color: var(--text-faint);
+}
+
+.chip--ticket-status[data-value="agent_running_step"],
+.chip--ticket-status[data-value="errored"] {
+  background: var(--accent-surface);
+  color: var(--accent-text);
+  border-color: var(--accent-bright);
+}
+
+.chip--ticket-status[data-value="awaiting_approval"] {
+  background: var(--surface-overlay);
+  color: var(--text-strong);
+  border-color: var(--text-muted);
+}
+
 .chip--project {
   background: transparent;
   color: var(--text-muted);
@@ -2334,4 +2353,3 @@ details.fsec[open] > summary .fsec-chev::before {
   margin-top: 0;
   justify-content: space-between;
 }
-

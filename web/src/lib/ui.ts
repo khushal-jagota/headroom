@@ -74,6 +74,17 @@ export function markerLabel(value: string): string {
   return labels[value] || value;
 }
 
+export function ticketStatusLabel(value: string): string {
+  const labels: Record<string, string> = {
+    empty: "empty",
+    agent_running_step: "running step",
+    awaiting_approval: "awaiting approval",
+    user_takeover: "user takeover",
+    errored: "errored"
+  };
+  return `status ${labels[value] || value.replace(/_/g, " ")}`;
+}
+
 export function formatUnix(seconds: unknown): string {
   if (seconds === null || seconds === undefined) return "";
   return new Date(Number(seconds) * 1000).toLocaleString();

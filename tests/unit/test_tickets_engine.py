@@ -127,6 +127,64 @@ def test_ticket_status_transitions(
     assert status_events[-1].payload == {"ticket_status": "errored", "error": "boom"}
 
 
+def test_claim_running_step_chat_session_key_logs_lookup_event(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    t = _create(tmp_db, cfg, fake_clock)
+    data.start_run_if_runnable(tmp_db, t.id, guard=None, now=now)
+
+    updated = data.claim_running_step_chat_session_key(
+        tmp_db, t.id, session_key="sess-early", now=now
+    )
+
+    assert updated.chat_session_key == "sess-early"
+    assert data.read_ticket_by_session_key(tmp_db, "sess-early").id == t.id
+    events = _events(tmp_db, cfg, t.id, EventKind.chat_session_created)
+    assert [event.payload for event in events] == [{"session_key": "sess-early"}]
+
+
+def test_claim_running_step_chat_session_key_does_not_overwrite_non_running_ticket(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    t = _create(tmp_db, cfg, fake_clock)
+
+    updated = data.claim_running_step_chat_session_key(
+        tmp_db, t.id, session_key="sess-early", now=now
+    )
+
+    assert updated.chat_session_key is None
+    events = _events(tmp_db, cfg, t.id, EventKind.chat_session_created)
+    assert events == []
+
+
+def test_mark_run_errored_if_still_running_step_preserves_lost_ownership(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    t = _create(tmp_db, cfg, fake_clock)
+    data.start_run_if_runnable(tmp_db, t.id, guard=None, now=now)
+    t = data.mark_run_errored_if_still_running_step(
+        tmp_db, t.id, error="boom", session_key="sess-error", now=now
+    )
+    assert t.ticket_status is TicketStatus.errored
+    assert t.chat_session_key == "sess-error"
+
+    t = data.release_ticket(tmp_db, t.id, now=now)
+    t = data.start_run_if_runnable(tmp_db, t.id, guard=None, now=now)
+    assert t is not None
+    t = data.take_over_ticket(tmp_db, t.id, now=now)
+    t = data.mark_run_errored_if_still_running_step(
+        tmp_db, t.id, error="late boom", session_key="sess-late", now=now
+    )
+
+    assert t.ticket_status is TicketStatus.user_takeover
+    assert t.chat_session_key == "sess-error"
+    status_events = _events(tmp_db, cfg, t.id, EventKind.ticket_status_changed)
+    assert status_events[-1].payload == {"ticket_status": "user_takeover"}
+
+
 def test_auto_accepted_proposal_does_not_park_status(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
