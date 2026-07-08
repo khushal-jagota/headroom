@@ -110,6 +110,21 @@ def test_patch_ticket_human_and_agent_priority_succeed(tmp_path: Path) -> None:
     assert _priority(db_path, tid) == "P2"
 
 
+def test_patch_ticket_human_title_and_project_succeed(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    with TestClient(app) as client:
+        title = client.patch(f"/api/tickets/{tid}", json={"title": "Renamed by human"})
+        project = client.patch(f"/api/tickets/{tid}", json={"project": "Vylo"})
+
+    assert title.status_code == 200, title.json()
+    assert title.json()["title"] == "Renamed by human"
+    assert project.status_code == 200, project.json()
+    assert project.json()["project"] == "Vylo"
+    assert _col(db_path, "tickets", tid, "title") == "Renamed by human"
+    assert _col(db_path, "tickets", tid, "project") == "Vylo"
+
+
 def test_patch_ticket_agent_human_only_field_is_forbidden(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)

@@ -33,9 +33,8 @@ from planner.core.authctx import (
 )
 from planner.core.clock import Clock
 from planner.core.config import Config
-from planner.core.contracts import EventKind, JsonDict, LinkKind, Priority, Project
+from planner.core.contracts import JsonDict, LinkKind, Priority, Project
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.events import append_event
 from planner.days.logic.dates import planning_date, resolve_day_id
 from planner.runtime.system_a import SystemA
 from planner.sprints import views as sprints_views
@@ -55,11 +54,9 @@ from planner.tickets.contracts import (
     RecapBody,
     ScopeBody,
     StateBody,
-    Ticket,
     TicketState,
     ValueEditBody,
 )
-from planner.tickets.logic import admission
 
 router = APIRouter()
 
@@ -196,50 +193,6 @@ def _parse_scope_at_cap(raw: str | None) -> AtCap | None:
         raise PlannerError(ErrorCode.scope_invalid, "unknown at_cap", {"at_cap": raw}) from None
 
 
-# --- private gap-fill writers (D2; A1: writer-shaped for relocation) ------------
-
-
-def _set_title(conn: sqlite3.Connection, ticket_id: str, title: str, *,
-               title_max_chars: int, now: int) -> Ticket:
-    admission.validate_title(title, title_max_chars)
-    with txn(conn):
-        ticket = tickets_data.read_ticket(conn, ticket_id)
-        prev = ticket.title
-        conn.execute(
-            "UPDATE tickets SET title = ?, updated_at = ? WHERE id = ?", (title, now, ticket_id)
-        )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.ticket_updated,
-            {"field": "title", "from": prev, "to": title},
-            now,
-        )
-        return tickets_data.read_ticket(conn, ticket_id)
-
-
-def _set_project(conn: sqlite3.Connection, ticket_id: str, project: Project | None, *,
-                 now: int) -> Ticket:
-    with txn(conn):
-        ticket = tickets_data.read_ticket(conn, ticket_id)
-        if ticket.sprint_item_id is not None:
-            raise PlannerError(ErrorCode.validation, "project is derived when parented")
-        prev = ticket.project.value if ticket.project is not None else None
-        new_value = project.value if project is not None else None
-        conn.execute(
-            "UPDATE tickets SET project = ?, updated_at = ? WHERE id = ?",
-            (new_value, now, ticket_id),
-        )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.ticket_updated,
-            {"field": "project", "from": prev, "to": new_value},
-            now,
-        )
-        return tickets_data.read_ticket(conn, ticket_id)
-
-
 # --- ticket routes -------------------------------------------------------------
 
 
@@ -313,7 +266,9 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
     reject_agent_fields(ctx, body, _TICKET_HUMAN_ONLY_FIELDS)
     now = clk.now_unix()
     if "title" in body:
-        _set_title(conn, ticket_id, body["title"], title_max_chars=TITLE_MAX_CHARS, now=now)
+        tickets_data.set_title(
+            conn, ticket_id, title=body["title"], title_max_chars=TITLE_MAX_CHARS, now=now
+        )
     if "priority" in body:
         priority = parse_enum(Priority, body["priority"], "priority")
         tickets_data.set_priority(conn, ticket_id, priority=priority, actor=ctx.actor, now=now)
@@ -323,7 +278,7 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
     if "project" in body:
         project = parse_enum(Project, body["project"], "project") \
             if body["project"] is not None else None
-        _set_project(conn, ticket_id, project, now=now)
+        tickets_data.set_project(conn, ticket_id, project=project, now=now)
     if "sprint_id" in body:
         tickets_data.set_sprint(conn, ticket_id, sprint_id=body["sprint_id"], actor=ctx.actor,
                                 now=now)

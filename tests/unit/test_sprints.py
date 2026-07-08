@@ -26,11 +26,13 @@ from planner.core.events import read_events_since
 from planner.sprints.contracts import ItemStatus
 from planner.sprints.data import (
     accept_item_status,
+    create_idea,
     create_item,
     create_sprint,
     propose_item_status,
     read_item,
     read_sprint,
+    set_sprint_dates,
     transition_item_status,
 )
 from planner.sprints.logic import DateRange, current_sprint_id
@@ -234,3 +236,56 @@ def test_x06_current_sprint_selection() -> None:
     assert current_sprint_id("2026-07-14", [a, d]) == "sp_a"  # inclusive end
     assert current_sprint_id("2026-07-15", [a, d]) == "sp_d"
     assert current_sprint_id("2026-06-30", [a, d]) is None
+
+
+def test_x06_create_idea_writer_logs_event(tmp_db, fake_clock) -> None:
+    now = fake_clock.now_unix()
+    idea = create_idea(
+        tmp_db,
+        title="Maybe later",
+        body="Worth exploring.",
+        project=Project.Vylo,
+        now=now,
+    )
+
+    assert idea["title"] == "Maybe later"
+    assert idea["body"] == "Worth exploring."
+    assert idea["project"] == "Vylo"
+    assert _events(tmp_db, idea["id"], "idea_created") == [
+        {"title": "Maybe later", "source": "api"}
+    ]
+
+
+def test_x06_set_sprint_dates_writer_updates_and_rejects_overlap(tmp_db, fake_clock) -> None:
+    sprint = create_sprint(
+        tmp_db, name="A", date_start="2026-07-01", date_end="2026-07-14", clock=fake_clock
+    )
+    other = create_sprint(
+        tmp_db, name="B", date_start="2026-07-20", date_end="2026-07-22", clock=fake_clock
+    )
+
+    updated = set_sprint_dates(
+        tmp_db,
+        sprint.id,
+        date_start="2026-07-02",
+        date_end="2026-07-15",
+        clock=fake_clock,
+    )
+
+    assert updated.date_start == "2026-07-02"
+    assert updated.date_end == "2026-07-15"
+    assert _events(tmp_db, sprint.id, "sprint_updated") == [
+        {"field": "date_start", "from": "2026-07-01", "to": "2026-07-02"},
+        {"field": "date_end", "from": "2026-07-14", "to": "2026-07-15"},
+    ]
+
+    with pytest.raises(PlannerError) as exc:
+        set_sprint_dates(
+            tmp_db,
+            sprint.id,
+            date_start=None,
+            date_end="2026-07-20",
+            clock=fake_clock,
+        )
+    assert exc.value.code is ErrorCode.sprint_overlap
+    assert exc.value.detail["conflict_id"] == other.id

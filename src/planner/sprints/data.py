@@ -10,7 +10,8 @@ import json
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from typing import NamedTuple
+from datetime import date
+from typing import NamedTuple, cast
 
 from planner.core.clock import Clock
 from planner.core.contracts import EventKind, Priority, Project
@@ -234,6 +235,68 @@ def update_sprint_field(
     return _load_sprint(conn, sprint_id)
 
 
+def set_sprint_dates(
+    conn: sqlite3.Connection,
+    sprint_id: str,
+    *,
+    date_start: str | None,
+    date_end: str | None,
+    clock: Clock,
+) -> Sprint:
+    sprint = _load_sprint(conn, sprint_id)
+    new_start = date_start if date_start is not None else sprint.date_start
+    new_end = date_end if date_end is not None else sprint.date_end
+    for label, value in (("date_start", new_start), ("date_end", new_end)):
+        try:
+            date.fromisoformat(value)
+        except ValueError as exc:
+            raise PlannerError(
+                ErrorCode.validation, f"invalid {label}", {label: value}
+            ) from exc
+    if new_start > new_end:
+        raise PlannerError(
+            ErrorCode.validation,
+            "date_start must not be after date_end",
+            {"date_start": new_start, "date_end": new_end},
+        )
+    others = [
+        DateRange(id=str(r["id"]), date_start=str(r["date_start"]), date_end=str(r["date_end"]))
+        for r in conn.execute(
+            "SELECT id, date_start, date_end FROM sprints WHERE id != ?", (sprint_id,)
+        ).fetchall()
+    ]
+    conflict = find_overlap(new_start, new_end, others)
+    if conflict is not None:
+        raise PlannerError(
+            ErrorCode.sprint_overlap,
+            "sprint dates overlap",
+            {"conflict_id": conflict, "date_start": new_start, "date_end": new_end},
+        )
+    now = clock.now_unix()
+    with _tx(conn):
+        conn.execute(
+            "UPDATE sprints SET date_start = ?, date_end = ?, updated_at = ? WHERE id = ?",
+            (new_start, new_end, now, sprint_id),
+        )
+        if new_start != sprint.date_start:
+            append_event(
+                conn,
+                sprint_id,
+                EventKind.sprint_updated,
+                {"field": "date_start", "from": sprint.date_start, "to": new_start},
+                now,
+            )
+        if new_end != sprint.date_end:
+            append_event(
+                conn,
+                sprint_id,
+                EventKind.sprint_updated,
+                {"field": "date_end", "from": sprint.date_end, "to": new_end},
+                now,
+            )
+    return _load_sprint(conn, sprint_id)
+
+
 # --- sprint-item writers --------------------------------------------------------
 
 
@@ -279,6 +342,32 @@ def create_item(
             now,
         )
     return _load_item(conn, item_id)
+
+
+def create_idea(
+    conn: sqlite3.Connection,
+    *,
+    title: str,
+    body: str,
+    project: Project | None,
+    now: int,
+) -> sqlite3.Row:
+    if not title:
+        raise PlannerError(ErrorCode.validation, "idea title is required", {})
+    idea_id = new_id(ID_PREFIXES["idea"])
+    with _tx(conn):
+        conn.execute(
+            "INSERT INTO ideas (id, title, body, project, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (idea_id, title, body, project.value if project is not None else None, now, now),
+        )
+        append_event(conn, idea_id, EventKind.idea_created, {"title": title, "source": "api"}, now)
+    row = cast(
+        sqlite3.Row | None,
+        conn.execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone(),
+    )
+    assert row is not None
+    return row
 
 
 def update_item_field(

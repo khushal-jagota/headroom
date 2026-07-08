@@ -1,0 +1,1060 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Planning v2 systems</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #f4f6f2;
+      --surface: #fbfbf8;
+      --surface-strong: #edf2ec;
+      --ink: #171a16;
+      --muted: #5d665c;
+      --quiet: #7c8579;
+      --accent: #2f6f5d;
+      --accent-soft: #dce9e3;
+      --warn: #8b5d24;
+      --warn-soft: #f1e6d3;
+      --shadow: 0 12px 32px rgba(21, 35, 27, 0.06);
+      --max: 1180px;
+      font-family:
+        Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      background: var(--page);
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0) 380px),
+        var(--page);
+      line-height: 1.56;
+    }
+
+    a {
+      color: inherit;
+      text-decoration-color: rgba(47, 111, 93, 0.35);
+      text-underline-offset: 0.22em;
+    }
+
+    a:hover {
+      color: var(--accent);
+      text-decoration-color: currentColor;
+    }
+
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.94em;
+      background: rgba(47, 111, 93, 0.1);
+      padding: 0.08rem 0.28rem;
+      border-radius: 5px;
+    }
+
+    .page {
+      width: min(var(--max), calc(100% - 48px));
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 208px minmax(0, 1fr);
+      gap: 56px;
+      padding: 44px 0 80px;
+    }
+
+    .rail {
+      position: sticky;
+      top: 24px;
+      align-self: start;
+      padding: 18px;
+      background: rgba(255, 255, 255, 0.54);
+      backdrop-filter: blur(18px);
+      box-shadow: var(--shadow);
+      border-radius: 8px;
+    }
+
+    .rail strong {
+      display: block;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      color: var(--quiet);
+      margin-bottom: 14px;
+    }
+
+    .rail a {
+      display: block;
+      padding: 8px 0;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.94rem;
+    }
+
+    .rail a[aria-current="true"] {
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    main {
+      min-width: 0;
+    }
+
+    .hero {
+      min-height: 520px;
+      display: grid;
+      grid-template-columns: minmax(0, 0.94fr) minmax(320px, 0.82fr);
+      gap: 48px;
+      align-items: center;
+      padding: 24px 0 56px;
+    }
+
+    .eyebrow {
+      margin: 0 0 18px;
+      font-size: 0.86rem;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      margin-bottom: 20px;
+      max-width: 11ch;
+      font-size: 4.35rem;
+      line-height: 0.98;
+      font-weight: 760;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 58ch;
+      font-size: 1.17rem;
+      color: var(--muted);
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 28px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 34px;
+      padding: 0 12px;
+      background: rgba(255, 255, 255, 0.72);
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .spine {
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      border-radius: 8px;
+      padding: 26px;
+    }
+
+    .spine h2 {
+      margin-bottom: 18px;
+      font-size: 1rem;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .flow {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 12px;
+    }
+
+    .flow li {
+      position: relative;
+      padding: 14px 16px;
+      background: var(--surface-strong);
+      border-radius: 8px;
+    }
+
+    .flow li::after {
+      content: "v";
+      position: absolute;
+      left: 50%;
+      bottom: -17px;
+      transform: translateX(-50%);
+      color: var(--quiet);
+      font-size: 0.78rem;
+    }
+
+    .flow li:last-child::after,
+    .flow .split::after {
+      content: "";
+    }
+
+    .flow strong {
+      display: block;
+      font-size: 0.98rem;
+      line-height: 1.25;
+    }
+
+    .flow span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      background: transparent !important;
+      padding: 0 !important;
+    }
+
+    .split > div {
+      position: relative;
+      padding: 14px 16px;
+      background: var(--surface-strong);
+      border-radius: 8px;
+    }
+
+    .split > div::after {
+      content: "v";
+      position: absolute;
+      left: 50%;
+      bottom: -17px;
+      transform: translateX(-50%);
+      color: var(--quiet);
+      font-size: 0.78rem;
+    }
+
+    section {
+      padding: 48px 0;
+    }
+
+    section > h2 {
+      margin-bottom: 14px;
+      font-size: 2rem;
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+
+    .section-intro {
+      max-width: 74ch;
+      color: var(--muted);
+      margin-bottom: 26px;
+    }
+
+    .question-list,
+    .boundary-list,
+    .deferred-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .question-list li,
+    .boundary-list li,
+    .deferred-list li {
+      display: grid;
+      grid-template-columns: 190px minmax(0, 1fr);
+      gap: 20px;
+      padding: 14px 0;
+      background:
+        linear-gradient(90deg, rgba(47, 111, 93, 0.1), rgba(47, 111, 93, 0) 1px)
+        left bottom / 100% 1px no-repeat;
+    }
+
+    .question-list strong,
+    .boundary-list strong,
+    .deferred-list strong {
+      color: var(--ink);
+    }
+
+    .question-list span,
+    .boundary-list span,
+    .deferred-list span {
+      color: var(--muted);
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: #1c4d40;
+      padding: 9px 14px;
+      font: inherit;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #cfe0d8;
+    }
+
+    .details-stack {
+      display: grid;
+      gap: 10px;
+    }
+
+    details {
+      background: rgba(255, 255, 255, 0.62);
+      border-radius: 8px;
+      overflow: clip;
+    }
+
+    details[open] {
+      background: var(--surface);
+      box-shadow: none;
+    }
+
+    summary {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      padding: 18px 20px;
+      cursor: pointer;
+      list-style: none;
+    }
+
+    summary::-webkit-details-marker {
+      display: none;
+    }
+
+    summary::after {
+      content: "+";
+      color: var(--accent);
+      font-size: 1.2rem;
+      font-weight: 500;
+    }
+
+    details[open] summary::after {
+      content: "-";
+    }
+
+    .number {
+      color: var(--quiet);
+      font-variant-numeric: tabular-nums;
+      font-size: 0.92rem;
+    }
+
+    summary strong {
+      display: block;
+      font-size: 1.05rem;
+    }
+
+    summary span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.95rem;
+      margin-top: 2px;
+    }
+
+    .detail-body {
+      padding: 0 20px 22px 78px;
+      max-width: 82ch;
+      color: var(--muted);
+    }
+
+    .detail-body p:last-child {
+      margin-bottom: 0;
+    }
+
+    .code-paths {
+      margin-top: 18px;
+      color: var(--quiet);
+      font-size: 0.9rem;
+    }
+
+    .friction details {
+      background: rgba(139, 93, 36, 0.09);
+    }
+
+    .friction details[open] {
+      background: var(--surface);
+    }
+
+    .friction summary::after {
+      color: var(--warn);
+    }
+
+    .friction .number {
+      color: var(--warn);
+    }
+
+    footer {
+      padding: 40px 0 0;
+      color: var(--quiet);
+      font-size: 0.92rem;
+    }
+
+    @media (max-width: 920px) {
+      .page {
+        width: min(100% - 30px, 760px);
+        display: block;
+        padding-top: 22px;
+      }
+
+      .rail {
+        position: static;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 14px;
+        overflow-x: visible;
+        margin-bottom: 26px;
+        border-radius: 8px;
+        padding: 14px 16px;
+      }
+
+      .rail strong {
+        display: none;
+      }
+
+      .rail a {
+        white-space: nowrap;
+      }
+
+      .hero {
+        min-height: 0;
+        grid-template-columns: 1fr;
+        gap: 28px;
+        padding-bottom: 28px;
+      }
+
+      h1 {
+        max-width: 12ch;
+        font-size: 3.1rem;
+      }
+
+      .spine {
+        padding: 18px;
+        border-radius: 8px;
+      }
+
+      .question-list li,
+      .boundary-list li,
+      .deferred-list li {
+        grid-template-columns: 1fr;
+        gap: 4px;
+      }
+
+      summary {
+        grid-template-columns: 34px minmax(0, 1fr) auto;
+        gap: 12px;
+        padding: 16px;
+      }
+
+      .detail-body {
+        padding: 0 16px 18px 62px;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .page {
+        width: min(100% - 24px, 520px);
+      }
+
+      h1 {
+        font-size: 2.45rem;
+      }
+
+      section {
+        padding: 34px 0;
+      }
+
+      section > h2 {
+        font-size: 1.62rem;
+      }
+
+      .detail-body {
+        padding-left: 16px;
+      }
+    }
+
+    @media print {
+      body {
+        background: #fff;
+      }
+
+      .page {
+        display: block;
+        width: 100%;
+        padding: 0;
+      }
+
+      .rail,
+      .toolbar {
+        display: none;
+      }
+
+      details {
+        background: transparent;
+        box-shadow: none;
+      }
+
+      details:not([open]) .detail-body {
+        display: block;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <nav class="rail" aria-label="Page sections">
+      <strong>Systems</strong>
+      <a href="#overview" aria-current="true">Overview</a>
+      <a href="#questions">Questions</a>
+      <a href="#systems">Systems</a>
+      <a href="#boundaries">Boundaries</a>
+      <a href="#friction">Friction</a>
+      <a href="#deferred">Deferred</a>
+    </nav>
+
+    <main>
+      <header class="hero" id="overview">
+        <div>
+          <p class="eyebrow">Planning v2</p>
+          <h1>Systems map</h1>
+          <p class="lead">
+            One source of truth, a human approval gate, a worker runtime, and a few
+            places where the boundaries are less clean than the design intent.
+          </p>
+          <div class="meta" aria-label="Document facts">
+            <span class="pill">SQLite is canonical</span>
+            <span class="pill">Events are doorbells</span>
+            <span class="pill">Workers propose</span>
+            <span class="pill">Humans resolve</span>
+          </div>
+        </div>
+
+        <div class="spine" aria-label="System flow">
+          <h2>System spine</h2>
+          <ol class="flow">
+            <li>
+              <strong>Human web page</strong>
+              <span>decisions and edits</span>
+            </li>
+            <li>
+              <strong>FastAPI routes</strong>
+              <span>domain HTTP surfaces</span>
+            </li>
+            <li class="split">
+              <div>
+                <strong>Canonical writers</strong>
+                <span>plain record changes</span>
+              </div>
+              <div>
+                <strong>Resolution engine</strong>
+                <span>ticket gate changes</span>
+              </div>
+            </li>
+            <li>
+              <strong>SQLite records + events</strong>
+              <span>records change; events append</span>
+            </li>
+            <li class="split">
+              <div>
+                <strong>WebSocket doorbell</strong>
+                <span>keyed UI refetch</span>
+              </div>
+              <div>
+                <strong>System A</strong>
+                <span>today readiness poll</span>
+              </div>
+            </li>
+            <li>
+              <strong>System B</strong>
+              <span>one Hermes worker step</span>
+            </li>
+          </ol>
+        </div>
+      </header>
+
+      <section id="questions" aria-labelledby="questions-title">
+        <h2 id="questions-title">Read By Question</h2>
+        <p class="section-intro">
+          Start with the system that owns the question. Then open the details only
+          where the answer needs code paths or boundary notes.
+        </p>
+        <ul class="question-list">
+          <li>
+            <strong>What is true?</strong>
+            <span>Record System. SQLite records are truth; events tell screens to refetch.</span>
+          </li>
+          <li>
+            <strong>Who can decide?</strong>
+            <span>Ticket Gate System. Workers propose; the resolution engine and human approvals settle.</span>
+          </li>
+          <li>
+            <strong>Why did work run?</strong>
+            <span>Employee Runtime. System A finds runnable tickets; System B runs one worker step.</span>
+          </li>
+          <li>
+            <strong>Where is chat?</strong>
+            <span>Hermes Gateway and Chat. The planner stores session keys, not transcripts.</span>
+          </li>
+          <li>
+            <strong>Why did UI update?</strong>
+            <span>Human UI System. Events map to resource keys and cause targeted refetches.</span>
+          </li>
+        </ul>
+      </section>
+
+      <section id="systems" aria-labelledby="systems-title">
+        <h2 id="systems-title">The Systems</h2>
+        <p class="section-intro">
+          Each row names one system, what it owns, and where the code lives.
+        </p>
+        <div class="toolbar" aria-label="System detail controls">
+          <button type="button" data-expand="systems">Expand all</button>
+          <button type="button" data-collapse="systems">Collapse all</button>
+        </div>
+        <div class="details-stack" data-group="systems">
+          <details open>
+            <summary>
+              <span class="number">01</span>
+              <span><strong>The Record System</strong><span>Canonical objects and event doorbells.</span></span>
+            </summary>
+            <div class="detail-body">
+              <p>
+                SQLite stores sprints, sprint items, tickets, days, ideas, links,
+                and events. The intended shape is contracts for records and enums,
+                writer modules for mutations, API files for HTTP, and logic files
+                for pure rules.
+              </p>
+              <p>
+                A write should go through a canonical writer, append an event, and
+                let the UI refetch from the server. Events are append-only. Records
+                are not.
+              </p>
+              <p class="code-paths">
+                Code paths: <code>src/planner/core/db.py</code>,
+                <code>src/planner/core/events.py</code>,
+                <code>src/planner/*/contracts.py</code>,
+                <code>src/planner/*/data.py</code>
+              </p>
+            </div>
+          </details>
+
+          <details>
+            <summary>
+              <span class="number">02</span>
+              <span><strong>The Planning Objects</strong><span>Sprints, items, tickets, days, ideas, and links.</span></span>
+            </summary>
+            <div class="detail-body">
+              <p>
+                Sprints are two-week pushes. Sprint items are larger chunks inside
+                or outside a sprint. Tickets are worker-sized work units. Days are
+                daily overview records and ordered ticket lists. Ideas are loose
+                thoughts that are not work yet.
+              </p>
+              <p>
+                The Board is today's execution board, not an all-ticket inventory.
+                System A starts from the same today membership, then narrows to
+                empty, non-terminal tickets that pass readiness.
+              </p>
+              <p class="code-paths">
+                Code paths: <code>src/planner/sprints/</code>,
+                <code>src/planner/tickets/</code>, <code>src/planner/days/</code>,
+                <code>src/planner/core/links.py</code>
+              </p>
+            </div>
+          </details>
+
+          <details>
+            <summary>
+              <span class="number">03</span>
+              <span><strong>The Ticket Gate System</strong><span>The correctness center.</span></span>
+            </summary>
+            <div class="detail-body">
+              <p>
+                Tickets have two states. <code>state</code> is the work stage:
+                success, approach, plan, progress, review, done, or dropped.
+                <code>ticket_status</code> is runtime control: empty, running,
+                awaiting approval, user takeover, or errored.
+              </p>
+              <p>
+                Workers write proposals to the four fields: success, approach,
+                plan, and result. The resolution engine is the only code that can
+                settle a proposal or advance <code>state</code>. Scope is
+                <code>ceiling</code> plus <code>at_cap</code>; it decides how far a
+                worker may go before the human must approve again.
+              </p>
+              <p class="code-paths">
+                Code paths: <code>src/planner/tickets/contracts.py</code>,
+                <code>src/planner/tickets/logic/machine.py</code>,
+                <code>src/planner/tickets/logic/resolution.py</code>,
+                <code>src/planner/tickets/data.py</code>
+              </p>
+            </div>
+          </details>
+
+          <details>
+            <summary>
+              <span class="number">04</span>
+              <span><strong>The Employee Runtime</strong><span>System A readiness and System B one-step work.</span></span>
+            </summary>
+            <div class="detail-body">
+              <p>
+                System A polls today's tickets whose <code>ticket_status</code> is
+                <code>empty</code>, then applies readiness: not terminal, has a
+                next field, no pending proposal there, not blocked, and not stopped
+                at the scope limit.
+              </p>
+              <p>
+                System B marks the ticket running, resumes or creates its Hermes
+                session, submits one prompt, and settles runtime status when the
+                turn ends. A parked proposal becomes <code>awaiting_approval</code>;
+                auto-accepted work can return to <code>empty</code>.
+              </p>
+              <p class="code-paths">
+                Code paths: <code>src/planner/runtime/readiness.py</code>,
+                <code>src/planner/runtime/system_a.py</code>,
+                <code>src/planner/runtime/system_b.py</code>,
+                <code>src/planner/core/loops.py</code>
+              </p>
+            </div>
+          </details>
+
+          <details>
+            <summary>
+              <span class="number">05</span>
+              <span><strong>The Hermes Gateway System</strong><span>The outside worker process boundary.</span></span>
+            </summary>
+            <div class="detail-body">
+              <p>
+                Hermes is outside the planner. Production startup installs a shared
+                gateway owner on app state. That owner spawns the gateway child
+                lazily on first use. Tests use fake adapters and never call the
+                real gateway.
+              </p>
+              <p>
+                Tickets and days store only a <code>chat_session_key</code>. Hermes
+                owns the transcript. When the planner needs history, it resumes the
+                session lazily and normalizes returned messages.
+              </p>
+              <p class="code-paths">
+                Code paths: <code>src/planner/core/adapters/</code>,
+                <code>src/planner/minds/shared_gateway.py</code>,
+                <code>src/planner/minds/gateway.py</code>,
+                <code>src/planner/minds/config.py</code>
+              </p>
+            </div>
+          </details>
+
+          <details>
+            <summary>
+              <span class="number">06</span>
+              <span><strong>The Chat System</strong><span>Human conversation on the same durable ticket session.</span></span>
+            </summary>
+            <div class="detail-body">
+              <p>
+                Ticket chat and automatic worker steps use the same durable ticket
+                session. System B stores a new or resumed session key before
+                submitting the worker prompt, so worker tools can resolve their
+                ticket during the turn.
+              </p>
+              <p>
+                Human chat sends are rejected while
+                <code>ticket_status=agent_running_step</code>. History stays
+                readable. There is no queue behind the active worker step.
+              </p>
+              <p class="code-paths">
+                Code paths: <code>src/planner/chat/</code>,
+                <code>web/src/components/ChatPanel.svelte</code>
+              </p>
+            </div>
+          </details>
+
+          <details>
+            <summary>
+              <span class="number">07</span>
+              <span><strong>The Human UI System</strong><span>Svelte resource projections.</span></span>
+            </summary>
+            <div class="detail-body">
+              <p>
+                The browser does not keep a canonical client store. Screens
+                subscribe to resources such as <code>ticket:&lt;id&gt;</code>,
+                <code>board</code>, <code>queues</code>, <code>day:today</code>,
+                and <code>sprint:current</code>.
+              </p>
+              <p>
+                WebSocket event batches map to resource keys. The browser refetches
+                only those keys from the server.
+              </p>
+              <p class="code-paths">
+                Code paths: <code>web/src/App.svelte</code>,
+                <code>web/src/routes/</code>,
+                <code>web/src/lib/resources.svelte.ts</code>,
+                <code>web/src/lib/ws.ts</code>,
+                <code>web/src/lib/eventMapping.mjs</code>
+              </p>
+            </div>
+          </details>
+
+          <details>
+            <summary>
+              <span class="number">08</span>
+              <span><strong>The CLI And Authority System</strong><span>Worker and debugging actions without approval power.</span></span>
+            </summary>
+            <div class="detail-body">
+              <p>
+                <code>panels</code> speaks HTTP to the server. It can create, show,
+                list, propose, write notes, set a few ordinary fields, and place
+                tickets on days. It has no accept, approve, scope, takeover,
+                release, or chat authority.
+              </p>
+              <p>
+                The server classifies requests with <code>X-Plan-Actor</code>. No
+                header means human. Any actor header means agent. Human-only routes
+                reject agent-classified requests.
+              </p>
+              <p class="code-paths">
+                Code paths: <code>src/planner/cli/main.py</code>,
+                <code>src/planner/cli/http.py</code>,
+                <code>src/planner/core/authctx.py</code>
+              </p>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <section id="boundaries" aria-labelledby="boundaries-title">
+        <h2 id="boundaries-title">Boundaries That Matter</h2>
+        <p class="section-intro">
+          The repo is understandable because the number of truth-changing doors is
+          small.
+        </p>
+        <ul class="boundary-list">
+          <li>
+            <strong>Resolution engine</strong>
+            <span>Owns ticket field values and ticket <code>state</code> transitions.</span>
+          </li>
+          <li>
+            <strong>Runtime writers</strong>
+            <span>Own <code>ticket_status</code>, the durable state of control.</span>
+          </li>
+          <li>
+            <strong>Canonical writers</strong>
+            <span>Own record mutation and event emission. Most live in domain <code>data.py</code> files.</span>
+          </li>
+          <li>
+            <strong>Hermes</strong>
+            <span>Owns chat transcripts. The planner stores session keys.</span>
+          </li>
+          <li>
+            <strong>Frontend</strong>
+            <span>Owns rendering and local drafts only.</span>
+          </li>
+          <li>
+            <strong>CLI</strong>
+            <span>Is an action surface, not a decision surface.</span>
+          </li>
+        </ul>
+      </section>
+
+      <section class="friction" id="friction" aria-labelledby="friction-title">
+        <h2 id="friction-title">System-Level Friction</h2>
+        <p class="section-intro">
+          These are boundary problems, not local style problems.
+        </p>
+        <div class="toolbar" aria-label="Friction detail controls">
+          <button type="button" data-expand="friction">Expand all</button>
+          <button type="button" data-collapse="friction">Collapse all</button>
+        </div>
+        <div class="details-stack" data-group="friction">
+          <details open>
+            <summary>
+              <span class="number">01</span>
+              <span><strong>Some canonical writers live outside expected writer modules.</strong><span>API and chat service exceptions weaken the module rule.</span></span>
+            </summary>
+            <div class="detail-body">
+              <p>
+                Ideas and sprint-date edits live in <code>src/planner/sprints/api.py</code>.
+                Ticket title and project edits live in <code>src/planner/tickets/api.py</code>.
+                Chat session-key writes live in <code>src/planner/chat/service.py</code>
+                because they coordinate with the gateway.
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>
+              <span class="number">02</span>
+              <span><strong>Configuration still carries retired runtime ideas.</strong><span>Loaded knobs imply machinery that no longer exists.</span></span>
+            </summary>
+            <div class="detail-body">
+              <p>
+                <code>claim_ttl_seconds</code>, <code>max_runs</code>,
+                <code>failure_limit</code>, and <code>run_max_seconds</code> remain
+                in config, but the runtime no longer has claims, run rows, a failure
+                breaker, or a per-run wall-clock failure.
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>
+              <span class="number">03</span>
+              <span><strong>There are two Hermes run primitives.</strong><span>Production uses one; tests still cover another.</span></span>
+            </summary>
+            <div class="detail-body">
+              <p>
+                Production uses <code>SharedGateway</code>. <code>minds/runner.py</code>
+                still implements a per-run child primitive. It should be marked as a
+                smoke/test primitive or retired.
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>
+              <span class="number">04</span>
+              <span><strong>Blocking exists in two shapes.</strong><span>Runtime tickets and sprint items model blockage differently.</span></span>
+            </summary>
+            <div class="detail-body">
+              <p>
+                Tickets use <code>links.kind='blocks'</code> for runtime readiness.
+                Sprint items use a <code>blocked_by</code> JSON list when item status
+                is blocked. Both make sense locally; together they add mental load.
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>
+              <span class="number">05</span>
+              <span><strong>The frontend copies ticket state-machine constants.</strong><span>Useful for rendering, but a drift risk.</span></span>
+            </summary>
+            <div class="detail-body">
+              <p>
+                <code>web/src/lib/ui.ts</code> repeats state order, gating fields,
+                and advance targets. A generated contract or server-provided
+                metadata would make the boundary cleaner.
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>
+              <span class="number">06</span>
+              <span><strong>Gateway bootstrap is indirect.</strong><span>The registry shape does not show the production owner directly.</span></span>
+            </summary>
+            <div class="detail-body">
+              <p>
+                The adapter registry returns a real adapter placeholder. Production
+                startup replaces app-state adapters with <code>SharedGateway</code>.
+                This keeps tests clean, but it is not obvious from the registry.
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>
+              <span class="number">07</span>
+              <span><strong>The dispatcher switch reads more dynamic than it is.</strong><span>It is checked at System A startup.</span></span>
+            </summary>
+            <div class="detail-body">
+              <p>
+                <code>dispatch_enabled</code> is loaded and checked when System A
+                starts. The helper and comments imply per-tick re-reading, but the
+                current runtime has no live caller for that helper.
+              </p>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <section id="deferred" aria-labelledby="deferred-title">
+        <h2 id="deferred-title">Deferred</h2>
+        <ul class="deferred-list">
+          <li>
+            <strong>Failed-run recovery</strong>
+            <span>An errored ticket has no retry or clear path.</span>
+          </li>
+          <li>
+            <strong>Automatic rollover</strong>
+            <span>Days materialize, but no worker drafts the next day's overview.</span>
+          </li>
+          <li>
+            <strong>Chat queue</strong>
+            <span>Human sends are rejected while a ticket worker is active.</span>
+          </li>
+          <li>
+            <strong>Idea conversion</strong>
+            <span>Ideas stay ideas until promotion or archive exists.</span>
+          </li>
+        </ul>
+      </section>
+
+      <footer>
+        HTML companion to <a href="systems.md">systems.md</a>. Last verified:
+        2026-07-08.
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    const groups = new Map(
+      Array.from(document.querySelectorAll("[data-group]")).map((el) => [
+        el.getAttribute("data-group"),
+        Array.from(el.querySelectorAll("details"))
+      ])
+    );
+
+    for (const button of document.querySelectorAll("button[data-expand], button[data-collapse]")) {
+      button.addEventListener("click", () => {
+        const groupName = button.dataset.expand || button.dataset.collapse;
+        const open = Boolean(button.dataset.expand);
+        for (const detail of groups.get(groupName) || []) {
+          detail.open = open;
+        }
+      });
+    }
+
+    const navLinks = Array.from(document.querySelectorAll(".rail a"));
+    const sections = navLinks
+      .map((link) => document.querySelector(link.getAttribute("href")))
+      .filter(Boolean);
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (!visible) return;
+        for (const link of navLinks) {
+          link.setAttribute(
+            "aria-current",
+            link.getAttribute("href") === `#${visible.target.id}` ? "true" : "false"
+          );
+        }
+      },
+      { rootMargin: "-20% 0px -68% 0px", threshold: [0.08, 0.18, 0.32] }
+    );
+
+    for (const section of sections) observer.observe(section);
+  </script>
+</body>
+</html>

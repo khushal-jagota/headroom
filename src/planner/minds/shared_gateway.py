@@ -25,6 +25,7 @@ from planner.chat.contracts import (
 )
 from planner.core.errors import ErrorCode, PlannerError
 from planner.minds.config import hermes_src_root
+from planner.minds.contracts import OnEvent, RunResult
 from planner.minds.gateway import (
     READY_TIMEOUT_DEFAULT,
     REQUEST_TIMEOUT_DEFAULT,
@@ -35,7 +36,6 @@ from planner.minds.gateway import (
     SpawnFn,
     spawn_popen,
 )
-from planner.minds.runner import OnEvent, RunResult
 
 SESSION_COLS = 100
 SESSION_SOURCE = "planner"

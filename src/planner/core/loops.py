@@ -3,8 +3,8 @@ System B. Test mode never starts it; that gating lives in the lifespan
 (core/server.py), so this module stays directly callable for tests.
 
 System A runs on its own daemon thread (its fast-path poke is a threading.Event, not an
-asyncio sleep to interrupt). It is guarded by the master switch (config.dispatch_enabled —
-W3a delegated: System A reuses it) and the relocated machine-wide lock
+asyncio sleep to interrupt). It is guarded by the startup switch (config.dispatch_enabled)
+and the relocated machine-wide lock
 (runtime.lock.ensure_machine_lock), so only one poller drives the board per machine. System
 B is constructed with the planner home + Hermes interpreter from config; its real gateway
 spawn is only ever reachable here (outside test mode), so ./verify stays hermetic."""
@@ -59,9 +59,9 @@ _active: BackgroundLoops | None = None
 
 
 def _start_system_a(config: Config, clock: Clock, gateway: SharedGateway) -> SystemA | None:
-    """Construct + start System A when enabled and this process wins the machine lock. Any
-    construction failure logs, releases the lock, and leaves the server running without the
-    worker poller."""
+    """Construct + start System A when startup-enabled and this process wins the machine lock.
+    Any construction failure logs, releases the lock, and leaves the server running without
+    the worker poller."""
     if not config.dispatch_enabled:
         _LOGGER.info("System A disabled (dispatch_enabled=false)")
         return None

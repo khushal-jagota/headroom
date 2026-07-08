@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from planner.core.contracts import EventKind
+from planner.core.contracts import EventKind, Project
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import read_events_since
 from planner.tickets import data
@@ -547,6 +547,51 @@ def test_a13_sprint_assignment_rules(
 
     assert data.get_effective_sprint_id(tmp_db, parented.id) == "sp_test"
     assert data.get_effective_sprint_id(tmp_db, standalone.id) == "sp_test"
+
+
+def test_x06_title_and_project_writers_log_events(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    ticket = _create(tmp_db, cfg, fake_clock, project=Project.Vylo)
+
+    renamed = data.set_title(
+        tmp_db,
+        ticket.id,
+        title="Renamed ticket",
+        title_max_chars=TITLE_MAX_CHARS,
+        now=now,
+    )
+    updated = data.set_project(tmp_db, ticket.id, project=None, now=now)
+
+    assert renamed.title == "Renamed ticket"
+    assert updated.project is None
+    assert [event.payload for event in _events(tmp_db, cfg, ticket.id, EventKind.ticket_updated)][
+        -2:
+    ] == [
+        {"field": "title", "from": "Test ticket", "to": "Renamed ticket"},
+        {"field": "project", "from": "Vylo", "to": None},
+    ]
+
+
+def test_x06_project_writer_preserves_parented_error_shape(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    tmp_db.execute(
+        "INSERT INTO sprint_items (id, title, project, created_at, updated_at) "
+        "VALUES ('si_project_parent', 'Parent item', 'Vylo', ?, ?)",
+        (now, now),
+    )
+    ticket = _create(tmp_db, cfg, fake_clock, sprint_item_id="si_project_parent")
+
+    with pytest.raises(PlannerError) as exc:
+        data.set_project(tmp_db, ticket.id, project=Project.Vylo, now=now)
+
+    assert exc.value.code is ErrorCode.validation
+    assert exc.value.message == "project is derived when parented"
+    assert data.read_ticket(tmp_db, ticket.id).project is None
+    assert _events(tmp_db, cfg, ticket.id, EventKind.ticket_updated) == []
 
 
 def test_a36_onward_scope(

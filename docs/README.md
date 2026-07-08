@@ -38,6 +38,13 @@ describes change, but the history of what happened is never edited or lost.
 
 ## The systems
 
+**The full-system view**
+
+- **Systems** (`systems.md`) — the cold-start map: the record, ticket gate,
+  runtime, Hermes gateway, chat, UI, CLI, and the main boundary problems.
+- **Systems artifact** (`systems.html`) — the same map as a designed, collapsible
+  reading artifact.
+
 **The core of the work**
 
 - **Tickets & the gates** (`tickets-and-gates.md`) — what a ticket is, the stages

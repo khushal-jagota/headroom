@@ -1,6 +1,9 @@
-"""run_step: the agent-operation primitive. Spawn a gateway child with role
-env, create/resume the durable session, submit one prompt, drain events to
-the single message.complete (or error event / child death), reap the child.
+"""run_step: a single-child Hermes smoke/helper primitive.
+
+Production ticket execution uses SharedGateway. This helper remains useful for
+protocol smoke tests: spawn a gateway child with role env, create/resume the
+durable session, submit one prompt, drain events to the single message.complete
+(or error event / child death), and reap the child.
 
 No overall wall-clock timeout by design (notes.md: REMOVE timeout-as-failure);
 ready/request timeouts guard only the protocol handshake."""
@@ -9,12 +12,12 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Final, Literal
+from typing import Final
 
 from planner.minds.config import hermes_src_root
+from planner.minds.contracts import OnEvent, RunResult
 from planner.minds.gateway import (
     READY_TIMEOUT_DEFAULT,
     REQUEST_TIMEOUT_DEFAULT,
@@ -26,20 +29,8 @@ from planner.minds.gateway import (
     spawn_popen,
 )
 
-RunStatus = Literal["complete", "interrupted", "errored"]
-OnEvent = Callable[[JsonDict], None]
-
 SESSION_SOURCE: Final = "planner"
 SESSION_COLS: Final = 100
-
-
-@dataclass(frozen=True)
-class RunResult:
-    status: RunStatus
-    text: str
-    usage: JsonDict | None
-    session_key: str | None
-    error: str | None
 
 
 def _notify(on_event: OnEvent | None, event: JsonDict) -> None:

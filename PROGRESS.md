@@ -3,7 +3,329 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
-## Current work cycle (2026-07-08): worker poll/chat propagation investigation
+## Current work cycle (2026-07-08): today tickets stopped at needs-success
+
+Owner request: correct today's imported tickets so they all sit on today's day at
+`needs_success` with `at_cap=stop`, and stop the accidental worker activity for
+now.
+
+Actions:
+
+- Terminated the live default `panels serve` process tree that had spawned six
+  ticket workers from the imported day.
+- Backed up the active DB to
+  `data/migration-backups/planning.db.before-today-stop.20260708-202520.bak`.
+- Repaired every ticket on `day_2026-07-08` in one SQLite transaction:
+  `state=needs_success`, `ceiling=needs_success`, `at_cap=stop`,
+  `ticket_status=empty`, `chat_session_key=NULL`, and all parked field
+  proposals cleared.
+- Preserved today's six ticket placements and their order.
+- A new `panels serve` process came back up after the repair, but no matching
+  worker children are running. With today's tickets at ceiling plus stop, System
+  A's readiness predicate returns false for them.
+
+Verification status: direct DB checks passed: 6 tickets remain on
+`day_2026-07-08`; 0 today tickets violate the requested
+`needs_success`/`needs_success`/`stop`/`empty`/no-proposal shape. No `./verify`
+run because this was a live DB data repair, not a code change.
+
+## Prior work cycle (2026-07-08): system-friction cleanup implementation
+
+Owner request: implement and review the first four system-friction cleanup
+tickets from `orchestration/system-friction-cleanup/plan.md`.
+
+Current approach:
+
+- Implement serially: SF1 writer relocation, SF2 retired config removal, SF3
+  startup-only dispatcher switch semantics, then SF4 Hermes path/type cleanup.
+- Keep the two blocking shapes out of scope for the later owner discussion.
+- Run Codex CLI read-only reviews after SF1 and SF4, then run full `./verify`.
+- Preserve unrelated workspace changes already present in docs, migration
+  scripts, board redesign planning, and ticket-attempt bookkeeping.
+
+Verification status: pending implementation.
+
+## Prior work cycle (2026-07-08): top-down Board redesign
+
+Owner request: change the Board from a kanban-style horizontal column layout into a more top-down
+execution view like the old planning server.
+
+Current finding:
+
+- The backend board contract is already right: `GET /api/board` returns today's day-scoped tickets,
+  grouped by ticket state, with priority/deadline/project/proposal/runtime markers.
+- This is a UI-shape change only. The Board should stay the same day-scoped System A surface and
+  keep the existing `data-column` / `data-card` e2e hooks.
+- The implementation can stay narrow: `web/src/routes/BoardRoute.svelte`, `assets/app.css`,
+  `docs/frontend.md`, plus memory bookkeeping. No new endpoint, no client-side canonical store.
+
+Result:
+
+- `web/src/routes/BoardRoute.svelte` now renders the Board as a single top-down stack of non-empty
+  ticket stages instead of horizontal kanban lanes.
+- `assets/app.css` replaces the kanban card-column treatment with a centered vertical execution
+  list and responsive single-column behavior.
+- `docs/frontend.md` now describes the Board as a top-down stage stack.
+- The existing e2e hooks are preserved: stage sections still expose `data-column`, and ticket rows
+  still expose `data-card` / `data-ticket-id`.
+- While running `./verify`, an unrelated dirty-worktree mypy failure in `src/planner/sprints/data.py`
+  surfaced (`create_idea` returning an untyped SQLite row). Added a narrow `cast` so the existing
+  return contract is explicit; no behavior changed.
+
+Verification status: `./verify` passed on 2026-07-08. Gates passed: ruff, mypy, 154 unit tests,
+compile/static checks, `npm --prefix web run check`, `npm --prefix web run build`,
+`npm --prefix web test`, and 19 e2e tests. The remaining frontend diagnostics are the pre-existing
+three Svelte initial-value warnings in `TicketRoute.svelte`.
+
+## Prior work cycle (2026-07-08): microphone support plan proposal
+
+Owner request: work ticket `t_ykfra3vz` and propose its `plan` field.
+
+Current finding:
+
+- The ticket is `needs_plan` and asks to publish already-built Vylo microphone support.
+- Its settled success condition is: prod has the xAI key set, local `main` is pushed, and the chat
+  composer can transcribe through the normal chat path in the deployed environment.
+- The imported V1 context says voice input was built and device-tested locally, the provider decision
+  is xAI Grok batch STT, and the boundary is publication only: do not reopen provider or design
+  exploration unless prod testing exposes a real fault.
+- This session is running inside `/Users/khushaljagota/.hermes/planning-v2`; the actual Vylo repo is
+  outside this workspace boundary. The plan therefore starts by handing execution to a worker in the
+  real Vylo repo or to an owner-approved repo override.
+
+Result: drafted a lean publish plan, but `panels propose plan t_ykfra3vz --body-file -` was rejected
+by the server with `at_cap_stop: ticket is at its ceiling with at_cap=stop`. No plan proposal was
+parked on the ticket; it needs a human scope change or correction before an agent proposal can land.
+No product code changed.
+
+Verification status: no `./verify`; this step only proposes a ticket plan and updates markdown
+bookkeeping.
+
+## Prior work cycle (2026-07-08): worker poll/chat propagation approach
+
+Owner request: work ticket `t_dpentg38` and propose its `approach` field.
+
+Current finding:
+
+- The ticket is `needs_approach`; its success notes ask for an investigation into why worker polling
+  and worker chat history did not appear to propagate after a settled success edit.
+- Current code/docs already encode the expected shape: System A polls only today's `empty` tickets,
+  readiness is checked again by System B, worker runs use the ticket's durable chat session, and the
+  chat panel retries worker history while/after a run so early empty history does not stick.
+
+Next step: propose an approach that starts with live reproduction/classification, traces the System
+A → System B → chat history route, separates product-rule questions from defects, and requires
+focused tests plus `./verify` for any fix.
+
+Verification status: no product code changes in this approach-only step.
+
+## Prior work cycle (2026-07-08): landing-page Gate 1 worker attempt
+
+Owner request: work ticket `t_gehbw18n` and propose its `result` field.
+
+Current finding:
+
+- The ticket is `in_progress` and asks for the Vylo landing page Gate 1 to be shippable enough to
+  push `main`. Its settled success condition is that a cold visitor roughly understands Vylo,
+  sees craft, is not bored, and is curious; the ticket notes name Vylo, dirty external landing
+  work, `.claude/plans/landing-page-gate1.md`, `LandingPage.tsx`, reveal-list and brandmark
+  assets, metadata, and a Gate-1-only boundary.
+- This session is running inside `/Users/khushaljagota/.hermes/planning-v2`, whose `AGENTS.md`
+  explicitly scopes work to this repository and says not to read from or write to any other repo.
+- Narrow repo inspection found no `LandingPage.tsx`, no `.tsx` files, and no
+  `.claude/plans/landing-page-gate1.md`; the only landing-page context here is the imported v1
+  planning snapshot.
+
+Result: no Vylo landing-page code was changed or pushed from this worker. I drafted the result field
+as a boundary report saying the work could not be completed from this workspace and needs a worker run
+in the actual Vylo repo, or an explicit owner override naming that repo/branch. The `panels propose
+result t_gehbw18n` call was rejected by the product gate with `at_cap_stop` because the ticket's
+scope is `ceiling=in_progress, at_cap=stop`; the API will not park a `result` proposal until the human
+raises the scope past `in_progress`.
+
+Verification status: no product code changes and no `./verify`; `git diff --check` is enough for the
+markdown-only bookkeeping edits in this worker attempt.
+
+## Prior work cycle (2026-07-08): current sprint V1 cutover
+
+Owner request: migrate the current sprint from planning V1 markdown into this v2
+system, treating V1's current sprint and daily ticket files as the source of
+truth. This is a scoped owner override to read
+`/Users/khushaljagota/.hermes/planning` for the current sprint only; no V1 files
+were written.
+
+Current approach:
+
+- Added `scripts/migrate_current_sprint_from_v1.py` as a one-off current-sprint
+  cutover script. It imports only `sprints/current/sprint-kickoff.md`,
+  `sprint-review.md`, `sprint-tracking.md`, and every
+  `sprints/current/daily/YYYY-MM-DD/{overview,tracker,workspace}.md`.
+- Excluded V1 `deferred.md` and `ideas.md` because the request was to migrate
+  just the current sprint and the referenced daily tickets.
+- Replaced the active v2 planner records with the imported current sprint. The
+  exact pre-cutover DB was backed up to
+  `data/migration-backups/planning.db.20260708-195040.bak`.
+- Preserved existing event rows to keep the event log append-only, then appended
+  fresh events for the imported records.
+- Active DB now has: 1 sprint, 13 sprint items, 10 unique tickets, 8 days, 35
+  day-ticket placements, 0 ideas, 1 link, and 295 total event rows. The event
+  table is higher than the first import because two running `panels serve`
+  processes picked up today tickets immediately after migration; they were
+  stopped with SIGTERM and the migration was reapplied cleanly, preserving the
+  event rows rather than deleting them. The post-dispatch intermediate DB was
+  backed up to `data/migration-backups/planning.db.20260708-195325.bak`.
+- Final imported tickets have `ticket_status=empty` and no parked proposals.
+- The latest day, `day_2026-07-08`, now contains six V1 tickets in order:
+  publish microphone support, landing page Gate 1, durable-personas exploration,
+  app typography pass, planning-v2 worker poll/chat propagation, and planning-v2
+  gateway smoke/home provisioning.
+
+Independent review:
+
+- Codex CLI read-only review caught three script issues before active apply:
+  backup was after schema creation, daily overview/tracker sections could be
+  silently dropped, and default DB path resolution depended on the caller's cwd.
+  All three were fixed.
+- Follow-up Codex review caught that clearing `events` still violated the
+  append-only event model even without resetting ids. Accepted fix: do not clear
+  `events`; keep old event rows and append migration events.
+
+Verification status: `./verify` passed on 2026-07-08. Gates passed: ruff, mypy,
+149 unit tests, compile/static checks, `npm --prefix web run check`,
+`npm --prefix web run build`, `npm --prefix web test`, and 19 e2e tests. The
+remaining frontend diagnostics are the pre-existing three Svelte initial-value
+warnings in `TicketRoute.svelte`.
+
+## Prior work cycle (2026-07-08): CLI capability/design exploration
+
+Owner request: map what it would take for the planner to be fully operable from
+the CLI, especially sprint planning, day planning, and day/ticket operation, and
+compare possible CLI designs before implementation.
+
+Current understanding:
+
+- The current `panels` CLI is deliberately agent-shaped. It can create/list/show/set
+  tickets, items, ideas, day ticket membership, links, proposals, recaps, notes, and
+  queues, but it has no verbs for human-only decisions such as accept, approve, scope,
+  state jump, drop, takeover/release, day overview edits, sprint creation/editing, item
+  status acceptance, or chat.
+- The backend already exposes most missing primitives as HTTP routes. The central gap is
+  the CLI authority model and command design, not database capability.
+- `docs/cli.md` says the CLI is for workers and developer debugging and intentionally
+  cannot approve/grant/unblock. `skills/panels/SKILL.md` says everything runs through
+  `panels` and the CLI is how to read and change everything. That mismatch is the first
+  product decision.
+- Owner clarification: the CLI does not need to perform human decisions. The human action
+  is approval. Code/runtime-owned changes such as ticket state, ticket status, and worker
+  control should remain code-owned, not exposed as broad manual CLI knobs.
+- The likely command surface should keep worker/operator primitives for scripts and add
+  workflow aliases for the common jobs: plan a sprint, plan today, operate today, and read
+  what needs approval. Approval itself stays outside the CLI unless the owner later makes
+  a narrower product call.
+
+Verification status: no code changes and no `./verify`; planning/read-only analysis plus
+this memory update only.
+
+## Prior work cycle (2026-07-08): system-friction cleanup plan
+
+Owner request: plan the first four system-friction fixes: canonical writer
+ownership, retired runtime config, dispatcher switch semantics, and Hermes run
+primitive ownership. The two blocking shapes are intentionally deferred for a
+separate owner discussion because they are important product semantics, not
+simple cleanup.
+
+Current approach:
+
+- Added `orchestration/system-friction-cleanup/plan.md`.
+- The plan defines four serial tickets: SF1 writer relocation, SF2 retired config
+  removal, SF3 startup-only dispatcher switch semantics, and SF4 explicit Hermes
+  primitive ownership.
+- It keeps chat session-key writers out of SF1, keeps blocking-shape unification
+  out of scope, and requires Codex reviews for SF1 and SF4.
+- Codex CLI reviewed the plan and found three concrete issues. All were accepted
+  and folded into the plan: SF4 now preserves production-used `RunResult` /
+  `OnEvent` typing, SF1 now requires focused public route tests for successful
+  title/project patches, and SF1 pins the current parented-project error code
+  and message.
+
+Verification status: `./verify` passed on 2026-07-08 after the plan-review
+corrections. Gates passed: ruff, mypy, unit suite, compile/build checks,
+frontend checks/build/test, and e2e suite.
+
+## Prior work cycle (2026-07-08): systems HTML artifact
+
+Owner request: turn the systems document into a designed HTML artifact, open it,
+and keep the same minimalism standard in the design: no over-carding, light
+background treatment instead of borders, and progressive disclosure.
+
+Current approach:
+
+- Added `docs/systems.html` as a static companion to `docs/systems.md`.
+- Kept the artifact typographic and operational: a single system-spine visual,
+  short question-based orientation, collapsible system rows, concise boundaries,
+  and collapsible friction details.
+- Linked the artifact from `docs/README.md`.
+- Opened the final artifact and visually checked desktop and mobile screenshots.
+
+Verification status: `./verify` passed on 2026-07-08. Gates passed: ruff, mypy,
+unit suite, compile/build checks, frontend checks/build/test, and e2e suite.
+
+## Prior work cycle (2026-07-08): system-design map and docs
+
+Owner request: read the repo from a system-design perspective, label the systems,
+identify structures that are less logical or less cleanly segmented, and write a
+minimal human-readable systems document for someone cold to the codebase.
+
+Current understanding:
+
+- The planner's real source of truth is SQLite. Canonical writer functions mutate
+  records and append events; the event log is a doorbell for targeted frontend
+  refetch, not a second data model.
+- The main product systems are: the record system, planning objects, ticket gate,
+  employee runtime, Hermes gateway, chat, frontend resources, and CLI/authority.
+- Tickets carry two separate states: `state` for the work gate and `ticket_status`
+  for runtime control. The resolution engine owns field values and `state`; runtime
+  writer functions own `ticket_status`.
+- System A polls only today's day tickets. System B runs one Hermes turn on a ticket's
+  durable session. Ticket chat and worker steps use that same session; chat sends are
+  rejected while a worker step is active.
+- The frontend is event-driven but not event-sourced: events map to resource keys
+  and trigger refetches from the backend.
+
+System-level friction found:
+
+- `src/planner/sprints/api.py` still contains private "gap-fill" writers for ideas
+  and sprint-date edits. `src/planner/tickets/api.py` also contains private title and
+  project writers, and `src/planner/chat/service.py` owns chat session-key writes.
+  These are working exceptions to the otherwise clean writer-module boundary.
+- `config.yaml` and `core.config.Config` still expose unused retired runtime knobs:
+  `claim_ttl_seconds`, `max_runs`, `failure_limit`, and `run_max_seconds`.
+- Both `SharedGateway` and `minds.runner.run_step` exist as Hermes run primitives,
+  but production uses `SharedGateway`.
+- Blocking has two shapes: runtime `links.kind='blocks'` and sprint-item
+  `blocked_by` JSON.
+- `web/src/lib/ui.ts` repeats ticket state-machine constants for rendering.
+- The real gateway adapter is a registry placeholder that production startup replaces
+  with the app-state `SharedGateway` owner, which lazily spawns the gateway child on
+  first use. This is correct but non-obvious.
+- `dispatch_enabled` is checked when System A starts; the helper/comment trail implies
+  per-tick re-reading, but no live runtime caller currently does that.
+
+Changes in this cycle:
+
+- Added `docs/systems.md` as the cold-start system map and boundary/friction list.
+- Linked the new doc from `docs/README.md`.
+- Corrected `docs/backlog-and-ideas.md` so it no longer says day chat captures loose
+  work; current Day and Chat docs say day chat is not a current UI surface.
+
+Independent review: Codex CLI read-only review accepted three doc fixes: narrow the
+writer-boundary claim, clarify that `SharedGateway` spawns the child lazily, and say
+the Board shares today's membership with System A rather than the exact runnable set.
+
+Verification status: `./verify` passed on 2026-07-08. Gates passed: ruff, mypy,
+unit suite, compile/build checks, frontend checks/build/test, and e2e suite.
+
+## Prior work cycle (2026-07-08): worker poll/chat propagation investigation
 
 Owner concern: the worker poll does not appear to drive the intended UX. Changing a settled success
 condition appears to do nothing, and the worker wake message that should be visible in ticket chat

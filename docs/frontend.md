@@ -14,8 +14,8 @@ One screen per part of the system:
   land.
 - **Review** — the one-at-a-time approval walk. The approve button physically refuses
   to work until "how far may the worker go next" has been answered, both halves.
-- **Board** — today's tickets by stage. It shows the same day-scoped ticket set that
-  System A can poll.
+- **Board** — today's tickets in a top-down stage stack. It shows the same
+  day-scoped ticket set that System A can poll.
 - **Ticket** — the whole story of one piece of work: the four blanks, the scope row,
   live status markers, the `auto` run eligibility chip, chat, and a copy button that
   produces a plain-text block for pasting anywhere.

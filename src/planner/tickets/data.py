@@ -1,7 +1,7 @@
 """The only module that writes ticket rows. State, ceiling/at_cap, and fields
 value mutations happen in exactly one function (_apply_decision); every public
-writer is one BEGIN IMMEDIATE transaction. Plain field writers (note, recap,
-priority, deadline, sprint) do their own single-column UPDATE and never touch
+writer is one BEGIN IMMEDIATE transaction. Plain field writers (title, project,
+note, recap, priority, deadline, sprint) do their own single-column UPDATE and never touch
 state/ceiling/at_cap/fields.value. sqlite3, events and ids live here only; the
 clock arrives as now (unix seconds) and the title limit as an argument."""
 
@@ -450,6 +450,58 @@ def write_recap(
             "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?", (body, now, ticket_id)
         )
         append_event(conn, ticket_id, EventKind.recap_updated, {}, now)
+        return _load_ticket(conn, ticket_id)
+
+
+def set_title(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    title: str,
+    title_max_chars: int,
+    now: int,
+) -> Ticket:
+    admission.validate_title(title, title_max_chars)
+    with _txn(conn):
+        ticket = _load_ticket(conn, ticket_id)
+        prev = ticket.title
+        conn.execute(
+            "UPDATE tickets SET title = ?, updated_at = ? WHERE id = ?", (title, now, ticket_id)
+        )
+        append_event(
+            conn,
+            ticket_id,
+            EventKind.ticket_updated,
+            {"field": "title", "from": prev, "to": title},
+            now,
+        )
+        return _load_ticket(conn, ticket_id)
+
+
+def set_project(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    project: Project | None,
+    now: int,
+) -> Ticket:
+    with _txn(conn):
+        ticket = _load_ticket(conn, ticket_id)
+        if ticket.sprint_item_id is not None:
+            raise PlannerError(ErrorCode.validation, "project is derived when parented")
+        prev = ticket.project.value if ticket.project is not None else None
+        new_value = project.value if project is not None else None
+        conn.execute(
+            "UPDATE tickets SET project = ?, updated_at = ? WHERE id = ?",
+            (new_value, now, ticket_id),
+        )
+        append_event(
+            conn,
+            ticket_id,
+            EventKind.ticket_updated,
+            {"field": "project", "from": prev, "to": new_value},
+            now,
+        )
         return _load_ticket(conn, ticket_id)
 
 

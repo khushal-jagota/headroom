@@ -1,26 +1,18 @@
 """Sprint-item, sprint, current-sprint view, and idea routes (§9). Thin HTTP shells
 over the stage-3 sprint writers and the sprint read views. Ideas are homed here
 because the Idea shape lives in this domain's contracts. Sprint writers take a
-`clock: Clock`, not `now: int` — do not mix them up.
-
-Two gap-fill writers (D1 ideas, D3 sprint dates) have no data-layer sibling yet;
-they are written writer-shaped (A1) so the integrator can relocate them into
-sprints/data.py as a pure cut-paste."""
+`clock: Clock`, not `now: int` — do not mix them up."""
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import date
 from typing import Any
 
 from fastapi import APIRouter
 
 from planner.core.authctx import reject_agent_fields, reject_agents
-from planner.core.clock import Clock
-from planner.core.contracts import EventKind, JsonDict, Priority, Project
+from planner.core.contracts import JsonDict, Priority, Project
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.events import append_event
-from planner.core.ids import ID_PREFIXES, new_id
 from planner.days.logic.dates import planning_date
 from planner.sprints import data as sprints_data
 from planner.sprints import views as sprints_views
@@ -34,8 +26,7 @@ from planner.sprints.contracts import (
     ItemStatus,
     ProposeStatusBody,
 )
-from planner.sprints.logic import DateRange, find_overlap
-from planner.tickets.api import Cfg, Clk, Ctx, DbConn, body_opt_str, body_str, parse_enum, txn
+from planner.tickets.api import Cfg, Clk, Ctx, DbConn, body_opt_str, body_str, parse_enum
 
 router = APIRouter()
 
@@ -75,81 +66,6 @@ def _marshal_create_idea(raw: JsonDict) -> CreateIdeaBody:
         body=body_str(raw, "body"),
         project=body_opt_str(raw, "project"),
     )
-
-
-# --- private gap-fill writers (D1/D3; A1: writer-shaped for relocation) ---------
-
-
-def _create_idea(conn: sqlite3.Connection, *, title: str, body: str, project: Project | None,
-                 now: int) -> JsonDict:
-    if not title:
-        raise PlannerError(ErrorCode.validation, "idea title is required", {})
-    idea_id = new_id(ID_PREFIXES["idea"])
-    with txn(conn):
-        conn.execute(
-            "INSERT INTO ideas (id, title, body, project, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (idea_id, title, body, project.value if project is not None else None, now, now),
-        )
-        append_event(conn, idea_id, EventKind.idea_created, {"title": title, "source": "api"}, now)
-    row = conn.execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone()
-    assert row is not None
-    return sprints_views.idea_json(row)
-
-
-def _set_sprint_dates(conn: sqlite3.Connection, sprint_id: str, *, date_start: str | None,
-                      date_end: str | None, clock: Clock) -> None:
-    sprint = sprints_data.read_sprint(conn, sprint_id)
-    new_start = date_start if date_start is not None else sprint.date_start
-    new_end = date_end if date_end is not None else sprint.date_end
-    for label, value in (("date_start", new_start), ("date_end", new_end)):
-        try:
-            date.fromisoformat(value)
-        except ValueError as exc:
-            raise PlannerError(
-                ErrorCode.validation, f"invalid {label}", {label: value}
-            ) from exc
-    if new_start > new_end:
-        raise PlannerError(
-            ErrorCode.validation,
-            "date_start must not be after date_end",
-            {"date_start": new_start, "date_end": new_end},
-        )
-    others = [
-        DateRange(id=str(r["id"]), date_start=str(r["date_start"]), date_end=str(r["date_end"]))
-        for r in conn.execute(
-            "SELECT id, date_start, date_end FROM sprints WHERE id != ?", (sprint_id,)
-        ).fetchall()
-    ]
-    conflict = find_overlap(new_start, new_end, others)
-    if conflict is not None:
-        raise PlannerError(
-            ErrorCode.sprint_overlap,
-            "sprint dates overlap",
-            {"conflict_id": conflict, "date_start": new_start, "date_end": new_end},
-        )
-    now = clock.now_unix()
-    with txn(conn):
-        conn.execute(
-            "UPDATE sprints SET date_start = ?, date_end = ?, updated_at = ? WHERE id = ?",
-            (new_start, new_end, now, sprint_id),
-        )
-        if new_start != sprint.date_start:
-            append_event(
-                conn,
-                sprint_id,
-                EventKind.sprint_updated,
-                {"field": "date_start", "from": sprint.date_start, "to": new_start},
-                now,
-            )
-        if new_end != sprint.date_end:
-            append_event(
-                conn,
-                sprint_id,
-                EventKind.sprint_updated,
-                {"field": "date_end", "from": sprint.date_end, "to": new_end},
-                now,
-            )
 
 
 def _marshal_item_deadline(raw: object) -> None:
@@ -313,7 +229,7 @@ async def patch_sprint(sprint_id: str, body: dict[str, Any], conn: DbConn, ctx: 
     for field, value in edits.items():
         sprints_data.update_sprint_field(conn, sprint_id, field, value, clock=clk)
     if setting_dates:
-        _set_sprint_dates(
+        sprints_data.set_sprint_dates(
             conn, sprint_id,
             date_start=body_opt_str(body, "date_start"),
             date_end=body_opt_str(body, "date_end"),
@@ -336,8 +252,10 @@ async def create_idea(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
     body = _marshal_create_idea(raw)
     project = parse_enum(Project, body["project"], "project") \
         if body["project"] is not None else None
-    return _create_idea(conn, title=body["title"], body=body["body"], project=project,
-                        now=clk.now_unix())
+    idea = sprints_data.create_idea(
+        conn, title=body["title"], body=body["body"], project=project, now=clk.now_unix()
+    )
+    return sprints_views.idea_json(idea)
 
 
 @router.get("/ideas")

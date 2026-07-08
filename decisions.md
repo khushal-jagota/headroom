@@ -679,3 +679,130 @@ ticket that exists but is not on today remains reachable by direct link, queues,
 surfaces, or its own ticket page, but it should not appear on the Board because changing its scope
 will not make the worker run until it is on today. The filter lives in the backend board view rather
 than only in Svelte, so API consumers and the UI share the same contract.
+
+## D37 — The system-design doc is a map plus boundary audit, not another feature doc
+
+The owner asked for a cold-start systems document and system-level critique. The new doc lives at
+`docs/systems.md` rather than expanding `docs/README.md`: the README stays a short map to subsystem
+docs, while `systems.md` names the whole-system architecture and the current boundary friction in
+one place. The friction list is intentionally system-level only: writer ownership, stale config
+knobs, duplicate Hermes primitives, two blocking shapes, frontend state-machine copies, and gateway
+bootstrap indirection. A seventh item, the `dispatch_enabled` helper/comment mismatch, is included
+because it affects the operator's mental model of the runtime switch. Smaller local cleanup is left
+out because it would dilute the purpose of the document.
+
+## D38 — The systems map describes actual boundaries, not ideal boundaries
+
+The read-only Codex review found three places where the first systems-doc draft described a cleaner
+or stronger boundary than the code currently has. Accepted corrections: writer ownership is
+"canonical writer functions" rather than "all domain data files"; `SharedGateway` is installed at
+startup but spawns its gateway child lazily on first use; and the Board shares today's membership
+boundary with System A, while System A further narrows to empty, non-terminal, readiness-passing
+tickets. The friction list now names the writer exceptions instead of hiding them behind the
+intended module layout.
+
+## D39 — The systems HTML artifact is a reading surface, not a landing page
+
+The HTML companion uses the markdown document as content but changes the display model: one
+system-spine visual, question-based orientation, and native disclosure rows for details. It avoids
+a card grid because the owner's goal is comprehension from cold, not promotion. Background contrast,
+spacing, and typography carry hierarchy; detail rows use soft surfaces without heavy borders.
+
+## D40 — Fix the first four system frictions before debating blocking semantics
+
+The cleanup plan is split into four serial tickets: move obvious API-local writers into canonical
+writer modules, remove retired claim/run/breaker config knobs, make `dispatch_enabled` explicitly
+startup-only, and clarify that production Hermes execution goes through `SharedGateway`. The
+two-shape blocking model is deliberately excluded because the owner said it is important and should
+be discussed separately. That makes the cleanup wave safe: it removes misleading boundaries without
+deciding whether ticket blockers and sprint-item blockers are the same product concept.
+
+## D41 — Current sprint cutover reads V1 narrowly and preserves event history
+
+The owner asked for a true migration of the current planning V1 sprint into v2, so the normal
+repo-boundary rule against reading `/Users/khushaljagota/.hermes/planning` has a scoped override for
+`sprints/current` only. The cutover imports the current sprint kickoff/review/tracking and all
+current daily overview/tracker/workspace files, but not V1 `deferred.md` or `ideas.md`, because the
+request was current sprint only. Repeated workspace tickets are deduped by V1 `Ticket ID` alias, the
+latest occurrence supplies the canonical ticket body/state/priority, and every daily placement is
+preserved in day order. Daily overview/tracker sections that do not map to first-class day columns
+are preserved in `days.notes`, not silently dropped. The active v2 planner records can be cleared
+for this owner-directed cutover, but the `events` table remains append-only: old dogfood events stay
+as history and the import appends new events for the migrated rows. The DB backup must be taken
+before schema creation or clearing so rollback can restore the exact pre-cutover database.
+
+## D42 — Split Hermes execution cleanup from Hermes result contracts
+
+The SF4 cleanup cannot call all of `minds.runner` test-only because production `SharedGateway`
+imports `RunResult` and `OnEvent` from it. The plan now treats those as live shared contracts and
+targets only the standalone `run_step` primitive for smoke/test labeling or removal. If the cleanup
+moves the types, they should move to a neutral contracts module before any doc says `runner.py` is
+outside the production path.
+
+## D43 — Landing-page ticket result is a boundary report, not an external-repo edit
+
+Ticket `t_1ev6nmfg` asks for Vylo landing-page work, but this worker is running inside the
+`planning-v2` repository whose `AGENTS.md` forbids reading or writing other repos. A narrow search of
+this repo found no landing-page source (`LandingPage.tsx`, `.tsx` files, or
+`.claude/plans/landing-page-gate1.md`), only imported planning snapshots. The result proposal for
+this run therefore reports the boundary and asks for the work to be rerun in the actual Vylo repo or
+with an explicit owner override naming the target repo/branch, instead of silently editing an
+unscoped external checkout.
+
+## D44 — Current landing-page Gate 1 ticket keeps the same workspace boundary
+
+Ticket `t_gehbw18n` is the same imported Vylo Gate 1 landing-page work under a fresh Panels id. Its
+notes explicitly point at external landing-page artifacts (`LandingPage.tsx`,
+`.claude/plans/landing-page-gate1.md`, reveal-list and brandmark assets), while this worker still runs
+inside `planning-v2` under the repository-local boundary. The result proposal remains a boundary
+report rather than an attempted cross-repo edit: no product page was changed, and the work needs a
+worker launched in the Vylo repo or an explicit owner override naming the target checkout and branch.
+The attempted `result` proposal is additionally blocked by the ticket's current scope
+(`ceiling=in_progress, at_cap=stop`), so the human must raise the scope before a result proposal can
+be parked for approval.
+
+## D45 — The Board is a top-down day execution list, not kanban
+
+The owner asked for the Board to feel more like the old planning server's top-down view. The data
+contract stays unchanged: the backend still returns today's tickets grouped by state, because state
+grouping is useful for scanning and existing e2e hooks depend on `data-column`. The frontend now
+renders those groups as one vertical execution stack instead of horizontal kanban columns. This is a
+narrow UI shape change, implemented directly rather than ticketed/delegated because the write surface
+is one Svelte route, scoped CSS, and docs; no backend contract, writer, or event-mapping behavior
+changes.
+
+## D46 — CLI commands are segmented by day, ticket, and sprint
+
+The owner clarified that the CLI model should be simpler than a backend-route or authority-mode map.
+There are three operating surfaces: things you do on a day, things you do to a ticket, and things
+you do to a sprint. CLI commands should be grouped around those surfaces. The CLI does not need broad
+human-only control verbs; approval is the human act. Code-owned transitions such as ticket state,
+ticket status, and runtime control should remain code-owned rather than exposed as manual CLI knobs.
+
+## D47 — Ticket creation and worker actions stay in their own command homes
+
+Refinement to D46: `day next` is not a real concept and should not be invented for the CLI. Worker
+actions such as proposing, notes, and recaps should be segmented away from ticket-management
+commands. Creating a ticket is always a `ticket` command. A sprint may assign an existing ticket to a
+sprint or sprint item, but it should not grow `sprint create-ticket` as a second ticket-creation
+surface. `ticket create` may still accept optional `--sprint` and `--sprint-item` fields as placement
+metadata at creation time.
+
+## D47 — `create_idea` row typing is an integration repair
+
+The first post-Board `./verify` run failed only on mypy: `create_idea` in the already-dirty
+`src/planner/sprints/data.py` returned a `fetchone()` value inferred as `Any` despite the function's
+`sqlite3.Row` return contract. The behavior was already guarded by `assert row is not None`; the fix
+is a narrow `cast(sqlite3.Row | None, ...)` so mypy sees the same contract. This is an integration
+typing repair needed to keep `./verify` green, not part of the Board design change.
+
+## D48 — Imported today tickets stop at needs-success until the owner restarts work
+
+The current-sprint migration originally preserved each V1 ticket's later state/scope, which made the
+runtime eligible to start work immediately once those tickets were on today's day. The owner
+corrected that intent: today's imported tickets should land at the first gate and stop. The live DB
+repair therefore sets every ticket on `day_2026-07-08` to
+`state=needs_success`, `ceiling=needs_success`, `at_cap=stop`, and
+`ticket_status=empty`; clears accidental worker session keys and parked proposals; and leaves day
+membership/order intact. This is a data correction, not a change to System A: at ceiling plus stop is
+already the readiness rule that prevents automatic work.

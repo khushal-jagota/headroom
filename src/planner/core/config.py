@@ -28,9 +28,6 @@ class Config:
     port: int
     boundary_hour: int
     tick_seconds: int
-    claim_ttl_seconds: int
-    max_runs: int
-    failure_limit: int
     dispatch_enabled: bool
     hermes_bin: str
     hermes_profile: str
@@ -38,7 +35,6 @@ class Config:
     # other tunables named across SPEC
     ws_poll_ms: int
     ui_debounce_ms: int
-    run_max_seconds: int
     dispatcher_lock_path: str
     logs_dir: str
     events_read_limit: int
@@ -133,16 +129,12 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         port=_int_value(cfg, env, "port", "PLAN_PORT", 8767),
         boundary_hour=_int_value(cfg, env, "boundary_hour", "PLAN_BOUNDARY_HOUR", 5),
         tick_seconds=_int_value(cfg, env, "tick_seconds", "PLAN_TICK_SECONDS", 60),
-        claim_ttl_seconds=_int_value(cfg, env, "claim_ttl_seconds", "PLAN_CLAIM_TTL_SECONDS", 900),
-        max_runs=_int_value(cfg, env, "max_runs", "PLAN_MAX_RUNS", 2),
-        failure_limit=_int_value(cfg, env, "failure_limit", "PLAN_FAILURE_LIMIT", 2),
         dispatch_enabled=_bool_value(cfg, env, "dispatch_enabled", "PLAN_DISPATCH_ENABLED", True),
         hermes_bin=_str_value(cfg, env, "hermes_bin", "PLAN_HERMES_BIN", "hermes"),
         hermes_profile=_str_value(cfg, env, "hermes_profile", "PLAN_HERMES_PROFILE", "default"),
         worker_skill=_str_value(cfg, env, "worker_skill", "PLAN_WORKER_SKILL", "panels-worker"),
         ws_poll_ms=_int_value(cfg, env, "ws_poll_ms", "PLAN_WS_POLL_MS", 300),
         ui_debounce_ms=_int_value(cfg, env, "ui_debounce_ms", "PLAN_UI_DEBOUNCE_MS", 250),
-        run_max_seconds=_int_value(cfg, env, "run_max_seconds", "PLAN_RUN_MAX_SECONDS", 1800),
         dispatcher_lock_path=_str_value(
             cfg, env, "dispatcher_lock_path", "PLAN_DISPATCHER_LOCK_PATH", "data/dispatcher.lock"
         ),
@@ -155,13 +147,3 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         test_mode=test_mode,
         fake_now=fake_now,
     )
-
-
-def read_dispatch_enabled(path: str | None = None, env: Mapping[str, str] | None = None) -> bool:
-    """§7.1 fail-safe: the dispatcher re-reads this every tick. Any read/parse
-    failure returns False (a missing config file is not a failure — defaults apply)."""
-    try:
-        env = os.environ if env is None else env
-        return _bool_value(_read_yaml(path), env, "dispatch_enabled", "PLAN_DISPATCH_ENABLED", True)
-    except Exception:
-        return False

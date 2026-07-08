@@ -960,32 +960,79 @@ select {
 
 /* --- Board screen (T16) -------------------------------------------------- */
 
+.board-screen {
+  max-width: calc(var(--space-7) * 16);
+  margin: 0 auto;
+}
+
+.board-summary {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-5);
+  margin-bottom: var(--space-5);
+}
+
+.board-kicker {
+  font-size: var(--type-xs);
+  color: var(--text-faint);
+  text-transform: uppercase;
+}
+
+.board-title {
+  margin: var(--space-1) 0 0;
+  font-size: var(--type-xl);
+  line-height: 1.1;
+  color: var(--text-strong);
+}
+
+.board-total {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+  color: var(--text-muted);
+}
+
+.board-empty {
+  padding-top: var(--space-4);
+}
+
 .board {
   display: flex;
-  gap: var(--space-4);
-  overflow-x: auto;
-  align-items: flex-start;
+  flex-direction: column;
 }
 
 .board-column {
-  min-width: calc(var(--space-7) * 5);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  background: var(--surface-raised);
-  border: var(--border-hairline) solid var(--surface-overlay);
-  border-radius: var(--radius-md);
-  padding: var(--space-3);
+  display: grid;
+  grid-template-columns: calc(var(--space-7) * 2) minmax(0, 1fr);
+  gap: var(--space-5);
+  padding: var(--space-4) 0;
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+.board-column:last-child {
+  border-bottom: var(--border-hairline) solid var(--border-color);
 }
 
 .board-column-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: baseline;
-  justify-content: space-between;
   gap: var(--space-2);
   font-size: var(--type-sm);
   font-weight: 600;
   color: var(--text-muted);
+}
+
+.board-stage-number {
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--text-faintest);
+}
+
+.board-column-name {
+  color: var(--text-default);
+  text-transform: uppercase;
 }
 
 .board-column-count {
@@ -997,7 +1044,36 @@ select {
 .board-column-cards {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  min-width: 0;
+}
+
+.board-column .entity-row {
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  margin: 0 calc(var(--space-3) * -1);
+  border-bottom: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-sm);
+}
+
+.board-column .entity-row:last-child {
+  border-bottom: 0;
+}
+
+.board-column .entity-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-default);
+}
+
+.board-column .entity-row-chips {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.board-column .entity-row:hover {
+  background: var(--surface-overlay);
 }
 
 /* --- Ticket screen (T16) ------------------------------------------------- */
@@ -1452,6 +1528,24 @@ details.fsec[open] > summary .fsec-chev::before {
   }
   .chat-rail {
     display: none;
+  }
+  .board-summary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  .board-column {
+    grid-template-columns: 1fr;
+    gap: var(--space-3);
+  }
+  .board-column .entity-row {
+    align-items: stretch;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin: 0;
+  }
+  .board-column .entity-row-chips {
+    justify-content: flex-start;
   }
 }
 

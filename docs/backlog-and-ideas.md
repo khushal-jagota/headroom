@@ -31,8 +31,8 @@ ideas are their own list (`src/planner/`).
 
 ## Handoffs
 
-- **Days** (`days.md`) — the day chat captures loose work straight into the backlog
-  or ideas.
+- **Days** (`days.md`) — the Day page is only the daily overview right now; loose
+  capture is not wired there.
 - **Sprints** (`sprints.md`) — a backlog item becomes a sprint item once it's placed
   in a sprint.
 
