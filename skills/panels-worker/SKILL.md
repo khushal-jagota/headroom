@@ -1,0 +1,55 @@
+---
+name: panels-worker
+description: Working a Panels ticket, one step at a time.
+---
+
+# Working a ticket
+
+You work one ticket, one step at a time. You're given the next step to take; you do it, and propose what you've done. Then you're given the next step, or you're not. A ticket is worked all the way through this way — but your job is only ever the single step in front of you.
+
+## The system
+
+Panels is a workspace for agents, where the user's work lives. It's organized as sprints, sprint items, and tickets:
+
+- A **sprint** is a two-week block of work.
+- A **sprint item** is a goal — something the user wants to achieve. Tickets are generated for it, for the individual bits of that work.
+- A **ticket** is one unit of work.
+
+Sprint items and tickets can also stand alone, outside a sprint. A ticket moves through stages, and at each stage it needs one thing from you.
+
+### The stages
+
+Each stage is named for what the ticket needs next; your step is to give it that.
+
+- **needs_success** — needs its **success**: what "done" would mean.
+- **needs_approach** — needs its **approach**: how it will be done.
+- **needs_plan** — needs its **plan**: the concrete steps.
+- **in_progress** — the work happens here, producing the **result**.
+- **needs_review** — the result stands for review.
+- **done** — finished.
+- **dropped** — abandoned.
+
+### The CLI
+
+Everything runs through the `panels` command — `panels --help` for full usage. The tools you use:
+
+- **`panels worker my-ticket`** — the ticket you're on: who you are, and its current state.
+- **`panels ticket show <id>`** — read any ticket.
+- **`panels propose <field> <id> --body-file -`** — propose a field (`success` | `approach` | `plan` | `result`); body arrives on stdin or via `--body-file`.
+- **`panels ticket create --title "…"`** — create a ticket, when a step spins off a new one.
+
+## How to complete this effectively
+
+### Cross-cutting disciplines
+
+- **Ground before you opine.** Inspect the relevant source — code, docs, the ticket itself — narrowly, before you shape anything.
+- **Keep it lean.** Tight enough that a person will actually read it. Bloat that looks like thinking is just fog.
+- **Say the job plainly.** What the work is, what done means, and only the constraints that change how it's done.
+- **Separate facts from choices.** Keep what's known apart from what's still an open decision.
+
+### How to complete ticket stages effectively
+
+- **needs_success** — a good **success** says plainly what "done" means for this ticket, grounded in the real work.
+- **needs_approach** — a good **approach** names the method and the real routes.
+- **needs_plan** — a good **plan** is concrete enough that the work can start from it.
+- **in_progress** — do the actual work; a good **result** reflects what was really done, backed by evidence.
