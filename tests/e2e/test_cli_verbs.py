@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PLAN_BIN = REPO_ROOT / ".venv" / "bin" / "plan"
+PLAN_BIN = REPO_ROOT / ".venv" / "bin" / "panels"
 
 
 def test_ticket_create_sprint_item_parents_it(server, cli, api) -> None:

@@ -27,7 +27,7 @@ import pytest
 from playwright.sync_api import Browser, BrowserContext, Page
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PLAN_BIN = REPO_ROOT / ".venv" / "bin" / "plan"
+PLAN_BIN = REPO_ROOT / ".venv" / "bin" / "panels"
 FAKE_NOW = "2026-07-04T12:00:00"
 WAIT_MS = 10_000          # every Playwright wait
 BOOT_BUDGET_S = 15.0      # server readiness budget

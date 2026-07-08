@@ -106,7 +106,7 @@ def json_option(func: Callable[..., Any]) -> Callable[..., Any]:
 
 @click.group()
 def main() -> None:
-    """plan — the planner CLI for agents and developer debugging."""
+    """panels — the planner CLI for agents and developer debugging."""
 
 
 # --- serve (the one handler that actually works in T01) ---
