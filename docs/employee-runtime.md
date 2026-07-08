@@ -38,7 +38,10 @@ release, and runtime start/finish/error all use those same writer functions, so
 One employee is one ticket session, so Hermes' per-session busy guard keeps one turn
 in flight for that ticket while the shared child can hold many sessions. An approval
 or an unblock from the web page pokes the poll immediately so the ticket advances
-the moment you act; the timer is only a backstop.
+the moment you act; adding a ticket to today's day list does the same. The timer is
+only a backstop. A ticket that is not on today is outside the automatic run set even
+when its status is `empty`; it does not appear on the Board, and the ticket page
+shows this as `auto not on today`.
 
 _Code paths:_ `src/planner/runtime/system_a.py`, `src/planner/runtime/system_b.py`,
 `src/planner/minds/` (the employee primitive: the shared gateway child and its
@@ -80,6 +83,11 @@ success value poked System A and the employee filed the next approach proposal.
 System B persists a created or resumed `chat_session_key` before submitting the
 prompt, so a worker calling `panels worker my-ticket` during its own turn can resolve
 the current ticket immediately.
+
+A live smoke on the default DB also proved that adding a new harmless ticket to
+today now wakes System A without a follow-up scope edit. The ticket moved to
+`agent_running_step` on the immediate read after the day add, then parked at
+`awaiting_approval` with a success proposal.
 
 ## Handoffs
 

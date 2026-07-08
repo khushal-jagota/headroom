@@ -129,7 +129,9 @@ def serve() -> None:
     from planner.core.db import connect, create_schema
     from planner.core.server import create_app
 
-    config = load_config()
+    repo_root = Path(__file__).resolve().parents[3]
+    os.chdir(repo_root)
+    config = load_config(str(repo_root / "config.yaml"))
     os.makedirs(os.path.dirname(config.db_path) or ".", exist_ok=True)
     os.makedirs(config.logs_dir, exist_ok=True)
     with connect(config.db_path, config.db_busy_timeout_ms) as bootstrap:

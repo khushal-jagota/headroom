@@ -6,6 +6,7 @@
     FIELD_NAMES,
     PRIORITIES,
     PROJECTS,
+    STATE_ORDER,
     advanceTarget,
     ceilingOptions,
     fieldIsPassed,
@@ -14,6 +15,7 @@
   } from "../lib/ui";
   import type {
     CurrentSprintResponse,
+    DayResponse,
     GatewayStatus,
     SprintsResponse,
     TicketDetail,
@@ -42,6 +44,9 @@
   );
   const currentSprint = resource<CurrentSprintResponse>("sprint:current", (signal) =>
     fetchJson("/api/sprint/current", { signal })
+  );
+  const today = resource<DayResponse>("day:today", (signal) =>
+    fetchJson("/api/day/today", { signal })
   );
 
   const ticketInvalidations = [`ticket:${id}`, "board", "queues", "sprint:current"];
@@ -139,6 +144,46 @@
     return markers;
   }
 
+  function atOrBeyondCeiling(state: string, ceiling: string): boolean {
+    return STATE_ORDER.indexOf(state) >= STATE_ORDER.indexOf(ceiling);
+  }
+
+  function autoRunStatus(detail: TicketDetail): string {
+    const ticketStatus = detail.ticket_status || "empty";
+    if (ticketStatus === "agent_running_step") return "running";
+    if (ticketStatus === "awaiting_approval") return "awaiting-approval";
+    if (ticketStatus === "user_takeover") return "user-takeover";
+    if (ticketStatus === "errored") return "errored";
+    if (detail.state === "done" || detail.state === "dropped") return "terminal";
+    if (!today.data?.id) return "checking";
+    if (!(detail.day_ids || []).includes(today.data.id)) return "not-on-today";
+    if (detail.blocked) return "blocked";
+    const gating = gatingField(detail.state);
+    if (!gating) return "human-review";
+    if (fieldSlot(detail, gating).proposal) return "awaiting-approval";
+    if (atOrBeyondCeiling(detail.state, detail.ceiling) && detail.at_cap === "stop") {
+      return "stopped-at-limit";
+    }
+    return "eligible";
+  }
+
+  function autoRunLabel(status: string): string {
+    const labels: Record<string, string> = {
+      checking: "checking",
+      running: "running",
+      "awaiting-approval": "awaiting approval",
+      "user-takeover": "user takeover",
+      errored: "errored",
+      terminal: "terminal",
+      "not-on-today": "not on today",
+      blocked: "blocked",
+      "human-review": "human review",
+      "stopped-at-limit": "stopped at limit",
+      eligible: "eligible"
+    };
+    return labels[status] || status.replace(/-/g, " ");
+  }
+
   function hasValue(slot: TicketField): boolean {
     return slot.value !== null && slot.value !== undefined && String(slot.value).trim() !== "";
   }
@@ -148,6 +193,7 @@
     sprints.dispose();
     chatStatus.dispose();
     currentSprint.dispose();
+    today.dispose();
   });
 </script>
 
@@ -213,6 +259,9 @@
             {/each}
             <span data-ticket-status={detail.ticket_status || "empty"}>
               <Chip variant="ticket-status" value={detail.ticket_status || "empty"} />
+            </span>
+            <span class="pill" data-auto-run-status={autoRunStatus(detail)}>
+              <span class="pill-key">auto</span> {autoRunLabel(autoRunStatus(detail))}
             </span>
             <button class="pill pill-button" type="button" data-ticket-takeover-toggle onclick={() => void takeover(detail)}>
               {detail.ticket_status === "user_takeover" ? "Release" : "Take over"}
@@ -361,7 +410,11 @@
         </div>
       </main>
       <aside class="chat-rail" data-chat>
-        <ChatPanel entityId={id} available={chatStatus.data?.available ?? true} />
+        <ChatPanel
+          entityId={id}
+          available={chatStatus.data?.available ?? true}
+          ticketStatus={detail.ticket_status || "empty"}
+        />
       </aside>
     </div>
   {/if}

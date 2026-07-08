@@ -24,6 +24,12 @@ or resumes a session, it stores the `chat_session_key` before submitting the pro
 so tools inside the worker turn can resolve their ticket immediately and the prompt
 and reply are visible in chat history after the turn.
 
+The DB event that says a worker step settled can arrive just before Hermes history
+returns the new prompt and reply. The mounted chat panel therefore keeps refreshing
+briefly while a worker is running, and retries a few times after the ticket parks at
+`awaiting_approval` or `errored` only if the visible transcript is still empty. This
+keeps the visible chat from getting stuck on an early empty history response.
+
 Human sends and commands follow the same pre-prompt session-key rule. If the ticket
 is already at `agent_running_step`, the send or command returns `already_running`
 instead of creating a competing turn; the history route still reads the existing

@@ -642,3 +642,40 @@ command. Do not install a separate `planner` console script. The `serve` command
 startup path: it creates the DB and logs directories, builds the FastAPI app, provisions planner
 role skills into `PLAN_HERMES_HOME`, starts the shared gateway-backed runtime in non-test mode, and
 serves the web UI/API.
+
+## D33 — `panels serve` must not depend on the caller's cwd
+
+The installed `panels` script can be launched from `~/.local/bin`, so the server cannot mount
+`assets`, `static`, or `web/dist` relative to the shell's current directory. Static mounts and the
+Svelte app shell now resolve from the repository root derived from `src/planner/core/server.py`.
+The `serve` command also changes to the repository root and loads the checked-in `config.yaml` from
+there, so default `data/` paths remain in this repo unless explicit `PLAN_*` paths override them.
+
+## D34 — Auto-run eligibility must be visible, and adding to today is a wake
+
+System A intentionally polls only tickets on today's day. A ticket can be `ticket_status=empty`,
+scope-permissive, and otherwise runnable, but still do nothing if it is on yesterday or no day. That
+is correct runtime scope but bad operator visibility. The ticket header now shows an `auto` chip
+derived from the current day, durable status, blockers, pending proposal, and approval limit, so
+`empty` is no longer the only clue. Adding a ticket to a day is also a readiness-changing action:
+`POST /api/day/{date}/tickets` now pokes System A after a successful add. Off-day adds are harmless
+because System A's candidate query still filters to today.
+
+## D35 — Worker chat history needs a bounded frontend retry
+
+Live dogfooding showed the DB can receive `proposal_filed` and `ticket_status_changed:
+awaiting_approval` a moment before Hermes history returns the worker prompt and reply through lazy
+`session.resume`. The event mapping was already correct (`chat:<ticket>` is invalidated), but the
+first refetch could cache an empty transcript and then receive no later event. The chat panel now
+refreshes history periodically while a ticket worker is `agent_running_step`, and performs a small
+bounded retry after `awaiting_approval` or `errored` only while the visible transcript is still empty.
+Hermes remains the source of truth; this is a read timing repair, not a planner-side transcript
+store.
+
+## D36 — Board is today's execution board
+
+The Board should show the same ticket set System A can poll: tickets attached to today's day. A
+ticket that exists but is not on today remains reachable by direct link, queues, backlog/search
+surfaces, or its own ticket page, but it should not appear on the Board because changing its scope
+will not make the worker run until it is on today. The filter lives in the backend board view rather
+than only in Svelte, so API consumers and the UI share the same contract.

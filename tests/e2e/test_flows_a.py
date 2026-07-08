@@ -60,7 +60,7 @@ def _wait_chat_text(page: Page, who: str, text: str) -> None:
     )
 
 
-def test_e22_cli_create_live_board(server, context_factory, open_page, cli):
+def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api):
     board = 'section[data-screen="board"]'
     ctx_a = context_factory()
     ctx_b = context_factory()
@@ -79,7 +79,16 @@ def test_e22_cli_create_live_board(server, context_factory, open_page, cli):
     assert created["state"] == "needs_success", created
 
     card = f'[data-column="needs_success"] [data-card][data-ticket-id="{tid}"]'
-    # No reload, no goto: the card can only arrive via a WS-flush re-render.
+    page_b.wait_for_function("f => window.__plannerDebug.flushes > f", arg=flushes_b,
+                             timeout=WAIT_MS)
+    assert page_b.query_selector(card) is None
+    assert page_a.query_selector(card) is None
+
+    flushes_b = page_b.evaluate("window.__plannerDebug.flushes")
+    api.human_post(server, "/api/day/today/tickets", {"ticket_id": tid})
+
+    # No reload, no goto: the card can only arrive via a WS-flush re-render after
+    # the ticket is explicitly added to today's board.
     _wait_present(page_b, card)
     assert "T18 board ticket" in page_b.inner_text(card)
     assert page_b.evaluate("window.__plannerDebug.flushes") > flushes_b
@@ -219,6 +228,7 @@ def test_e26_chat_panel_echo_and_offline(
         settled=True,
     )
     assert pending_page.text_content('[data-ticket-status="empty"]') == "status empty"
+    pending_page.wait_for_selector('[data-auto-run-status="not-on-today"]', timeout=WAIT_MS)
     pending_page.route(
         "**/api/chat/*/stream",
         lambda route: route.fulfill(
@@ -235,6 +245,54 @@ def test_e26_chat_panel_echo_and_offline(
     pending_page.wait_for_selector('[data-chat] [data-chat-pending]', timeout=WAIT_MS)
     assert pending_page.query_selector('[data-chat] [data-chat-msg="planner"]') is None
     assert "(none)" not in pending_page.inner_text("[data-chat] [data-chat-messages]")
+
+    # A worker event can invalidate chat history before the gateway history is readable.
+    # The panel must retry so it does not cache the first empty read forever.
+    retry_tid = cli(server, "ticket", "create", "--title", "T18 worker history retry")["id"]
+    cli(
+        server,
+        "propose",
+        "success",
+        "--body-file",
+        "-",
+        ticket_id=retry_tid,
+        stdin="worker proposed success",
+    )
+    retry_context = context_factory()
+    history_calls = {"n": 0}
+
+    def flaky_history(route):
+        history_calls["n"] += 1
+        if history_calls["n"] == 1:
+            route.fulfill(
+                status=200,
+                headers={"content-type": "application/json"},
+                body='{"messages":[],"session_key":"worker-session"}',
+            )
+            return
+        route.fulfill(
+            status=200,
+            headers={"content-type": "application/json"},
+            body=(
+                '{"messages":['
+                '{"role":"user","text":"worker prompt","created_at":1},'
+                '{"role":"assistant","text":"worker reply","created_at":2}'
+                '],"session_key":"worker-session"}'
+            ),
+        )
+
+    retry_context.route(f"**/api/chat/{retry_tid}/history", flaky_history)
+    retry_page = open_page(
+        retry_context,
+        server,
+        f"#/ticket/{retry_tid}",
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]',
+        settled=True,
+    )
+    retry_page.wait_for_selector('[data-ticket-status="awaiting_approval"]', timeout=WAIT_MS)
+    _wait_chat_text(retry_page, "you", "worker prompt")
+    _wait_chat_text(retry_page, "planner", "worker reply")
+    assert history_calls["n"] >= 2
 
     # --- echo half (default echo gateway) ---
     tid = cli(server, "ticket", "create", "--title", "T18 chat ticket")["id"]

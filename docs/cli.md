@@ -25,6 +25,8 @@ human's web page. A worker can propose and record; it can never resolve.
 - **`queue approvals / overdue`** — read-only views of what waits on the human and
   what's past its deadline.
 - **`serve`** — run the server and background worker runtime in the foreground.
+  It may be launched from outside the repository; the app shell, static assets, and
+  checked-in config are resolved from the repository root.
 
 _Code paths:_ `src/planner/cli/main.py` (the verbs), `src/planner/cli/http.py`
 (the HTTP call, output, and exit codes).

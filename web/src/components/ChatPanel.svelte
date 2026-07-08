@@ -12,8 +12,13 @@
     text: string;
   };
 
-  let { entityId, available }: { entityId: string; available: boolean } = $props();
+  let {
+    entityId,
+    available,
+    ticketStatus = ""
+  }: { entityId: string; available: boolean; ticketStatus?: string } = $props();
   const stableEntityId = untrack(() => entityId);
+  const isTicketChat = stableEntityId.startsWith("t_");
 
   const commands = resource<CommandCatalog>("chat-commands", (signal) =>
     fetchJson("/api/chat/commands", { signal })
@@ -29,8 +34,12 @@
   let draft = $state("");
   let pending = $state(false);
   let error = $state<unknown>(null);
-  let controller: AbortController | null = null;
-  let historySignature = $state("");
+	  let controller: AbortController | null = null;
+	  let workerRefreshTimer: ReturnType<typeof window.setTimeout> | null = null;
+	  let settledRefreshKey = "";
+	  let settledBaselineSignature = "";
+	  let settledRefreshesRemaining = 0;
+	  let historySignature = $state("");
 
   function whoForRole(role: string): ChatMessage["who"] {
     const normalized = role.toLowerCase();
@@ -54,6 +63,76 @@
       who: whoForRole(msg.role),
       text: msg.text
     }));
+  });
+
+  function clearWorkerRefresh(): void {
+    if (workerRefreshTimer === null) return;
+    window.clearTimeout(workerRefreshTimer);
+    workerRefreshTimer = null;
+  }
+
+  function scheduleWorkerHistoryRefresh(delayMs: number, expectedSignature?: string): void {
+    if (workerRefreshTimer !== null) return;
+    workerRefreshTimer = window.setTimeout(() => {
+      workerRefreshTimer = null;
+      const hasRenderedTranscript =
+        transcript.length > 0 || document.querySelector("[data-chat-msg]") !== null;
+      if (
+        expectedSignature !== undefined &&
+        (hasRenderedTranscript || signatureFor(history.data) !== expectedSignature)
+      ) {
+        resetSettledRetry();
+        return;
+      }
+      void history.refresh().catch(() => undefined);
+    }, delayMs);
+  }
+
+  function resetSettledRetry(): void {
+    settledRefreshKey = "";
+    settledBaselineSignature = "";
+    settledRefreshesRemaining = 0;
+  }
+
+  $effect(() => {
+    if (!available || !isTicketChat) {
+      resetSettledRetry();
+      clearWorkerRefresh();
+      return;
+    }
+    const status = ticketStatus || "";
+    if (status === "agent_running_step") {
+      resetSettledRetry();
+      if (!history.loading) scheduleWorkerHistoryRefresh(2000);
+      return;
+    }
+    if (status === "awaiting_approval" || status === "errored") {
+      if (history.loading || history.data === undefined) return;
+      const signature = signatureFor(history.data);
+      const shouldRetry = (history.data.messages || []).length === 0;
+      if (!shouldRetry) {
+        resetSettledRetry();
+        clearWorkerRefresh();
+        return;
+      }
+      const key = `${stableEntityId}:${status}`;
+      if (key !== settledRefreshKey) {
+        settledRefreshKey = key;
+        settledBaselineSignature = signature;
+        settledRefreshesRemaining = 6;
+      } else if (signature !== settledBaselineSignature) {
+        resetSettledRetry();
+        clearWorkerRefresh();
+        return;
+      }
+      if (!history.loading && settledRefreshesRemaining > 0) {
+        settledRefreshesRemaining -= 1;
+        scheduleWorkerHistoryRefresh(1000, settledBaselineSignature);
+      }
+      return;
+    }
+    resetSettledRetry();
+    clearWorkerRefresh();
   });
 
   function eventData<T extends Record<string, unknown>>(data: unknown): T {
@@ -103,6 +182,7 @@
 
   onDestroy(() => {
     controller?.abort();
+    clearWorkerRefresh();
     commands.dispose();
     history.dispose();
   });

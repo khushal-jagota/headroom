@@ -28,6 +28,22 @@ Current intended-behavior model:
   appear in `/api/chat/{ticket_id}/history` and therefore in the ticket chat rail after event-driven
   invalidation/refetch.
 
+Latest live-root-cause pass:
+
+- The owner's live ticket from the logs, `t_0jb9s3sh`, was not on today's day. It was on
+  `day_2026-07-07`; the actual today resource was `day_2026-07-08` and had no tickets. Direct DB
+  inspection showed `readiness.is_runnable(conn, t_0jb9s3sh) == True`, but System A's candidate SQL
+  returned `[]` because it joins `day_tickets` on today's id. Scope edits were writing
+  `scope_changed` events and poking, but the ticket was outside the auto-run set.
+- A real harmless dogfood ticket on the actual DB, `t_a89826gz`, proved the worker path works when a
+  ticket is on today and receives a wake: scope poke moved it `empty -> agent_running_step ->
+  awaiting_approval`, filed a success proposal, and `/api/chat/t_a89826gz/history` later returned
+  the System B prompt plus worker reply.
+- That same live run exposed a frontend timing bug: the immediate history read at the settled
+  `awaiting_approval` event returned zero messages, while a later history read returned the worker
+  prompt/reply. A mounted chat panel could therefore cache the early empty read and never receive a
+  later invalidation.
+
 Changes made in this cycle:
 
 - `PUT /api/tickets/{id}/value/{field}` now takes `SystemA` and pokes it after a successful settled
@@ -46,6 +62,16 @@ Changes made in this cycle:
   `agent_running_step`. A second read-only Codex review reported no violations.
 - The ticket page header now always shows the durable `ticket_status`, so `empty`,
   `agent_running_step`, `awaiting_approval`, `user_takeover`, and `errored` are visible in the UI.
+- The ticket page header now also shows an `auto` chip: `not on today`, `eligible`, `running`,
+  `awaiting approval`, `blocked`, `human review`, or `stopped at limit`. This makes the today-scoped
+  System A candidate rule visible instead of leaving `empty` to carry too much meaning.
+- `/api/board` now uses the same today scope as System A: it only returns tickets on today's day.
+  The Board is now the execution board, not an all-ticket inventory.
+- `POST /api/day/{date}/tickets` now pokes System A after a successful add. Adding a ready ticket to
+  today's list is a readiness-changing action and should not wait for the next poll tick.
+- `ChatPanel.svelte` now keeps refreshing history while `ticket_status=agent_running_step` and runs
+  a small bounded retry after `awaiting_approval` or `errored` only while the transcript is still
+  empty, so an early empty Hermes history read does not permanently hide the worker prompt/reply.
 - The owner clarified that `planner serve` was a misstatement. `panels serve` remains the only
   console startup command; packaging now has a regression test that `panels` is installed and
   `planner` is not. A non-test isolated startup smoke verified that the serve path serves
@@ -53,6 +79,12 @@ Changes made in this cycle:
   `PLAN_HERMES_HOME`, and creates the dispatcher lock for System A. The latest smoke used
   `.venv/bin/panels serve` directly after reinstalling the package and confirming `.venv/bin/planner`
   is absent.
+- A user-run `panels serve` exposed a cwd bug: the global script failed when launched from a directory
+  without `assets/`. Fix: server static mounts (`web/dist`, `assets`, `static`) now resolve from the
+  repository root, and `serve` loads repo-root `config.yaml` after changing into the repo root. A
+  smoke launched `/Users/khushaljagota/.local/bin/panels serve` from a directory with no `assets/`
+  and verified `/`, `/assets/app.css`, `/static/favicon.ico`, skill provisioning, and the dispatcher
+  lock.
 - Tests now cover value-edit wakeups, early session-key lookup, System B prompt/reply visibility
   through ticket chat history, chat rejection while a worker step is active, worker ownership loss
   before prompt submit, guarded error settlement, the `panels` console-script contract,
@@ -68,15 +100,20 @@ Live non-test smokes:
   not fire within five seconds, then editing its settled success value through the API poked System A
   immediately and produced an approach proposal. The worker's by-session identity lookup returned
   200 during the active turn.
+- Actual default DB/server on port 8767 after restarting from the changed code: adding harmless ticket
+  `t_88j0b6jp` to `/api/day/today/tickets` moved it to `agent_running_step` on the immediate read
+  without any scope poke, then it parked at `awaiting_approval` with a success proposal. Immediate
+  history was empty, then `/api/chat/t_88j0b6jp/history` returned two messages after two seconds.
+  A Playwright assertion against the actual server confirmed the ticket page showed `status awaiting
+  approval`, `auto awaiting approval`, and the worker chat reply.
+- Actual default DB/server after the Board scope change: created harmless ticket `t_sjgq8tx9`,
+  confirmed `/api/board` did not include it before a day assignment, then posted it to
+  `/api/day/today/tickets` and confirmed `/api/board` included it.
 
-Verification: focused unit/runtime checks, Svelte check/test/build, ruff on touched files,
-`git diff --check`, two read-only Codex reviews with all findings accepted and fixed, the live
-worker smokes, the isolated non-test serve startup smoke, and the focused
-`test_cli_entrypoints.py` check passed. Final `./verify` passed on 2026-07-08 after removing the
-mistaken `planner` alias: ruff, mypy,
-146 unit tests, compile/build checks, frontend check/build/test, and 19 e2e tests all passed. The
-only remaining diagnostics are the pre-existing three Svelte initial-value warnings in
-`TicketRoute.svelte`.
+Final verification: `./verify` passed on 2026-07-08. It ran ruff, mypy, 149 unit tests,
+compile/static checks, `npm --prefix web run check`, `npm --prefix web run build`,
+`npm --prefix web test`, and 19 e2e tests. The remaining frontend diagnostics are the pre-existing
+three Svelte initial-value warnings in `TicketRoute.svelte`.
 
 ## Prior work cycle (2026-07-08): verify command review
 

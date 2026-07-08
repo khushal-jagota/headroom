@@ -174,10 +174,12 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
 # --- board (§10.3) -------------------------------------------------------------
 
 
-def board_view(conn: sqlite3.Connection, now: int) -> JsonDict:
+def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
     rows = conn.execute(
         "SELECT id, title, state, priority, deadline, project, fields, ticket_status, "
-        "created_at FROM tickets WHERE state != 'dropped'"
+        "created_at FROM tickets WHERE state != 'dropped' "
+        "AND id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?)",
+        (day_id,),
     ).fetchall()
     by_state: dict[str, list[tuple[tuple[int, int, str, int], JsonDict]]] = {
         s.value: [] for s in STATE_ORDER

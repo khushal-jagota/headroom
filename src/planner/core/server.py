@@ -42,8 +42,11 @@ _STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.gateway_offline: 503,
 }
 
-_WEB_DIST = Path("web/dist")
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_WEB_DIST = _REPO_ROOT / "web" / "dist"
 _WEB_INDEX = _WEB_DIST / "index.html"
+_ASSETS_DIR = _REPO_ROOT / "assets"
+_STATIC_DIR = _REPO_ROOT / "static"
 
 
 def svelte_index_html() -> str:
@@ -159,6 +162,6 @@ def create_app(
 
     if _WEB_DIST.is_dir():
         app.mount("/_app", StaticFiles(directory=_WEB_DIST, html=True), name="vite_app")
-    app.mount("/assets", StaticFiles(directory="assets"), name="assets")
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+    app.mount("/assets", StaticFiles(directory=_ASSETS_DIR), name="assets")
+    app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
     return app

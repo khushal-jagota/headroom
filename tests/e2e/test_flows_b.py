@@ -276,6 +276,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     # Human-author a day overview on the next planning date (for the third
     # reload-restore surface below).
     _set_now(api, server, NOW_0501)
+    api.human_post(server, "/api/day/today/tickets", {"ticket_id": mid})
     api.human_patch(
         server,
         f"/api/day/{DAY_CUR}",

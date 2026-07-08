@@ -17,7 +17,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.days import data as days_data
 from planner.days.contracts import AddDayTicketBody
 from planner.days.logic import dates
-from planner.tickets.api import Cfg, Clk, Ctx, DbConn, body_opt_str, body_str, txn
+from planner.tickets.api import Cfg, Clk, Ctx, DbConn, Sa, _poke, body_opt_str, body_str, txn
 from planner.tickets.data import read_ticket
 from planner.tickets.views import ticket_json
 
@@ -85,13 +85,15 @@ async def patch_day(date: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg:
 
 @router.post("/day/{date}/tickets")
 async def add_day_ticket(date: str, raw: dict[str, Any], conn: DbConn,
-                         cfg: Cfg, clk: Clk) -> JsonDict:
+                         cfg: Cfg, clk: Clk, sa: Sa) -> JsonDict:
     body = AddDayTicketBody(ticket_id=body_str(raw, "ticket_id"))
     did = resolve_day_id(date, clk, cfg)
     now = clk.now_unix()
     read_ticket(conn, body["ticket_id"])  # existence guard (avoids a raw FK 500)
     with txn(conn):
-        days_data.add_day_ticket(conn, did, body["ticket_id"], now)
+        added = days_data.add_day_ticket(conn, did, body["ticket_id"], now)
+    if added:
+        _poke(sa)  # adding to today's board can make a ticket runnable immediately
     return _day_view(conn, did, now)
 
 

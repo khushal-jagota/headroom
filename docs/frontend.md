@@ -14,10 +14,11 @@ One screen per part of the system:
   land.
 - **Review** — the one-at-a-time approval walk. The approve button physically refuses
   to work until "how far may the worker go next" has been answered, both halves.
-- **Board** — every ticket by stage.
+- **Board** — today's tickets by stage. It shows the same day-scoped ticket set that
+  System A can poll.
 - **Ticket** — the whole story of one piece of work: the four blanks, the scope row,
-  live status markers, chat, and a copy button that produces a plain-text block for
-  pasting anywhere.
+  live status markers, the `auto` run eligibility chip, chat, and a copy button that
+  produces a plain-text block for pasting anywhere.
 - **Sprint** — the Overview and Tracking tabs (see `sprints.md`).
 - **Backlog** and **Ideas** — the two catch surfaces (see `backlog-and-ideas.md`).
 
@@ -32,7 +33,10 @@ share.
   `sprint:current`; ticket events also map to `chat:<id>` so the ticket chat rail
   can reload the worker's full Hermes trace. Only those resources refetch. There
   is no client-side store mirroring the server — the server is always the source
-  of truth.
+  of truth. The ticket chat rail refreshes while a worker is running and performs
+  a short settled-state retry only while the transcript is empty, because Hermes
+  history can become readable a moment after the DB status/proposal event that
+  triggered the first refetch.
 - **The markdown renderer is hardened.** Written text (briefs, notes, ideas) renders
   through a markdown pass built so a crafted link that a browser would quietly treat
   as runnable code is impossible to express.
