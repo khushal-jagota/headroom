@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import { fetchJson, streamChat } from "../lib/api";
   import { resource } from "../lib/resources";
-  import type { CommandCatalog } from "../lib/types";
+  import type { ChatHistoryResponse, CommandCatalog } from "../lib/types";
   import ChatComposer from "./ChatComposer.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
@@ -13,16 +13,48 @@
   };
 
   let { entityId, available }: { entityId: string; available: boolean } = $props();
+  const stableEntityId = untrack(() => entityId);
 
   const commands = resource<CommandCatalog>("chat-commands", (signal) =>
     fetchJson("/api/chat/commands", { signal })
   );
+  const history = resource<ChatHistoryResponse>(`chat:${stableEntityId}`, (signal) =>
+    fetchJson(`/api/chat/${stableEntityId}/history`, { signal })
+  );
+  if (history.data !== undefined && !history.stale) {
+    void history.refresh().catch(() => undefined);
+  }
 
   let transcript = $state<ChatMessage[]>([]);
   let draft = $state("");
   let pending = $state(false);
   let error = $state<unknown>(null);
   let controller: AbortController | null = null;
+  let historySignature = $state("");
+
+  function whoForRole(role: string): ChatMessage["who"] {
+    const normalized = role.toLowerCase();
+    if (normalized === "user" || normalized === "human") return "you";
+    if (normalized === "system" || normalized === "tool") return "system";
+    return "planner";
+  }
+
+  function signatureFor(historyData: ChatHistoryResponse | undefined): string {
+    return JSON.stringify(
+      (historyData?.messages || []).map((msg) => [msg.role, msg.text, msg.created_at])
+    );
+  }
+
+  $effect(() => {
+    if (pending) return;
+    const signature = signatureFor(history.data);
+    if (signature === historySignature) return;
+    historySignature = signature;
+    transcript = (history.data?.messages || []).map((msg) => ({
+      who: whoForRole(msg.role),
+      text: msg.text
+    }));
+  });
 
   function eventData<T extends Record<string, unknown>>(data: unknown): T {
     return data && typeof data === "object" ? (data as T) : ({} as T);
@@ -37,7 +69,7 @@
     controller = new AbortController();
     try {
       await streamChat(
-        entityId,
+        stableEntityId,
         { text, mode },
         {
           signal: controller.signal,
@@ -54,6 +86,7 @@
               transcript[replyIndex].text = String(payload.reply_text || "");
               transcript[replyIndex].who = payload.kind === "system" ? "system" : "planner";
               pending = false;
+              void history.refresh().catch(() => undefined);
             }
             if (event === "error") {
               error = data;
@@ -71,6 +104,7 @@
   onDestroy(() => {
     controller?.abort();
     commands.dispose();
+    history.dispose();
   });
 </script>
 
@@ -86,7 +120,7 @@
         <div>The employee is offline.</div>
         <div class="chat-off-sub">Your draft is saved.</div>
       </div>
-    {:else if transcript.length === 0 && !pending}
+    {:else if transcript.length === 0 && !pending && !history.loading}
       <div class="chat-empty"><h2 class="chat-empty-h">What do you need?</h2></div>
     {:else}
       {#each transcript as msg}

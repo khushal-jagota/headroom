@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from datetime import date
 
 from planner.chat.contracts import (
+    ChatHistory,
     ChatSendResult,
     ChatStreamChunk,
     CommandCatalog,
@@ -133,6 +134,30 @@ def send(
         effective = _persist_key(conn, kind, entity_id, stored_key, result.session_key, now)
         if effective != result.session_key:  # lost the first-write race; adopt the winner
             result = ChatSendResult(reply_text=result.reply_text, session_key=effective)
+    return result
+
+
+def history(
+    conn: sqlite3.Connection,
+    gateway: GatewayAdapter,
+    entity_id: str,
+    now: int,
+) -> ChatHistory:
+    kind, stored_key = _resolve(conn, entity_id, now)
+    if stored_key is None:
+        return ChatHistory(messages=(), session_key=None)
+    try:
+        result = gateway.history(stored_key, entity_id)
+    except PlannerError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise PlannerError(
+            ErrorCode.gateway_offline, "gateway unavailable", {"cause": str(exc)}
+        ) from exc
+    if result.session_key is not None and result.session_key != stored_key:
+        effective = _persist_key(conn, kind, entity_id, stored_key, result.session_key, now)
+        if effective != result.session_key:
+            result = ChatHistory(messages=result.messages, session_key=effective)
     return result
 
 

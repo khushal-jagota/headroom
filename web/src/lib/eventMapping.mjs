@@ -36,7 +36,7 @@ function keysForEntity(entityId, options = {}) {
     throw new Error(`unknown entity_id prefix: ${entityId}`);
   }
   if (prefix === "t") {
-    return [`ticket:${entityId}`, "board", "queues", "sprint:current"];
+    return [`ticket:${entityId}`, `chat:${entityId}`, "board", "queues", "sprint:current"];
   }
   if (prefix === "si") {
     return [`item:${entityId}`, "items:backlog", "sprint:current", "board", "queues"];

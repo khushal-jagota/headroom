@@ -96,5 +96,5 @@ assert.deepEqual(
     payload: { from_id: "t_left", to_id: "si_right", kind: "relates" },
     created_at: 1
   }).sort(),
-  ["board", "item:si_right", "queues", "sprint:current", "ticket:t_left"].sort()
+  ["board", "chat:t_left", "item:si_right", "queues", "sprint:current", "ticket:t_left"].sort()
 );

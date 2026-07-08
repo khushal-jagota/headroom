@@ -902,25 +902,41 @@ select {
 .review-screen {
   max-width: calc(var(--space-7) * 14);
   margin: 0 auto;
+  padding: var(--space-6) var(--space-4) 128px;
 }
 
-.review-card-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+.review-ticket-title {
+  font-size: var(--type-lg);
+  font-weight: 600;
+  color: var(--text-strong);
+  text-decoration: none;
+  display: inline-block;
+  margin-bottom: var(--space-4);
+  transition: color var(--motion-fast) var(--motion-ease);
 }
 
-.review-card-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
+.review-ticket-title:hover {
+  color: var(--accent-bright);
 }
 
-.review-note {
+.approval-skip {
   font-size: var(--type-sm);
+  font-weight: 600;
+  background: var(--surface-overlay);
   color: var(--text-muted);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-5);
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease),
+    background var(--motion-fast) var(--motion-ease);
+}
+
+.approval-skip:hover {
+  color: var(--text-strong);
+  border-color: var(--text-faint);
+  background: var(--surface-raised);
 }
 
 /* --- Board screen (T16) -------------------------------------------------- */
@@ -2285,3 +2301,37 @@ details.fsec[open] > summary .fsec-chev::before {
   background: var(--surface-sunken);
   cursor: default;
 }
+
+/* --- Review screen redesign ---------------------------------------------- */
+
+.proposed-recessed-block {
+  background: var(--surface-sunken);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-5);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.proposed-recessed-block hr {
+  height: 1px;
+  background: var(--border-color);
+  margin: var(--space-4) calc(-1 * var(--space-5)) var(--space-3);
+  border: none;
+}
+
+.proposed-recessed-block .approval-draft {
+  background: transparent;
+  padding: 0;
+  border: 0;
+  min-height: auto;
+}
+
+.proposed-recessed-block .approval-draft:focus {
+  outline: none;
+}
+
+.proposed-recessed-block .approval-actions {
+  margin-top: 0;
+  justify-content: space-between;
+}
+

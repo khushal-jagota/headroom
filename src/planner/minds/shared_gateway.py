@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any
 
 from planner.chat.contracts import (
+    ChatHistory,
+    ChatMessage,
     ChatSendResult,
     ChatStreamChunk,
     CommandCatalog,
@@ -91,6 +93,39 @@ class SharedGateway:
             )
         child = self._child
         return GatewayStatus(available=child is None or child.alive)
+
+    def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
+        if session_key is None:
+            return ChatHistory(messages=(), session_key=None)
+        try:
+            child = self._child_or_spawn()
+            resumed = child.request(
+                "session.resume",
+                {
+                    "session_id": session_key,
+                    "cols": SESSION_COLS,
+                    "source": CHAT_SOURCE,
+                },
+                timeout=self._request_timeout,
+            )
+            stored = str(resumed.get("resumed") or session_key)
+            raw_messages = resumed.get("messages")
+            messages = self._normalize_history_messages(raw_messages)
+            return ChatHistory(messages=messages, session_key=stored)
+        except GatewayRpcError as exc:
+            if exc.code == NOT_FOUND_CODE:
+                return ChatHistory(messages=(), session_key=session_key)
+            raise PlannerError(
+                ErrorCode.gateway_offline,
+                "chat gateway history failed",
+                {"detail": str(exc), "entity_id": entity_id},
+            ) from exc
+        except GatewayError as exc:
+            raise PlannerError(
+                ErrorCode.gateway_offline,
+                "chat gateway history failed",
+                {"detail": str(exc), "entity_id": entity_id},
+            ) from exc
 
     def run_ticket_step(
         self,
@@ -494,3 +529,63 @@ class SharedGateway:
             else {}
         )
         return CommandCatalog(categories=categories, skills=skills, canon=canon, sub=sub)
+
+    @classmethod
+    def _normalize_history_messages(cls, raw_messages: Any) -> tuple[ChatMessage, ...]:
+        if not isinstance(raw_messages, list):
+            return ()
+        messages: list[ChatMessage] = []
+        for index, raw in enumerate(raw_messages, start=1):
+            if not isinstance(raw, dict):
+                continue
+            text = cls._message_text(raw)
+            if not text:
+                continue
+            role = str(raw.get("role") or raw.get("author") or raw.get("type") or "assistant")
+            created_at = cls._message_created_at(raw, index)
+            messages.append(ChatMessage(role=role, text=text, created_at=created_at))
+        return tuple(messages)
+
+    @classmethod
+    def _message_text(cls, raw: dict[str, Any]) -> str:
+        for key in ("text", "content", "message", "output"):
+            value = raw.get(key)
+            text = cls._stringify_message_content(value)
+            if text:
+                return text
+        return ""
+
+    @classmethod
+    def _stringify_message_content(cls, value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            parts: list[str] = []
+            for item in value:
+                text = cls._stringify_message_content(item)
+                if text:
+                    parts.append(text)
+            return "\n".join(parts)
+        if isinstance(value, dict):
+            for key in ("text", "content", "message", "output"):
+                text = cls._stringify_message_content(value.get(key))
+                if text:
+                    return text
+        return ""
+
+    @staticmethod
+    def _message_created_at(raw: dict[str, Any], fallback: int) -> int:
+        for key in ("created_at", "timestamp", "time"):
+            value = raw.get(key)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, int):
+                return value
+            if isinstance(value, float):
+                return int(value)
+            if isinstance(value, str):
+                try:
+                    return int(float(value))
+                except ValueError:
+                    continue
+        return fallback

@@ -4,10 +4,10 @@
   import { mutateJson, resource, ResourceHandle } from "../lib/resources";
   import { advanceTarget, gatingField } from "../lib/ui";
   import type { AnyRecord, QueueEntry, QueuesResponse, TicketDetail } from "../lib/types";
+  import ApprovalBlock from "../components/ApprovalBlock.svelte";
   import Chip from "../components/Chip.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
-  import ProposalCard from "../components/ProposalCard.svelte";
 
   const queues = resource<QueuesResponse>("queues", (signal) =>
     fetchJson("/api/queues", { signal })
@@ -100,6 +100,22 @@
     ));
   }
 
+  function saveNote(ticketId: string, field: string, note: string): Promise<unknown> {
+    return mutateJson(
+      `/api/tickets/${ticketId}/notes/${field}`,
+      { method: "PUT", body: { note } },
+      ["queues", `ticket:${ticketId}`, "board", "sprint:current"]
+    );
+  }
+
+  function saveValue(ticketId: string, field: string, body: string): Promise<unknown> {
+    return mutateJson(
+      `/api/tickets/${ticketId}/value/${field}`,
+      { method: "PUT", body: { body } },
+      ["queues", `ticket:${ticketId}`, "board", "sprint:current"]
+    );
+  }
+
   onDestroy(() => {
     queues.dispose();
     detailResource?.dispose();
@@ -133,52 +149,107 @@
       {#if isStale(entry, detail)}
         <div class="quiet-line">Loading approval...</div>
       {:else}
-        <section
-          class="panel"
+        <div
+          class="modern-review-content"
           data-review-card
           data-entity-id={entry.entity_id}
           data-kind={entry.kind}
           data-field={["success", "approach", "plan", "result"].includes(entry.kind) ? entry.kind : undefined}
         >
-          <h2 class="panel-title">{entry.title}</h2>
-          <div class="panel-body">
-            {#if ["success", "approach", "plan", "result"].includes(entry.kind)}
-              <div class="review-card-head">
-                <Chip variant="state" value={detail.state} />
-                <Chip variant="pending-proposal" />
+          <!-- Simple Ticket Title linked to the ticket page -->
+          {#if entry.entity_type === "ticket"}
+            <a href={`#/ticket/${entry.entity_id}`} class="review-ticket-title">
+              {entry.title}
+            </a>
+          {:else}
+            <h2 class="review-ticket-title" style="pointer-events: none;">{entry.title}</h2>
+          {/if}
+
+          <!-- Recap: Plain Text Section -->
+          {#if detail.recap}
+            <div style="margin-bottom: var(--space-4);">
+              <div style="font-size: var(--type-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faintest); margin-bottom: var(--space-1);">Recap</div>
+              <div style="font-size: var(--type-md); color: var(--text-default); line-height: 1.62;">
+                <MarkdownBlock text={detail.recap} />
               </div>
-              <ProposalCard
-                proposal={detail.fields[entry.kind].proposal!}
-                requireScope
+            </div>
+          {/if}
+
+          <!-- Note: Plain Text Section -->
+          {#if ["success", "approach", "plan", "result"].includes(entry.kind) && detail.fields?.[entry.kind]?.notes}
+            <div style="margin-bottom: var(--space-5);">
+              <div style="font-size: var(--type-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faintest); margin-bottom: var(--space-1);">Note</div>
+              <div style="font-size: var(--type-sm); color: var(--text-muted); line-height: 1.55;">
+                <MarkdownBlock text={detail.fields[entry.kind].notes} />
+              </div>
+            </div>
+          {:else if entry.kind === "review" && detail.fields?.result?.notes}
+            <div style="margin-bottom: var(--space-5);">
+              <div style="font-size: var(--type-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faintest); margin-bottom: var(--space-1);">Note</div>
+              <div style="font-size: var(--type-sm); color: var(--text-muted); line-height: 1.55;">
+                <MarkdownBlock text={detail.fields.result.notes} />
+              </div>
+            </div>
+          {:else if entry.kind === "status" && detail.status_proposal?.note}
+            <div style="margin-bottom: var(--space-5);">
+              <div style="font-size: var(--type-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faintest); margin-bottom: var(--space-1);">Note</div>
+              <div style="font-size: var(--type-sm); color: var(--text-muted); line-height: 1.55;">
+                {detail.status_proposal.note}
+              </div>
+            </div>
+          {/if}
+
+          <!-- The Proposed Item (Recessed/Sunken Block) -->
+          {#if ["success", "approach", "plan", "result"].includes(entry.kind)}
+            <div class="proposed-recessed-block">
+              <ApprovalBlock
+                mode="gating-pending"
+                field={entry.kind}
+                whatLabel={entry.kind.replace(/_/g, " ")}
+                proposalBody={detail.fields[entry.kind].proposal!.body}
+                proposedBy={detail.fields[entry.kind].proposal!.proposed_by}
                 newState={advanceTarget(detail.state, detail.ceiling)}
-                onAccept={(payload) => accept(entry, payload)}
-              />
-            {:else if entry.kind === "review"}
-              <div class="review-card-head"><Chip variant="state" value={detail.state} /></div>
-              <MarkdownBlock text={detail.fields.result.value} />
-              {#if detail.fields.result.notes}
-                <div class="review-note"><MarkdownBlock text={detail.fields.result.notes} /></div>
-              {/if}
-              <div class="review-card-actions">
-                <button type="button" class="button button--primary" data-approve onclick={() => void approve(entry)}>Approve</button>
-                <button type="button" class="button" data-skip onclick={() => skip(entry)}>Skip</button>
-                <a class="review-open" data-open-ticket href={`#/ticket/${entry.entity_id}`}>open ticket</a>
+                onApprove={(payload) => accept(entry, payload)}
+              >
+                {#snippet actions()}
+                  <button type="button" class="approval-skip" data-skip onclick={() => skip(entry)}>Skip</button>
+                {/snippet}
+              </ApprovalBlock>
+            </div>
+          {:else if entry.kind === "review"}
+            <div class="proposed-recessed-block">
+              <ApprovalBlock
+                mode="needs_review"
+                field="result"
+                whatLabel="Result"
+                proposalBody={detail.fields.result.value}
+                onApprove={() => approve(entry)}
+              >
+                {#snippet actions()}
+                  <button type="button" class="approval-skip" data-skip onclick={() => skip(entry)}>Skip</button>
+                {/snippet}
+              </ApprovalBlock>
+            </div>
+          {:else if entry.kind === "status"}
+            <div class="proposed-recessed-block">
+              <div style="font-size: var(--type-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-faint); margin-bottom: var(--space-3);">
+                Proposed Status Change
               </div>
-            {:else if entry.kind === "status"}
-              <div class="review-card-head">
-                <Chip value={detail.status} />
-                <Chip value={`→ ${detail.status_proposal?.to_status || ""}`} />
+              <div style="font-size: var(--type-md); color: var(--text-strong); display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-4);">
+                <span class="pill">{detail.status}</span>
+                <span style="color: var(--text-faint);">→</span>
+                <span class="pill" style="color: var(--text-strong); background: var(--accent-surface);">{detail.status_proposal?.to_status || ""}</span>
               </div>
-              {#if detail.status_proposal?.note}
-                <div class="review-note">{detail.status_proposal.note}</div>
-              {/if}
-              <div class="review-card-actions">
-                <button type="button" class="button button--primary" data-accept-status onclick={() => void acceptStatus(entry)}>Accept</button>
-                <button type="button" class="button" data-skip onclick={() => skip(entry)}>Skip</button>
+              
+              <hr />
+
+              <div class="approval-actions" style="display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: 0;">
+                <button type="button" class="approval-skip" data-skip onclick={() => skip(entry)}>Skip</button>
+                <button type="button" class="approval-approve" data-accept-status onclick={() => void acceptStatus(entry)}>Accept</button>
               </div>
-            {/if}
-          </div>
-        </section>
+            </div>
+          {/if}
+        </div>
       {/if}
     {/if}
   {:else}

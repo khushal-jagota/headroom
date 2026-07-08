@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from typing import Protocol
 
 from planner.chat.contracts import (
+    ChatHistory,
     ChatSendResult,
     ChatStreamChunk,
     CommandCatalog,
@@ -21,6 +22,7 @@ from planner.chat.contracts import (
 
 class GatewayAdapter(Protocol):
     def status(self) -> GatewayStatus: ...
+    def history(self, session_key: str | None, entity_id: str) -> ChatHistory: ...
     def send(self, session_key: str | None, entity_id: str, text: str) -> ChatSendResult: ...
     def stream(
         self, session_key: str | None, entity_id: str, text: str, mode: str

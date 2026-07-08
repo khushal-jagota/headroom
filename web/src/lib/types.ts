@@ -4,6 +4,17 @@ export type GatewayStatus = {
   available: boolean;
 };
 
+export type ChatHistoryMessage = {
+  role: string;
+  text: string;
+  created_at: number;
+};
+
+export type ChatHistoryResponse = {
+  messages: ChatHistoryMessage[];
+  session_key?: string | null;
+};
+
 export type SprintSummary = {
   id: string;
   name: string;

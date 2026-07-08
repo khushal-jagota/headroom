@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Review Screen Redesign Proposal</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #1b1917;
+      --sunk: #141210;
+      --raised: #24211b;
+      --overlay: #26221c;
+      --line: rgba(230, 210, 175, 0.11);
+      
+      --fg-strong: #f4f1ea;
+      --fg-default: #dcd8cf;
+      --fg-muted: #b4b0a6;
+      --fg-faint: #8a867c;
+      --fg-faintest: #66625a;
+      
+      --amber: #e7a742;
+      --amber-ink: #1c1406;
+      --done: #7fa564;
+      
+      --font-ui: "Inter", -apple-system, system-ui, sans-serif;
+      --font-mono: ui-monospace, Menlo, Monaco, monospace;
+      --dur: 150ms;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--fg-default);
+      font-family: var(--font-ui);
+      font-size: 15px;
+      font-weight: 500;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Header for the comparison mockup page */
+    .mockup-header {
+      background: var(--sunk);
+      border-bottom: 1px solid var(--line);
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .mockup-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--fg-strong);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .mockup-badge {
+      font-size: 11px;
+      background: var(--amber);
+      color: var(--amber-ink);
+      padding: 2px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+
+    .mockup-controls {
+      display: flex;
+      gap: 8px;
+    }
+
+    .view-btn {
+      background: var(--overlay);
+      color: var(--fg-muted);
+      border: 1px solid var(--line);
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all var(--dur);
+    }
+
+    .view-btn:hover {
+      color: var(--fg-strong);
+      border-color: var(--fg-faint);
+    }
+
+    .view-btn.active {
+      background: var(--amber);
+      color: var(--amber-ink);
+      border-color: var(--amber);
+    }
+
+    /* Comparison Split Screen */
+    .comparison-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      height: calc(100vh - 73px);
+      overflow: hidden;
+      transition: grid-template-columns var(--dur);
+    }
+
+    .pane {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      overflow-y: auto;
+      padding: 32px 40px;
+    }
+
+    .pane-before {
+      background: #181614; /* slightly cooler dark for before */
+      border-right: 1px solid var(--line);
+    }
+
+    .pane-after {
+      background: var(--bg);
+    }
+
+    .pane-header {
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px dashed var(--line);
+      padding-bottom: 12px;
+    }
+
+    .pane-title {
+      font-size: 14px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    .pane-before .pane-title {
+      color: var(--fg-faint);
+    }
+
+    .pane-after .pane-title {
+      color: var(--amber);
+    }
+
+    /* Legacy CSS Styles (Before) */
+    .legacy-panel {
+      background: #24211b;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 6px;
+      margin-bottom: 24px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    }
+
+    .legacy-panel-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--fg-strong);
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .legacy-panel-body {
+      padding: 16px;
+    }
+
+    .legacy-card-head {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .legacy-chip {
+      display: inline-flex;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      border: 1px solid var(--fg-faintest);
+      background: var(--overlay);
+      color: var(--fg-muted);
+    }
+
+    .legacy-chip-state {
+      border-color: transparent;
+      background: #33291a;
+      color: var(--fg-strong);
+    }
+
+    .legacy-chip-pending {
+      background: var(--amber);
+      color: var(--amber-ink);
+      border-color: var(--amber);
+    }
+
+    .legacy-proposal {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .legacy-meta {
+      font-size: 12px;
+      color: var(--fg-faint);
+    }
+
+    .legacy-markdown {
+      font-size: 14px;
+      color: var(--fg-default);
+      background: var(--sunk);
+      padding: 12px;
+      border-radius: 4px;
+      border: 1px solid rgba(255,255,255,0.02);
+    }
+
+    .legacy-textarea {
+      width: 100%;
+      min-height: 120px;
+      background: var(--sunk);
+      color: var(--fg-default);
+      border: 1px solid var(--fg-faintest);
+      border-radius: 4px;
+      padding: 10px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      resize: vertical;
+    }
+
+    .legacy-scope-picker {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: #33291a;
+      padding: 10px 14px;
+      border-radius: 4px;
+      font-size: 12px;
+      color: var(--fg-muted);
+    }
+
+    .legacy-scope-picker select {
+      background: var(--sunk);
+      color: var(--fg-default);
+      border: 1px solid var(--fg-faint);
+      border-radius: 3px;
+      padding: 2px 6px;
+    }
+
+    .legacy-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .legacy-btn {
+      background: var(--overlay);
+      color: var(--fg-default);
+      border: 1px solid var(--fg-faintest);
+      padding: 6px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: all var(--dur);
+    }
+
+    .legacy-btn:hover {
+      background: var(--line);
+    }
+
+    .legacy-btn-primary {
+      background: #33291a;
+      color: var(--amber);
+      border-color: var(--amber);
+    }
+
+    .legacy-btn-primary:hover {
+      background: var(--amber);
+      color: var(--amber-ink);
+    }
+
+    /* Redesigned Modern CSS Styles (After) */
+    .review-container {
+      max-width: 680px;
+      width: 100%;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* Queue Navigation Bar at the top of the queue */
+    .queue-navigator {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 16px;
+      background: var(--sunk);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+    }
+
+    .queue-progress {
+      font-size: 12px;
+      color: var(--fg-faint);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .queue-dots {
+      display: flex;
+      gap: 6px;
+    }
+
+    .queue-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: var(--radius-pill);
+      background: var(--fg-faintest);
+    }
+
+    .queue-dot.active {
+      background: var(--amber);
+    }
+
+    .queue-dot.completed {
+      background: var(--done);
+    }
+
+    .queue-actions-nav {
+      display: flex;
+      gap: 6px;
+    }
+
+    .queue-nav-btn {
+      background: transparent;
+      border: none;
+      color: var(--fg-faint);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+      transition: all var(--dur);
+    }
+
+    .queue-nav-btn:hover {
+      color: var(--fg-strong);
+      background: var(--overlay);
+    }
+
+    /* Recessed / Sunken Block only for the thing being proposed */
+    .proposed-recessed-block {
+      background: var(--sunk);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      padding: 20px 22px;
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+
+    /* The contenteditable draft body. Caret color and seamless look */
+    .approval-draft {
+      font-size: 15px;
+      line-height: 1.62;
+      color: var(--fg-strong);
+      outline: none;
+      caret-color: var(--amber);
+      cursor: text;
+    }
+
+    .approval-draft ol {
+      margin: 8px 0 0;
+      padding-left: 20px;
+    }
+
+    .approval-draft li {
+      margin: 4px 0;
+    }
+
+    .approval-draft code {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--fg-default);
+      background: var(--overlay);
+      padding: 1px 5px;
+      border-radius: var(--radius-sm);
+    }
+
+    .approval-approve {
+      font-size: 13.5px;
+      font-weight: 600;
+      background: var(--amber);
+      color: var(--amber-ink);
+      border: 0;
+      border-radius: var(--radius-md);
+      padding: 10px 20px;
+      cursor: pointer;
+      transition: filter var(--dur) var(--motion-ease);
+    }
+
+    .approval-approve:hover {
+      filter: brightness(1.08);
+    }
+
+    .approval-skip {
+      font-size: 13.5px;
+      font-weight: 600;
+      background: var(--overlay);
+      color: var(--fg-muted);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      padding: 9px 18px;
+      cursor: pointer;
+      transition: all var(--dur);
+    }
+
+    .approval-skip:hover {
+      color: var(--fg-strong);
+      border-color: var(--fg-faint);
+    }
+
+    /* Scope Picker styling (Grant) */
+    .grant {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--fg-faint);
+      font-size: 12.5px;
+    }
+
+    .grant .sel {
+      position: relative;
+      color: var(--fg-strong);
+      background: var(--overlay);
+      border-radius: var(--radius-sm);
+      padding: 4px 8px;
+      cursor: pointer;
+      border: 1px solid var(--line);
+      font-weight: 600;
+      font-size: 12px;
+      transition: border-color var(--dur);
+    }
+
+    .grant .sel:hover {
+      border-color: var(--fg-faint);
+    }
+
+    .grant .sel select {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      width: 100%;
+      cursor: pointer;
+    }
+
+    /* View Switcher States */
+    .comparison-container.view-before {
+      grid-template-columns: 1fr 0fr;
+    }
+    .comparison-container.view-before .pane-after {
+      display: none;
+    }
+
+    .comparison-container.view-after {
+      grid-template-columns: 0fr 1fr;
+    }
+    .comparison-container.view-after .pane-before {
+      display: none;
+    }
+
+    @media (max-width: 1024px) {
+      .comparison-container {
+        grid-template-columns: 1fr;
+        height: auto;
+        overflow: visible;
+      }
+      .pane-before {
+        border-right: none;
+        border-bottom: 2px solid var(--line);
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="mockup-header">
+    <div class="mockup-title">
+      <span>Review Screen Proposal</span>
+      <span class="mockup-badge">Redesign Mockup</span>
+    </div>
+    <div class="mockup-controls">
+      <button class="view-btn" onclick="setView('before')">Show Before</button>
+      <button class="view-btn active" onclick="setView('split')">Split View</button>
+      <button class="view-btn" onclick="setView('after')">Show Proposed After</button>
+    </div>
+  </header>
+
+  <main id="container" class="comparison-container">
+    
+    <!-- LEGACY BEFORE PANE -->
+    <section class="pane pane-before">
+      <div class="pane-header">
+        <div class="pane-title">Current Legacy UI</div>
+        <div class="legacy-chip">1 of 4 pending</div>
+      </div>
+
+      <div class="legacy-panel">
+        <div class="legacy-panel-title">Ship the waitlist capture flow</div>
+        <div class="legacy-panel-body">
+          
+          <div class="legacy-card-head">
+            <span class="legacy-chip legacy-chip-state">needs plan</span>
+            <span class="legacy-chip legacy-chip-pending">pending proposal</span>
+          </div>
+
+          <div class="legacy-proposal">
+            <div class="legacy-meta">proposed by agent</div>
+            
+            <div class="legacy-markdown">
+              <p>Two-tier capture, shipped behind a flag:</p>
+              <ul>
+                <li>Single-field email form on the hero; optimistic insert.</li>
+                <li>Confirmation screen collects name + role.</li>
+                <li>Double opt-in via Resend.</li>
+              </ul>
+            </div>
+
+            <div class="legacy-meta">Edit Proposal:</div>
+            <textarea class="legacy-textarea">Two-tier capture, shipped behind a flag:
+- Single-field email form on the hero; optimistic insert.
+- Confirmation screen collects name + role.
+- Double opt-in via Resend.</textarea>
+
+            <div class="legacy-scope-picker">
+              <span>let it run up to:</span>
+              <select>
+                <option>needs approach</option>
+                <option>needs plan</option>
+                <option selected>in progress</option>
+                <option>needs review</option>
+                <option>done</option>
+              </select>
+              <span>then:</span>
+              <select>
+                <option selected>keep proposing</option>
+                <option>stop</option>
+              </select>
+            </div>
+
+            <div class="legacy-actions">
+              <button class="legacy-btn legacy-btn-primary">Accept</button>
+              <button class="legacy-btn">Skip</button>
+            </div>
+
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- MODERN PROPOSED AFTER PANE -->
+    <section class="pane pane-after">
+      <div class="pane-header">
+        <div class="pane-title">Proposed Redesigned UI</div>
+        <div class="pill">queue: 1 of 4 items</div>
+      </div>
+
+      <div class="review-container">
+        
+        <!-- Queue Navigator Bar -->
+        <div class="queue-navigator">
+          <div class="queue-progress">
+            <span>Progress:</span>
+            <div class="queue-dots">
+              <div class="queue-dot active" title="Current: Plan for Waitlist Flow"></div>
+              <div class="queue-dot" title="Next: Approach for auth fix"></div>
+              <div class="queue-dot" title="Result: Landing page spec"></div>
+              <div class="queue-dot" title="Status: Dropped item"></div>
+            </div>
+            <span style="margin-left: 8px; font-weight: 600; color: var(--fg-strong);">1 / 4</span>
+          </div>
+          <div class="queue-actions-nav">
+            <button class="queue-nav-btn" style="opacity: 0.5; cursor: not-allowed;" disabled>← Prev</button>
+            <button class="queue-nav-btn">Skip →</button>
+          </div>
+        </div>
+
+        <!-- The Redesigned Screen Content (No Card Container) -->
+        <div class="modern-review-content">
+          
+          <!-- Simple Ticket Title at the top -->
+          <h2 style="font-size: 20px; font-weight: 600; color: var(--fg-strong); margin-bottom: 24px;">
+            Ship the waitlist capture flow
+          </h2>
+
+          <!-- Recap: Plain Text Section -->
+          <div style="margin-bottom: 24px;">
+            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--fg-faintest); margin-bottom: 6px;">Recap</div>
+            <div style="font-size: 15px; color: var(--fg-default); line-height: 1.62;">
+              Success and approach are agreed. The agent has drafted a step-by-step plan and is holding for your approval before it starts building — the only open question is the two-tier capture and the consent-copy dependency.
+            </div>
+          </div>
+
+          <!-- Note: Plain Text Section -->
+          <div style="margin-bottom: 28px;">
+            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--fg-faintest); margin-bottom: 6px;">Note</div>
+            <div style="font-size: 14px; color: var(--fg-muted); line-height: 1.55;">
+              Watch the double-opt-in edge — legal wants explicit consent copy before this hits real traffic.
+            </div>
+          </div>
+
+          <!-- The Proposed Item (Recessed/Sunken Block) -->
+          <div class="proposed-recessed-block">
+            <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--fg-faint); margin-bottom: 12px; display: flex; justify-content: space-between;">
+              <span>Proposed Plan</span>
+              <span style="color: var(--fg-faintest); text-transform: none; font-weight: 500;">proposed by agent</span>
+            </div>
+
+            <!-- Single editable draft body inside the recessed block -->
+            <div class="approval-draft ed" contenteditable="true" role="textbox" aria-multiline="true">Two-tier capture, shipped behind a flag:
+              <ol>
+                <li>Single-field email form on the hero (<code>WaitlistHero.tsx</code>); optimistic insert into Convex.</li>
+                <li>Confirmation screen collects name + role, write-through to the same row.</li>
+                <li>Double opt-in via the existing Resend adapter.</li>
+              </ol>
+            </div>
+
+            <!-- Seam divider in recessed block -->
+            <div style="height: 1px; background: var(--line); margin: 20px -22px 18px; border: none;"></div>
+
+            <!-- Actions Row inside recessed block -->
+            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+              <div class="grant">
+                <span>run up to</span>
+                <span class="sel">
+                  in&nbsp;progress
+                  <select>
+                    <option>needs approach</option>
+                    <option>needs plan</option>
+                    <option selected>in progress</option>
+                    <option>needs review</option>
+                    <option>done</option>
+                  </select>
+                </span>
+                <span>then</span>
+                <span class="sel">
+                  keep&nbsp;proposing
+                  <select>
+                    <option selected>keep proposing</option>
+                    <option>stop</option>
+                  </select>
+                </span>
+              </div>
+
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <button class="approval-skip">Skip</button>
+                <button class="approval-approve">Approve</button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    function setView(view) {
+      const container = document.getElementById('container');
+      const buttons = document.querySelectorAll('.view-btn');
+      
+      // Clear active class
+      buttons.forEach(btn => btn.classList.remove('active'));
+      
+      // Set active button
+      if (view === 'before') {
+        buttons[0].classList.add('active');
+        container.className = 'comparison-container view-before';
+      } else if (view === 'split') {
+        buttons[1].classList.add('active');
+        container.className = 'comparison-container';
+      } else if (view === 'after') {
+        buttons[2].classList.add('active');
+        container.className = 'comparison-container view-after';
+      }
+    }
+  </script>
+</body>
+</html>

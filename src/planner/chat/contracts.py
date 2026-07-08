@@ -8,9 +8,15 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ChatMessage:
-    role: str                      # "user" | "assistant"
+    role: str                      # gateway role: "user" | "assistant" | "system" | ...
     text: str
     created_at: int
+
+
+@dataclass(frozen=True)
+class ChatHistory:
+    messages: tuple[ChatMessage, ...]
+    session_key: str | None        # the durable Hermes key whose history was read, if any
 
 
 @dataclass(frozen=True)

@@ -12,7 +12,7 @@ from sqlite3 import Connection
 from fastapi.testclient import TestClient
 
 from planner.chat import service
-from planner.chat.contracts import ChatSendResult, GatewayStatus
+from planner.chat.contracts import ChatHistory, ChatMessage, ChatSendResult, GatewayStatus
 from planner.core.adapters.registry import Adapters, build_adapters
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -102,6 +102,14 @@ def _stored_key(db_path: Path, table: str, entity_id: str) -> object:
     return None if row is None else row["chat_session_key"]
 
 
+def _set_stored_key(db_path: Path, table: str, entity_id: str, key: str) -> None:
+    conn = connect(str(db_path))
+    try:
+        conn.execute(f"UPDATE {table} SET chat_session_key = ? WHERE id = ?", (key, entity_id))
+    finally:
+        conn.close()
+
+
 def test_chat_send_echo_persists_key_and_event(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)
@@ -111,6 +119,96 @@ def test_chat_send_echo_persists_key_and_event(tmp_path: Path) -> None:
     assert response.json() == {"reply_text": "echo: hello", "session_key": "fake-sess-1"}
     assert _stored_key(db_path, "tickets", tid) == "fake-sess-1"
     assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fake-sess-1"}]
+
+
+def test_chat_history_empty_without_session(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+
+    with TestClient(app) as client:
+        response = client.get(f"/api/chat/{tid}/history")
+
+    assert response.status_code == 200
+    assert response.json() == {"messages": [], "session_key": None}
+    assert _stored_key(db_path, "tickets", tid) is None
+    assert _events(db_path, tid, "chat_session_created") == []
+
+
+def test_chat_history_reads_full_fake_trace(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+
+    with TestClient(app) as client:
+        first = client.post(f"/api/chat/{tid}/send", json={"text": "hello"})
+        second = client.post(f"/api/chat/{tid}/send", json={"text": "again"})
+        history = client.get(f"/api/chat/{tid}/history")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert history.status_code == 200
+    assert history.json() == {
+        "messages": [
+            {"role": "user", "text": "hello", "created_at": 1},
+            {"role": "assistant", "text": "echo: hello", "created_at": 2},
+            {"role": "user", "text": "again", "created_at": 3},
+            {"role": "assistant", "text": "echo: again", "created_at": 4},
+        ],
+        "session_key": "fake-sess-1",
+    }
+
+
+def test_chat_history_rejects_agents(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+
+    with TestClient(app) as client:
+        response = client.get(f"/api/chat/{tid}/history", headers={"X-Plan-Actor": "agent"})
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "agent_forbidden"
+
+
+def test_chat_history_offline_is_503_when_session_exists(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path, gateway="offline")
+    tid = _ticket(db_path)
+    _set_stored_key(db_path, "tickets", tid, "stored-key")
+
+    with TestClient(app) as client:
+        response = client.get(f"/api/chat/{tid}/history")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "gateway_offline"
+    assert _stored_key(db_path, "tickets", tid) == "stored-key"
+
+
+def test_chat_history_rotated_key_repersists(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    _set_stored_key(db_path, "tickets", tid, "old-key")
+
+    class RotatingHistoryGateway:
+        def status(self) -> GatewayStatus:
+            return GatewayStatus(available=True)
+
+        def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
+            assert session_key == "old-key"
+            assert entity_id == tid
+            return ChatHistory(
+                messages=(ChatMessage(role="system", text="worker prompt", created_at=7),),
+                session_key="fresh-key",
+            )
+
+    _replace_gateway(app, RotatingHistoryGateway())
+    with TestClient(app) as client:
+        response = client.get(f"/api/chat/{tid}/history")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "messages": [{"role": "system", "text": "worker prompt", "created_at": 7}],
+        "session_key": "fresh-key",
+    }
+    assert _stored_key(db_path, "tickets", tid) == "fresh-key"
+    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fresh-key"}]
 
 
 def test_chat_stream_echo_persists_key_and_event(tmp_path: Path) -> None:

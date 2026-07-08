@@ -29,8 +29,10 @@ share.
 
 - **Keyed invalidation, no canonical client store.** The event log is a doorbell.
   Each event maps to resource keys such as `ticket:<id>`, `board`, `queues`, and
-  `sprint:current`; only those resources refetch. There is no client-side store
-  mirroring the server — the server is always the source of truth.
+  `sprint:current`; ticket events also map to `chat:<id>` so the ticket chat rail
+  can reload the worker's full Hermes trace. Only those resources refetch. There
+  is no client-side store mirroring the server — the server is always the source
+  of truth.
 - **The markdown renderer is hardened.** Written text (briefs, notes, ideas) renders
   through a markdown pass built so a crafted link that a browser would quietly treat
   as runnable code is impossible to express.

@@ -18,7 +18,7 @@ from planner.minds.config import (
 from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.gateway import ChildProcess, GatewayChild, GatewayError
 from planner.minds.runner import RunResult, run_step
-from planner.minds.shared_gateway import SharedGateway
+from planner.minds.shared_gateway import CHAT_SOURCE, SESSION_COLS, SharedGateway
 
 LIVE_SID = "ab12cd34"
 OTHER_SID = "ff00ff00"
@@ -271,6 +271,54 @@ def test_run_step_resume_path_issues_resume_not_create() -> None:
     assert fake.sent_methods() == ["session.resume", "prompt.submit"]
     assert res.session_key == "20260707_090000_tip999"
     assert res.status == "complete"
+
+
+def test_shared_gateway_history_resumes_and_preserves_full_trace() -> None:
+    fake = FakeGateway(
+        {
+            "session.resume": [
+                Reply(
+                    result={
+                        "session_id": LIVE_SID,
+                        "resumed": "20260708_090000_rotated",
+                        "messages": [
+                            {"role": "user", "content": "human asks", "created_at": 10},
+                            {
+                                "role": "system",
+                                "content": [{"text": "worker prompt"}, {"text": "context"}],
+                                "timestamp": "11.7",
+                            },
+                            {
+                                "author": "assistant",
+                                "message": {"content": "worker replies"},
+                                "time": 12.2,
+                            },
+                            {"role": "tool", "output": "tool output", "created_at": 13},
+                        ],
+                    }
+                )
+            ]
+        }
+    )
+    gateway = shared(fake)
+    try:
+        history = gateway.history(STORED_KEY, "t_demo")
+    finally:
+        gateway.shutdown()
+
+    assert fake.sent_methods() == ["session.resume"]
+    assert fake.sent[0]["params"] == {
+        "session_id": STORED_KEY,
+        "cols": SESSION_COLS,
+        "source": CHAT_SOURCE,
+    }
+    assert history.session_key == "20260708_090000_rotated"
+    assert [(msg.role, msg.text, msg.created_at) for msg in history.messages] == [
+        ("user", "human asks", 10),
+        ("system", "worker prompt\ncontext", 11),
+        ("assistant", "worker replies", 12),
+        ("tool", "tool output", 13),
+    ]
 
 
 def test_run_step_event_racing_submit_response() -> None:

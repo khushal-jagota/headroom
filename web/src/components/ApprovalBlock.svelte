@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { type Snippet } from "svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
@@ -16,7 +17,8 @@
     newState = null,
     onApprove,
     onNoteSave,
-    onValueSave
+    onValueSave,
+    actions
   }: {
     mode: "gating-pending" | "needs_review";
     field?: string;
@@ -28,6 +30,7 @@
     onApprove: (payload: Record<string, unknown>) => Promise<unknown>;
     onNoteSave?: (raw: string) => Promise<unknown>;
     onValueSave?: (raw: string) => Promise<unknown>;
+    actions?: Snippet;
   } = $props();
 
   let draft = $state("");
@@ -151,6 +154,7 @@
       >
         Approve
       </button>
+      {@render actions?.()}
     </div>
   {:else}
     {#if proposedBy}
@@ -188,6 +192,7 @@
         Approve
       </button>
       <ScopePairPicker {newState} bind:scope />
+      {@render actions?.()}
     </div>
   {/if}
 </div>

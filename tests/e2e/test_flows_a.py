@@ -51,6 +51,15 @@ def _wait_present(page: Page, selector: str) -> None:
     )
 
 
+def _wait_chat_text(page: Page, who: str, text: str) -> None:
+    page.wait_for_function(
+        "({ who, text }) => Array.from(document.querySelectorAll(`[data-chat-msg=\"${who}\"]`))"
+        ".some(el => el.textContent.includes(text))",
+        arg={"who": who, "text": text},
+        timeout=WAIT_MS,
+    )
+
+
 def test_e22_cli_create_live_board(server, context_factory, open_page, cli):
     board = 'section[data-screen="board"]'
     ctx_a = context_factory()
@@ -164,9 +173,13 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
     page = open_page(context_factory(), server, "#/review", card, settled=True)
 
     # Prefill first (before any fill).
-    assert page.input_value(f"{card} [data-edit]") == E25_ORIG
+    page.focus(f"{card} [data-edit]")
+    assert page.text_content(f"{card} [data-edit]") == E25_ORIG
 
-    page.fill(f"{card} [data-edit]", E25_EDIT)
+    page.locator(f"{card} [data-edit]").evaluate(
+        f"(el) => {{ el.textContent = {repr(E25_EDIT)}; }}"
+    )
+    page.locator(f"{card} [data-edit]").blur()
     page.select_option(f"{card} [data-scope-ceiling]", "needs_plan")
     page.check(f'{card} [data-scope-atcap] input[value="propose"]')
     _wait_enabled(page, f"{card} [data-accept]")
@@ -231,6 +244,32 @@ def test_e26_chat_panel_echo_and_offline(
         " return false; }",
         timeout=WAIT_MS,
     )
+
+    history = api.get(server, f"/api/chat/{tid}/history")
+    assert [msg["text"] for msg in history["messages"]] == [
+        "warmup",
+        "echo: warmup",
+        "hello from e2e",
+        "echo: hello from e2e",
+    ]
+
+    # The transcript is gateway history, not component-local state. Leaving the ticket,
+    # returning, and a hard reload must all recover the visible turns.
+    page.goto(server.base + "/#/board")
+    page.wait_for_selector('section[data-screen="board"]', timeout=WAIT_MS)
+    page.goto(server.base + f"/#/ticket/{tid}")
+    page.wait_for_selector(
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]', timeout=WAIT_MS
+    )
+    _wait_chat_text(page, "you", "hello from e2e")
+    _wait_chat_text(page, "planner", "echo: hello from e2e")
+
+    page.reload()
+    page.wait_for_selector(
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]', timeout=WAIT_MS
+    )
+    _wait_chat_text(page, "you", "hello from e2e")
+    _wait_chat_text(page, "planner", "echo: hello from e2e")
 
     # --- offline half (boot-time adapter -> a second instance) ---
     off = server_factory(gateway="offline")

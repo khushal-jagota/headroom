@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 from planner.chat.contracts import (
+    ChatHistory,
     ChatSendResult,
     ChatStreamChunk,
     CommandCatalog,
@@ -43,6 +44,9 @@ class RealGatewayAdapter:
         if not python.exists():
             return GatewayStatus(available=False, detail=f"hermes interpreter not found: {python}")
         return GatewayStatus(available=False, detail="shared gateway is not attached")
+
+    def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
+        raise self._offline()
 
     def send(self, session_key: str | None, entity_id: str, text: str) -> ChatSendResult:
         raise self._offline()

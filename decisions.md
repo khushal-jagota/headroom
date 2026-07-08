@@ -584,3 +584,19 @@ chunk path, not a second UI. The old classic route loop (`assets/api.js`, `asset
 `assets/components.js`, and `assets/screens-*.js`) is deleted. Keep `assets/tokens.css`,
 `assets/app.css`, and `assets/markdown.js` because the Svelte document still imports them as shared
 styling and hardened markdown infrastructure.
+
+## 2026-07-08 · Ticket chat is the full Hermes employee trace
+
+Owner concern: returning to a ticket loses the visible chat. Root cause is local: Svelte
+`ChatPanel` stores the transcript only in component state, while the backend persists only the
+durable Hermes `chat_session_key`. Owner ruling: the ticket chat rail is the full employee trace,
+not just human-origin messages. Worker step prompts and replies are part of what the worker has done
+and should be visible. Decision: the history endpoint should read the full durable Hermes session
+history (`session.resume` messages or `session.history`) as the primary source for
+`chat:<entity_id>`. A planner-owned table may still be added later as a cache/index if needed, but
+it must preserve the full trace and must not filter worker prompts out of the ticket chat.
+Implementation choice: use the proven `session.resume` `messages` payload first, without lazy
+resume, because the local Hermes linkage spike demonstrates that exact response shape; keep
+`session.history` as a later adapter option if resume proves too expensive. Ticket-domain events now
+also invalidate `chat:<ticket_id>`, so worker status/proposal events prompt the mounted chat panel to
+refetch the full trace rather than depending on component-local transcript state.
