@@ -3,7 +3,65 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
-## Current work cycle (2026-07-08): system-friction cleanup implementation
+## Current work cycle (2026-07-08): Board Workspace-left correction
+
+Owner correction: the Board must copy the old planning-server Workspace left rail, not a generic
+top-down list. The right inspector can stay minimal for now; the current priority is getting the
+left chooser shape right.
+
+Current approach:
+
+- Keep the backend board contract unchanged (`GET /api/board` columns in state order).
+- Make the Board own the full height below the app nav, like the old Workspace shell.
+- Render the left rail as the old Workspace chooser shape: `Refinement Tree` heading, uppercase
+  state sections, chevrons, counts, and transparent row buttons.
+- Render every state header in order; do not filter empty states.
+- Keep rows flat in the rail; no generic EntityRow/card treatment.
+- Preserve existing e2e selectors: `data-column`, `data-card`, and `data-ticket-id`.
+
+Result:
+
+- `web/src/routes/BoardRoute.svelte` now renders the Board as a Workspace split with a left
+  Refinement Tree chooser. The right side is only a minimal selected-ticket link for now.
+- `assets/app.css` replaces the generic Board list/card styling with the old Workspace-left shape:
+  full-height split shell, scrollable left rail, uppercase mono section headers, counts, chevrons,
+  transparent rows, and hover/active row fill only.
+- `docs/frontend.md` describes Board as a Workspace-style left rail.
+- The row title keeps the legacy `.entity-row-title` compatibility hook so the existing reload e2e
+  can keep asserting Board state without restoring the old EntityRow visual treatment.
+
+Verification status: `./verify` passed on 2026-07-08. Gates passed: ruff, mypy over 80 source files,
+159 unit tests, compile/static checks, `npm --prefix web run check`, `npm --prefix web run build`,
+`npm --prefix web test`, and 19 e2e tests. The known Svelte `TicketRoute.svelte` initial-value
+warnings and Pytest `TestClock` collection warnings remain.
+
+### Side planning note: CLI redesign plan
+
+Owner request: plan the move to the simpler CLI shape and use built-in subagents as
+reviewers.
+
+- Added `orchestration/cli-redesign/plan.md`.
+- The planned command shape is `panels day ...`, `panels ticket ...`,
+  `panels sprint ...`, and `panels worker ...`.
+- Worker commands are separate from ticket management. `worker propose` infers the
+  current proposal field from ticket state and must include a recap update; `worker
+  recap` remains available for recap-only updates.
+- Ticket creation stays under `ticket create`; sprint commands may place existing
+  tickets into a sprint or sprint item, but do not create tickets.
+- Day listing is explicit: `day show` includes overview plus tickets, while
+  `day list-tickets` is the focused scanner/script command.
+- Code-owned state and runtime status are deliberately out of CLI scope.
+- Two built-in reviewer subagents reviewed the plan. Accepted fixes: remove old
+  top-level command homes instead of aliasing them, remove visible `idea` from this
+  CLI shape, remove post-create `ticket set sprint`, make `day set` field-first
+  with `--date`, keep broad sprint-item status knobs out of the first wave, add the
+  missing backend writer/API for moving existing tickets under sprint items, allow
+  proposal-with-recap to write recap on the first `needs_success` proposal, spell out
+  blocker link direction, and add `current`/`none` selector tests.
+
+Verification status: planning-only; no product code changed and no `./verify` run.
+
+## Prior work cycle (2026-07-08): system-friction cleanup implementation
 
 Owner request: implement and review the first four system-friction cleanup
 tickets from `orchestration/system-friction-cleanup/plan.md`.

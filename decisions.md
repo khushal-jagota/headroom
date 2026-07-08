@@ -795,13 +795,23 @@ value/body source rather than every surface inventing a different flag shape. `d
 day's ticket list as part of the full day view, but listing the tickets for a day is important enough
 to be an explicit command such as `day list-tickets`.
 
-## D49 — A worker proposal carries the recap with it
+## D49 — Worker proposals carry a recap update
 
 Worker writes should not be made field-shaped just to match entity `set` commands. The worker action
-is simply `propose`: it proposes the next field of work. The recap is not a separate worker field and
-not a sibling of success/approach/plan/result. When a worker proposes something, it should also send
-the updated recap as part of that same action, and the backend should overwrite the ticket recap in
-the same operation.
+is simply `propose`: it proposes the next field of work. The recap is not a fifth proposal field and
+not a sibling of success/approach/plan/result. A worker may still update the recap by itself through a
+separate recap command, but every proposal must also carry the updated recap and the backend should
+overwrite the ticket recap as part of the same proposal operation.
+
+## D50 — CLI redesign removes old homes instead of aliasing them
+
+The CLI redesign should not keep the old top-level command homes as visible or hidden compatibility
+aliases. `propose`, `recap`, and `note` move under `worker`; sprint-item commands move under
+`sprint item`; `idea` is removed from the visible product CLI until a later owner decision says where
+idea capture belongs. Post-create sprint assignment lives under `sprint add-ticket` or
+`sprint item add-ticket`, not `ticket set sprint`; `ticket create` may still carry placement metadata
+at creation. `day set` uses a concrete field-first grammar with `--date` so date and field positions
+cannot be ambiguous. Broad manual status knobs stay out of the first CLI shape.
 
 ## D47 — `create_idea` row typing is an integration repair
 
@@ -833,3 +843,18 @@ and tested as a System A startup switch; and shared Hermes run types moved to
 live gateway session ownership, and the two blocking shapes stay out of scope for the owner
 discussion. Codex read-only reviews were used on the writer relocation and Hermes contract/export
 cleanup because those are the architectural seams most likely to drift.
+
+## D50 — Board correction keeps all state headers visible
+
+The first top-down Board pass still hid empty states and added a new page summary, which did not
+match the intended old planning-server shape. The corrected Board renders every backend state column
+in order, including empty ones, and removes the summary block. Stages and ticket rows stay flat:
+dividers and spacing carry the structure, not raised panels.
+
+## D51 — Board left rail copies the old Workspace chooser before inspector work
+
+The owner clarified that the mismatch is specifically the Workspace left side. The Board therefore
+uses the old split Workspace shell and chooser pattern first: full-height screen, left rail, mono
+`Refinement Tree` heading, always-present state sections with chevrons/counts, and transparent row
+buttons. The right side is deliberately minimal in this slice because the owner explicitly said not
+to worry about the inspector yet. The backend board contract and event invalidation stay unchanged.
