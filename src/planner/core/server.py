@@ -72,6 +72,8 @@ _SHELL = """<!doctype html>
 </html>
 """
 
+_WEB_DIST = Path("web/dist")
+
 
 def http_status_for(code: ErrorCode) -> int:
     return _STATUS_BY_CODE.get(code, 400)
@@ -104,15 +106,10 @@ def create_app(
                     worker_role=config.worker_skill,
                 )
                 app_.state.shared_gateway = shared_gateway
-                app_.state.adapters = Adapters(
-                    boundary=adapters.boundary,
-                    gateway=shared_gateway,
-                )
+                app_.state.adapters = Adapters(gateway=shared_gateway)
                 loops = start(
                     config,
                     clock,
-                    app_.state.adapters,
-                    conn_factory,
                     shared_gateway=shared_gateway,
                 )
                 # Expose System A for the API poke seam (readiness-changing endpoints wake it).
@@ -169,10 +166,10 @@ def create_app(
         return _SHELL
 
     if config.test_mode:
-        app.include_router(
-            build_test_router(config, clock, adapters, conn_factory), prefix="/api"
-        )
+        app.include_router(build_test_router(config, clock), prefix="/api")
 
+    if _WEB_DIST.is_dir():
+        app.mount("/_app", StaticFiles(directory=_WEB_DIST), name="vite_app")
     app.mount("/assets", StaticFiles(directory="assets"), name="assets")
     app.mount("/static", StaticFiles(directory="static"), name="static")
     return app

@@ -39,13 +39,11 @@ class Config:
     ws_poll_ms: int
     ui_debounce_ms: int
     run_max_seconds: int
-    boundary_timeout_seconds: int
     dispatcher_lock_path: str
     logs_dir: str
     events_read_limit: int
     db_busy_timeout_ms: int
     # adapter selection (registry §9.4)
-    boundary_adapter: str
     gateway_adapter: str
     # test mode — ENV ONLY, never in config.yaml
     test_mode: bool
@@ -145,9 +143,6 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         ws_poll_ms=_int_value(cfg, env, "ws_poll_ms", "PLAN_WS_POLL_MS", 300),
         ui_debounce_ms=_int_value(cfg, env, "ui_debounce_ms", "PLAN_UI_DEBOUNCE_MS", 250),
         run_max_seconds=_int_value(cfg, env, "run_max_seconds", "PLAN_RUN_MAX_SECONDS", 1800),
-        boundary_timeout_seconds=_int_value(
-            cfg, env, "boundary_timeout_seconds", "PLAN_BOUNDARY_TIMEOUT_SECONDS", 60
-        ),
         dispatcher_lock_path=_str_value(
             cfg, env, "dispatcher_lock_path", "PLAN_DISPATCHER_LOCK_PATH", "data/dispatcher.lock"
         ),
@@ -156,7 +151,6 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         db_busy_timeout_ms=_int_value(
             cfg, env, "db_busy_timeout_ms", "PLAN_DB_BUSY_TIMEOUT_MS", 5000
         ),
-        boundary_adapter=_str_value(cfg, env, "boundary_adapter", "PLAN_BOUNDARY_ADAPTER", "auto"),
         gateway_adapter=_str_value(cfg, env, "gateway_adapter", "PLAN_GATEWAY_ADAPTER", "auto"),
         test_mode=test_mode,
         fake_now=fake_now,

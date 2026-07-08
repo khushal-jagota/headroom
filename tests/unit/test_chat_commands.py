@@ -330,7 +330,7 @@ def test_command_busy_is_409_already_running(tmp_path: Path) -> None:
                 {"entity_id": entity_id},
             )
 
-    app.state.adapters = Adapters(boundary=adapters.boundary, gateway=BusyGateway())  # type: ignore[arg-type]
+    app.state.adapters = Adapters(gateway=BusyGateway())  # type: ignore[arg-type]
     with TestClient(app) as client:
         response = client.post(f"/api/chat/{tid}/command", json={"command": "/status"})
 

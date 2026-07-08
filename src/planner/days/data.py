@@ -64,24 +64,6 @@ def list_day_tickets(conn: sqlite3.Connection, day_id: str) -> list[DayTicket]:
     ]
 
 
-def store_judgment(
-    conn: sqlite3.Connection,
-    day_id: str,
-    focus: str,
-    brief_take: str,
-    watchout: str,
-    if_today_lands: str,
-    now_unix: int,
-) -> None:
-    """Boundary success path: write the four overview fields the boundary filled +
-    updated_at in one UPDATE. No event; run_boundary emits the day_updated signal."""
-    conn.execute(
-        "UPDATE days SET focus = ?, brief_take = ?, watchout = ?, if_today_lands = ?, "
-        "updated_at = ? WHERE id = ?",
-        (focus, brief_take, watchout, if_today_lands, now_unix, day_id),
-    )
-
-
 def add_day_ticket(
     conn: sqlite3.Connection, day_id: str, ticket_id: str, now_unix: int, cause: str = "manual"
 ) -> bool:

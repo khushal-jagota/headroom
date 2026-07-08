@@ -66,7 +66,7 @@ async def get_day(date: str, conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
 @router.patch("/day/{date}")
 async def patch_day(date: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
                     clk: Clk) -> JsonDict:
-    reject_agents(ctx)  # §8: overview fields + notes are human-only; the boundary writes its own
+    reject_agents(ctx)  # §8: overview fields + notes are human-only
     did = resolve_day_id(date, clk, cfg)
     now = clk.now_unix()
     # Each overview field (and notes) edits on its own — no whole-blob re-serialize.

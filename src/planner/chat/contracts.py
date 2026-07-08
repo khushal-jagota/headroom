@@ -27,6 +27,15 @@ class CommandRunResult:            # what the gateway adapter returns per /comma
 
 
 @dataclass(frozen=True)
+class ChatStreamChunk:             # normalized gateway stream chunk for SSE callers
+    type: str                      # "token" | "done"
+    text: str = ""                 # token text when type == "token"
+    reply_text: str = ""           # complete reply when type == "done"
+    session_key: str = ""          # minted/resumed key when type == "done"
+    kind: str = "assistant"        # "assistant" | "system" when type == "done"
+
+
+@dataclass(frozen=True)
 class CommandCategory:             # one grouped section of the "/" menu (skills excluded)
     name: str
     pairs: tuple[tuple[str, str], ...]   # (command, description), catalog order

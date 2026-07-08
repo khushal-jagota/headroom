@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import os
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
 from planner.chat.contracts import (
     ChatSendResult,
+    ChatStreamChunk,
     CommandCatalog,
     CommandCategory,
     CommandRunResult,
@@ -126,6 +127,27 @@ class SharedGateway:
             ) from exc
         return ChatSendResult(reply_text=result.text, session_key=stored)
 
+    def stream(
+        self, session_key: str | None, entity_id: str, text: str, mode: str
+    ) -> Iterator[ChatStreamChunk]:
+        try:
+            child = self._child_or_spawn()
+            live_sid, stored = self._resume_or_create(child, session_key, CHAT_SOURCE)
+            if mode == "command":
+                yield from self._stream_command(child, live_sid, stored, text)
+            else:
+                yield from self._stream_prompt(child, live_sid, stored, text, "assistant")
+        except SharedGatewayBusy as exc:
+            raise PlannerError(
+                ErrorCode.already_running,
+                "an agent is already running on this ticket",
+                {"entity_id": entity_id, "session_key": exc.session_key},
+            ) from exc
+        except GatewayError as exc:
+            raise PlannerError(
+                ErrorCode.gateway_offline, "chat gateway stream failed", {"detail": str(exc)}
+            ) from exc
+
     def catalog(self) -> CommandCatalog:
         try:
             child = self._child_or_spawn()
@@ -179,6 +201,76 @@ class SharedGateway:
             raise PlannerError(
                 ErrorCode.gateway_offline, "chat gateway command failed", {"detail": str(exc)}
             ) from exc
+
+    def _stream_done(self, reply: str, stored: str, kind: str) -> Iterator[ChatStreamChunk]:
+        if reply:
+            yield ChatStreamChunk(type="token", text=reply)
+        yield ChatStreamChunk(
+            type="done", reply_text=reply, session_key=stored, kind=kind
+        )
+
+    def _stream_command(
+        self, child: GatewayChild, live_sid: str, stored: str, command: str
+    ) -> Iterator[ChatStreamChunk]:
+        name, arg = self._split_command(command)
+        try:
+            result = child.request(
+                "slash.exec",
+                {"session_id": live_sid, "command": command},
+                timeout=self._request_timeout,
+            )
+        except GatewayRpcError as exc:
+            if exc.code == BUSY_CODE:
+                raise SharedGatewayBusy(stored) from exc
+            if exc.code != 4018:
+                raise
+            payload = child.request(
+                "command.dispatch",
+                {"session_id": live_sid, "name": name, "arg": arg},
+                timeout=self._request_timeout,
+            )
+            yield from self._stream_interpret(child, live_sid, stored, payload, arg)
+            return
+        if result.get("type"):
+            yield from self._stream_interpret(child, live_sid, stored, result, arg)
+            return
+        output = str(result.get("output") or "")
+        warning = str(result.get("warning") or "")
+        reply = (output + "\n" + warning).strip() if warning else output
+        yield from self._stream_done(reply, stored, "system")
+
+    def _stream_interpret(
+        self,
+        child: GatewayChild,
+        live_sid: str,
+        stored: str,
+        payload: dict[str, Any],
+        arg: str,
+        *,
+        alias_ok: bool = True,
+    ) -> Iterator[ChatStreamChunk]:
+        ptype = str(payload.get("type") or "")
+        if ptype in ("skill", "send"):
+            message = str(payload.get("message") or "")
+            yield from self._stream_prompt(child, live_sid, stored, message, "assistant")
+            return
+        if ptype in ("exec", "plugin"):
+            yield from self._stream_done(str(payload.get("output") or ""), stored, "system")
+            return
+        if ptype == "alias" and alias_ok:
+            target_name, target_arg = self._split_command(str(payload.get("target") or ""))
+            combined = f"{target_arg} {arg}".strip() if target_arg and arg else (arg or target_arg)
+            resolved = child.request(
+                "command.dispatch",
+                {"session_id": live_sid, "name": target_name, "arg": combined},
+                timeout=self._request_timeout,
+            )
+            yield from self._stream_interpret(
+                child, live_sid, stored, resolved, combined, alias_ok=False
+            )
+            return
+        reply = str(payload.get("output") or payload.get("message") or "")
+        yield from self._stream_done(reply, stored, "system")
 
     def _child_or_spawn(self) -> GatewayChild:
         with self._lock:
@@ -281,6 +373,57 @@ class SharedGateway:
                         stored_key,
                         text_out or "run ended with status=error",
                     )
+
+    def _stream_prompt(
+        self,
+        child: GatewayChild,
+        live_sid: str,
+        stored_key: str,
+        text: str,
+        kind: str,
+    ) -> Iterator[ChatStreamChunk]:
+        seen_delta = False
+        with child.open_session_events(live_sid) as events:
+            try:
+                child.request(
+                    "prompt.submit",
+                    {"session_id": live_sid, "text": text},
+                    timeout=self._request_timeout,
+                )
+            except GatewayRpcError as exc:
+                if exc.code == BUSY_CODE:
+                    raise SharedGatewayBusy(stored_key) from exc
+                raise
+            while True:
+                event = events.next_event()
+                if event is None:
+                    raise GatewayError(
+                        f"gateway child died mid-run; stderr: {child.stderr_tail()!r}"
+                    )
+                etype = str(event.get("type") or "")
+                raw = event.get("payload")
+                payload = raw if isinstance(raw, dict) else {}
+                if etype == "error":
+                    raise GatewayError(str(payload.get("message") or "gateway error event"))
+                if etype == "message.delta":
+                    delta = str(payload.get("text") or payload.get("delta") or "")
+                    if delta:
+                        seen_delta = True
+                        yield ChatStreamChunk(type="token", text=delta)
+                if etype == "message.complete":
+                    text_out = str(payload.get("text") or "")
+                    gw_status = str(payload.get("status") or "complete")
+                    if gw_status in ("complete", "interrupted"):
+                        if text_out and not seen_delta:
+                            yield ChatStreamChunk(type="token", text=text_out)
+                        yield ChatStreamChunk(
+                            type="done",
+                            reply_text=text_out,
+                            session_key=stored_key,
+                            kind=kind,
+                        )
+                        return
+                    raise GatewayError(text_out or "run ended with status=error")
 
     def _interpret(
         self,

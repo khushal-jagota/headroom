@@ -1,19 +1,19 @@
-"""In-memory fakes for the boundary and gateway adapters. Tests use these; they
-never touch the OS or the network. Each records its calls and behaves
-deterministically."""
+"""In-memory fakes for gateway adapters. Tests use these; they never touch the
+OS or the network. Each records its calls and behaves deterministically."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 from planner.chat.contracts import (
     ChatSendResult,
+    ChatStreamChunk,
     CommandCatalog,
     CommandCategory,
     CommandRunResult,
     GatewayStatus,
 )
-from planner.core.adapters.base import BoundaryInputs, BoundaryJudgment
 from planner.core.errors import ErrorCode, PlannerError
 
 # One canned catalog for the whole test suite — two grouped categories plus a
@@ -34,26 +34,6 @@ CANNED_CATALOG: CommandCatalog = CommandCatalog(
 )
 
 _CANNED_SKILL_NAMES = frozenset(name for name, _ in CANNED_CATALOG.skills)
-
-
-@dataclass
-class FakeBoundaryAdapter:
-    judgment_result: BoundaryJudgment | None = None
-    fail: bool = False
-    calls: list[str] = field(default_factory=list)  # method names, in order
-
-    def judgment(self, inputs: BoundaryInputs) -> BoundaryJudgment:
-        self.calls.append("judgment")
-        if self.fail:
-            raise RuntimeError("fake boundary failure")
-        if self.judgment_result is not None:
-            return self.judgment_result
-        return BoundaryJudgment(
-            focus=f"Focus for {inputs.planning_date}",
-            brief_take=f"Brief take for {inputs.planning_date}",
-            watchout=f"Watchout for {inputs.planning_date}",
-            if_today_lands=f"If today lands for {inputs.planning_date}",
-        )
 
 
 @dataclass
@@ -79,6 +59,29 @@ class EchoGatewayAdapter:
             session_key = f"fake-sess-{self.next_session}"
             self.next_session += 1
         return ChatSendResult(reply_text=f"echo: {text}", session_key=session_key)
+
+    def stream(
+        self, session_key: str | None, entity_id: str, text: str, mode: str
+    ) -> Iterator[ChatStreamChunk]:
+        if mode == "command":
+            result = self.run_command(session_key, entity_id, text)
+        else:
+            send_result = self.send(session_key, entity_id, text)
+            result = CommandRunResult(
+                reply_text=send_result.reply_text,
+                session_key=send_result.session_key,
+                kind="assistant",
+            )
+        midpoint = max(1, len(result.reply_text) // 2)
+        for token in (result.reply_text[:midpoint], result.reply_text[midpoint:]):
+            if token:
+                yield ChatStreamChunk(type="token", text=token)
+        yield ChatStreamChunk(
+            type="done",
+            reply_text=result.reply_text,
+            session_key=result.session_key,
+            kind=result.kind,
+        )
 
     def catalog(self) -> CommandCatalog:
         self.catalog_calls += 1
@@ -122,6 +125,11 @@ class OfflineGatewayAdapter:
         return GatewayStatus(available=False, detail="gateway offline")
 
     def send(self, session_key: str | None, entity_id: str, text: str) -> ChatSendResult:
+        raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
+
+    def stream(
+        self, session_key: str | None, entity_id: str, text: str, mode: str
+    ) -> Iterator[ChatStreamChunk]:
         raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
 
     def catalog(self) -> CommandCatalog:

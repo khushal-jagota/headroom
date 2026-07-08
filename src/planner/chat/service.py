@@ -14,6 +14,7 @@ from datetime import date
 
 from planner.chat.contracts import (
     ChatSendResult,
+    ChatStreamChunk,
     CommandCatalog,
     CommandRunResult,
     GatewayStatus,
@@ -138,6 +139,45 @@ def send(
 def catalog(gateway: GatewayAdapter) -> CommandCatalog:
     """The gateway's own command/skill registry (pass-through; the route caches it)."""
     return gateway.catalog()
+
+
+def stream(
+    conn: sqlite3.Connection,
+    gateway: GatewayAdapter,
+    entity_id: str,
+    text: str,
+    mode: str,
+    now: int,
+) -> Iterator[ChatStreamChunk]:
+    """Stream a chat message or command and persist the completed session key.
+
+    The gateway owns live token production; this service owns the same first-reply
+    and re-mint persistence rule used by send()/run_command().
+    """
+    entity_kind, stored_key = _resolve(conn, entity_id, now)
+    try:
+        chunks = gateway.stream(stored_key, entity_id, text, mode)
+        for chunk in chunks:
+            if chunk.type != "done":
+                yield chunk
+                continue
+            session_key = chunk.session_key
+            if session_key != stored_key:
+                session_key = _persist_key(
+                    conn, entity_kind, entity_id, stored_key, session_key, now
+                )
+            yield ChatStreamChunk(
+                type="done",
+                reply_text=chunk.reply_text,
+                session_key=session_key,
+                kind=chunk.kind,
+            )
+    except PlannerError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise PlannerError(
+            ErrorCode.gateway_offline, "gateway unavailable", {"cause": str(exc)}
+        ) from exc
 
 
 def run_command(

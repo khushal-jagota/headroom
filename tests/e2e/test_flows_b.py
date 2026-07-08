@@ -2,10 +2,10 @@
 
 One test per acceptance item, its name carrying the ``test_eNN_`` anchor the verify
 scorer matches: exactly one anchored match per item across the whole e2e suite, so no
-parametrize and every shared helper below has a non-``test_`` name. The boundary tick is
-driven synchronously through /api/test/*; time through /api/test/set-now. Assertions use
-exact values (planning dates, fake-adapter strings, ticket states); every wait carries an
-explicit timeout and precedes its assert — no sleeps."""
+parametrize and every shared helper below has a non-``test_`` name. Time is driven
+through /api/test/set-now. Assertions use exact values (planning dates, seeded strings,
+ticket states); every wait carries an explicit timeout and precedes its assert — no
+sleeps."""
 
 from __future__ import annotations
 
@@ -20,16 +20,8 @@ NOW_0501 = "2026-07-05T05:01:00"
 DAY_PREV = "2026-07-04"
 DAY_CUR = "2026-07-05"
 
-# fake boundary adapter literals (core/adapters/fakes.py) — DEFAULT behaviors,
-# unscriptable from a test (the fake lives in the server process). It fills the four
-# overview fields keyed off the planning date:
-FAKE_FOCUS = "Focus for 2026-07-05"
-FAKE_TAKE = "Brief take for 2026-07-05"
-FAKE_WATCH = "Watchout for 2026-07-05"
-FAKE_LANDS = "If today lands for 2026-07-05"
-
-# item 28 — the boundary FILLS the four overview fields; the Day overview renders each
-# in its own slot (focus hero + Brief Take / Watchout / If Today Lands bodies).
+# item 28 — without the future rollover agent, the new day's overview is unauthored:
+# each structured slot renders empty/placeholder, and no deterministic tick fills it.
 
 # item 29 — the four overview fields, seeded per-field through the human PATCH, then
 # amended in place. Each body is a single line so its slot's inner_text is exactly the
@@ -54,6 +46,10 @@ E31_SUCCESS = "E31 success body."
 E31_APPROACH = "E31 approach body."
 E31_PLAN = "E31 plan body."
 E31_RESULT = "E31 result proposal body."
+E31_DAY_FOCUS = "E31 reload day focus."
+E31_DAY_TAKE = "E31 reload day take."
+E31_DAY_WATCH = "E31 reload day watch."
+E31_DAY_LANDS = "E31 reload day lands."
 
 # item 32
 E32_SPRINT_NAME = "E32 sprint"
@@ -76,10 +72,6 @@ SO_MID_STAND = "SO halfway in, the bet is tracking."
 
 def _set_now(api, server, iso):
     return api.human_post(server, "/api/test/set-now", {"now": iso})
-
-
-def _tick_boundary(api, server):
-    return api.human_post(server, "/api/test/tick-boundary", {})
 
 
 def _scope_and_advance(server, api, cli, tid, ceiling, bodies):
@@ -129,36 +121,32 @@ def _snap_board(p: Page, mid):
 
 
 def _snap_day(p: Page):
-    # The Day overview renders the fake-adapter fields in their slots; the Brief Take
+    # The Day overview renders each structured field in its own slot; the Brief Take
     # body is the state that must survive a reload unchanged.
     return {"take": p.inner_text('[data-day-take-body]')}
 
 
-def test_e28_day_boundary_accept_all(server, context_factory, open_page, cli, api):
-    # A boundary judgment pass FILLS the day's four overview fields (fake adapter,
-    # keyed off the planning date). The Day is now the OVERVIEW, not a dashboard: the
-    # plan tree, today-ticket list, review-count and chat are gone from it. Each field
-    # renders straight into its slot — no markdown parse, no degrade branch.
+def test_e28_day_overview_empty_until_rollover_agent(server, context_factory, open_page, cli, api):
+    # The Day is the OVERVIEW, not a dashboard: the plan tree, today-ticket list,
+    # review-count and chat are gone from it. With deterministic boundary removed,
+    # crossing to the new planning date leaves the structured overview unauthored until
+    # a human or future rollover agent writes it.
     r = _set_now(api, server, NOW_0501)
     assert r["planning_date"] == DAY_CUR, r
-
-    rep = _tick_boundary(api, server)
-    assert rep == {
-        "planning_date": DAY_CUR,
-        "ran": True,
-        "judgment": "ok",
-    }, rep
 
     page = open_page(
         context_factory(), server, "#/day", "[data-day-overview]", settled=True
     )
     page.wait_for_selector("[data-day-take-body]", timeout=WAIT_MS)
 
-    # The four fields the boundary filled render in their slots.
-    assert page.inner_text('[data-day-focus]') == FAKE_FOCUS
-    assert page.inner_text('[data-day-take-body]') == FAKE_TAKE
-    assert page.inner_text('[data-day-watch-body]') == FAKE_WATCH
-    assert page.inner_text('[data-day-lands-body]') == FAKE_LANDS
+    # The four fields render in their slots, but stay empty by default.
+    assert page.text_content('[data-day-focus]') == ""
+    assert page.text_content('[data-day-take-body]') == ""
+    assert page.text_content('[data-day-watch-body]') == ""
+    assert page.text_content('[data-day-lands-body]') == ""
+    d = api.get(server, "/api/day/today")
+    assert d["id"] == f"day_{DAY_CUR}", d
+    assert d["focus"] == d["brief_take"] == d["watchout"] == d["if_today_lands"] == ""
     # The date orients the read (planning date 2026-07-05). text_content, not
     # inner_text: the date label is text-transform:uppercase, and inner_text would
     # return the rendered "JULY 5" while text_content keeps the raw DOM text.
@@ -285,15 +273,19 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
         {"success": E31_SUCCESS, "approach": E31_APPROACH, "plan": E31_PLAN},
     )
 
-    # Roll the day so the Day overview renders the boundary-filled fields (for the third
+    # Human-author a day overview on the next planning date (for the third
     # reload-restore surface below).
     _set_now(api, server, NOW_0501)
-    rep = _tick_boundary(api, server)
-    assert rep == {
-        "planning_date": DAY_CUR,
-        "ran": True,
-        "judgment": "ok",
-    }, rep
+    api.human_patch(
+        server,
+        f"/api/day/{DAY_CUR}",
+        {
+            "focus": E31_DAY_FOCUS,
+            "brief_take": E31_DAY_TAKE,
+            "watchout": E31_DAY_WATCH,
+            "if_today_lands": E31_DAY_LANDS,
+        },
+    )
 
     # Worker files the result claimless; ceiling in_progress ⇒ it PARKS pending (nothing
     # auto-accepts past the ceiling), leaving a gating-pending proposal to reload-restore.
@@ -329,7 +321,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     expected_b = {"title": E31_TITLE, "pend": 1}
     assert before_b == after_b == expected_b, (before_b, after_b)
 
-    # Day surface — the overview renders the boundary-filled fields; a reload restores.
+    # Day surface — the overview renders structured fields; a reload restores.
     ready_d = '[data-day-take-body]'
     page_d = open_page(context_factory(), server, "#/day", ready_d, settled=True)
     page_d.wait_for_selector(ready_d, timeout=WAIT_MS)
@@ -338,7 +330,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     _reload_settle(page_d, ready_d)
     page_d.wait_for_selector(ready_d, timeout=WAIT_MS)
     after_d = _snap_day(page_d)
-    expected_d = {"take": FAKE_TAKE}
+    expected_d = {"take": E31_DAY_TAKE}
     assert before_d == after_d == expected_d, (before_d, after_d)
 
 

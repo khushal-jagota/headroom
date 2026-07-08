@@ -1,8 +1,6 @@
-"""Production background loops: the boundary tick every tick_seconds via
-asyncio.to_thread, and — replacing the removed dispatcher loop — System A, the readiness
-poll that drives System B. An iteration's exception is logged and never kills the loop.
-Test mode never starts these; that gating lives in the lifespan (core/server.py), so this
-module stays directly callable for tests.
+"""Production background runtime for System A, the readiness poll that drives
+System B. Test mode never starts it; that gating lives in the lifespan
+(core/server.py), so this module stays directly callable for tests.
 
 System A runs on its own daemon thread (its fast-path poke is a threading.Event, not an
 asyncio sleep to interrupt). It is guarded by the master switch (config.dispatch_enabled —
@@ -14,41 +12,16 @@ spawn is only ever reachable here (outside test mode), so ./verify stays hermeti
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
-import sqlite3
-from collections.abc import Callable
-from functools import partial
 
-from planner.core.adapters.registry import Adapters
 from planner.core.clock import Clock
 from planner.core.config import Config
-from planner.core.contracts import JsonDict
-from planner.days.scheduler import run_boundary_tick
 from planner.minds.shared_gateway import SharedGateway
 from planner.runtime.lock import ensure_machine_lock, release_machine_lock
 from planner.runtime.system_a import SystemA
 from planner.runtime.system_b import SystemB
 
 _LOGGER = logging.getLogger(__name__)
-
-ConnFactory = Callable[[], sqlite3.Connection]
-
-
-async def _loop_forever(name: str, tick: Callable[[], JsonDict], interval: int) -> None:
-    """One background loop: tick first, then sleep. A4: shield the in-flight tick thread so
-    cancellation waits it out. Catch Exception only so CancelledError propagates."""
-    while True:
-        thread_task = asyncio.ensure_future(asyncio.to_thread(tick))
-        try:
-            await asyncio.shield(thread_task)
-        except asyncio.CancelledError:
-            with contextlib.suppress(BaseException):
-                await thread_task
-            raise
-        except Exception:
-            _LOGGER.exception("background %s tick failed", name)
-        await asyncio.sleep(interval)
 
 
 class BackgroundLoops:
@@ -65,8 +38,8 @@ class BackgroundLoops:
 
     async def stop(self) -> None:
         """Stop System A (join its poll thread — no new set-offs after this), release the
-        machine lock, then cancel the boundary task and wait out any in-flight tick thread.
-        Idempotent: a re-stopped handle is a no-op."""
+        machine lock, then cancel any background tasks. Idempotent: a re-stopped handle is
+        a no-op."""
         global _active
         if self._stopped:
             return
@@ -87,8 +60,8 @@ _active: BackgroundLoops | None = None
 
 def _start_system_a(config: Config, clock: Clock, gateway: SharedGateway) -> SystemA | None:
     """Construct + start System A when enabled and this process wins the machine lock. Any
-    construction failure logs, releases the lock, and degrades to boundary-only (never kills
-    the server)."""
+    construction failure logs, releases the lock, and leaves the server running without the
+    worker poller."""
     if not config.dispatch_enabled:
         _LOGGER.info("System A disabled (dispatch_enabled=false)")
         return None
@@ -109,7 +82,7 @@ def _start_system_a(config: Config, clock: Clock, gateway: SharedGateway) -> Sys
         system_a.start(config.tick_seconds)
         return system_a
     except Exception:
-        _LOGGER.exception("System A failed to start; running boundary-only")
+        _LOGGER.exception("System A failed to start; worker poller disabled")
         release_machine_lock(config.dispatcher_lock_path)
         return None
 
@@ -117,25 +90,15 @@ def _start_system_a(config: Config, clock: Clock, gateway: SharedGateway) -> Sys
 def start_background_loops(
     config: Config,
     clock: Clock,
-    adapters: Adapters,
-    conn_factory: ConnFactory,
     *,
     shared_gateway: SharedGateway,
 ) -> BackgroundLoops:
-    """Start the boundary loop + (when enabled) System A. At most one live instance per
-    process."""
+    """Start System A when enabled. At most one live instance per process."""
     global _active
     if _active is not None:
         raise RuntimeError("background loops already running")
-    boundary = asyncio.create_task(
-        _loop_forever(
-            "boundary",
-            partial(run_boundary_tick, conn_factory, config, clock, adapters),
-            config.tick_seconds,
-        )
-    )
     system_a = _start_system_a(config, clock, shared_gateway)
     lock_path = config.dispatcher_lock_path if system_a is not None else None
-    loops = BackgroundLoops([boundary], system_a, lock_path)
+    loops = BackgroundLoops([], system_a, lock_path)
     _active = loops
     return loops

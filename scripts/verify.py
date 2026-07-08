@@ -110,6 +110,29 @@ def run_build_check() -> GateResult:
     return GateResult("build check", ok)
 
 
+def run_frontend() -> GateResult:
+    web = REPO_ROOT / "web"
+    if not (web / "package.json").exists():
+        return GateResult("frontend", True)
+
+    ok = True
+    if not (web / "node_modules").exists():
+        if not (web / "package-lock.json").exists():
+            return GateResult("frontend", True, "skipped: npm dependencies unavailable")
+        rc_install, _ = _run(["npm", "--prefix", "web", "ci"])
+        if rc_install != 0:
+            ok = False
+    for cmd in (
+        ["npm", "--prefix", "web", "run", "check"],
+        ["npm", "--prefix", "web", "run", "build"],
+        ["npm", "--prefix", "web", "test"],
+    ):
+        rc, _ = _run(cmd)
+        if rc != 0:
+            ok = False
+    return GateResult("frontend", ok)
+
+
 def main() -> int:
     DATA_VERIFY.mkdir(parents=True, exist_ok=True)
 
@@ -136,6 +159,8 @@ def main() -> int:
     gates.append(run_pytest("tests/unit", unit_junit, "unit suite"))
 
     gates.append(run_build_check())
+
+    gates.append(run_frontend())
 
     e2e_junit = DATA_VERIFY / "e2e.xml"
     gates.append(

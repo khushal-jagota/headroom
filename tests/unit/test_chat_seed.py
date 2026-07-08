@@ -55,8 +55,7 @@ def _ticket(db_path: Path) -> str:
 
 
 def _replace_gateway(app: object, gateway: object) -> None:
-    adapters = app.state.adapters
-    app.state.adapters = Adapters(boundary=adapters.boundary, gateway=gateway)  # type: ignore[arg-type]
+    app.state.adapters = Adapters(gateway=gateway)  # type: ignore[arg-type]
 
 
 def _ticket_status(db_path: Path, ticket_id: str) -> str:
@@ -112,6 +111,57 @@ def test_chat_send_echo_persists_key_and_event(tmp_path: Path) -> None:
     assert response.json() == {"reply_text": "echo: hello", "session_key": "fake-sess-1"}
     assert _stored_key(db_path, "tickets", tid) == "fake-sess-1"
     assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fake-sess-1"}]
+
+
+def test_chat_stream_echo_persists_key_and_event(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    with TestClient(app) as client:
+        with client.stream(
+            "POST", f"/api/chat/{tid}/stream", json={"text": "hello", "mode": "message"}
+        ) as response:
+            body = "".join(response.iter_text())
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert 'event: message_start\ndata: {"entity_id":"' + tid + '","mode":"message"}' in body
+    assert 'event: token\ndata: {"text":"echo' in body
+    assert (
+        'event: message_done\ndata: {"reply_text":"echo: hello",'
+        '"session_key":"fake-sess-1","kind":"assistant"}'
+    ) in body
+    assert _stored_key(db_path, "tickets", tid) == "fake-sess-1"
+    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fake-sess-1"}]
+
+
+def test_chat_stream_command_uses_system_kind(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    with TestClient(app) as client:
+        with client.stream(
+            "POST", f"/api/chat/{tid}/stream", json={"text": "/status", "mode": "command"}
+        ) as response:
+            body = "".join(response.iter_text())
+    assert response.status_code == 200
+    assert (
+        'event: message_done\ndata: {"reply_text":"exec: /status",'
+        '"session_key":"fake-sess-1","kind":"system"}'
+    ) in body
+    assert _stored_key(db_path, "tickets", tid) == "fake-sess-1"
+    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fake-sess-1"}]
+
+
+def test_chat_stream_offline_is_error_event_and_no_persist(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path, gateway="offline")
+    tid = _ticket(db_path)
+    with TestClient(app) as client:
+        with client.stream(
+            "POST", f"/api/chat/{tid}/stream", json={"text": "hello", "mode": "message"}
+        ) as response:
+            body = "".join(response.iter_text())
+    assert response.status_code == 200
+    assert 'event: error\ndata: {"code":"gateway_offline","message":"gateway offline"' in body
+    assert _stored_key(db_path, "tickets", tid) is None
+    assert _events(db_path, tid, "chat_session_created") == []
 
 
 def test_chat_send_second_send_reuses_key_no_new_event(tmp_path: Path) -> None:

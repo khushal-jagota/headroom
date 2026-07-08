@@ -10,7 +10,7 @@ from typing import TypedDict
 
 
 @dataclass
-class Day:                         # §3.4 — overview = four structured fields the boundary fills
+class Day:                         # §3.4 — overview = four structured day fields
     id: str                        # day_YYYY-MM-DD (planning date)
     focus: str                     # the one-line hero (plain text)
     brief_take: str                # markdown

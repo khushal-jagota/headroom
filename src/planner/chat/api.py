@@ -3,13 +3,15 @@ gateway availability."""
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request
+from fastapi.responses import StreamingResponse
 
 from planner.chat import service
 from planner.chat.contracts import CommandCatalog
@@ -39,6 +41,10 @@ def _cached_catalog(app: FastAPI, gateway: GatewayAdapter, refresh: bool) -> Com
         return catalog
 
 
+def _sse(event: str, data: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n"
+
+
 @router.post("/chat/{entity_id}/send")
 async def send_message(
     entity_id: str, body: dict[str, Any], request: Request
@@ -56,6 +62,55 @@ async def send_message(
     finally:
         conn.close()
     return asdict(result)
+
+
+@router.post("/chat/{entity_id}/stream")
+async def stream_message(
+    entity_id: str, body: dict[str, Any], request: Request
+) -> StreamingResponse:
+    authctx.reject_agents(authctx.request_context(request))  # §11/§8: chat is human-only.
+    text = body.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise PlannerError(ErrorCode.validation, "text is required")
+    mode = body.get("mode", "message")
+    if mode not in ("message", "command"):
+        raise PlannerError(ErrorCode.validation, "mode must be message or command")
+    clock: Clock = request.app.state.clock
+    adapters: Adapters = request.app.state.adapters
+    conn_factory: Callable[[], sqlite3.Connection] = request.app.state.conn_factory
+
+    def events() -> Iterator[str]:
+        yield _sse("message_start", {"entity_id": entity_id, "mode": mode})
+        conn = conn_factory()
+        try:
+            for chunk in service.stream(
+                conn, adapters.gateway, entity_id, text, mode, clock.now_unix()
+            ):
+                if chunk.type == "token":
+                    yield _sse("token", {"text": chunk.text})
+                elif chunk.type == "done":
+                    yield _sse(
+                        "message_done",
+                        {
+                            "reply_text": chunk.reply_text,
+                            "session_key": chunk.session_key,
+                            "kind": chunk.kind,
+                        },
+                    )
+                    break
+        except PlannerError as exc:
+            yield _sse("error", exc.to_payload()["error"])
+        except Exception as exc:  # noqa: BLE001
+            err = PlannerError(
+                ErrorCode.gateway_offline,
+                "gateway unavailable",
+                {"cause": str(exc)},
+            )
+            yield _sse("error", err.to_payload()["error"])
+        finally:
+            conn.close()
+
+    return StreamingResponse(events(), media_type="text/event-stream")
 
 
 @router.post("/chat/{entity_id}/command")

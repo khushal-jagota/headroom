@@ -1,0 +1,20 @@
+{
+  "name": "planner-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node tests/event-mapping.test.mjs"
+  },
+  "dependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "svelte": "^5.19.7",
+    "vite": "^6.1.0"
+  },
+  "devDependencies": {
+    "svelte-check": "^4.1.4",
+    "typescript": "^5.7.3"
+  }
+}

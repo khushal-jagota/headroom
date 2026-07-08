@@ -12,13 +12,15 @@ import sqlite3
 
 from planner.core import links as core_links
 from planner.core.contracts import JsonDict, Project
-from planner.days.logic.carryover import approvals_digest, overdue_list
+from planner.sprints.contracts import ItemStatus
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import STATE_ORDER, Ticket, TicketState
+from planner.tickets.contracts import GATING_FIELD, STATE_ORDER, Ticket, TicketState
 from planner.tickets.logic import fields_codec, machine
 
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
+_TICKET_CLOSED = {TicketState.done.value, TicketState.dropped.value}
+_ITEM_CLOSED = {ItemStatus.done.value, ItemStatus.deferred_next_sprint.value}
 
 
 def _prio_rank(priority: str) -> int:
@@ -215,6 +217,78 @@ def _entity_type(entity_id: str) -> str:
     return "ticket" if entity_id.split("_", 1)[0] == "t" else "item"
 
 
+def _approval_digest(tickets: list[JsonDict], items: list[JsonDict]) -> list[JsonDict]:
+    digest: list[JsonDict] = []
+    for row in tickets:
+        state = str(row["state"])
+        if state == TicketState.needs_review.value:
+            digest.append(
+                {"entity_id": row["id"], "kind": "review", "waiting_since": row["updated_at"]}
+            )
+            continue
+        gating = GATING_FIELD.get(TicketState(state))
+        if gating is None:
+            continue
+        fields = row["fields"]
+        if not isinstance(fields, dict):
+            continue
+        slot = fields.get(gating.value)
+        if not isinstance(slot, dict):
+            continue
+        proposal = slot.get("proposal")
+        if not isinstance(proposal, dict):
+            continue
+        digest.append(
+            {
+                "entity_id": row["id"],
+                "kind": gating.value,
+                "waiting_since": proposal["created_at"],
+            }
+        )
+    for row in items:
+        proposal = row["status_proposal"]
+        if proposal is None:
+            continue
+        if not isinstance(proposal, dict):
+            continue
+        digest.append(
+            {"entity_id": row["id"], "kind": "status", "waiting_since": proposal["created_at"]}
+        )
+    digest.sort(key=lambda entry: entry["waiting_since"])
+    return digest
+
+
+def _overdue_digest(
+    tickets: list[JsonDict], items: list[JsonDict], today_iso: str
+) -> list[JsonDict]:
+    result: list[JsonDict] = []
+    for row in tickets:
+        deadline = row["deadline"]
+        state = str(row["state"])
+        if deadline is not None and str(deadline) < today_iso and state not in _TICKET_CLOSED:
+            result.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "state": state,
+                    "priority": row["priority"],
+                }
+            )
+    for row in items:
+        deadline = row["deadline"]
+        state = str(row["status"])
+        if deadline is not None and str(deadline) < today_iso and state not in _ITEM_CLOSED:
+            result.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "state": state,
+                    "priority": row["priority"],
+                }
+            )
+    return result
+
+
 def _approvals(conn: sqlite3.Connection, item_approval_rows: list[JsonDict]) -> list[JsonDict]:
     ticket_rows = conn.execute(
         "SELECT id, title, state, fields, updated_at FROM tickets "
@@ -241,9 +315,9 @@ def _approvals(conn: sqlite3.Connection, item_approval_rows: list[JsonDict]) -> 
         iid = str(r["id"])
         item_digest.append({"id": iid, "status_proposal": r["status_proposal"]})
         item_title[iid] = str(r["title"])
-    digest = approvals_digest(ticket_digest, item_digest)
+    digest = _approval_digest(ticket_digest, item_digest)
     # A5: review entries use the last state_changed->needs_review event time, not the
-    # updated_at proxy; the boundary digest keeps its documented proxy.
+    # updated_at proxy.
     for entry in digest:
         if entry["kind"] == "review":
             tid = str(entry["entity_id"])
@@ -292,7 +366,7 @@ def _overdue(
         for r in ticket_rows
     ]
     item_dicts: list[dict[str, object]] = [dict(r) for r in item_overdue_rows]
-    digest = overdue_list(ticket_dicts, item_dicts, today_iso)
+    digest = _overdue_digest(ticket_dicts, item_dicts, today_iso)
     ticket_deadline = {str(d["id"]): d["deadline"] for d in ticket_dicts}
     item_deadline = {str(d["id"]): d["deadline"] for d in item_dicts}
     result: list[JsonDict] = []

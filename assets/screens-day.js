@@ -4,11 +4,11 @@
  * Review owns approvals, so the plan-tree, today-ticket-list, review-count and chat
  * are all DROPPED here (their backend endpoints stay; they just have no Day home).
  *
- * The overview is four structured fields the boundary agent (§6.2) fills — focus,
- * brief_take, watchout, if_today_lands — not one markdown blob this screen parses.
- * The screen reads each field straight off /api/day/today and renders it in its slot.
- * An unfilled field (today's default, before the boundary or a human writes it) is
- * empty and shows the slot's quiet placeholder — no crash, no degrade branch.
+ * The overview is four structured fields — focus, brief_take, watchout,
+ * if_today_lands — not one markdown blob this screen parses. The screen reads each
+ * field straight off /api/day/today and renders it in its slot. An unfilled field
+ * (today's default, before a human or future rollover agent writes it) is empty and
+ * shows the slot's quiet placeholder — no crash, no degrade branch.
  *
  * Editing: each field is human-amendable in place, on its own. Focus is a plain
  * scalar; the three bodies are markdown. The shared inlineEdit hook commits on blur →

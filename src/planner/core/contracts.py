@@ -41,7 +41,6 @@ class EventKind(StrEnum):
     proposal_accepted = "proposal_accepted"          # §4.4.2/4 {field, body, resolved_by, edited}
     proposal_superseded = "proposal_superseded"      # §4.4.1 {field, replaced_body}
     day_ticket_removed = "day_ticket_removed"        # §3.4 {ticket_id}
-    day_closed = "day_closed"                        # §6.2 {done_count, not_done_count}
 
     # --- supplemental: creation, one per entity ---
     ticket_created = "ticket_created"
@@ -66,7 +65,6 @@ class EventKind(StrEnum):
 
     # --- supplemental: day lifecycle ---
     day_ticket_added = "day_ticket_added"            # {ticket_id, position, cause}
-    boundary_failed = "boundary_failed"              # §6.2 adapter failure/timeout {error}
 
     # --- supplemental: durable ticket runtime/parking status ---
     ticket_status_changed = "ticket_status_changed"  # {ticket_status, optional error}
