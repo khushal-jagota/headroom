@@ -1,29 +1,38 @@
 # The command-line tool
 
-`panels` is the command-line tool. It is for AI workers and for developer debugging;
-the human plans through the web page. Every verb speaks to the server over HTTP and
-answers in machine-readable JSON (`--json`). Long text always comes from a file or
-standard input, never as an inline argument.
+`panels` is the command-line tool. It speaks to the server over HTTP and answers in
+machine-readable JSON with `--json`.
 
-Its most important property is what it _cannot_ do: there is **no verb for accepting,
-approving, granting, or unblocking anything**. Those decisions live only in the
-human's web page. A worker can propose and record; it can never resolve.
+The command tree matches the system model:
+
+- `day ...` — plan and inspect a day.
+- `ticket ...` — create, inspect, organize, and approve tickets.
+- `sprint ...` — create, inspect, edit, and populate sprints and sprint items.
+- `worker ...` — worker-only writes such as proposals, recaps, notes, and item status
+  proposals.
+
+The CLI does not expose internal runtime controls. Ticket `state`, `ticket_status`,
+run claiming, takeover, and release remain code-owned. The only human resolution verb
+in the CLI is approval.
 
 ## The verbs
 
-- **`propose <field>`** — file or replace a proposal on a blank (`success`,
-  `approach`, `plan`, or `result`). **`recap`** — overwrite the ticket's running
-  summary. **`note <field>`** — leave durable guidance next to a blank without
-  touching it.
-- **`ticket create / show / list / set`** — manage tickets. `set` covers priority,
-  deadline, day placement, and sprint placement only — scope (ceiling and at-cap) is
-  never settable here, because that is a human grant.
-- **`item create / show / list / set / propose-status`** — sprint items, including
-  proposing a done-or-deferred status for the human to accept.
-- **`sprint show`**, **`idea create / list`**, **`day show / add-ticket /
-  remove-ticket`**, **`link add / rm`** — read and edit those objects.
-- **`queue approvals / overdue`** — read-only views of what waits on the human and
-  what's past its deadline.
+- **`day show / list-tickets / set / add-ticket / remove-ticket`** — plan a day and
+  assign tickets to it. `day show` includes the day's tickets; `day list-tickets`
+  returns the ticket list explicitly.
+- **`ticket create / show / list / set / approve / block / unblock`** — manage
+  tickets. `ticket set` names one field (`title`, `priority`, `deadline`, or
+  `project`). Sprint placement is a sprint command, not a ticket setter.
+- **`ticket copy / events`** — copy one ticket's plain-text packet or inspect its event log.
+- **`sprint create / list / show / set / add-ticket / remove-ticket`** — plan and
+  populate sprints. `current` resolves through `/api/sprint/current`; `none` means the
+  backlog where a list supports it.
+- **`sprint item create / list / show / set / add-ticket / remove-ticket / approve`**
+  — manage sprint items and their ticket membership. Creating a ticket is still
+  `ticket create`; adding an existing ticket to an item is a sprint-item command.
+- **`worker propose / recap / note / my-ticket / propose-item-status`** — worker
+  actions. `worker propose` infers the current gating field from ticket state and
+  requires a recap (`--recap` or `--recap-file`) in the same request.
 - **`serve`** — run the server and background worker runtime in the foreground.
   It may be launched from outside the repository; the app shell, static assets, and
   checked-in config are resolved from the repository root.
@@ -34,11 +43,11 @@ _Code paths:_ `src/planner/cli/main.py` (the verbs), `src/planner/cli/http.py`
 ## What used to be here and isn't
 
 Earlier documentation listed verbs that belonged to the old dispatcher-and-claim
-machinery, now removed. They no longer exist: **`run heartbeat` / `run close`** (a
-dispatched worker keeping a lease alive and reporting its outcome), **`queue
-pickup`** (what the dispatcher could take next), and **`plan seed`** (the markdown
-importer). A worker no longer holds a claim or a lease; the employee runtime runs one
-step at a time and writes status itself (see `employee-runtime.md`).
+machinery, or to old top-level homes. They no longer exist: **`run heartbeat` / `run
+close`**, **`queue pickup`**, **`plan seed`**, top-level **`propose` / `recap` /
+`note` / `item` / `idea` / `link` / `queue`**. A worker no longer holds a claim or a
+lease; the employee runtime runs one step at a time and writes status itself (see
+`employee-runtime.md`).
 
 ## Handoffs
 

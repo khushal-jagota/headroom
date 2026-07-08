@@ -155,9 +155,14 @@ Code paths: `web/src/App.svelte`, `web/src/routes/`, `web/src/lib/resources.svel
 
 ### 8. The CLI And Authority System
 
-`panels` is the worker and debugging CLI. It speaks HTTP to the server. It can create,
-show, list, propose, write notes, set a few ordinary fields, and place tickets on
-days. It has no accept, approve, scope, takeover, release, or chat authority.
+`panels` is the product and worker CLI. Its command groups match the domain model:
+`day`, `ticket`, `sprint`, and `worker`. Product commands are headerless human
+requests; worker commands send `X-Plan-Actor`.
+
+The CLI can plan days, create and organize tickets, plan sprints and sprint items,
+and file worker proposals/recaps/notes. It has no runtime-control authority: no run
+claiming, takeover, release, ticket status edits, or direct state jumps. Approval is
+the one human resolution command exposed here.
 
 The server classifies requests with `X-Plan-Actor`: no header means the human; any
 actor header means an agent. Human-only routes reject agent-classified requests.

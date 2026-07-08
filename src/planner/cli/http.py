@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from typing import Any, NoReturn
+from typing import Any, Literal, NoReturn
 
 import httpx
 
@@ -30,9 +30,14 @@ def _url(path: str) -> str:
     return _base_url().rstrip("/") + path
 
 
-def _headers() -> dict[str, str]:
-    # X-Plan-Actor is always sent (default "agent"): it classifies the request as an
-    # agent (vs the header-less human). The old run/claim headers are gone.
+RequestActor = Literal["agent", "human"]
+
+
+def _headers(request_actor: RequestActor) -> dict[str, str]:
+    if request_actor == "human":
+        return {}
+    # X-Plan-Actor classifies the request as an agent. Headerless requests are the
+    # local human/product CLI.
     return {"X-Plan-Actor": os.environ.get("PLAN_ACTOR", "").strip() or "agent"}
 
 
@@ -43,13 +48,18 @@ def send(
     as_json: bool,
     json_body: Any | None = None,
     params: dict[str, Any] | None = None,
+    request_actor: RequestActor = "agent",
 ) -> Any:
     """Execute one request and apply the failure half of the exit contract. Transport
     failure -> stderr + exit 2. Non-2xx (or a 2xx body that still carries an "error"
     key) -> stderr + exit 1. On 2xx: return the parsed JSON body to the caller."""
     try:
         resp = httpx.request(
-            method, _url(path), json=json_body, params=params, headers=_headers(),
+            method,
+            _url(path),
+            json=json_body,
+            params=params,
+            headers=_headers(request_actor),
             timeout=_TIMEOUT,
         )
     except httpx.TransportError as exc:
@@ -62,6 +72,33 @@ def send(
         if isinstance(data, dict) and "error" in data:
             _fail_response(resp, data, as_json)  # A1: unconditional error-envelope contract
         return data
+    _fail_response(resp, data, as_json)
+
+
+def send_text(
+    method: str,
+    path: str,
+    *,
+    as_json: bool,
+    params: dict[str, Any] | None = None,
+    request_actor: RequestActor = "agent",
+) -> str:
+    try:
+        resp = httpx.request(
+            method,
+            _url(path),
+            params=params,
+            headers=_headers(request_actor),
+            timeout=_TIMEOUT,
+        )
+    except httpx.TransportError as exc:
+        _fail_connection(exc, as_json)
+    if resp.is_success:
+        return resp.text
+    try:
+        data: Any = resp.json()
+    except ValueError:
+        data = None
     _fail_response(resp, data, as_json)
 
 

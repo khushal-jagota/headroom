@@ -3,6 +3,50 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-08): CLI noun-shape implementation
+
+Owner request: build the CLI redesign, then review it.
+
+Current implementation:
+
+- Rebuilt `src/planner/cli/main.py` around `day`, `ticket`, `sprint`, and `worker`.
+- Product commands use headerless human requests through the CLI HTTP seam; worker commands keep
+  `X-Plan-Actor`.
+- Added `POST /api/tickets/{ticket_id}/propose`: it infers the current gating field and writes the
+  required recap in the same ticket transaction.
+- Added existing-ticket sprint-item placement routes:
+  `POST /api/items/{item_id}/tickets` and
+  `DELETE /api/items/{item_id}/tickets/{ticket_id}`.
+- Updated e2e callers, unit coverage, docs, and local worker/planner skills to remove retired
+  top-level command homes.
+- Read-only subagent review found CLI shape mismatches: `ticket approve --next-ceiling`, missing
+  `ticket list --sprint-item`, missing `ticket copy/events`, sprint add/remove using a positional
+  sprint selector, `sprint set current` not resolving, and reversed `worker note` args. These were
+  fixed.
+- Read-only backend review found raw PATCH value leaks in ticket/item APIs. These were fixed by
+  marshalling patch fields before they reach writers.
+
+Current hypothesis:
+
+- The backend now has the canonical operations needed by the CLI, so the command tree does not need
+  client-side multi-write tricks.
+- The most likely failures are grammar regressions in the e2e suite and static feedback in the
+  rewritten CLI file.
+
+Immediate next step:
+
+Verification status:
+
+- Fresh `./verify` passed after the reviewer fixes: ruff, mypy over 80 source files, 165 unit
+  tests, compile/static checks, `npm --prefix web run check`, `npm --prefix web run build`,
+  `npm --prefix web test`, and 21 e2e tests all passed.
+- Known warnings remain: the three `TicketRoute.svelte` initial-`id` capture warnings and the
+  existing Pytest `TestClock` collection warnings.
+
+Immediate next step:
+
+- None for this CLI slice; ready for owner review.
+
 ## Current work cycle (2026-07-08): Board Workspace-left correction
 
 Owner correction: the Board must copy the old planning-server Workspace left rail, not a generic

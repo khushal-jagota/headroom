@@ -9,6 +9,7 @@ sleeps."""
 
 from __future__ import annotations
 
+import httpx
 from playwright.sync_api import Page
 
 WAIT_MS = 10_000
@@ -82,7 +83,12 @@ def _scope_and_advance(server, api, cli, tid, ceiling, bodies):
     assert g["ceiling"] == ceiling and g["at_cap"] == "propose", g
     # Claimless CLI proposals auto-accept up the chain to in_progress (like flows_a e27).
     for field in ("success", "approach", "plan"):
-        cli(server, "propose", field, "--body-file", "-", ticket_id=tid, stdin=bodies[field])
+        cli(
+            server,
+            "worker", "propose", "--body-file", "-", "--recap", f"{field} ready.",
+            ticket_id=tid,
+            stdin=bodies[field],
+        )
     d = api.get(server, f"/api/tickets/{tid}")
     assert d["state"] == "in_progress", d
     return d
@@ -239,7 +245,12 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
 
     # Worker files the result claimless; ceiling needs_review ⇒ it auto-accepts to
     # needs_review (the accepted value is stored, no pending proposal remains).
-    r = cli(server, "propose", "result", "--body-file", "-", ticket_id=mid, stdin=E30_RESULT)
+    r = cli(
+        server,
+        "worker", "propose", "--body-file", "-", "--recap", "Result ready.",
+        ticket_id=mid,
+        stdin=E30_RESULT,
+    )
     assert r["state"] == "needs_review", r
     assert r["fields"]["result"]["value"] == E30_RESULT, r
     assert r["fields"]["result"]["proposal"] is None, r
@@ -255,7 +266,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     card = f'[data-review-card][data-entity-id="{mid}"]'
     rpage = open_page(context_factory(), server, "#/review", card, settled=True)
     assert rpage.get_attribute(card, "data-kind") == "review"
-    assert rpage.inner_text(f"{card} .markdown-block") == E30_RESULT
+    assert rpage.inner_text(f"{card} .approval-result .markdown-block") == E30_RESULT
     approvals = api.get(server, "/api/queues")["approvals"]
     assert len(approvals) == 1, approvals
     assert approvals[0]["entity_id"] == mid, approvals
@@ -290,7 +301,12 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
 
     # Worker files the result claimless; ceiling in_progress ⇒ it PARKS pending (nothing
     # auto-accepts past the ceiling), leaving a gating-pending proposal to reload-restore.
-    r = cli(server, "propose", "result", "--body-file", "-", ticket_id=mid, stdin=E31_RESULT)
+    r = cli(
+        server,
+        "worker", "propose", "--body-file", "-", "--recap", "Result proposed.",
+        ticket_id=mid,
+        stdin=E31_RESULT,
+    )
     assert r["state"] == "in_progress", r
     assert r["fields"]["result"]["proposal"]["body"] == E31_RESULT, r
 
@@ -344,7 +360,7 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
     sid = s["id"]
 
     iid = cli(
-        server, "item", "create", "--title", E32_ITEM_TITLE,
+        server, "sprint", "item", "create", "--title", E32_ITEM_TITLE,
         "--project", E32_ITEM_PROJECT, "--sprint", sid,
     )["id"]
     ltid = cli(server, "ticket", "create", "--title", E32_LOOSE_TITLE, "--sprint", sid)["id"]
@@ -360,8 +376,14 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
     fa = pa.evaluate("window.__plannerDebug.flushes")
     fb = pb.evaluate("window.__plannerDebug.flushes")
 
-    # Agent todo→active (§3.2): PATCH /api/items/{iid} with X-Plan-Actor: agent.
-    cli(server, "item", "set", iid, "--status", "active")
+    # Agent todo→active (§3.2): status remains an agent transition, not a product CLI knob.
+    response = httpx.patch(
+        server.base + f"/api/items/{iid}",
+        json={"status": "active"},
+        headers={"X-Plan-Actor": "agent"},
+        timeout=10.0,
+    )
+    assert response.status_code < 300, response.text
 
     for p, f0 in ((pa, fa), (pb, fb)):
         p.wait_for_selector(

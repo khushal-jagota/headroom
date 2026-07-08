@@ -20,12 +20,14 @@ from planner.sprints.contracts import (
     KICKOFF_FIELDS,
     MID_SPRINT_FIELDS,
     REVIEW_FIELDS,
+    AddItemTicketBody,
     CreateIdeaBody,
     CreateItemBody,
     CreateSprintBody,
     ItemStatus,
     ProposeStatusBody,
 )
+from planner.tickets import data as tickets_data
 from planner.tickets.api import Cfg, Clk, Ctx, DbConn, body_opt_str, body_str, parse_enum
 
 router = APIRouter()
@@ -81,6 +83,12 @@ def _marshal_item_deadline(raw: object) -> None:
         ) from exc
 
 
+def _marshal_blocked_by(raw: object) -> list[str]:
+    if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+        raise PlannerError(ErrorCode.validation, "invalid blocked_by", {"blocked_by": raw})
+    return raw
+
+
 # --- item routes ---------------------------------------------------------------
 
 
@@ -123,6 +131,27 @@ async def get_item(item_id: str, conn: DbConn) -> JsonDict:
     return sprints_views.item_detail(conn, item_id)
 
 
+@router.post("/items/{item_id}/tickets")
+async def add_item_ticket(item_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
+                          clk: Clk) -> JsonDict:
+    reject_agents(ctx)
+    body = AddItemTicketBody(ticket_id=body_str(raw, "ticket_id"))
+    tickets_data.assign_ticket_to_sprint_item(
+        conn, body["ticket_id"], sprint_item_id=item_id, actor=ctx.actor, now=clk.now_unix()
+    )
+    return sprints_views.item_detail(conn, item_id)
+
+
+@router.delete("/items/{item_id}/tickets/{ticket_id}")
+async def remove_item_ticket(item_id: str, ticket_id: str, conn: DbConn, ctx: Ctx,
+                             clk: Clk) -> JsonDict:
+    reject_agents(ctx)
+    tickets_data.remove_ticket_from_sprint_item(
+        conn, ticket_id, sprint_item_id=item_id, actor=ctx.actor, now=clk.now_unix()
+    )
+    return sprints_views.item_detail(conn, item_id)
+
+
 @router.patch("/items/{item_id}")
 async def patch_item(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
                      clk: Clk) -> JsonDict:
@@ -140,15 +169,21 @@ async def patch_item(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
     for field in _ITEM_PLAIN_FIELDS:
         if field in body:
             if field == "deadline":
-                _marshal_item_deadline(body["deadline"])
-            sprints_data.update_item_field(conn, item_id, field, body[field], clock=clk)
+                value = body_opt_str(body, "deadline")
+                _marshal_item_deadline(value)
+            elif field in ("title", "body", "priority", "project"):
+                value = body_str(body, field)
+            else:
+                value = body[field]
+            sprints_data.update_item_field(conn, item_id, field, value, clock=clk)
     if "sprint_id" in body:
-        sprints_data.assign_item_sprint(conn, item_id, body["sprint_id"], clock=clk)
+        sprints_data.assign_item_sprint(conn, item_id, body_opt_str(body, "sprint_id"), clock=clk)
     if "status" in body:
-        to_status = parse_enum(ItemStatus, body["status"], "status")
+        to_status = parse_enum(ItemStatus, body_str(body, "status"), "status")
+        blocked_by = _marshal_blocked_by(body["blocked_by"]) if "blocked_by" in body else None
         sprints_data.transition_item_status(
             conn, item_id, to_status, clock=clk, by_agent=not ctx.is_human,
-            blocked_by=body.get("blocked_by"),
+            blocked_by=blocked_by,
         )
     return sprints_views.item_detail(conn, item_id)
 

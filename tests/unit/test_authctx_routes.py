@@ -66,6 +66,21 @@ def _item(db_path: Path) -> str:
     return item.id
 
 
+def _item_in_sprint(db_path: Path, sprint_id: str) -> str:
+    conn = connect(str(db_path))
+    try:
+        item = create_item(
+            conn,
+            title="Sprint item.",
+            project=Project.Vylo,
+            sprint_id=sprint_id,
+            clock=RealClock(),
+        )
+    finally:
+        conn.close()
+    return item.id
+
+
 def _sprint(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
@@ -157,6 +172,27 @@ def test_patch_ticket_agent_permitted_fields_succeed(tmp_path: Path) -> None:
     assert _col(db_path, "tickets", tid, "deadline") == "2026-08-01"
 
 
+def test_patch_ticket_rejects_bad_field_types(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    with TestClient(app) as client:
+        for body in (
+            {"title": 123},
+            {"priority": 123},
+            {"deadline": 123},
+            {"project": 123},
+            {"sprint_id": 123},
+        ):
+            response = client.patch(f"/api/tickets/{tid}", json=body)
+            assert response.status_code == 400, body
+            assert response.json()["error"]["code"] == "validation"
+    assert _col(db_path, "tickets", tid, "title") == "Patch me."
+    assert _col(db_path, "tickets", tid, "priority") == "P3"
+    assert _col(db_path, "tickets", tid, "deadline") is None
+    assert _col(db_path, "tickets", tid, "project") is None
+    assert _col(db_path, "tickets", tid, "sprint_id") is None
+
+
 # --- PATCH /items/{id}: agent may transition status only (§3.2/§8) ---------------
 
 
@@ -185,6 +221,68 @@ def test_patch_item_agent_status_transition_succeeds(tmp_path: Path) -> None:
     assert response.status_code == 200, response.json()
     assert response.json()["status"] == "active"
     assert _col(db_path, "sprint_items", iid, "status") == "active"
+
+
+def test_patch_item_rejects_bad_field_types(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    iid = _item(db_path)
+    with TestClient(app) as client:
+        for body in (
+            {"title": 123},
+            {"body": 123},
+            {"priority": 123},
+            {"deadline": 123},
+            {"project": 123},
+            {"sprint_id": 123},
+            {"status": 123},
+            {"status": "blocked", "blocked_by": 123},
+            {"status": "blocked", "blocked_by": [123]},
+        ):
+            response = client.patch(f"/api/items/{iid}", json=body)
+            assert response.status_code == 400, body
+            assert response.json()["error"]["code"] == "validation"
+    assert _col(db_path, "sprint_items", iid, "title") == "Item."
+    assert _col(db_path, "sprint_items", iid, "body") == ""
+    assert _col(db_path, "sprint_items", iid, "priority") == "P3"
+    assert _col(db_path, "sprint_items", iid, "deadline") is None
+    assert _col(db_path, "sprint_items", iid, "project") == "Vylo"
+    assert _col(db_path, "sprint_items", iid, "sprint_id") is None
+    assert _col(db_path, "sprint_items", iid, "status") == "todo"
+
+
+def test_item_ticket_routes_parent_and_unparent_existing_ticket(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    sid = _sprint(db_path)
+    iid = _item_in_sprint(db_path, sid)
+    tid = _ticket(db_path)
+    with TestClient(app) as client:
+        added = client.post(f"/api/items/{iid}/tickets", json={"ticket_id": tid})
+        assert added.status_code == 200, added.json()
+        assert added.json()["rollup"]["needs_success"] == 1
+        removed = client.delete(f"/api/items/{iid}/tickets/{tid}")
+        assert removed.status_code == 200, removed.json()
+        assert removed.json()["rollup"]["needs_success"] == 0
+
+    assert _col(db_path, "tickets", tid, "sprint_item_id") is None
+    assert _col(db_path, "tickets", tid, "sprint_id") == sid
+    assert _col(db_path, "tickets", tid, "project") is None
+
+
+def test_item_ticket_routes_are_human_only(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    sid = _sprint(db_path)
+    iid = _item_in_sprint(db_path, sid)
+    tid = _ticket(db_path)
+    with TestClient(app) as client:
+        added = client.post(
+            f"/api/items/{iid}/tickets", json={"ticket_id": tid}, headers=_AGENT
+        )
+        removed = client.delete(f"/api/items/{iid}/tickets/{tid}", headers=_AGENT)
+    assert added.status_code == 400
+    assert added.json()["error"]["code"] == "agent_forbidden"
+    assert removed.status_code == 400
+    assert removed.json()["error"]["code"] == "agent_forbidden"
+    assert _col(db_path, "tickets", tid, "sprint_item_id") is None
 
 
 # --- PATCH /sprints/{id}: human-only (§8) ---------------------------------------

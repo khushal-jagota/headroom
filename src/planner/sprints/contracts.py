@@ -112,6 +112,10 @@ class ProposeStatusBody(TypedDict, total=False):  # POST /items/{id}/propose-sta
     note: str | None               # optional rationale shown in Review
 
 
+class AddItemTicketBody(TypedDict, total=False):  # POST /items/{id}/tickets
+    ticket_id: str
+
+
 class CreateSprintBody(TypedDict, total=False):   # POST /sprints
     name: str                      # default ""
     date_start: str                # ISO date; required (default "" is rejected)

@@ -23,7 +23,14 @@ When a day finishes, it rolls up into the sprint, and a new day is planned.
 
 ## The CLI
 
-Everything runs through the `panels` command — run `panels help` to see what it can do. It talks to the Panels server and database, and is how you read and change everything.
+Everything runs through the `panels` command — run `panels --help` to see what it can do. It talks to the Panels server and database.
+
+The command groups are the system's nouns:
+
+- `panels day ...` for planning and operating on a day.
+- `panels ticket ...` for creating, inspecting, organizing, and approving tickets.
+- `panels sprint ...` and `panels sprint item ...` for planning and populating sprints.
+- `panels worker ...` for worker-only writes such as proposals, recaps, notes, and item status proposals.
 
 ## Skills
 

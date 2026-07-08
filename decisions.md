@@ -858,3 +858,39 @@ uses the old split Workspace shell and chooser pattern first: full-height screen
 `Refinement Tree` heading, always-present state sections with chevrons/counts, and transparent row
 buttons. The right side is deliberately minimal in this slice because the owner explicitly said not
 to worry about the inspector yet. The backend board contract and event invalidation stay unchanged.
+
+## D52 — Product CLI commands are headerless; worker commands carry actor identity
+
+The redesigned CLI needs both local product operations and worker operations. Rather than expose a
+human/agent mode flag, the command home chooses the request class: `day`, `ticket`, and `sprint`
+commands send headerless human requests, while `worker` commands send `X-Plan-Actor`. This keeps the
+user-facing CLI nouns simple and keeps actor classification at the existing HTTP boundary.
+
+## D53 — Worker proposal plus recap is one ticket writer
+
+`worker propose` is not a client-side composition of `propose/{field}` plus `recap`. The backend now
+has one writer that infers the current gating field and updates the recap in the same transaction.
+Standalone recap still follows the normal recap timing rule, but proposal-with-recap may set recap on
+the first `needs_success` proposal because the proposal requires that memory update.
+
+## D54 — Sprint items own existing-ticket membership commands
+
+Adding an existing ticket to a sprint item is a sprint-item operation, not a second ticket-creation
+surface and not `ticket set sprint`. The new routes update ticket parentage canonically: adding to an
+item sets `sprint_item_id` and clears standalone `sprint_id`/`project`; removing from an item clears
+the parent and leaves the ticket as a loose ticket in the parent item's sprint.
+
+## D55 — CLI command grammar follows the redesign plan over first-pass convenience
+
+The reviewer caught places where the first implementation was convenient but not the planned shape:
+`ticket approve` uses `--ceiling` rather than `--next-ceiling`; sprint add/remove use a `--sprint`
+option rather than a positional sprint; `sprint set current` resolves the current sprint before
+patching; and `worker note` accepts `[ticket-id] <field>`. These are not aliases. The implemented
+grammar is the one documented in `orchestration/cli-redesign/plan.md`.
+
+## D56 — PATCH routes marshal raw values before writer calls
+
+Ticket and sprint-item PATCH routes now validate each recognized field's type before passing it to a
+writer. Wrong-shaped values return the normal validation envelope instead of SQLite coercion,
+`not_found`, or a 500. This preserves the route-body contract and keeps the canonical writers from
+being used as request parsers.

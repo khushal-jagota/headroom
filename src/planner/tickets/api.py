@@ -51,6 +51,7 @@ from planner.tickets.contracts import (
     NextCeiling,
     NoteBody,
     ProposeBody,
+    ProposeWithRecapBody,
     RecapBody,
     ScopeBody,
     StateBody,
@@ -267,22 +268,49 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
     now = clk.now_unix()
     if "title" in body:
         tickets_data.set_title(
-            conn, ticket_id, title=body["title"], title_max_chars=TITLE_MAX_CHARS, now=now
+            conn,
+            ticket_id,
+            title=body_str(body, "title"),
+            title_max_chars=TITLE_MAX_CHARS,
+            now=now,
         )
     if "priority" in body:
-        priority = parse_enum(Priority, body["priority"], "priority")
+        priority = parse_enum(Priority, body_str(body, "priority"), "priority")
         tickets_data.set_priority(conn, ticket_id, priority=priority, actor=ctx.actor, now=now)
     if "deadline" in body:
-        tickets_data.set_deadline(conn, ticket_id, deadline=body["deadline"], actor=ctx.actor,
-                                  now=now)
+        deadline = body_opt_str(body, "deadline")
+        tickets_data.set_deadline(
+            conn, ticket_id, deadline=deadline, actor=ctx.actor, now=now
+        )
     if "project" in body:
-        project = parse_enum(Project, body["project"], "project") \
-            if body["project"] is not None else None
+        project_raw = body_opt_str(body, "project")
+        project = parse_enum(Project, project_raw, "project") if project_raw is not None else None
         tickets_data.set_project(conn, ticket_id, project=project, now=now)
     if "sprint_id" in body:
-        tickets_data.set_sprint(conn, ticket_id, sprint_id=body["sprint_id"], actor=ctx.actor,
-                                now=now)
+        sprint_id = body_opt_str(body, "sprint_id")
+        tickets_data.set_sprint(
+            conn, ticket_id, sprint_id=sprint_id, actor=ctx.actor, now=now
+        )
     return tickets_views.ticket_json(tickets_data.read_ticket(conn, ticket_id), now)
+
+
+@router.post("/tickets/{ticket_id}/propose")
+async def propose_current_field(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
+                                clk: Clk) -> JsonDict:
+    body = ProposeWithRecapBody(
+        body=body_str(raw, "body"),
+        recap=body_str(raw, "recap"),
+    )
+    now = clk.now_unix()
+    ticket = tickets_data.file_current_proposal_with_recap(
+        conn,
+        ticket_id,
+        body=body["body"],
+        recap=body["recap"],
+        actor=ctx.actor,
+        now=now,
+    )
+    return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/propose/{field}")

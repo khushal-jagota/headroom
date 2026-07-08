@@ -35,7 +35,9 @@ Everything runs through the `panels` command — `panels --help` for full usage.
 
 - **`panels worker my-ticket`** — the ticket you're on: who you are, and its current state.
 - **`panels ticket show <id>`** — read any ticket.
-- **`panels propose <field> <id> --body-file -`** — propose a field (`success` | `approach` | `plan` | `result`); body arrives on stdin or via `--body-file`.
+- **`panels worker propose <id> --body-file - --recap "…"`** — propose the ticket's current gated field; body arrives on stdin or via `--body-file`, and every proposal must also set a recap.
+- **`panels worker recap <id> --body-file -`** — update the running recap outside a proposal.
+- **`panels worker note <id> <field> --body-file -`** — leave durable guidance next to a field without touching its value.
 - **`panels ticket create --title "…"`** — create a ticket, when a step spins off a new one.
 
 ## How to complete this effectively

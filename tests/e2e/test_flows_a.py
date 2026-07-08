@@ -100,7 +100,12 @@ def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api)
 def test_e23_env_pinned_propose(server, context_factory, open_page, cli, api):
     tid = cli(server, "ticket", "create", "--title", "T18 propose ticket")["id"]
     # PLAN_TICKET_ID resolves the ticket (no positional id); stdin carries the body.
-    cli(server, "propose", "success", "--body-file", "-", ticket_id=tid, stdin=MD_BODY)
+    cli(
+        server,
+        "worker", "propose", "--body-file", "-", "--recap", "Success criteria proposed.",
+        ticket_id=tid,
+        stdin=MD_BODY,
+    )
 
     ready = f'section[data-screen="ticket"][data-ticket-id="{tid}"]'
     page = open_page(context_factory(), server, f"#/ticket/{tid}", ready, settled=True)
@@ -132,7 +137,12 @@ def test_e23_env_pinned_propose(server, context_factory, open_page, cli, api):
 
 def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
     tid = cli(server, "ticket", "create", "--title", "T18 review ticket")["id"]
-    cli(server, "propose", "success", "--body-file", "-", ticket_id=tid, stdin=E24_BODY)
+    cli(
+        server,
+        "worker", "propose", "--body-file", "-", "--recap", "Success ready for review.",
+        ticket_id=tid,
+        stdin=E24_BODY,
+    )
 
     card = f'[data-review-card][data-entity-id="{tid}"]'
     page_a = open_page(context_factory(), server, "#/review", card, settled=True)
@@ -176,7 +186,12 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
 
 def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api):
     tid = cli(server, "ticket", "create", "--title", "T18 edit ticket")["id"]
-    cli(server, "propose", "success", "--body-file", "-", ticket_id=tid, stdin=E25_ORIG)
+    cli(
+        server,
+        "worker", "propose", "--body-file", "-", "--recap", "Success draft for edit review.",
+        ticket_id=tid,
+        stdin=E25_ORIG,
+    )
 
     card = f'[data-review-card][data-entity-id="{tid}"]'
     page = open_page(context_factory(), server, "#/review", card, settled=True)
@@ -251,10 +266,7 @@ def test_e26_chat_panel_echo_and_offline(
     retry_tid = cli(server, "ticket", "create", "--title", "T18 worker history retry")["id"]
     cli(
         server,
-        "propose",
-        "success",
-        "--body-file",
-        "-",
+        "worker", "propose", "--body-file", "-", "--recap", "Worker history retry.",
         ticket_id=retry_tid,
         stdin="worker proposed success",
     )
@@ -381,11 +393,26 @@ def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
     assert g["at_cap"] == "propose", g
 
     # Success + approach auto-accept and advance; the plan proposal parks at the ceiling.
-    r1 = cli(server, "propose", "success", "--body-file", "-", ticket_id=tid, stdin=E27_SUCCESS)
+    r1 = cli(
+        server,
+        "worker", "propose", "--body-file", "-", "--recap", "Success is ready.",
+        ticket_id=tid,
+        stdin=E27_SUCCESS,
+    )
     assert r1["state"] == "needs_approach", r1
-    r2 = cli(server, "propose", "approach", "--body-file", "-", ticket_id=tid, stdin=E27_APPROACH)
+    r2 = cli(
+        server,
+        "worker", "propose", "--body-file", "-", "--recap", "Approach is ready.",
+        ticket_id=tid,
+        stdin=E27_APPROACH,
+    )
     assert r2["state"] == "needs_plan", r2
-    r3 = cli(server, "propose", "plan", "--body-file", "-", ticket_id=tid, stdin=E27_PLAN)
+    r3 = cli(
+        server,
+        "worker", "propose", "--body-file", "-", "--recap", "Plan is ready.",
+        ticket_id=tid,
+        stdin=E27_PLAN,
+    )
     assert r3["state"] == "needs_plan", r3
     assert r3["fields"]["plan"]["proposal"]["body"] == E27_PLAN, r3
 

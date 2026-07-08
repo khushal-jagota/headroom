@@ -822,14 +822,16 @@
           <details>
             <summary>
               <span class="number">08</span>
-              <span><strong>The CLI And Authority System</strong><span>Worker and debugging actions without approval power.</span></span>
+              <span><strong>The CLI And Authority System</strong><span>Day, ticket, sprint, and worker actions.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                <code>panels</code> speaks HTTP to the server. It can create, show,
-                list, propose, write notes, set a few ordinary fields, and place
-                tickets on days. It has no accept, approve, scope, takeover,
-                release, or chat authority.
+                <code>panels</code> speaks HTTP to the server. Its command groups are
+                <code>day</code>, <code>ticket</code>, <code>sprint</code>, and
+                <code>worker</code>. Product commands are headerless human requests;
+                worker commands send <code>X-Plan-Actor</code>. Approval is the one
+                human resolution command exposed here; runtime controls and direct
+                ticket state/status edits are not CLI actions.
               </p>
               <p>
                 The server classifies requests with <code>X-Plan-Actor</code>. No

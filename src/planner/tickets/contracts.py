@@ -126,6 +126,11 @@ class ProposeBody(TypedDict, total=False):        # POST /tickets/{id}/propose/{
     body: str                      # default ""
 
 
+class ProposeWithRecapBody(TypedDict, total=False):  # POST /tickets/{id}/propose
+    body: str                      # default ""
+    recap: str                     # required non-empty by the writer
+
+
 class AcceptBody(TypedDict, total=False):         # POST /tickets/{id}/accept/{field}
     edited_body: str | None        # human edit applied before resolution
     next_ceiling: str | None       # TicketState value or NO_FURTHER; scope pair (§4.4.7)

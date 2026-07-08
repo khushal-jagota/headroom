@@ -26,7 +26,7 @@ from planner.tickets.contracts import (
     TicketState,
     TicketStatus,
 )
-from planner.tickets.logic import admission, fields_codec, resolution
+from planner.tickets.logic import admission, fields_codec, machine, resolution
 from planner.tickets.logic.decisions import Decision
 
 
@@ -332,6 +332,43 @@ def file_proposal(
         return updated
 
 
+def file_current_proposal_with_recap(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    body: str,
+    recap: str,
+    actor: str,
+    now: int,
+) -> Ticket:
+    """Worker proposal surface: infer the current gating field and update recap atomically.
+
+    Standalone recap keeps its normal "past needs_success" guard. A proposal always carries
+    a recap, so this writer validates and writes it in the same transaction even when the
+    proposal parks at the first success gate.
+    """
+    admission.validate_body(recap, "recap")
+    with _txn(conn):
+        ticket = _load_ticket(conn, ticket_id)
+        field = machine.gating_field(ticket.state)
+        if field is None:
+            raise PlannerError(
+                ErrorCode.validation,
+                "ticket state has no proposal field",
+                {"state": ticket.state.value},
+            )
+        decision = resolution.decide_file_proposal(ticket, field, body, actor, now)
+        _apply_decision(conn, ticket, decision, now)
+        conn.execute(
+            "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?",
+            (recap, now, ticket_id),
+        )
+        append_event(conn, ticket_id, EventKind.recap_updated, {}, now)
+        if any(spec.kind is EventKind.proposal_filed for spec in decision.events):
+            _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
+        return _load_ticket(conn, ticket_id)
+
+
 def accept_proposal(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -566,6 +603,89 @@ def set_sprint(
             ticket_id,
             EventKind.ticket_updated,
             {"field": "sprint_id", "from": prev, "to": sprint_id},
+            now,
+        )
+        return _load_ticket(conn, ticket_id)
+
+
+def assign_ticket_to_sprint_item(
+    conn: sqlite3.Connection, ticket_id: str, *, sprint_item_id: str, actor: str, now: int
+) -> Ticket:
+    with _txn(conn):
+        ticket = _load_ticket(conn, ticket_id)
+        if conn.execute(
+            "SELECT 1 FROM sprint_items WHERE id = ?", (sprint_item_id,)
+        ).fetchone() is None:
+            raise PlannerError(
+                ErrorCode.not_found, "sprint item not found", {"sprint_item_id": sprint_item_id}
+            )
+        if ticket.sprint_item_id is not None and ticket.sprint_item_id != sprint_item_id:
+            raise PlannerError(
+                ErrorCode.validation,
+                "ticket is already assigned to a sprint item",
+                {"ticket_id": ticket_id, "sprint_item_id": ticket.sprint_item_id},
+            )
+        prev_item = ticket.sprint_item_id
+        prev_sprint = ticket.sprint_id
+        prev_project = ticket.project.value if ticket.project is not None else None
+        conn.execute(
+            "UPDATE tickets SET sprint_item_id = ?, sprint_id = NULL, project = NULL, "
+            "updated_at = ? WHERE id = ?",
+            (sprint_item_id, now, ticket_id),
+        )
+        append_event(
+            conn,
+            ticket_id,
+            EventKind.ticket_updated,
+            {
+                "field": "sprint_item_id",
+                "from": prev_item,
+                "to": sprint_item_id,
+                "cleared_sprint_id": prev_sprint,
+                "cleared_project": prev_project,
+            },
+            now,
+        )
+        return _load_ticket(conn, ticket_id)
+
+
+def remove_ticket_from_sprint_item(
+    conn: sqlite3.Connection, ticket_id: str, *, sprint_item_id: str, actor: str, now: int
+) -> Ticket:
+    with _txn(conn):
+        ticket = _load_ticket(conn, ticket_id)
+        item = conn.execute(
+            "SELECT sprint_id FROM sprint_items WHERE id = ?", (sprint_item_id,)
+        ).fetchone()
+        if item is None:
+            raise PlannerError(
+                ErrorCode.not_found, "sprint item not found", {"sprint_item_id": sprint_item_id}
+            )
+        if ticket.sprint_item_id != sprint_item_id:
+            raise PlannerError(
+                ErrorCode.validation,
+                "ticket is not assigned to this sprint item",
+                {
+                    "ticket_id": ticket_id,
+                    "sprint_item_id": sprint_item_id,
+                    "actual_sprint_item_id": ticket.sprint_item_id,
+                },
+            )
+        parent_sprint_id: str | None = item["sprint_id"]
+        conn.execute(
+            "UPDATE tickets SET sprint_item_id = NULL, sprint_id = ?, updated_at = ? WHERE id = ?",
+            (parent_sprint_id, now, ticket_id),
+        )
+        append_event(
+            conn,
+            ticket_id,
+            EventKind.ticket_updated,
+            {
+                "field": "sprint_item_id",
+                "from": sprint_item_id,
+                "to": None,
+                "sprint_id": parent_sprint_id,
+            },
             now,
         )
         return _load_ticket(conn, ticket_id)

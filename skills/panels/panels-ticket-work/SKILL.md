@@ -11,18 +11,18 @@ Use this when the user asks you to work a Panels ticket or propose a ticket fiel
 
 1. Read the current ticket and its field notes with `panels ticket show <id>`.
 2. Ground the proposal in the repository/docs/ticket context before writing it.
-3. Propose the requested field with `panels propose <field> <id> --body-file -`.
+3. Propose the current gated field with `panels worker propose <id> --body-file - --recap "…"`.
 4. Verify the resulting ticket state and field slot, not just the command exit line.
 5. Report the state succinctly: field proposed, current `state`, current `ticket_status`, and anything unusual.
 
 ## Scope pitfall: proposing at a stop ceiling
 
-If `panels propose …` fails with `at_cap_stop`, the proposal body is not the problem. The ticket is at its current ceiling with `at_cap=stop`, so the worker is not allowed to park the next field.
+If `panels worker propose …` fails with `at_cap_stop`, the proposal body is not the problem. The ticket is at its current ceiling with `at_cap=stop`, so the worker is not allowed to park the next field.
 
 When the user's explicit current instruction is to propose that field for approval:
 
 1. Change only the scope needed to allow a parked proposal: keep the same ceiling and set `at_cap=propose`.
-2. Use a human-authority surface for that scope change. The normal `panels` CLI sends an agent actor header by default, so human-only routes such as `/api/tickets/{id}/scope` must be called without `X-Plan-Actor` unless a human-mode CLI exists.
+2. Use a human-authority surface for that scope change. Worker commands send an agent actor header, so human-only routes such as `/api/tickets/{id}/scope` must be called without `X-Plan-Actor`.
 3. Immediately file the requested proposal.
 4. Verify the ticket is `ticket_status=awaiting_approval` and the intended field has a pending proposal.
 

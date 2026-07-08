@@ -200,6 +200,66 @@ def test_auto_accepted_proposal_does_not_park_status(
     assert status_events == []
 
 
+def test_current_proposal_with_recap_parks_both_atomically(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    t = _create(tmp_db, cfg, fake_clock)
+
+    t = data.file_current_proposal_with_recap(
+        tmp_db,
+        t.id,
+        body="success proposal",
+        recap="worker recap",
+        actor="agent",
+        now=now,
+    )
+
+    assert t.state is TicketState.needs_success
+    assert t.recap == "worker recap"
+    assert t.fields.success.proposal is not None
+    assert t.fields.success.proposal.body == "success proposal"
+    assert t.ticket_status is TicketStatus.awaiting_approval
+    assert [e.kind for e in _events(tmp_db, cfg, t.id)] == [
+        EventKind.ticket_created.value,
+        EventKind.proposal_filed.value,
+        EventKind.recap_updated.value,
+        EventKind.ticket_status_changed.value,
+    ]
+
+
+def test_current_proposal_with_recap_inferrs_current_auto_accept_field(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    t = _create(tmp_db, cfg, fake_clock)
+    _scope(tmp_db, t, TicketState.needs_plan, AtCap.propose, fake_clock)
+
+    t = data.file_current_proposal_with_recap(
+        tmp_db,
+        t.id,
+        body="success proposal",
+        recap="first recap",
+        actor="agent",
+        now=now,
+    )
+    assert t.state is TicketState.needs_approach
+    assert t.fields.success.value == "success proposal"
+    assert t.recap == "first recap"
+
+    t = data.file_current_proposal_with_recap(
+        tmp_db,
+        t.id,
+        body="approach proposal",
+        recap="second recap",
+        actor="agent",
+        now=now,
+    )
+    assert t.state is TicketState.needs_plan
+    assert t.fields.approach.value == "approach proposal"
+    assert t.recap == "second recap"
+
+
 def test_a02_gating_chain_one_state_per_accept(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:

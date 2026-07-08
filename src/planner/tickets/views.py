@@ -85,8 +85,11 @@ def list_tickets(
         clauses.append("project = ?")
         params.append(project.value)
     if sprint_id is not None:
-        clauses.append("sprint_id = ?")
-        params.append(sprint_id)
+        if sprint_id == "null":
+            clauses.append("sprint_id IS NULL")
+        else:
+            clauses.append("sprint_id = ?")
+            params.append(sprint_id)
     if sprint_item_id is not None:
         clauses.append("sprint_item_id = ?")
         params.append(sprint_item_id)
