@@ -2,6 +2,15 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D29 — Sprint item status is derived, while the API keeps a read-only status field
+
+Dewey's derived-status branch is integrated by preserving the user-facing `status` key in sprint
+item JSON as a derived read field, but removing the writable/proposal lifecycle for sprint-item
+status. The database stores only item fields and placement; reads derive `todo`, `in_progress`,
+`blocked`, or `done` from child tickets, worker/control status, and blocking links. Legacy
+`deferred_next_sprint` rows migrate to backlog placement (`sprint_id = NULL`) because deferred is
+placement, not a status. Legacy `blocked_by` JSON migrates into `links(kind='blocks')`.
+
 ## D28 — Chief-of-staff first slice uses a narrow top-level chat entity
 
 The chief-of-staff slice is implemented directly rather than dispatched because it is a bounded

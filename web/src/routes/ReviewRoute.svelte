@@ -4,8 +4,6 @@
   import { mutateJson, resource, ResourceHandle } from "../lib/resources";
   import { fieldStageVisualState, gatingField } from "../lib/ui";
   import type { AnyRecord, QueueEntry, QueuesResponse, TicketDetail } from "../lib/types";
-  import Chip from "../components/Chip.svelte";
-  import ContentDisclosure from "../components/ContentDisclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
 
@@ -53,7 +51,6 @@
 
   function isStale(entry: QueueEntry, detail: AnyRecord): boolean {
     if (entry.kind === "review") return detail.state !== "needs_review";
-    if (entry.kind === "status") return !detail.status_proposal;
     if (!detail.fields?.[entry.kind]?.proposal) return true;
     return gatingField(String(detail.state)) !== entry.kind;
   }
@@ -94,14 +91,6 @@
       `/api/tickets/${entry.entity_id}/approve`,
       { method: "POST", body: {} },
       ["queues", `ticket:${entry.entity_id}`, "board", "sprint:current"]
-    ));
-  }
-
-  function acceptStatus(entry: QueueEntry): Promise<unknown> {
-    return refreshQueuesAfter(mutateJson(
-      `/api/items/${entry.entity_id}/accept-status`,
-      { method: "POST", body: {} },
-      ["queues", `item:${entry.entity_id}`, "items:backlog", "sprint:current", "board"]
     ));
   }
 
@@ -182,23 +171,6 @@
               onAccept={() => approve(entry)}
               onApproveResult={() => approve(entry)}
             />
-          {:else if entry.kind === "status"}
-            <div class="approval approval--review">
-              <div class="approval-proposal-shell review-status-proposal">
-                <ContentDisclosure title="Status" section="proposal">
-                  <div class="review-status-change">
-                    <span class="pill">{detail.status}</span>
-                    <span class="review-status-arrow" aria-hidden="true">→</span>
-                    <span class="pill review-status-target">{detail.status_proposal?.to_status || ""}</span>
-                  </div>
-                </ContentDisclosure>
-                <div class="approval-actions">
-                  <div class="approval-control-group">
-                    <button type="button" class="approval-approve" data-accept data-accept-status onclick={() => void acceptStatus(entry)}>Approve</button>
-                  </div>
-                </div>
-              </div>
-            </div>
           {/if}
 
           <div class="review-outside-actions">

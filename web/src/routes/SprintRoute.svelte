@@ -13,14 +13,13 @@
     fetchJson("/api/sprint/current", { signal })
   );
 
-  const liveOrder = ["active", "todo", "blocked"];
-  const settledOrder = ["done", "deferred_next_sprint"];
+  const liveOrder = ["in_progress", "todo", "blocked"];
+  const settledOrder = ["done"];
   const groupLabel: Record<string, string> = {
-    active: "Active",
+    in_progress: "In progress",
     todo: "Todo",
     blocked: "Blocked",
-    done: "Done",
-    deferred_next_sprint: "Deferred → next sprint"
+    done: "Done"
   };
   const kickoff = [
     ["limiting_factor", "Limiting factor"],

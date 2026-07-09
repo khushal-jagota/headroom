@@ -23,6 +23,10 @@ def test_create_schema_has_projects_project_ids_and_default_rows(tmp_path):
         columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")}
         assert "project_id" in columns
         assert "project" not in columns
+        if table == "sprint_items":
+            assert "status" not in columns
+            assert "blocked_by" not in columns
+            assert "status_proposal" not in columns
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     conn.close()
 
@@ -76,10 +80,11 @@ def test_create_schema_upgrades_old_ticket_status_column(tmp_path):
           updated_at INTEGER NOT NULL
         );
         INSERT INTO sprint_items (
-          id, title, project, created_at, updated_at
+          id, title, status, project, blocked_by, created_at, updated_at
         ) VALUES
-          ('si_custom', 'Custom item', 'Alpha One', 1, 1),
-          ('si_default', 'Default item', 'Vylo', 1, 1);
+          ('si_custom', 'Custom item', 'blocked', 'Alpha One', '["t_parented"]', 1, 1),
+          ('si_default', 'Default item', 'todo', 'Vylo', '[]', 1, 1),
+          ('si_deferred', 'Deferred item', 'deferred_next_sprint', 'Vylo', '[]', 1, 1);
         INSERT INTO tickets (
           id, title, status, project, sprint_item_id, created_at, updated_at
         ) VALUES
@@ -105,6 +110,10 @@ def test_create_schema_upgrades_old_ticket_status_column(tmp_path):
         table_columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")}
         assert "project_id" in table_columns
         assert "project" not in table_columns
+        if table == "sprint_items":
+            assert "status" not in table_columns
+            assert "blocked_by" not in table_columns
+            assert "status_proposal" not in table_columns
     assert {
         row["id"]: row["name"]
         for row in conn.execute("SELECT id, name FROM projects ORDER BY id")
@@ -128,7 +137,19 @@ def test_create_schema_upgrades_old_ticket_status_column(tmp_path):
     ) == {
         "si_custom": "project_alpha_one",
         "si_default": "project_vylo",
+        "si_deferred": "project_vylo",
     }
+    assert dict(
+        conn.execute("SELECT id, sprint_id FROM sprint_items ORDER BY id").fetchall()
+    ) == {
+        "si_custom": None,
+        "si_default": None,
+        "si_deferred": None,
+    }
+    assert [
+        tuple(row)
+        for row in conn.execute("SELECT from_id, to_id, kind FROM links ORDER BY from_id, to_id")
+    ] == [("t_parented", "si_custom", "blocks")]
     assert dict(
         conn.execute("SELECT id, project_id FROM tickets ORDER BY id").fetchall()
     ) == {

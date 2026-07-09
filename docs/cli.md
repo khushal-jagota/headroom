@@ -9,8 +9,7 @@ The command tree matches the system model:
 - `project ...` — list and create project catalog rows.
 - `ticket ...` — create, inspect, organize, and approve tickets.
 - `sprint ...` — create, inspect, edit, and populate sprints and sprint items.
-- `worker ...` — worker-only writes such as proposals, recaps, notes, and item status
-  proposals.
+- `worker ...` — worker-only writes such as ticket proposals, recaps, and notes.
 
 The CLI does not expose internal runtime controls. Ticket `state`, `ticket_status`,
 run claiming, takeover, and release remain code-owned. The only human resolution verb
@@ -30,12 +29,13 @@ in the CLI is approval.
 - **`sprint create / list / show / set / add-ticket / remove-ticket`** — plan and
   populate sprints. `current` resolves through `/api/sprint/current`; `none` means the
   backlog where a list supports it.
-- **`sprint item create / list / show / set / add-ticket / remove-ticket / approve`**
+- **`sprint item create / list / show / set / add-ticket / remove-ticket`**
   — manage sprint items and their ticket membership. Creating a ticket is still
   `ticket create`; adding an existing ticket to an item is a sprint-item command.
-- **`worker propose / recap / note / my-ticket / propose-item-status`** — worker
-  actions. `worker propose` infers the current gating field from ticket state and
-  requires a recap (`--recap` or `--recap-file`) in the same request.
+  Item status is read-only and derived from child tickets and open blocking links.
+- **`worker propose / recap / note / my-ticket`** — worker actions. `worker propose`
+  infers the current gating field from ticket state and requires a recap
+  (`--recap` or `--recap-file`) in the same request.
 - **`serve`** — run the server and background worker runtime in the foreground.
   It may be launched from outside the repository; the app shell, static assets, and
   checked-in config are resolved from the repository root.
@@ -70,4 +70,4 @@ lease; the employee runtime runs one step at a time and writes status itself (se
 
 ---
 
-_Last verified: 2026-07-08._
+_Last verified: 2026-07-09._

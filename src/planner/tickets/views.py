@@ -20,7 +20,7 @@ from planner.tickets.logic import fields_codec, machine
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
 _TICKET_CLOSED = {TicketState.done.value, TicketState.dropped.value}
-_ITEM_CLOSED = {ItemStatus.done.value, ItemStatus.deferred_next_sprint.value}
+_ITEM_CLOSED = {ItemStatus.done.value}
 
 
 def _prio_rank(priority: str) -> int:
@@ -255,15 +255,6 @@ def _approval_digest(tickets: list[JsonDict], items: list[JsonDict]) -> list[Jso
                 "waiting_since": proposal["created_at"],
             }
         )
-    for row in items:
-        proposal = row["status_proposal"]
-        if proposal is None:
-            continue
-        if not isinstance(proposal, dict):
-            continue
-        digest.append(
-            {"entity_id": row["id"], "kind": "status", "waiting_since": proposal["created_at"]}
-        )
     digest.sort(key=lambda entry: entry["waiting_since"])
     return digest
 
@@ -323,7 +314,7 @@ def _approvals(conn: sqlite3.Connection, item_approval_rows: list[JsonDict]) -> 
     item_title: dict[str, str] = {}
     for r in item_approval_rows:
         iid = str(r["id"])
-        item_digest.append({"id": iid, "status_proposal": r["status_proposal"]})
+        item_digest.append({"id": iid})
         item_title[iid] = str(r["title"])
     digest = _approval_digest(ticket_digest, item_digest)
     # A5: review entries use the last state_changed->needs_review event time, not the

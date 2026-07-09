@@ -909,13 +909,14 @@
           <details>
             <summary>
               <span class="number">02</span>
-              <span><strong>Blocking exists in two shapes.</strong><span>Runtime tickets and sprint items model blockage differently.</span></span>
+              <span><strong>Sprint item status is a read projection.</strong><span>Items derive progress from child tickets and blocking links.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                Tickets use <code>links.kind='blocks'</code> for runtime readiness.
-                Sprint items use a <code>blocked_by</code> JSON list when item status
-                is blocked. Both make sense locally; together they add mental load.
+                Sprint items no longer store their own status. They derive
+                <code>todo</code>, <code>in_progress</code>, <code>blocked</code>, or
+                <code>done</code> from child tickets and open
+                <code>links.kind='blocks'</code> rows.
               </p>
             </div>
           </details>

@@ -81,7 +81,7 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert (
         report.sprints, report.sprint_items, report.deferred_items,
         report.tickets, report.ideas, report.links, report.duplicates_skipped,
-    ) == (1, 6, 3, 4, 3, 1, 0)
+    ) == (1, 5, 4, 4, 3, 1, 0)
 
     # (2) DB row counts.
     assert _count(tmp_db, "sprints") == 1
@@ -109,29 +109,26 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     )
     assert sprint["outcomes"] == "The fixture pack shipped and the importer ran clean twice."
 
-    # (4) item status/priority/project/body mappings.
+    # (4) item priority/project/body mappings; legacy Deferred imports as backlog.
     items = _rows_by(
         tmp_db,
-        "SELECT sprint_items.id, sprint_items.title, sprint_items.status, "
+        "SELECT sprint_items.id, sprint_items.title, "
         "sprint_items.priority, sprint_items.project_id, projects.name AS project, "
-        "sprint_items.sprint_id, sprint_items.deadline, sprint_items.body, "
-        "sprint_items.blocked_by "
+        "sprint_items.sprint_id, sprint_items.deadline, sprint_items.body "
         "FROM sprint_items JOIN projects ON projects.id = sprint_items.project_id "
         "WHERE sprint_items.sprint_id IS NOT NULL",
         "title",
     )
     expected = {
-        "Write the parser design note.": ("todo", "P1", "Learning"),
-        "Refit the garden shed.": ("todo", "P3", "Other"),
-        "Build the import pipeline.": ("active", "P0", "Vylo"),
-        "Ship the fixture pack.": ("done", "P2", "Vylo"),
-        "Publish the beta changelog.": ("blocked", "P1", "Tribe"),
-        "Automate the weekly digest.": ("deferred_next_sprint", "P3", "Vylo"),
+        "Write the parser design note.": ("P1", "Learning"),
+        "Refit the garden shed.": ("P3", "Other"),
+        "Build the import pipeline.": ("P0", "Vylo"),
+        "Ship the fixture pack.": ("P2", "Vylo"),
+        "Publish the beta changelog.": ("P1", "Tribe"),
     }
     assert set(items) == set(expected)
-    for title, (status, priority, project) in expected.items():
+    for title, (priority, project) in expected.items():
         row = items[title]
-        assert row["status"] == status
         assert row["priority"] == priority
         assert row["project"] == project
         assert row["sprint_id"] == sprint_id
@@ -139,7 +136,16 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert items["Write the parser design note."]["body"] == (
         "- Cover the tokenizer first.\n  - Then the emitter.\n- Keep examples from the real files."
     )
-    assert items["Publish the beta changelog."]["blocked_by"] == "[]"
+    backlog = _rows_by(
+        tmp_db,
+        "SELECT sprint_items.title, sprint_items.priority, sprint_items.project_id, "
+        "projects.name AS project, sprint_items.sprint_id "
+        "FROM sprint_items JOIN projects ON projects.id = sprint_items.project_id "
+        "WHERE sprint_items.sprint_id IS NULL",
+        "title",
+    )
+    assert backlog["Automate the weekly digest."]["priority"] == "P3"
+    assert backlog["Automate the weekly digest."]["project"] == "Vylo"
 
     # (5) ticket Readiness mappings by alias.
     tickets = _rows_by(
@@ -229,15 +235,20 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     # (10) deferred items.
     deferred = _rows_by(
         tmp_db,
-        "SELECT sprint_items.title, sprint_items.status, sprint_items.priority, "
+        "SELECT sprint_items.title, sprint_items.priority, "
         "sprint_items.project_id, projects.name AS project, sprint_items.sprint_id, "
         "sprint_items.deadline, sprint_items.body "
         "FROM sprint_items JOIN projects ON projects.id = sprint_items.project_id "
         "WHERE sprint_items.sprint_id IS NULL",
         "title",
     )
-    assert len(deferred) == 3
+    assert len(deferred) == 4
     expected_deferred = {
+        "Automate the weekly digest.": (
+            "P3",
+            "Vylo",
+            "- Next sprint once the event feed settles.",
+        ),
         "Tune the retrieval cache.": ("P2", "Vylo", "- Watch the hit rate for a week first."),
         "Rotate the leaked staging key.": ("P0", "Vylo", ""),
         "Read the WAL internals paper.": (
@@ -246,7 +257,6 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     }
     for title, (priority, project, body) in expected_deferred.items():
         row = deferred[title]
-        assert row["status"] == "todo"
         assert row["priority"] == priority
         assert row["project"] == project
         assert row["body"] == body

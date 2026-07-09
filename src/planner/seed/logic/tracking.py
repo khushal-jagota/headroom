@@ -4,7 +4,12 @@ body. Pure."""
 
 from __future__ import annotations
 
-from planner.seed.contracts import DEFAULT_PROJECT_NAME, ITEM_STATUS_MAP, ParsedItem, SkippedSection
+from planner.seed.contracts import (
+    DEFAULT_PROJECT_NAME,
+    TRACKING_ITEM_SECTIONS,
+    ParsedItem,
+    SkippedSection,
+)
 from planner.seed.logic.blocks import (
     REASON_PROSE,
     REASON_SECTION,
@@ -17,7 +22,6 @@ from planner.seed.logic.blocks import (
     structural_residual,
 )
 from planner.seed.logic.fieldmap import parse_project, resolve_priority
-from planner.sprints.contracts import ItemStatus
 
 
 def parse_tracking(text: str, source_file: str) -> tuple[list[ParsedItem], list[SkippedSection]]:
@@ -28,21 +32,20 @@ def parse_tracking(text: str, source_file: str) -> tuple[list[ParsedItem], list[
     if residual:
         skipped.append(SkippedSection(source_file, None, REASON_SECTION, excerpt_of(residual)))
     for heading, body in sections:
-        status = ITEM_STATUS_MAP.get(heading)
-        if status is not None:
+        if heading in TRACKING_ITEM_SECTIONS:
             bullets, orphans = parse_bullets(body)
             if orphans:
                 skipped.append(SkippedSection(
                     source_file, heading, REASON_PROSE, excerpt_of("\n".join(orphans)),
                 ))
             for bullet in bullets:
-                items.append(_item_from_bullet(bullet, status))
+                items.append(_item_from_bullet(bullet, deferred=heading == "Deferred"))
         elif body.strip() != "":
             skipped.append(SkippedSection(source_file, heading, REASON_SECTION, excerpt_of(body)))
     return items, skipped
 
 
-def _item_from_bullet(bullet: Bullet, status: ItemStatus) -> ParsedItem:
+def _item_from_bullet(bullet: Bullet, *, deferred: bool) -> ParsedItem:
     priority_raw: str | None = None
     urgency_raw: str | None = None
     project_raw: str | None = None
@@ -65,10 +68,9 @@ def _item_from_bullet(bullet: Bullet, status: ItemStatus) -> ParsedItem:
         body_bullets.append(child)
     return ParsedItem(
         title=bullet.text,
-        status=status,
         priority=resolve_priority(priority_raw, urgency_raw),
         project=parse_project(project_raw) or DEFAULT_PROJECT_NAME,
         body="\n".join(emit_body(body_bullets)),
         deadline=None,
-        deferred=False,
+        deferred=deferred,
     )

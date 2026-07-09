@@ -194,10 +194,10 @@ less clean than the rest.
    live conversation setup. That is intentional, but it is still an exception a
    cold reader has to know.
 
-2. **Blocking exists in two shapes.** Tickets use `links.kind='blocks'` for runtime
-   readiness. Sprint items also have a `blocked_by` JSON list when their item status
-   is `blocked`. Both are logical in isolation, but a reader has to learn two ways
-   to say "blocked."
+2. **Sprint item status is a read projection.** Sprint items no longer store their
+   own status. They derive `todo`, `in_progress`, `blocked`, or `done` from child
+   tickets and open `links.kind='blocks'` rows. This keeps ticket readiness and item
+   blocking on the same link model.
 
 3. **The frontend copies some ticket state-machine constants.** The server owns the
    ticket state machine, but `web/src/lib/ui.ts` repeats `STATE_ORDER`, gating fields,

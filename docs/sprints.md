@@ -34,8 +34,14 @@ change can be undone if it's ever wanted.
 ## Tracking — the items
 
 Tracking is the sprint's items and, under each, the tickets that carry it, with a
-progress rollup. Each sprint item stores a `project_id` from the projects catalog;
-child tickets inherit that classification from the item.
+progress rollup. Each sprint item stores plain fields and placement only: title, body,
+priority, deadline, project, and optional sprint. Its status is derived when read:
+an item is done when all non-dropped child tickets are done, in progress when any
+child ticket is active or an agent is working, blocked when it has an open blocking
+ticket or blocked/errored child, and todo otherwise.
+
+Each sprint item stores a `project_id` from the projects catalog; child tickets
+inherit that classification from the item.
 
 _Code paths:_ `src/planner/sprints/` (the sprint, its items, and the overview
 fields), `web/src/routes/SprintRoute.svelte` (both tabs).
@@ -48,12 +54,6 @@ fields), `web/src/routes/SprintRoute.svelte` (both tabs).
   fields.
 - **Projects** (`projects.md`) — the catalog used by sprint items.
 
-## Deferred
-
-- **Freeze and weekly addenda are dormant, not gone.** The columns and machinery
-  remain in place, switched off, so the freeze behaviour can be restored. Trigger: a
-  decision to bring either back.
-
 ---
 
-_Last verified: 2026-07-08._
+_Last verified: 2026-07-09._

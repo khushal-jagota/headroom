@@ -16,14 +16,13 @@ Outstanding planned / submitted work:
   `tests/e2e/test_flows_a.py`, `web/dist/*`, plus memory files. Agent-reported checks passed and
   an agent-run Codex review said `NO VIOLATIONS`, but the lead has not reviewed or accepted the
   diff yet. Treat as **submitted, pending lead review/integration**.
-- **Derived sprint item status** — Dewey is still implementing in
-  `/Users/khushaljagota/.hermes/planning-v2-derived-status` on
-  `codex/derived-sprint-item-status`. It is explicitly **not complete**. Known unfinished work:
-  tests/docs still expect stored status, sprint API cleanup is incomplete, Review/Sprint frontend
-  edits are partial, and the broad diff must not be integrated blindly.
-- **Chief-of-staff agent** — Erdos submitted a skill draft at
-  `orchestration/chief-of-staff/erdos-skill-draft.md`. Owner edited it and called out more skill
-  corrections. Implementation is paused until owner review and the skill/role plan is corrected.
+- **Derived sprint item status** — Dewey's worktree has been merged into the main integration
+  branch. Sprint items no longer store or accept explicit status/status-proposal writes; status is
+  derived on read from child tickets and blocking links. Focused unit/web checks passed during
+  integration; full `./verify` is still deferred until the end-of-batch verification.
+- **Chief-of-staff agent** — first slice is implemented on main: repo role skill, planner-home
+  symlink provisioning, top-level chat entity, and full-pane `#/chief` route. Browser verification
+  passed after restarting the stale server.
 - **Repo guidance / `AGENTS.md` + `CLAUDE.md`** — Descartes submitted findings at
   `orchestration/repo-guidance/descartes-report.md`. Owner decision: do **not** directly edit
   `AGENTS.md` / `CLAUDE.md` further yet. This belongs in a planned guidance cleanup, including a
@@ -42,12 +41,44 @@ Plan files / artifacts that must stay on the radar:
 
 - `orchestration/chief-of-staff/erdos-skill-draft.md`
 - `orchestration/repo-guidance/descartes-report.md`
-- `/Users/khushaljagota/.hermes/planning-v2-derived-status` for Dewey's derived-status worktree
-- Schrodinger's submitted markdown-editing diff in the main worktree
+- Dewey's derived-status work has been merged; keep the worktree only until the merge commit is
+  accepted.
+- In-place markdown editing is committed on main.
 - Russell live-chat plan needs to be written to an `orchestration/` plan artifact before
   implementation starts.
-- Boyle derived-status plan needs to be written to an `orchestration/` plan artifact or reconciled
-  with Dewey's worktree before integration.
+- Goodall live-chat implementation should start on main after the derived-status merge commit.
+
+## Current work cycle (2026-07-09): Derived sprint item status integration
+
+Owner request: commit the current main work, merge Dewey's derived sprint-item status work, then set
+Goodall off on main.
+
+Current implementation:
+
+- Sprint item rows store only plain item fields and sprint placement.
+- `ItemStatus` is now `todo`, `in_progress`, `blocked`, `done`, derived in
+  `planner.sprints.logic.status` from child tickets, runtime ticket status, and blocking links.
+- Legacy `status = deferred_next_sprint` rows migrate to backlog placement (`sprint_id = NULL`).
+- Legacy `blocked_by` JSON migrates into `links(kind='blocks')`.
+- Item status proposal routes and Review item-status approval UI are removed.
+- Seed import recognizes legacy tracking sections, but does not persist them as item status; legacy
+  `Deferred` imports as backlog.
+
+Verification status:
+
+- `.venv/bin/python -m py_compile ...` passed for the edited backend modules.
+- `.venv/bin/python -m pytest tests/unit/test_db.py tests/unit/test_sprints.py
+  tests/unit/test_seed.py tests/unit/test_authctx_routes.py` passed: 28 passed, 1 existing
+  Starlette/httpx warning.
+- `npm --prefix web run check` passed with the existing three `TicketRoute.svelte` initial-`id`
+  warnings.
+- `npm --prefix web run test` passed.
+- Full `./verify` has not been run for this merge yet.
+
+Immediate next step:
+
+- Regenerate `web/dist`, stage the merge, commit it, then instruct Goodall to begin live-chat
+  implementation on main.
 
 ## Current work cycle (2026-07-09): Shared ticket stage component
 

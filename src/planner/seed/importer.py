@@ -179,24 +179,25 @@ def _import_items(
             conn, project_id=None, project_name=item.project, required=True
         )
         assert project is not None
+        item_is_deferred = deferred or item.deferred
+        item_sprint_id = None if item_is_deferred else sprint_id
         conn.execute(
-            "INSERT INTO sprint_items (id, title, body, status, priority, deadline, project_id, "
+            "INSERT INTO sprint_items (id, title, body, priority, deadline, project_id, "
             "sprint_id, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                item_id, item.title, item.body, item.status.value, item.priority.value,
-                item.deadline, project.id, sprint_id, now, now,
+                item_id, item.title, item.body, item.priority.value,
+                item.deadline, project.id, item_sprint_id, now, now,
             ),
         )
         append_event(
             conn, item_id, EventKind.sprint_item_created,
             {
-                "title": item.title, "status": item.status.value,
-                "sprint_id": sprint_id, "source": "seed",
+                "title": item.title, "sprint_id": item_sprint_id, "source": "seed",
             },
             now,
         )
-        if deferred:
+        if item_is_deferred:
             report.deferred_items += 1
         else:
             report.sprint_items += 1

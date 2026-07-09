@@ -1,14 +1,13 @@
-"""Canonical sprint writers: the single door for every sprint / sprint-item state
-transition. Pure logic (imported from planner.sprints.logic) decides; this layer
-enforces — mapping each verdict to a PlannerError or a SQL mutation plus its
-event(s), all inside one BEGIN IMMEDIATE transaction. sqlite3, events and the clock
-live here only. Column names equal the contract dataclass field names one-for-one."""
+"""Canonical sprint writers and sprint-item reads.
+
+Sprint items store plain item fields only; their status is derived on read from
+child tickets and blocking links.
+"""
 
 from __future__ import annotations
 
-import json
 import sqlite3
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date
 from typing import NamedTuple, cast
@@ -21,25 +20,23 @@ from planner.core.ids import ID_PREFIXES, new_id
 from planner.sprints.contracts import (
     KICKOFF_FIELDS,
     MID_SPRINT_FIELDS,
-    PROPOSAL_ONLY_STATUSES,
     REVIEW_FIELDS,
     ItemStatus,
-    ItemStatusProposal,
     Sprint,
     SprintItem,
 )
 from planner.sprints.logic import (
     DateRange,
-    TransitionVerdict,
-    blockers_cleared,
-    classify_agent_transition,
-    classify_human_transition,
+    SprintItemChildStatus,
+    derive_sprint_item_status,
     find_overlap,
 )
 
 
 class ItemRead(NamedTuple):
     item: SprintItem
+    status: ItemStatus
+    blocking_ticket_ids: list[str]
     blockers_cleared: bool
 
 
@@ -86,42 +83,16 @@ def _row_to_sprint(row: sqlite3.Row) -> Sprint:
     )
 
 
-def _proposal_to_json(p: ItemStatusProposal) -> str:
-    return json.dumps(
-        {
-            "to_status": p.to_status.value,
-            "note": p.note,
-            "proposed_by": p.proposed_by,
-            "created_at": p.created_at,
-        }
-    )
-
-
-def _proposal_from_json(raw: str | None) -> ItemStatusProposal | None:
-    if raw is None:
-        return None
-    data = json.loads(raw)
-    return ItemStatusProposal(
-        to_status=ItemStatus(data["to_status"]),
-        note=data["note"],
-        proposed_by=data["proposed_by"],
-        created_at=data["created_at"],
-    )
-
-
 def _row_to_item(row: sqlite3.Row) -> SprintItem:
     return SprintItem(
         id=row["id"],
         title=row["title"],
         body=row["body"],
-        status=ItemStatus(row["status"]),
         priority=Priority(row["priority"]),
         deadline=row["deadline"],
         project_id=row["project_id"],
         project_name=row["project_name"],
         sprint_id=row["sprint_id"],
-        blocked_by=json.loads(row["blocked_by"]),
-        status_proposal=_proposal_from_json(row["status_proposal"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -324,14 +295,13 @@ def create_item(
     with _tx(conn):
         conn.execute(
             "INSERT INTO sprint_items ("
-            "id, title, body, status, priority, deadline, project_id, "
-            "sprint_id, blocked_by, status_proposal, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, ?, ?)",
+            "id, title, body, priority, deadline, project_id, sprint_id, "
+            "created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 item_id,
                 title,
                 body,
-                ItemStatus.todo.value,
                 priority.value,
                 deadline,
                 project_id,
@@ -419,152 +389,6 @@ def update_item_field(
     return _load_item(conn, item_id)
 
 
-def transition_item_status(
-    conn: sqlite3.Connection,
-    item_id: str,
-    to_status: ItemStatus,
-    *,
-    clock: Clock,
-    by_agent: bool = True,
-    blocked_by: Sequence[str] | None = None,
-) -> SprintItem:
-    item = _load_item(conn, item_id)
-    from_status = item.status
-    intended: list[str] = list(blocked_by or []) if to_status is ItemStatus.blocked else []
-    verdict = (
-        classify_agent_transition(from_status, to_status, intended)
-        if by_agent
-        else classify_human_transition(from_status, to_status, intended)
-    )
-    if verdict is TransitionVerdict.forbidden:
-        raise PlannerError(
-            ErrorCode.item_transition_forbidden,
-            "transition not permitted",
-            {"from": from_status.value, "to": to_status.value},
-        )
-    if verdict is TransitionVerdict.missing_blockers:
-        raise PlannerError(
-            ErrorCode.validation,
-            "blocked requires a non-empty blocked_by",
-            {"to": "blocked"},
-        )
-    new_blocked_by = intended if to_status is ItemStatus.blocked else []
-    cause = "agent" if by_agent else "human"
-    now = clock.now_unix()
-    with _tx(conn):
-        conn.execute(
-            "UPDATE sprint_items SET status = ?, blocked_by = ?, updated_at = ? WHERE id = ?",
-            (to_status.value, json.dumps(new_blocked_by), now, item_id),
-        )
-        append_event(
-            conn,
-            item_id,
-            EventKind.item_status_changed,
-            {"from": from_status.value, "to": to_status.value, "cause": cause},
-            now,
-        )
-    return _load_item(conn, item_id)
-
-
-def propose_item_status(
-    conn: sqlite3.Connection,
-    item_id: str,
-    to_status: ItemStatus,
-    *,
-    note: str | None,
-    proposed_by: str,
-    clock: Clock,
-) -> SprintItem:
-    if to_status not in PROPOSAL_ONLY_STATUSES:
-        raise PlannerError(
-            ErrorCode.validation,
-            "only done/deferred_next_sprint are proposable",
-            {"to": to_status.value},
-        )
-    item = _load_item(conn, item_id)
-    if item.status in PROPOSAL_ONLY_STATUSES:
-        raise PlannerError(
-            ErrorCode.validation,
-            "item status is terminal; no further proposals",
-            {"status": item.status.value},
-        )
-    now = clock.now_unix()
-    with _tx(conn):
-        existing = item.status_proposal
-        if existing is not None:
-            append_event(
-                conn,
-                item_id,
-                EventKind.proposal_superseded,
-                {
-                    "field": "status",
-                    "replaced_body": {
-                        "to_status": existing.to_status.value,
-                        "note": existing.note,
-                        "proposed_by": existing.proposed_by,
-                        "created_at": existing.created_at,
-                    },
-                },
-                now,
-            )
-        proposal = ItemStatusProposal(
-            to_status=to_status, note=note, proposed_by=proposed_by, created_at=now
-        )
-        conn.execute(
-            "UPDATE sprint_items SET status_proposal = ?, updated_at = ? WHERE id = ?",
-            (_proposal_to_json(proposal), now, item_id),
-        )
-        append_event(
-            conn,
-            item_id,
-            EventKind.proposal_filed,
-            {
-                "field": "status",
-                "body": {"to_status": to_status.value, "note": note},
-                "proposed_by": proposed_by,
-            },
-            now,
-        )
-    return _load_item(conn, item_id)
-
-
-def accept_item_status(
-    conn: sqlite3.Connection, item_id: str, *, clock: Clock, resolved_by: str = "human"
-) -> SprintItem:
-    item = _load_item(conn, item_id)
-    if item.status_proposal is None:
-        raise PlannerError(ErrorCode.validation, "no pending status proposal", {})
-    to_status = item.status_proposal.to_status
-    from_status = item.status
-    now = clock.now_unix()
-    with _tx(conn):
-        conn.execute(
-            "UPDATE sprint_items SET status = ?, status_proposal = NULL, "
-            "blocked_by = '[]', updated_at = ? WHERE id = ?",
-            (to_status.value, now, item_id),
-        )
-        append_event(
-            conn,
-            item_id,
-            EventKind.proposal_accepted,
-            {
-                "field": "status",
-                "body": {"to_status": to_status.value},
-                "resolved_by": resolved_by,
-                "edited": False,
-            },
-            now,
-        )
-        append_event(
-            conn,
-            item_id,
-            EventKind.item_status_changed,
-            {"from": from_status.value, "to": to_status.value, "cause": "accept"},
-            now,
-        )
-    return _load_item(conn, item_id)
-
-
 def assign_item_sprint(
     conn: sqlite3.Connection, item_id: str, sprint_id: str | None, *, clock: Clock
 ) -> SprintItem:
@@ -593,17 +417,47 @@ def assign_item_sprint(
 
 def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
     item = _load_item(conn, item_id)
-    if item.blocked_by:
-        placeholders = ", ".join("?" for _ in item.blocked_by)
-        rows = conn.execute(
-            f"SELECT id, state FROM tickets WHERE id IN ({placeholders})",
-            tuple(item.blocked_by),
-        ).fetchall()
-        states = {row["id"]: row["state"] for row in rows}
-        cleared = blockers_cleared(item.blocked_by, states)
-    else:
-        cleared = False
-    return ItemRead(item=item, blockers_cleared=cleared)
+    blocking_rows = conn.execute(
+        "SELECT links.from_id, tickets.state FROM links "
+        "JOIN tickets ON tickets.id = links.from_id "
+        "WHERE links.to_id = ? AND links.kind = 'blocks' ORDER BY links.from_id",
+        (item_id,),
+    ).fetchall()
+    blocking_ticket_ids = [str(row["from_id"]) for row in blocking_rows]
+    blockers_cleared = bool(blocking_rows) and all(
+        str(row["state"]) == "done" for row in blocking_rows
+    )
+    child_rows = conn.execute(
+        """
+        SELECT tickets.state, tickets.ticket_status,
+          EXISTS(
+            SELECT 1 FROM links
+            WHERE links.to_id = tickets.id AND links.kind = 'blocks'
+          ) AS blocked
+        FROM tickets
+        WHERE tickets.sprint_item_id = ?
+        ORDER BY tickets.id
+        """,
+        (item_id,),
+    ).fetchall()
+    children = [
+        SprintItemChildStatus(
+            state=str(row["state"]),
+            ticket_status=str(row["ticket_status"]),
+            blocked=bool(row["blocked"]),
+        )
+        for row in child_rows
+    ]
+    status = derive_sprint_item_status(
+        directly_blocked=bool(blocking_ticket_ids) and not blockers_cleared,
+        children=children,
+    )
+    return ItemRead(
+        item=item,
+        status=status,
+        blocking_ticket_ids=blocking_ticket_ids,
+        blockers_cleared=blockers_cleared,
+    )
 
 
 def read_sprint(conn: sqlite3.Connection, sprint_id: str) -> Sprint:

@@ -2,12 +2,13 @@
 
 The §18.3 fence is 1:1 — one named test per item — so test_a10_* and test_a20_*
 each exist exactly once and assert their item's full statement. Supplementary
-coverage (supersede mechanics, empty-blockers rejection, current-sprint
-selection) runs under the unanchored test_x06_* names.
+coverage runs under the unanchored test_x06_* names.
 
-Item 10 — sprint-item permissions: agent todo->active succeeds; agent direct
-active->done write rejected; done via proposal + accept succeeds; blocked_by
-stored and blockers_cleared computed when all blockers done.
+Item 10 — sprint-item status is derived from child tickets and blocking links:
+done has precedence when all non-dropped children are done; in_progress follows
+running/control states or active ticket lifecycle states; blocked follows open
+blocking links, blocked children, or errored child runtime; dropped children are
+ignored and all-dropped/no-children items are todo.
 
 Item 20 — sprint overlap: freeze and weekly_addenda are retired (rev6), so every
 sprint text field is always-editable and nothing latches; the remaining rule is
@@ -16,34 +17,39 @@ sprint overlap rejection (inclusive ranges).
 
 from __future__ import annotations
 
-import inspect
-
 import pytest
 
+from planner.core import links as core_links
+from planner.core.contracts import LinkKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import read_events_since
 from planner.sprints.contracts import ItemStatus
 from planner.sprints.data import (
-    accept_item_status,
     create_idea,
     create_item,
     create_sprint,
-    propose_item_status,
     read_item,
     read_sprint,
     set_sprint_dates,
-    transition_item_status,
 )
 from planner.sprints.logic import DateRange, current_sprint_id
 
 
-def _insert_ticket(conn, ticket_id: str, state: str) -> None:
+def _insert_ticket(
+    conn,
+    ticket_id: str,
+    state: str,
+    *,
+    sprint_item_id: str | None = None,
+    ticket_status: str = "empty",
+) -> None:
     # T04 owns ticket writers; a direct INSERT is the sanctioned test-fixture
-    # shortcut for setting blocker ticket-states (only NOT-NULL non-defaulted
+    # shortcut for setting child/blocker ticket-states (only NOT-NULL non-defaulted
     # columns are supplied; project may stay NULL under its CHECK).
     conn.execute(
-        "INSERT INTO tickets (id, title, state, created_at, updated_at) VALUES (?, ?, ?, 0, 0)",
-        (ticket_id, "blk", state),
+        "INSERT INTO tickets (id, title, state, sprint_item_id, ticket_status, created_at, "
+        "updated_at) VALUES (?, ?, ?, ?, ?, 0, 0)",
+        (ticket_id, "child", state, sprint_item_id, ticket_status),
     )
 
 
@@ -65,84 +71,63 @@ def _events(conn, entity_id: str, kind: str) -> list[dict]:
 
 
 def test_a10_sprint_item_permissions(tmp_db, fake_clock) -> None:
-    # Leg 1 — agent todo -> active succeeds, with one exact {from, to, cause} event.
-    item1 = create_item(tmp_db, title="ship it", project_id="project_vylo", clock=fake_clock)
-    assert item1.status is ItemStatus.todo
-    moved = transition_item_status(tmp_db, item1.id, ItemStatus.active, clock=fake_clock)
-    assert moved.status is ItemStatus.active
-    assert _events(tmp_db, item1.id, "item_status_changed") == [
-        {"from": "todo", "to": "active", "cause": "agent"},
-    ]
+    empty = create_item(tmp_db, title="empty", project_id="project_vylo", clock=fake_clock)
+    assert read_item(tmp_db, empty.id).status is ItemStatus.todo
 
-    # Leg 2 — agent direct active -> done write rejected (and deferred_next_sprint
-    # equally, per PROPOSAL_ONLY_STATUSES); status and event log unchanged.
-    item2 = create_item(tmp_db, title="x", project_id="project_vylo", clock=fake_clock)
-    transition_item_status(tmp_db, item2.id, ItemStatus.active, clock=fake_clock)
-    with pytest.raises(PlannerError) as ei:
-        transition_item_status(tmp_db, item2.id, ItemStatus.done, clock=fake_clock)
-    assert ei.value.code == ErrorCode.item_transition_forbidden
-    with pytest.raises(PlannerError) as ei2:
-        transition_item_status(
-            tmp_db, item2.id, ItemStatus.deferred_next_sprint, clock=fake_clock
-        )
-    assert ei2.value.code == ErrorCode.item_transition_forbidden
-    assert read_item(tmp_db, item2.id).item.status is ItemStatus.active
-    changes = _events(tmp_db, item2.id, "item_status_changed")
-    assert all(c["to"] != "done" for c in changes)
-    assert all(c["to"] != "deferred_next_sprint" for c in changes)
+    done = create_item(tmp_db, title="done", project_id="project_vylo", clock=fake_clock)
+    _insert_ticket(tmp_db, "t_done_a", "done", sprint_item_id=done.id)
+    _insert_ticket(tmp_db, "t_done_b", "dropped", sprint_item_id=done.id)
+    assert read_item(tmp_db, done.id).status is ItemStatus.done
 
-    # Leg 3 — done via proposal + human accept succeeds; proposal cleared; exact
-    # proposal_filed / proposal_accepted / item_status_changed payloads.
-    item3 = create_item(tmp_db, title="y", project_id="project_vylo", clock=fake_clock)
-    transition_item_status(tmp_db, item3.id, ItemStatus.active, clock=fake_clock)
-    proposed = propose_item_status(
-        tmp_db, item3.id, ItemStatus.done, note="ready", proposed_by="agent-x", clock=fake_clock
+    running = create_item(tmp_db, title="running", project_id="project_vylo", clock=fake_clock)
+    _insert_ticket(
+        tmp_db,
+        "t_running",
+        "needs_success",
+        sprint_item_id=running.id,
+        ticket_status="agent_running_step",
     )
-    assert proposed.status is ItemStatus.active
-    assert proposed.status_proposal is not None
-    assert proposed.status_proposal.to_status is ItemStatus.done
-    assert _events(tmp_db, item3.id, "proposal_filed") == [
-        {
-            "field": "status",
-            "body": {"to_status": "done", "note": "ready"},
-            "proposed_by": "agent-x",
-        },
-    ]
-    accepted = accept_item_status(tmp_db, item3.id, clock=fake_clock)
-    assert accepted.status is ItemStatus.done
-    assert accepted.status_proposal is None
-    assert _events(tmp_db, item3.id, "proposal_accepted") == [
-        {
-            "field": "status",
-            "body": {"to_status": "done"},
-            "resolved_by": "human",
-            "edited": False,
-        },
-    ]
-    assert {"from": "active", "to": "done", "cause": "accept"} in _events(
-        tmp_db, item3.id, "item_status_changed"
-    )
-    # §4.4.7 guard: item accepts carry no onward-scope pair.
-    params = inspect.signature(accept_item_status).parameters
-    assert "next_ceiling" not in params
-    assert "at_cap" not in params
+    assert read_item(tmp_db, running.id).status is ItemStatus.in_progress
 
-    # Leg 4 — blocked_by stored; blockers_cleared computed on read, flipping True
-    # only when every blocker ticket reaches state done.
+    shaped = create_item(tmp_db, title="shaped", project_id="project_vylo", clock=fake_clock)
+    _insert_ticket(tmp_db, "t_shaped", "needs_plan", sprint_item_id=shaped.id)
+    assert read_item(tmp_db, shaped.id).status is ItemStatus.in_progress
+
+    blocked = create_item(tmp_db, title="blocked", project_id="project_vylo", clock=fake_clock)
     _insert_ticket(tmp_db, "t_a", "in_progress")
     _insert_ticket(tmp_db, "t_b", "done")
-    item4 = create_item(tmp_db, title="z", project_id="project_vylo", clock=fake_clock)
-    blocked = transition_item_status(
-        tmp_db, item4.id, ItemStatus.blocked, clock=fake_clock, blocked_by=["t_a", "t_b"]
-    )
-    assert blocked.status is ItemStatus.blocked
-    assert blocked.blocked_by == ["t_a", "t_b"]
-    assert _events(tmp_db, item4.id, "item_status_changed") == [
-        {"from": "todo", "to": "blocked", "cause": "agent"},
-    ]
-    assert read_item(tmp_db, item4.id).blockers_cleared is False
+    core_links.add_link(tmp_db, "t_a", blocked.id, LinkKind.blocks, fake_clock.now_unix())
+    core_links.add_link(tmp_db, "t_b", blocked.id, LinkKind.blocks, fake_clock.now_unix())
+    blocked_read = read_item(tmp_db, blocked.id)
+    assert blocked_read.status is ItemStatus.blocked
+    assert blocked_read.blocking_ticket_ids == ["t_a", "t_b"]
+    assert blocked_read.blockers_cleared is False
     _set_ticket_state(tmp_db, "t_a", "done")
-    assert read_item(tmp_db, item4.id).blockers_cleared is True
+    cleared_read = read_item(tmp_db, blocked.id)
+    assert cleared_read.blockers_cleared is True
+    assert cleared_read.status is ItemStatus.todo
+
+    child_blocked = create_item(
+        tmp_db, title="child blocked", project_id="project_vylo", clock=fake_clock
+    )
+    _insert_ticket(tmp_db, "t_child", "needs_success", sprint_item_id=child_blocked.id)
+    _insert_ticket(tmp_db, "t_child_blocker", "needs_success")
+    core_links.add_link(tmp_db, "t_child_blocker", "t_child", LinkKind.blocks, fake_clock.now_unix())
+    assert read_item(tmp_db, child_blocked.id).status is ItemStatus.blocked
+
+    errored = create_item(tmp_db, title="errored", project_id="project_vylo", clock=fake_clock)
+    _insert_ticket(
+        tmp_db,
+        "t_errored_child",
+        "needs_success",
+        sprint_item_id=errored.id,
+        ticket_status="errored",
+    )
+    assert read_item(tmp_db, errored.id).status is ItemStatus.blocked
+
+    all_dropped = create_item(tmp_db, title="dropped", project_id="project_vylo", clock=fake_clock)
+    _insert_ticket(tmp_db, "t_dropped", "dropped", sprint_item_id=all_dropped.id)
+    assert read_item(tmp_db, all_dropped.id).status is ItemStatus.todo
 
 
 # --- item 20: sprint overlap (single anchored test) -------------------------------
@@ -175,56 +160,6 @@ def test_a20_sprint_overlap(tmp_db, fake_clock) -> None:
 
 
 # --- supplementary sprints-domain tests (no fence anchor) -------------------------
-
-
-def test_x06_item_proposal_supersedes_prior(tmp_db, fake_clock) -> None:
-    item = create_item(tmp_db, title="x", project_id="project_vylo", clock=fake_clock)
-    transition_item_status(tmp_db, item.id, ItemStatus.active, clock=fake_clock)
-
-    propose_item_status(
-        tmp_db, item.id, ItemStatus.done, note="d1", proposed_by="agent-x", clock=fake_clock
-    )
-    superseded = propose_item_status(
-        tmp_db,
-        item.id,
-        ItemStatus.deferred_next_sprint,
-        note="d2",
-        proposed_by="agent-x",
-        clock=fake_clock,
-    )
-
-    supersede_events = _events(tmp_db, item.id, "proposal_superseded")
-    assert supersede_events == [
-        {
-            "field": "status",
-            "replaced_body": {
-                "to_status": "done",
-                "note": "d1",
-                "proposed_by": "agent-x",
-                "created_at": fake_clock.now_unix(),
-            },
-        },
-    ]
-
-    assert superseded.status is ItemStatus.active
-    assert superseded.status_proposal is not None
-    assert superseded.status_proposal.to_status is ItemStatus.deferred_next_sprint
-
-    # Accept the surviving proposal -> deferred_next_sprint, proposal cleared.
-    accepted = accept_item_status(tmp_db, item.id, clock=fake_clock)
-    assert accepted.status is ItemStatus.deferred_next_sprint
-    assert accepted.status_proposal is None
-
-
-def test_x06_item_blocked_requires_blockers(tmp_db, fake_clock) -> None:
-    item = create_item(tmp_db, title="x", project_id="project_vylo", clock=fake_clock)
-
-    with pytest.raises(PlannerError) as ei:
-        transition_item_status(
-            tmp_db, item.id, ItemStatus.blocked, clock=fake_clock, blocked_by=[]
-        )
-    assert ei.value.code == ErrorCode.validation
-    assert read_item(tmp_db, item.id).item.status is ItemStatus.todo
 
 
 def test_x06_current_sprint_selection() -> None:
