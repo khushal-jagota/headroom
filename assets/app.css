@@ -1109,6 +1109,7 @@ select {
   padding: var(--space-5) var(--space-6);
   border-right: var(--border-hairline) solid var(--border-color);
   --board-workspace-rail-pad-x: var(--space-2);
+  --board-workspace-stage-rail-width: calc((0.7rem * 4) + (var(--space-1) * 3));
 }
 
 .board-workspace-right {
@@ -1205,9 +1206,9 @@ select {
 
 .board-workspace-item-row {
   width: 100%;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--board-workspace-stage-rail-width);
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-2);
   border: 0;
   border-radius: var(--radius-sm);
@@ -1229,30 +1230,23 @@ select {
 }
 
 .board-workspace-item-label {
-  flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
   color: inherit;
   font-size: inherit;
 }
 
-.board-workspace-runtime-status {
-  flex: 0 0 var(--space-2);
-  width: var(--space-2);
-  height: var(--space-2);
-  border-radius: var(--radius-pill);
+.board-workspace-stage-rail {
+  width: var(--board-workspace-stage-rail-width);
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  justify-self: end;
 }
 
-.board-workspace-runtime-status--pending-proposal {
-  background: var(--accent-bright);
-}
-
-.board-workspace-runtime-status--agent-running-step {
-  background: var(--accent-done);
-}
-
-.board-workspace-runtime-status--user-takeover {
-  background: var(--text-faint);
+.board-workspace-stage-mark {
+  flex: 0 0 0.7rem;
 }
 
 .board-workspace-placeholder {
@@ -1666,12 +1660,17 @@ details.fsec > summary:hover {
 }
 
 .fsec-mark--current-waiting {
-  border-color: var(--text-faint);
+  border-color: var(--accent-bright);
 }
 
 .fsec-mark--current-awaiting-approval {
   background: var(--accent-bright);
   border-color: var(--accent-bright);
+}
+
+.fsec-mark--errored {
+  background: var(--accent-error);
+  border-color: var(--accent-error);
 }
 
 .fsec-mark--upcoming {
