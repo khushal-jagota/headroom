@@ -90,8 +90,8 @@ def test_ticket_chat_send_survives_navigation_from_server_state(
         "echo: persist this ticket message",
     ]
 
-    page.goto(server.base + "/#/board")
-    page.wait_for_selector('section[data-screen="board"]', timeout=WAIT_MS)
+    page.goto(server.base + "/#/workspace")
+    page.wait_for_selector('section[data-screen="workspace"]', timeout=WAIT_MS)
     page.goto(server.base + f"/#/ticket/{tid}")
     page.wait_for_selector(
         'section[data-screen="ticket"] [data-chat] [data-chat-input]', timeout=WAIT_MS
@@ -133,8 +133,8 @@ def test_chief_chat_send_survives_navigation_from_server_state(
         "echo: remember this chief message",
     ]
 
-    page.goto(server.base + "/#/board")
-    page.wait_for_selector('section[data-screen="board"]', timeout=WAIT_MS)
+    page.goto(server.base + "/#/workspace")
+    page.wait_for_selector('section[data-screen="workspace"]', timeout=WAIT_MS)
     page.goto(server.base + "/#/chief")
     page.wait_for_selector('section[data-screen="chief"] [data-chat-input]', timeout=WAIT_MS)
     _wait_chat_text(page, "you", "remember this chief message")
@@ -173,8 +173,8 @@ def test_ticket_chat_shows_running_worker_turn_after_remount(
     _wait_chat_text(page, "worker", "Checking the plan")
     page.wait_for_selector("[data-chat] [data-chat-pending]", timeout=WAIT_MS)
 
-    page.goto(server.base + "/#/board")
-    page.wait_for_selector('section[data-screen="board"]', timeout=WAIT_MS)
+    page.goto(server.base + "/#/workspace")
+    page.wait_for_selector('section[data-screen="workspace"]', timeout=WAIT_MS)
     page.goto(server.base + f"/#/ticket/{tid}")
     page.wait_for_selector(
         'section[data-screen="ticket"] [data-chat] [data-chat-input]', timeout=WAIT_MS

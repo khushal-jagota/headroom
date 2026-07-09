@@ -48,8 +48,8 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
     page = open_page(
         context_factory(),
         server,
-        "#/board",
-        'section[data-screen="board"]',
+        "#/workspace",
+        'section[data-screen="workspace"]',
         settled=True,
     )
 
@@ -60,7 +60,7 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
         page.wait_for_selector(card, timeout=WAIT_MS)
         assert page.eval_on_selector_all(
             f"{card} .board-workspace-stage-mark", "els => els.length"
-        ) == 4
+        ) == 1
 
     assert page.get_attribute(_stage(page, waiting_card, "success"), "data-stage-state") == (
         "current-waiting"

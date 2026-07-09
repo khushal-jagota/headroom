@@ -1042,3 +1042,15 @@ dogfood logs, verify transcripts, and stale audit/playbook artifacts. The delete
 evidence for completed work, not source of truth for the current product; live guidance remains in
 `AGENTS.md`, `PRINCIPLES.md`, `PROGRESS.md`, `decisions.md`, `docs/`, and the retained redesign
 plans/mockups.
+
+## D68 — Workspace is the product route; board remains the backend resource
+
+The user-facing Board page is now Workspace at `#/workspace`, with `#/board` kept as a compatibility
+alias. The API route, resource key, event invalidation key, and backend view names stay `board`
+because they describe the execution set that System A polls and changing them would be contract
+churn unrelated to the requested UI rename.
+
+Workspace defaults its right pane to the existing Chief of Staff chat entity. Selecting a ticket
+temporarily switches the right pane back to the current ticket-link view, and the Chief of Staff
+button restores the top-level chat. The rail now renders only the ticket's current stage marker so
+the stage signal is one active dot, not a full lifecycle tracker.

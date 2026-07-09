@@ -37,3 +37,52 @@ def test_chief_of_staff_route_nav_and_chat(server, context_factory, open_page) -
 
     _wait_chat_text(page, "you", "triage the workspace")
     _wait_chat_text(page, "planner", "echo: triage the workspace")
+
+
+def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
+    server, context_factory, open_page, cli, api
+) -> None:
+    tid = cli(server, "ticket", "create", "--title", "Workspace selectable ticket")["id"]
+    api.human_post(server, "/api/day/today/tickets", {"ticket_id": tid})
+
+    page = open_page(
+        context_factory(),
+        server,
+        "#/workspace",
+        'section[data-screen="workspace"] [data-chat-input]',
+        settled=True,
+    )
+
+    assert "active" in (
+        page.get_attribute('a.nav-link[data-screen="workspace"]', "class") or ""
+    )
+    assert page.get_attribute("[data-chat-input]", "placeholder") == "Message Chief of Staff..."
+
+    page.fill("[data-chat-input]", "triage from workspace")
+    page.click("[data-chat-send]")
+    _wait_chat_text(page, "you", "triage from workspace")
+    _wait_chat_text(page, "planner", "echo: triage from workspace")
+
+    card = f'[data-column="needs_success"] [data-card][data-ticket-id="{tid}"]'
+    page.click(card)
+    page.wait_for_selector(f'.board-workspace-open-ticket[href="#/ticket/{tid}"]', timeout=WAIT_MS)
+    assert page.inner_text(".board-workspace-open-ticket") == "Workspace selectable ticket"
+
+    page.click("[data-chief-of-staff-button]")
+    page.wait_for_selector('section[data-screen="workspace"] [data-chat-input]', timeout=WAIT_MS)
+    _wait_chat_text(page, "you", "triage from workspace")
+    _wait_chat_text(page, "planner", "echo: triage from workspace")
+
+
+def test_legacy_board_route_renders_workspace(server, context_factory, open_page) -> None:
+    page = open_page(
+        context_factory(),
+        server,
+        "#/board",
+        'section[data-screen="workspace"] [data-chief-of-staff-button]',
+        settled=False,
+    )
+
+    assert "active" in (
+        page.get_attribute('a.nav-link[data-screen="workspace"]', "class") or ""
+    )

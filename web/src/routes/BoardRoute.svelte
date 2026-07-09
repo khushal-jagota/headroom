@@ -2,22 +2,26 @@
   import { onDestroy } from "svelte";
   import { fetchJson } from "../lib/api";
   import { resource } from "../lib/resources";
-  import type { BoardResponse } from "../lib/types";
+  import type { BoardResponse, GatewayStatus } from "../lib/types";
   import {
     FIELD_NAMES,
     ticketStageVisualState,
     type FieldStageVisualState
   } from "../lib/ui";
+  import ChatPanel from "../components/ChatPanel.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
 
+  const chiefOfStaffEntityId = "agent_panels_chief_of_staff";
   const board = resource<BoardResponse>("board", (signal) => fetchJson("/api/board", { signal }));
+  const chiefChatStatus = resource<GatewayStatus>(`chat-status:${chiefOfStaffEntityId}`, (signal) =>
+    fetchJson(`/api/chat/${chiefOfStaffEntityId}/status`, { signal })
+  );
   let columns = $derived(board.data?.columns || []);
   let selectedTicketId = $state<string | null>(null);
+  let rightPaneMode = $state<"chief" | "ticket">("chief");
   let collapsedStates = $state<string[]>([]);
   let allCards = $derived(columns.flatMap((column) => column.cards));
-  let selectedCard = $derived(
-    allCards.find((card) => card.id === selectedTicketId) || allCards[0] || null
-  );
+  let selectedCard = $derived(allCards.find((card) => card.id === selectedTicketId) || null);
 
   function stateLabel(state: string): string {
     return state.replace(/_/g, " ");
@@ -25,6 +29,11 @@
 
   function selectCard(ticketId: string): void {
     selectedTicketId = ticketId;
+    rightPaneMode = "ticket";
+  }
+
+  function showChiefOfStaff(): void {
+    rightPaneMode = "chief";
   }
 
   function isCollapsed(state: string): boolean {
@@ -62,21 +71,36 @@
     return null;
   }
 
-  onDestroy(() => board.dispose());
+  function isCurrentStage(stageState: FieldStageVisualState): boolean {
+    return stageState.startsWith("current-") || stageState === "errored";
+  }
+
+  onDestroy(() => {
+    board.dispose();
+    chiefChatStatus.dispose();
+  });
 </script>
 
-<section class="board-screen" data-screen="board">
+<section class="board-screen" data-screen="workspace">
   {#if board.error}
     <ErrorLine error={board.error} />
   {:else if board.loading && !board.data}
-    <div class="quiet-line">Loading board...</div>
+    <div class="quiet-line">Loading workspace...</div>
   {:else}
     <div class="board-workspace-wrap">
       <div class="board-workspace-shell">
-        <section class="board-workspace-left" aria-label="Board ticket tree">
-          <h2 class="board-workspace-heading board-workspace-heading-row">
-            <span>Refinement Tree</span>
-          </h2>
+        <section class="board-workspace-left" aria-label="Workspace ticket tree">
+          <div class="board-workspace-heading board-workspace-heading-row">
+            <button
+              aria-pressed={rightPaneMode === "chief"}
+              class="board-workspace-chief-button"
+              data-chief-of-staff-button
+              type="button"
+              onclick={showChiefOfStaff}
+            >
+              Chief of Staff
+            </button>
+          </div>
 
           {#each columns as column}
             {@const collapsed = isCollapsed(column.state)}
@@ -98,7 +122,7 @@
                 <div class="board-workspace-index-items">
                   {#each column.cards as card}
                     <button
-                      class:active={selectedCard?.id === card.id}
+                      class:active={rightPaneMode === "ticket" && selectedCard?.id === card.id}
                       class="board-workspace-item-row"
                       data-card
                       data-ticket-id={card.id}
@@ -110,13 +134,15 @@
                         {#each FIELD_NAMES as name}
                           {@const stageState = cardStageState(column.state, card, name)}
                           {@const marker = stageMarker(card, stageState)}
-                          <span
-                            class={`board-workspace-stage-mark fsec-mark fsec-mark--${stageState}`}
-                            data-stage-field={name}
-                            data-stage-state={stageState}
-                            data-marker={marker || undefined}
-                            aria-label={`${name} ${stageState.replace(/-/g, " ")}`}
-                          ></span>
+                          {#if isCurrentStage(stageState)}
+                            <span
+                              class={`board-workspace-stage-mark fsec-mark fsec-mark--${stageState}`}
+                              data-stage-field={name}
+                              data-stage-state={stageState}
+                              data-marker={marker || undefined}
+                              aria-label={`${name} ${stageState.replace(/-/g, " ")}`}
+                            ></span>
+                          {/if}
                         {/each}
                       </span>
                     </button>
@@ -127,8 +153,14 @@
           {/each}
         </section>
 
-        <section class="board-workspace-right" aria-label="Board inspector">
-          {#if selectedCard}
+        <section class="board-workspace-right" aria-label="Workspace inspector">
+          {#if rightPaneMode === "chief"}
+            <ChatPanel
+              entityId={chiefOfStaffEntityId}
+              available={chiefChatStatus.data?.available ?? true}
+              label="Chief of Staff"
+            />
+          {:else if selectedCard}
             <div class="board-workspace-placeholder">
               <a class="board-workspace-open-ticket" href={`#/ticket/${selectedCard.id}`}>
                 {selectedCard.title}

@@ -1377,3 +1377,46 @@ Next step: final response should call out that `npm run build` rewrote `web/dist
 which were outside the requested source scope and already dirty in this shared worktree.
 
 Blockers: none.
+
+## Workspace rename + Chief of Staff right pane
+
+Current build stage: implemented and verified.
+
+What changed:
+
+- `#/workspace` is now the canonical user-facing route, with `#/board` retained as a compatibility
+  alias over the same Svelte route.
+- The Workspace nav label replaces Board, while backend `/api/board` and the `board` resource key
+  stay unchanged.
+- The Workspace right pane defaults to the existing Chief of Staff chat. Selecting a ticket shows
+  the current ticket link view, and the full-width borderless Chief of Staff button restores the
+  chat.
+- The Workspace rail renders only the current stage marker for each ticket, instead of all four
+  lifecycle dots.
+- Focused e2e coverage was updated/added for Workspace routing, the embedded Chief of Staff chat,
+  legacy `#/board`, and the one-dot stage indicator.
+
+What passed:
+
+- `npm --prefix web run check` passed with the existing three `TicketRoute.svelte` warnings.
+- `npm --prefix web run build` passed with the existing external-asset warnings and the same three
+  `TicketRoute.svelte` warnings.
+- `.venv/bin/pytest tests/e2e/test_chief_of_staff.py tests/e2e/test_board_stage_indicators.py -q`
+  passed.
+- `.venv/bin/pytest tests/e2e/test_live_chat_state.py
+  tests/e2e/test_flows_a.py::test_e22_cli_create_live_board
+  tests/e2e/test_flows_a.py::test_e26_chat_panel_echo_and_offline
+  tests/e2e/test_flows_b.py::test_e31_refresh_restores_state -q` passed.
+- Read-only Codex diff review (`codex exec -m gpt-5.5 -s read-only`) reported `NO VIOLATIONS`.
+- Fresh `./verify` passed:
+  - ruff ok
+  - mypy ok
+  - unit suite ok: 172 passed, 3 warnings
+  - build check ok
+  - frontend ok
+  - e2e suite ok: 31 passed
+  - `VERIFY: PASS`
+
+Immediate next step: ready for owner review/commit.
+
+Blockers: none.

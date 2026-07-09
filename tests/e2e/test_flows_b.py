@@ -356,9 +356,9 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     assert before_t == after_t == expected_t, (before_t, after_t)
 
     # Board surface.
-    ready_b = 'section[data-screen="board"]'
+    ready_b = 'section[data-screen="workspace"]'
     mid_b = f'[data-column="in_progress"] [data-card][data-ticket-id="{mid}"]'
-    page_b = open_page(context_factory(), server, "#/board", ready_b, settled=True)
+    page_b = open_page(context_factory(), server, "#/workspace", ready_b, settled=True)
     page_b.wait_for_selector(mid_b, timeout=WAIT_MS)
     before_b = _snap_board(page_b, mid)
     _reload_settle(page_b, ready_b)

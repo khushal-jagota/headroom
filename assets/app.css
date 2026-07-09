@@ -1093,7 +1093,7 @@ select {
   color: var(--text-default);
 }
 
-/* --- Board screen (T16) -------------------------------------------------- */
+/* --- Workspace screen (backed by board data) ----------------------------- */
 
 .board-screen {
   height: 100%;
@@ -1122,7 +1122,7 @@ select {
   padding: var(--space-5) var(--space-6);
   border-right: var(--border-hairline) solid var(--border-color);
   --board-workspace-rail-pad-x: var(--space-2);
-  --board-workspace-stage-rail-width: calc((0.7rem * 4) + (var(--space-1) * 3));
+  --board-workspace-stage-rail-width: 0.7rem;
 }
 
 .board-workspace-right {
@@ -1138,20 +1138,37 @@ select {
 .board-workspace-heading-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: var(--space-2);
   padding: 0 var(--board-workspace-rail-pad-x);
-  font-family: var(--font-mono);
-  font-size: var(--type-md);
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  line-height: 1.35;
-  text-transform: uppercase;
 }
 
 .board-workspace-heading {
   color: var(--text-default);
   margin: 0 0 var(--space-4);
+}
+
+.board-workspace-chief-button {
+  width: 100%;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-default);
+  cursor: pointer;
+  padding: var(--space-2) var(--board-workspace-rail-pad-x);
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+  font-weight: 600;
+  line-height: 1.35;
+  transition: color var(--motion-fast) var(--motion-ease),
+    background var(--motion-fast) var(--motion-ease);
+}
+
+.board-workspace-chief-button:hover,
+.board-workspace-chief-button[aria-pressed="true"] {
+  background: var(--surface-overlay);
+  color: var(--text-strong);
 }
 
 .board-workspace-index-section {
@@ -1787,7 +1804,7 @@ details.fsec[open] > summary .fsec-chev::before {
   padding: var(--space-3) var(--space-3) var(--space-4);
 }
 
-/* Board copies the old Workspace shell: the screen owns the height below the nav,
+/* Workspace owns the height below the nav,
  * then scrolls its left chooser internally. */
 .shell:has(.board-screen) {
   height: 100dvh;

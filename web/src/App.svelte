@@ -41,6 +41,7 @@
   }
 
   function currentNav(name: string): boolean {
+    if (name === "workspace") return route.name === "workspace" || route.name === "board";
     return route.name === name;
   }
 
@@ -49,7 +50,7 @@
     if (route.name === "sprint") {
       return !route.params.sub || route.params.sub === "tracking" || route.params.sub === "overview";
     }
-    return ["day", "review", "chief", "board", "backlog", "ideas"].includes(route.name);
+    return ["day", "review", "chief", "workspace", "board", "backlog", "ideas"].includes(route.name);
   }
 
   onMount(() => {
@@ -82,7 +83,7 @@
           <span class="nav-badge hidden"></span>
         {/if}
       </a>
-      <a class:active={currentNav("board")} class="nav-link" data-screen="board" href="#/board">Board</a>
+      <a class:active={currentNav("workspace")} class="nav-link" data-screen="workspace" href="#/workspace">Workspace</a>
       <a class:active={currentNav("sprint")} class="nav-link" data-screen="sprint" href="#/sprint">Sprint</a>
       <a class:active={currentNav("backlog")} class="nav-link" data-screen="backlog" href="#/backlog">Backlog</a>
       <a class:active={currentNav("ideas")} class="nav-link" data-screen="ideas" href="#/ideas">Ideas</a>
@@ -99,7 +100,7 @@
             <ChiefOfStaffRoute />
           {:else if route.name === "review"}
             <ReviewRoute />
-          {:else if route.name === "board"}
+          {:else if route.name === "workspace" || route.name === "board"}
             <BoardRoute />
           {:else if route.name === "ticket"}
             <TicketRoute id={route.params.id} />

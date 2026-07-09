@@ -62,11 +62,11 @@ def _wait_chat_text(page: Page, who: str, text: str) -> None:
 
 
 def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api):
-    board = 'section[data-screen="board"]'
+    board = 'section[data-screen="workspace"]'
     ctx_a = context_factory()
     ctx_b = context_factory()
-    page_a = open_page(ctx_a, server, "#/board", board, settled=False)
-    page_b = open_page(ctx_b, server, "#/board", board, settled=False)
+    page_a = open_page(ctx_a, server, "#/workspace", board, settled=False)
+    page_b = open_page(ctx_b, server, "#/workspace", board, settled=False)
 
     for page in (page_a, page_b):
         count = page.eval_on_selector_all(
@@ -353,8 +353,8 @@ def test_e26_chat_panel_echo_and_offline(
 
     # The transcript is gateway history, not component-local state. Leaving the ticket,
     # returning, and a hard reload must all recover the visible turns.
-    page.goto(server.base + "/#/board")
-    page.wait_for_selector('section[data-screen="board"]', timeout=WAIT_MS)
+    page.goto(server.base + "/#/workspace")
+    page.wait_for_selector('section[data-screen="workspace"]', timeout=WAIT_MS)
     page.goto(server.base + f"/#/ticket/{tid}")
     page.wait_for_selector(
         'section[data-screen="ticket"] [data-chat] [data-chat-input]', timeout=WAIT_MS
