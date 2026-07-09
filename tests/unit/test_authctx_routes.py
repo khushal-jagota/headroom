@@ -1,10 +1,10 @@
 """§8 route boundary regression: the HTTP PATCH surfaces enforce the same agent write
 boundary the CLI does. PATCH /api/tickets/{id} gates human-only fields (an agent may
-still set the agent-permitted priority/deadline); PATCH /api/items/{id} lets an agent
-transition status only; PATCH /api/sprints/{id} and PATCH /api/day/{date} are
-human-only. Human requests behave exactly as before on every route. The old carried-
-claim gate is gone (the ticket's code-owned status is the lock now). Supporting tests,
-no §18.3 anchor."""
+still set the agent-permitted priority/deadline); PATCH /api/items/{id} has no status
+write surface because item status is derived; PATCH /api/sprints/{id} and
+PATCH /api/day/{date} are human-only. Human requests behave exactly as before on every
+route. The old carried-claim gate is gone (the ticket's code-owned status is the lock
+now). Supporting tests, no §18.3 anchor."""
 
 from __future__ import annotations
 
@@ -193,7 +193,7 @@ def test_patch_ticket_rejects_bad_field_types(tmp_path: Path) -> None:
     assert _col(db_path, "tickets", tid, "sprint_id") is None
 
 
-# --- PATCH /items/{id}: agent may transition status only (§3.2/§8) ---------------
+# --- PATCH /items/{id}: status is derived; fields/sprint remain human-only --------
 
 
 def test_patch_item_agent_plain_field_or_sprint_is_forbidden(tmp_path: Path) -> None:
@@ -213,14 +213,19 @@ def test_patch_item_agent_plain_field_or_sprint_is_forbidden(tmp_path: Path) -> 
     assert _col(db_path, "sprint_items", iid, "sprint_id") is None
 
 
-def test_patch_item_agent_status_transition_succeeds(tmp_path: Path) -> None:
+def test_patch_item_status_write_is_rejected(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
-    iid = _item(db_path)  # created in `todo`
+    iid = _item(db_path)
     with TestClient(app) as client:
-        response = client.patch(f"/api/items/{iid}", json={"status": "active"}, headers=_AGENT)
-    assert response.status_code == 200, response.json()
-    assert response.json()["status"] == "active"
-    assert _col(db_path, "sprint_items", iid, "status") == "active"
+        response = client.patch(f"/api/items/{iid}", json={"status": "in_progress"})
+        agent = client.patch(
+            f"/api/items/{iid}", json={"status": "in_progress"}, headers=_AGENT
+        )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation"
+    assert response.json()["error"]["detail"]["field"] == "status"
+    assert agent.status_code == 400
+    assert agent.json()["error"]["code"] == "validation"
 
 
 def test_patch_item_rejects_bad_field_types(tmp_path: Path) -> None:
@@ -247,7 +252,6 @@ def test_patch_item_rejects_bad_field_types(tmp_path: Path) -> None:
     assert _col(db_path, "sprint_items", iid, "deadline") is None
     assert _col(db_path, "sprint_items", iid, "project") == "Vylo"
     assert _col(db_path, "sprint_items", iid, "sprint_id") is None
-    assert _col(db_path, "sprint_items", iid, "status") == "todo"
 
 
 def test_item_ticket_routes_parent_and_unparent_existing_ticket(tmp_path: Path) -> None:

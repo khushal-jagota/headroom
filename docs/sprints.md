@@ -34,7 +34,20 @@ change can be undone if it's ever wanted.
 ## Tracking — the items
 
 Tracking is the sprint's items and, under each, the tickets that carry it, with a
-progress rollup.
+progress rollup. Item status is not stored. The server derives it in one shared
+sprint function, and every API, CLI, and UI read uses that derived value.
+
+The derived statuses are:
+
+- `done` — the item has at least one child ticket and every non-dropped child ticket is done.
+- `in_progress` — any non-dropped child ticket is running, awaiting approval, in user takeover,
+  or sitting in an active planning/work/review state.
+- `blocked` — the item has an open blocking link, a non-dropped child ticket is blocked, or a
+  child ticket runtime errored.
+- `todo` — none of the above. Empty items and items with only dropped child tickets are todo.
+
+Deferred work is backlog placement, not a status. Legacy deferred imported rows are kept as
+unscheduled sprint items.
 
 _Code paths:_ `src/planner/sprints/` (the sprint, its items, and the overview
 fields), `web/src/routes/SprintRoute.svelte` (both tabs).
@@ -54,4 +67,4 @@ fields), `web/src/routes/SprintRoute.svelte` (both tabs).
 
 ---
 
-_Last verified: 2026-07-08._
+_Last verified: 2026-07-09._

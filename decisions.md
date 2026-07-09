@@ -894,3 +894,14 @@ Ticket and sprint-item PATCH routes now validate each recognized field's type be
 writer. Wrong-shaped values return the normal validation envelope instead of SQLite coercion,
 `not_found`, or a 500. This preserves the route-body contract and keeps the canonical writers from
 being used as request parsers.
+
+## D57 — Sprint item status is derived, not written
+
+Sprint item status now exists only as a read projection named `status` in API/CLI/UI JSON. The shared
+derivation function lives in sprint logic and reads child ticket state/runtime status plus open
+blocking links. `deferred_next_sprint` became backlog placement (`sprint_id=NULL`) during migration
+and seed import, because deferred work is a scheduling choice rather than an item status.
+
+This slice was implemented directly in the isolated derived-status worktree because the change cuts
+through one tightly coupled contract surface: schema migration, sprint reads, ticket invalidation,
+CLI/API removal, frontend review removal, and tests all had to stay in lockstep.

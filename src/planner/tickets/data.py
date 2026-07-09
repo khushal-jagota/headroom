@@ -543,8 +543,6 @@ def set_title(
             {"field": "title", "from": prev, "to": title},
             now,
         )
-        _append_item_children_changed(conn, prev_item, ticket_id, "parentage", now)
-        _append_item_children_changed(conn, sprint_item_id, ticket_id, "parentage", now)
         return _load_ticket(conn, ticket_id)
 
 
@@ -572,7 +570,6 @@ def set_project(
             {"field": "project", "from": prev, "to": new_value},
             now,
         )
-        _append_item_children_changed(conn, sprint_item_id, ticket_id, "parentage", now)
         return _load_ticket(conn, ticket_id)
 
 
@@ -680,6 +677,9 @@ def assign_ticket_to_sprint_item(
             },
             now,
         )
+        if prev_item != sprint_item_id:
+            _append_item_children_changed(conn, prev_item, ticket_id, "parentage", now)
+            _append_item_children_changed(conn, sprint_item_id, ticket_id, "parentage", now)
         return _load_ticket(conn, ticket_id)
 
 
@@ -722,4 +722,5 @@ def remove_ticket_from_sprint_item(
             },
             now,
         )
+        _append_item_children_changed(conn, sprint_item_id, ticket_id, "parentage", now)
         return _load_ticket(conn, ticket_id)

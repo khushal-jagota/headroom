@@ -9,7 +9,6 @@ sleeps."""
 
 from __future__ import annotations
 
-import httpx
 from playwright.sync_api import Page
 
 WAIT_MS = 10_000
@@ -365,7 +364,7 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
     )["id"]
     ltid = cli(server, "ticket", "create", "--title", E32_LOOSE_TITLE, "--sprint", sid)["id"]
 
-    ready = '[data-status-group="active"]'
+    ready = '[data-status-group="todo"]'
     pa = open_page(context_factory(), server, "#/sprint", ready, settled=True)
     pb = open_page(context_factory(), server, "#/sprint", ready, settled=True)
 
@@ -376,24 +375,38 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
     fa = pa.evaluate("window.__plannerDebug.flushes")
     fb = pb.evaluate("window.__plannerDebug.flushes")
 
-    # Agent todo→active (§3.2): status remains an agent transition, not a product CLI knob.
-    response = httpx.patch(
-        server.base + f"/api/items/{iid}",
-        json={"status": "active"},
-        headers={"X-Plan-Actor": "agent"},
-        timeout=10.0,
+    child = cli(
+        server,
+        "ticket",
+        "create",
+        "--title",
+        f"{E32_ITEM_TITLE} child",
+        "--sprint-item",
+        iid,
+    )["id"]
+    _scope_and_advance(
+        server,
+        api,
+        cli,
+        child,
+        "in_progress",
+        {
+            "success": "E32 success",
+            "approach": "E32 approach",
+            "plan": "E32 plan",
+        },
     )
-    assert response.status_code < 300, response.text
 
     for p, f0 in ((pa, fa), (pb, fb)):
         p.wait_for_selector(
-            f'[data-status-group="active"] [data-item-id="{iid}"]', timeout=WAIT_MS
+            f'[data-status-group="in_progress"] [data-item-id="{iid}"]', timeout=WAIT_MS
         )
         assert p.query_selector(f'[data-status-group="todo"] [data-item-id="{iid}"]') is None
+        assert p.query_selector(f'[data-ticket-id="{child}"]') is not None
         assert p.evaluate("window.__plannerDebug.flushes") > f0
 
     cur = api.get(server, "/api/sprint/current")
-    assert iid in [i["id"] for i in cur["groups"]["active"]], cur
+    assert iid in [i["id"] for i in cur["groups"]["in_progress"]], cur
     assert iid not in [i["id"] for i in cur["groups"]["todo"]], cur
     assert ltid in [t["id"] for t in cur["loose_tickets"]], cur
 

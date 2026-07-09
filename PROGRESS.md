@@ -3,6 +3,44 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-09): Derived sprint item status
+
+Owner request: remove explicit sprint item status as canonical state and derive it everywhere from
+child tickets and blocking links.
+
+Current implementation:
+
+- `sprint_items.status`, `blocked_by`, and `status_proposal` are removed from the live schema;
+  migration drops the columns, migrates valid legacy blockers into `links(kind='blocks')`, and
+  moves legacy `deferred_next_sprint` rows to backlog placement.
+- `src/planner/sprints/logic/status.py` owns the shared pure derivation function for
+  `todo`, `in_progress`, `blocked`, and `done`.
+- Sprint API/views/CLI/frontend reads still expose a `status` field, but it is derived. Status
+  writes, worker status proposals, and item status approvals are removed.
+- Ticket state, runtime status, creation, and sprint-item parentage changes emit
+  `item_children_changed` events so item, sprint, board, and queue views invalidate.
+- Seed import treats legacy Deferred tracking rows as unscheduled backlog items, not a fifth
+  status.
+
+Verification status:
+
+- Focused backend/unit slice passed:
+  `PYTHONPATH=src /Users/khushaljagota/.hermes/planning-v2/.venv/bin/python -m pytest tests/unit/test_db.py tests/unit/test_sprints.py tests/unit/test_authctx_routes.py tests/unit/test_seed.py`
+  -> 28 passed, 1 known Starlette/httpx warning.
+
+Current hypothesis:
+
+- The backend behavior is coherent after the event-invalidation call-site fix. Remaining risk is
+  frontend/static drift or e2e expectations around sprint tracking and review queues.
+
+Immediate next step:
+
+- Run frontend check/build/test, targeted CLI/e2e coverage, and `git diff --check`.
+
+Known gaps:
+
+- Full `./verify` has not been run for this slice yet.
+
 ## Current work cycle (2026-07-08): CLI noun-shape implementation
 
 Owner request: build the CLI redesign, then review it.
