@@ -8,6 +8,16 @@ things stand right now, not a history log.
 Important wording: an agent being "complete" only means the agent submitted a deliverable. It does
 not mean the work is accepted, integrated, or owner-reviewed.
 
+Orchestration cleanup:
+
+- Owner asked to keep the `orchestration/` structure but remove unnecessary bulk.
+- Deleted completed per-ticket pipeline artifacts under `orchestration/tickets/`, keeping each
+  ticket directory and its `ticket.md` scope file.
+- Deleted old dogfood evidence logs, verify-run transcripts, top-level audit review artifacts,
+  dogfood report, and the stale per-ticket orchestrator playbook.
+- Preserved redesign/design intent folders, current targeted plans, chief-of-staff draft,
+  repo-guidance report, and the live-chat accuracy plan.
+
 Outstanding planned / submitted work:
 
 - **In-place markdown editing** — Schrodinger submitted an implementation in the main worktree:

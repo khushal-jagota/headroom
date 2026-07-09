@@ -1033,3 +1033,12 @@ context. The active worker-state check seeds a running worker turn directly in t
 database instead of mocking a client route, then verifies the UI renders the worker line, doing
 activity label, and pending indicator after remount. This keeps the assertion focused on the product
 invariant without depending on a race against a real worker finishing quickly.
+
+## D67 — Orchestration keeps structure and current intent, not historical exhaust
+
+The `orchestration/` cleanup keeps current design intent, active targeted plans, and each ticket's
+scope file, while deleting old generated reviews, raw Codex outputs, smoke scripts, reports,
+dogfood logs, verify transcripts, and stale audit/playbook artifacts. The deleted files were process
+evidence for completed work, not source of truth for the current product; live guidance remains in
+`AGENTS.md`, `PRINCIPLES.md`, `PROGRESS.md`, `decisions.md`, `docs/`, and the retained redesign
+plans/mockups.
