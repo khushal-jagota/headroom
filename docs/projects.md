@@ -13,6 +13,10 @@ are sent and they point to different rows, the server rejects the request.
 Parented tickets do not carry their own project. Their `project_id` stays null because
 the parent sprint item owns the project.
 
+The Workspace board groups tickets by an effective display project. Standalone tickets
+use their own project. Tickets under a sprint item use the parent item's project.
+Tickets with neither source appear under `No project`.
+
 ## Surfaces
 
 - `GET /api/projects` lists available projects.
@@ -24,9 +28,10 @@ the parent sprint item owns the project.
 There is no rename, delete, or archive flow yet.
 
 _Code paths:_ `src/planner/projects/`, `src/planner/core/db.py`,
-`web/src/routes/BacklogRoute.svelte`, `web/src/routes/IdeasRoute.svelte`,
-`web/src/routes/TicketRoute.svelte`.
+`src/planner/tickets/views.py`, `web/src/routes/BacklogRoute.svelte`,
+`web/src/routes/IdeasRoute.svelte`, `web/src/routes/TicketRoute.svelte`,
+`web/src/routes/BoardRoute.svelte`.
 
 ---
 
-_Last verified: 2026-07-08._
+_Last verified: 2026-07-09._

@@ -1060,3 +1060,15 @@ the stage signal is one active dot, not a full lifecycle tracker.
 The top-level `#/chief` route remains available for direct links and focused smoke coverage, but the
 primary shell no longer shows a Chief of Staff nav entry. Workspace is the product surface for the
 same top-level chat because it sits beside today's execution set.
+
+## D70 — Workspace groups by project and shows the full four-dot ticket lifecycle
+
+Workspace still reads the backend `board` resource, but the left rail now projects those cards by
+effective project rather than by ticket state. The read view adds `group_project_id` /
+`group_project` so parented tickets can group under their sprint item's project without changing
+the ticket's own `project_id` / `project` contract. Rows inside a project are ordered by ticket
+stage progress, then by the server's existing order inside a stage.
+
+This supersedes D68's "one active dot" rail choice: the rail now shows all four ticket-stage dots
+because the owner explicitly asked to reintroduce the progress circles. Runtime markers remain
+attached only to the current relevant dot.

@@ -5,13 +5,24 @@
   import type { BoardResponse, GatewayStatus } from "../lib/types";
   import {
     FIELD_NAMES,
+    STATE_ORDER,
     ticketStageVisualState,
+    ticketStatusLabel,
     type FieldStageVisualState
   } from "../lib/ui";
   import ChatPanel from "../components/ChatPanel.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
 
   const chiefOfStaffEntityId = "agent_panels_chief_of_staff";
+  const noProjectKey = "__no_project__";
+  const ticketStatusFilters = [
+    { value: "all", label: "All" },
+    { value: "empty", label: "Empty" },
+    { value: "agent_running_step", label: "Running" },
+    { value: "awaiting_approval", label: "Awaiting approval" },
+    { value: "user_takeover", label: "User takeover" },
+    { value: "errored", label: "Errored" }
+  ];
   const board = resource<BoardResponse>("board", (signal) => fetchJson("/api/board", { signal }));
   const chiefChatStatus = resource<GatewayStatus>(`chat-status:${chiefOfStaffEntityId}`, (signal) =>
     fetchJson(`/api/chat/${chiefOfStaffEntityId}/status`, { signal })
@@ -19,13 +30,11 @@
   let columns = $derived(board.data?.columns || []);
   let selectedTicketId = $state<string | null>(null);
   let rightPaneMode = $state<"chief" | "ticket">("chief");
-  let collapsedStates = $state<string[]>([]);
+  let collapsedProjects = $state<string[]>([]);
+  let statusFilter = $state<string>("all");
   let allCards = $derived(columns.flatMap((column) => column.cards));
   let selectedCard = $derived(allCards.find((card) => card.id === selectedTicketId) || null);
-
-  function stateLabel(state: string): string {
-    return state.replace(/_/g, " ");
-  }
+  let projectSections = $derived(buildProjectSections(columns, statusFilter));
 
   function selectCard(ticketId: string): void {
     selectedTicketId = ticketId;
@@ -36,23 +45,19 @@
     rightPaneMode = "chief";
   }
 
-  function isCollapsed(state: string): boolean {
-    return collapsedStates.includes(state);
+  function isCollapsed(projectKey: string): boolean {
+    return collapsedProjects.includes(projectKey);
   }
 
-  function toggleState(state: string): void {
-    collapsedStates = isCollapsed(state)
-      ? collapsedStates.filter((current) => current !== state)
-      : [...collapsedStates, state];
+  function toggleProject(projectKey: string): void {
+    collapsedProjects = isCollapsed(projectKey)
+      ? collapsedProjects.filter((current) => current !== projectKey)
+      : [...collapsedProjects, projectKey];
   }
 
-  function cardStageState(
-    columnState: string,
-    card: Record<string, any>,
-    fieldName: string
-  ): FieldStageVisualState {
+  function cardStageState(card: Record<string, any>, fieldName: string): FieldStageVisualState {
     return ticketStageVisualState({
-      ticketState: columnState,
+      ticketState: card.state,
       ticketStatus: card.ticket_status,
       fieldName,
       fieldHasProposal: Boolean(card.has_pending_proposal)
@@ -71,8 +76,43 @@
     return null;
   }
 
-  function isCurrentStage(stageState: FieldStageVisualState): boolean {
-    return stageState.startsWith("current-") || stageState === "errored";
+  function buildProjectSections(
+    sourceColumns: Array<{ state: string; cards: Record<string, any>[] }>,
+    activeStatusFilter: string
+  ): Array<{ key: string; label: string; cards: Record<string, any>[] }> {
+    const groups = new Map<string, { key: string; label: string; cards: Record<string, any>[] }>();
+    let sequence = 0;
+
+    for (const column of sourceColumns) {
+      for (const card of column.cards) {
+        if (activeStatusFilter !== "all" && card.ticket_status !== activeStatusFilter) continue;
+        const key = card.group_project_id || noProjectKey;
+        const label = card.group_project || "No project";
+        if (!groups.has(key)) groups.set(key, { key, label, cards: [] });
+        groups.get(key)?.cards.push({
+          ...card,
+          state: column.state,
+          boardSequence: sequence
+        });
+        sequence += 1;
+      }
+    }
+
+    const stateRank = new Map(STATE_ORDER.map((state, index) => [state, index]));
+    for (const group of groups.values()) {
+      group.cards.sort((left, right) => {
+        const stateDelta =
+          (stateRank.get(left.state) ?? STATE_ORDER.length) -
+          (stateRank.get(right.state) ?? STATE_ORDER.length);
+        return stateDelta || left.boardSequence - right.boardSequence;
+      });
+    }
+
+    return Array.from(groups.values()).sort((left, right) => {
+      if (left.key === noProjectKey) return 1;
+      if (right.key === noProjectKey) return -1;
+      return left.label.localeCompare(right.label, undefined, { sensitivity: "base" });
+    });
   }
 
   onDestroy(() => {
@@ -102,47 +142,74 @@
             </button>
           </div>
 
-          {#each columns as column}
-            {@const collapsed = isCollapsed(column.state)}
-            <section class="board-workspace-index-section" data-column={column.state}>
+          <div class="board-workspace-filters" data-workspace-filters>
+            <div class="board-workspace-filter-head">Filters</div>
+            <div class="board-workspace-filter-group" data-filter-group="ticket-status">
+              <div class="board-workspace-filter-label">Ticket status</div>
+              <div class="board-workspace-filter-options">
+                {#each ticketStatusFilters as filter}
+                  <button
+                    aria-pressed={statusFilter === filter.value}
+                    class="board-workspace-filter-button"
+                    data-status-filter={filter.value}
+                    type="button"
+                    title={filter.value === "all" ? "All ticket statuses" : ticketStatusLabel(filter.value)}
+                    onclick={() => {
+                      statusFilter = filter.value;
+                    }}
+                  >
+                    {filter.label}
+                  </button>
+                {/each}
+              </div>
+            </div>
+          </div>
+
+          {#each projectSections as section}
+            {@const collapsed = isCollapsed(section.key)}
+            <section
+              class="board-workspace-index-section"
+              data-project-section
+              data-project-key={section.key}
+            >
               <button
                 aria-expanded={!collapsed}
                 class="board-workspace-index-heading board-workspace-index-toggle"
                 type="button"
-                onclick={() => toggleState(column.state)}
+                onclick={() => toggleProject(section.key)}
               >
                 <span class="board-workspace-index-heading-main">
                   <span class:board-workspace-index-chevron--collapsed={collapsed} class="board-workspace-index-chevron">▸</span>
-                  <span>{stateLabel(column.state)}</span>
+                  <span>{section.label}</span>
                 </span>
-                <span class="board-workspace-index-count">{column.cards.length}</span>
+                <span class="board-workspace-index-count">{section.cards.length}</span>
               </button>
 
               {#if !collapsed}
                 <div class="board-workspace-index-items">
-                  {#each column.cards as card}
+                  {#each section.cards as card}
                     <button
                       class:active={rightPaneMode === "ticket" && selectedCard?.id === card.id}
                       class="board-workspace-item-row"
                       data-card
                       data-ticket-id={card.id}
+                      data-ticket-state={card.state}
+                      data-ticket-status={card.ticket_status}
                       type="button"
                       onclick={() => selectCard(card.id)}
                     >
                       <span class="board-workspace-item-label entity-row-title">{card.title}</span>
                       <span class="board-workspace-stage-rail" aria-label="Ticket stages">
                         {#each FIELD_NAMES as name}
-                          {@const stageState = cardStageState(column.state, card, name)}
+                          {@const stageState = cardStageState(card, name)}
                           {@const marker = stageMarker(card, stageState)}
-                          {#if isCurrentStage(stageState)}
-                            <span
-                              class={`board-workspace-stage-mark fsec-mark fsec-mark--${stageState}`}
-                              data-stage-field={name}
-                              data-stage-state={stageState}
-                              data-marker={marker || undefined}
-                              aria-label={`${name} ${stageState.replace(/-/g, " ")}`}
-                            ></span>
-                          {/if}
+                          <span
+                            class={`board-workspace-stage-mark fsec-mark fsec-mark--${stageState}`}
+                            data-stage-field={name}
+                            data-stage-state={stageState}
+                            data-marker={marker || undefined}
+                            aria-label={`${name} ${stageState.replace(/-/g, " ")}`}
+                          ></span>
                         {/each}
                       </span>
                     </button>

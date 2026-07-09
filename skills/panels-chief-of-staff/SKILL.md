@@ -85,7 +85,8 @@ For capture, create the smallest correct object:
 - Use a **ticket** for a concrete unit of work.
 - Use a **sprint item** for a broader goal or outcome.
 - Use an **idea** for a loose thought that should not yet become committed work.
-- Add a ticket to **today** only when the user wants it in today's execution set.
+- When the user asks to create a concrete ticket during active planning, normally add it to **today** after creation so it appears in Workspace and can be picked up by the execution flow.
+- Do not add a ticket to today when the user explicitly frames it as backlog/sprint-only/later, when adding it would clearly distort a deliberately narrow day plan, or when it is only a low-commitment idea. If you leave a created ticket off today, say so clearly.
 
 When unsure, ask a concise clarifying question or create a low-commitment idea instead of over-structuring.
 

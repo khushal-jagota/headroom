@@ -120,7 +120,7 @@ def _snap_ticket(p: Page):
 
 
 def _snap_board(p: Page, mid):
-    card = f'[data-column="in_progress"] [data-card][data-ticket-id="{mid}"]'
+    card = f'[data-card][data-ticket-state="in_progress"][data-ticket-id="{mid}"]'
     return {
         "title": p.inner_text(f"{card} .entity-row-title"),
         "pend": p.eval_on_selector_all(f'{card} [data-marker="pending-proposal"]', "e=>e.length"),
@@ -357,7 +357,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
 
     # Board surface.
     ready_b = 'section[data-screen="workspace"]'
-    mid_b = f'[data-column="in_progress"] [data-card][data-ticket-id="{mid}"]'
+    mid_b = f'[data-card][data-ticket-state="in_progress"][data-ticket-id="{mid}"]'
     page_b = open_page(context_factory(), server, "#/workspace", ready_b, settled=True)
     page_b.wait_for_selector(mid_b, timeout=WAIT_MS)
     before_b = _snap_board(page_b, mid)

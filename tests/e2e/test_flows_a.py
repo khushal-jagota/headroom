@@ -70,7 +70,7 @@ def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api)
 
     for page in (page_a, page_b):
         count = page.eval_on_selector_all(
-            '[data-column="needs_success"] [data-card]', "els => els.length"
+            '[data-card][data-ticket-state="needs_success"]', "els => els.length"
         )
         assert count == 0, count
     flushes_b = page_b.evaluate("window.__plannerDebug.flushes")
@@ -79,7 +79,7 @@ def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api)
     tid = created["id"]
     assert created["state"] == "needs_success", created
 
-    card = f'[data-column="needs_success"] [data-card][data-ticket-id="{tid}"]'
+    card = f'[data-card][data-ticket-state="needs_success"][data-ticket-id="{tid}"]'
     page_b.wait_for_function("f => window.__plannerDebug.flushes > f", arg=flushes_b,
                              timeout=WAIT_MS)
     assert page_b.query_selector(card) is None

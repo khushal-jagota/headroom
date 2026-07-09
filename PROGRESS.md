@@ -117,6 +117,70 @@ Immediate next step:
 
 - Ready for owner review/commit. No derived sprint item status writes were reintroduced.
 
+## Current work cycle (2026-07-09): Ticket project edit investigation
+
+Owner report: changing a ticket project in the Ticket UI appears to change in the UI but not in
+"the thing." Investigate whether the UI is sending project IDs or whether another projection is
+stale.
+
+Current implementation:
+
+- Confirmed the Ticket UI project picker sends `project_id`, not the legacy project name.
+- Confirmed `PATCH /api/tickets/{id}` resolves the ID, writes `tickets.project_id`, returns the
+  updated `project_id` / `project`, appends `ticket_updated`, and invalidates the `board` resource.
+- Added browser coverage proving an open Workspace page moves a ticket from `No project` to `Vylo`
+  after the project is changed through the Ticket UI.
+- Found one stale projection: `/api/tickets/{id}/copy-text` included state and priority but omitted
+  project, so copied/exported ticket text never reflected a project change. It now includes
+  `project: <name>` or `project: (none)`.
+
+Verification status:
+
+- Focused check passed:
+  `.venv/bin/python -m pytest tests/unit/test_authctx_routes.py::test_patch_ticket_human_title_and_project_succeed
+  tests/e2e/test_board_stage_indicators.py::test_ticket_project_edit_moves_workspace_group` → 2
+  passed, 1 existing Starlette/httpx warning.
+- Full `./verify` pending after this fix.
+
+Immediate next step:
+
+- Run one full `./verify`.
+
+## Current work cycle (2026-07-09): Workspace sidebar project grouping
+
+Owner request: widen the Workspace left sidebar, group tickets by project instead of stage,
+reintroduce four progress circles per ticket row, and add ticket-status filters below Chief of
+Staff.
+
+Current implementation:
+
+- Implemented directly because the change is cohesive across the board read
+  projection, one Svelte route, shared CSS, and focused tests; splitting it would create overlapping
+  edits in the same files.
+- Backend board cards now keep `project_id` / `project` unchanged and add `group_project_id` /
+  `group_project`. Standalone tickets group by their own project; parented tickets group by the
+  parent sprint item's project; missing project groups as `No project`.
+- Workspace route now derives project sections, sorts rows by ticket progress within project, adds
+  a single-select `ticket_status` filter, and renders all four stage dots.
+- Docs are updated with the new Workspace/project behavior.
+- `web/dist` has been rebuilt so the FastAPI-served app uses the new Workspace bundle.
+
+Verification status:
+
+- `npm --prefix web run check` passed with the existing three `TicketRoute.svelte`
+  initial-`id` warnings.
+- `.venv/bin/python -m pytest tests/unit/test_board_view.py` passed: 2 passed.
+- Focused e2e passed:
+  `.venv/bin/python -m pytest tests/e2e/test_board_stage_indicators.py
+  tests/e2e/test_chief_of_staff.py tests/e2e/test_flows_a.py::test_e22_cli_create_live_board
+  tests/e2e/test_flows_b.py::test_e31_refresh_restores_state` → 7 passed.
+- Full `./verify` passed: ruff ok, mypy ok, 173 unit tests passed, build/frontend gates ok, 32 e2e
+  tests passed, `VERIFY: PASS`.
+
+Immediate next step:
+
+- Ready for owner review.
+
 ## Current work cycle (2026-07-09): Derived sprint item status integration
 
 Owner request: commit the current main work, merge Dewey's derived sprint-item status work, then set
@@ -1391,8 +1455,8 @@ What changed:
 - The Workspace right pane defaults to the existing Chief of Staff chat. Selecting a ticket shows
   the current ticket link view, and the full-width borderless Chief of Staff button restores the
   chat.
-- The Workspace rail renders only the current stage marker for each ticket, instead of all four
-  lifecycle dots.
+- The Workspace rail now renders all four lifecycle dots for each ticket, grouped by project with
+  ticket-status filters in the left rail.
 - Focused e2e coverage was updated/added for Workspace routing, the embedded Chief of Staff chat,
   legacy `#/board`, and the one-dot stage indicator.
 - Follow-up: removed Chief of Staff from the top nav while keeping `#/chief` as a direct route.

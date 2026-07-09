@@ -15,9 +15,10 @@ One screen per part of the system:
 - **Review** — the one-at-a-time approval walk. The approve button physically refuses
   to work until "how far may the worker go next" has been answered, both halves.
 - **Workspace** — today's tickets in a left rail backed by the board resource. The
-  rail keeps every state header visible, including empty states, and shows the same
-  day-scoped ticket set that System A can poll. The right side opens on the Chief of
-  Staff chat, and selecting a ticket switches it to that ticket's current link view.
+  rail groups tickets by project, orders rows by ticket progress inside each project,
+  shows the four ticket-stage dots, and can filter visible rows by `ticket_status`.
+  The right side opens on the Chief of Staff chat, and selecting a ticket switches it
+  to that ticket's current link view.
 - **Ticket** — the whole story of one piece of work: the four blanks, the scope row,
   live status markers, the `auto` run eligibility chip, chat, and a copy button that
   produces a plain-text block for pasting anywhere. Its project picker is backed by

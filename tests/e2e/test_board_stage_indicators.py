@@ -19,6 +19,14 @@ def _set_ticket_status(server, ticket_id: str, status: str) -> None:
         )
 
 
+def _set_ticket_state(server, ticket_id: str, state: str) -> None:
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "UPDATE tickets SET state = ? WHERE id = ?",
+            (state, ticket_id),
+        )
+
+
 def _stage(page, card: str, field: str) -> str:
     return f'{card} [data-stage-field="{field}"]'
 
@@ -53,14 +61,14 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
         settled=True,
     )
 
-    waiting_card = f'[data-column="needs_success"] [data-card][data-ticket-id="{waiting}"]'
-    pending_card = f'[data-column="needs_success"] [data-card][data-ticket-id="{pending}"]'
-    errored_card = f'[data-column="needs_success"] [data-card][data-ticket-id="{errored}"]'
+    waiting_card = f'[data-card][data-ticket-id="{waiting}"]'
+    pending_card = f'[data-card][data-ticket-id="{pending}"]'
+    errored_card = f'[data-card][data-ticket-id="{errored}"]'
     for card in (waiting_card, pending_card, errored_card):
         page.wait_for_selector(card, timeout=WAIT_MS)
         assert page.eval_on_selector_all(
             f"{card} .board-workspace-stage-mark", "els => els.length"
-        ) == 1
+        ) == 4
 
     assert page.get_attribute(_stage(page, waiting_card, "success"), "data-stage-state") == (
         "current-waiting"
@@ -85,3 +93,115 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
     assert page.eval_on_selector_all(
         f'{errored_card} [data-marker="errored"]', "els => els.length"
     ) == 1
+
+
+def test_workspace_groups_by_project_orders_by_progress_and_filters_status(
+    server, context_factory, open_page, cli, api
+) -> None:
+    later_progress = cli(
+        server,
+        "ticket",
+        "create",
+        "--title",
+        "Vylo later progress",
+        "--project-id",
+        "project_vylo",
+    )["id"]
+    earlier_progress = cli(
+        server,
+        "ticket",
+        "create",
+        "--title",
+        "Vylo earlier progress",
+        "--project-id",
+        "project_vylo",
+    )["id"]
+    learning = cli(
+        server,
+        "ticket",
+        "create",
+        "--title",
+        "Learning errored ticket",
+        "--project-id",
+        "project_learning",
+    )["id"]
+    no_project = cli(server, "ticket", "create", "--title", "No project ticket")["id"]
+    for ticket_id in (later_progress, earlier_progress, learning, no_project):
+        _add_today(api, server, ticket_id)
+
+    _set_ticket_state(server, later_progress, "needs_plan")
+    _set_ticket_status(server, learning, "errored")
+
+    page = open_page(
+        context_factory(),
+        server,
+        "#/workspace",
+        'section[data-screen="workspace"] [data-workspace-filters]',
+        settled=True,
+    )
+
+    page.wait_for_selector('[data-project-key="project_learning"]', timeout=WAIT_MS)
+    page.wait_for_selector('[data-project-key="project_vylo"]', timeout=WAIT_MS)
+    page.wait_for_selector('[data-project-key="__no_project__"]', timeout=WAIT_MS)
+    headers = page.eval_on_selector_all(
+        "[data-project-section] .board-workspace-index-heading-main span:last-child",
+        "els => els.map(el => el.textContent.trim())",
+    )
+    assert headers == ["Learning", "Vylo", "No project"]
+
+    vylo_titles = page.eval_on_selector_all(
+        '[data-project-key="project_vylo"] [data-card] .board-workspace-item-label',
+        "els => els.map(el => el.textContent.trim())",
+    )
+    assert vylo_titles == ["Vylo earlier progress", "Vylo later progress"]
+
+    assert page.eval_on_selector_all(
+        "[data-card]",
+        "els => els.every(el => el.querySelectorAll('.board-workspace-stage-mark').length === 4)",
+    )
+
+    page.click('[data-status-filter="errored"]')
+    page.wait_for_selector(f'[data-card][data-ticket-id="{learning}"]', timeout=WAIT_MS)
+    visible_titles = page.eval_on_selector_all(
+        "[data-card] .board-workspace-item-label",
+        "els => els.map(el => el.textContent.trim())",
+    )
+    assert visible_titles == ["Learning errored ticket"]
+
+    page.click('[data-status-filter="all"]')
+    page.wait_for_selector(f'[data-card][data-ticket-id="{earlier_progress}"]', timeout=WAIT_MS)
+
+
+def test_ticket_project_edit_moves_workspace_group(server, context_factory, open_page, cli, api) -> None:
+    ticket_id = cli(server, "ticket", "create", "--title", "Project edit moves group")["id"]
+    _add_today(api, server, ticket_id)
+
+    context = context_factory()
+    workspace = open_page(
+        context,
+        server,
+        "#/workspace",
+        f'[data-project-key="__no_project__"] [data-card][data-ticket-id="{ticket_id}"]',
+        settled=True,
+    )
+    ticket = open_page(
+        context,
+        server,
+        f"#/ticket/{ticket_id}",
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+        settled=True,
+    )
+
+    ticket.locator(".ticket-meta .pill select").nth(1).select_option("project_vylo")
+    ticket.wait_for_function(
+        "async (ticketId) => (await fetch(`/api/tickets/${ticketId}`).then(r => r.json())).project_id === 'project_vylo'",
+        arg=ticket_id,
+        timeout=WAIT_MS,
+    )
+    workspace.wait_for_selector(
+        f'[data-project-key="project_vylo"] [data-card][data-ticket-id="{ticket_id}"]',
+        timeout=WAIT_MS,
+    )
+    assert workspace.query_selector(
+        f'[data-project-key="__no_project__"] [data-card][data-ticket-id="{ticket_id}"]'
+    ) is None

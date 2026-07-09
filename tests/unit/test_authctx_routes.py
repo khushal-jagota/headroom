@@ -137,6 +137,10 @@ def test_patch_ticket_human_title_and_project_succeed(tmp_path: Path) -> None:
     assert project.json()["project"] == "Vylo"
     assert _col(db_path, "tickets", tid, "title") == "Renamed by human"
     assert _col(db_path, "tickets", tid, "project_id") == "project_vylo"
+    with TestClient(app) as client:
+        copy_text = client.get(f"/api/tickets/{tid}/copy-text")
+    assert copy_text.status_code == 200, copy_text.text
+    assert "project: Vylo" in copy_text.text
 
 
 def test_patch_ticket_agent_human_only_field_is_forbidden(tmp_path: Path) -> None:

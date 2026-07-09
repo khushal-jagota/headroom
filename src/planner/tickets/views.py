@@ -160,6 +160,7 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"{ticket.title}\n"
         f"state: {ticket.state.value}\n"
         f"priority: {ticket.priority.value}\n"
+        f"project: {show(ticket.project_name)}\n"
         f"\n"
         f"success:\n{show(fields.success.value)}\n"
         f"\n"
@@ -181,9 +182,13 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
 def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.state, tickets.priority, tickets.deadline, "
-        "tickets.project_id, projects.name AS project_name, tickets.fields, tickets.ticket_status, "
+        "tickets.project_id, ticket_projects.name AS project_name, tickets.sprint_item_id, "
+        "sprint_items.project_id AS parent_project_id, "
+        "parent_projects.name AS parent_project_name, tickets.fields, tickets.ticket_status, "
         "tickets.created_at FROM tickets "
-        "LEFT JOIN projects ON projects.id = tickets.project_id "
+        "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
+        "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
+        "LEFT JOIN projects AS parent_projects ON parent_projects.id = sprint_items.project_id "
         "WHERE tickets.state != 'dropped' "
         "AND tickets.id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?)",
         (day_id,),
@@ -196,13 +201,26 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
         priority = str(row["priority"])
         deadline = str(row["deadline"]) if row["deadline"] is not None else None
         fields = fields_codec.fields_from_json(str(row["fields"]))
+        parent_project_id = (
+            str(row["parent_project_id"]) if row["parent_project_id"] is not None else None
+        )
+        parent_project_name = (
+            str(row["parent_project_name"]) if row["parent_project_name"] is not None else None
+        )
+        ticket_project_id = str(row["project_id"]) if row["project_id"] is not None else None
+        ticket_project_name = str(row["project_name"]) if row["project_name"] is not None else None
+        is_parented = row["sprint_item_id"] is not None
+        group_project_id = parent_project_id if is_parented else ticket_project_id
+        group_project_name = parent_project_name if is_parented else ticket_project_name
         card: JsonDict = {
             "id": str(row["id"]),
             "title": str(row["title"]),
             "priority": priority,
             "deadline": deadline,
-            "project_id": str(row["project_id"]) if row["project_id"] is not None else None,
-            "project": str(row["project_name"]) if row["project_name"] is not None else None,
+            "project_id": ticket_project_id,
+            "project": ticket_project_name,
+            "group_project_id": group_project_id,
+            "group_project": group_project_name,
             "has_pending_proposal": machine.has_pending_gating_proposal(TicketState(state), fields),
             "ticket_status": str(row["ticket_status"]),
         }

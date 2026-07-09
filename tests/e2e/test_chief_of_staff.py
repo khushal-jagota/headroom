@@ -57,13 +57,15 @@ def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
         page.get_attribute('a.nav-link[data-screen="workspace"]', "class") or ""
     )
     assert page.get_attribute("[data-chat-input]", "placeholder") == "Message Chief of Staff..."
+    page.wait_for_selector('[data-workspace-filters] [data-status-filter="all"]', timeout=WAIT_MS)
+    assert page.inner_text('[data-workspace-filters] [data-filter-group="ticket-status"]')
 
     page.fill("[data-chat-input]", "triage from workspace")
     page.click("[data-chat-send]")
     _wait_chat_text(page, "you", "triage from workspace")
     _wait_chat_text(page, "planner", "echo: triage from workspace")
 
-    card = f'[data-column="needs_success"] [data-card][data-ticket-id="{tid}"]'
+    card = f'[data-card][data-ticket-id="{tid}"]'
     page.click(card)
     page.wait_for_selector(f'.board-workspace-open-ticket[href="#/ticket/{tid}"]', timeout=WAIT_MS)
     assert page.inner_text(".board-workspace-open-ticket") == "Workspace selectable ticket"

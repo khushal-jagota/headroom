@@ -1111,7 +1111,7 @@ select {
 
 .board-workspace-shell {
   display: grid;
-  grid-template-columns: minmax(calc(var(--space-7) * 6), 0.6fr) minmax(0, 1.4fr);
+  grid-template-columns: clamp(23rem, 38vw, 32rem) minmax(0, 1fr);
   height: 100%;
   min-height: 0;
 }
@@ -1122,7 +1122,7 @@ select {
   padding: var(--space-5) var(--space-6);
   border-right: var(--border-hairline) solid var(--border-color);
   --board-workspace-rail-pad-x: var(--space-2);
-  --board-workspace-stage-rail-width: 0.7rem;
+  --board-workspace-stage-rail-width: 3.25rem;
 }
 
 .board-workspace-right {
@@ -1168,6 +1168,56 @@ select {
 .board-workspace-chief-button:hover,
 .board-workspace-chief-button[aria-pressed="true"] {
   background: var(--surface-overlay);
+  color: var(--text-strong);
+}
+
+.board-workspace-filters {
+  margin: 0 0 var(--space-4);
+  padding: 0 var(--board-workspace-rail-pad-x) var(--space-4);
+  border-bottom: var(--border-hairline) solid var(--border-color);
+}
+
+.board-workspace-filter-head,
+.board-workspace-filter-label {
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  line-height: 1.35;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.board-workspace-filter-group {
+  margin-top: var(--space-3);
+}
+
+.board-workspace-filter-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.board-workspace-filter-button {
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  line-height: 1.35;
+  transition: color var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease),
+    background var(--motion-fast) var(--motion-ease);
+}
+
+.board-workspace-filter-button:hover,
+.board-workspace-filter-button[aria-pressed="true"] {
+  background: var(--surface-overlay);
+  border-color: var(--text-muted);
   color: var(--text-strong);
 }
 
