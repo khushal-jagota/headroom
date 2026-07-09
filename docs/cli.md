@@ -23,8 +23,10 @@ in the CLI is approval.
 - **`project list / create`** — inspect and add projects. Project availability is
   data-backed, not enum-backed.
 - **`ticket create / show / list / set / approve / block / unblock`** — manage
-  tickets. `ticket set` names one field (`title`, `priority`, `deadline`, or
-  `project` / `project-id`). Sprint placement is a sprint command, not a ticket setter.
+  tickets. `ticket create` can take a `--user-note` / `--user-note-file` intake
+  note. `ticket set` names one field (`title`, `user-note`, `priority`, `deadline`,
+  or `project` / `project-id`). Sprint placement is a sprint command, not a ticket
+  setter.
 - **`ticket copy / events`** — copy one ticket's plain-text packet or inspect its event log.
 - **`sprint create / list / show / set / add-ticket / remove-ticket`** — plan and
   populate sprints. `current` resolves through `/api/sprint/current`; `none` means the
@@ -34,8 +36,9 @@ in the CLI is approval.
   `ticket create`; adding an existing ticket to an item is a sprint-item command.
   Item status is read-only and derived from child tickets and open blocking links.
 - **`worker propose / recap / note / my-ticket`** — worker actions. `worker propose`
-  infers the current gating field from ticket state and requires a recap
-  (`--recap` or `--recap-file`) in the same request.
+  infers the current gating field from ticket state and requires a short recap
+  (`--recap` or `--recap-file`) in the same request. `worker note` preserves
+  field-specific user guidance without changing the field's value.
 - **`serve`** — run the server and background worker runtime in the foreground.
   It may be launched from outside the repository; the app shell, static assets, and
   checked-in config are resolved from the repository root.

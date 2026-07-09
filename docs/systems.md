@@ -81,8 +81,9 @@ Tickets are the correctness center. A ticket has two different kinds of state:
 - `ticket_status` is runtime control: `empty`, `agent_running_step`,
   `awaiting_approval`, `user_takeover`, or `errored`.
 
-A ticket has four fields: `success`, `approach`, `plan`, and `result`. Each field
-has a settled value, a pending proposal, and notes. Workers write proposals. The
+A ticket has a `user_note` for intake context plus four fields: `success`,
+`approach`, `plan`, and `result`. Each field has a settled value, a pending proposal,
+and a field `user_note` for step-specific user guidance. Workers write proposals. The
 resolution engine is the only code that can settle a proposed value or advance the
 ticket's `state`.
 
@@ -127,6 +128,11 @@ transport. Panels owns the product chat state in `chat_messages` and `chat_turns
 Hermes history is still readable for old sessions, but the UI reads Panels'
 `ChatState` resource.
 
+Panels chat state is not model context. Appending to `chat_messages` or `chat_turns`
+does not make a worker see that text. Anything the worker must read has to go
+through the Hermes gateway/session path or the actual worker prompt; the Panels chat
+row is only the UI/audit mirror.
+
 Code paths: `src/planner/core/adapters/`, `src/planner/minds/shared_gateway.py`,
 `src/planner/minds/gateway.py`, `src/planner/minds/config.py`.
 
@@ -143,6 +149,10 @@ activity from ticket status.
 
 Human chat sends are rejected while `ticket_status=agent_running_step`. History
 remains readable. There is no queue behind the active worker step.
+
+Because the chat state is product state, backend code must not use a visible chat row
+as a substitute for worker-session delivery. Designs that depend on worker awareness
+must prove the text reached the Hermes session.
 
 Code paths: `src/planner/chat/`, `web/src/components/ChatPanel.svelte`.
 
@@ -229,4 +239,4 @@ less clean than the rest.
 
 ---
 
-_Last verified: 2026-07-08._
+_Last verified: 2026-07-09._

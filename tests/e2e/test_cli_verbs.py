@@ -74,7 +74,17 @@ def test_queue_pickup_command_removed(server) -> None:
 
 
 def test_ticket_approval_copy_events_and_worker_note_shape(server, cli, api) -> None:
-    tid = cli(server, "ticket", "create", "--title", "CLI approve ticket")["id"]
+    tid = cli(
+        server,
+        "ticket", "create", "--title", "CLI approve ticket",
+        "--user-note", "intake context from user",
+    )["id"]
+    created = api.get(server, f"/api/tickets/{tid}")
+    assert created["user_note"] == "intake context from user"
+
+    cli(server, "ticket", "set", tid, "user-note", "--value", "updated intake")
+    assert api.get(server, f"/api/tickets/{tid}")["user_note"] == "updated intake"
+
     cli(
         server,
         "worker", "propose", "--body-file", "-", "--recap", "Ready to approve.",
@@ -87,10 +97,12 @@ def test_ticket_approval_copy_events_and_worker_note_shape(server, cli, api) -> 
 
     cli(server, "worker", "note", tid, "approach", "--body-file", "-", stdin="approach note")
     detail = api.get(server, f"/api/tickets/{tid}")
-    assert detail["fields"]["approach"]["notes"] == "approach note"
+    assert detail["fields"]["approach"]["user_note"] == "approach note"
 
     copied = cli(server, "ticket", "copy", tid)
     assert "CLI approve ticket" in copied["text"]
+    assert "updated intake" in copied["text"]
+    assert "approach note" in copied["text"]
     events = cli(server, "ticket", "events", tid)
     assert "events" in events
     assert any(event["kind"] == "proposal_accepted" for event in events["events"])

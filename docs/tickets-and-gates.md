@@ -27,6 +27,12 @@ having that accepted — is what moves the ticket one stage forward. A ticket ca
 be **dropped** at any point, only by the human. The human can always jump a ticket
 anywhere; workers never can.
 
+A ticket also has a **user note**. This is not one of the four blanks and it does not
+advance the ticket. It preserves intake context: the user's original wording, source
+context, boundaries, and advice. It stays readable beside the work so agents can honor
+the user's direction without mixing that direction into success, approach, plan, or
+result.
+
 _Code paths:_ `src/planner/tickets/` (the ticket state and its fields).
 
 Standalone tickets may point at a project by `project_id`. API responses also include
@@ -40,6 +46,14 @@ files a **proposal** on the blank the current stage gates. The resolution engine
 the only thing that can turn a proposal into a real value or advance the stage. Only
 one proposal can be pending on a blank at a time — a newer one replaces the older,
 and the replacement is recorded.
+
+Each field also has a **field user note**. It is step-specific user guidance, not
+agent scratchpad and not a canonical value. A worker may write one when the user gives
+guidance that should survive for the relevant step.
+
+The **recap** is different from both kinds of user note. It is a short cold-reader
+orientation line that works beside the title: what the ticket is, where it stands now,
+and the key fact for the current step. It is not a detailed log.
 
 _Code paths:_ `src/planner/core/loops.py` (the resolution engine), `src/planner/core/server.py`.
 
@@ -72,10 +86,12 @@ already covered. One shared source of the allowed stages feeds both the header r
 and the approval screen, so the two can never disagree.
 
 The Review screen can also send a ticket back instead of accepting it. The human
-writes short guidance in the review card, and the system records that guidance in
-the ticket chat as a human message for the worker. A pending gated proposal is
-cleared without advancing the ticket. A final review item moves from **needs
-review** back to **in progress** so the worker can revise the result.
+writes short guidance in the review card. That guidance must reach the worker's
+Hermes session as a real user message or actual worker input; recording it only in
+the visible ticket chat is not enough. The ticket chat row is the UI/audit mirror,
+not the worker's context. A pending gated proposal is cleared without advancing the
+ticket. A final review item moves from **needs review** back to **in progress** so
+the worker can revise the result.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the scope row),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`
@@ -111,4 +127,4 @@ _Code paths:_ `src/planner/core/events.py`.
 
 ---
 
-_Last verified: 2026-07-08._
+_Last verified: 2026-07-09._

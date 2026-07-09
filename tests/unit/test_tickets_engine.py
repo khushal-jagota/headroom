@@ -7,6 +7,7 @@ payloads, event order, and error codes from the T04 plan.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -23,7 +24,7 @@ from planner.tickets.contracts import (
     TicketState,
     TicketStatus,
 )
-from planner.tickets.logic import machine
+from planner.tickets.logic import fields_codec, machine
 
 if TYPE_CHECKING:
     from sqlite3 import Connection
@@ -60,6 +61,45 @@ def _events(
     return [
         e for e in rows if e.entity_id == ticket_id and (kind is None or e.kind == kind.value)
     ]
+
+
+def test_ticket_and_field_user_notes_round_trip_with_legacy_field_notes(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    t = _create(tmp_db, cfg, fake_clock, user_note="intake direction")
+    assert t.user_note == "intake direction"
+
+    t = data.set_user_note(
+        tmp_db, t.id, user_note="updated intake direction", now=fake_clock.now_unix()
+    )
+    assert t.user_note == "updated intake direction"
+
+    t = data.set_field_user_note(
+        tmp_db,
+        t.id,
+        field=FieldName.approach,
+        user_note="approach guidance",
+        actor="agent",
+        now=fake_clock.now_unix(),
+    )
+    assert t.fields.approach.user_note == "approach guidance"
+
+    legacy = json.dumps(
+        {
+            "success": {"value": None, "proposal": None, "notes": "legacy guidance"},
+            "approach": {"value": None, "proposal": None, "user_note": "new guidance"},
+            "plan": {"value": None, "proposal": None, "notes": None},
+            "result": {"value": None, "proposal": None, "notes": None},
+        }
+    )
+    parsed = fields_codec.fields_from_json(legacy)
+    assert parsed.success.user_note == "legacy guidance"
+    assert parsed.approach.user_note == "new guidance"
+    assert json.loads(fields_codec.fields_to_json(parsed))["success"] == {
+        "value": None,
+        "proposal": None,
+        "user_note": "legacy guidance",
+    }
 
 
 def test_ticket_status_transitions(

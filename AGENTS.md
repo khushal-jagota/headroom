@@ -15,6 +15,11 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - `docs/` is the live plain-language system documentation. `orchestration/*-redesign/` holds current design intent and mockups; `orchestration/tickets/` holds ticket plans, dispatches, and reviews.
 - `data/` is gitignored runtime state: SQLite DBs, WAL/SHM files, logs, locks, Hermes home state, smoke artifacts, and verify output.
 
+## Worker chat boundary
+- **Do not append to Panels chat and expect the worker to see it.** `chat_messages` and `chat_turns` are Panels' product-visible transcript/active-turn state for the UI. They are not the worker's Hermes conversation.
+- To change what a worker sees, deliver the text through the Hermes gateway/session path as a real user message or as part of the actual worker prompt. A Panels-visible chat row can mirror or audit that delivery, but it is not delivery by itself.
+- If a design depends on the worker reading human guidance, prove the guidance reaches the Hermes worker session. Do not treat a DB chat row, event-log row, or UI transcript line as model context.
+
 ## Naming and restraint
 - **Name things for exactly what they are.** Descriptive beats concise — an extra word that removes ambiguity costs nothing and prevents confusion later. A name should be self-evident: the ticket's status is `ticket_status`, an employee's session id is `employee_session_id`. When names are right it is obvious where a new thing belongs — a new ticket status obviously goes in the status — so you extend a clear structure instead of guessing or fitting around.
 - **Everything earns its existence; understand before you extend.** When handed something to build or plan, first work out what each existing thing actually *is* and why it exists — never fit around a structure you have not understood. Add nothing without a clear, stated reason: no speculative field, status, guard, or mechanism. If you cannot say plainly why a thing exists, it should not. When a plan — yours or a reviewer's — bolts on something that wasn't asked for or doesn't clearly make sense, cut it, don't accommodate it.

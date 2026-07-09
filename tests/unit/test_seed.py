@@ -153,7 +153,7 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
         "SELECT tickets.id, tickets.alias, tickets.state, tickets.priority, "
         "tickets.chat_session_key, tickets.sprint_item_id, tickets.sprint_id, "
         "tickets.project_id, projects.name AS project, tickets.recap, tickets.ceiling, "
-        "tickets.at_cap, tickets.deadline, tickets.fields "
+        "tickets.at_cap, tickets.deadline, tickets.user_note, tickets.fields "
         "FROM tickets LEFT JOIN projects ON projects.id = tickets.project_id",
         "alias",
     )
@@ -179,31 +179,32 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     # (7) fields JSON.
     onboarding = json.loads(tickets["ticket-20260611-onboarding-survey"]["fields"])
     assert onboarding["success"]["value"] is None
-    assert onboarding["success"]["notes"] == (
+    assert tickets["ticket-20260611-onboarding-survey"]["user_note"] == (
         "Work out what the survey must learn before any UI is sketched.\n"
         "- Project: Vylo\n- Current state: nothing exists yet.\n"
         "- Next: list the three decisions the survey feeds."
     )
+    assert onboarding["success"]["user_note"] is None
     export = json.loads(tickets["ticket-20260611-export-format"]["fields"])
     assert export["success"]["value"] == (
         "a one-page format note that a second reader can implement from."
     )
-    assert export["success"]["notes"] == "- Project: Tribe"
+    assert tickets["ticket-20260611-export-format"]["user_note"] == "- Project: Tribe"
     release = json.loads(tickets["ticket-20260611-release-branch"]["fields"])
     assert release["success"]["value"] == "the branch exists and CI is green on it."
     assert release["approach"]["value"] == (
         "branch from main after the fixture tests pass, then tag."
     )
-    assert release["success"]["notes"] == "- Project: Vylo"
+    assert tickets["ticket-20260611-release-branch"]["user_note"] == "- Project: Vylo"
     pipeline = json.loads(tickets["ticket-20260611-import-pipeline"]["fields"])
     assert pipeline["success"]["value"] == "the fixture import passes twice with zero duplicates."
-    assert pipeline["success"]["notes"] == (
+    assert tickets["ticket-20260611-import-pipeline"]["user_note"] == (
         "Parse the fixture tree and land rows behind one transaction.\n"
         "- Project: Vylo\n- Boundary: importer only; no CLI wiring yet."
     )
     for parsed in (onboarding, export, release, pipeline):
-        assert parsed["plan"] == {"value": None, "proposal": None, "notes": None}
-        assert parsed["result"] == {"value": None, "proposal": None, "notes": None}
+        assert parsed["plan"] == {"value": None, "proposal": None, "user_note": None}
+        assert parsed["result"] == {"value": None, "proposal": None, "user_note": None}
         for slot in parsed.values():
             assert slot["proposal"] is None
 

@@ -37,7 +37,7 @@ Everything runs through the `panels` command — `panels --help` for full usage.
 - **`panels ticket show <id>`** — read any ticket.
 - **`panels worker propose <id> --body-file - --recap "…"`** — propose the ticket's current gated field; body arrives on stdin or via `--body-file`, and every proposal must also set a recap.
 - **`panels worker recap <id> --body-file -`** — update the running recap outside a proposal.
-- **`panels worker note <id> <field> --body-file -`** — leave durable guidance next to a field without touching its value.
+- **`panels worker note <id> <field> --body-file -`** — preserve user guidance next to a field without touching its value.
 - **`panels ticket create --title "…"`** — create a ticket, when a step spins off a new one.
 
 ## How to complete this effectively
@@ -50,8 +50,10 @@ Everything runs through the `panels` command — `panels --help` for full usage.
 - **Separate facts from choices.** Keep what's known apart from what's still an open decision.
 - **Do not over-specify gated fields.** Success, approach, and plan proposals should not become long technical design docs. They should usually be a short paragraph or a few bullets, with implementation detail only when it materially changes the decision the user is approving.
 - **Prefer clarity over coverage.** If a proposal is getting progressively more detailed, stop and compress it back to the decision-level shape a human can approve.
+- **Explain your proposal judgment in chat.** After you propose a gated field, your chat reply should briefly explain why you shaped the proposal that way: the user direction, source facts, judgment calls, and any real alternatives considered or ruled out. Do not merely announce that the field is ready, repeat which field you proposed, or restate approval/status details the UI already shows. Keep the formal proposal itself normal, concise, and approval-ready; keep the chat rationale short and separate.
 - **Use recap as cold-user orientation.** The recap is not a work log. Keep it short and scannable, so a cold user can read it alongside the title and understand what the ticket is, where the current step stands, and the one or two key facts that matter now.
-- **Treat field notes as user direction.** Notes are primarily preserved user advice or constraints for a specific step. Agents may write them when carrying the user's instruction forward, but should label and phrase them as user-directed guidance, not as hidden agent scratchpad or canonical gated output.
+- **Honor ticket and field user notes.** The ticket-level `user_note` is intake context: the user's wording, source context, boundaries, and advice. Each field's `user_note` is user direction for that step. Treat both as guidance to honor, not as hidden agent scratchpad and not as canonical success/approach/plan/result text to copy blindly.
+- **Preserve direct user guidance with field notes.** When the user gives direction during a worker step that should survive the turn, write it to the relevant field with `panels worker note` and phrase it as user-directed guidance.
 
 ### How to complete ticket stages effectively
 

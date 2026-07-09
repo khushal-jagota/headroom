@@ -2,11 +2,34 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
-## D31 — Send-back guidance is stored as chat, not a field note
+## D33 — Workspace mounts the canonical ticket screen by selected ID
 
-Review send-back messages are appended to the ticket chat as human guidance instead of being stored
-in a field note or replacing the rejected proposal. Chat is the worker-facing instruction stream;
-clearing the pending proposal keeps the canonical field unchanged until the worker drafts a revision.
+Workspace renders `TicketRoute` directly in its right pane and keys that mount by the selected
+ticket ID. This keeps one ticket implementation while ensuring the route's ID-bound resources are
+recreated when the user selects a different ticket; the standalone `#/ticket/<id>` route stays
+unchanged.
+
+## D32 — Legacy imported ticket body becomes ticket user note
+
+Legacy seed ticket body text is imported into the ticket-level `user_note`, not into any gated field
+note. The body is intake context and user guidance for the ticket as a whole; keeping success,
+approach, plan, and result field notes empty avoids mixing preserved context with canonical gated
+outputs or step-specific user direction.
+
+## D34 — Panels chat rows are not worker context
+
+Panels `chat_messages` and `chat_turns` are product-visible UI/audit state, not the worker's
+Hermes conversation. A normal chat send reaches the worker only because it goes through the
+gateway/session path and is mirrored into Panels chat. Any Review send-back, approval-edit notice,
+or other worker guidance must be delivered through the Hermes session or actual worker prompt; a
+chat row, event row, or UI transcript line alone is not delivery.
+
+## D31 — Send-back guidance is not a field note and must reach Hermes
+
+Review send-back messages are not stored in a field note or used to replace the rejected proposal.
+The visible ticket chat row is only a UI/audit mirror. The guidance must reach the worker through
+the Hermes session or actual worker input; clearing the pending proposal keeps the canonical field
+unchanged until the worker drafts a revision.
 
 ## D30 — Workspace hide-done starts off
 

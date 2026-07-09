@@ -74,7 +74,7 @@ class ParsedTicket:                # workspace.md ticket
     priority: Priority
     alias: str | None = None       # "Ticket ID:"
     chat_session_key: str | None = None   # "Chat ID:"
-    body: str = ""                 # -> fields.success/approach values per §12
+    body: str = ""                 # -> ticket.user_note intake context
     success: str | None = None
     approach: str | None = None
     item_title: str | None = None  # link target for unambiguous title match

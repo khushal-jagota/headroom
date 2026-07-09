@@ -19,7 +19,8 @@ One screen per part of the system:
   shows the four ticket-stage dots, filters visible rows by `ticket_status`, and can
   hide done tickets separately.
   The right side opens on the Chief of Staff chat, and selecting a ticket switches it
-  to that ticket's current link view.
+  to the same complete ticket screen used by a direct ticket link while leaving the
+  Workspace rail in place.
 - **Ticket** — the whole story of one piece of work: the four blanks, the scope row,
   live status markers, the `auto` run eligibility chip, chat, and a copy button that
   produces a plain-text block for pasting anywhere. Its project picker is backed by

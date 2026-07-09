@@ -564,3 +564,21 @@ def test_slash_menu_runs_display_command(server, context_factory, open_page, cli
         " return n >= 2; }",
         timeout=WAIT_MS,
     )
+
+
+def test_ticket_user_note_renders_as_own_intake_block(server, context_factory, open_page, cli):
+    tid = cli(
+        server,
+        "ticket", "create", "--title", "User note UI ticket",
+        "--user-note", "Preserve this intake boundary.",
+    )["id"]
+
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{tid}",
+        f'section[data-screen="ticket"][data-ticket-id="{tid}"] [data-user-note]',
+        settled=True,
+    )
+    assert "Preserve this intake boundary." in page.inner_text("[data-user-note]")
+    assert page.query_selector('[data-user-note] .ed') is not None

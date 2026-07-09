@@ -12,6 +12,7 @@
   } from "../lib/ui";
   import ChatPanel from "../components/ChatPanel.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
+  import TicketRoute from "./TicketRoute.svelte";
 
   const chiefOfStaffEntityId = "agent_panels_chief_of_staff";
   const noProjectKey = "__no_project__";
@@ -232,7 +233,11 @@
           {/each}
         </section>
 
-        <section class="board-workspace-right" aria-label="Workspace inspector">
+        <section
+          class:board-workspace-right--ticket={rightPaneMode === "ticket"}
+          class="board-workspace-right"
+          aria-label="Workspace inspector"
+        >
           {#if rightPaneMode === "chief"}
             <ChatPanel
               entityId={chiefOfStaffEntityId}
@@ -240,11 +245,9 @@
               label="Chief of Staff"
             />
           {:else if selectedCard}
-            <div class="board-workspace-placeholder">
-              <a class="board-workspace-open-ticket" href={`#/ticket/${selectedCard.id}`}>
-                {selectedCard.title}
-              </a>
-            </div>
+            {#key selectedCard.id}
+              <TicketRoute id={selectedCard.id} />
+            {/key}
           {/if}
         </section>
       </div>

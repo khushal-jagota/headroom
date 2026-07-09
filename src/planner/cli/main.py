@@ -458,7 +458,9 @@ def ticket_create(
 ) -> None:
     body: dict[str, Any] = {"title": title}
     if user_note is not None and user_note_file is not None:
-        http.fail_validation("user note accepts only one of --user-note or --user-note-file", as_json)
+        http.fail_validation(
+            "user note accepts only one of --user-note or --user-note-file", as_json
+        )
     if user_note_file is not None:
         body["user_note"] = _read_source(user_note_file, as_json)
     elif user_note is not None:
@@ -1007,7 +1009,9 @@ def worker_recap(ticket_id: str | None, body_file: str | None, as_json: bool) ->
 
 @worker.command("note")
 @click.argument("args", nargs=-1)
-@click.option("--body-file", default=None, help="Read field user guidance text from this file, or -.")
+@click.option(
+    "--body-file", default=None, help="Read field user guidance text from this file, or -."
+)
 @json_option
 def worker_note(args: tuple[str, ...], body_file: str | None, as_json: bool) -> None:
     if len(args) == 1:

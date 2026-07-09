@@ -67,11 +67,17 @@ def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
 
     card = f'[data-card][data-ticket-id="{tid}"]'
     page.click(card)
-    page.wait_for_selector(f'.board-workspace-open-ticket[href="#/ticket/{tid}"]', timeout=WAIT_MS)
-    assert page.inner_text(".board-workspace-open-ticket") == "Workspace selectable ticket"
+    ticket = (
+        'section[data-screen="workspace"] '
+        f'section[data-screen="ticket"][data-ticket-id="{tid}"]'
+    )
+    page.wait_for_selector(f"{ticket} [data-chat-input]", timeout=WAIT_MS)
+    assert page.query_selector('[aria-label="Workspace ticket tree"]') is not None
+    assert page.inner_text(f"{ticket} .ticket-title") == "Workspace selectable ticket"
 
     page.click("[data-chief-of-staff-button]")
     page.wait_for_selector('section[data-screen="workspace"] [data-chat-input]', timeout=WAIT_MS)
+    assert page.query_selector(ticket) is None
     _wait_chat_text(page, "you", "triage from workspace")
     _wait_chat_text(page, "planner", "echo: triage from workspace")
 

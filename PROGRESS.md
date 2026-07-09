@@ -3,6 +3,104 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-09): Worker chat context boundary
+
+Current implementation:
+
+- `AGENTS.md` and `CLAUDE.md` now explicitly warn that Panels `chat_messages` and `chat_turns` are
+  product-visible UI/audit state, not the worker's Hermes conversation.
+- `docs/chat.md`, `docs/systems.md`, and `docs/tickets-and-gates.md` now state that worker-visible
+  guidance must go through the Hermes gateway/session path or actual worker prompt; a visible chat row
+  can mirror delivery but is not delivery by itself.
+- The `panels-ticket-workflow` skill now carries the same boundary so planning agents do not propose
+  "append to chat" as a worker-awareness mechanism. The generic `panels-worker` role skill was left
+  free of this project-specific guidance.
+- `decisions.md` records the owner correction as D34 and corrects the older D31 wording.
+
+Verification status:
+
+- Documentation/skill-only change; verified by searching for the new boundary language and corrected
+  stale wording.
+
+Immediate next step:
+
+- None for this doc/guidance correction unless the owner wants the same warning added to another surface.
+
+## Current work cycle (2026-07-09): Shared ticket screen in Workspace
+
+Current implementation:
+
+- Selecting a Workspace ticket now mounts the canonical `TicketRoute` in the right pane while the
+  Workspace ticket rail remains visible.
+- The ticket mount is keyed by ticket ID so selecting another ticket recreates its ID-bound
+  resources; the standalone ticket route is unchanged.
+- The Chief of Staff remains the default and return surface, and the embedded ticket uses scoped
+  pane layout instead of a Workspace-specific ticket implementation.
+- The obsolete selected-ticket link placeholder and its styles were removed, and the frontend doc
+  now describes the shared screen behavior.
+
+Verification status:
+
+- Focused Svelte check, production build, and Workspace browser test passed; Svelte still reports
+  the three existing `TicketRoute.svelte` initial-`id` warnings.
+- Full `./verify` passed: ruff ok, mypy ok, 180 unit tests passed, build/frontend gates ok,
+  36 e2e tests passed, `VERIFY: PASS`.
+
+Immediate next step:
+
+- Ticket `t_aejd0by7` is done after the result update.
+
+## Current work cycle (2026-07-09): Ticket user notes and recap semantics
+
+Current implementation:
+
+- Tickets now expose a ticket-level `user_note` for preserved intake context / user guidance.
+- Field-level notes have been clarified to `user_note` in contracts, codecs, API JSON, worker note writes,
+  ticket copy text, and frontend typing, while legacy field JSON with `notes` still reads correctly.
+- CLI support now includes `ticket create --user-note/--user-note-file`, `ticket set user-note`, and
+  worker note writes as field user guidance.
+- The Ticket screen renders an editable User note block above Recap, and the recap placeholder now frames
+  recap as short cold-reader orientation.
+- Seed import moves legacy ticket body/context into the ticket-level user note instead of success notes.
+- Worker skills and docs now distinguish ticket user notes, field user notes, and recaps.
+
+Verification status:
+
+- Focused backend/seed/value tests passed: `.venv/bin/python -m pytest tests/unit/test_tickets_engine.py
+  tests/unit/test_seed.py tests/unit/test_value_edit_logic.py -q`.
+- Focused CLI/UI tests passed: `.venv/bin/python -m pytest
+  tests/e2e/test_cli_verbs.py::test_ticket_approval_copy_events_and_worker_note_shape
+  tests/e2e/test_flows_a.py::test_ticket_user_note_renders_as_own_intake_block -q`.
+- Full `./verify` passed after wrapping the two new long CLI lines: ruff ok, mypy ok, 180 unit tests
+  passed, build/frontend gates ok, 36 e2e tests passed, `VERIFY: PASS`.
+
+Immediate next step:
+
+- Result proposed on ticket `t_g8zgpn77`; ready for owner review.
+
+## Current work cycle (2026-07-09): Worker completion chat rationale
+
+Current implementation:
+
+- `skills/panels-worker/SKILL.md` now tells workers to use the chat reply after a gated-field
+  proposal for a brief rationale: why the proposal was shaped that way, what user direction or
+  source facts mattered, and any real alternatives considered.
+- The guidance explicitly keeps that rationale separate from the formal proposal and tells workers
+  not to repeat field names, readiness, or approval/status details already shown by the UI.
+
+Verification status:
+
+- Focused text assertion passed: the worker skill contains the required rationale, separation,
+  non-readiness-announcement, and non-status-repeat guidance.
+- `.venv/bin/python -m pytest tests/unit/test_minds.py::test_provision_planner_home_skills_symlinks_repo_skills -q`
+  passed.
+- Full `./verify` passed after wrapping two pre-existing long CLI lines surfaced by ruff: ruff ok,
+  mypy ok, 180 unit tests passed, build/frontend gates ok, 36 e2e tests passed, `VERIFY: PASS`.
+
+Immediate next step:
+
+- Propose the result on ticket `t_8qk5jfxh`.
+
 ## Current work cycle (2026-07-09): Pause active chat turn
 
 Current implementation:

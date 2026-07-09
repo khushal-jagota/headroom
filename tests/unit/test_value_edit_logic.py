@@ -59,6 +59,7 @@ def _ticket(
         sprint_item_id=None,
         sprint_id=None,
         recap="",
+        user_note="",
         ceiling=ceiling,
         at_cap=AtCap.propose,
         ticket_status=TicketStatus.empty,

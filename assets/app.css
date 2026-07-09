@@ -1157,6 +1157,11 @@ select {
   background: var(--surface-sunken);
 }
 
+.board-workspace-right--ticket {
+  padding: 0;
+  background: var(--surface-base);
+}
+
 .board-workspace-heading-row {
   display: flex;
   align-items: center;
@@ -1370,25 +1375,6 @@ select {
 
 .board-workspace-stage-mark {
   flex: 0 0 0.7rem;
-}
-
-.board-workspace-placeholder {
-  min-height: 0;
-  padding-bottom: var(--space-4);
-  border-bottom: var(--border-hairline) solid var(--border-color);
-}
-
-.board-workspace-open-ticket {
-  display: inline-block;
-  color: var(--text-strong);
-  font-size: var(--type-xl);
-  font-weight: 600;
-  line-height: 1.25;
-  text-decoration: none;
-}
-
-.board-workspace-open-ticket:hover {
-  color: var(--accent-bright);
 }
 
 /* --- Ticket screen (T16) ------------------------------------------------- */

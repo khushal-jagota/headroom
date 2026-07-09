@@ -18,6 +18,12 @@ immediately. The visible transcript and live activity indicator belong to Panels
 `chat_messages` records the product-facing lines, and `chat_turns` records the
 current phase, partial output, session key, error, and completion.
 
+That split matters: writing a row to Panels chat state does not append anything to
+the worker's Hermes conversation. A normal chat send reaches the worker because it
+goes through the gateway/session path and is then mirrored into Panels chat. Direct
+`chat_messages` or `chat_turns` writes are only UI/audit state unless the same text
+is also delivered through Hermes.
+
 System B uses the same chat state. When it starts an automatic worker step, it writes
 a worker line and an active turn. Gateway deltas and future tool/activity events
 update that turn. When the worker settles, the assistant reply is recorded as a
