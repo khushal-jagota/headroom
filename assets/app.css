@@ -1174,7 +1174,6 @@ select {
 .board-workspace-filters {
   margin: 0 0 var(--space-4);
   padding: 0 var(--board-workspace-rail-pad-x) var(--space-4);
-  border-bottom: var(--border-hairline) solid var(--border-color);
 }
 
 .board-workspace-filter-head,

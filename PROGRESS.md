@@ -117,34 +117,24 @@ Immediate next step:
 
 - Ready for owner review/commit. No derived sprint item status writes were reintroduced.
 
-## Current work cycle (2026-07-09): Ticket project edit investigation
+## Current work cycle (2026-07-09): Workspace filter divider cleanup
 
-Owner report: changing a ticket project in the Ticket UI appears to change in the UI but not in
-"the thing." Investigate whether the UI is sending project IDs or whether another projection is
-stale.
+Owner correction: the Ticket UI project edit path does work. Remove the extra divider line between
+the Workspace filters and the project ticket sections.
 
 Current implementation:
 
-- Confirmed the Ticket UI project picker sends `project_id`, not the legacy project name.
-- Confirmed `PATCH /api/tickets/{id}` resolves the ID, writes `tickets.project_id`, returns the
-  updated `project_id` / `project`, appends `ticket_updated`, and invalidates the `board` resource.
-- Added browser coverage proving an open Workspace page moves a ticket from `No project` to `Vylo`
-  after the project is changed through the Ticket UI.
-- Found one stale projection: `/api/tickets/{id}/copy-text` included state and priority but omitted
-  project, so copied/exported ticket text never reflected a project change. It now includes
-  `project: <name>` or `project: (none)`.
+- Removed the `border-bottom` from `.board-workspace-filters`.
+- Reverted the speculative copy-text and regression-test edits from the false-alarm investigation,
+  keeping the work scoped to the sidebar visual cleanup.
 
 Verification status:
 
-- Focused check passed:
-  `.venv/bin/python -m pytest tests/unit/test_authctx_routes.py::test_patch_ticket_human_title_and_project_succeed
-  tests/e2e/test_board_stage_indicators.py::test_ticket_project_edit_moves_workspace_group` → 2
-  passed, 1 existing Starlette/httpx warning.
-- Full `./verify` pending after this fix.
+- Pending focused check.
 
 Immediate next step:
 
-- Run one full `./verify`.
+- Run a focused CSS/frontend check.
 
 ## Current work cycle (2026-07-09): Workspace sidebar project grouping
 

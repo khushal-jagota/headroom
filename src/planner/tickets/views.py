@@ -160,7 +160,6 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"{ticket.title}\n"
         f"state: {ticket.state.value}\n"
         f"priority: {ticket.priority.value}\n"
-        f"project: {show(ticket.project_name)}\n"
         f"\n"
         f"success:\n{show(fields.success.value)}\n"
         f"\n"

@@ -170,38 +170,3 @@ def test_workspace_groups_by_project_orders_by_progress_and_filters_status(
 
     page.click('[data-status-filter="all"]')
     page.wait_for_selector(f'[data-card][data-ticket-id="{earlier_progress}"]', timeout=WAIT_MS)
-
-
-def test_ticket_project_edit_moves_workspace_group(server, context_factory, open_page, cli, api) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Project edit moves group")["id"]
-    _add_today(api, server, ticket_id)
-
-    context = context_factory()
-    workspace = open_page(
-        context,
-        server,
-        "#/workspace",
-        f'[data-project-key="__no_project__"] [data-card][data-ticket-id="{ticket_id}"]',
-        settled=True,
-    )
-    ticket = open_page(
-        context,
-        server,
-        f"#/ticket/{ticket_id}",
-        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        settled=True,
-    )
-
-    ticket.locator(".ticket-meta .pill select").nth(1).select_option("project_vylo")
-    ticket.wait_for_function(
-        "async (ticketId) => (await fetch(`/api/tickets/${ticketId}`).then(r => r.json())).project_id === 'project_vylo'",
-        arg=ticket_id,
-        timeout=WAIT_MS,
-    )
-    workspace.wait_for_selector(
-        f'[data-project-key="project_vylo"] [data-card][data-ticket-id="{ticket_id}"]',
-        timeout=WAIT_MS,
-    )
-    assert workspace.query_selector(
-        f'[data-project-key="__no_project__"] [data-card][data-ticket-id="{ticket_id}"]'
-    ) is None
