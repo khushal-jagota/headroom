@@ -86,25 +86,43 @@ already covered. One shared source of the allowed stages feeds both the header r
 and the approval screen, so the two can never disagree.
 
 The Review screen can also send a ticket back instead of accepting it. The human
-writes short guidance in the review card. That guidance must reach the worker's
-Hermes session as a real user message or actual worker input; recording it only in
-the visible ticket chat is not enough. The ticket chat row is the UI/audit mirror,
-not the worker's context. A pending gated proposal is cleared without advancing the
-ticket. A final review item moves from **needs review** back to **in progress** so
-the worker can revise the result.
+writes short guidance in the review card. Panels sends that guidance directly to the
+ticket's existing Hermes session as the user message that starts a worker turn. It is
+not copied into ticket chat and no later generic worker prompt is sent. The ticket's
+stage never changes: a pending gated proposal is cleared, settled values remain, and
+the ticket leaves Review while its control status is **agent running step**. A result
+can therefore be revised while the ticket remains at **needs review**; it returns to
+Review when the worker submits the revision.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the scope row),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`
 (the approval walk).
 
+## Permanent deletion
+
+Dropping a ticket keeps its record. Permanent deletion is different: it is a
+human-only action for a ticket created by mistake. The action is blocked while
+ticket activity is still running. After confirmation, one transaction removes the
+ticket from days, sprint views, links, Review, Workspace, and Panels chat. Other
+tickets and day ordering stay intact.
+
+The deletion also replaces that ticket's old event history with one small deletion
+record containing its identity, the human actor, and the time. This is the only
+exception to normal append-only event history. The separate stored Hermes session is
+outside Panels' record and is not erased; once the ticket row is gone, Panels no
+longer has a route that resolves or resumes it.
+
+_Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
+`web/src/routes/TicketRoute.svelte`.
+
 ## The event log
 
-Every change, by anyone, writes a line into an event log that is strictly
-append-only: the log itself is never edited or trimmed. The records the log
+Every normal change writes a permanent line into the event log. The records it
 describes _do_ change — a ticket's fields update, taking a ticket off a day's list
-removes that link — but each such change leaves its own permanent line, so the
-history of what happened is never lost. The front end treats the log as a doorbell,
-not as data: a new line tells screens to refetch.
+removes that link — but the event lines remain. A permanent ticket deletion is the
+one deliberate exception: that ticket's old lines are replaced by its minimal
+deletion audit. The front end treats the log as a doorbell, not as data: a new line
+tells screens to refetch.
 
 _Code paths:_ `src/planner/core/events.py`.
 

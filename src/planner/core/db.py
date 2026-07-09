@@ -161,7 +161,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_links_one_belongs_to
   ON links(from_id) WHERE kind = 'belongs_to';       -- at most one belongs_to per ticket
 CREATE INDEX IF NOT EXISTS idx_links_to ON links(to_id, kind);
 
-CREATE TABLE IF NOT EXISTS events (                  -- §3, append-only
+CREATE TABLE IF NOT EXISTS events (                  -- append-only except entity hard-delete audit
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   entity_id  TEXT NOT NULL,
   kind       TEXT NOT NULL,

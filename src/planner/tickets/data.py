@@ -12,17 +12,18 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Final
 
-from planner.chat import data as chat_data
 from planner.core.contracts import EventKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.events import append_event
+from planner.core.events import append_event, delete_entity_history
 from planner.core.ids import ID_PREFIXES, new_id
+from planner.days import data as days_data
 from planner.tickets.contracts import (
     AtCap,
     FieldName,
     FieldSlot,
     NextCeiling,
     Ticket,
+    TicketDeletion,
     TicketFields,
     TicketState,
     TicketStatus,
@@ -372,7 +373,10 @@ def file_proposal(
         ticket = _load_ticket(conn, ticket_id)
         decision = resolution.decide_file_proposal(ticket, field, body, actor, now)
         updated = _apply_decision(conn, ticket, decision, now)
-        if any(spec.kind is EventKind.proposal_filed for spec in decision.events):
+        if (
+            ticket.state is TicketState.needs_review
+            and ticket.ticket_status is TicketStatus.agent_running_step
+        ) or any(spec.kind is EventKind.proposal_filed for spec in decision.events):
             _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
             updated = _load_ticket(conn, ticket_id)
         return updated
@@ -396,7 +400,12 @@ def file_current_proposal_with_recap(
     admission.validate_body(recap, "recap")
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
-        field = machine.gating_field(ticket.state)
+        field = (
+            FieldName.result
+            if ticket.state is TicketState.needs_review
+            and ticket.ticket_status is TicketStatus.agent_running_step
+            else machine.gating_field(ticket.state)
+        )
         if field is None:
             raise PlannerError(
                 ErrorCode.validation,
@@ -410,7 +419,10 @@ def file_current_proposal_with_recap(
             (recap, now, ticket_id),
         )
         append_event(conn, ticket_id, EventKind.recap_updated, {}, now)
-        if any(spec.kind is EventKind.proposal_filed for spec in decision.events):
+        if (
+            ticket.state is TicketState.needs_review
+            and ticket.ticket_status is TicketStatus.agent_running_step
+        ) or any(spec.kind is EventKind.proposal_filed for spec in decision.events):
             _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
         return _load_ticket(conn, ticket_id)
 
@@ -467,7 +479,11 @@ def approve_review(conn: sqlite3.Connection, ticket_id: str, *, actor: str, now:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
         decision = resolution.decide_approve(ticket, actor)
-        return _apply_decision(conn, ticket, decision, now)
+        updated = _apply_decision(conn, ticket, decision, now)
+        if ticket.ticket_status is not TicketStatus.empty:
+            _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
+            updated = _load_ticket(conn, ticket_id)
+        return updated
 
 
 def return_for_revision(
@@ -477,7 +493,7 @@ def return_for_revision(
     message: str,
     actor: str,
     now: int,
-) -> Ticket:
+) -> tuple[Ticket, str]:
     admission.validate_body(message, "revision guidance")
     framed_message = (
         "The user rejected your proposal and provided the following guidance:\n\n"
@@ -487,9 +503,8 @@ def return_for_revision(
         ticket = _load_ticket(conn, ticket_id)
         decision = resolution.decide_return_for_revision(ticket, actor)
         _apply_decision(conn, ticket, decision, now)
-        chat_data.record_message(conn, ticket_id, role="human", text=framed_message, now=now)
-        _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
-        return _load_ticket(conn, ticket_id)
+        _write_ticket_status(conn, ticket_id, TicketStatus.agent_running_step, now)
+        return _load_ticket(conn, ticket_id), framed_message
 
 
 def set_state(
@@ -506,6 +521,125 @@ def drop_ticket(conn: sqlite3.Connection, ticket_id: str, *, actor: str, now: in
         ticket = _load_ticket(conn, ticket_id)
         decision = resolution.decide_drop(ticket, actor)
         return _apply_decision(conn, ticket, decision, now)
+
+
+def delete_ticket(
+    conn: sqlite3.Connection, ticket_id: str, *, actor: str, now: int
+) -> TicketDeletion:
+    """Permanently remove a mistaken ticket and its product footprint in one transaction.
+
+    Deletion is blocked while durable ticket control owns a worker step or any
+    product-visible turn is still running. Both are checked under the same write lock
+    before cleanup. All ticket-owned Planner history is removed; the one surviving
+    ticket event is the minimal deletion audit and invalidation doorbell.
+    """
+    admission.require_human(actor, "delete_ticket")
+    with _txn(conn):
+        ticket = _load_ticket(conn, ticket_id)
+        running_turn = conn.execute(
+            "SELECT 1 FROM chat_turns WHERE entity_id = ? AND status = 'running' LIMIT 1",
+            (ticket_id,),
+        ).fetchone()
+        if ticket.ticket_status is TicketStatus.agent_running_step or running_turn is not None:
+            raise PlannerError(
+                ErrorCode.already_running,
+                "ticket activity is still running",
+                {"ticket_id": ticket_id},
+            )
+
+        day_ids = tuple(
+            str(row["day_id"])
+            for row in conn.execute(
+                "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id",
+                (ticket_id,),
+            ).fetchall()
+        )
+        link_rows = conn.execute(
+            "SELECT from_id, to_id, kind FROM links "
+            "WHERE from_id = ? OR to_id = ? ORDER BY from_id, to_id, kind",
+            (ticket_id, ticket_id),
+        ).fetchall()
+        linked_entity_ids = tuple(
+            sorted(
+                {
+                    str(row["to_id"] if row["from_id"] == ticket_id else row["from_id"])
+                    for row in link_rows
+                }
+            )
+        )
+        sprint_item_ids = (
+            (ticket.sprint_item_id,) if ticket.sprint_item_id is not None else ()
+        )
+        effective_sprint_id = ticket.sprint_id
+        if ticket.sprint_item_id is not None:
+            item_row = conn.execute(
+                "SELECT sprint_id FROM sprint_items WHERE id = ?", (ticket.sprint_item_id,)
+            ).fetchone()
+            if item_row is not None and item_row["sprint_id"] is not None:
+                effective_sprint_id = str(item_row["sprint_id"])
+        sprint_ids = (effective_sprint_id,) if effective_sprint_id is not None else ()
+
+        # Prune only pre-delete history. The cleanup events written below stay as
+        # doorbells on the surviving day, item, and link endpoints.
+        delete_entity_history(conn, ticket_id)
+
+        turn_ids = tuple(
+            str(row["id"])
+            for row in conn.execute(
+                "SELECT id FROM chat_turns WHERE entity_id = ?", (ticket_id,)
+            ).fetchall()
+        )
+        if turn_ids:
+            placeholders = ",".join("?" for _ in turn_ids)
+            conn.execute(
+                f"DELETE FROM chat_messages WHERE entity_id = ? OR turn_id IN ({placeholders})",
+                (ticket_id, *turn_ids),
+            )
+        else:
+            conn.execute("DELETE FROM chat_messages WHERE entity_id = ?", (ticket_id,))
+        conn.execute("DELETE FROM chat_turns WHERE entity_id = ?", (ticket_id,))
+
+        for day_id in day_ids:
+            days_data.remove_day_ticket(conn, day_id, ticket_id, now)
+        for row in link_rows:
+            from_id = str(row["from_id"])
+            to_id = str(row["to_id"])
+            kind = str(row["kind"])
+            conn.execute(
+                "DELETE FROM links WHERE from_id = ? AND to_id = ? AND kind = ?",
+                (from_id, to_id, kind),
+            )
+            survivor_id = to_id if from_id == ticket_id else from_id
+            append_event(
+                conn,
+                survivor_id,
+                EventKind.link_removed,
+                {"from_id": from_id, "to_id": to_id, "kind": kind},
+                now,
+            )
+
+        conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+        for sprint_item_id in sprint_item_ids:
+            _append_item_children_changed(conn, sprint_item_id, ticket_id, "deleted", now)
+        append_event(
+            conn,
+            ticket_id,
+            EventKind.ticket_deleted,
+            {
+                "ticket_id": ticket_id,
+                "title": ticket.title,
+                "actor": actor,
+            },
+            now,
+        )
+        return TicketDeletion(
+            ticket_id=ticket_id,
+            title=ticket.title,
+            day_ids=day_ids,
+            sprint_item_ids=sprint_item_ids,
+            sprint_ids=sprint_ids,
+            linked_entity_ids=linked_entity_ids,
+        )
 
 
 def change_scope(

@@ -27,6 +27,14 @@ def _set_ticket_state(server, ticket_id: str, state: str) -> None:
         )
 
 
+def _set_ticket_updated_at(server, ticket_id: str, updated_at: int) -> None:
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "UPDATE tickets SET updated_at = ? WHERE id = ?",
+            (updated_at, ticket_id),
+        )
+
+
 def _stage(page, card: str, field: str) -> str:
     return f'{card} [data-stage-field="{field}"]'
 
@@ -68,7 +76,7 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
         page.wait_for_selector(card, timeout=WAIT_MS)
         assert page.eval_on_selector_all(
             f"{card} .board-workspace-stage-mark", "els => els.length"
-        ) == 4
+        ) == 1
 
     assert page.get_attribute(_stage(page, waiting_card, "success"), "data-stage-state") == (
         "current-waiting"
@@ -95,33 +103,33 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
     ) == 1
 
 
-def test_workspace_groups_by_project_orders_by_progress_and_filters_status(
+def test_workspace_groups_by_project_orders_by_activity_and_filters_status(
     server, context_factory, open_page, cli, api
 ) -> None:
-    later_progress = cli(
+    older_activity = cli(
         server,
         "ticket",
         "create",
         "--title",
-        "Vylo later progress",
+        "Vylo older activity",
         "--project-id",
         "project_vylo",
     )["id"]
-    earlier_progress = cli(
+    newer_activity = cli(
         server,
         "ticket",
         "create",
         "--title",
-        "Vylo earlier progress",
+        "Vylo newer activity",
         "--project-id",
         "project_vylo",
     )["id"]
-    done_progress = cli(
+    done_activity = cli(
         server,
         "ticket",
         "create",
         "--title",
-        "Vylo done progress",
+        "Vylo done activity",
         "--project-id",
         "project_vylo",
     )["id"]
@@ -135,12 +143,15 @@ def test_workspace_groups_by_project_orders_by_progress_and_filters_status(
         "project_learning",
     )["id"]
     no_project = cli(server, "ticket", "create", "--title", "No project ticket")["id"]
-    for ticket_id in (later_progress, earlier_progress, done_progress, learning, no_project):
+    for ticket_id in (older_activity, newer_activity, done_activity, learning, no_project):
         _add_today(api, server, ticket_id)
 
-    _set_ticket_state(server, later_progress, "needs_plan")
-    _set_ticket_state(server, done_progress, "done")
+    _set_ticket_state(server, older_activity, "needs_plan")
+    _set_ticket_state(server, done_activity, "done")
     _set_ticket_status(server, learning, "errored")
+    _set_ticket_updated_at(server, older_activity, 10)
+    _set_ticket_updated_at(server, newer_activity, 30)
+    _set_ticket_updated_at(server, done_activity, 20)
 
     page = open_page(
         context_factory(),
@@ -164,14 +175,14 @@ def test_workspace_groups_by_project_orders_by_progress_and_filters_status(
         "els => els.map(el => el.textContent.trim())",
     )
     assert vylo_titles == [
-        "Vylo earlier progress",
-        "Vylo later progress",
-        "Vylo done progress",
+        "Vylo newer activity",
+        "Vylo done activity",
+        "Vylo older activity",
     ]
 
     assert page.eval_on_selector_all(
         "[data-card]",
-        "els => els.every(el => el.querySelectorAll('.board-workspace-stage-mark').length === 4)",
+        "els => els.every(el => el.querySelectorAll('.board-workspace-stage-mark').length === 1)",
     )
 
     page.select_option('[data-filter-group="ticket-status"] select', "errored")
@@ -183,11 +194,11 @@ def test_workspace_groups_by_project_orders_by_progress_and_filters_status(
     assert visible_titles == ["Learning errored ticket"]
 
     page.select_option('[data-filter-group="ticket-status"] select', "all")
-    page.wait_for_selector(f'[data-card][data-ticket-id="{earlier_progress}"]', timeout=WAIT_MS)
+    page.wait_for_selector(f'[data-card][data-ticket-id="{newer_activity}"]', timeout=WAIT_MS)
 
     page.check("[data-hide-done-toggle]")
     page.wait_for_selector(
-        f'[data-card][data-ticket-id="{done_progress}"]',
+        f'[data-card][data-ticket-id="{done_activity}"]',
         state="detached",
         timeout=WAIT_MS,
     )
@@ -195,7 +206,25 @@ def test_workspace_groups_by_project_orders_by_progress_and_filters_status(
         "[data-card] .board-workspace-item-label",
         "els => els.map(el => el.textContent.trim())",
     )
-    assert "Vylo done progress" not in visible_titles
+    assert "Vylo done activity" not in visible_titles
+
+    page.click('.shell-links a[data-screen="day"]')
+    page.wait_for_selector('section[data-screen="day"]', timeout=WAIT_MS)
+    page.click('.shell-links a[data-screen="workspace"]')
+    page.wait_for_selector("[data-hide-done-toggle]", timeout=WAIT_MS)
+    assert page.is_checked("[data-hide-done-toggle]")
+    page.wait_for_selector(
+        f'[data-card][data-ticket-id="{done_activity}"]',
+        state="detached",
+        timeout=WAIT_MS,
+    )
 
     page.uncheck("[data-hide-done-toggle]")
-    page.wait_for_selector(f'[data-card][data-ticket-id="{done_progress}"]', timeout=WAIT_MS)
+    page.wait_for_selector(f'[data-card][data-ticket-id="{done_activity}"]', timeout=WAIT_MS)
+
+    page.click('.shell-links a[data-screen="day"]')
+    page.wait_for_selector('section[data-screen="day"]', timeout=WAIT_MS)
+    page.click('.shell-links a[data-screen="workspace"]')
+    page.wait_for_selector("[data-hide-done-toggle]", timeout=WAIT_MS)
+    assert not page.is_checked("[data-hide-done-toggle]")
+    page.wait_for_selector(f'[data-card][data-ticket-id="{done_activity}"]', timeout=WAIT_MS)

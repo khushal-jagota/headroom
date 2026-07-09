@@ -10,6 +10,8 @@ minted session key, rendered markdown structure) — never weakened approximatio
 
 from __future__ import annotations
 
+import sqlite3
+
 from playwright.sync_api import Page
 
 WAIT_MS = 10_000
@@ -34,6 +36,7 @@ NOOP_MARKDOWN_BODY = "# Raw forms\n\n* star bullet\n\n1) ordered paren\n\n_line 
 E27_SUCCESS = "Success body for the chain."
 E27_APPROACH = "Approach body for the chain."
 E27_PLAN = "Plan body for the chain."
+TALL_CHAT_MESSAGE = "\n".join(f"history line {index}" for index in range(24))
 
 
 def _wait_enabled(page: Page, selector: str) -> None:
@@ -188,7 +191,7 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
     assert d["fields"]["success"]["proposal"] is None
 
 
-def test_review_return_for_revision_sends_guidance_and_clears_queue(
+def test_review_return_for_revision_starts_agent_without_chat_copy(
     server, context_factory, open_page, cli, api
 ):
     tid = cli(server, "ticket", "create", "--title", "Revision review ticket")["id"]
@@ -198,6 +201,11 @@ def test_review_return_for_revision_sends_guidance_and_clears_queue(
         ticket_id=tid,
         stdin="Too much detail.",
     )
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "UPDATE tickets SET chat_session_key = ? WHERE id = ?",
+            ("existing-worker-session", tid),
+        )
 
     card = f'[data-review-card][data-entity-id="{tid}"]'
     page = open_page(context_factory(), server, "#/review", card, settled=True)
@@ -207,13 +215,12 @@ def test_review_return_for_revision_sends_guidance_and_clears_queue(
 
     ticket = api.get(server, f"/api/tickets/{tid}")
     assert ticket["state"] == "needs_success"
-    assert ticket["ticket_status"] == "empty"
+    assert ticket["ticket_status"] == "agent_running_step"
     assert ticket["fields"]["success"]["value"] is None
     assert ticket["fields"]["success"]["proposal"] is None
     assert api.get(server, "/api/queues")["approvals"] == []
     chat = api.get(server, f"/api/chat/{tid}/state")
-    assert chat["messages"][-1]["role"] == "human"
-    assert chat["messages"][-1]["text"].endswith("\n\nMake it shorter.")
+    assert chat["messages"] == []
 
 
 def test_markdown_approval_focus_noop_keeps_raw_source(
@@ -336,6 +343,50 @@ def test_e26_chat_panel_echo_and_offline(
     assert [msg["text"] for msg in pending_state["messages"]] == ["hold before first token"]
     assert "(none)" not in pending_page.inner_text("[data-chat] [data-chat-messages]")
 
+    pending_selector = '[data-chat] [data-chat-pending]'
+    pending_page.wait_for_function(
+        "selector => document.querySelector(selector) === null",
+        arg=pending_selector,
+        timeout=WAIT_MS,
+    )
+    pending_page.fill('[data-chat] [data-chat-input]', TALL_CHAT_MESSAGE)
+    pending_page.click('[data-chat] [data-chat-send]')
+    pending_page.wait_for_selector(pending_selector, timeout=WAIT_MS)
+    pending_page.wait_for_function(
+        "selector => document.querySelector(selector) === null",
+        arg=pending_selector,
+        timeout=WAIT_MS,
+    )
+    _wait_chat_text(pending_page, "planner", "history line 23")
+
+    pending_page.goto(pending_server.base + "/#/workspace")
+    pending_page.wait_for_selector('section[data-screen="workspace"]', timeout=WAIT_MS)
+    pending_page.add_style_tag(content='[data-chat-messages] { flex: 0 0 120px !important; }')
+    pending_page.goto(pending_server.base + f"/#/ticket/{pending_tid}")
+    pending_page.wait_for_selector(
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]', timeout=WAIT_MS
+    )
+    _wait_chat_text(pending_page, "planner", "history line 23")
+    pending_thread_selector = '[data-chat] [data-chat-messages]'
+    pending_page.wait_for_function(
+        "selector => { const el = document.querySelector(selector);"
+        " return el && el.scrollHeight > el.clientHeight; }",
+        arg=pending_thread_selector,
+        timeout=WAIT_MS,
+    )
+    pending_page.eval_on_selector(pending_thread_selector, "el => { el.scrollTop = 0; }")
+    pending_page.fill('[data-chat] [data-chat-input]', "stream without moving")
+    pending_page.click('[data-chat] [data-chat-send]')
+    pending_page.wait_for_selector(pending_selector, timeout=WAIT_MS)
+    _wait_chat_text(pending_page, "planner", "echo: stream without moving")
+    assert pending_page.query_selector(pending_selector) is not None
+    assert pending_page.eval_on_selector(pending_thread_selector, "el => el.scrollTop") == 0
+    pending_page.wait_for_function(
+        "selector => document.querySelector(selector) === null",
+        arg=pending_selector,
+        timeout=WAIT_MS,
+    )
+
     # --- echo half (default echo gateway) ---
     tid = cli(server, "ticket", "create", "--title", "T18 chat ticket")["id"]
     page = open_page(
@@ -379,16 +430,47 @@ def test_e26_chat_panel_echo_and_offline(
         "echo: hello from e2e",
     ]
 
+    # Make the recovered transcript tall enough to prove initial and subsequent
+    # scroll behavior without relying on viewport-specific message heights.
+    page.fill('[data-chat] [data-chat-input]', TALL_CHAT_MESSAGE)
+    page.click('[data-chat] [data-chat-send]')
+    _wait_chat_text(page, "planner", "history line 23")
+
     # The transcript is gateway history, not component-local state. Leaving the ticket,
     # returning, and a hard reload must all recover the visible turns.
     page.goto(server.base + "/#/workspace")
     page.wait_for_selector('section[data-screen="workspace"]', timeout=WAIT_MS)
+    page.add_style_tag(content='[data-chat-messages] { flex: 0 0 120px !important; }')
     page.goto(server.base + f"/#/ticket/{tid}")
     page.wait_for_selector(
         'section[data-screen="ticket"] [data-chat] [data-chat-input]', timeout=WAIT_MS
     )
     _wait_chat_text(page, "you", "hello from e2e")
     _wait_chat_text(page, "planner", "echo: hello from e2e")
+    _wait_chat_text(
+        page,
+        "planner",
+        "history line 23",
+    )
+
+    thread_selector = '[data-chat] [data-chat-messages]'
+    page.wait_for_function(
+        "selector => { const el = document.querySelector(selector);"
+        " return el && el.scrollHeight > el.clientHeight; }",
+        arg=thread_selector,
+        timeout=WAIT_MS,
+    )
+    initial_scroll = page.eval_on_selector(
+        thread_selector,
+        "el => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight })",
+    )
+    assert abs(initial_scroll["top"] - initial_scroll["max"]) <= 1, initial_scroll
+
+    page.eval_on_selector(thread_selector, "el => { el.scrollTop = 0; }")
+    page.fill('[data-chat] [data-chat-input]', "do not move my scroll")
+    page.click('[data-chat] [data-chat-send]')
+    _wait_chat_text(page, "planner", "echo: do not move my scroll")
+    assert page.eval_on_selector(thread_selector, "el => el.scrollTop") == 0
 
     page.reload()
     page.wait_for_selector(
@@ -567,6 +649,7 @@ def test_slash_menu_runs_display_command(server, context_factory, open_page, cli
 
 
 def test_ticket_user_note_renders_as_own_intake_block(server, context_factory, open_page, cli):
+    placeholder = "Preserve user guidance, source context, and boundaries..."
     tid = cli(
         server,
         "ticket", "create", "--title", "User note UI ticket",
@@ -582,3 +665,14 @@ def test_ticket_user_note_renders_as_own_intake_block(server, context_factory, o
     )
     assert "Preserve this intake boundary." in page.inner_text("[data-user-note]")
     assert page.query_selector('[data-user-note] .ed') is not None
+
+    empty_tid = cli(server, "ticket", "create", "--title", "Empty user note UI ticket")["id"]
+    empty_page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{empty_tid}",
+        f'section[data-screen="ticket"][data-ticket-id="{empty_tid}"] [data-user-note]',
+        settled=True,
+    )
+    assert "No user note yet." not in empty_page.inner_text("[data-user-note]")
+    assert empty_page.get_attribute('[data-user-note] .ed', "data-ph") == placeholder

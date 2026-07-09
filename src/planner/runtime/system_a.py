@@ -73,6 +73,10 @@ class SystemA:
         """Wake the poll loop now. ``_key`` is accepted for the System B idle callback."""
         self._wake.set()
 
+    def send_to_claimed_worker(self, ticket_id: str, message: str) -> None:
+        """Send a human rejection as the turn for an already-claimed worker step."""
+        self._system_b.set_off_claimed(ticket_id, self._role, message)
+
     # --- one readiness pass (also the unit-test seam) -----------------------
 
     def poll_once(self) -> list[str]:

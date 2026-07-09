@@ -491,6 +491,25 @@ def ticket_show(ticket_id: str | None, as_json: bool) -> None:
     http.emit(data, as_json, f"{data['id']} {data['state']} {data['priority']} {data['title']}")
 
 
+@ticket.command("delete")
+@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
+@click.option(
+    "--yes",
+    is_flag=True,
+    default=False,
+    help="Permanently delete the ticket and all of its working history.",
+)
+@json_option
+def ticket_delete(ticket_id: str | None, yes: bool, as_json: bool) -> None:
+    tid = resolve_ticket_id(ticket_id, as_json)
+    if not yes:
+        http.fail_validation("permanent deletion requires --yes", as_json)
+    data = http.send(
+        "DELETE", f"/api/tickets/{tid}", as_json=as_json, request_actor="human"
+    )
+    http.emit(data, as_json, f"{tid} permanently deleted")
+
+
 @ticket.command("list")
 @click.option("--state", default=None, help="Only show tickets in this state.")
 @click.option("--project", default=None, help="Only show project name.")

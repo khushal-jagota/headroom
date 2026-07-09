@@ -20,6 +20,7 @@ from planner.minds.shared_gateway import SharedGateway
 from planner.runtime import readiness
 from planner.runtime.system_b import SystemB
 from planner.tickets import data as tickets_data
+from planner.tickets import views as tickets_views
 from planner.tickets.contracts import AtCap, FieldName, TicketState, TicketStatus
 
 HOME = "/tmp/planner-home"
@@ -106,6 +107,30 @@ def _file_proposal(db_path: str, ticket_id: str, field: str, body: str) -> None:
         )
     finally:
         conn.close()
+
+
+def _file_current_proposal(db_path: str, ticket_id: str, body: str) -> None:
+    conn = connect(db_path)
+    try:
+        tickets_data.file_current_proposal_with_recap(
+            conn,
+            ticket_id,
+            body=body,
+            recap="Revised result ready for review.",
+            actor="agent",
+            now=3,
+        )
+    finally:
+        conn.close()
+
+
+def _needs_review_ticket(db_path: str) -> str:
+    tid = _new_ticket(db_path, ceiling=TicketState.needs_review)
+    _file_proposal(db_path, tid, "success", "success")
+    _file_proposal(db_path, tid, "approach", "approach")
+    _file_proposal(db_path, tid, "plan", "plan")
+    _file_proposal(db_path, tid, "result", "old result")
+    return tid
 
 
 def _set_key(db_path: str, ticket_id: str, key: str) -> None:
@@ -266,6 +291,71 @@ def test_worker_step_prompt_and_reply_are_visible_in_chat_history(tmp_path: Path
         ("assistant", "worker reply"),
     ]
     assert state.active_turn is None
+
+
+def test_claimed_rejection_turn_revises_result_in_same_session_without_chat_copy(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    tid = _needs_review_ticket(db)
+    _set_key(db, tid, STORED_KEY)
+    conn = connect(db)
+    try:
+        ticket, prompt = tickets_data.return_for_revision(
+            conn,
+            tid,
+            message="Add evidence.",
+            actor="human",
+            now=1,
+        )
+    finally:
+        conn.close()
+    assert ticket.state is TicketState.needs_review
+    assert ticket.ticket_status is TicketStatus.agent_running_step
+
+    fake = _ProposingFake(
+        _resume_script(STORED_KEY, _complete_ev()),
+        on_submit=lambda: _file_current_proposal(db, tid, "revised result with evidence"),
+    )
+    gateway = _gateway(fake)
+    sb = SystemB(db, RealClock(), gateway=gateway)
+    try:
+        sb.set_off_claimed(tid, ROLE, prompt)
+        assert sb.wait_idle(10.0)
+        conn = connect(db)
+        try:
+            state = chat_service.state(conn, gateway, tid, 2)
+            queues = tickets_views.queues_view(
+                conn,
+                now=4,
+                today_iso="2026-07-09",
+                item_approval_rows=[],
+                item_overdue_rows=[],
+            )
+        finally:
+            conn.close()
+    finally:
+        gateway.shutdown()
+
+    submit_frame = next(frame for frame in fake.sent if frame.get("method") == "prompt.submit")
+    assert submit_frame["params"]["text"] == (
+        "The user rejected your proposal and provided the following guidance:\n\nAdd evidence."
+    )
+    revised = _read(db, tid)
+    assert revised.state is TicketState.needs_review
+    assert revised.ticket_status is TicketStatus.awaiting_approval
+    assert revised.fields.result.value == "revised result with evidence"
+    assert revised.fields.result.proposal is None
+    assert [(message.role, message.text) for message in state.messages] == [("assistant", "ok")]
+    assert queues["approvals"][0]["waiting_since"] == 3
+
+    conn = connect(db)
+    try:
+        approved = tickets_data.approve_review(conn, tid, actor="human", now=2)
+    finally:
+        conn.close()
+    assert approved.state is TicketState.done
+    assert approved.ticket_status is TicketStatus.empty
 
 
 def test_created_session_key_is_queryable_before_prompt_submit(tmp_path: Path) -> None:

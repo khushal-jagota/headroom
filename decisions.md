@@ -2,6 +2,46 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D38 — Ticket hard deletion compacts Planner history, not Hermes storage
+
+A permanent ticket delete is a deliberate human-only exception to the normal append-only event rule.
+The transaction removes the ticket, placements, links, Panels chat rows, and every prior Planner event
+owned by or referring to that ticket, then writes fresh cleanup doorbells on surviving entities and one
+minimal `ticket_deleted` audit. Deletion is refused while either ticket control or any Panels chat turn
+is still running, avoiding a completion race against removed rows. The separate stored Hermes session
+is outside the approved Panels-record scope and remains in Hermes storage; after the ticket row is gone,
+Panels no longer has an entity or session-key route that can resolve it.
+
+## D37 — Direct employee turns rank first in the architecture review
+
+The architecture review delegated three read-only walks by file-disjoint area, then promoted only
+candidates that passed the deletion test and had concrete source/test evidence. Direct Review
+rejection is the top recommendation because the Ticket writer claims `agent_running_step` before
+the route relays through nullable System A; when System A is absent, the route returns success but
+no Hermes user turn starts. System B is the deep ownership home because removing it would spread
+claim, session, Chat, and settlement knowledge, while removing System A's one-line relay loses no
+readiness behaviour.
+
+The report stays outside the repository in the OS temp directory and proposes no interfaces. Five
+other candidates survived: atomic compound Ticket edits, centralized readiness wakes, domain-owned
+frontend resources, a deep Sprint item read projection, and one gateway composition/lifecycle
+module. `CONTEXT.md` and `docs/adr/` are absent, so live `docs/`, `PRINCIPLES.md`, decisions, and
+retained redesign plans supplied the domain and decision language for this run.
+
+## D36 — Review rejection is the worker's next user turn
+
+Review rejection sends the framed human guidance directly to the ticket's existing Hermes session
+as the prompt for an already-claimed `agent_running_step`. It does not write a Panels chat mirror,
+queue input for later, emit `approval_returned`, or change the ticket stage. Review visibility follows
+control status; a rejected final result is revised while the ticket remains `needs_review`.
+
+## D35 — Chat scrolling belongs to the reader after initial load
+
+The shared chat panel scrolls to the latest message once, after its initial chat state has loaded
+and rendered. Transcript, pending-state, and streamed-output updates never move the scroll
+position afterward. This follows the owner's explicit "on load" boundary rather than adding the
+common alternative of continuing to follow new output while the reader is near the bottom.
+
 ## D33 — Workspace mounts the canonical ticket screen by selected ID
 
 Workspace renders `TicketRoute` directly in its right pane and keys that mount by the selected

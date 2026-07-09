@@ -1144,7 +1144,7 @@ select {
   padding: var(--space-5) var(--space-6);
   border-right: var(--border-hairline) solid var(--border-color);
   --board-workspace-rail-pad-x: var(--space-2);
-  --board-workspace-stage-rail-width: 3.25rem;
+  --board-workspace-stage-rail-width: 0.9rem;
 }
 
 .board-workspace-right {
@@ -2017,9 +2017,18 @@ details.fsec[open] > summary .fsec-chev::before {
   cursor: pointer;
 }
 
-/* Copy — a pill rendered as a button (no native chrome). */
+/* Copy and destructive actions — pills rendered as buttons (no native chrome). */
 .pill-button {
   border: 0;
+}
+
+.pill-button--danger {
+  color: var(--accent-error);
+}
+
+.pill-button--danger:hover {
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--accent-error) 18%, transparent);
 }
 
 /* --- Sprint = TRACKING page (redesign) ----------------------------------- */

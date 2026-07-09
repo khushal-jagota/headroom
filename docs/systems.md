@@ -19,7 +19,7 @@ else is a surface, a worker, or a projection of that record.
        +-------------+-------------+
                      |
                      v
-          SQLite records + append-only events
+       SQLite records + normally append-only events
                      |
        +-------------+-------------+
        |                           |
@@ -45,9 +45,11 @@ ideas, links, and events. The main shape is contracts for records and enums, wri
 modules for mutations, API files for HTTP, and logic files for pure rules.
 
 The clean rule is: a write goes through a canonical writer, the writer appends an
-event, and the UI refetches from the server. Events are append-only. Records are not.
-Some older or gap-fill writers still live outside the intended homes; those are
-listed in the friction section.
+event, and the UI refetches from the server. Event history normally only grows;
+permanently deleting a mistaken ticket is the one exception, replacing that ticket's
+history with a minimal deletion audit. Records are not append-only. Some older or
+gap-fill writers still live outside the intended homes; those are listed in the
+friction section.
 
 Code paths: `src/planner/core/db.py`, `src/planner/core/contracts.py`,
 `src/planner/core/events.py`, `src/planner/*/contracts.py`, `src/planner/*/data.py`.

@@ -14,7 +14,7 @@ from planner.core import links as core_links
 from planner.core.contracts import JsonDict
 from planner.sprints.contracts import ItemStatus
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import GATING_FIELD, STATE_ORDER, Ticket, TicketState
+from planner.tickets.contracts import GATING_FIELD, STATE_ORDER, Ticket, TicketState, TicketStatus
 from planner.tickets.logic import fields_codec, machine
 
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
@@ -191,7 +191,7 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
         "tickets.project_id, ticket_projects.name AS project_name, tickets.sprint_item_id, "
         "sprint_items.project_id AS parent_project_id, "
         "parent_projects.name AS parent_project_name, tickets.fields, tickets.ticket_status, "
-        "tickets.created_at FROM tickets "
+        "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
         "LEFT JOIN projects AS parent_projects ON parent_projects.id = sprint_items.project_id "
@@ -227,6 +227,7 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
             "project": ticket_project_name,
             "group_project_id": group_project_id,
             "group_project": group_project_name,
+            "activity_at": int(row["updated_at"]),
             "has_pending_proposal": machine.has_pending_gating_proposal(TicketState(state), fields),
             "ticket_status": str(row["ticket_status"]),
         }
@@ -255,6 +256,8 @@ def _approval_digest(tickets: list[JsonDict], items: list[JsonDict]) -> list[Jso
     digest: list[JsonDict] = []
     for row in tickets:
         state = str(row["state"])
+        if row.get("ticket_status") == TicketStatus.agent_running_step.value:
+            continue
         if state == TicketState.needs_review.value:
             digest.append(
                 {"entity_id": row["id"], "kind": "review", "waiting_since": row["updated_at"]}
@@ -316,7 +319,7 @@ def _overdue_digest(
 
 def _approvals(conn: sqlite3.Connection, item_approval_rows: list[JsonDict]) -> list[JsonDict]:
     ticket_rows = conn.execute(
-        "SELECT id, title, state, fields, updated_at FROM tickets "
+        "SELECT id, title, state, ticket_status, fields, updated_at FROM tickets "
         "WHERE state NOT IN ('done','dropped') ORDER BY id"
     ).fetchall()
     ticket_digest: list[dict[str, object]] = []
@@ -328,6 +331,7 @@ def _approvals(conn: sqlite3.Connection, item_approval_rows: list[JsonDict]) -> 
             {
                 "id": tid,
                 "state": str(r["state"]),
+                "ticket_status": str(r["ticket_status"]),
                 "fields": json.loads(str(r["fields"])),
                 "updated_at": int(r["updated_at"]),
             }
@@ -341,16 +345,34 @@ def _approvals(conn: sqlite3.Connection, item_approval_rows: list[JsonDict]) -> 
         item_digest.append({"id": iid})
         item_title[iid] = str(r["title"])
     digest = _approval_digest(ticket_digest, item_digest)
-    # A5: review entries use the last state_changed->needs_review event time, not the
-    # updated_at proxy.
+    # A5: initial review entries use the state change time. A result revised in place
+    # keeps needs_review, so its new approval wait starts when control returns to the human.
     for entry in digest:
         if entry["kind"] == "review":
             tid = str(entry["entity_id"])
-            row = conn.execute(
-                "SELECT created_at FROM events WHERE entity_id = ? AND kind = 'state_changed' "
-                "AND json_extract(payload, '$.to') = 'needs_review' ORDER BY id DESC LIMIT 1",
-                (tid,),
-            ).fetchone()
+            status = next(
+                (
+                    str(ticket["ticket_status"])
+                    for ticket in ticket_digest
+                    if str(ticket["id"]) == tid
+                ),
+                "",
+            )
+            if status == TicketStatus.awaiting_approval.value:
+                row = conn.execute(
+                    "SELECT created_at FROM events WHERE entity_id = ? "
+                    "AND kind = 'ticket_status_changed' "
+                    "AND json_extract(payload, '$.ticket_status') = 'awaiting_approval' "
+                    "ORDER BY id DESC LIMIT 1",
+                    (tid,),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT created_at FROM events WHERE entity_id = ? AND kind = 'state_changed' "
+                    "AND json_extract(payload, '$.to') = 'needs_review' "
+                    "ORDER BY id DESC LIMIT 1",
+                    (tid,),
+                ).fetchone()
             entry["waiting_since"] = (
                 int(row["created_at"]) if row is not None
                 else ticket_updated.get(tid, entry["waiting_since"])

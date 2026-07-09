@@ -191,3 +191,15 @@ class Ticket:                      # §3.3 — column names match exactly
     fields: TicketFields
     created_at: int
     updated_at: int
+
+
+@dataclass(frozen=True)
+class TicketDeletion:
+    """The deleted identity plus surviving resources affected by the transaction."""
+
+    ticket_id: str
+    title: str
+    day_ids: tuple[str, ...]
+    sprint_item_ids: tuple[str, ...]
+    sprint_ids: tuple[str, ...]
+    linked_entity_ids: tuple[str, ...]

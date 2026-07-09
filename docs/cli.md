@@ -22,11 +22,11 @@ in the CLI is approval.
   returns the ticket list explicitly.
 - **`project list / create`** — inspect and add projects. Project availability is
   data-backed, not enum-backed.
-- **`ticket create / show / list / set / approve / block / unblock`** — manage
+- **`ticket create / show / list / set / approve / block / unblock / delete`** — manage
   tickets. `ticket create` can take a `--user-note` / `--user-note-file` intake
   note. `ticket set` names one field (`title`, `user-note`, `priority`, `deadline`,
   or `project` / `project-id`). Sprint placement is a sprint command, not a ticket
-  setter.
+  setter. `ticket delete` is a permanent human action and requires `--yes`.
 - **`ticket copy / events`** — copy one ticket's plain-text packet or inspect its event log.
 - **`sprint create / list / show / set / add-ticket / remove-ticket`** — plan and
   populate sprints. `current` resolves through `/api/sprint/current`; `none` means the

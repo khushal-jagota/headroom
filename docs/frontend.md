@@ -15,9 +15,11 @@ One screen per part of the system:
 - **Review** — the one-at-a-time approval walk. The approve button physically refuses
   to work until "how far may the worker go next" has been answered, both halves.
 - **Workspace** — today's tickets in a left rail backed by the board resource. The
-  rail groups tickets by project, orders rows by ticket progress inside each project,
-  shows the four ticket-stage dots, filters visible rows by `ticket_status`, and can
-  hide done tickets separately.
+  rail groups tickets by project, orders rows by recent ticket activity inside each
+  project, shows one current-stage/status dot per ticket, filters visible rows by
+  `ticket_status`, and can hide done tickets separately. The hide-done choice stays
+  in place when the human visits another screen and returns.
+
   The right side opens on the Chief of Staff chat, and selecting a ticket switches it
   to the same complete ticket screen used by a direct ticket link while leaving the
   Workspace rail in place.

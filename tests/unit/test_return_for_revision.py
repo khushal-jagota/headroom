@@ -12,10 +12,23 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets.contracts import AtCap, FieldName, TicketState
-from planner.tickets.data import change_scope, create_ticket, file_proposal
+from planner.tickets.data import (
+    change_scope,
+    create_ticket,
+    file_proposal,
+    finish_run_if_still_running_step,
+)
 
 _AGENT = {"X-Plan-Actor": "agent"}
 _PREFIX = "The user rejected your proposal and provided the following guidance:"
+
+
+class FakeSystemA:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    def send_to_claimed_worker(self, ticket_id: str, message: str) -> None:
+        self.sent.append((ticket_id, message))
 
 
 def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
@@ -61,6 +74,9 @@ def _ticket_with_pending_plan(db_path: Path) -> str:
         file_proposal(
             conn, ticket.id, field=FieldName.plan, body="bad plan", actor="agent", now=0
         )
+        finish_run_if_still_running_step(
+            conn, ticket.id, session_key=f"session-{ticket.id}", now=0
+        )
     finally:
         conn.close()
     return ticket.id
@@ -90,24 +106,19 @@ def _ticket_needs_review(db_path: Path) -> str:
         file_proposal(
             conn, ticket.id, field=FieldName.result, body="bad result", actor="agent", now=0
         )
+        finish_run_if_still_running_step(
+            conn, ticket.id, session_key=f"session-{ticket.id}", now=0
+        )
     finally:
         conn.close()
     return ticket.id
 
 
-def test_return_for_revision_clears_pending_proposal_and_records_message(
+def test_return_for_revision_clears_proposal_and_sends_direct_worker_message(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket_with_pending_plan(db_path)
-
-    class FakeSystemA:
-        def __init__(self) -> None:
-            self.pokes = 0
-
-        def poke(self) -> None:
-            self.pokes += 1
-
     fake_system_a = FakeSystemA()
     app.state.system_a = fake_system_a
 
@@ -120,21 +131,31 @@ def test_return_for_revision_clears_pending_proposal_and_records_message(
         ticket = response.json()
         chat = client.get(f"/api/chat/{tid}/state").json()
         events = client.get(f"/api/tickets/{tid}/events").json()["events"]
+        approvals = client.get("/api/queues").json()["approvals"]
+        duplicate = client.post(
+            f"/api/tickets/{tid}/return-for-revision",
+            json={"message": "Duplicate send."},
+        )
 
     assert ticket["state"] == "needs_plan"
-    assert ticket["ticket_status"] == "empty"
+    assert ticket["ticket_status"] == "agent_running_step"
     assert ticket["fields"]["plan"]["value"] is None
     assert ticket["fields"]["plan"]["proposal"] is None
-    assert chat["messages"][-1]["role"] == "human"
-    assert chat["messages"][-1]["text"] == f"{_PREFIX}\n\nMake it shorter."
-    returned = [event for event in events if event["kind"] == "approval_returned"]
-    assert returned[-1]["payload"] == {"kind": "proposal", "field": "plan"}
-    assert fake_system_a.pokes == 1
+    assert chat["messages"] == []
+    assert all(event["kind"] != "approval_returned" for event in events)
+    assert fake_system_a.sent == [(tid, f"{_PREFIX}\n\nMake it shorter.")]
+    assert approvals == []
+    assert duplicate.status_code == 409
+    assert duplicate.json()["error"]["code"] == "already_running"
 
 
-def test_return_for_revision_moves_final_review_back_to_in_progress(tmp_path: Path) -> None:
+def test_return_for_revision_keeps_final_review_stage_and_sends_worker_message(
+    tmp_path: Path,
+) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket_needs_review(db_path)
+    fake_system_a = FakeSystemA()
+    app.state.system_a = fake_system_a
 
     with TestClient(app) as client:
         response = client.post(
@@ -144,19 +165,43 @@ def test_return_for_revision_moves_final_review_back_to_in_progress(tmp_path: Pa
         assert response.status_code == 200, response.json()
         ticket = response.json()
         events = client.get(f"/api/tickets/{tid}/events").json()["events"]
+        stale_approve = client.post(f"/api/tickets/{tid}/approve")
 
-    assert ticket["state"] == "in_progress"
-    assert ticket["ticket_status"] == "empty"
+    assert ticket["state"] == "needs_review"
+    assert ticket["ticket_status"] == "agent_running_step"
     assert ticket["fields"]["result"]["value"] == "bad result"
     assert ticket["fields"]["result"]["proposal"] is None
-    returned = [event for event in events if event["kind"] == "approval_returned"]
-    assert returned[-1]["payload"] == {"kind": "review"}
-    state_changes = [event for event in events if event["kind"] == "state_changed"]
-    assert state_changes[-1]["payload"] == {
-        "from": "needs_review",
-        "to": "in_progress",
-        "cause": "return_for_revision",
-    }
+    assert all(event["kind"] != "approval_returned" for event in events)
+    assert all(
+        event["payload"].get("cause") != "return_for_revision"
+        for event in events
+        if event["kind"] == "state_changed"
+    )
+    assert fake_system_a.sent == [(tid, f"{_PREFIX}\n\nThe result needs evidence.")]
+    assert stale_approve.status_code == 409
+    assert stale_approve.json()["error"]["code"] == "already_running"
+    with TestClient(app) as client:
+        assert client.get("/api/queues").json()["approvals"] == []
+
+
+def test_return_for_revision_requires_existing_worker_session(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket_with_pending_plan(db_path)
+    conn = connect(str(db_path))
+    try:
+        conn.execute("UPDATE tickets SET chat_session_key = NULL WHERE id = ?", (tid,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/tickets/{tid}/return-for-revision",
+            json={"message": "Revise it."},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation"
 
 
 def test_return_for_revision_agent_forbidden_and_requires_message(tmp_path: Path) -> None:

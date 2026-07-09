@@ -6,6 +6,7 @@ const FALLBACK_KINDS = [
   "proposal_accepted",
   "proposal_superseded",
   "day_ticket_removed",
+  "ticket_deleted",
   "ticket_created",
   "sprint_created",
   "sprint_item_created",
@@ -41,7 +42,7 @@ assert.ok(kinds.length > 0, "backend EventKind list is empty");
 
 function sampleEvent(kind) {
   if (kind === "sprint_created" || kind === "sprint_updated") {
-    return { id: 1, entity_id: "s_demo", kind, payload: {}, created_at: 1 };
+    return { id: 1, entity_id: "sp_demo", kind, payload: {}, created_at: 1 };
   }
   if (
     kind === "sprint_item_created" ||
@@ -129,4 +130,15 @@ assert.deepEqual(
     created_at: 1
   }).sort(),
   ["board", "chat:t_left", "item:si_right", "queues", "sprint:current", "ticket:t_left"].sort()
+);
+
+assert.deepEqual(
+  keysForEvent({
+    id: 2,
+    entity_id: "t_deleted",
+    kind: "ticket_deleted",
+    payload: { ticket_id: "t_deleted", title: "Mistake", actor: "human" },
+    created_at: 2
+  }).sort(),
+  ["board", "chat:t_deleted", "queues", "sprint:current", "ticket:t_deleted"].sort()
 );

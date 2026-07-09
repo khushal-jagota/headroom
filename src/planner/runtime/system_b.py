@@ -40,6 +40,8 @@ class _Item:
     role: str
     prompt: str
     guard: RunGuard | None = None
+    already_claimed: bool = False
+    show_prompt_in_chat: bool = True
 
 
 class SystemB:
@@ -75,6 +77,22 @@ class SystemB:
         )
         thread.start()
 
+    def set_off_claimed(self, ticket_id: str, role: str, prompt: str) -> None:
+        """Run a human-returned ticket whose agent_running_step status is already claimed."""
+        item = _Item(
+            ticket_id,
+            role,
+            prompt,
+            already_claimed=True,
+            show_prompt_in_chat=False,
+        )
+        with self._active_cond:
+            self._active += 1
+        thread = threading.Thread(
+            target=self._run_item, args=(item,), name=f"system-b-{ticket_id}", daemon=True
+        )
+        thread.start()
+
     def set_idle_callback(self, cb: Callable[[str], None]) -> None:
         """Register a callback fired when a set-off settles."""
         self._idle_cb = cb
@@ -93,26 +111,62 @@ class SystemB:
 
     def _run_item(self, item: _Item) -> None:
         try:
-            self._run(item.ticket_id, item.prompt, item.guard)
+            self._run(
+                item.ticket_id,
+                item.prompt,
+                item.guard,
+                already_claimed=item.already_claimed,
+                show_prompt_in_chat=item.show_prompt_in_chat,
+            )
         finally:
             with self._active_cond:
                 self._active -= 1
                 self._active_cond.notify_all()
             self._on_idle(item.ticket_id)
 
-    def _run(self, ticket_id: str, prompt: str, guard: RunGuard | None) -> None:
+    def _run(
+        self,
+        ticket_id: str,
+        prompt: str,
+        guard: RunGuard | None,
+        *,
+        already_claimed: bool,
+        show_prompt_in_chat: bool,
+    ) -> None:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
             now = self._clock.now_unix()
-            pre = tickets_data.start_run_if_runnable(
-                conn, ticket_id, guard=guard, now=now
-            )
+            if already_claimed:
+                claimed = tickets_data.read_ticket(conn, ticket_id)
+                if (
+                    claimed.ticket_status is TicketStatus.agent_running_step
+                    and claimed.chat_session_key is None
+                ):
+                    tickets_data.mark_run_errored_if_still_running_step(
+                        conn,
+                        ticket_id,
+                        error="claimed worker step has no existing session",
+                        now=now,
+                    )
+                    return
+                pre = (
+                    claimed
+                    if claimed.ticket_status is TicketStatus.agent_running_step
+                    else None
+                )
+            else:
+                pre = tickets_data.start_run_if_runnable(
+                    conn, ticket_id, guard=guard, now=now
+                )
             if pre is None:
                 _log.info("system B skipped a no-longer-runnable ticket (ticket=%s)", ticket_id)
                 return
             current_session_key = pre.chat_session_key
             worker_turn = chat_service.start_worker_turn(
-                conn, ticket_id, visible_text=prompt, now=now
+                conn,
+                ticket_id,
+                visible_text=prompt if show_prompt_in_chat else "",
+                now=now,
             )
 
             def persist_session_key(session_key: str) -> None:

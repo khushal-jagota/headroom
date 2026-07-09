@@ -12,6 +12,9 @@ you send a message it starts a server-owned chat turn. The browser reads one
 running. The same resource survives navigation, remounts, reloads, WebSocket
 misses, and simple polling.
 
+When the panel first loads, it starts at the latest message. After that one-time
+positioning, new messages and live output do not move the reader's scroll position.
+
 Hermes is still the transport. The planner stores the durable `chat_session_key`
 before submitting a prompt, so tools inside a worker turn can resolve their ticket
 immediately. The visible transcript and live activity indicator belong to Panels:

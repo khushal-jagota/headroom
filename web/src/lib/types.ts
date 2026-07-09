@@ -98,6 +98,16 @@ export type TicketDetail = {
   fields: Record<string, TicketField>;
 };
 
+export type TicketDeletionResponse = {
+  ok: true;
+  ticket_id: string;
+  title: string;
+  day_ids: string[];
+  sprint_item_ids: string[];
+  sprint_ids: string[];
+  linked_entity_ids: string[];
+};
+
 export type CurrentSprintResponse = {
   sprint: AnyRecord | null;
   groups: Record<string, AnyRecord[]>;

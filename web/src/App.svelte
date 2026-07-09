@@ -21,6 +21,7 @@
   const queues = resource<{ approvals: unknown[] }>("queues", () => fetchJson("/api/queues"));
 
   let route = $state<Route>(parseRoute());
+  let workspaceHideDone = $state(false);
 
   function parseRoute(): Route {
     const hash = window.location.hash;
@@ -100,7 +101,7 @@
           {:else if route.name === "review"}
             <ReviewRoute />
           {:else if route.name === "workspace" || route.name === "board"}
-            <BoardRoute />
+            <BoardRoute bind:hideDone={workspaceHideDone} />
           {:else if route.name === "ticket"}
             <TicketRoute id={route.params.id} />
           {:else if route.name === "sprint"}

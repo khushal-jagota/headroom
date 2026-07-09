@@ -266,6 +266,24 @@ async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk) -> JsonDict:
     return tickets_views.ticket_detail(conn, ticket_id, clk.now_unix())
 
 
+@router.delete("/tickets/{ticket_id}")
+async def delete_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa) -> JsonDict:
+    reject_agents(ctx)
+    deleted = tickets_data.delete_ticket(
+        conn, ticket_id, actor=ctx.actor, now=clk.now_unix()
+    )
+    _poke(sa)  # deleting a blocker can make a surviving ticket runnable immediately
+    return {
+        "ok": True,
+        "ticket_id": deleted.ticket_id,
+        "title": deleted.title,
+        "day_ids": list(deleted.day_ids),
+        "sprint_item_ids": list(deleted.sprint_item_ids),
+        "sprint_ids": list(deleted.sprint_ids),
+        "linked_entity_ids": list(deleted.linked_entity_ids),
+    }
+
+
 @router.patch("/tickets/{ticket_id}")
 async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
                        cfg: Cfg, clk: Clk) -> JsonDict:
@@ -386,10 +404,11 @@ async def return_ticket_for_revision(
     body = RevisionMessageBody(message=body_str(raw, "message"))
     reject_agents(ctx)
     now = clk.now_unix()
-    ticket = tickets_data.return_for_revision(
+    ticket, framed_message = tickets_data.return_for_revision(
         conn, ticket_id, message=body["message"], actor=ctx.actor, now=now
     )
-    _poke(sa)
+    if sa is not None:
+        sa.send_to_claimed_worker(ticket_id, framed_message)
     return tickets_views.ticket_json(ticket, now)
 
 

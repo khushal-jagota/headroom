@@ -39,7 +39,7 @@
   let pausePending = $state(false);
   let threadElement = $state<HTMLDivElement | null>(null);
   let pollTimer: ReturnType<typeof window.setTimeout> | null = null;
-  let scrollRequest = 0;
+  let initialScrollComplete = false;
 
   function whoForRole(role: string): ChatMessage["who"] {
     const normalized = role.toLowerCase();
@@ -97,9 +97,8 @@
   }
 
   async function scrollThreadToBottom(): Promise<void> {
-    const request = ++scrollRequest;
     await tick();
-    if (request !== scrollRequest || !threadElement) return;
+    if (!threadElement) return;
     threadElement.scrollTop = threadElement.scrollHeight;
   }
 
@@ -112,8 +111,10 @@
   });
 
   $effect(() => {
-    transcript;
-    pending;
+    if (initialScrollComplete || chatState.loading || chatState.data === undefined || !threadElement) {
+      return;
+    }
+    initialScrollComplete = true;
     void scrollThreadToBottom();
   });
 

@@ -24,8 +24,8 @@ that system's doc.
                    (the single door)
                           │
                           ▼
-              the record  +  the append-only event log
-                 (one permanent line per change)
+          the record  +  the normally append-only event log
+                (ticket deletion leaves one audit line)
 ```
 
 Two kinds of user, two surfaces, on purpose. The human uses the web page, where
@@ -33,9 +33,9 @@ every decision that matters lives — approving work, granting how far a worker 
 go, closing things out. AI workers use a command-line tool and can only ever file
 _proposals_. A piece of code called the **resolution engine** is the one thing that
 can turn a proposal into a real value or move a ticket to its next stage; a worker
-can never take a decision that belongs to the human. Every change, by anyone, also
-writes a line into an event log that is strictly append-only — the records it
-describes change, but the history of what happened is never edited or lost.
+can never take a decision that belongs to the human. Every normal change also writes
+a permanent event line. Permanently deleting a mistaken ticket is the sole exception:
+its old event lines are replaced by one minimal deletion audit.
 
 ## The systems
 

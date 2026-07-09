@@ -3,16 +3,13 @@
   import { fetchJson } from "../lib/api";
   import { resource } from "../lib/resources";
   import type { BoardResponse, GatewayStatus } from "../lib/types";
-  import {
-    FIELD_NAMES,
-    STATE_ORDER,
-    ticketStageVisualState,
-    ticketStatusLabel,
-    type FieldStageVisualState
-  } from "../lib/ui";
+  import { gatingField, ticketStageVisualState, ticketStatusLabel } from "../lib/ui";
+  import type { FieldStageVisualState } from "../lib/ui";
   import ChatPanel from "../components/ChatPanel.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import TicketRoute from "./TicketRoute.svelte";
+
+  let { hideDone = $bindable(false) }: { hideDone?: boolean } = $props();
 
   const chiefOfStaffEntityId = "agent_panels_chief_of_staff";
   const noProjectKey = "__no_project__";
@@ -33,7 +30,6 @@
   let rightPaneMode = $state<"chief" | "ticket">("chief");
   let collapsedProjects = $state<string[]>([]);
   let statusFilter = $state<string>("all");
-  let hideDone = $state(false);
   let allCards = $derived(columns.flatMap((column) => column.cards));
   let selectedCard = $derived(allCards.find((card) => card.id === selectedTicketId) || null);
   let projectSections = $derived(buildProjectSections(columns, statusFilter, hideDone));
@@ -44,6 +40,11 @@
   }
 
   function showChiefOfStaff(): void {
+    rightPaneMode = "chief";
+  }
+
+  function handleTicketDeleted(): void {
+    selectedTicketId = null;
     rightPaneMode = "chief";
   }
 
@@ -78,6 +79,19 @@
     return null;
   }
 
+  function currentStageField(card: Record<string, any>): string {
+    if (card.state === "needs_review" || card.state === "done") return "result";
+    return gatingField(card.state) || "result";
+  }
+
+  function currentStageState(card: Record<string, any>): FieldStageVisualState {
+    return cardStageState(card, currentStageField(card));
+  }
+
+  function activitySortValue(card: Record<string, any>): number {
+    return Number(card.activity_at ?? 0);
+  }
+
   function buildProjectSections(
     sourceColumns: Array<{ state: string; cards: Record<string, any>[] }>,
     activeStatusFilter: string,
@@ -102,13 +116,10 @@
       }
     }
 
-    const stateRank = new Map(STATE_ORDER.map((state, index) => [state, index]));
     for (const group of groups.values()) {
       group.cards.sort((left, right) => {
-        const stateDelta =
-          (stateRank.get(left.state) ?? STATE_ORDER.length) -
-          (stateRank.get(right.state) ?? STATE_ORDER.length);
-        return stateDelta || left.boardSequence - right.boardSequence;
+        const activityDelta = activitySortValue(right) - activitySortValue(left);
+        return activityDelta || left.boardSequence - right.boardSequence;
       });
     }
 
@@ -201,6 +212,9 @@
               {#if !collapsed}
                 <div class="board-workspace-index-items">
                   {#each section.cards as card}
+                    {@const stageField = currentStageField(card)}
+                    {@const stageState = currentStageState(card)}
+                    {@const marker = stageMarker(card, stageState)}
                     <button
                       class:active={rightPaneMode === "ticket" && selectedCard?.id === card.id}
                       class="board-workspace-item-row"
@@ -212,18 +226,14 @@
                       onclick={() => selectCard(card.id)}
                     >
                       <span class="board-workspace-item-label entity-row-title">{card.title}</span>
-                      <span class="board-workspace-stage-rail" aria-label="Ticket stages">
-                        {#each FIELD_NAMES as name}
-                          {@const stageState = cardStageState(card, name)}
-                          {@const marker = stageMarker(card, stageState)}
-                          <span
-                            class={`board-workspace-stage-mark fsec-mark fsec-mark--${stageState}`}
-                            data-stage-field={name}
-                            data-stage-state={stageState}
-                            data-marker={marker || undefined}
-                            aria-label={`${name} ${stageState.replace(/-/g, " ")}`}
-                          ></span>
-                        {/each}
+                      <span class="board-workspace-stage-rail" aria-label="Ticket current stage">
+                        <span
+                          class={`board-workspace-stage-mark fsec-mark fsec-mark--${stageState}`}
+                          data-stage-field={stageField}
+                          data-stage-state={stageState}
+                          data-marker={marker || undefined}
+                          aria-label={`${stageField} ${stageState.replace(/-/g, " ")}`}
+                        ></span>
                       </span>
                     </button>
                   {/each}
@@ -246,7 +256,7 @@
             />
           {:else if selectedCard}
             {#key selectedCard.id}
-              <TicketRoute id={selectedCard.id} />
+              <TicketRoute id={selectedCard.id} onDeleted={handleTicketDeleted} />
             {/key}
           {/if}
         </section>

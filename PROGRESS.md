@@ -3,6 +3,113 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-09): Real ticket hard deletion
+
+Current implementation:
+
+- One human-only transaction now permanently deletes a ticket, refuses any running worker control
+  or chat turn, repacks day placement, removes links and Panels chat, and refreshes affected
+  day/item/link/sprint/queue resources.
+- Prior Planner events owned by or referring to the ticket are pruned before fresh cleanup
+  doorbells are written; one minimal `ticket_deleted` event remains as the audit.
+- `DELETE /api/tickets/{id}`, `panels ticket delete <id> --yes`, and a confirmed destructive action
+  on both standalone and embedded Ticket screens all use the same writer. The route wakes System A
+  because deleting a blocking ticket can make another ticket runnable.
+- The separate stored Hermes session is explicitly outside the Panels-record deletion boundary.
+
+Verification status:
+
+- Focused delete/event tests passed: 4 unit tests; CLI/browser delete coverage passed: 2 e2e tests.
+- Codex's plan review found the active-human-turn race and the event-history contract/scope gaps;
+  those were fixed or explicitly scoped. Its implementation review found stale cross-entity event
+  references; recursive pre-delete pruning and coverage were added, and the follow-up reported
+  `RESOLVED`.
+- Full `./verify` passed: ruff ok, mypy ok, 185 unit tests passed, build/frontend gates ok,
+  38 e2e tests passed, `VERIFY: PASS`.
+- The real mistaken ticket `t_e5yagwfw` was deleted through the new CLI action. Direct lookup now
+  returns `not_found`; ticket/day/link/chat rows are zero; it is absent from ticket lists and Review;
+  exactly one minimal `ticket_deleted` audit remains.
+
+Immediate next step:
+
+- Propose the result on ticket `t_svb8xkpz`.
+
+## Current work cycle (2026-07-09): Deep-module architecture review
+
+Current result:
+
+- Completed a read-only architecture scan using the deep-module vocabulary and deletion test.
+- Opened a six-candidate visual report at
+  `/var/folders/m1/ghygg_r133nc05srgprf9j5c0000gn/T/architecture-review-20260709-220503.html`.
+- Ranked direct employee-turn ownership first: Review rejection can claim
+  `agent_running_step` and return success without delivering guidance when System A is absent.
+- Proved a second correctness failure with temporary SQLite: a compound Ticket PATCH can return
+  validation while preserving an earlier field commit.
+- The other surviving candidates are readiness-wake ownership, frontend resource identity and
+  invalidation, the Sprint item read projection, and gateway composition/lifecycle.
+
+Verification status:
+
+- Three read-only sub-agent walks independently covered Ticket/core, runtime/Chat, and
+  frontend/Sprint seams; the lead checked every promoted candidate against source, tests,
+  decisions, and the relevant redesign plans.
+- The report contains six before/after diagrams, passed an HTML tag-balance check, and was opened
+  with the macOS `open` command.
+- No implementation changed, so `./verify` was not rerun for this review-only cycle.
+
+Immediate next step:
+
+- The owner selects a candidate; then run the grilling and domain-modeling loop before proposing
+  any interface.
+
+## Current work cycle (2026-07-09): Direct Review rejection worker turn
+
+Current implementation:
+
+- Review rejection clears a pending gated proposal without changing ticket stage or settled values.
+- The rejection guidance is sent directly to the existing Hermes worker session as the prompt for an
+  already-claimed `agent_running_step`; it is not copied into Panels chat or deferred to System A.
+- Agent-running tickets are absent from Review. A rejected final result can be revised and returned to
+  Review while the ticket remains `needs_review`.
+- The obsolete `approval_returned` and rejection state-change writes are no longer emitted.
+
+Verification status:
+
+- Targeted return-for-revision and System B tests pass: 19 tests passed.
+- Focused Review browser coverage passed.
+- Codex found duplicate-send, stale-approve, missing-session, and stale-queue-time risks; each was
+  fixed, covered, and the final read-only review reported no violations.
+- Full `./verify` passed: ruff ok, mypy ok, 182 unit tests passed, build/frontend gates ok,
+  36 e2e tests passed, `VERIFY: PASS`.
+
+Immediate next step:
+
+- Propose the result on ticket `t_854bbmqg`.
+
+## Current work cycle (2026-07-09): Keep Hide done across navigation
+
+Current implementation:
+
+- The app shell now owns the Workspace Hide done choice, so leaving and returning to Workspace
+  remounts the screen with the current choice instead of resetting it.
+- The Workspace toggle remains the writer for that choice, and done-ticket filtering still uses the
+  same value.
+- Workspace browser coverage now checks both enabled and disabled choices after navigating to Day
+  and back.
+- `docs/frontend.md` describes the navigation behavior.
+
+Verification status:
+
+- `npm --prefix web run check` passed with the existing three `TicketRoute.svelte` warnings.
+- `npm --prefix web run build` passed and refreshed the checked-in frontend bundle.
+- `.venv/bin/python -m pytest tests/e2e/test_board_stage_indicators.py -q` passed: 2 tests passed.
+- Full `./verify` passed: ruff ok, mypy ok, 181 unit tests passed, build/frontend gates ok,
+  36 e2e tests passed, `VERIFY: PASS`.
+
+Immediate next step:
+
+- Propose the result on ticket `t_mu16dnhj`.
+
 ## Current work cycle (2026-07-09): Worker chat context boundary
 
 Current implementation:
@@ -150,30 +257,11 @@ Immediate next step:
 
 - Result proposed on ticket `t_37fx0wvp`; ready for owner review.
 
-## Current work cycle (2026-07-09): Review queue send-back guidance
+## Superseded work cycle (2026-07-09): Review queue send-back guidance
 
-Current implementation:
-
-- Review cards for ticket approvals now include a compact guidance box with a **Send back** action.
-- `POST /api/tickets/{id}/return-for-revision` records the human guidance in ticket chat, clears a
-  pending gated proposal without accepting it, or moves a final review item back to `in_progress`.
-- Returning an item sets `ticket_status` back to `empty`, emits `approval_returned`, refreshes the
-  Review queue/chat/ticket resources, and pokes System A so the worker can revise immediately.
-- Added API and browser coverage for proposal returns, final review returns, agent/message guards,
-  chat recording, queue clearing, and event mapping.
-- `docs/tickets-and-gates.md` describes the send-back path.
-
-Verification status:
-
-- Targeted `.venv/bin/pytest tests/unit/test_return_for_revision.py
-  tests/e2e/test_flows_a.py::test_review_return_for_revision_sends_guidance_and_clears_queue -q`
-  passed after the new ruff fixes.
-- Full `./verify` passed: ruff ok, mypy ok, 178 unit tests passed, build/frontend gates ok, 34 e2e
-  tests passed, `VERIFY: PASS`.
-
-Immediate next step:
-
-- Propose the result on ticket `t_gcsd5uyr`.
+The original send-back implementation in this cycle has been replaced by the direct Review rejection
+worker turn described at the top of this file. Rejection no longer writes ticket chat, changes ticket
+stage, emits `approval_returned`, or relies on a later System A prompt.
 
 ## Current work cycle (2026-07-09): Default approval onward scope to propose
 
@@ -225,23 +313,33 @@ Immediate next step:
 
 - Result proposed on ticket `t_u10mmpj1`; ready for owner review.
 
-## Current work cycle (2026-07-09): Chat panels open at bottom
+## Current work cycle (2026-07-09): Chat panels only scroll on initial load
 
 Current implementation:
 
-- Updated shared `ChatPanel` to bind the scrollable message thread and scroll it to the bottom
-  after Svelte renders transcript or pending-state changes.
+- The shared `ChatPanel` waits for the initial chat state to finish loading, scrolls to the latest
+  message once after rendering, and never changes scroll position for later transcript, pending,
+  or streamed-output updates.
 - The behavior is centralized in `ChatPanel`, so ticket, workspace, and Chief of Staff chat panels
   inherit it without route-specific layout changes.
+- Browser coverage proves both initial bottom positioning and preserved user scroll during a pending
+  turn with partial streamed output, as well as after a completed reply.
 
 Verification status:
 
-- Full `./verify` passed: ruff ok, mypy ok, 174 unit tests passed, build/frontend gates ok, 32 e2e
-  tests passed, `VERIFY: PASS`.
+- `npm --prefix web run check`, `npm --prefix web run build`, and the focused chat browser test
+  passed before unrelated concurrent Workspace edits made `BoardRoute.svelte` invalid. The three
+  existing `TicketRoute.svelte` initial-`id` warnings remain.
+- Codex's first review found missing pending/streaming coverage; the slow-fake browser path now proves
+  that case, and the follow-up review returned `RESOLVED`.
+- Full `./verify` passed ruff, mypy, 181 unit tests, asset/build checks, and all 36 e2e tests, but the
+  overall frontend gate failed on an unrelated concurrent `BoardRoute.svelte` `{@const}` placement
+  error. That file is outside this ticket and continued changing during verification.
 
 Immediate next step:
 
-- Result proposed on ticket `t_w6js97tn`; ready for owner review.
+- Result proposed on ticket `t_7sbe2vay`; ready for owner review. Rerun full verification after the
+  concurrent Workspace change settles.
 
 ## Current orchestration ledger (2026-07-09)
 
@@ -1725,7 +1823,8 @@ What changed:
 - The Workspace right pane defaults to the existing Chief of Staff chat. Selecting a ticket shows
   the current ticket link view, and the full-width borderless Chief of Staff button restores the
   chat.
-- The Workspace rail now renders all four lifecycle dots for each ticket, grouped by project with
+- The Workspace rail now orders tickets by recent ticket activity inside each project and renders one
+  current-stage/status dot at the far right of each ticket row, grouped by project with
   ticket-status filters in the left rail.
 - Focused e2e coverage was updated/added for Workspace routing, the embedded Chief of Staff chat,
   legacy `#/board`, and the one-dot stage indicator.
@@ -1745,13 +1844,15 @@ What passed:
   tests/e2e/test_flows_a.py::test_e26_chat_panel_echo_and_offline
   tests/e2e/test_flows_b.py::test_e31_refresh_restores_state -q` passed.
 - Read-only Codex diff review (`codex exec -m gpt-5.5 -s read-only`) reported `NO VIOLATIONS`.
+- `.venv/bin/pytest tests/e2e/test_board_stage_indicators.py -q` passed after switching Workspace
+  ordering to activity and the rail to one current-stage/status dot.
 - Fresh `./verify` passed:
   - ruff ok
   - mypy ok
-  - unit suite ok: 172 passed, 3 warnings
+  - unit suite ok: 181 passed, 3 warnings
   - build check ok
   - frontend ok
-  - e2e suite ok: 31 passed
+  - e2e suite ok: 36 passed
   - `VERIFY: PASS`
 
 Immediate next step: ready for owner review/commit.
