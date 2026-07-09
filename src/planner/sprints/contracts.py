@@ -1,35 +1,28 @@
-"""Sprint domain shapes: sprints, sprint items, ideas, and the item status
-proposal. Stdlib only; Priority/Project imported from core."""
+"""Sprint domain shapes: sprints, sprint items, ideas, and derived item status.
+Stdlib only; Priority/Project imported from core."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final, TypedDict
 
 from planner.core.contracts import Priority, Project
 
 
-class ItemStatus(StrEnum):         # §3.2
+class ItemStatus(StrEnum):
     todo = "todo"
-    active = "active"
-    done = "done"
+    in_progress = "in_progress"
     blocked = "blocked"
-    deferred_next_sprint = "deferred_next_sprint"
+    done = "done"
 
 
-# Agent-permitted direct transitions (§3.2): todo<->active, and -> blocked (with blockers).
-AGENT_ITEM_TRANSITIONS: Final[frozenset[tuple[ItemStatus, ItemStatus]]] = frozenset({
-    (ItemStatus.todo, ItemStatus.active),
-    (ItemStatus.active, ItemStatus.todo),
-    (ItemStatus.todo, ItemStatus.blocked),
-    (ItemStatus.active, ItemStatus.blocked),
-})
-
-# Statuses reachable only via human-accepted proposal (§3.2).
-PROPOSAL_ONLY_STATUSES: Final[frozenset[ItemStatus]] = frozenset({
-    ItemStatus.done, ItemStatus.deferred_next_sprint,
-})
+ITEM_STATUS_ORDER: Final[tuple[ItemStatus, ...]] = (
+    ItemStatus.todo,
+    ItemStatus.in_progress,
+    ItemStatus.blocked,
+    ItemStatus.done,
+)
 
 # Sprint text-field groups: the kickoff and review sub-fields. Freeze is retired,
 # so these no longer gate writes — they only enumerate the always-editable sprint
@@ -43,14 +36,6 @@ REVIEW_FIELDS: Final[tuple[str, ...]] = (
 MID_SPRINT_FIELDS: Final[tuple[str, ...]] = (
     "mid_where_we_stand", "mid_whats_changed", "mid_what_to_adjust",
 )
-
-
-@dataclass(frozen=True)
-class ItemStatusProposal:          # §3.2 status proposal — the item's single gating field
-    to_status: ItemStatus          # must be in PROPOSAL_ONLY_STATUSES
-    note: str | None               # optional rationale shown in Review
-    proposed_by: str
-    created_at: int
 
 
 @dataclass
@@ -80,13 +65,10 @@ class SprintItem:                  # §3.2
     id: str
     title: str
     body: str
-    status: ItemStatus
     priority: Priority
     deadline: str | None
     project: Project
     sprint_id: str | None          # NULL = backlog/deferred
-    blocked_by: list[str] = field(default_factory=list)   # ticket ids; non-empty iff blocked
-    status_proposal: ItemStatusProposal | None = None
     created_at: int = 0
     updated_at: int = 0
 
@@ -105,11 +87,6 @@ class CreateItemBody(TypedDict, total=False):     # POST /items
     priority: str | None           # Priority value; default P3
     deadline: str | None           # ISO date
     sprint_id: str | None          # null/absent = backlog
-
-
-class ProposeStatusBody(TypedDict, total=False):  # POST /items/{id}/propose-status
-    to: str                        # ItemStatus value; required (default "" is rejected)
-    note: str | None               # optional rationale shown in Review
 
 
 class AddItemTicketBody(TypedDict, total=False):  # POST /items/{id}/tickets

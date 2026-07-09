@@ -17,7 +17,6 @@ from planner.seed.logic.blocks import (
     split_sections,
 )
 from planner.seed.logic.fieldmap import split_pn_prefix
-from planner.sprints.contracts import ItemStatus
 
 
 def parse_deferred(text: str, source_file: str) -> tuple[list[ParsedItem], list[SkippedSection]]:
@@ -39,7 +38,6 @@ def parse_deferred(text: str, source_file: str) -> tuple[list[ParsedItem], list[
                 priority, title = split_pn_prefix(bullet.text)
                 items.append(ParsedItem(
                     title=title,
-                    status=ItemStatus.todo,
                     priority=priority if priority is not None else Priority.P3,
                     project=project,
                     body="\n".join(emit_body(bullet.children)),

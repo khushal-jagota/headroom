@@ -61,7 +61,7 @@ class EventKind(StrEnum):
     item_updated = "item_updated"
     sprint_updated = "sprint_updated"
     day_updated = "day_updated"                      # notes/brief manual edits
-    item_status_changed = "item_status_changed"      # {from, to, cause} incl. agent todo<->active
+    item_children_changed = "item_children_changed"  # {ticket_id, reason}
 
     # --- supplemental: day lifecycle ---
     day_ticket_added = "day_ticket_added"            # {ticket_id, position, cause}

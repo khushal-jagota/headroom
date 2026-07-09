@@ -100,7 +100,27 @@ def _apply_decision(
     )
     for spec in decision.events:
         append_event(conn, ticket.id, spec.kind, spec.payload, now)
+    if any(spec.kind is EventKind.state_changed for spec in decision.events):
+        _append_item_children_changed(conn, ticket.sprint_item_id, ticket.id, "state", now)
     return _load_ticket(conn, ticket.id)
+
+
+def _append_item_children_changed(
+    conn: sqlite3.Connection,
+    sprint_item_id: str | None,
+    ticket_id: str,
+    reason: str,
+    now: int,
+) -> None:
+    if sprint_item_id is None:
+        return
+    append_event(
+        conn,
+        sprint_item_id,
+        EventKind.item_children_changed,
+        {"ticket_id": ticket_id, "reason": reason},
+        now,
+    )
 
 
 def _write_ticket_status(
@@ -111,6 +131,9 @@ def _write_ticket_status(
     *,
     error: str | None = None,
 ) -> None:
+    row = conn.execute(
+        "SELECT sprint_item_id FROM tickets WHERE id = ?", (ticket_id,)
+    ).fetchone()
     conn.execute(
         "UPDATE tickets SET ticket_status = ?, updated_at = ? WHERE id = ?",
         (ticket_status.value, now, ticket_id),
@@ -119,6 +142,13 @@ def _write_ticket_status(
     if error is not None:
         payload["error"] = error
     append_event(conn, ticket_id, EventKind.ticket_status_changed, payload, now)
+    _append_item_children_changed(
+        conn,
+        str(row["sprint_item_id"]) if row is not None and row["sprint_item_id"] is not None else None,
+        ticket_id,
+        "ticket_status",
+        now,
+    )
 
 
 def _persist_ticket_chat_session_key(
@@ -222,6 +252,7 @@ def create_ticket(
             ),
         )
         append_event(conn, ticket_id, EventKind.ticket_created, {}, now)
+        _append_item_children_changed(conn, sprint_item_id, ticket_id, "created", now)
         return _load_ticket(conn, ticket_id)
 
 
@@ -512,6 +543,8 @@ def set_title(
             {"field": "title", "from": prev, "to": title},
             now,
         )
+        _append_item_children_changed(conn, prev_item, ticket_id, "parentage", now)
+        _append_item_children_changed(conn, sprint_item_id, ticket_id, "parentage", now)
         return _load_ticket(conn, ticket_id)
 
 
@@ -539,6 +572,7 @@ def set_project(
             {"field": "project", "from": prev, "to": new_value},
             now,
         )
+        _append_item_children_changed(conn, sprint_item_id, ticket_id, "parentage", now)
         return _load_ticket(conn, ticket_id)
 
 

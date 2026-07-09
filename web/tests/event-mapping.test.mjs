@@ -20,7 +20,7 @@ const FALLBACK_KINDS = [
   "item_updated",
   "sprint_updated",
   "day_updated",
-  "item_status_changed",
+  "item_children_changed",
   "day_ticket_added",
   "ticket_status_changed",
   "link_added",
@@ -39,7 +39,7 @@ function sampleEvent(kind) {
   if (
     kind === "sprint_item_created" ||
     kind === "item_updated" ||
-    kind === "item_status_changed"
+    kind === "item_children_changed"
   ) {
     return { id: 1, entity_id: "si_demo", kind, payload: {}, created_at: 1 };
   }

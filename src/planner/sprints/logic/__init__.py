@@ -1,5 +1,5 @@
-"""Pure sprint logic: item-transition permissions, blockers-cleared derivation,
-and sprint-range overlap / current-sprint selection. Stdlib + contracts only; zero
+"""Pure sprint logic: derived item status, blockers-cleared derivation, and
+sprint-range overlap / current-sprint selection. Stdlib + contracts only; zero
 side effects. Data-layer writers import from here."""
 
 from __future__ import annotations
@@ -11,19 +11,14 @@ from planner.sprints.logic.ranges import (
     find_overlap,
     ranges_overlap,
 )
-from planner.sprints.logic.transitions import (
-    TransitionVerdict,
-    classify_agent_transition,
-    classify_human_transition,
-)
+from planner.sprints.logic.status import SprintItemChildStatus, derive_sprint_item_status
 
 __all__ = [
     "DateRange",
-    "TransitionVerdict",
+    "SprintItemChildStatus",
     "blockers_cleared",
-    "classify_agent_transition",
-    "classify_human_transition",
     "current_sprint_id",
+    "derive_sprint_item_status",
     "find_overlap",
     "ranges_overlap",
 ]

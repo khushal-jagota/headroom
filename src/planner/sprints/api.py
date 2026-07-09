@@ -25,7 +25,6 @@ from planner.sprints.contracts import (
     CreateItemBody,
     CreateSprintBody,
     ItemStatus,
-    ProposeStatusBody,
 )
 from planner.tickets import data as tickets_data
 from planner.tickets.api import Cfg, Clk, Ctx, DbConn, body_opt_str, body_str, parse_enum
@@ -83,12 +82,6 @@ def _marshal_item_deadline(raw: object) -> None:
         ) from exc
 
 
-def _marshal_blocked_by(raw: object) -> list[str]:
-    if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
-        raise PlannerError(ErrorCode.validation, "invalid blocked_by", {"blocked_by": raw})
-    return raw
-
-
 # --- item routes ---------------------------------------------------------------
 
 
@@ -111,7 +104,7 @@ async def create_item(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
         sprint_id=body["sprint_id"],
         clock=clk,
     )
-    return {**sprints_views.item_json(item), "blockers_cleared": False}
+    return sprints_views.item_detail(conn, item.id)
 
 
 @router.get("/items")
@@ -161,10 +154,9 @@ async def patch_item(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
             raise PlannerError(ErrorCode.validation, "unknown item field", {"field": key})
     if not body:
         raise PlannerError(ErrorCode.validation, "no item fields to update", {})
-    if "blocked_by" in body and "status" not in body:
-        raise PlannerError(ErrorCode.validation, "blocked_by requires status", {})
-    # §3.2/§8: an agent's only item write surface is the status transition (todo↔active,
-    # blocked); plain fields and sprint moves are human-only.
+    if "status" in body or "blocked_by" in body:
+        field = "status" if "status" in body else "blocked_by"
+        raise PlannerError(ErrorCode.validation, "item status is derived", {"field": field})
     reject_agent_fields(ctx, body, set(_ITEM_PLAIN_FIELDS) | {"sprint_id"})
     for field in _ITEM_PLAIN_FIELDS:
         if field in body:
@@ -178,31 +170,6 @@ async def patch_item(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
             sprints_data.update_item_field(conn, item_id, field, value, clock=clk)
     if "sprint_id" in body:
         sprints_data.assign_item_sprint(conn, item_id, body_opt_str(body, "sprint_id"), clock=clk)
-    if "status" in body:
-        to_status = parse_enum(ItemStatus, body_str(body, "status"), "status")
-        blocked_by = _marshal_blocked_by(body["blocked_by"]) if "blocked_by" in body else None
-        sprints_data.transition_item_status(
-            conn, item_id, to_status, clock=clk, by_agent=not ctx.is_human,
-            blocked_by=blocked_by,
-        )
-    return sprints_views.item_detail(conn, item_id)
-
-
-@router.post("/items/{item_id}/propose-status")
-async def propose_item_status(item_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                              clk: Clk) -> JsonDict:
-    body = ProposeStatusBody(to=body_str(raw, "to"), note=body_opt_str(raw, "note"))
-    to_status = parse_enum(ItemStatus, body["to"], "status")
-    sprints_data.propose_item_status(
-        conn, item_id, to_status, note=body["note"], proposed_by=ctx.actor, clock=clk
-    )
-    return sprints_views.item_detail(conn, item_id)
-
-
-@router.post("/items/{item_id}/accept-status")
-async def accept_item_status(item_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
-    reject_agents(ctx)
-    sprints_data.accept_item_status(conn, item_id, clock=clk, resolved_by="human")
     return sprints_views.item_detail(conn, item_id)
 
 

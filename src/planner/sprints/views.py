@@ -1,17 +1,14 @@
 """Sprint / sprint-item / idea read-view assembly: per-entity serializers, item
-rollups, the sprint-current view (§5/§6.1), and the two item-row helpers the queues
-view consumes. Pure read assembly — no FastAPI, no writes. This is the only module
-that imports across the views layer (tickets/views ticket_json + tickets/data
-read_ticket) to render a sprint's loose tickets; tickets/views never imports back."""
+rollups, the sprint-current view (§5/§6.1), and the item-row helpers the queues
+view consumes. Sprint item status is always derived through sprints.data.read_item."""
 
 from __future__ import annotations
 
-import json
 import sqlite3
 
 from planner.core.contracts import JsonDict, Project
 from planner.sprints import data as sprints_data
-from planner.sprints.contracts import ItemStatus, Sprint, SprintItem
+from planner.sprints.contracts import ITEM_STATUS_ORDER, ItemStatus, Sprint, SprintItem
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TicketState
@@ -27,24 +24,16 @@ def _prio_rank(priority: str) -> int:
 # --- serializers ---------------------------------------------------------------
 
 
-def item_json(item: SprintItem) -> JsonDict:
-    proposal = item.status_proposal
+def item_json(item: SprintItem, status: ItemStatus) -> JsonDict:
     return {
         "id": item.id,
         "title": item.title,
         "body": item.body,
-        "status": item.status.value,
+        "status": status.value,
         "priority": item.priority.value,
         "deadline": item.deadline,
         "project": item.project.value,
         "sprint_id": item.sprint_id,
-        "blocked_by": list(item.blocked_by),
-        "status_proposal": None if proposal is None else {
-            "to_status": proposal.to_status.value,
-            "note": proposal.note,
-            "proposed_by": proposal.proposed_by,
-            "created_at": proposal.created_at,
-        },
         "created_at": item.created_at,
         "updated_at": item.updated_at,
     }
@@ -118,11 +107,10 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
     ]
 
 
-def blocked_by_titles(conn: sqlite3.Connection, blocked_by: list[str]) -> list[str]:
-    """Resolve an item's blocked_by ticket ids (§3.2 stores ids) to titles, order
-    preserved, unknown ids dropped — so the Blocked chip can name the blocker."""
+def blocking_ticket_titles(conn: sqlite3.Connection, blocking_ticket_ids: list[str]) -> list[str]:
+    """Resolve blocker ticket ids to titles, order preserved, unknown ids dropped."""
     titles: list[str] = []
-    for ticket_id in blocked_by:
+    for ticket_id in blocking_ticket_ids:
         row = conn.execute(
             "SELECT title FROM tickets WHERE id = ?", (ticket_id,)
         ).fetchone()
@@ -144,9 +132,6 @@ def list_items(
 ) -> list[JsonDict]:
     clauses: list[str] = []
     params: list[str] = []
-    if status is not None:
-        clauses.append("status = ?")
-        params.append(status.value)
     if project is not None:
         clauses.append("project = ?")
         params.append(project.value)
@@ -163,15 +148,24 @@ def list_items(
     result: list[JsonDict] = []
     for row in sorted(rows, key=_item_row_key):
         read = sprints_data.read_item(conn, str(row["id"]))
-        result.append({**item_json(read.item), "blockers_cleared": read.blockers_cleared})
+        if status is not None and read.status is not status:
+            continue
+        result.append(
+            {
+                **item_json(read.item, read.status),
+                "blockers_cleared": read.blockers_cleared,
+                "blocking_ticket_ids": list(read.blocking_ticket_ids),
+            }
+        )
     return result
 
 
 def item_detail(conn: sqlite3.Connection, item_id: str) -> JsonDict:
     read = sprints_data.read_item(conn, item_id)
     return {
-        **item_json(read.item),
+        **item_json(read.item, read.status),
         "blockers_cleared": read.blockers_cleared,
+        "blocking_ticket_ids": list(read.blocking_ticket_ids),
         "rollup": item_rollup(conn, item_id),
     }
 
@@ -189,36 +183,24 @@ def list_ideas(conn: sqlite3.Connection) -> list[JsonDict]:
 # --- item rows fed to the queues view (tickets/views) --------------------------
 
 
-def approval_item_rows(conn: sqlite3.Connection) -> list[JsonDict]:
-    rows = conn.execute(
-        "SELECT id, title, status_proposal FROM sprint_items WHERE status_proposal IS NOT NULL "
-        "ORDER BY id"
-    ).fetchall()
-    return [
-        {
-            "id": str(r["id"]),
-            "title": str(r["title"]),
-            "status_proposal": json.loads(str(r["status_proposal"])),
-        }
-        for r in rows
-    ]
-
-
 def overdue_item_rows(conn: sqlite3.Connection) -> list[JsonDict]:
     rows = conn.execute(
-        "SELECT id, title, status, priority, deadline FROM sprint_items WHERE deadline IS NOT NULL "
+        "SELECT id, title, priority, deadline FROM sprint_items WHERE deadline IS NOT NULL "
         "ORDER BY deadline ASC, id"
     ).fetchall()
-    return [
-        {
-            "id": str(r["id"]),
-            "title": str(r["title"]),
-            "status": str(r["status"]),
-            "priority": str(r["priority"]),
-            "deadline": str(r["deadline"]) if r["deadline"] is not None else None,
-        }
-        for r in rows
-    ]
+    result: list[JsonDict] = []
+    for r in rows:
+        read = sprints_data.read_item(conn, str(r["id"]))
+        result.append(
+            {
+                "id": str(r["id"]),
+                "title": str(r["title"]),
+                "status": read.status.value,
+                "priority": str(r["priority"]),
+                "deadline": str(r["deadline"]) if r["deadline"] is not None else None,
+            }
+        )
+    return result
 
 
 # --- sprint-current view (§5) --------------------------------------------------
@@ -233,22 +215,24 @@ def sprint_current_view(conn: sqlite3.Connection, today_iso: str, now: int) -> J
     if sid is None:
         return {
             "sprint": None,
-            "groups": {s.value: [] for s in ItemStatus},
+            "groups": {s.value: [] for s in ITEM_STATUS_ORDER},
             "loose_tickets": [],
         }
     item_rows = conn.execute(
         "SELECT id, priority, created_at FROM sprint_items WHERE sprint_id = ?", (sid,)
     ).fetchall()
-    groups: dict[str, list[JsonDict]] = {s.value: [] for s in ItemStatus}
+    groups: dict[str, list[JsonDict]] = {s.value: [] for s in ITEM_STATUS_ORDER}
     for row in sorted(item_rows, key=_item_row_key):
         read = sprints_data.read_item(conn, str(row["id"]))
-        groups[read.item.status.value].append(
+        groups[read.status.value].append(
             {
-                **item_json(read.item),
+                **item_json(read.item, read.status),
                 "blockers_cleared": read.blockers_cleared,
                 "rollup": item_rollup(conn, str(row["id"])),
                 "tickets": item_tickets(conn, str(row["id"])),
-                "blocked_by_titles": blocked_by_titles(conn, list(read.item.blocked_by)),
+                "blocking_ticket_titles": blocking_ticket_titles(
+                    conn, list(read.blocking_ticket_ids)
+                ),
             }
         )
     loose_rows = conn.execute(

@@ -5,10 +5,11 @@ dataclass field names one-for-one."""
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Final
 
-SCHEMA_VERSION: Final = 5
+SCHEMA_VERSION: Final = 6
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS sprints (
@@ -37,14 +38,10 @@ CREATE TABLE IF NOT EXISTS sprint_items (
   id                  TEXT PRIMARY KEY,              -- si_<slug>
   title               TEXT NOT NULL,
   body                TEXT NOT NULL DEFAULT '',
-  status              TEXT NOT NULL DEFAULT 'todo'
-                      CHECK (status IN ('todo','active','done','blocked','deferred_next_sprint')),
   priority            TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
   deadline            TEXT,
   project             TEXT NOT NULL CHECK (project IN ('Vylo','Tribe','Learning','Other')),
   sprint_id           TEXT REFERENCES sprints(id),   -- NULL = backlog/deferred
-  blocked_by          TEXT NOT NULL DEFAULT '[]',    -- JSON list[str] of ticket ids
-  status_proposal     TEXT,                          -- JSON ItemStatusProposal | NULL
   created_at          INTEGER NOT NULL,
   updated_at          INTEGER NOT NULL
 );
@@ -139,6 +136,7 @@ def connect(db_path: str, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
 def create_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(DDL)
     _migrate_tickets_status_column(conn)
+    _migrate_derived_sprint_item_status(conn)
     conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
 
@@ -166,3 +164,36 @@ def _migrate_tickets_status_column(conn: sqlite3.Connection) -> None:
         "WHEN 'errored' THEN 'errored' "
         "ELSE 'empty' END"
     )
+
+
+def _migrate_derived_sprint_item_status(conn: sqlite3.Connection) -> None:
+    columns = _table_columns(conn, "sprint_items")
+    if not {"status", "blocked_by", "status_proposal"} & columns:
+        return
+    if "status" in columns:
+        conn.execute(
+            "UPDATE sprint_items SET sprint_id = NULL WHERE status = 'deferred_next_sprint'"
+        )
+    if "blocked_by" in columns:
+        rows = conn.execute("SELECT id, blocked_by FROM sprint_items").fetchall()
+        for row in rows:
+            raw = row["blocked_by"]
+            if not isinstance(raw, str):
+                continue
+            try:
+                blocked_by = json.loads(raw)
+            except ValueError:
+                continue
+            if not isinstance(blocked_by, list):
+                continue
+            for ticket_id in blocked_by:
+                if not isinstance(ticket_id, str):
+                    continue
+                if conn.execute("SELECT 1 FROM tickets WHERE id = ?", (ticket_id,)).fetchone():
+                    conn.execute(
+                        "INSERT OR IGNORE INTO links (from_id, to_id, kind) VALUES (?, ?, 'blocks')",
+                        (ticket_id, row["id"]),
+                    )
+    for column in ("status_proposal", "blocked_by", "status"):
+        if column in _table_columns(conn, "sprint_items"):
+            conn.execute(f"ALTER TABLE sprint_items DROP COLUMN {column}")

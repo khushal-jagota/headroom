@@ -7,17 +7,12 @@ from dataclasses import dataclass, field
 from typing import Final
 
 from planner.core.contracts import Priority, Project
-from planner.sprints.contracts import ItemStatus
 from planner.tickets.contracts import TicketState
 
 # §12 mapping tables — exact source strings on the left.
-ITEM_STATUS_MAP: Final[dict[str, ItemStatus]] = {
-    "Todo": ItemStatus.todo,
-    "In Progress": ItemStatus.active,
-    "Done": ItemStatus.done,
-    "Blocked": ItemStatus.blocked,
-    "Deferred": ItemStatus.deferred_next_sprint,
-}
+TRACKING_ITEM_SECTIONS: Final[frozenset[str]] = frozenset(
+    {"Todo", "In Progress", "Done", "Blocked", "Deferred"}
+)
 
 READINESS_MAP: Final[dict[str, TicketState]] = {
     "Concepts": TicketState.needs_success,
@@ -63,7 +58,6 @@ class ParsedSprint:
 @dataclass
 class ParsedItem:                  # sprint-tracking.md item or deferred.md item
     title: str
-    status: ItemStatus
     priority: Priority
     project: Project
     body: str = ""

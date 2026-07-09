@@ -174,24 +174,25 @@ def _import_items(
             items_by_title[item.title] = cast(str, row["id"])
             continue
         item_id = new_id(ID_PREFIXES["sprint_item"])
+        item_is_deferred = deferred or item.deferred
+        item_sprint_id = None if item_is_deferred else sprint_id
         conn.execute(
-            "INSERT INTO sprint_items (id, title, body, status, priority, deadline, project, "
+            "INSERT INTO sprint_items (id, title, body, priority, deadline, project, "
             "sprint_id, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                item_id, item.title, item.body, item.status.value, item.priority.value,
-                item.deadline, item.project.value, sprint_id, now, now,
+                item_id, item.title, item.body, item.priority.value,
+                item.deadline, item.project.value, item_sprint_id, now, now,
             ),
         )
         append_event(
             conn, item_id, EventKind.sprint_item_created,
             {
-                "title": item.title, "status": item.status.value,
-                "sprint_id": sprint_id, "source": "seed",
+                "title": item.title, "sprint_id": item_sprint_id, "source": "seed",
             },
             now,
         )
-        if deferred:
+        if item_is_deferred:
             report.deferred_items += 1
         else:
             report.sprint_items += 1

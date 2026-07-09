@@ -48,7 +48,6 @@
 
   function isStale(entry: QueueEntry, detail: AnyRecord): boolean {
     if (entry.kind === "review") return detail.state !== "needs_review";
-    if (entry.kind === "status") return !detail.status_proposal;
     if (!detail.fields?.[entry.kind]?.proposal) return true;
     return gatingField(String(detail.state)) !== entry.kind;
   }
@@ -89,14 +88,6 @@
       `/api/tickets/${entry.entity_id}/approve`,
       { method: "POST", body: {} },
       ["queues", `ticket:${entry.entity_id}`, "board", "sprint:current"]
-    ));
-  }
-
-  function acceptStatus(entry: QueueEntry): Promise<unknown> {
-    return refreshQueuesAfter(mutateJson(
-      `/api/items/${entry.entity_id}/accept-status`,
-      { method: "POST", body: {} },
-      ["queues", `item:${entry.entity_id}`, "items:backlog", "sprint:current", "board"]
     ));
   }
 
@@ -190,13 +181,6 @@
                 <MarkdownBlock text={detail.fields.result.notes} />
               </div>
             </div>
-          {:else if entry.kind === "status" && detail.status_proposal?.note}
-            <div style="margin-bottom: var(--space-5);">
-              <div style="font-size: var(--type-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faintest); margin-bottom: var(--space-1);">Note</div>
-              <div style="font-size: var(--type-sm); color: var(--text-muted); line-height: 1.55;">
-                {detail.status_proposal.note}
-              </div>
-            </div>
           {/if}
 
           <!-- The Proposed Item (Recessed/Sunken Block) -->
@@ -229,24 +213,6 @@
                   <button type="button" class="approval-skip" data-skip onclick={() => skip(entry)}>Skip</button>
                 {/snippet}
               </ApprovalBlock>
-            </div>
-          {:else if entry.kind === "status"}
-            <div class="proposed-recessed-block">
-              <div style="font-size: var(--type-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-faint); margin-bottom: var(--space-3);">
-                Proposed Status Change
-              </div>
-              <div style="font-size: var(--type-md); color: var(--text-strong); display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-4);">
-                <span class="pill">{detail.status}</span>
-                <span style="color: var(--text-faint);">→</span>
-                <span class="pill" style="color: var(--text-strong); background: var(--accent-surface);">{detail.status_proposal?.to_status || ""}</span>
-              </div>
-              
-              <hr />
-
-              <div class="approval-actions" style="display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: 0;">
-                <button type="button" class="approval-skip" data-skip onclick={() => skip(entry)}>Skip</button>
-                <button type="button" class="approval-approve" data-accept-status onclick={() => void acceptStatus(entry)}>Accept</button>
-              </div>
             </div>
           {/if}
         </div>

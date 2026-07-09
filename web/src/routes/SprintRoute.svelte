@@ -13,14 +13,13 @@
     fetchJson("/api/sprint/current", { signal })
   );
 
-  const liveOrder = ["active", "todo", "blocked"];
-  const settledOrder = ["done", "deferred_next_sprint"];
+  const liveOrder = ["in_progress", "todo", "blocked"];
+  const settledOrder = ["done"];
   const groupLabel: Record<string, string> = {
-    active: "Active",
+    in_progress: "In progress",
     todo: "Todo",
     blocked: "Blocked",
-    done: "Done",
-    deferred_next_sprint: "Deferred → next sprint"
+    done: "Done"
   };
   const kickoff = [
     ["limiting_factor", "Limiting factor"],
@@ -159,7 +158,7 @@
                       <Chip variant="project" value={item.project} />
                       {#if item.deadline}<Chip variant="deadline" value={item.deadline} />{/if}
                       {#if item.blockers_cleared}<Chip variant="blockers-cleared" />{/if}
-                      {#each item.blocked_by_titles || [] as blockerTitle}
+                      {#each item.blocking_ticket_titles || [] as blockerTitle}
                         <span class="chip chip--blocked-by"><span class="k">blocked by</span>{blockerTitle}</span>
                       {/each}
                     </span>

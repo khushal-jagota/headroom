@@ -843,16 +843,6 @@ def sprint_item_remove_ticket(item_id: str, ticket_id: str, as_json: bool) -> No
     http.emit(data, as_json, f"{ticket_id} removed from {item_id}")
 
 
-@sprint_item.command("approve")
-@click.argument("item_id")
-@json_option
-def sprint_item_approve(item_id: str, as_json: bool) -> None:
-    data = http.send(
-        "POST", f"/api/items/{item_id}/accept-status", as_json=as_json, request_actor="human"
-    )
-    http.emit(data, as_json, f"{data['id']} status approved")
-
-
 # --- worker -------------------------------------------------------------------
 
 
@@ -930,30 +920,6 @@ def worker_note(args: tuple[str, ...], body_file: str | None, as_json: bool) -> 
         "PUT", f"/api/tickets/{tid}/notes/{field}", as_json=as_json, json_body={"note": body}
     )
     http.emit(data, as_json, f"note {field} written on {data['id']}")
-
-
-@worker.command("propose-item-status")
-@click.argument("item_id")
-@click.option(
-    "--to",
-    "to_status",
-    type=click.Choice(["done", "deferred_next_sprint"]),
-    required=True,
-    help="Final status to propose for human approval.",
-)
-@click.option("--body-file", default=None, help="Optional rationale file, or - for stdin.")
-@json_option
-def worker_propose_item_status(
-    item_id: str, to_status: str, body_file: str | None, as_json: bool
-) -> None:
-    note = read_optional_body(body_file, as_json)
-    data = http.send(
-        "POST",
-        f"/api/items/{item_id}/propose-status",
-        as_json=as_json,
-        json_body={"to": to_status, "note": note},
-    )
-    http.emit(data, as_json, f"{data['id']} status proposal {to_status}")
 
 
 if __name__ == "__main__":

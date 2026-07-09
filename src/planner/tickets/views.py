@@ -12,7 +12,6 @@ import sqlite3
 
 from planner.core import links as core_links
 from planner.core.contracts import JsonDict, Project
-from planner.sprints.contracts import ItemStatus
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import GATING_FIELD, STATE_ORDER, Ticket, TicketState
 from planner.tickets.logic import fields_codec, machine
@@ -20,7 +19,7 @@ from planner.tickets.logic import fields_codec, machine
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
 _TICKET_CLOSED = {TicketState.done.value, TicketState.dropped.value}
-_ITEM_CLOSED = {ItemStatus.done.value, ItemStatus.deferred_next_sprint.value}
+_ITEM_CLOSED = {TicketState.done.value}
 
 
 def _prio_rank(priority: str) -> int:
@@ -222,7 +221,7 @@ def _entity_type(entity_id: str) -> str:
     return "ticket" if entity_id.split("_", 1)[0] == "t" else "item"
 
 
-def _approval_digest(tickets: list[JsonDict], items: list[JsonDict]) -> list[JsonDict]:
+def _approval_digest(tickets: list[JsonDict]) -> list[JsonDict]:
     digest: list[JsonDict] = []
     for row in tickets:
         state = str(row["state"])
@@ -249,15 +248,6 @@ def _approval_digest(tickets: list[JsonDict], items: list[JsonDict]) -> list[Jso
                 "kind": gating.value,
                 "waiting_since": proposal["created_at"],
             }
-        )
-    for row in items:
-        proposal = row["status_proposal"]
-        if proposal is None:
-            continue
-        if not isinstance(proposal, dict):
-            continue
-        digest.append(
-            {"entity_id": row["id"], "kind": "status", "waiting_since": proposal["created_at"]}
         )
     digest.sort(key=lambda entry: entry["waiting_since"])
     return digest
@@ -294,7 +284,7 @@ def _overdue_digest(
     return result
 
 
-def _approvals(conn: sqlite3.Connection, item_approval_rows: list[JsonDict]) -> list[JsonDict]:
+def _approvals(conn: sqlite3.Connection) -> list[JsonDict]:
     ticket_rows = conn.execute(
         "SELECT id, title, state, fields, updated_at FROM tickets "
         "WHERE state NOT IN ('done','dropped') ORDER BY id"
@@ -314,13 +304,7 @@ def _approvals(conn: sqlite3.Connection, item_approval_rows: list[JsonDict]) -> 
         )
         ticket_title[tid] = str(r["title"])
         ticket_updated[tid] = int(r["updated_at"])
-    item_digest: list[dict[str, object]] = []
-    item_title: dict[str, str] = {}
-    for r in item_approval_rows:
-        iid = str(r["id"])
-        item_digest.append({"id": iid, "status_proposal": r["status_proposal"]})
-        item_title[iid] = str(r["title"])
-    digest = _approval_digest(ticket_digest, item_digest)
+    digest = _approval_digest(ticket_digest)
     # A5: review entries use the last state_changed->needs_review event time, not the
     # updated_at proxy.
     for entry in digest:
@@ -340,13 +324,12 @@ def _approvals(conn: sqlite3.Connection, item_approval_rows: list[JsonDict]) -> 
     for entry in digest:
         eid = str(entry["entity_id"])
         etype = _entity_type(eid)
-        title = ticket_title.get(eid) if etype == "ticket" else item_title.get(eid)
         result.append(
             {
                 "entity_id": eid,
                 "entity_type": etype,
                 "kind": entry["kind"],
-                "title": title,
+                "title": ticket_title.get(eid),
                 "waiting_since": entry["waiting_since"],
             }
         )
@@ -396,10 +379,9 @@ def queues_view(
     conn: sqlite3.Connection,
     now: int,
     today_iso: str,
-    item_approval_rows: list[JsonDict],
     item_overdue_rows: list[JsonDict],
 ) -> JsonDict:
     return {
-        "approvals": _approvals(conn, item_approval_rows),
+        "approvals": _approvals(conn),
         "overdue": _overdue(conn, today_iso, item_overdue_rows),
     }
