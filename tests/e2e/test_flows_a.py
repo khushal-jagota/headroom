@@ -28,8 +28,8 @@ MD_BODY = (
     "Done when verify flips items 22-27."
 )
 E24_BODY = "Agent-drafted success criteria."
-E25_ORIG = "Original proposal body."
-E25_EDIT = "Human-edited success criteria. "   # trailing space: stored + asserted verbatim
+E25_ORIG = "# Original proposal\n\n- old structure"
+E25_EDIT = "# Human-edited success criteria\n\n- kept structure\n- serialized from DOM"
 E27_SUCCESS = "Success body for the chain."
 E27_APPROACH = "Approach body for the chain."
 E27_PLAN = "Plan body for the chain."
@@ -110,8 +110,7 @@ def test_e23_env_pinned_propose(server, context_factory, open_page, cli, api):
     ready = f'section[data-screen="ticket"][data-ticket-id="{tid}"]'
     page = open_page(context_factory(), server, f"#/ticket/{tid}", ready, settled=True)
 
-    # Rendered: the proposal's markdown structure, with exact texts. Read the draft's
-    # rendered markdown AT REST first — focusing it (below) swaps it to raw source.
+    # Rendered: the proposal's markdown structure, with exact texts.
     b = '[data-approval-block] .approval-draft .markdown-block'
     assert page.inner_text(f"{b} h1") == "Success criteria"
     assert page.eval_on_selector_all(
@@ -125,10 +124,16 @@ def test_e23_env_pinned_propose(server, context_factory, open_page, cli, api):
     assert len(paras) == 2, paras
     assert paras[-1] == "Done when verify flips items 22-27."
 
-    # Intact: focusing the contenteditable draft swaps it to the RAW markdown source,
-    # which carries the proposal body byte-for-byte.
+    # Focusing the contenteditable draft keeps the rendered markdown DOM in place.
     page.focus('[data-approval-block] .approval-draft')
-    assert page.text_content('[data-approval-block] .approval-draft') == MD_BODY
+    assert page.inner_text(f"{b} h1") == "Success criteria"
+    assert page.eval_on_selector_all(
+        f"{b} ul li", "els => els.map(e => e.textContent)"
+    ) == ["six anchored tests", "two browser contexts"]
+    assert page.eval_on_selector_all(
+        f"{b} ol li", "els => els.map(e => e.textContent)"
+    ) == ["boot server", "drive UI"]
+    assert page.inner_text(f"{b} strong") == "exact"
 
     # Did not advance: still needs_success, and the value is still unset.
     assert page.get_attribute(ready, "data-state") == "needs_success"
@@ -194,12 +199,21 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
     card = f'[data-review-card][data-entity-id="{tid}"]'
     page = open_page(context_factory(), server, "#/review", card, settled=True)
 
-    # Prefill first (before any fill).
+    # Focusing keeps the rendered markdown structure editable in place.
     page.focus(f"{card} [data-edit]")
-    assert page.text_content(f"{card} [data-edit]") == E25_ORIG
+    assert page.inner_text(f"{card} [data-edit] h1") == "Original proposal"
+    assert page.eval_on_selector_all(
+        f"{card} [data-edit] ul li", "els => els.map(e => e.textContent)"
+    ) == ["old structure"]
 
     page.locator(f"{card} [data-edit]").evaluate(
-        f"(el) => {{ el.textContent = {repr(E25_EDIT)}; }}"
+        """(el) => {
+            el.querySelector('h1').textContent = 'Human-edited success criteria';
+            el.querySelector('li').textContent = 'kept structure';
+            const extra = document.createElement('li');
+            extra.textContent = 'serialized from DOM';
+            el.querySelector('ul').appendChild(extra);
+        }"""
     )
     page.locator(f"{card} [data-edit]").blur()
     page.select_option(f"{card} [data-scope-ceiling]", "needs_plan")
@@ -210,7 +224,7 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
     page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
 
     d = api.get(server, f"/api/tickets/{tid}")
-    # Exact, trailing space included.
+    # Exact markdown serialized from the edited rendered DOM.
     assert d["fields"]["success"]["value"] == E25_EDIT, repr(d["fields"]["success"]["value"])
     assert d["ceiling"] == "needs_plan", d
     assert d["at_cap"] == "propose", d
@@ -224,9 +238,13 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
         'section[data-screen="ticket"][data-state="needs_approach"]',
         settled=True,
     )
-    assert "Human-edited success criteria." in ticket_page.text_content(
-        '[data-field="success"] .markdown-block'
-    )
+    assert ticket_page.text_content(
+        '[data-field="success"] .markdown-block h1'
+    ) == "Human-edited success criteria"
+    assert ticket_page.eval_on_selector_all(
+        '[data-field="success"] .markdown-block ul li',
+        "els => els.map(e => e.textContent)",
+    ) == ["kept structure", "serialized from DOM"]
 
 
 def test_e26_chat_panel_echo_and_offline(

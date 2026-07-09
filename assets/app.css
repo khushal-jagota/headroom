@@ -1414,6 +1414,12 @@ select {
   font-style: italic;
 }
 
+.ed[data-empty="true"]:not(:empty)::before {
+  content: attr(data-ph);
+  color: var(--text-faintest);
+  font-style: italic;
+}
+
 .content-disclosure {
   margin: 0;
 }

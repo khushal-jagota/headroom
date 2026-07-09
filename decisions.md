@@ -273,6 +273,16 @@ substitution. Changes that alter HOW (not what) is asserted:
   `.proposal-meta`, body = `.approval-draft .markdown-block`); `mid_t` retargeted to
   `[data-approval-block][data-mode="gating-pending"]`. `expected_t` values unchanged.
 
+## Markdown editing primitive follow-up
+
+- Added a shared Svelte-side markdown editing adapter for the current renderer grammar instead of
+  extending route-specific editing code. It serializes the rendered DOM shapes the renderer emits
+  today: paragraphs, h1-h3, ul/ol, pre/code, strong, em, inline code, and links.
+- Kept ApprovalBlock draft editing local until approve, matching the prior contract: `edited_body`
+  is sent only when the serialized draft differs from `proposalBody`.
+- The installed Codex CLI does not support the repo note's `--reasoning-effort` flag; the review
+  was run read-only with `--model gpt-5.5 --sandbox read-only` and returned `NO VIOLATIONS`.
+
 ## Sprint Overview redesign — rev6 (2026-07-06, uncommitted; lead reviews)
 
 Replaced the interim old kickoff/review/weekly-addenda panels at `#/sprint/overview`
@@ -971,3 +981,10 @@ they are sprint-item status approvals, not ticket stages.
 This slice was implemented directly rather than delegated because the owner did not request
 sub-agent dispatch in this turn and the work crossed tightly coupled Svelte/CSS layout files where
 serial edits were lower risk.
+
+## D64 — Assistant guidance files stay mirrored, not redirected
+
+`AGENTS.md` and `CLAUDE.md` remain maintained top-level guidance files. The repo-orientation pass is
+limited to inline corrections and a compact stack/system map so neither file becomes a stale pointer
+or a large duplicated architecture document. The stale `plan serve` and vanilla-assets frontend
+notes were corrected to `panels serve` and Svelte/Vite.

@@ -1,4 +1,12 @@
 <script lang="ts">
+  import {
+    handlePlainTextPaste,
+    paintMarkdownEditable,
+    paintPlainEditable,
+    readMarkdownEditable,
+    readPlainEditable,
+    refreshEditableEmptyState
+  } from "../lib/markdownEdit";
   import ErrorLine from "./ErrorLine.svelte";
 
   let {
@@ -31,33 +39,19 @@
 
   function paint(raw: unknown): void {
     if (!el) return;
-    const text = raw === null || raw === undefined ? "" : String(raw);
-    el.replaceChildren();
-    if (markdown) {
-      if (text.trim()) {
-        const rendered = window.Planner?.markdown?.render(text);
-        if (rendered) {
-          rendered.classList.add("markdown-block");
-          el.appendChild(rendered);
-        } else {
-          el.textContent = text;
-        }
-      }
-    } else {
-      el.textContent = text;
-    }
+    if (markdown) paintMarkdownEditable(el, raw);
+    else paintPlainEditable(el, raw);
   }
 
   function enterEdit(): void {
     if (editing || inFlight) return;
     editing = true;
     error = null;
-    el.textContent = rawValue();
   }
 
   async function commit(): Promise<void> {
     if (!editing || inFlight) return;
-    const raw = el.textContent || "";
+    const raw = markdown ? readMarkdownEditable(el) : readPlainEditable(el);
     if (raw === rawValue()) {
       editing = false;
       paint(raw);
@@ -72,7 +66,7 @@
     } catch (err) {
       error = err;
       editing = true;
-      el.textContent = raw;
+      paint(raw);
     } finally {
       inFlight = false;
     }
@@ -126,6 +120,8 @@
     void commit();
   }}
   onkeydown={onKeydown}
+  oninput={() => refreshEditableEmptyState(el, markdown)}
+  onpaste={handlePlainTextPaste}
 ></div>
 {#if error}
   <ErrorLine {error} />

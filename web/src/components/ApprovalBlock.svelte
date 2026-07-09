@@ -1,5 +1,11 @@
 <script lang="ts">
   import { type Snippet } from "svelte";
+  import {
+    handlePlainTextPaste,
+    paintMarkdownEditable,
+    readMarkdownEditable,
+    refreshEditableEmptyState
+  } from "../lib/markdownEdit";
   import ContentDisclosure from "./ContentDisclosure.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import InlineEdit from "./InlineEdit.svelte";
@@ -57,28 +63,19 @@
   function paintDraft(): void {
     const el = draftEl;
     if (!el) return;
-    el.replaceChildren();
-    if (!draft.trim()) return;
-    const rendered = window.Planner?.markdown?.render(draft);
-    if (rendered) {
-      rendered.classList.add("markdown-block");
-      el.appendChild(rendered);
-    } else {
-      el.textContent = draft;
-    }
+    paintMarkdownEditable(el, draft);
   }
 
   function enterDraftEdit(): void {
     const el = draftEl;
     if (!el || draftEditing || inFlight) return;
     draftEditing = true;
-    el.textContent = draft;
   }
 
   function commitDraft(): void {
     const el = draftEl;
     if (!el || !draftEditing) return;
-    draft = el.textContent || "";
+    draft = readMarkdownEditable(el);
     draftEditing = false;
     paintDraft();
   }
@@ -102,6 +99,7 @@
     const payload: Record<string, unknown> = {};
     if (mode === "gating-pending") {
       if (!scope) return;
+      if (draftEditing) commitDraft();
       payload.next_ceiling = scope.next_ceiling;
       payload.at_cap = scope.at_cap;
       if (draft !== (proposalBody || "")) payload.edited_body = draft;
@@ -212,6 +210,10 @@
           onfocus={enterDraftEdit}
           onblur={commitDraft}
           onkeydown={draftKeydown}
+          oninput={() => {
+            if (draftEl) refreshEditableEmptyState(draftEl, true);
+          }}
+          onpaste={handlePlainTextPaste}
         ></div>
       </ContentDisclosure>
       {#if reviewLayout}

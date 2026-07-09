@@ -3,6 +3,52 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current orchestration ledger (2026-07-09)
+
+Important wording: an agent being "complete" only means the agent submitted a deliverable. It does
+not mean the work is accepted, integrated, or owner-reviewed.
+
+Outstanding planned / submitted work:
+
+- **In-place markdown editing** — Schrodinger submitted an implementation in the main worktree:
+  `web/src/lib/markdownEdit.ts`, `web/src/components/InlineEdit.svelte`,
+  `web/src/components/ApprovalBlock.svelte`, `assets/app.css`,
+  `tests/e2e/test_flows_a.py`, `web/dist/*`, plus memory files. Agent-reported checks passed and
+  an agent-run Codex review said `NO VIOLATIONS`, but the lead has not reviewed or accepted the
+  diff yet. Treat as **submitted, pending lead review/integration**.
+- **Derived sprint item status** — Dewey is still implementing in
+  `/Users/khushaljagota/.hermes/planning-v2-derived-status` on
+  `codex/derived-sprint-item-status`. It is explicitly **not complete**. Known unfinished work:
+  tests/docs still expect stored status, sprint API cleanup is incomplete, Review/Sprint frontend
+  edits are partial, and the broad diff must not be integrated blindly.
+- **Chief-of-staff agent** — Erdos submitted a skill draft at
+  `orchestration/chief-of-staff/erdos-skill-draft.md`. Owner edited it and called out more skill
+  corrections. Implementation is paused until owner review and the skill/role plan is corrected.
+- **Repo guidance / `AGENTS.md` + `CLAUDE.md`** — Descartes submitted findings at
+  `orchestration/repo-guidance/descartes-report.md`. Owner decision: do **not** directly edit
+  `AGENTS.md` / `CLAUDE.md` further yet. This belongs in a planned guidance cleanup, including a
+  correct map of repo-local Panels role skills, planner-home symlinked skills, and user/Hermes
+  workflow skills.
+- **Hermes skill inventory** — Ampere is currently exploring drafted and installed skills. The task
+  is to locate Panels/chief-of-staff/rollover/sprint-planning/worker skills, record exact
+  frontmatter names and paths, and call out wrong or ambiguous names such as repo references to
+  `panels-rollover` versus installed Hermes `rollover`.
+- **Live chat accuracy / server-owned live turn state** — Russell's plan is conceptually accepted
+  as the direction but not implemented: the server should own active chat/turn state so ticket chat
+  and the future chief-of-staff chat can both show user/system/worker messages and thinking/doing
+  activity accurately after navigation/remount.
+
+Plan files / artifacts that must stay on the radar:
+
+- `orchestration/chief-of-staff/erdos-skill-draft.md`
+- `orchestration/repo-guidance/descartes-report.md`
+- `/Users/khushaljagota/.hermes/planning-v2-derived-status` for Dewey's derived-status worktree
+- Schrodinger's submitted markdown-editing diff in the main worktree
+- Russell live-chat plan needs to be written to an `orchestration/` plan artifact before
+  implementation starts.
+- Boyle derived-status plan needs to be written to an `orchestration/` plan artifact or reconciled
+  with Dewey's worktree before integration.
+
 ## Current work cycle (2026-07-09): Shared ticket stage component
 
 Owner request: make Recap and Notes share a slightly larger header/body treatment, extract that
@@ -1115,3 +1161,27 @@ Run the isolated live worker smoke:
   the component; clean it up if route keying is ever removed or TicketRoute becomes reusable in-place.
 - The untracked `orchestration/dogfood-report.md` is a prior test-mode/echo-gateway dogfood report,
   not evidence of the real Hermes worker loop.
+
+## Markdown in-place editing follow-up
+
+Current build stage: source fix implemented and focused verification passed.
+
+What just passed:
+
+- `npm --prefix web run check` passed with the existing three `TicketRoute.svelte` warnings.
+- `npm --prefix web run build` passed with the usual external asset warnings.
+- `.venv/bin/pytest tests/e2e/test_flows_a.py::test_e23_env_pinned_propose
+  tests/e2e/test_flows_a.py::test_e25_edit_accept_in_review -q` passed.
+- `git diff --check -- web/src/lib/markdownEdit.ts web/src/components/InlineEdit.svelte
+  web/src/components/ApprovalBlock.svelte assets/app.css tests/e2e/test_flows_a.py` passed.
+- Read-only Codex diff review (`--model gpt-5.5 --sandbox read-only`) returned `NO VIOLATIONS`.
+
+Current hypothesis: the true in-place markdown behavior is fixed through shared primitives.
+`InlineEdit` and `ApprovalBlock` now keep the rendered markdown DOM on focus, serialize the
+supported rendered DOM back to markdown on commit/approve, paste plaintext only, and preserve the
+old non-markdown edit path.
+
+Next step: final response should call out that `npm run build` rewrote `web/dist` generated files,
+which were outside the requested source scope and already dirty in this shared worktree.
+
+Blockers: none.

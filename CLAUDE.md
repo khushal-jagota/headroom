@@ -4,6 +4,17 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 **PRINCIPLES.md** holds the standing engineering and design rules; they bind unless a live owner decision overrides them.
 
+## Stack and system map
+- Python ≥ 3.12 backend in `src/planner/`, with FastAPI wiring in `src/planner/core/server.py` and SQLite schema/migrations in `src/planner/core/db.py`.
+- Domain code is grouped by system: `tickets/`, `sprints/`, `days/`, `projects/`, and `chat/`. Contracts live in each domain's `contracts.py`; framework-free rules live in `logic/`; HTTP routes live in `api.py`.
+- `panels` is the CLI entry point (`planner.cli.main:main`); `python -m planner` delegates to it. Important command groups are `serve`, `project`, `day`, `ticket`, `sprint`, `sprint item`, and `worker`.
+- Runtime work is split between `runtime/system_a.py` and `runtime/system_b.py`: System A finds runnable tickets on today's board; System B runs one ticket step through the shared Hermes gateway.
+- Gateway and chat code lives in `minds/` and `chat/`. The shared gateway owns Hermes session transport; chat owns human sends, streaming, command catalog, and history.
+- Frontend is Svelte/Vite in `web/`; FastAPI serves the built `web/dist` app at `/` and Vite chunks under `/_app/`. Shared design/runtime assets remain in `assets/`: `tokens.css`, `app.css`, and `markdown.js`.
+- Local agent role skills live in `skills/`, especially `panels`, `panels-worker`, and `panels/panels-ticket-work`.
+- `docs/` is the live plain-language system documentation. `orchestration/*-redesign/` holds current design intent and mockups; `orchestration/tickets/` holds ticket plans, dispatches, and reviews.
+- `data/` is gitignored runtime state: SQLite DBs, WAL/SHM files, logs, locks, Hermes home state, smoke artifacts, and verify output.
+
 ## Naming and restraint
 - **Name things for exactly what they are.** Descriptive beats concise — an extra word that removes ambiguity costs nothing and prevents confusion later. A name should be self-evident: the ticket's status is `ticket_status`, an employee's session id is `employee_session_id`. When names are right it is obvious where a new thing belongs — a new ticket status obviously goes in the status — so you extend a clear structure instead of guessing or fitting around.
 - **Everything earns its existence; understand before you extend.** When handed something to build or plan, first work out what each existing thing actually *is* and why it exists — never fit around a structure you have not understood. Add nothing without a clear, stated reason: no speculative field, status, guard, or mechanism. If you cannot say plainly why a thing exists, it should not. When a plan — yours or a reviewer's — bolts on something that wasn't asked for or doesn't clearly make sense, cut it, don't accommodate it.
@@ -33,7 +44,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - Do not ask questions mid-run. Delegated choices are yours; make them and log them in decisions.md.
 
 ## Project notes
-- Python ≥ 3.12, venv at `.venv`, deps pinned in `requirements.txt`. Run the server: `plan serve` (or `python -m planner serve`). DB and logs live under `data/` (gitignored).
-- Frontend is no-build vanilla JS in `assets/` — classic scripts, no bundler; syntax-check with `node --check`.
+- Python ≥ 3.12, venv at `.venv`, deps pinned in `requirements.txt`. Run the server: `panels serve` (or `python -m planner serve`). DB and logs live under `data/` (gitignored).
+- Frontend is Svelte/Vite in `web/`; FastAPI serves the built `web/dist` app at `/` and mounts Vite chunks under `/_app/`. Shared tokens, app CSS, and markdown rendering remain in `assets/`.
 - Frontend reactivity is `events → keyed invalidation → targeted refetch` (Decision A; see spike 06 + decisions.md). The UI keeps a keyed resource cache (`ticket:<id>`, `board`, `sprint:current`, …) and refetches only the resources an event invalidates — never a whole-screen refetch, never a client-side store of canonical state (the server stays the single source of truth). Invalidation keys off the changed entity's `entity_id` prefix → its resource + the aggregates it appears in, so a new event kind about an existing entity needs no mapping change. A completeness test (required, spike 06 Phase 2) asserts every backend event kind maps to at least one resource — so when you add an event kind or a resource, a forgotten mapping fails `./verify` instead of going silently stale.
 - One canonical writer function per state transition. Agents (claim-carrying requests) write proposals only — the resolution engine is the single door to canonical values.
