@@ -67,6 +67,9 @@ class RealGatewayAdapter:
     ) -> Iterator[ChatStreamChunk]:
         raise self._offline()
 
+    def interrupt(self, session_key: str, entity_id: str) -> None:
+        raise self._offline()
+
     def catalog(self) -> CommandCatalog:
         raise self._offline()
 

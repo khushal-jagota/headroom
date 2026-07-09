@@ -2,6 +2,18 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D31 — Send-back guidance is stored as chat, not a field note
+
+Review send-back messages are appended to the ticket chat as human guidance instead of being stored
+in a field note or replacing the rejected proposal. Chat is the worker-facing instruction stream;
+clearing the pending proposal keeps the canonical field unchanged until the worker drafts a revision.
+
+## D30 — Workspace hide-done starts off
+
+The new Workspace hide-done control defaults unchecked so the ticket list preserves the existing
+"show all current board rows" behavior until the human explicitly hides completed work. The status
+dropdown and hide-done checkbox compose as independent filters.
+
 ## D29 — Sprint item status is derived, while the API keeps a read-only status field
 
 Dewey's derived-status branch is integrated by preserving the user-facing `status` key in sprint
@@ -1081,3 +1093,13 @@ turns persist those chunks onto `chat_turns.phase` / `activity_label`, and `Chat
 poll `GET /api/chat/{entity_id}/state` while a turn is active. This keeps ticket, worker, and Chief
 chat on one state contract and avoids a second live-status source that could drift from transcript
 and session ownership.
+
+## D72 — Pausing is chat/session control, not ticket-runtime control
+
+The pause affordance interrupts the currently visible chat turn and settles `chat_turns` as
+`interrupted`; it deliberately does not write `tickets.ticket_status`, release/take over the ticket,
+or poke System A. The affordance lives in the composer send button while a turn is active, not in the
+activity/thinking row, because it is the alternate action for the composer during an in-flight turn.
+Ticket runtime status remains dispatch/readiness ownership, while chat pause is a session/transcript
+action. This keeps a paused chat turn from pretending to decide whether the ticket should rerun,
+remain owned by a worker, or wait for a human.

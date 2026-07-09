@@ -27,6 +27,11 @@ Human sends and commands follow the same pre-prompt session-key rule. If the tic
 is already at `agent_running_step`, the send or command returns `already_running`
 instead of creating a competing turn. The chat state remains readable.
 
+The visible active turn can be paused from the chat panel. While a turn is active,
+the composer's send button becomes the pause button; pressing it interrupts that
+chat session and settles the `chat_turns` row as interrupted with any partial output
+kept. Pause does not change the ticket's runtime status or dispatch ownership.
+
 Earlier the chat could only ever say "Gateway Offline", because it was wired to the
 wrong thing and, after a gateway restart, kept trying to resume a session that no
 longer existed. It now reaches the actual worker, and if the link is ever lost the

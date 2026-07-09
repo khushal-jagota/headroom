@@ -149,7 +149,6 @@
             <div class="board-workspace-filter-head">Filters</div>
             <div class="board-workspace-filter-row">
               <label class="board-workspace-filter-group" data-filter-group="ticket-status">
-                <span class="board-workspace-filter-label">Ticket status</span>
                 <select
                   aria-label="Ticket status"
                   class="board-workspace-filter-select"

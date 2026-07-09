@@ -65,7 +65,7 @@ router = APIRouter()
 
 # §8: agents drive priority/deadline/day/sprint via `ticket set`; title and project are
 # human-only, so an agent-classified PATCH touching them is agent_forbidden (§14).
-_TICKET_HUMAN_ONLY_FIELDS = ("title", "project", "project_id")
+_TICKET_HUMAN_ONLY_FIELDS = ("title", "project", "project_id", "user_note")
 
 
 # --- shared plumbing (imported by the other api modules) -----------------------
@@ -155,6 +155,7 @@ def body_opt_str(body: JsonDict, key: str) -> str | None:
 def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
     return CreateTicketBody(
         title=body_str(raw, "title"),
+        user_note=body_str(raw, "user_note"),
         priority=body_opt_str(raw, "priority"),
         deadline=body_opt_str(raw, "deadline"),
         project=body_opt_str(raw, "project"),
@@ -218,6 +219,7 @@ async def create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
         actor=ctx.actor,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
+        user_note=body["user_note"],
         project_id=project.id if project is not None else None,
         priority=priority,
         deadline=body["deadline"],
@@ -267,7 +269,9 @@ async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk) -> JsonDict:
 @router.patch("/tickets/{ticket_id}")
 async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
                        cfg: Cfg, clk: Clk) -> JsonDict:
-    recognized = ("title", "priority", "deadline", "project", "project_id", "sprint_id")
+    recognized = (
+        "title", "user_note", "priority", "deadline", "project", "project_id", "sprint_id",
+    )
     for key in body:
         if key not in recognized:
             raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": key})
@@ -282,6 +286,10 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
             title=body_str(body, "title"),
             title_max_chars=TITLE_MAX_CHARS,
             now=now,
+        )
+    if "user_note" in body:
+        tickets_data.set_user_note(
+            conn, ticket_id, user_note=body_str(body, "user_note"), now=now
         )
     if "priority" in body:
         priority = parse_enum(Priority, body_str(body, "priority"), "priority")
@@ -388,11 +396,18 @@ async def return_ticket_for_revision(
 @router.put("/tickets/{ticket_id}/notes/{field}")
 async def put_notes(ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                     clk: Clk) -> JsonDict:
-    body = NoteBody(note=body_opt_str(raw, "note"))
+    body = NoteBody(note=body_opt_str(raw, "note"), user_note=body_opt_str(raw, "user_note"))
+    if "note" in raw and "user_note" in raw:
+        raise PlannerError(ErrorCode.validation, "use note or user_note, not both", {})
     field_enum = parse_enum(FieldName, field, "field")
     now = clk.now_unix()
     ticket = tickets_data.set_note(
-        conn, ticket_id, field=field_enum, note=body["note"], actor=ctx.actor, now=now
+        conn,
+        ticket_id,
+        field=field_enum,
+        note=body["user_note"] if "user_note" in raw else body["note"],
+        actor=ctx.actor,
+        now=now,
     )
     return tickets_views.ticket_json(ticket, now)
 

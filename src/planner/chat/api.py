@@ -118,6 +118,20 @@ async def start_chat_turn(
     return asdict(result)
 
 
+@router.post("/chat/{entity_id}/pause")
+async def pause_chat_turn(entity_id: str, request: Request) -> dict[str, Any]:
+    authctx.reject_agents(authctx.request_context(request))  # chat pause is human-only.
+    clock: Clock = request.app.state.clock
+    adapters: Adapters = request.app.state.adapters
+    conn_factory: Callable[[], sqlite3.Connection] = request.app.state.conn_factory
+    conn = conn_factory()
+    try:
+        result = service.pause_turn(conn, adapters.gateway, entity_id, clock.now_unix())
+    finally:
+        conn.close()
+    return asdict(result)
+
+
 @router.post("/chat/{entity_id}/stream")
 async def stream_message(
     entity_id: str, body: dict[str, Any], request: Request

@@ -105,7 +105,7 @@ def test_edit_passed_field_succeeds(
     # Decision shape: exactly one field_value_edited event; state/ceiling/at_cap left None.
     ticket = _ticket(
         TicketState.needs_plan,
-        _fields(success=FieldSlot(value="old success", notes="keep me")),
+        _fields(success=FieldSlot(value="old success", user_note="keep me")),
         ceiling=TicketState.needs_plan,
     )
     decision = resolution.decide_edit_value(ticket, FieldName.success, "new success", "human")
@@ -117,7 +117,7 @@ def test_edit_passed_field_succeeds(
     assert decision.events[0].payload == {"field": "success", "body": "new success"}
     assert decision.new_fields is not None
     assert decision.new_fields.success.value == "new success"
-    assert decision.new_fields.success.notes == "keep me"  # notes preserved
+    assert decision.new_fields.success.user_note == "keep me"  # user note preserved
 
     # End-to-end through the sole appender: value persists, state/ceiling untouched,
     # one field_value_edited row logged.

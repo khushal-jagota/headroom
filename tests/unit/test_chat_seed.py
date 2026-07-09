@@ -334,6 +334,56 @@ def test_chat_state_shows_active_turn_activity_label(tmp_path: Path) -> None:
         release.set()
 
 
+def test_pause_active_turn_interrupts_chat_without_touching_ticket_status(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    _set_ticket_status(db_path, tid, TicketStatus.agent_running_step)
+    conn = connect(str(db_path))
+    try:
+        conn.execute(
+            "INSERT INTO chat_turns ("
+            "id, entity_id, origin, mode, status, phase, activity_label, output_role, "
+            "output_text, session_key, error, started_at, updated_at, completed_at"
+            ") VALUES ('run_pause_test', ?, 'worker', 'worker_step', 'running', "
+            "'responding', NULL, 'assistant', 'partial output', 'pause-session', "
+            "NULL, 1, 1, NULL)",
+            (tid,),
+        )
+    finally:
+        conn.close()
+
+    class InterruptGateway:
+        interrupt_calls: list[tuple[str, str]] = []
+
+        def status(self) -> GatewayStatus:
+            return GatewayStatus(available=True)
+
+        def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
+            return ChatHistory(messages=(), session_key=session_key)
+
+        def interrupt(self, session_key: str, entity_id: str) -> None:
+            self.interrupt_calls.append((session_key, entity_id))
+
+    gateway = InterruptGateway()
+    _replace_gateway(app, gateway)
+
+    with TestClient(app) as client:
+        paused = client.post(f"/api/chat/{tid}/pause")
+        state = client.get(f"/api/chat/{tid}/state").json()
+
+    assert paused.status_code == 200
+    assert paused.json()["status"] == "interrupted"
+    assert gateway.interrupt_calls == [("pause-session", tid)]
+    assert _ticket_status(db_path, tid) == TicketStatus.agent_running_step.value
+    assert state["active_turn"] is None
+    assert [(msg["role"], msg["text"]) for msg in state["messages"]] == [
+        ("assistant", "partial output")
+    ]
+    assert _events(db_path, tid, "chat_turn_finished") == [
+        {"turn_id": "run_pause_test", "status": "interrupted"}
+    ]
+
+
 def test_chat_history_rejects_agents(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)

@@ -1,7 +1,7 @@
 """The only module that writes ticket rows. State, ceiling/at_cap, and fields
 value mutations happen in exactly one function (_apply_decision); every public
 writer is one BEGIN IMMEDIATE transaction. Plain field writers (title, project,
-note, recap, priority, deadline, sprint) do their own single-column UPDATE and never touch
+user notes, recap, priority, deadline, sprint) do their own single-column UPDATE and never touch
 state/ceiling/at_cap/fields.value. sqlite3, events and ids live here only; the
 clock arrives as now (unix seconds) and the title limit as an argument."""
 
@@ -62,6 +62,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         sprint_item_id=row["sprint_item_id"],
         sprint_id=row["sprint_id"],
         recap=row["recap"],
+        user_note=row["user_note"],
         ceiling=TicketState(row["ceiling"]),
         at_cap=AtCap(row["at_cap"]),
         ticket_status=TicketStatus(row["ticket_status"]),
@@ -205,6 +206,7 @@ def create_ticket(
     actor: str,
     now: int,
     title_max_chars: int,
+    user_note: str = "",
     project_id: str | None = None,
     priority: Priority = Priority.P3,
     deadline: str | None = None,
@@ -240,9 +242,9 @@ def create_ticket(
         conn.execute(
             "INSERT INTO tickets ("
             "id, title, state, priority, deadline, project_id, sprint_item_id, "
-            "sprint_id, recap, ceiling, at_cap, ticket_status, "
+            "sprint_id, recap, user_note, ceiling, at_cap, ticket_status, "
             "chat_session_key, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -252,6 +254,7 @@ def create_ticket(
                 project_id,
                 sprint_item_id,
                 sprint_id,
+                user_note,
                 TicketState.needs_success.value,
                 AtCap.propose.value,
                 TicketStatus.empty.value,
@@ -520,6 +523,29 @@ def change_scope(
         return _apply_decision(conn, ticket, decision, now)
 
 
+def set_field_user_note(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    field: FieldName,
+    user_note: str | None,
+    actor: str,
+    now: int,
+) -> Ticket:
+    with _txn(conn):
+        ticket = _load_ticket(conn, ticket_id)
+        slot = fields_codec.get_slot(ticket.fields, field)
+        new_slot = FieldSlot(value=slot.value, proposal=slot.proposal, user_note=user_note)
+        new_fields = fields_codec.with_slot(ticket.fields, field, new_slot)
+        conn.execute(
+            "UPDATE tickets SET fields = ?, updated_at = ? WHERE id = ?",
+            (fields_codec.fields_to_json(new_fields), now, ticket_id),
+        )
+        append_event(conn, ticket_id, EventKind.note_updated, {"field": field.value}, now)
+        return _load_ticket(conn, ticket_id)
+
+
+# Backwards-compatible name for the legacy /notes route and worker note command.
 def set_note(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -529,16 +555,32 @@ def set_note(
     actor: str,
     now: int,
 ) -> Ticket:
+    return set_field_user_note(
+        conn, ticket_id, field=field, user_note=note, actor=actor, now=now
+    )
+
+
+def set_user_note(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    user_note: str,
+    now: int,
+) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
-        slot = fields_codec.get_slot(ticket.fields, field)
-        new_slot = FieldSlot(value=slot.value, proposal=slot.proposal, notes=note)
-        new_fields = fields_codec.with_slot(ticket.fields, field, new_slot)
+        prev = ticket.user_note
         conn.execute(
-            "UPDATE tickets SET fields = ?, updated_at = ? WHERE id = ?",
-            (fields_codec.fields_to_json(new_fields), now, ticket_id),
+            "UPDATE tickets SET user_note = ?, updated_at = ? WHERE id = ?",
+            (user_note, now, ticket_id),
         )
-        append_event(conn, ticket_id, EventKind.note_updated, {"field": field.value}, now)
+        append_event(
+            conn,
+            ticket_id,
+            EventKind.ticket_updated,
+            {"field": "user_note", "from": prev, "to": user_note},
+            now,
+        )
         return _load_ticket(conn, ticket_id)
 
 

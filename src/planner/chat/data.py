@@ -114,13 +114,17 @@ def read_state(
     messages = tuple(_row_to_message(row) for row in rows)
     if not messages and legacy_messages:
         messages = legacy_messages
+    active_turn = read_active_turn(conn, entity_id)
+    return ChatState(messages=messages, active_turn=active_turn, session_key=session_key)
+
+
+def read_active_turn(conn: sqlite3.Connection, entity_id: str) -> ChatTurn | None:
     turn_row = conn.execute(
         "SELECT * FROM chat_turns WHERE entity_id = ? AND status = 'running' "
         "ORDER BY started_at DESC, id DESC LIMIT 1",
         (entity_id,),
     ).fetchone()
-    active_turn = _row_to_turn(turn_row) if turn_row is not None else None
-    return ChatState(messages=messages, active_turn=active_turn, session_key=session_key)
+    return _row_to_turn(turn_row) if turn_row is not None else None
 
 
 def start_turn(
@@ -210,11 +214,13 @@ def set_turn_activity(
     now: int,
 ) -> None:
     with _txn(conn):
-        conn.execute(
+        cursor = conn.execute(
             "UPDATE chat_turns SET phase = ?, activity_label = ?, updated_at = ? "
             "WHERE id = ? AND status = 'running'",
             (phase, activity_label, now, turn_id),
         )
+        if cursor.rowcount == 0:
+            return
         append_event(
             conn,
             entity_id,
@@ -236,11 +242,13 @@ def append_turn_output(
     if not delta:
         return
     with _txn(conn):
-        conn.execute(
+        cursor = conn.execute(
             "UPDATE chat_turns SET output_text = output_text || ?, phase = ?, "
             "activity_label = NULL, updated_at = ? WHERE id = ? AND status = 'running'",
             (delta, phase, now, turn_id),
         )
+        if cursor.rowcount == 0:
+            return
         append_event(
             conn,
             entity_id,
@@ -259,11 +267,13 @@ def finish_turn(
     output_role: str,
     status: str = "complete",
     now: int,
-) -> None:
+) -> ChatTurn | None:
     with _txn(conn):
         row = conn.execute("SELECT * FROM chat_turns WHERE id = ?", (turn_id,)).fetchone()
         if row is None:
             raise PlannerError(ErrorCode.not_found, "chat turn not found", {"turn_id": turn_id})
+        if row["status"] != "running":
+            return _row_to_turn(row)
         final_text = reply_text or str(row["output_text"])
         conn.execute(
             "UPDATE chat_turns SET status = ?, phase = 'settled', activity_label = NULL, "
@@ -286,6 +296,8 @@ def finish_turn(
             {"turn_id": turn_id, "status": status},
             now,
         )
+        updated = conn.execute("SELECT * FROM chat_turns WHERE id = ?", (turn_id,)).fetchone()
+        return _row_to_turn(updated) if updated is not None else None
 
 
 def fail_turn(
@@ -295,8 +307,13 @@ def fail_turn(
     entity_id: str,
     error: str,
     now: int,
-) -> None:
+) -> ChatTurn | None:
     with _txn(conn):
+        row = conn.execute("SELECT * FROM chat_turns WHERE id = ?", (turn_id,)).fetchone()
+        if row is None:
+            raise PlannerError(ErrorCode.not_found, "chat turn not found", {"turn_id": turn_id})
+        if row["status"] != "running":
+            return _row_to_turn(row)
         conn.execute(
             "UPDATE chat_turns SET status = 'errored', phase = 'settled', "
             "activity_label = NULL, error = ?, updated_at = ?, completed_at = ? WHERE id = ?",
@@ -309,3 +326,5 @@ def fail_turn(
             {"turn_id": turn_id, "status": "errored", "error": error},
             now,
         )
+        updated = conn.execute("SELECT * FROM chat_turns WHERE id = ?", (turn_id,)).fetchone()
+        return _row_to_turn(updated) if updated is not None else None

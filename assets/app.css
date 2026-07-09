@@ -1198,8 +1198,7 @@ select {
   padding: 0 var(--board-workspace-rail-pad-x) var(--space-4);
 }
 
-.board-workspace-filter-head,
-.board-workspace-filter-label {
+.board-workspace-filter-head {
   font-family: var(--font-mono);
   font-size: var(--type-xs);
   font-weight: 600;
@@ -1217,7 +1216,7 @@ select {
 
 .board-workspace-filter-row {
   display: flex;
-  align-items: end;
+  align-items: center;
   gap: var(--space-2);
   margin-top: var(--space-3);
 }
@@ -1401,7 +1400,8 @@ select {
 }
 
 .ticket-field,
-.ticket-recap {
+.ticket-recap,
+.ticket-user-note {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);

@@ -11,7 +11,7 @@ from typing import Final
 
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 10
+SCHEMA_VERSION: Final = 11
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   sprint_item_id       TEXT REFERENCES sprint_items(id),
   sprint_id            TEXT REFERENCES sprints(id),  -- writable only when sprint_item_id IS NULL
   recap                TEXT NOT NULL DEFAULT '',
+  user_note            TEXT NOT NULL DEFAULT '',      -- preserved intake context / user guidance
   ceiling              TEXT NOT NULL DEFAULT 'needs_success'
                        CHECK (ceiling IN ('needs_success','needs_approach','needs_plan',
                                           'in_progress','needs_review','done')),
@@ -77,7 +78,7 @@ CREATE TABLE IF NOT EXISTS tickets (
                                                 'awaiting_approval','user_takeover','errored')),
   chat_session_key     TEXT,                         -- the ticket-mind's durable Hermes session_key
   alias                TEXT,                         -- migration "Ticket ID:" (seed importer dedup)
-  fields               TEXT NOT NULL DEFAULT '{"success":{"value":null,"proposal":null,"notes":null},"approach":{"value":null,"proposal":null,"notes":null},"plan":{"value":null,"proposal":null,"notes":null},"result":{"value":null,"proposal":null,"notes":null}}',
+  fields               TEXT NOT NULL DEFAULT '{"success":{"value":null,"proposal":null,"user_note":null},"approach":{"value":null,"proposal":null,"user_note":null},"plan":{"value":null,"proposal":null,"user_note":null},"result":{"value":null,"proposal":null,"user_note":null}}',
   created_at           INTEGER NOT NULL,
   updated_at           INTEGER NOT NULL
 );
@@ -183,11 +184,13 @@ def connect(db_path: str, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
 def create_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(DDL)
     _migrate_tickets_status_column(conn)
+    _migrate_ticket_user_note_column(conn)
     projects_data.seed_default_projects(conn)
     _migrate_project_columns(conn)
     _migrate_project_summary_column(conn)
     _migrate_derived_sprint_item_status(conn)
     _migrate_tickets_status_column(conn)
+    _migrate_ticket_user_note_column(conn)
     _create_indexes(conn)
     conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
@@ -216,6 +219,12 @@ def _migrate_tickets_status_column(conn: sqlite3.Connection) -> None:
         "WHEN 'errored' THEN 'errored' "
         "ELSE 'empty' END"
     )
+
+
+def _migrate_ticket_user_note_column(conn: sqlite3.Connection) -> None:
+    if "user_note" in _table_columns(conn, "tickets"):
+        return
+    conn.execute("ALTER TABLE tickets ADD COLUMN user_note TEXT NOT NULL DEFAULT ''")
 
 
 def _migrate_project_summary_column(conn: sqlite3.Connection) -> None:
@@ -386,6 +395,7 @@ def _rebuild_tickets_with_project_id(conn: sqlite3.Connection) -> None:
           sprint_item_id       TEXT REFERENCES sprint_items(id),
           sprint_id            TEXT REFERENCES sprints(id),
           recap                TEXT NOT NULL DEFAULT '',
+          user_note            TEXT NOT NULL DEFAULT '',
           ceiling              TEXT NOT NULL DEFAULT 'needs_success'
                                CHECK (ceiling IN ('needs_success','needs_approach','needs_plan',
                                                   'in_progress','needs_review','done')),
@@ -395,7 +405,7 @@ def _rebuild_tickets_with_project_id(conn: sqlite3.Connection) -> None:
                                                         'awaiting_approval','user_takeover','errored')),
           chat_session_key     TEXT,
           alias                TEXT,
-          fields               TEXT NOT NULL DEFAULT '{"success":{"value":null,"proposal":null,"notes":null},"approach":{"value":null,"proposal":null,"notes":null},"plan":{"value":null,"proposal":null,"notes":null},"result":{"value":null,"proposal":null,"notes":null}}',
+          fields               TEXT NOT NULL DEFAULT '{"success":{"value":null,"proposal":null,"user_note":null},"approach":{"value":null,"proposal":null,"user_note":null},"plan":{"value":null,"proposal":null,"user_note":null},"result":{"value":null,"proposal":null,"user_note":null}}',
           created_at           INTEGER NOT NULL,
           updated_at           INTEGER NOT NULL
         )
@@ -405,12 +415,12 @@ def _rebuild_tickets_with_project_id(conn: sqlite3.Connection) -> None:
         f"""
         INSERT INTO tickets_new (
           id, title, state, priority, deadline, project_id, sprint_item_id, sprint_id,
-          recap, ceiling, at_cap, ticket_status, chat_session_key, alias, fields,
+          recap, user_note, ceiling, at_cap, ticket_status, chat_session_key, alias, fields,
           created_at, updated_at
         )
         SELECT id, title, state, priority, deadline,
           CASE WHEN sprint_item_id IS NOT NULL THEN NULL ELSE {_project_id_expr()} END,
-          sprint_item_id, sprint_id, recap, ceiling, at_cap, ticket_status,
+          sprint_item_id, sprint_id, recap, user_note, ceiling, at_cap, ticket_status,
           chat_session_key, alias, fields, created_at, updated_at
         FROM tickets
         """

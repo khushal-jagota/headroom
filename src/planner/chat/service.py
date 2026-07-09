@@ -275,6 +275,44 @@ def state(
     )
 
 
+def pause_turn(
+    conn: sqlite3.Connection,
+    gateway: GatewayAdapter,
+    entity_id: str,
+    now: int,
+) -> ChatTurn:
+    """Interrupt the visible active chat turn without touching ticket runtime status."""
+    _resolve(conn, entity_id, now)
+    active = chat_data.read_active_turn(conn, entity_id)
+    if active is None:
+        raise PlannerError(ErrorCode.not_found, "no active chat turn", {"entity_id": entity_id})
+    session_key = active.session_key
+    if not session_key:
+        raise PlannerError(
+            ErrorCode.validation,
+            "active chat turn has no session key yet",
+            {"entity_id": entity_id, "turn_id": active.id},
+        )
+    try:
+        gateway.interrupt(session_key, entity_id)
+    except PlannerError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise PlannerError(
+            ErrorCode.gateway_offline, "gateway unavailable", {"cause": str(exc)}
+        ) from exc
+    settled = chat_data.finish_turn(
+        conn,
+        active.id,
+        entity_id=entity_id,
+        reply_text="",
+        output_role=active.output_role,
+        status="interrupted",
+        now=now,
+    )
+    return settled or active
+
+
 def catalog(gateway: GatewayAdapter) -> CommandCatalog:
     """The gateway's own command/skill registry (pass-through; the route caches it)."""
     return gateway.catalog()

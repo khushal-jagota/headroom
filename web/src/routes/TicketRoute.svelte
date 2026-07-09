@@ -46,6 +46,7 @@
   const ticketInvalidations = [`ticket:${id}`, "board", "queues", "sprint:current"];
   const emptyTicketFieldText = "Not written yet.";
   const emptyTicketRecapText = "No recap yet.";
+  const emptyTicketUserNoteText = "No user note yet.";
 
   let headerError = $state<unknown>(null);
   let copied = $state(false);
@@ -69,7 +70,7 @@
   function saveNote(field: string, note: string): Promise<unknown> {
     return mutateJson(
       `/api/tickets/${id}/notes/${field}`,
-      { method: "PUT", body: { note } },
+      { method: "PUT", body: { user_note: note } },
       ticketInvalidations
     );
   }
@@ -247,6 +248,21 @@
         </header>
 
         <div class="ticket-col">
+          <div class="ticket-user-note" data-user-note>
+            <ContentDisclosure title="User note" tone="support" section="user-note">
+              <InlineEdit
+                value={detail.user_note || ""}
+                markdown
+                multiline
+                placeholder="Preserve user guidance, source context, and boundaries..."
+                onSave={(raw) => patch({ user_note: raw })}
+              />
+              {#if !detail.user_note}
+                <div class="quiet-line">{emptyTicketUserNoteText}</div>
+              {/if}
+            </ContentDisclosure>
+          </div>
+
           <div class="ticket-recap" data-recap>
             <ContentDisclosure title="Recap" tone="support" section="recap">
               {#if ["needs_approach", "needs_plan", "in_progress", "needs_review", "done"].includes(detail.state)}
@@ -254,7 +270,7 @@
                   value={detail.recap}
                   markdown
                   multiline
-                  placeholder="Recap the state of play..."
+                  placeholder="Short orientation for a cold reader..."
                   onSave={(raw) =>
                     mutateJson(
                       `/api/tickets/${id}/recap`,

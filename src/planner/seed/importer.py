@@ -229,20 +229,20 @@ def _import_tickets(
             sprint_item_id = None
             row_sprint_id = sprint_id
         fields = {
-            "success": {"value": ticket.success, "proposal": None, "notes": ticket.body or None},
-            "approach": {"value": ticket.approach, "proposal": None, "notes": None},
-            "plan": {"value": None, "proposal": None, "notes": None},
-            "result": {"value": None, "proposal": None, "notes": None},
+            "success": {"value": ticket.success, "proposal": None, "user_note": None},
+            "approach": {"value": ticket.approach, "proposal": None, "user_note": None},
+            "plan": {"value": None, "proposal": None, "user_note": None},
+            "result": {"value": None, "proposal": None, "user_note": None},
         }
         conn.execute(
             "INSERT INTO tickets ("
             "id, title, state, priority, deadline, project_id, sprint_item_id, "
-            "sprint_id, recap, ceiling, at_cap, "
+            "sprint_id, recap, user_note, ceiling, at_cap, "
             "chat_session_key, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ticket_id, ticket.title, ticket.state.value, ticket.priority.value, None, None,
-                sprint_item_id, row_sprint_id, "", ticket.state.value, "propose",
+                sprint_item_id, row_sprint_id, "", ticket.body, ticket.state.value, "propose",
                 ticket.chat_session_key, ticket.alias, json.dumps(fields), now, now,
             ),
         )

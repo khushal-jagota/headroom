@@ -254,10 +254,11 @@ def test_chief_chat_shows_running_activity_status_after_remount(
     _wait_chat_text(page, "planner", "I found the current board.")
     _wait_chat_text(page, "planner", "Reading workspace status")
     page.wait_for_selector('[data-chat-pending] [data-chat-activity]', timeout=WAIT_MS)
+    assert page.locator("[data-chat-send]").get_attribute("title") == "Pause"
+    assert page.locator("[data-chat-send]").is_enabled()
     assert page.locator("[data-chat-input]").is_enabled()
     page.fill("[data-chat-input]", "draft while chief works")
     assert page.locator("[data-chat-input]").input_value() == "draft while chief works"
-    assert page.locator("[data-chat-send]").is_disabled()
 
     _update_running_worker_turn_label(server, entity_id, "Checking ticket activity")
     _wait_chat_text(page, "planner", "Checking ticket activity")
@@ -294,11 +295,12 @@ def test_ticket_chat_shows_running_worker_turn_after_remount(
     _wait_chat_text(page, "worker", WORKER_PROMPT_TEXT)
     _wait_chat_text(page, "worker", "Checking the plan")
     page.wait_for_selector("[data-chat] [data-chat-pending]", timeout=WAIT_MS)
+    assert page.locator("[data-chat] [data-chat-send]").get_attribute("title") == "Pause"
 
     assert page.locator("[data-chat] [data-chat-input]").is_enabled()
     page.fill("[data-chat] [data-chat-input]", "draft while worker runs")
     assert page.locator("[data-chat] [data-chat-input]").input_value() == "draft while worker runs"
-    assert page.locator("[data-chat] [data-chat-send]").is_disabled()
+    assert page.locator("[data-chat] [data-chat-send]").is_enabled()
 
     page.press("[data-chat] [data-chat-input]", "Enter")
     state = api.get(server, f"/api/chat/{tid}/state")
@@ -318,6 +320,32 @@ def test_ticket_chat_shows_running_worker_turn_after_remount(
     _wait_chat_text(page, "worker", "Still checking the plan")
     page.wait_for_selector("[data-chat] [data-chat-pending]", timeout=WAIT_MS)
     assert page.locator("[data-chat] [data-chat-input]").is_enabled()
+    assert page.locator("[data-chat] [data-chat-send]").get_attribute("title") == "Pause"
     page.fill("[data-chat] [data-chat-input]", "draft after remount")
     assert page.locator("[data-chat] [data-chat-input]").input_value() == "draft after remount"
-    assert page.locator("[data-chat] [data-chat-send]").is_disabled()
+    assert page.locator("[data-chat] [data-chat-send]").is_enabled()
+
+
+def test_ticket_chat_pause_settles_visible_active_turn(
+    server, context_factory, open_page, cli, api
+) -> None:
+    tid = cli(server, "ticket", "create", "--title", "Pause visible chat turn")["id"]
+    _seed_running_worker_turn(server, tid)
+
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{tid}",
+        'section[data-screen="ticket"] [data-chat] [data-chat-send][title="Pause"]',
+        settled=True,
+    )
+    _wait_chat_text(page, "worker", WORKER_PROMPT_TEXT)
+    page.click('[data-chat] [data-chat-send][title="Pause"]')
+    page.wait_for_function(
+        "() => !document.querySelector('[data-chat] [data-chat-pending]')",
+        timeout=WAIT_MS,
+    )
+
+    state = api.get(server, f"/api/chat/{tid}/state")
+    assert state["active_turn"] is None
+    assert [msg["text"] for msg in state["messages"]] == [WORKER_PROMPT_TEXT]

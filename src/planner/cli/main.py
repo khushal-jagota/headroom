@@ -37,6 +37,7 @@ _DAY_FIELDS = {
 
 _TICKET_SET_FIELDS = {
     "title": "title",
+    "user-note": "user_note",
     "priority": "priority",
     "deadline": "deadline",
     "project": "project",
@@ -440,6 +441,8 @@ def ticket() -> None:
 @click.option("--project-id", default=None, help="Project id.")
 @click.option("--sprint", default=None, help="Sprint id, current, or none.")
 @click.option("--sprint-item", "sprint_item", default=None, help="Parent sprint item id.")
+@click.option("--user-note", default=None, help="Preserved intake context / user guidance.")
+@click.option("--user-note-file", default=None, help="Read intake user note from this file, or -.")
 @json_option
 def ticket_create(
     title: str,
@@ -449,9 +452,17 @@ def ticket_create(
     project_id: str | None,
     sprint: str | None,
     sprint_item: str | None,
+    user_note: str | None,
+    user_note_file: str | None,
     as_json: bool,
 ) -> None:
     body: dict[str, Any] = {"title": title}
+    if user_note is not None and user_note_file is not None:
+        http.fail_validation("user note accepts only one of --user-note or --user-note-file", as_json)
+    if user_note_file is not None:
+        body["user_note"] = _read_source(user_note_file, as_json)
+    elif user_note is not None:
+        body["user_note"] = user_note
     if priority is not None:
         body["priority"] = priority
     if deadline is not None:
@@ -532,6 +543,8 @@ def ticket_set(
         http.fail_validation(f"{field} cannot be cleared", as_json)
     if field == "priority" and new_value not in _PRIORITIES:
         http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
+    if field == "user-note" and new_value is None:
+        new_value = ""
     data = http.send(
         "PATCH",
         f"/api/tickets/{ticket_id}",
@@ -994,7 +1007,7 @@ def worker_recap(ticket_id: str | None, body_file: str | None, as_json: bool) ->
 
 @worker.command("note")
 @click.argument("args", nargs=-1)
-@click.option("--body-file", default=None, help="Read note text from this file, or -.")
+@click.option("--body-file", default=None, help="Read field user guidance text from this file, or -.")
 @json_option
 def worker_note(args: tuple[str, ...], body_file: str | None, as_json: bool) -> None:
     if len(args) == 1:
@@ -1010,9 +1023,9 @@ def worker_note(args: tuple[str, ...], body_file: str | None, as_json: bool) -> 
     body = read_body(ticket_id, body_file, as_json)
     tid = resolve_ticket_id(ticket_id, as_json)
     data = http.send(
-        "PUT", f"/api/tickets/{tid}/notes/{field}", as_json=as_json, json_body={"note": body}
+        "PUT", f"/api/tickets/{tid}/notes/{field}", as_json=as_json, json_body={"user_note": body}
     )
-    http.emit(data, as_json, f"note {field} written on {data['id']}")
+    http.emit(data, as_json, f"user note {field} written on {data['id']}")
 
 
 if __name__ == "__main__":

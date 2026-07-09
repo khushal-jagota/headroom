@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
-  import { fetchJson, startChatTurn } from "../lib/api";
+  import { fetchJson, pauseChatTurn, startChatTurn } from "../lib/api";
   import { resource } from "../lib/resources";
   import type { ChatStateMessage, ChatStateResponse, ChatTurn, CommandCatalog } from "../lib/types";
   import ChatComposer from "./ChatComposer.svelte";
@@ -36,6 +36,7 @@
 
   let draft = $state("");
   let error = $state<unknown>(null);
+  let pausePending = $state(false);
   let threadElement = $state<HTMLDivElement | null>(null);
   let pollTimer: ReturnType<typeof window.setTimeout> | null = null;
   let scrollRequest = 0;
@@ -126,6 +127,20 @@
     }
   }
 
+  async function pauseActiveTurn(): Promise<void> {
+    if (!activeTurn || pausePending) return;
+    error = null;
+    pausePending = true;
+    try {
+      await pauseChatTurn(stableEntityId);
+      await chatState.refresh();
+    } catch (err) {
+      error = err;
+    } finally {
+      pausePending = false;
+    }
+  }
+
   onDestroy(() => {
     clearPoll();
     commands.dispose();
@@ -176,10 +191,14 @@
     <ChatComposer
       catalog={commands.data}
       submitDisabled={pending}
+      pauseMode={pending}
+      pauseDisabled={!activeTurn?.session_key}
+      {pausePending}
       initialText={draft}
       placeholder={label === "employee" ? "Message the employee..." : `Message ${label}...`}
       onDraft={(text) => (draft = text)}
       onSubmit={submit}
+      onPause={pauseActiveTurn}
     />
   {/if}
 </div>

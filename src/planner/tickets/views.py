@@ -43,6 +43,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "sprint_item_id": ticket.sprint_item_id,
         "sprint_id": ticket.sprint_id,
         "recap": ticket.recap,
+        "user_note": ticket.user_note,
         "ceiling": ticket.ceiling.value,
         "at_cap": ticket.at_cap.value,
         "ticket_status": ticket.ticket_status.value,
@@ -161,13 +162,19 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"state: {ticket.state.value}\n"
         f"priority: {ticket.priority.value}\n"
         f"\n"
+        f"user_note:\n{show(ticket.user_note)}\n"
+        f"\n"
         f"success:\n{show(fields.success.value)}\n"
+        f"success_user_note:\n{show(fields.success.user_note)}\n"
         f"\n"
         f"approach:\n{show(fields.approach.value)}\n"
+        f"approach_user_note:\n{show(fields.approach.user_note)}\n"
         f"\n"
         f"plan:\n{show(fields.plan.value)}\n"
+        f"plan_user_note:\n{show(fields.plan.user_note)}\n"
         f"\n"
         f"result:\n{show(fields.result.value)}\n"
+        f"result_user_note:\n{show(fields.result.user_note)}\n"
         f"\n"
         f"recap:\n{show(ticket.recap)}\n"
         f"\n"

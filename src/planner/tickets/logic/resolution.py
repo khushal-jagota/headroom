@@ -49,7 +49,7 @@ def _accept_gating_proposal(
     superseded_body: str | None = None,
 ) -> Decision:
     slot = fields_codec.get_slot(ticket.fields, field)
-    new_slot = FieldSlot(value=stored_body, proposal=None, notes=slot.notes)
+    new_slot = FieldSlot(value=stored_body, proposal=None, user_note=slot.user_note)
     new_fields = fields_codec.with_slot(ticket.fields, field, new_slot)
     new_state = machine.advance_target(ticket.state, ticket.ceiling)
     events: list[EventSpec] = []
@@ -119,7 +119,7 @@ def decide_file_proposal(
     new_slot = FieldSlot(
         value=slot.value,
         proposal=Proposal(body=body, proposed_by=actor, created_at=now),
-        notes=slot.notes,
+        user_note=slot.user_note,
     )
     new_fields = fields_codec.with_slot(ticket.fields, field, new_slot)
     events: list[EventSpec] = []
@@ -175,7 +175,7 @@ def decide_accept(
             scope=scope,
             cause=CAUSE_HUMAN_ACCEPT,
         )
-    new_slot = FieldSlot(value=stored_body, proposal=None, notes=slot.notes)
+    new_slot = FieldSlot(value=stored_body, proposal=None, user_note=slot.user_note)
     new_fields = fields_codec.with_slot(ticket.fields, field, new_slot)
     events = (
         EventSpec(
@@ -219,7 +219,7 @@ def decide_edit_value(
             "field is not yet passed",
             {"field": field.value, "state": ticket.state.value},
         )
-    new_slot = FieldSlot(value=new_body, proposal=None, notes=slot.notes)
+    new_slot = FieldSlot(value=new_body, proposal=None, user_note=slot.user_note)
     new_fields = fields_codec.with_slot(ticket.fields, field, new_slot)
     return Decision(
         events=(
@@ -271,7 +271,7 @@ def decide_return_for_revision(ticket: Ticket, actor: str) -> Decision:
             "no pending proposal to return",
             {"ticket_id": ticket.id, "field": field.value},
         )
-    new_slot = FieldSlot(value=slot.value, proposal=None, notes=slot.notes)
+    new_slot = FieldSlot(value=slot.value, proposal=None, user_note=slot.user_note)
     return Decision(
         events=(
             EventSpec(EventKind.approval_returned, {"kind": "proposal", "field": field.value}),

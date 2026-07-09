@@ -51,7 +51,7 @@
   let isGating = $derived(gatingField(ticketState) === name);
   let passed = $derived(fieldIsPassed(name, ticketState));
   let hasValue = $derived(hasText(slot.value));
-  let hasNotes = $derived(hasText(slot.notes));
+  let hasNotes = $derived(hasText(slot.user_note));
   let hasProposal = $derived(Boolean(slot.proposal));
   let isResultApproval = $derived(ticketState === "needs_review" && name === "result");
   let nextState = $derived(advanceTarget(ticketState, ceiling));
@@ -77,7 +77,7 @@
 
   {#if reviewVariant && hasNotes}
     <ContentDisclosure title="Notes" defaultOpen={false} tone="support" section="notes">
-      <MarkdownBlock text={slot.notes} />
+      <MarkdownBlock text={slot.user_note} />
     </ContentDisclosure>
   {/if}
 
@@ -129,7 +129,7 @@
 
   {#if !reviewVariant && onSaveNote}
     <ContentDisclosure title="Notes" defaultOpen={hasNotes} tone="support" section="note">
-      <InlineEdit value={slot.notes} markdown multiline placeholder="Note..." onSave={onSaveNote} />
+      <InlineEdit value={slot.user_note} markdown multiline placeholder="Note..." onSave={onSaveNote} />
     </ContentDisclosure>
   {/if}
 {/snippet}

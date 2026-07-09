@@ -3,6 +3,80 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-09): Pause active chat turn
+
+Current implementation:
+
+- Chat now exposes `POST /api/chat/{entity_id}/pause` for human-only interruption of the visible
+  active chat turn.
+- Pause calls the shared Hermes gateway `session.interrupt`, settles the `chat_turns` row as
+  `interrupted`, preserves partial output as the final visible assistant/system line, and leaves
+  `tickets.ticket_status` untouched.
+- `ChatPanel` turns the composer send button into the Pause button while a turn is active, preserving
+  the user's draft and refreshing chat state after pause.
+- The live chat doc now states that pause is chat/session state, not ticket dispatch ownership.
+
+Verification status:
+
+- Targeted `.venv/bin/python -m pytest tests/unit/test_chat_seed.py tests/unit/test_chat_commands.py
+  tests/unit/test_system_b.py` passed: 62 tests passed, 1 existing Starlette/httpx warning.
+- Targeted `.venv/bin/python -m pytest tests/e2e/test_live_chat_state.py` passed: 5 tests passed.
+- Full `./verify` passed: ruff ok, mypy ok, 179 unit tests passed, build/frontend gates ok, 35 e2e
+  tests passed, `VERIFY: PASS`.
+
+Immediate next step:
+
+- Ticket `t_wyxgs2u0` now shows `done` after the corrected result update.
+
+## Current work cycle (2026-07-09): Workspace status dropdown and hide-done toggle
+
+Current implementation:
+
+- Workspace status filters now render as a compact dropdown using the existing `ticket_status`
+  choices.
+- A separate Hide done checkbox filters workflow-state `done` tickets without changing the selected
+  ticket-status filter.
+- The redundant `Ticket status` subheader was removed so the row is just the dropdown and Hide done
+  toggle under `Filters`.
+- Workspace e2e coverage now exercises the dropdown path and hide/restore behavior for done tickets.
+- `docs/frontend.md` describes the separate hide-done control.
+
+Verification status:
+
+- `npm --prefix web run check` passed with the existing three `TicketRoute.svelte` warnings.
+- `.venv/bin/pytest tests/e2e/test_board_stage_indicators.py -q` passed: 2 tests passed.
+- Full `./verify` passed: ruff ok, mypy ok, 178 unit tests passed, build/frontend gates ok,
+  34 e2e tests passed, `VERIFY: PASS`.
+
+Immediate next step:
+
+- Result proposed on ticket `t_37fx0wvp`; ready for owner review.
+
+## Current work cycle (2026-07-09): Review queue send-back guidance
+
+Current implementation:
+
+- Review cards for ticket approvals now include a compact guidance box with a **Send back** action.
+- `POST /api/tickets/{id}/return-for-revision` records the human guidance in ticket chat, clears a
+  pending gated proposal without accepting it, or moves a final review item back to `in_progress`.
+- Returning an item sets `ticket_status` back to `empty`, emits `approval_returned`, refreshes the
+  Review queue/chat/ticket resources, and pokes System A so the worker can revise immediately.
+- Added API and browser coverage for proposal returns, final review returns, agent/message guards,
+  chat recording, queue clearing, and event mapping.
+- `docs/tickets-and-gates.md` describes the send-back path.
+
+Verification status:
+
+- Targeted `.venv/bin/pytest tests/unit/test_return_for_revision.py
+  tests/e2e/test_flows_a.py::test_review_return_for_revision_sends_guidance_and_clears_queue -q`
+  passed after the new ruff fixes.
+- Full `./verify` passed: ruff ok, mypy ok, 178 unit tests passed, build/frontend gates ok, 34 e2e
+  tests passed, `VERIFY: PASS`.
+
+Immediate next step:
+
+- Propose the result on ticket `t_gcsd5uyr`.
+
 ## Current work cycle (2026-07-09): Default approval onward scope to propose
 
 Current implementation:

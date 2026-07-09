@@ -7,18 +7,26 @@
     catalog,
     disabled = false,
     submitDisabled = false,
+    pauseMode = false,
+    pauseDisabled = false,
+    pausePending = false,
     initialText = "",
     placeholder = "Message the employee...",
     onDraft,
-    onSubmit
+    onSubmit,
+    onPause
   }: {
     catalog?: CommandCatalog;
     disabled?: boolean;
     submitDisabled?: boolean;
+    pauseMode?: boolean;
+    pauseDisabled?: boolean;
+    pausePending?: boolean;
     initialText?: string;
     placeholder?: string;
     onDraft?: (text: string) => void;
     onSubmit: (text: string, mode: "message" | "command") => Promise<void>;
+    onPause?: () => Promise<void>;
   } = $props();
 
   let text = $state("");
@@ -103,6 +111,15 @@
     }
   }
 
+  async function activateButton(): Promise<void> {
+    if (pauseMode) {
+      if (busy || disabled || pauseDisabled || pausePending || !onPause) return;
+      await onPause();
+      return;
+    }
+    await send();
+  }
+
   function choose(item: MenuItem): void {
     const kind = commandKind(item.name);
     if (kind === "skill" || kind === "command") {
@@ -116,6 +133,7 @@
   function onKeydown(event: KeyboardEvent): void {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
+      if (pauseMode) return;
       void send();
     }
     if (event.key === "Escape") menuOpen = false;
@@ -147,13 +165,13 @@
     </button>
     <button
       type="button"
-      class={`chat-send${text.trim() ? " on" : ""}`}
+      class={`chat-send${text.trim() || pauseMode ? " on" : ""}${pauseMode ? " pause" : ""}`}
       data-chat-send
-      disabled={disabled || submitDisabled || busy || !text.trim()}
-      onclick={() => void send()}
-      title="Send"
+      disabled={pauseMode ? (disabled || pauseDisabled || pausePending || busy) : (disabled || submitDisabled || busy || !text.trim())}
+      onclick={() => void activateButton()}
+      title={pauseMode ? "Pause" : "Send"}
     >
-      ↑
+      {pauseMode ? "Ⅱ" : "↑"}
     </button>
   </div>
   <div class="chat-menu" data-chat-menu hidden={!menuOpen}>

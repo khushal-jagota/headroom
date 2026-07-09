@@ -112,6 +112,9 @@ class EntityRoutingGateway:
             session_key, entity_id, text, mode, on_session_key
         )
 
+    def interrupt(self, session_key: str, entity_id: str) -> None:
+        self._gateway_for(entity_id).interrupt(session_key, entity_id)
+
     def catalog(self) -> CommandCatalog:
         return self._default_gateway.catalog()
 
@@ -285,6 +288,33 @@ class SharedGateway:
         except GatewayError as exc:
             raise PlannerError(
                 ErrorCode.gateway_offline, "chat gateway stream failed", {"detail": str(exc)}
+            ) from exc
+
+    def interrupt(self, session_key: str, entity_id: str) -> None:
+        try:
+            child = self._child_or_spawn()
+            child.request(
+                "session.interrupt",
+                {"session_id": session_key},
+                timeout=self._request_timeout,
+            )
+        except GatewayRpcError as exc:
+            if exc.code == NOT_FOUND_CODE:
+                raise PlannerError(
+                    ErrorCode.not_found,
+                    "chat session not found",
+                    {"entity_id": entity_id, "session_key": session_key},
+                ) from exc
+            raise PlannerError(
+                ErrorCode.gateway_offline,
+                "chat gateway interrupt failed",
+                {"detail": str(exc), "entity_id": entity_id},
+            ) from exc
+        except GatewayError as exc:
+            raise PlannerError(
+                ErrorCode.gateway_offline,
+                "chat gateway interrupt failed",
+                {"detail": str(exc), "entity_id": entity_id},
             ) from exc
 
     def catalog(self) -> CommandCatalog:

@@ -69,7 +69,7 @@ export type ProjectsResponse = {
 
 export type TicketField = {
   value?: string | null;
-  notes?: string | null;
+  user_note?: string | null;
   proposal?: {
     body: string;
     proposed_by: string;
@@ -94,6 +94,7 @@ export type TicketDetail = {
   day_ids?: string[];
   blocked?: boolean;
   recap?: string | null;
+  user_note?: string | null;
   fields: Record<string, TicketField>;
 };
 

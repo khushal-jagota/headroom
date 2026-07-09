@@ -83,7 +83,7 @@ class Proposal:                    # §4.2 proposal slot
 class FieldSlot:                   # §4.2 — one of the four field objects
     value: str | None = None       # canonical; resolution engine is the only writer
     proposal: Proposal | None = None
-    notes: str | None = None       # free guidance; result.notes = review notes (§4.2)
+    user_note: str | None = None   # preserved user guidance for this field / step
 
 
 @dataclass
@@ -114,6 +114,7 @@ class ScopePair:                   # required on every human accept/edit-accept
 
 class CreateTicketBody(TypedDict, total=False):   # POST /tickets
     title: str                     # default ""
+    user_note: str                 # default ""; preserved intake context / user guidance
     priority: str | None           # Priority value; default P3
     deadline: str | None           # ISO date
     project: str | None            # legacy project name
@@ -138,7 +139,8 @@ class AcceptBody(TypedDict, total=False):         # POST /tickets/{id}/accept/{f
 
 
 class NoteBody(TypedDict, total=False):           # PUT /tickets/{id}/notes/{field}
-    note: str | None               # null clears the note
+    note: str | None               # legacy key; null clears the user note
+    user_note: str | None          # preferred key; null clears the user note
 
 
 class RecapBody(TypedDict, total=False):          # PUT /tickets/{id}/recap
@@ -180,6 +182,7 @@ class Ticket:                      # §3.3 — column names match exactly
     sprint_item_id: str | None
     sprint_id: str | None          # writable only when sprint_item_id IS NULL
     recap: str                     # writable only past needs_success
+    user_note: str                 # preserved intake context / user guidance
     ceiling: TicketState           # default needs_success (R2); restricted to STATE_ORDER
     at_cap: AtCap                  # default propose (R2)
     ticket_status: TicketStatus    # durable state-of-control; transition functions write it

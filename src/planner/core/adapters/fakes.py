@@ -43,6 +43,7 @@ _CANNED_SKILL_NAMES = frozenset(name for name, _ in CANNED_CATALOG.skills)
 class EchoGatewayAdapter:
     calls: list[tuple[str | None, str, str]] = field(default_factory=list)
     command_calls: list[tuple[str | None, str, str]] = field(default_factory=list)
+    interrupt_calls: list[tuple[str, str]] = field(default_factory=list)
     histories: dict[str, list[ChatMessage]] = field(default_factory=dict)
     catalog_calls: int = 0                # counts real catalog() work (cache-miss proof)
     next_session: int = 1
@@ -135,6 +136,9 @@ class EchoGatewayAdapter:
             kind=result.kind,
         )
 
+    def interrupt(self, session_key: str, entity_id: str) -> None:
+        self.interrupt_calls.append((session_key, entity_id))
+
     def catalog(self) -> CommandCatalog:
         self.catalog_calls += 1
         return CANNED_CATALOG
@@ -207,6 +211,9 @@ class OfflineGatewayAdapter:
         mode: str,
         on_session_key: Callable[[str], None] | None = None,
     ) -> Iterator[ChatStreamChunk]:
+        raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
+
+    def interrupt(self, session_key: str, entity_id: str) -> None:
         raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
 
     def catalog(self) -> CommandCatalog:

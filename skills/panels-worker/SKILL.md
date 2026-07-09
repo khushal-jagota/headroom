@@ -50,6 +50,8 @@ Everything runs through the `panels` command — `panels --help` for full usage.
 - **Separate facts from choices.** Keep what's known apart from what's still an open decision.
 - **Do not over-specify gated fields.** Success, approach, and plan proposals should not become long technical design docs. They should usually be a short paragraph or a few bullets, with implementation detail only when it materially changes the decision the user is approving.
 - **Prefer clarity over coverage.** If a proposal is getting progressively more detailed, stop and compress it back to the decision-level shape a human can approve.
+- **Use recap as cold-user orientation.** The recap is not a work log. Keep it short and scannable, so a cold user can read it alongside the title and understand what the ticket is, where the current step stands, and the one or two key facts that matter now.
+- **Treat field notes as user direction.** Notes are primarily preserved user advice or constraints for a specific step. Agents may write them when carrying the user's instruction forward, but should label and phrase them as user-directed guidance, not as hidden agent scratchpad or canonical gated output.
 
 ### How to complete ticket stages effectively
 

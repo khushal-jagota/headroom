@@ -71,6 +71,12 @@ ones after it, never an earlier one, so you can't hand back ground the ticket ha
 already covered. One shared source of the allowed stages feeds both the header row
 and the approval screen, so the two can never disagree.
 
+The Review screen can also send a ticket back instead of accepting it. The human
+writes short guidance in the review card, and the system records that guidance in
+the ticket chat as a human message for the worker. A pending gated proposal is
+cleared without advancing the ticket. A final review item moves from **needs
+review** back to **in progress** so the worker can revise the result.
+
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the scope row),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`
 (the approval walk).

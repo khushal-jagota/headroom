@@ -174,3 +174,9 @@ export async function startChatTurn(
     body
   });
 }
+
+export async function pauseChatTurn(entityId: string): Promise<unknown> {
+  return fetchJson(`/api/chat/${encodeURIComponent(entityId)}/pause`, {
+    method: "POST"
+  });
+}
