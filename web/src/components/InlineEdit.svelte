@@ -1,5 +1,7 @@
 <script lang="ts">
   import {
+    editableMarkupChanged,
+    editableMarkupSnapshot,
     handlePlainTextPaste,
     paintMarkdownEditable,
     paintPlainEditable,
@@ -32,6 +34,7 @@
   let inFlight = $state(false);
   let error = $state<unknown>(null);
   let reverting = false;
+  let editSnapshot = "";
 
   function rawValue(): string {
     return value === null || value === undefined ? "" : String(value);
@@ -47,10 +50,16 @@
     if (editing || inFlight) return;
     editing = true;
     error = null;
+    editSnapshot = editableMarkupSnapshot(el);
   }
 
   async function commit(): Promise<void> {
     if (!editing || inFlight) return;
+    if (!editableMarkupChanged(el, editSnapshot)) {
+      editing = false;
+      paint(rawValue());
+      return;
+    }
     const raw = markdown ? readMarkdownEditable(el) : readPlainEditable(el);
     if (raw === rawValue()) {
       editing = false;

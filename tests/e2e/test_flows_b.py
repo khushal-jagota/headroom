@@ -33,6 +33,7 @@ E29_WATCH = "E29 the hero still does not say what Vylo is in one line."
 E29_LANDS = "E29 real visitors are in the waitlist table by tonight."
 E29_FOCUS_EDIT = "E29 signal today, not polish."
 E29_WATCH_EDIT = "E29 watch the funnel drop-off after signup."
+DAY_NOOP_MARKDOWN = "# Day raw forms\n\n* star bullet\n\n1) ordered paren\n\n_line italic_"
 
 # item 30 (ceiling needs_review so accepted result parks AT needs_review, §4.4.5)
 E30_TITLE = "E30 dispatch ticket"
@@ -226,6 +227,33 @@ def test_e29_day_overview_structured_and_edit(
     assert d["watchout"] == E29_WATCH_EDIT, d
     assert d["brief_take"] == E29_TAKE, d
     assert d["if_today_lands"] == E29_LANDS, d
+
+
+def test_day_markdown_focus_noop_keeps_raw_source(server, context_factory, open_page, api):
+    api.human_patch(
+        server,
+        f"/api/day/{DAY_PREV}",
+        {"watchout": DAY_NOOP_MARKDOWN},
+    )
+
+    page = open_page(
+        context_factory(), server, "#/day", "[data-day-overview]", settled=True
+    )
+    page.wait_for_selector("[data-day-watch-body] h1", timeout=WAIT_MS)
+
+    assert page.inner_text("[data-day-watch-body] h1") == "Day raw forms"
+    assert page.eval_on_selector_all(
+        "[data-day-watch-body] ul li", "els => els.map(e => e.textContent)"
+    ) == ["star bullet"]
+    assert page.eval_on_selector_all(
+        "[data-day-watch-body] ol li", "els => els.map(e => e.textContent)"
+    ) == ["ordered paren"]
+
+    page.focus("[data-day-watch-body]")
+    page.locator("[data-day-watch-body]").blur()
+
+    d = api.get(server, "/api/day/today")
+    assert d["watchout"] == DAY_NOOP_MARKDOWN, d
 
 
 def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api):

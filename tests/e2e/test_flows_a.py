@@ -29,7 +29,8 @@ MD_BODY = (
 )
 E24_BODY = "Agent-drafted success criteria."
 E25_ORIG = "# Original proposal\n\n- old structure"
-E25_EDIT = "# Human-edited success criteria\n\n- kept structure\n- serialized from DOM"
+E25_EDIT = "# Original proposal v2\n\n- kept structure\n- serialized from DOM"
+NOOP_MARKDOWN_BODY = "# Raw forms\n\n* star bullet\n\n1) ordered paren\n\n_line italic_"
 E27_SUCCESS = "Success body for the chain."
 E27_APPROACH = "Approach body for the chain."
 E27_PLAN = "Plan body for the chain."
@@ -187,6 +188,41 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
     assert d["fields"]["success"]["proposal"] is None
 
 
+def test_markdown_approval_focus_noop_keeps_raw_source(
+    server, context_factory, open_page, cli, api
+):
+    tid = cli(server, "ticket", "create", "--title", "Markdown noop ticket")["id"]
+    cli(
+        server,
+        "worker", "propose", "--body-file", "-", "--recap", "Raw forms ready.",
+        ticket_id=tid,
+        stdin=NOOP_MARKDOWN_BODY,
+    )
+
+    card = f'[data-review-card][data-entity-id="{tid}"]'
+    page = open_page(context_factory(), server, "#/review", card, settled=True)
+
+    # Focus leaves the rendered structure in place, but an untouched focus/approve must
+    # not serialize the DOM back to canonical markdown forms.
+    page.focus(f"{card} [data-edit]")
+    assert page.inner_text(f"{card} [data-edit] h1") == "Raw forms"
+    assert page.eval_on_selector_all(
+        f"{card} [data-edit] ul li", "els => els.map(e => e.textContent)"
+    ) == ["star bullet"]
+    assert page.eval_on_selector_all(
+        f"{card} [data-edit] ol li", "els => els.map(e => e.textContent)"
+    ) == ["ordered paren"]
+    assert page.inner_text(f"{card} [data-edit] em") == "line italic"
+
+    _wait_enabled(page, f"{card} [data-accept]")
+    page.click(f"{card} [data-accept]")
+    page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
+
+    d = api.get(server, f"/api/tickets/{tid}")
+    assert d["fields"]["success"]["value"] == NOOP_MARKDOWN_BODY
+    assert d["fields"]["success"]["proposal"] is None
+
+
 def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api):
     tid = cli(server, "ticket", "create", "--title", "T18 edit ticket")["id"]
     cli(
@@ -206,9 +242,11 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
         f"{card} [data-edit] ul li", "els => els.map(e => e.textContent)"
     ) == ["old structure"]
 
+    page.locator(f"{card} [data-edit] h1").click()
+    page.keyboard.press("End")
+    page.keyboard.type(" v2")
     page.locator(f"{card} [data-edit]").evaluate(
         """(el) => {
-            el.querySelector('h1').textContent = 'Human-edited success criteria';
             el.querySelector('li').textContent = 'kept structure';
             const extra = document.createElement('li');
             extra.textContent = 'serialized from DOM';
@@ -240,7 +278,7 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
     )
     assert ticket_page.text_content(
         '[data-field="success"] .markdown-block h1'
-    ) == "Human-edited success criteria"
+    ) == "Original proposal v2"
     assert ticket_page.eval_on_selector_all(
         '[data-field="success"] .markdown-block ul li',
         "els => els.map(e => e.textContent)",

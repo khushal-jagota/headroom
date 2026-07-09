@@ -42,6 +42,14 @@ export function readMarkdownEditable(el: HTMLElement): string {
   return raw;
 }
 
+export function editableMarkupSnapshot(el: HTMLElement): string {
+  return el.innerHTML;
+}
+
+export function editableMarkupChanged(el: HTMLElement, snapshot: string): boolean {
+  return el.innerHTML !== snapshot;
+}
+
 export function refreshEditableEmptyState(el: HTMLElement, markdown: boolean): void {
   setEmptyState(el, markdown ? readMarkdownEditable(el) : readPlainEditable(el));
 }

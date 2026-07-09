@@ -1,6 +1,8 @@
 <script lang="ts">
   import { type Snippet } from "svelte";
   import {
+    editableMarkupChanged,
+    editableMarkupSnapshot,
     handlePlainTextPaste,
     paintMarkdownEditable,
     readMarkdownEditable,
@@ -50,6 +52,7 @@
   let inFlight = $state(false);
   let resolved = $state(false);
   let error = $state<unknown>(null);
+  let draftSnapshot = "";
   let reviewLayout = $derived(layout === "review");
   let hasNote = $derived(Boolean(onNoteSave) || Boolean((note || "").trim()));
   let contentTitle = $derived(displayLabel(whatLabel || field.replace(/_/g, " ")));
@@ -70,11 +73,17 @@
     const el = draftEl;
     if (!el || draftEditing || inFlight) return;
     draftEditing = true;
+    draftSnapshot = editableMarkupSnapshot(el);
   }
 
   function commitDraft(): void {
     const el = draftEl;
     if (!el || !draftEditing) return;
+    if (!editableMarkupChanged(el, draftSnapshot)) {
+      draftEditing = false;
+      paintDraft();
+      return;
+    }
     draft = readMarkdownEditable(el);
     draftEditing = false;
     paintDraft();

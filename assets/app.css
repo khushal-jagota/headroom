@@ -1408,6 +1408,11 @@ select {
   cursor: text;
 }
 
+.ed:focus {
+  outline: var(--border-hairline) solid var(--accent-bright);
+  outline-offset: var(--space-1);
+}
+
 .ed:empty::before {
   content: attr(data-ph);
   color: var(--text-faintest);
