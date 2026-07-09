@@ -55,8 +55,8 @@ describes change, but the history of what happened is never edited or lost.
   carries each ticket forward, and the loop that fires it, watches it, and feeds an
   approval back in. The wiring is in place; a live end-to-end worker smoke is still
   the next proof.
-- **Chat** (`chat.md`) — talking to a ticket's worker, and the slash menu of
-  commands and skills.
+- **Chat** (`chat.md`) — talking to a ticket's worker or the Chief of Staff, with
+  server-owned live turn state and the slash menu of commands and skills.
 
 **The surfaces you plan on**
 

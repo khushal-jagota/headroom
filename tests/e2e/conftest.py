@@ -91,8 +91,8 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
                 "PLAN_UI_DEBOUNCE_MS": "50",
             }
         )
-        if gateway == "offline":
-            env["PLAN_GATEWAY_ADAPTER"] = "offline"
+        if gateway is not None:
+            env["PLAN_GATEWAY_ADAPTER"] = gateway
 
         log = log_path.open("wb")
         try:

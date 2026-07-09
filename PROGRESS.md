@@ -32,10 +32,9 @@ Outstanding planned / submitted work:
   is to locate Panels/chief-of-staff/rollover/sprint-planning/worker skills, record exact
   frontmatter names and paths, and call out wrong or ambiguous names such as repo references to
   `panels-rollover` versus installed Hermes `rollover`.
-- **Live chat accuracy / server-owned live turn state** — Russell's plan is conceptually accepted
-  as the direction but not implemented: the server should own active chat/turn state so ticket chat
-  and the future chief-of-staff chat can both show user/system/worker messages and thinking/doing
-  activity accurately after navigation/remount.
+- **Live chat accuracy / server-owned live turn state** — implemented on main. Panels now owns
+  `ChatState` through `chat_messages` and `chat_turns`; ticket chat, worker turns, and Chief of
+  Staff chat read the same state shape. Browser-driven remount checks and full `./verify` pass.
 
 Plan files / artifacts that must stay on the radar:
 
@@ -44,9 +43,69 @@ Plan files / artifacts that must stay on the radar:
 - Dewey's derived-status work has been merged; keep the worktree only until the merge commit is
   accepted.
 - In-place markdown editing is committed on main.
-- Russell live-chat plan needs to be written to an `orchestration/` plan artifact before
-  implementation starts.
-- Goodall live-chat implementation should start on main after the derived-status merge commit.
+- Russell live-chat plan is recorded at `orchestration/live-chat-accuracy/plan.md`.
+- Goodall live-chat implementation is complete on main.
+
+## Current work cycle (2026-07-09): Live chat accuracy / server-owned turn state
+
+Owner request: implement the live chat accuracy plan on current main after the derived sprint item
+status merge. The chat panel must accurately reflect user/system/worker/chief activity across live
+streaming, polling, navigation/remount, and future thinking/doing indicators; no client-only
+workarounds.
+
+Current implementation:
+
+- Added generic `chat_messages` and `chat_turns` tables. `chat_turns` enforces one running turn per
+  entity with a partial unique index.
+- Added chat state contracts: `ChatState`, `ChatStateMessage`, and `ChatTurn`.
+- Added chat lifecycle events: `chat_message_recorded`, `chat_turn_started`, `chat_turn_updated`,
+  and `chat_turn_finished`.
+- Added `GET /api/chat/{entity_id}/state` as the UI source of truth.
+- Added `POST /api/chat/{entity_id}/turns`, which starts a background server-owned human turn.
+- Kept the existing `/history`, `/send`, `/stream`, and `/command` routes for compatibility.
+- Wired System B worker steps into the same chat-state writer. Worker turns now record a worker
+  visible line, session key, gateway deltas/activity, completion, and errors.
+- Switched `ChatPanel` to render server `ChatState`. It no longer keeps an optimistic transcript or
+  retries Hermes history based on `ticket_status`; it polls `/state` only while the server reports
+  an active turn.
+- Updated frontend event mapping so chat lifecycle events invalidate `chat:<entity_id>`, including
+  `agent_panels_chief_of_staff`.
+- Updated live docs and recorded D65/D66.
+
+Verification status:
+
+- `.venv/bin/python -m py_compile src/planner/chat/contracts.py src/planner/chat/data.py
+  src/planner/chat/service.py src/planner/chat/api.py src/planner/core/db.py
+  src/planner/core/contracts.py src/planner/runtime/system_b.py` passed.
+- `.venv/bin/python -m pytest tests/unit/test_chat_seed.py tests/unit/test_chat_commands.py
+  tests/unit/test_minds.py tests/unit/test_system_b.py tests/unit/test_db.py
+  tests/unit/test_frontend_event_mapping.py` passed: 85 passed, 1 existing Starlette/httpx
+  warning.
+- `npm --prefix web run check` passed with the existing three `TicketRoute.svelte` initial-`id`
+  warnings.
+- `npm --prefix web run build` passed with existing Vite asset warnings and the same Svelte
+  warnings.
+- Browser-driven evidence:
+  - `test_ticket_chat_send_survives_navigation_from_server_state` sends in a ticket chat, asserts
+    `/api/chat/{ticket_id}/state` contains the human/assistant messages, navigates away/back, and
+    opens a fresh browser context to confirm the panel reloads them from the server.
+  - `test_chief_chat_send_survives_navigation_from_server_state` repeats the same check for
+    `agent_panels_chief_of_staff`.
+  - `test_ticket_chat_shows_running_worker_turn_after_remount` seeds a running worker turn in the
+    real server DB, asserts `/state` reports `origin=worker`, `phase=doing`, and the activity
+    label, then verifies the ticket chat still shows the worker line, activity text, and pending
+    indicator after navigation/remount.
+- Focused browser command:
+  `.venv/bin/python -m pytest tests/e2e/test_flows_a.py::test_e26_chat_panel_echo_and_offline
+  tests/e2e/test_flows_a.py::test_slash_menu_runs_skill
+  tests/e2e/test_flows_a.py::test_slash_menu_runs_display_command
+  tests/e2e/test_chief_of_staff.py tests/e2e/test_live_chat_state.py` passed: 7 passed.
+- Full `./verify` passed: ruff ok, mypy ok, unit suite ok, build check ok, frontend ok, e2e suite
+  ok (`VERIFY: PASS`).
+
+Immediate next step:
+
+- Ready for owner review/commit. No derived sprint item status writes were reintroduced.
 
 ## Current work cycle (2026-07-09): Derived sprint item status integration
 

@@ -113,8 +113,9 @@ def _reload_settle(page: Page, ready_selector):
 def _snap_ticket(p: Page):
     return {
         "state": p.get_attribute('section[data-screen="ticket"]', "data-state"),
-        "meta": p.inner_text('[data-approval-block] .proposal-meta'),
-        "body": p.inner_text('[data-approval-block] .approval-draft .markdown-block'),
+        "mode": p.get_attribute("[data-approval-block]", "data-mode"),
+        "field": p.get_attribute("[data-approval-block]", "data-field"),
+        "body": p.inner_text("[data-approval-block] .approval-draft"),
     }
 
 
@@ -348,7 +349,8 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     after_t = _snap_ticket(page_t)
     expected_t = {
         "state": "in_progress",
-        "meta": "proposed by agent",
+        "mode": "gating-pending",
+        "field": "result",
         "body": E31_RESULT,
     }
     assert before_t == after_t == expected_t, (before_t, after_t)

@@ -15,6 +15,37 @@ export type ChatHistoryResponse = {
   session_key?: string | null;
 };
 
+export type ChatStateMessage = {
+  id: number;
+  role: "human" | "assistant" | "system" | "worker" | string;
+  text: string;
+  created_at: number;
+  turn_id?: string | null;
+};
+
+export type ChatTurn = {
+  id: string;
+  entity_id: string;
+  origin: "human" | "worker" | "system" | string;
+  mode: "message" | "command" | "worker_step" | string;
+  status: "running" | "complete" | "errored" | "interrupted" | string;
+  phase: "queued" | "thinking" | "doing" | "responding" | "settled" | string;
+  activity_label?: string | null;
+  output_role: "assistant" | "system" | string;
+  output_text: string;
+  session_key?: string | null;
+  error?: string | null;
+  started_at: number;
+  updated_at: number;
+  completed_at?: number | null;
+};
+
+export type ChatStateResponse = {
+  messages: ChatStateMessage[];
+  active_turn?: ChatTurn | null;
+  session_key?: string | null;
+};
+
 export type SprintSummary = {
   id: string;
   name: string;

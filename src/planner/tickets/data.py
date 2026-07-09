@@ -149,7 +149,9 @@ def _write_ticket_status(
     append_event(conn, ticket_id, EventKind.ticket_status_changed, payload, now)
     _append_item_children_changed(
         conn,
-        str(row["sprint_item_id"]) if row is not None and row["sprint_item_id"] is not None else None,
+        str(row["sprint_item_id"])
+        if row is not None and row["sprint_item_id"] is not None
+        else None,
         ticket_id,
         "ticket_status",
         now,

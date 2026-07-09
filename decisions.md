@@ -1008,3 +1008,28 @@ serial edits were lower risk.
 limited to inline corrections and a compact stack/system map so neither file becomes a stale pointer
 or a large duplicated architecture document. The stale `plan serve` and vanilla-assets frontend
 notes were corrected to `panels serve` and Svelte/Vite.
+
+## D65 — Live chat state is Panels-owned; Hermes is transport
+
+Chat accuracy now depends on a server-owned `ChatState`, not a browser-local transcript and not a
+lazy Hermes-history read. `chat_messages` stores the product-visible transcript and `chat_turns`
+stores the single active turn per entity, including phase, activity label, partial output, session
+key, and error. This is intentionally generic over `entity_id`, so ticket chat and the top-level
+Chief of Staff chat read the same contract; only gateway routing differs.
+
+Human sends start a background server turn through `POST /api/chat/{entity_id}/turns`; navigation
+or remounting the panel no longer owns or cancels the turn. The existing streaming route is kept for
+compatibility, but `ChatPanel` reads `GET /api/chat/{entity_id}/state` and polls that source only
+while the server reports an active turn. System B records automatic worker steps through the same
+chat writer, so worker activity is no longer inferred from `ticket_status` or retried via timed
+Hermes-history refreshes.
+
+## D66 — Live chat remount tests assert server state, not browser survival
+
+The browser checks for chat remounts now assert the server `ChatState` between navigation steps.
+Ticket and Chief tests send through the visible composer, read `/api/chat/{entity_id}/state` to
+prove the messages are durable server data, then return to the panel and also open a fresh browser
+context. The active worker-state check seeds a running worker turn directly in the real e2e SQLite
+database instead of mocking a client route, then verifies the UI renders the worker line, doing
+activity label, and pending indicator after remount. This keeps the assertion focused on the product
+invariant without depending on a race against a real worker finishing quickly.

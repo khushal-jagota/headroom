@@ -164,3 +164,13 @@ export async function streamChat(
     }
   }
 }
+
+export async function startChatTurn(
+  entityId: string,
+  body: { text: string; mode: "message" | "command" }
+): Promise<unknown> {
+  return fetchJson(`/api/chat/${encodeURIComponent(entityId)}/turns`, {
+    method: "POST",
+    body
+  });
+}

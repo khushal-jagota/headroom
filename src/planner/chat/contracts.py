@@ -7,6 +7,40 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
+class ChatStateMessage:
+    id: int
+    role: str                      # product role: "human" | "assistant" | "system" | "worker"
+    text: str
+    created_at: int
+    turn_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ChatTurn:
+    id: str
+    entity_id: str
+    origin: str                    # "human" | "worker" | "system"
+    mode: str                      # "message" | "command" | "worker_step"
+    status: str                    # "running" | "complete" | "errored" | "interrupted"
+    phase: str                     # "queued" | "thinking" | "doing" | "responding" | "settled"
+    activity_label: str | None
+    output_role: str               # "assistant" | "system"
+    output_text: str
+    session_key: str | None
+    error: str | None
+    started_at: int
+    updated_at: int
+    completed_at: int | None
+
+
+@dataclass(frozen=True)
+class ChatState:
+    messages: tuple[ChatStateMessage, ...]
+    active_turn: ChatTurn | None
+    session_key: str | None
+
+
+@dataclass(frozen=True)
 class ChatMessage:
     role: str                      # gateway role: "user" | "assistant" | "system" | ...
     text: str

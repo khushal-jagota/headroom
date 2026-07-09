@@ -718,12 +718,25 @@ textarea {
   font-size: var(--type-sm);
 }
 
-/* thinking = three bubble-less dots in the employee's spot */
-.chat-dots { align-self: flex-start; display: inline-flex; gap: 5px; padding: var(--space-1) 0; }
+/* thinking = inline activity and three bubble-less dots in the employee's spot */
+.chat-pending-row {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  color: var(--text-faint);
+  font-size: var(--type-xs);
+  line-height: 1.4;
+}
+.chat-dots { display: inline-flex; gap: 5px; flex: 0 0 auto; }
 .chat-dots i {
   width: 6px; height: 6px; border-radius: var(--radius-pill);
   background: var(--text-faint);
   animation: chat-bounce 1.3s var(--motion-ease) infinite;
+}
+.chat-pending-label {
+  min-width: 0;
 }
 .chat-dots i:nth-child(2) { animation-delay: 0.16s; }
 .chat-dots i:nth-child(3) { animation-delay: 0.32s; }

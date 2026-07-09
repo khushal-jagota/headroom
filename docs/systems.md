@@ -122,18 +122,24 @@ Production startup creates one shared gateway owner and installs it on app state
 That owner spawns the child lazily on first use. Tests use fake adapters and never
 call the real gateway.
 
-Tickets and days store only a `chat_session_key`. The transcript belongs to Hermes.
-When the planner needs history, it resumes that Hermes session lazily and normalizes
-the returned messages.
+Tickets, days, and top-level agent chats store a `chat_session_key` for Hermes
+transport. Panels owns the product chat state in `chat_messages` and `chat_turns`.
+Hermes history is still readable for old sessions, but the UI reads Panels'
+`ChatState` resource.
 
 Code paths: `src/planner/core/adapters/`, `src/planner/minds/shared_gateway.py`,
 `src/planner/minds/gateway.py`, `src/planner/minds/config.py`.
 
 ### 6. The Chat System
 
-Ticket chat and automatic worker steps use the same durable ticket session. System B
-stores a newly created or resumed session key before submitting the worker prompt, so
-tools inside the worker can resolve their ticket while the turn is still active.
+Ticket chat, Chief of Staff chat, and automatic worker steps use the same chat-state
+contract. A chat state is durable messages plus one optional active turn. The active
+turn carries the phase, activity label, partial output, session key, and error.
+
+System B stores a newly created or resumed session key before submitting the worker
+prompt, so tools inside the worker can resolve their ticket while the turn is still
+active. It also records the worker turn in chat state, so the UI does not infer
+activity from ticket status.
 
 Human chat sends are rejected while `ticket_status=agent_running_step`. History
 remains readable. There is no queue behind the active worker step.

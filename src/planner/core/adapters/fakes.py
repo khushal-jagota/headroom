@@ -3,6 +3,7 @@ OS or the network. Each records its calls and behaves deterministically."""
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 
@@ -46,6 +47,7 @@ class EchoGatewayAdapter:
     catalog_calls: int = 0                # counts real catalog() work (cache-miss proof)
     next_session: int = 1
     busy: bool = False
+    stream_delay_seconds: float = 0.0
 
     def status(self) -> GatewayStatus:
         return GatewayStatus(available=True)
@@ -124,6 +126,8 @@ class EchoGatewayAdapter:
         for token in (result.reply_text[:midpoint], result.reply_text[midpoint:]):
             if token:
                 yield ChatStreamChunk(type="token", text=token)
+        if self.stream_delay_seconds > 0:
+            time.sleep(self.stream_delay_seconds)
         yield ChatStreamChunk(
             type="done",
             reply_text=result.reply_text,

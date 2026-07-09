@@ -34,6 +34,8 @@ def _select_gateway(config: Config) -> GatewayAdapter:
     choice = _resolve_auto(config.gateway_adapter, config.test_mode)
     if choice == "fake":
         return EchoGatewayAdapter()
+    if choice == "slow_fake":
+        return EchoGatewayAdapter(stream_delay_seconds=1.5)
     if choice == "offline":
         return OfflineGatewayAdapter()
     if choice == "real":

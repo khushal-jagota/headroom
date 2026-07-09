@@ -26,7 +26,11 @@ const FALLBACK_KINDS = [
   "project_created",
   "link_added",
   "link_removed",
-  "chat_session_created"
+  "chat_session_created",
+  "chat_message_recorded",
+  "chat_turn_started",
+  "chat_turn_updated",
+  "chat_turn_finished"
 ];
 
 const kinds = JSON.parse(process.env.PLANNER_EVENT_KINDS || JSON.stringify(FALLBACK_KINDS));
@@ -101,6 +105,17 @@ assert.deepEqual(
     created_at: 1
   }),
   ["projects"]
+);
+
+assert.deepEqual(
+  keysForEvent({
+    id: 1,
+    entity_id: "agent_panels_chief_of_staff",
+    kind: "chat_turn_started",
+    payload: { turn_id: "run_demo" },
+    created_at: 1
+  }),
+  ["chat:agent_panels_chief_of_staff"]
 );
 
 assert.deepEqual(

@@ -14,6 +14,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from planner.chat import service as chat_service
 from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.minds.shared_gateway import SharedGateway, SharedGatewayBusy
@@ -110,11 +111,15 @@ class SystemB:
                 _log.info("system B skipped a no-longer-runnable ticket (ticket=%s)", ticket_id)
                 return
             current_session_key = pre.chat_session_key
+            worker_turn = chat_service.start_worker_turn(
+                conn, ticket_id, visible_text=prompt, now=now
+            )
 
             def persist_session_key(session_key: str) -> None:
                 nonlocal current_session_key
+                event_now = self._clock.now_unix()
                 updated = tickets_data.claim_running_step_chat_session_key(
-                    conn, ticket_id, session_key=session_key, now=now
+                    conn, ticket_id, session_key=session_key, now=event_now
                 )
                 if (
                     updated.ticket_status is not TicketStatus.agent_running_step
@@ -122,6 +127,14 @@ class SystemB:
                 ):
                     raise _WorkerSessionClaimLost
                 current_session_key = updated.chat_session_key
+                chat_service.attach_worker_session_key(
+                    conn, ticket_id, worker_turn.id, session_key, event_now
+                )
+
+            def observe_gateway_event(event: dict[str, object]) -> None:
+                chat_service.observe_worker_gateway_event(
+                    conn, ticket_id, worker_turn.id, event, self._clock.now_unix()
+                )
 
             def finish_running_step(session_key: str | None) -> None:
                 if session_key is None:
@@ -143,25 +156,72 @@ class SystemB:
 
             try:
                 result = self._gateway.run_ticket_step(
-                    pre.chat_session_key, prompt, None, on_session_key=persist_session_key
+                    pre.chat_session_key,
+                    prompt,
+                    observe_gateway_event,
+                    on_session_key=persist_session_key,
                 )
             except SharedGatewayBusy as exc:
+                chat_service.fail_worker_turn(
+                    conn,
+                    ticket_id,
+                    worker_turn.id,
+                    "session busy",
+                    self._clock.now_unix(),
+                )
                 finish_running_step(exc.session_key or current_session_key)
                 return
             except _WorkerSessionClaimLost:
                 _log.info("system B skipped an unowned worker session (ticket=%s)", ticket_id)
+                chat_service.fail_worker_turn(
+                    conn,
+                    ticket_id,
+                    worker_turn.id,
+                    "worker session ownership was lost",
+                    self._clock.now_unix(),
+                )
                 finish_running_step(current_session_key)
                 return
             except Exception as exc:  # never leave the ticket at agent_running_step
                 _log.exception("system B run crashed (ticket=%s)", ticket_id)
+                chat_service.fail_worker_turn(
+                    conn,
+                    ticket_id,
+                    worker_turn.id,
+                    f"system B run crashed: {exc}",
+                    self._clock.now_unix(),
+                )
                 mark_errored(f"system B run crashed: {exc}", current_session_key)
                 return
             current_session_key = result.session_key or current_session_key
             if result.status == "complete":
+                chat_service.finish_worker_turn(
+                    conn,
+                    ticket_id,
+                    worker_turn.id,
+                    result.text,
+                    "complete",
+                    self._clock.now_unix(),
+                )
                 finish_running_step(current_session_key)
             elif result.status == "interrupted":
+                chat_service.finish_worker_turn(
+                    conn,
+                    ticket_id,
+                    worker_turn.id,
+                    result.text,
+                    "interrupted",
+                    self._clock.now_unix(),
+                )
                 mark_errored("run interrupted", current_session_key)
             else:
+                chat_service.fail_worker_turn(
+                    conn,
+                    ticket_id,
+                    worker_turn.id,
+                    result.error or "gateway run failed",
+                    self._clock.now_unix(),
+                )
                 mark_errored(result.error or "gateway run failed", current_session_key)
         finally:
             conn.close()

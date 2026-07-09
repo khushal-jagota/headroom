@@ -112,7 +112,9 @@ def test_a10_sprint_item_permissions(tmp_db, fake_clock) -> None:
     )
     _insert_ticket(tmp_db, "t_child", "needs_success", sprint_item_id=child_blocked.id)
     _insert_ticket(tmp_db, "t_child_blocker", "needs_success")
-    core_links.add_link(tmp_db, "t_child_blocker", "t_child", LinkKind.blocks, fake_clock.now_unix())
+    core_links.add_link(
+        tmp_db, "t_child_blocker", "t_child", LinkKind.blocks, fake_clock.now_unix()
+    )
     assert read_item(tmp_db, child_blocked.id).status is ItemStatus.blocked
 
     errored = create_item(tmp_db, title="errored", project_id="project_vylo", clock=fake_clock)

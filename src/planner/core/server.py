@@ -83,12 +83,12 @@ def create_app(
             try:
                 module = importlib.import_module("planner.core.loops")
                 start = module.start_background_loops
+                from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
                 from planner.minds.config import (
                     provision_planner_home_skills,
                     resolve_hermes_python,
                     resolve_planner_home,
                 )
-                from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
                 from planner.minds.shared_gateway import EntityRoutingGateway, SharedGateway
             except (ImportError, AttributeError):
                 _log.warning("planner.core.loops unavailable; running without background loops")

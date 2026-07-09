@@ -292,7 +292,6 @@
         <ChatPanel
           entityId={id}
           available={chatStatus.data?.available ?? true}
-          ticketStatus={detail.ticket_status || "empty"}
         />
       </aside>
     </div>

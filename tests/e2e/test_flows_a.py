@@ -288,76 +288,25 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
 def test_e26_chat_panel_echo_and_offline(
     server, server_factory, context_factory, open_page, cli, api
 ):
-    pending_tid = cli(server, "ticket", "create", "--title", "T18 pending chat ticket")["id"]
+    pending_server = server_factory(gateway="slow_fake")
+    pending_tid = cli(
+        pending_server, "ticket", "create", "--title", "T18 pending chat ticket"
+    )["id"]
     pending_page = open_page(
         context_factory(),
-        server,
+        pending_server,
         f"#/ticket/{pending_tid}",
         'section[data-screen="ticket"] [data-chat] [data-chat-input]',
         settled=True,
     )
     assert pending_page.text_content('[data-ticket-status="empty"]') == "status empty"
-    pending_page.route(
-        "**/api/chat/*/stream",
-        lambda route: route.fulfill(
-            status=200,
-            headers={"content-type": "text/event-stream"},
-            body=(
-                'event: message_start\n'
-                f'data: {{"entity_id":"{pending_tid}","mode":"message"}}\n\n'
-            ),
-        ),
-    )
     pending_page.fill('[data-chat] [data-chat-input]', "hold before first token")
     pending_page.click('[data-chat] [data-chat-send]')
     pending_page.wait_for_selector('[data-chat] [data-chat-pending]', timeout=WAIT_MS)
-    assert pending_page.query_selector('[data-chat] [data-chat-msg="planner"]') is None
+    pending_state = api.get(pending_server, f"/api/chat/{pending_tid}/state")
+    assert pending_state["active_turn"]["status"] == "running"
+    assert [msg["text"] for msg in pending_state["messages"]] == ["hold before first token"]
     assert "(none)" not in pending_page.inner_text("[data-chat] [data-chat-messages]")
-
-    # A worker event can invalidate chat history before the gateway history is readable.
-    # The panel must retry so it does not cache the first empty read forever.
-    retry_tid = cli(server, "ticket", "create", "--title", "T18 worker history retry")["id"]
-    cli(
-        server,
-        "worker", "propose", "--body-file", "-", "--recap", "Worker history retry.",
-        ticket_id=retry_tid,
-        stdin="worker proposed success",
-    )
-    retry_context = context_factory()
-    history_calls = {"n": 0}
-
-    def flaky_history(route):
-        history_calls["n"] += 1
-        if history_calls["n"] == 1:
-            route.fulfill(
-                status=200,
-                headers={"content-type": "application/json"},
-                body='{"messages":[],"session_key":"worker-session"}',
-            )
-            return
-        route.fulfill(
-            status=200,
-            headers={"content-type": "application/json"},
-            body=(
-                '{"messages":['
-                '{"role":"user","text":"worker prompt","created_at":1},'
-                '{"role":"assistant","text":"worker reply","created_at":2}'
-                '],"session_key":"worker-session"}'
-            ),
-        )
-
-    retry_context.route(f"**/api/chat/{retry_tid}/history", flaky_history)
-    retry_page = open_page(
-        retry_context,
-        server,
-        f"#/ticket/{retry_tid}",
-        'section[data-screen="ticket"] [data-chat] [data-chat-input]',
-        settled=True,
-    )
-    retry_page.wait_for_selector('[data-ticket-status="awaiting_approval"]', timeout=WAIT_MS)
-    _wait_chat_text(retry_page, "you", "worker prompt")
-    _wait_chat_text(retry_page, "planner", "worker reply")
-    assert history_calls["n"] >= 2
 
     # --- echo half (default echo gateway) ---
     tid = cli(server, "ticket", "create", "--title", "T18 chat ticket")["id"]

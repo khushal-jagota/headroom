@@ -1,4 +1,4 @@
-const ENTITY_PREFIXES = new Set(["t", "si", "s", "day", "idea", "project"]);
+const ENTITY_PREFIXES = new Set(["t", "si", "s", "day", "idea", "project", "agent"]);
 
 /**
  * @typedef {{id: number, entity_id: string, kind: string, payload: Record<string, unknown>, created_at: number}} PlannerEvent
@@ -52,6 +52,7 @@ function keysForEntity(entityId, options = {}) {
     }
     return keys;
   }
+  if (prefix === "agent") return [`chat:${entityId}`];
   if (prefix === "idea") return ["ideas"];
   return ["projects"];
 }
@@ -66,6 +67,7 @@ function endpointEntityKeys(entityId) {
   if (prefix === "si") return [`item:${entityId}`];
   if (prefix === "s") return [`sprint:${entityId}`];
   if (prefix === "day") return [`day:${suffixAfter(String(entityId), "day")}`];
+  if (prefix === "agent") return [`chat:${entityId}`];
   if (prefix === "idea") return ["ideas"];
   if (prefix === "project") return ["projects"];
   throw new Error(`unknown entity_id prefix: ${String(entityId)}`);
@@ -91,7 +93,13 @@ export function keysForEvent(event, options = {}) {
     keys.push("board", "queues", "sprint:current");
   }
 
-  if (kind === "chat_session_created") {
+  if (
+    kind === "chat_session_created" ||
+    kind === "chat_message_recorded" ||
+    kind === "chat_turn_started" ||
+    kind === "chat_turn_updated" ||
+    kind === "chat_turn_finished"
+  ) {
     keys.push(...endpointEntityKeys(entityId));
   }
 

@@ -248,6 +248,7 @@ def test_worker_step_prompt_and_reply_are_visible_in_chat_history(tmp_path: Path
         conn = connect(db)
         try:
             history = chat_service.history(conn, gateway, tid, 0)
+            state = chat_service.state(conn, gateway, tid, 0)
         finally:
             conn.close()
     finally:
@@ -260,6 +261,11 @@ def test_worker_step_prompt_and_reply_are_visible_in_chat_history(tmp_path: Path
         ("user", prompt),
         ("assistant", "worker reply"),
     ]
+    assert [(msg.role, msg.text) for msg in state.messages] == [
+        ("worker", prompt),
+        ("assistant", "worker reply"),
+    ]
+    assert state.active_turn is None
 
 
 def test_created_session_key_is_queryable_before_prompt_submit(tmp_path: Path) -> None:

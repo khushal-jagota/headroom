@@ -78,6 +78,46 @@ async def chat_history(entity_id: str, request: Request) -> dict[str, Any]:
     return asdict(result)
 
 
+@router.get("/chat/{entity_id}/state")
+async def chat_state(entity_id: str, request: Request) -> dict[str, Any]:
+    authctx.reject_agents(authctx.request_context(request))  # §11/§8: chat is human-only.
+    clock: Clock = request.app.state.clock
+    adapters: Adapters = request.app.state.adapters
+    conn_factory: Callable[[], sqlite3.Connection] = request.app.state.conn_factory
+    conn = conn_factory()
+    try:
+        result = service.state(conn, adapters.gateway, entity_id, clock.now_unix())
+    finally:
+        conn.close()
+    return asdict(result)
+
+
+@router.post("/chat/{entity_id}/turns")
+async def start_chat_turn(
+    entity_id: str, body: dict[str, Any], request: Request
+) -> dict[str, Any]:
+    authctx.reject_agents(authctx.request_context(request))  # §11/§8: chat is human-only.
+    text = body.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise PlannerError(ErrorCode.validation, "text is required")
+    mode = body.get("mode", "message")
+    if mode not in ("message", "command"):
+        raise PlannerError(ErrorCode.validation, "mode must be message or command")
+    clock: Clock = request.app.state.clock
+    adapters: Adapters = request.app.state.adapters
+    conn_factory: Callable[[], sqlite3.Connection] = request.app.state.conn_factory
+    result = service.start_human_turn(
+        conn_factory,
+        adapters.gateway,
+        entity_id,
+        text.strip(),
+        mode,
+        clock.now_unix(),
+        clock.now_unix,
+    )
+    return asdict(result)
+
+
 @router.post("/chat/{entity_id}/stream")
 async def stream_message(
     entity_id: str, body: dict[str, Any], request: Request

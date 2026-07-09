@@ -1,196 +1,112 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
-  import { fetchJson, streamChat } from "../lib/api";
+  import { fetchJson, startChatTurn } from "../lib/api";
   import { resource } from "../lib/resources";
-  import type { ChatHistoryResponse, CommandCatalog } from "../lib/types";
+  import type { ChatStateMessage, ChatStateResponse, ChatTurn, CommandCatalog } from "../lib/types";
   import ChatComposer from "./ChatComposer.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
 
   type ChatMessage = {
-    who: "you" | "planner" | "system";
+    who: "you" | "planner" | "system" | "worker";
     text: string;
+    pending?: boolean;
   };
 
   let {
     entityId,
     available,
-    ticketStatus = "",
     label = "employee"
   }: {
     entityId: string;
     available: boolean;
-    ticketStatus?: string;
     label?: string;
   } = $props();
   const stableEntityId = untrack(() => entityId);
-  const isTicketChat = stableEntityId.startsWith("t_");
 
   const commands = resource<CommandCatalog>("chat-commands", (signal) =>
     fetchJson("/api/chat/commands", { signal })
   );
-  const history = resource<ChatHistoryResponse>(`chat:${stableEntityId}`, (signal) =>
-    fetchJson(`/api/chat/${stableEntityId}/history`, { signal })
+  const chatState = resource<ChatStateResponse>(`chat:${stableEntityId}`, (signal) =>
+    fetchJson(`/api/chat/${stableEntityId}/state`, { signal })
   );
-  if (history.data !== undefined && !history.stale) {
-    void history.refresh().catch(() => undefined);
+  if (chatState.data !== undefined && !chatState.stale) {
+    void chatState.refresh().catch(() => undefined);
   }
 
-  let transcript = $state<ChatMessage[]>([]);
   let draft = $state("");
-  let pending = $state(false);
   let error = $state<unknown>(null);
-	  let controller: AbortController | null = null;
-	  let workerRefreshTimer: ReturnType<typeof window.setTimeout> | null = null;
-	  let settledRefreshKey = "";
-	  let settledBaselineSignature = "";
-	  let settledRefreshesRemaining = 0;
-	  let historySignature = $state("");
+  let pollTimer: ReturnType<typeof window.setTimeout> | null = null;
 
   function whoForRole(role: string): ChatMessage["who"] {
     const normalized = role.toLowerCase();
     if (normalized === "user" || normalized === "human") return "you";
+    if (normalized === "worker") return "worker";
     if (normalized === "system" || normalized === "tool") return "system";
     return "planner";
   }
 
-  function signatureFor(historyData: ChatHistoryResponse | undefined): string {
-    return JSON.stringify(
-      (historyData?.messages || []).map((msg) => [msg.role, msg.text, msg.created_at])
-    );
+  function messageFor(msg: ChatStateMessage): ChatMessage {
+    return { who: whoForRole(msg.role), text: msg.text };
+  }
+
+  function activeMessage(turn: ChatTurn): ChatMessage | null {
+    if (turn.output_text.trim()) {
+      return { who: whoForRole(turn.output_role), text: turn.output_text, pending: true };
+    }
+    return null;
+  }
+
+  let transcript = $derived.by<ChatMessage[]>(() => {
+    const messages = (chatState.data?.messages || []).map(messageFor);
+    const turn = chatState.data?.active_turn || null;
+    const live = turn ? activeMessage(turn) : null;
+    return live ? [...messages, live] : messages;
+  });
+
+  let activeTurn = $derived(chatState.data?.active_turn || null);
+  let pending = $derived(Boolean(activeTurn));
+  let pendingWho = $derived(activeTurn?.origin === "worker" ? "worker" : "planner");
+  let pendingLabel = $derived(
+    activeTurn?.activity_label || (activeTurn?.phase === "doing" ? "Working" : "Thinking")
+  );
+
+  function clearPoll(): void {
+    if (pollTimer === null) return;
+    window.clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+
+  function schedulePoll(): void {
+    if (pollTimer !== null || !activeTurn) return;
+    pollTimer = window.setTimeout(() => {
+      pollTimer = null;
+      void chatState.refresh().catch(() => undefined);
+    }, 500);
   }
 
   $effect(() => {
-    if (pending) return;
-    const signature = signatureFor(history.data);
-    if (signature === historySignature) return;
-    historySignature = signature;
-    transcript = (history.data?.messages || []).map((msg) => ({
-      who: whoForRole(msg.role),
-      text: msg.text
-    }));
+    if (activeTurn && !chatState.loading) {
+      schedulePoll();
+      return;
+    }
+    if (!activeTurn) clearPoll();
   });
-
-  function clearWorkerRefresh(): void {
-    if (workerRefreshTimer === null) return;
-    window.clearTimeout(workerRefreshTimer);
-    workerRefreshTimer = null;
-  }
-
-  function scheduleWorkerHistoryRefresh(delayMs: number, expectedSignature?: string): void {
-    if (workerRefreshTimer !== null) return;
-    workerRefreshTimer = window.setTimeout(() => {
-      workerRefreshTimer = null;
-      const hasRenderedTranscript =
-        transcript.length > 0 || document.querySelector("[data-chat-msg]") !== null;
-      if (
-        expectedSignature !== undefined &&
-        (hasRenderedTranscript || signatureFor(history.data) !== expectedSignature)
-      ) {
-        resetSettledRetry();
-        return;
-      }
-      void history.refresh().catch(() => undefined);
-    }, delayMs);
-  }
-
-  function resetSettledRetry(): void {
-    settledRefreshKey = "";
-    settledBaselineSignature = "";
-    settledRefreshesRemaining = 0;
-  }
-
-  $effect(() => {
-    if (!available || !isTicketChat) {
-      resetSettledRetry();
-      clearWorkerRefresh();
-      return;
-    }
-    const status = ticketStatus || "";
-    if (status === "agent_running_step") {
-      resetSettledRetry();
-      if (!history.loading) scheduleWorkerHistoryRefresh(2000);
-      return;
-    }
-    if (status === "awaiting_approval" || status === "errored") {
-      if (history.loading || history.data === undefined) return;
-      const signature = signatureFor(history.data);
-      const shouldRetry = (history.data.messages || []).length === 0;
-      if (!shouldRetry) {
-        resetSettledRetry();
-        clearWorkerRefresh();
-        return;
-      }
-      const key = `${stableEntityId}:${status}`;
-      if (key !== settledRefreshKey) {
-        settledRefreshKey = key;
-        settledBaselineSignature = signature;
-        settledRefreshesRemaining = 6;
-      } else if (signature !== settledBaselineSignature) {
-        resetSettledRetry();
-        clearWorkerRefresh();
-        return;
-      }
-      if (!history.loading && settledRefreshesRemaining > 0) {
-        settledRefreshesRemaining -= 1;
-        scheduleWorkerHistoryRefresh(1000, settledBaselineSignature);
-      }
-      return;
-    }
-    resetSettledRetry();
-    clearWorkerRefresh();
-  });
-
-  function eventData<T extends Record<string, unknown>>(data: unknown): T {
-    return data && typeof data === "object" ? (data as T) : ({} as T);
-  }
 
   async function submit(text: string, mode: "message" | "command"): Promise<void> {
-    transcript = [...transcript, { who: "you", text }, { who: "planner", text: "" }];
-    const replyIndex = transcript.length - 1;
-    pending = true;
     error = null;
-    controller?.abort();
-    controller = new AbortController();
     try {
-      await streamChat(
-        stableEntityId,
-        { text, mode },
-        {
-          signal: controller.signal,
-          onEvent(event, data) {
-            if (event === "token") {
-              const payload = eventData<{ text?: unknown }>(data);
-              transcript[replyIndex].text += String(payload.text || "");
-            }
-            if (event === "message_done") {
-              const payload = eventData<{
-                reply_text?: unknown;
-                kind?: unknown;
-              }>(data);
-              transcript[replyIndex].text = String(payload.reply_text || "");
-              transcript[replyIndex].who = payload.kind === "system" ? "system" : "planner";
-              pending = false;
-              void history.refresh().catch(() => undefined);
-            }
-            if (event === "error") {
-              error = data;
-              pending = false;
-            }
-          }
-        }
-      );
+      await startChatTurn(stableEntityId, { text, mode });
+      await chatState.refresh();
     } catch (err) {
       error = err;
-      pending = false;
     }
   }
 
   onDestroy(() => {
-    controller?.abort();
-    clearWorkerRefresh();
+    clearPoll();
     commands.dispose();
-    history.dispose();
+    chatState.dispose();
   });
 </script>
 
@@ -206,12 +122,14 @@
         <div>{label} is offline.</div>
         <div class="chat-off-sub">Your draft is saved.</div>
       </div>
-    {:else if transcript.length === 0 && !pending && !history.loading}
+    {:else if transcript.length === 0 && !pending && !chatState.loading}
       <div class="chat-empty"><h2 class="chat-empty-h">What do you need?</h2></div>
     {:else}
       {#each transcript as msg}
         {#if msg.who === "you"}
           <div class="chat-u" data-chat-msg="you">{msg.text}</div>
+        {:else if msg.who === "worker"}
+          <div class="chat-sys" data-chat-msg="worker">{msg.text}</div>
         {:else if msg.who === "system"}
           <div class="chat-sys" data-chat-msg="system">{msg.text}</div>
         {:else if msg.text.trim()}
@@ -219,7 +137,10 @@
         {/if}
       {/each}
       {#if pending}
-        <div class="chat-dots" data-chat-pending><i></i><i></i><i></i></div>
+        <div class="chat-pending-row" data-chat-pending data-chat-msg={pendingWho}>
+          <span class="chat-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="chat-pending-label">{pendingLabel}</span>
+        </div>
       {/if}
     {/if}
   </div>

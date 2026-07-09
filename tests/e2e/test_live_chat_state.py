@@ -1,0 +1,184 @@
+"""Browser-driven checks for server-owned live chat state."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+
+from playwright.sync_api import Page
+
+WAIT_MS = 10_000
+WORKER_PROMPT_TEXT = "Work this ticket step from the current system prompt."
+
+
+def _wait_chat_text(page: Page, who: str, text: str) -> None:
+    page.wait_for_function(
+        "({ who, text }) => Array.from(document.querySelectorAll(`[data-chat-msg=\"${who}\"]`))"
+        ".some(el => el.textContent.includes(text))",
+        arg={"who": who, "text": text},
+        timeout=WAIT_MS,
+    )
+
+
+def _seed_running_worker_turn(server, entity_id: str) -> None:
+    turn_id = f"run_e2e_worker_{entity_id}"
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "INSERT INTO chat_turns ("
+            "id, entity_id, origin, mode, status, phase, activity_label, output_role, "
+            "output_text, session_key, error, started_at, updated_at, completed_at"
+            ") VALUES (?, ?, 'worker', 'worker_step', 'running', 'doing', ?, "
+            "'assistant', '', 'worker-session-e2e', NULL, 1, 1, NULL)",
+            (turn_id, entity_id, "Checking the plan"),
+        )
+        conn.execute(
+            "INSERT INTO chat_messages (entity_id, turn_id, role, text, created_at) "
+            "VALUES (?, ?, 'worker', ?, 1)",
+            (entity_id, turn_id, WORKER_PROMPT_TEXT),
+        )
+        conn.execute(
+            "INSERT INTO events (entity_id, kind, payload, created_at) VALUES (?, ?, ?, 1)",
+            (
+                entity_id,
+                "chat_turn_started",
+                json.dumps(
+                    {
+                        "turn_id": turn_id,
+                        "origin": "worker",
+                        "mode": "worker_step",
+                        "phase": "doing",
+                    }
+                ),
+            ),
+        )
+        conn.execute(
+            "INSERT INTO events (entity_id, kind, payload, created_at) VALUES (?, ?, ?, 1)",
+            (
+                entity_id,
+                "chat_turn_updated",
+                json.dumps(
+                    {
+                        "turn_id": turn_id,
+                        "phase": "doing",
+                        "activity_label": "Checking the plan",
+                    }
+                ),
+            ),
+        )
+
+
+def test_ticket_chat_send_survives_navigation_from_server_state(
+    server, context_factory, open_page, cli, api
+) -> None:
+    tid = cli(server, "ticket", "create", "--title", "Live chat remount ticket")["id"]
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{tid}",
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]',
+        settled=True,
+    )
+
+    page.fill("[data-chat] [data-chat-input]", "persist this ticket message")
+    page.click("[data-chat] [data-chat-send]")
+    _wait_chat_text(page, "you", "persist this ticket message")
+    _wait_chat_text(page, "planner", "echo: persist this ticket message")
+
+    state = api.get(server, f"/api/chat/{tid}/state")
+    assert [msg["text"] for msg in state["messages"]] == [
+        "persist this ticket message",
+        "echo: persist this ticket message",
+    ]
+
+    page.goto(server.base + "/#/board")
+    page.wait_for_selector('section[data-screen="board"]', timeout=WAIT_MS)
+    page.goto(server.base + f"/#/ticket/{tid}")
+    page.wait_for_selector(
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]', timeout=WAIT_MS
+    )
+    _wait_chat_text(page, "you", "persist this ticket message")
+    _wait_chat_text(page, "planner", "echo: persist this ticket message")
+
+    fresh_page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{tid}",
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]',
+        settled=True,
+    )
+    _wait_chat_text(fresh_page, "you", "persist this ticket message")
+    _wait_chat_text(fresh_page, "planner", "echo: persist this ticket message")
+
+
+def test_chief_chat_send_survives_navigation_from_server_state(
+    server, context_factory, open_page, api
+) -> None:
+    entity_id = "agent_panels_chief_of_staff"
+    page = open_page(
+        context_factory(),
+        server,
+        "#/chief",
+        'section[data-screen="chief"] [data-chat-input]',
+        settled=False,
+    )
+
+    page.fill("[data-chat-input]", "remember this chief message")
+    page.click("[data-chat-send]")
+    _wait_chat_text(page, "you", "remember this chief message")
+    _wait_chat_text(page, "planner", "echo: remember this chief message")
+
+    state = api.get(server, f"/api/chat/{entity_id}/state")
+    assert [msg["text"] for msg in state["messages"]] == [
+        "remember this chief message",
+        "echo: remember this chief message",
+    ]
+
+    page.goto(server.base + "/#/board")
+    page.wait_for_selector('section[data-screen="board"]', timeout=WAIT_MS)
+    page.goto(server.base + "/#/chief")
+    page.wait_for_selector('section[data-screen="chief"] [data-chat-input]', timeout=WAIT_MS)
+    _wait_chat_text(page, "you", "remember this chief message")
+    _wait_chat_text(page, "planner", "echo: remember this chief message")
+
+    fresh_page = open_page(
+        context_factory(),
+        server,
+        "#/chief",
+        'section[data-screen="chief"] [data-chat-input]',
+        settled=True,
+    )
+    _wait_chat_text(fresh_page, "you", "remember this chief message")
+    _wait_chat_text(fresh_page, "planner", "echo: remember this chief message")
+
+
+def test_ticket_chat_shows_running_worker_turn_after_remount(
+    server, context_factory, open_page, cli, api
+) -> None:
+    tid = cli(server, "ticket", "create", "--title", "Live worker state ticket")["id"]
+    _seed_running_worker_turn(server, tid)
+
+    state = api.get(server, f"/api/chat/{tid}/state")
+    assert state["active_turn"]["origin"] == "worker"
+    assert state["active_turn"]["phase"] == "doing"
+    assert state["active_turn"]["activity_label"] == "Checking the plan"
+
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{tid}",
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]',
+        settled=True,
+    )
+    _wait_chat_text(page, "worker", WORKER_PROMPT_TEXT)
+    _wait_chat_text(page, "worker", "Checking the plan")
+    page.wait_for_selector("[data-chat] [data-chat-pending]", timeout=WAIT_MS)
+
+    page.goto(server.base + "/#/board")
+    page.wait_for_selector('section[data-screen="board"]', timeout=WAIT_MS)
+    page.goto(server.base + f"/#/ticket/{tid}")
+    page.wait_for_selector(
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]', timeout=WAIT_MS
+    )
+    _wait_chat_text(page, "worker", WORKER_PROMPT_TEXT)
+    _wait_chat_text(page, "worker", "Checking the plan")
+    page.wait_for_selector("[data-chat] [data-chat-pending]", timeout=WAIT_MS)

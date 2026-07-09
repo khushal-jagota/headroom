@@ -23,7 +23,12 @@ from planner.minds.contracts import RunResult
 from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.gateway import ChildProcess, GatewayChild, GatewayError
 from planner.minds.runner import run_step
-from planner.minds.shared_gateway import CHAT_SOURCE, SESSION_COLS, EntityRoutingGateway, SharedGateway
+from planner.minds.shared_gateway import (
+    CHAT_SOURCE,
+    SESSION_COLS,
+    EntityRoutingGateway,
+    SharedGateway,
+)
 
 LIVE_SID = "ab12cd34"
 OTHER_SID = "ff00ff00"
@@ -126,7 +131,14 @@ class RecordingChatGateway:
         self.calls.append(("send", entity_id))
         return ChatSendResult(reply_text=f"{self.name}: {text}", session_key=f"{self.name}-key")
 
-    def stream(self, session_key: str | None, entity_id: str, text: str, mode: str, on_session_key=None):
+    def stream(
+        self,
+        session_key: str | None,
+        entity_id: str,
+        text: str,
+        mode: str,
+        on_session_key=None,
+    ):
         self.calls.append(("stream", entity_id))
         yield from ()
 
@@ -134,7 +146,13 @@ class RecordingChatGateway:
         self.calls.append(("catalog", ""))
         return CommandCatalog(categories=(), skills=(), canon={}, sub={})
 
-    def run_command(self, session_key: str | None, entity_id: str, command: str, on_session_key=None):
+    def run_command(
+        self,
+        session_key: str | None,
+        entity_id: str,
+        command: str,
+        on_session_key=None,
+    ):
         self.calls.append(("run_command", entity_id))
         return ChatSendResult(reply_text=f"{self.name}: {command}", session_key=f"{self.name}-key")
 

@@ -11,7 +11,7 @@ from typing import Final
 
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 8
+SCHEMA_VERSION: Final = 9
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -101,6 +101,36 @@ CREATE TABLE IF NOT EXISTS agent_chat_sessions (
   created_at       INTEGER NOT NULL,
   updated_at       INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS chat_turns (
+  id             TEXT PRIMARY KEY,
+  entity_id      TEXT NOT NULL,
+  origin         TEXT NOT NULL CHECK (origin IN ('human','worker','system')),
+  mode           TEXT NOT NULL CHECK (mode IN ('message','command','worker_step')),
+  status         TEXT NOT NULL CHECK (status IN ('running','complete','errored','interrupted')),
+  phase          TEXT NOT NULL CHECK (phase IN ('queued','thinking','doing','responding','settled')),
+  activity_label TEXT,
+  output_role    TEXT NOT NULL CHECK (output_role IN ('assistant','system')),
+  output_text    TEXT NOT NULL DEFAULT '',
+  session_key    TEXT,
+  error          TEXT,
+  started_at     INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL,
+  completed_at   INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_turns_one_running
+  ON chat_turns(entity_id) WHERE status = 'running';
+CREATE INDEX IF NOT EXISTS idx_chat_turns_entity ON chat_turns(entity_id, started_at);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_id  TEXT NOT NULL,
+  turn_id    TEXT REFERENCES chat_turns(id),
+  role       TEXT NOT NULL CHECK (role IN ('human','assistant','system','worker')),
+  text       TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_entity ON chat_messages(entity_id, id);
 
 CREATE TABLE IF NOT EXISTS day_tickets (
   day_id    TEXT NOT NULL REFERENCES days(id),

@@ -6,6 +6,7 @@ first-reply race."""
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from sqlite3 import Connection
@@ -164,6 +165,113 @@ def test_chat_history_reads_full_fake_trace(tmp_path: Path) -> None:
         ],
         "session_key": "fake-sess-1",
     }
+
+
+def test_chat_state_records_server_owned_human_turn(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+
+    with TestClient(app) as client:
+        started = client.post(f"/api/chat/{tid}/turns", json={"text": "hello", "mode": "message"})
+        assert started.status_code == 200
+        for _ in range(20):
+            state = client.get(f"/api/chat/{tid}/state")
+            assert state.status_code == 200
+            body = state.json()
+            if body["active_turn"] is None and len(body["messages"]) >= 2:
+                break
+            threading.Event().wait(0.05)
+        else:
+            raise AssertionError(body)
+
+    assert body["messages"] == [
+        {
+            "id": 1,
+            "role": "human",
+            "text": "hello",
+            "created_at": body["messages"][0]["created_at"],
+            "turn_id": body["messages"][0]["turn_id"],
+        },
+        {
+            "id": 2,
+            "role": "assistant",
+            "text": "echo: hello",
+            "created_at": body["messages"][1]["created_at"],
+            "turn_id": body["messages"][1]["turn_id"],
+        },
+    ]
+    assert body["messages"][0]["turn_id"] == body["messages"][1]["turn_id"]
+    assert _events(db_path, tid, "chat_turn_started")
+    assert _events(db_path, tid, "chat_turn_finished") == [
+        {"turn_id": body["messages"][0]["turn_id"], "status": "complete"}
+    ]
+
+
+def test_chat_state_shows_active_turn_while_gateway_is_running(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    release = threading.Event()
+
+    class BlockingGateway:
+        def status(self) -> GatewayStatus:
+            return GatewayStatus(available=True)
+
+        def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
+            return ChatHistory(messages=(), session_key=session_key)
+
+        def stream(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            text: str,
+            mode: str,
+            on_session_key: Callable[[str], None] | None = None,
+        ) -> Iterator[ChatStreamChunk]:
+            if on_session_key is not None:
+                on_session_key("blocked-session")
+            yield ChatStreamChunk(type="session", session_key="blocked-session")
+            yield ChatStreamChunk(type="token", text="partial")
+            release.wait(2.0)
+            yield ChatStreamChunk(
+                type="done",
+                reply_text="partial done",
+                session_key="blocked-session",
+                kind="assistant",
+            )
+
+        def catalog(self):  # noqa: ANN201
+            raise AssertionError("unused")
+
+        def send(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
+            raise AssertionError("unused")
+
+        def run_command(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
+            raise AssertionError("unused")
+
+    _replace_gateway(app, BlockingGateway())
+    with TestClient(app) as client:
+        started = client.post(f"/api/chat/{tid}/turns", json={"text": "hold", "mode": "message"})
+        assert started.status_code == 200
+        for _ in range(20):
+            state = client.get(f"/api/chat/{tid}/state").json()
+            active = state["active_turn"]
+            if active is not None and active["output_text"] == "partial":
+                break
+            threading.Event().wait(0.05)
+        else:
+            raise AssertionError(state)
+        assert state["messages"][0]["role"] == "human"
+        assert active["status"] == "running"
+        assert active["phase"] == "responding"
+        release.set()
+        for _ in range(20):
+            final = client.get(f"/api/chat/{tid}/state").json()
+            if final["active_turn"] is None and len(final["messages"]) == 2:
+                break
+            threading.Event().wait(0.05)
+        else:
+            raise AssertionError(final)
+    assert final["messages"][1]["text"] == "partial done"
 
 
 def test_chat_history_rejects_agents(tmp_path: Path) -> None:
