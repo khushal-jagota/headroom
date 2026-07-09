@@ -1060,6 +1060,28 @@ select {
   flex-wrap: wrap;
 }
 
+.review-revision-box {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-recessed);
+}
+
+.review-revision-input {
+  width: 100%;
+  min-height: 4.5rem;
+  resize: vertical;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-default);
+}
+
+.review-revision-box .button {
+  justify-self: end;
+}
+
 .approval-skip {
   font-size: var(--type-sm);
   font-weight: 600;
@@ -1188,20 +1210,24 @@ select {
 }
 
 .board-workspace-filter-group {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.board-workspace-filter-row {
+  display: flex;
+  align-items: end;
+  gap: var(--space-2);
   margin-top: var(--space-3);
 }
 
-.board-workspace-filter-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-  margin-top: var(--space-2);
-}
-
-.board-workspace-filter-button {
+.board-workspace-filter-select {
+  min-width: 0;
+  width: 100%;
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-sm);
-  background: transparent;
+  background: var(--surface-raised);
   color: var(--text-muted);
   cursor: pointer;
   padding: var(--space-1) var(--space-2);
@@ -1213,10 +1239,29 @@ select {
     background var(--motion-fast) var(--motion-ease);
 }
 
-.board-workspace-filter-button:hover,
-.board-workspace-filter-button[aria-pressed="true"] {
+.board-workspace-filter-select:hover,
+.board-workspace-filter-select:focus {
   background: var(--surface-overlay);
   border-color: var(--text-muted);
+  color: var(--text-strong);
+}
+
+.board-workspace-hide-done-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 0 auto;
+  min-height: 28px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.board-workspace-hide-done-toggle:hover,
+.board-workspace-hide-done-toggle:focus-within {
   color: var(--text-strong);
 }
 

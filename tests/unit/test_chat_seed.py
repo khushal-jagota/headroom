@@ -274,6 +274,66 @@ def test_chat_state_shows_active_turn_while_gateway_is_running(tmp_path: Path) -
     assert final["messages"][1]["text"] == "partial done"
 
 
+def test_chat_state_shows_active_turn_activity_label(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    release = threading.Event()
+
+    class ActivityGateway:
+        def status(self) -> GatewayStatus:
+            return GatewayStatus(available=True)
+
+        def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
+            return ChatHistory(messages=(), session_key=session_key)
+
+        def stream(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            text: str,
+            mode: str,
+            on_session_key: Callable[[str], None] | None = None,
+        ) -> Iterator[ChatStreamChunk]:
+            if on_session_key is not None:
+                on_session_key("activity-session")
+            yield ChatStreamChunk(type="session", session_key="activity-session")
+            yield ChatStreamChunk(type="activity", text="Checking workspace tools")
+            release.wait(2.0)
+            yield ChatStreamChunk(
+                type="done",
+                reply_text="done",
+                session_key="activity-session",
+                kind="assistant",
+            )
+
+        def catalog(self):  # noqa: ANN201
+            raise AssertionError("unused")
+
+        def send(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
+            raise AssertionError("unused")
+
+        def run_command(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
+            raise AssertionError("unused")
+
+    _replace_gateway(app, ActivityGateway())
+    with TestClient(app) as client:
+        started = client.post(f"/api/chat/{tid}/turns", json={"text": "status", "mode": "message"})
+        assert started.status_code == 200
+        state = client.get(f"/api/chat/{tid}/state").json()
+        active = state["active_turn"]
+        for _ in range(20):
+            state = client.get(f"/api/chat/{tid}/state").json()
+            active = state["active_turn"]
+            if active is not None and active["activity_label"] == "Checking workspace tools":
+                break
+            threading.Event().wait(0.05)
+        else:
+            raise AssertionError(state)
+        assert active["status"] == "running"
+        assert active["phase"] == "doing"
+        release.set()
+
+
 def test_chat_history_rejects_agents(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)

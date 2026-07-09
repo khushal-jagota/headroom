@@ -12,6 +12,7 @@ const FALLBACK_KINDS = [
   "idea_created",
   "day_created",
   "proposal_filed",
+  "approval_returned",
   "note_updated",
   "recap_updated",
   "scope_changed",
@@ -20,6 +21,7 @@ const FALLBACK_KINDS = [
   "item_updated",
   "sprint_updated",
   "day_updated",
+  "project_updated",
   "item_children_changed",
   "day_ticket_added",
   "ticket_status_changed",
@@ -51,7 +53,7 @@ function sampleEvent(kind) {
   if (kind === "idea_created") {
     return { id: 1, entity_id: "idea_demo", kind, payload: {}, created_at: 1 };
   }
-  if (kind === "project_created") {
+  if (kind === "project_created" || kind === "project_updated") {
     return { id: 1, entity_id: "project_demo", kind, payload: {}, created_at: 1 };
   }
   if (kind.startsWith("day_") || kind === "day_created") {

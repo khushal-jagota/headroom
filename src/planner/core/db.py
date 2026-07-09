@@ -11,12 +11,13 @@ from typing import Final
 
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 9
+SCHEMA_VERSION: Final = 10
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  summary    TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -184,6 +185,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _migrate_tickets_status_column(conn)
     projects_data.seed_default_projects(conn)
     _migrate_project_columns(conn)
+    _migrate_project_summary_column(conn)
     _migrate_derived_sprint_item_status(conn)
     _migrate_tickets_status_column(conn)
     _create_indexes(conn)
@@ -214,6 +216,12 @@ def _migrate_tickets_status_column(conn: sqlite3.Connection) -> None:
         "WHEN 'errored' THEN 'errored' "
         "ELSE 'empty' END"
     )
+
+
+def _migrate_project_summary_column(conn: sqlite3.Connection) -> None:
+    if "summary" in _table_columns(conn, "projects"):
+        return
+    conn.execute("ALTER TABLE projects ADD COLUMN summary TEXT NOT NULL DEFAULT ''")
 
 
 def _migrate_derived_sprint_item_status(conn: sqlite3.Connection) -> None:

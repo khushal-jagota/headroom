@@ -29,6 +29,7 @@ CAUSE_HUMAN_STATE_JUMP: Final[str] = "human_state_jump"
 CAUSE_DROP: Final[str] = "drop"
 CAUSE_ONWARD_SCOPE: Final[str] = "onward_scope"
 CAUSE_HUMAN_SCOPE: Final[str] = "human_scope"
+CAUSE_RETURN_FOR_REVISION: Final[str] = "return_for_revision"
 RESOLVED_BY_AUTO: Final[str] = "auto"
 RESOLVED_BY_HUMAN: Final[str] = "human"
 
@@ -238,6 +239,45 @@ def decide_approve(ticket: Ticket, actor: str) -> Decision:
         )
     events = (_state_change(ticket.state, TicketState.done, CAUSE_REVIEW_APPROVE),)
     return Decision(events=events, new_state=TicketState.done)
+
+
+def decide_return_for_revision(ticket: Ticket, actor: str) -> Decision:
+    admission.require_human(actor, "return_for_revision")
+    if ticket.state in (TicketState.done, TicketState.dropped):
+        raise PlannerError(
+            ErrorCode.validation,
+            "terminal tickets cannot be returned for revision",
+            {"state": ticket.state.value},
+        )
+    if ticket.state is TicketState.needs_review:
+        return Decision(
+            events=(
+                EventSpec(EventKind.approval_returned, {"kind": "review"}),
+                _state_change(ticket.state, TicketState.in_progress, CAUSE_RETURN_FOR_REVISION),
+            ),
+            new_state=TicketState.in_progress,
+        )
+    field = machine.gating_field(ticket.state)
+    if field is None:
+        raise PlannerError(
+            ErrorCode.validation,
+            "ticket has no approval item to return",
+            {"state": ticket.state.value},
+        )
+    slot = fields_codec.get_slot(ticket.fields, field)
+    if slot.proposal is None:
+        raise PlannerError(
+            ErrorCode.not_found,
+            "no pending proposal to return",
+            {"ticket_id": ticket.id, "field": field.value},
+        )
+    new_slot = FieldSlot(value=slot.value, proposal=None, notes=slot.notes)
+    return Decision(
+        events=(
+            EventSpec(EventKind.approval_returned, {"kind": "proposal", "field": field.value}),
+        ),
+        new_fields=fields_codec.with_slot(ticket.fields, field, new_slot),
+    )
 
 
 def decide_state_jump(ticket: Ticket, new_state: TicketState, actor: str) -> Decision:

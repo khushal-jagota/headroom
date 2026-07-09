@@ -116,6 +116,15 @@ def test_workspace_groups_by_project_orders_by_progress_and_filters_status(
         "--project-id",
         "project_vylo",
     )["id"]
+    done_progress = cli(
+        server,
+        "ticket",
+        "create",
+        "--title",
+        "Vylo done progress",
+        "--project-id",
+        "project_vylo",
+    )["id"]
     learning = cli(
         server,
         "ticket",
@@ -126,10 +135,11 @@ def test_workspace_groups_by_project_orders_by_progress_and_filters_status(
         "project_learning",
     )["id"]
     no_project = cli(server, "ticket", "create", "--title", "No project ticket")["id"]
-    for ticket_id in (later_progress, earlier_progress, learning, no_project):
+    for ticket_id in (later_progress, earlier_progress, done_progress, learning, no_project):
         _add_today(api, server, ticket_id)
 
     _set_ticket_state(server, later_progress, "needs_plan")
+    _set_ticket_state(server, done_progress, "done")
     _set_ticket_status(server, learning, "errored")
 
     page = open_page(
@@ -153,14 +163,18 @@ def test_workspace_groups_by_project_orders_by_progress_and_filters_status(
         '[data-project-key="project_vylo"] [data-card] .board-workspace-item-label',
         "els => els.map(el => el.textContent.trim())",
     )
-    assert vylo_titles == ["Vylo earlier progress", "Vylo later progress"]
+    assert vylo_titles == [
+        "Vylo earlier progress",
+        "Vylo later progress",
+        "Vylo done progress",
+    ]
 
     assert page.eval_on_selector_all(
         "[data-card]",
         "els => els.every(el => el.querySelectorAll('.board-workspace-stage-mark').length === 4)",
     )
 
-    page.click('[data-status-filter="errored"]')
+    page.select_option('[data-filter-group="ticket-status"] select', "errored")
     page.wait_for_selector(f'[data-card][data-ticket-id="{learning}"]', timeout=WAIT_MS)
     visible_titles = page.eval_on_selector_all(
         "[data-card] .board-workspace-item-label",
@@ -168,5 +182,20 @@ def test_workspace_groups_by_project_orders_by_progress_and_filters_status(
     )
     assert visible_titles == ["Learning errored ticket"]
 
-    page.click('[data-status-filter="all"]')
+    page.select_option('[data-filter-group="ticket-status"] select', "all")
     page.wait_for_selector(f'[data-card][data-ticket-id="{earlier_progress}"]', timeout=WAIT_MS)
+
+    page.check("[data-hide-done-toggle]")
+    page.wait_for_selector(
+        f'[data-card][data-ticket-id="{done_progress}"]',
+        state="detached",
+        timeout=WAIT_MS,
+    )
+    visible_titles = page.eval_on_selector_all(
+        "[data-card] .board-workspace-item-label",
+        "els => els.map(el => el.textContent.trim())",
+    )
+    assert "Vylo done progress" not in visible_titles
+
+    page.uncheck("[data-hide-done-toggle]")
+    page.wait_for_selector(f'[data-card][data-ticket-id="{done_progress}"]', timeout=WAIT_MS)

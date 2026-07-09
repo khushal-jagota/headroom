@@ -163,9 +163,9 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
         settled=True,
     )
 
-    # Scope defaults to the next stage and then stop.
+    # Scope defaults to the next stage and then propose.
     assert page_a.locator(f"{card} [data-scope-ceiling]").input_value() == "needs_approach"
-    assert page_a.locator(f"{card} [data-scope-atcap] select").input_value() == "stop"
+    assert page_a.locator(f"{card} [data-scope-atcap] select").input_value() == "propose"
     _wait_enabled(page_a, f"{card} [data-accept]")
     page_a.click(f"{card} [data-accept]")
 
@@ -183,9 +183,37 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
     d = api.get(server, f"/api/tickets/{tid}")
     assert d["state"] == "needs_approach", d
     assert d["ceiling"] == "needs_approach", d      # default approval scope is next stage
-    assert d["at_cap"] == "stop", d
+    assert d["at_cap"] == "propose", d
     assert d["fields"]["success"]["value"] == E24_BODY
     assert d["fields"]["success"]["proposal"] is None
+
+
+def test_review_return_for_revision_sends_guidance_and_clears_queue(
+    server, context_factory, open_page, cli, api
+):
+    tid = cli(server, "ticket", "create", "--title", "Revision review ticket")["id"]
+    cli(
+        server,
+        "worker", "propose", "--body-file", "-", "--recap", "Needs revision.",
+        ticket_id=tid,
+        stdin="Too much detail.",
+    )
+
+    card = f'[data-review-card][data-entity-id="{tid}"]'
+    page = open_page(context_factory(), server, "#/review", card, settled=True)
+    page.fill(f"{card} [data-review-revision-input]", "Make it shorter.")
+    page.click(f"{card} [data-review-revision-send]")
+    page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
+
+    ticket = api.get(server, f"/api/tickets/{tid}")
+    assert ticket["state"] == "needs_success"
+    assert ticket["ticket_status"] == "empty"
+    assert ticket["fields"]["success"]["value"] is None
+    assert ticket["fields"]["success"]["proposal"] is None
+    assert api.get(server, "/api/queues")["approvals"] == []
+    chat = api.get(server, f"/api/chat/{tid}/state")
+    assert chat["messages"][-1]["role"] == "human"
+    assert chat["messages"][-1]["text"].endswith("\n\nMake it shorter.")
 
 
 def test_markdown_approval_focus_noop_keeps_raw_source(

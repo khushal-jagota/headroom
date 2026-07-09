@@ -8,15 +8,27 @@ from fastapi import APIRouter
 
 from planner.core.authctx import reject_agents
 from planner.core.contracts import JsonDict
+from planner.core.errors import ErrorCode, PlannerError
 from planner.projects import data as projects_data
-from planner.projects.contracts import CreateProjectBody
+from planner.projects.contracts import CreateProjectBody, UpdateProjectBody
 from planner.tickets.api import Clk, Ctx, DbConn, body_str
 
 router = APIRouter()
 
 
 def _marshal_create_project(raw: JsonDict) -> CreateProjectBody:
-    return CreateProjectBody(name=body_str(raw, "name"))
+    return CreateProjectBody(name=body_str(raw, "name"), summary=body_str(raw, "summary"))
+
+
+def _marshal_update_project(raw: JsonDict) -> UpdateProjectBody:
+    body = UpdateProjectBody()
+    if "name" in raw:
+        body["name"] = body_str(raw, "name")
+    if "summary" in raw:
+        body["summary"] = body_str(raw, "summary")
+    if not body:
+        raise PlannerError(ErrorCode.validation, "no project fields to update", {})
+    return body
 
 
 @router.get("/projects")
@@ -28,5 +40,23 @@ async def list_projects(conn: DbConn) -> JsonDict:
 async def create_project(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
     reject_agents(ctx)
     body = _marshal_create_project(raw)
-    project = projects_data.create_project(conn, name=body["name"], now=clk.now_unix())
+    project = projects_data.create_project(
+        conn, name=body["name"], summary=body["summary"], now=clk.now_unix()
+    )
+    return projects_data.project_json(project)
+
+
+@router.patch("/projects/{project_id}")
+async def update_project(
+    project_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
+    reject_agents(ctx)
+    body = _marshal_update_project(raw)
+    project = projects_data.update_project(
+        conn,
+        project_id,
+        name=body.get("name"),
+        summary=body.get("summary"),
+        now=clk.now_unix(),
+    )
     return projects_data.project_json(project)

@@ -6,6 +6,7 @@
   let {
     catalog,
     disabled = false,
+    submitDisabled = false,
     initialText = "",
     placeholder = "Message the employee...",
     onDraft,
@@ -13,6 +14,7 @@
   }: {
     catalog?: CommandCatalog;
     disabled?: boolean;
+    submitDisabled?: boolean;
     initialText?: string;
     placeholder?: string;
     onDraft?: (text: string) => void;
@@ -88,7 +90,7 @@
 
   async function send(raw = text): Promise<void> {
     const trimmed = raw.trim();
-    if (!trimmed || busy || disabled) return;
+    if (!trimmed || busy || disabled || submitDisabled) return;
     const command = commandFor(trimmed);
     busy = true;
     menuOpen = false;
@@ -147,7 +149,7 @@
       type="button"
       class={`chat-send${text.trim() ? " on" : ""}`}
       data-chat-send
-      disabled={disabled || busy || !text.trim()}
+      disabled={disabled || submitDisabled || busy || !text.trim()}
       onclick={() => void send()}
       title="Send"
     >

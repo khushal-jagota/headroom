@@ -20,7 +20,7 @@
     const externalScope = scope;
     const nextDefault = newState || options[1]?.value || "none";
     let nextCeiling = externalScope === null ? nextDefault : ceiling;
-    let nextAtCap = externalScope === null ? "stop" : atCap;
+    let nextAtCap = externalScope === null ? "propose" : atCap;
     if (externalScope && !nextCeiling) nextCeiling = externalScope.next_ceiling;
     if (externalScope && !nextAtCap) nextAtCap = externalScope.at_cap;
     if (!options.some((option) => option.value === nextCeiling)) {

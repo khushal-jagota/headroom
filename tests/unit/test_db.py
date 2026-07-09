@@ -11,14 +11,16 @@ def test_create_schema_has_projects_project_ids_and_default_rows(tmp_path):
     create_schema(conn)
 
     assert {
-        row["id"]: row["name"]
-        for row in conn.execute("SELECT id, name FROM projects ORDER BY id")
+        row["id"]: (row["name"], row["summary"])
+        for row in conn.execute("SELECT id, name, summary FROM projects ORDER BY id")
     } == {
-        "project_learning": "Learning",
-        "project_other": "Other",
-        "project_tribe": "Tribe",
-        "project_vylo": "Vylo",
+        "project_learning": ("Learning", ""),
+        "project_other": ("Other", ""),
+        "project_tribe": ("Tribe", ""),
+        "project_vylo": ("Vylo", ""),
     }
+    project_columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(projects)")}
+    assert "summary" in project_columns
     for table in ("sprint_items", "tickets", "ideas"):
         columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")}
         assert "project_id" in columns
@@ -115,14 +117,14 @@ def test_create_schema_upgrades_old_ticket_status_column(tmp_path):
             assert "blocked_by" not in table_columns
             assert "status_proposal" not in table_columns
     assert {
-        row["id"]: row["name"]
-        for row in conn.execute("SELECT id, name FROM projects ORDER BY id")
+        row["id"]: (row["name"], row["summary"])
+        for row in conn.execute("SELECT id, name, summary FROM projects ORDER BY id")
     } == {
-        "project_alpha_one": "Alpha One",
-        "project_learning": "Learning",
-        "project_other": "Other",
-        "project_tribe": "Tribe",
-        "project_vylo": "Vylo",
+        "project_alpha_one": ("Alpha One", ""),
+        "project_learning": ("Learning", ""),
+        "project_other": ("Other", ""),
+        "project_tribe": ("Tribe", ""),
+        "project_vylo": ("Vylo", ""),
     }
     assert dict(
         conn.execute("SELECT id, ticket_status FROM tickets ORDER BY id").fetchall()
@@ -165,5 +167,37 @@ def test_create_schema_upgrades_old_ticket_status_column(tmp_path):
         "idea_null": None,
     }
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    conn.close()
+
+
+def test_create_schema_adds_project_summary_to_existing_project_table(tmp_path):
+    db_path = tmp_path / "old-projects.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE projects (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES ('project_alpha', 'Alpha', 1, 1);
+        """
+    )
+
+    create_schema(conn)
+
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(projects)")}
+    assert "summary" in columns
+    assert dict(conn.execute("SELECT id, summary FROM projects ORDER BY id").fetchall()) == {
+        "project_alpha": "",
+        "project_learning": "",
+        "project_other": "",
+        "project_tribe": "",
+        "project_vylo": "",
+    }
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     conn.close()

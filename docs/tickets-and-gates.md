@@ -63,8 +63,10 @@ unless the ceiling was already **done**, in which case it lands straight in done
 Whenever the human approves a step, they must say in the same breath how far the
 worker may go next — the system refuses an approval that doesn't answer that
 question. That same scope is shown and editable right on the ticket header as a plain
-row: "approved until [a stage] then stop" — or "then propose", rendered as pills you
-can tap to change any time. The stages it offers are always the current one and the
+row: "approved until [a stage] then propose" — or "then stop", rendered as pills you
+can tap to change any time. A fresh approval starts on "then propose" so the worker
+keeps drafting the next gated step unless the human changes it. The stages it offers
+are always the current one and the
 ones after it, never an earlier one, so you can't hand back ground the ticket has
 already covered. One shared source of the allowed stages feeds both the header row
 and the approval screen, so the two can never disagree.

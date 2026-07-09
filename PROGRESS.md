@@ -3,6 +3,74 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-09): Default approval onward scope to propose
+
+Current implementation:
+
+- `ScopePairPicker` now defaults a fresh gated approval to the next stage with `then propose`.
+- The existing e2e approval flow now expects the proposed default and verifies the saved `at_cap` is
+  `propose`.
+- `docs/tickets-and-gates.md` now describes fresh approvals starting on `then propose` while keeping
+  the human's ability to switch to `then stop`.
+
+Verification status:
+
+- `npm --prefix web run check && npm --prefix web run build && .venv/bin/python -m pytest
+  tests/e2e/test_flows_a.py::test_e24_accept_in_review -q` passed. Svelte still reports the existing
+  three `TicketRoute.svelte` initial-`id` warnings.
+- Full `./verify` passed ruff, mypy, unit tests (175 passed), compile/frontend gates, and 32/33 e2e
+  tests, then failed `tests/e2e/test_board_stage_indicators.py::test_workspace_groups_by_project_orders_by_progress_and_filters_status`
+  waiting for `[data-status-filter="errored"]`. That failure is outside this ticket's changed files.
+
+Immediate next step:
+
+- Result proposed on ticket `t_pw57w861`; ready for owner review, with the unrelated full-verify
+  failure called out.
+
+## Current work cycle (2026-07-09): Chief chat richer activity status
+
+Current implementation:
+
+- Gateway prompt streams now surface tool/command activity as `ChatStreamChunk(type="activity")`.
+- Server-owned human chat turns persist activity chunks into `chat_turns.phase='doing'` and
+  `activity_label`, using the same active-turn state path as ticket worker activity.
+- `ChatPanel` now labels running turns from the active turn's activity label, with clearer fallbacks
+  for queued/working/responding/thinking, and exposes the pending activity text for browser checks.
+- Added coverage proving Chief of Staff chat shows a running turn's partial assistant output, live
+  activity label, updated activity label, disabled send state, and remount behavior.
+
+Verification status:
+
+- `.venv/bin/pytest tests/unit/test_chat_seed.py::test_chat_state_shows_active_turn_activity_label
+  tests/e2e/test_live_chat_state.py::test_chief_chat_shows_running_activity_status_after_remount
+  -q` passed after rebuilding `web/dist`.
+- `.venv/bin/pytest tests/unit/test_chat_seed.py tests/e2e/test_live_chat_state.py -q` passed:
+  35 passed, 1 existing Starlette/httpx warning.
+- Full `./verify` passed: ruff ok, mypy ok, 175 unit tests passed, build/frontend gates ok, 33 e2e
+  tests passed, `VERIFY: PASS`.
+
+Immediate next step:
+
+- Result proposed on ticket `t_u10mmpj1`; ready for owner review.
+
+## Current work cycle (2026-07-09): Chat panels open at bottom
+
+Current implementation:
+
+- Updated shared `ChatPanel` to bind the scrollable message thread and scroll it to the bottom
+  after Svelte renders transcript or pending-state changes.
+- The behavior is centralized in `ChatPanel`, so ticket, workspace, and Chief of Staff chat panels
+  inherit it without route-specific layout changes.
+
+Verification status:
+
+- Full `./verify` passed: ruff ok, mypy ok, 174 unit tests passed, build/frontend gates ok, 32 e2e
+  tests passed, `VERIFY: PASS`.
+
+Immediate next step:
+
+- Result proposed on ticket `t_w6js97tn`; ready for owner review.
+
 ## Current orchestration ledger (2026-07-09)
 
 Important wording: an agent being "complete" only means the agent submitted a deliverable. It does
@@ -55,6 +123,35 @@ Plan files / artifacts that must stay on the radar:
 - In-place markdown editing is committed on main.
 - Russell live-chat plan is recorded at `orchestration/live-chat-accuracy/plan.md`.
 - Goodall live-chat implementation is complete on main.
+
+## Current work cycle (2026-07-09): Project summary context field
+
+Owner correction: project context is one free-text `summary` field only. Repo locations, when useful,
+belong inside that summary text; there is no separate repo-location field.
+
+Current implementation:
+
+- Added `projects.summary` with empty-string defaults for fresh schemas and existing databases.
+- Project API JSON now includes `summary`; project creation accepts optional summary text.
+- Added human-only `PATCH /api/projects/{project_id}` for `name` and `summary`, with
+  `project_updated` events invalidating the `projects` resource.
+- Added CLI support: `panels project create --summary ...` and
+  `panels project set <project_id> summary --value/--body-file/--clear`.
+- Updated frontend project typing and `docs/projects.md` for the single summary field.
+
+Verification status:
+
+- `.venv/bin/python -m py_compile src/planner/core/db.py src/planner/core/contracts.py
+  src/planner/projects/contracts.py src/planner/projects/data.py src/planner/projects/api.py
+  src/planner/cli/main.py` passed.
+- `.venv/bin/python -m pytest tests/unit/test_db.py tests/unit/test_projects.py
+  tests/unit/test_frontend_event_mapping.py` passed: 6 passed, 1 existing Starlette/httpx warning.
+- Full `./verify` passed: ruff ok, mypy ok, 174 unit tests passed, build/frontend gates ok, 32 e2e
+  tests passed, `VERIFY: PASS`.
+
+Immediate next step:
+
+- Result proposed on ticket `t_zd6ycvrw`; ready for owner review.
 
 ## Current work cycle (2026-07-09): Live chat accuracy / server-owned turn state
 
@@ -130,11 +227,22 @@ Current implementation:
 
 Verification status:
 
-- Pending focused check.
+- `git diff --check` passed.
+- `npm --prefix web run check` passed with the existing three `TicketRoute.svelte`
+  initial-`id` warnings.
+- `.venv/bin/python -m pytest tests/e2e/test_board_stage_indicators.py` passed: 2 passed.
+- Full `./verify` was attempted twice after this cleanup and did not get a clean run:
+  - First run failed in e2e because one `panels serve` subprocess did not answer `/api/meta` within
+    the 15s test boot budget, even though Uvicorn had started.
+  - Second run passed ruff, mypy, unit, build, frontend, and 31/32 e2e tests, then failed the
+    existing chat reload test `test_e26_chat_panel_echo_and_offline` waiting for the human chat
+    line after reload.
+  - Neither failure touched the Workspace sidebar/filter surface changed here.
 
 Immediate next step:
 
-- Run a focused CSS/frontend check.
+- Ready for owner review of the divider cleanup; full verify is not clean because of unrelated e2e
+  failures.
 
 ## Current work cycle (2026-07-09): Workspace sidebar project grouping
 

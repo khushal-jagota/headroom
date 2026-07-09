@@ -32,9 +32,10 @@
   let rightPaneMode = $state<"chief" | "ticket">("chief");
   let collapsedProjects = $state<string[]>([]);
   let statusFilter = $state<string>("all");
+  let hideDone = $state(false);
   let allCards = $derived(columns.flatMap((column) => column.cards));
   let selectedCard = $derived(allCards.find((card) => card.id === selectedTicketId) || null);
-  let projectSections = $derived(buildProjectSections(columns, statusFilter));
+  let projectSections = $derived(buildProjectSections(columns, statusFilter, hideDone));
 
   function selectCard(ticketId: string): void {
     selectedTicketId = ticketId;
@@ -78,13 +79,15 @@
 
   function buildProjectSections(
     sourceColumns: Array<{ state: string; cards: Record<string, any>[] }>,
-    activeStatusFilter: string
+    activeStatusFilter: string,
+    shouldHideDone: boolean
   ): Array<{ key: string; label: string; cards: Record<string, any>[] }> {
     const groups = new Map<string, { key: string; label: string; cards: Record<string, any>[] }>();
     let sequence = 0;
 
     for (const column of sourceColumns) {
       for (const card of column.cards) {
+        if (shouldHideDone && column.state === "done") continue;
         if (activeStatusFilter !== "all" && card.ticket_status !== activeStatusFilter) continue;
         const key = card.group_project_id || noProjectKey;
         const label = card.group_project || "No project";
@@ -144,24 +147,34 @@
 
           <div class="board-workspace-filters" data-workspace-filters>
             <div class="board-workspace-filter-head">Filters</div>
-            <div class="board-workspace-filter-group" data-filter-group="ticket-status">
-              <div class="board-workspace-filter-label">Ticket status</div>
-              <div class="board-workspace-filter-options">
-                {#each ticketStatusFilters as filter}
-                  <button
-                    aria-pressed={statusFilter === filter.value}
-                    class="board-workspace-filter-button"
-                    data-status-filter={filter.value}
-                    type="button"
-                    title={filter.value === "all" ? "All ticket statuses" : ticketStatusLabel(filter.value)}
-                    onclick={() => {
-                      statusFilter = filter.value;
-                    }}
-                  >
-                    {filter.label}
-                  </button>
-                {/each}
-              </div>
+            <div class="board-workspace-filter-row">
+              <label class="board-workspace-filter-group" data-filter-group="ticket-status">
+                <span class="board-workspace-filter-label">Ticket status</span>
+                <select
+                  aria-label="Ticket status"
+                  class="board-workspace-filter-select"
+                  data-status-filter={statusFilter}
+                  bind:value={statusFilter}
+                >
+                  {#each ticketStatusFilters as filter}
+                    <option
+                      value={filter.value}
+                      title={filter.value === "all" ? "All ticket statuses" : ticketStatusLabel(filter.value)}
+                    >
+                      {filter.label}
+                    </option>
+                  {/each}
+                </select>
+              </label>
+
+              <label class="board-workspace-hide-done-toggle">
+                <input
+                  type="checkbox"
+                  data-hide-done-toggle
+                  bind:checked={hideDone}
+                />
+                <span>Hide done</span>
+              </label>
             </div>
           </div>
 

@@ -14,6 +14,10 @@
   let skipped = $state<Record<string, boolean>>({});
   let detailResource = $state<ResourceHandle<AnyRecord> | null>(null);
   let detailError = $state<unknown>(null);
+  let revisionDraft = $state("");
+  let revisionError = $state<unknown>(null);
+  let revisionBusy = $state(false);
+  let revisionEntryKey = $state<string | null>(null);
   const staleRefreshRequests = new Set<string>();
 
   function entryKey(entry: QueueEntry): string {
@@ -68,6 +72,16 @@
     if (detailResource?.error) detailError = detailResource.error;
   });
 
+  $effect(() => {
+    const key = currentEntry ? entryKey(currentEntry) : null;
+    if (key !== revisionEntryKey) {
+      revisionEntryKey = key;
+      revisionDraft = "";
+      revisionError = null;
+      revisionBusy = false;
+    }
+  });
+
   function skip(entry: QueueEntry): void {
     skipped = { ...skipped, [entryKey(entry)]: true };
   }
@@ -92,6 +106,25 @@
       { method: "POST", body: {} },
       ["queues", `ticket:${entry.entity_id}`, "board", "sprint:current"]
     ));
+  }
+
+  async function returnForRevision(entry: QueueEntry): Promise<void> {
+    const message = revisionDraft.trim();
+    if (!message || revisionBusy) return;
+    revisionError = null;
+    revisionBusy = true;
+    try {
+      await refreshQueuesAfter(mutateJson(
+        `/api/tickets/${entry.entity_id}/return-for-revision`,
+        { method: "POST", body: { message } },
+        ["queues", `ticket:${entry.entity_id}`, `chat:${entry.entity_id}`, "board", "sprint:current"]
+      ));
+      revisionDraft = "";
+    } catch (err) {
+      revisionError = err;
+    } finally {
+      revisionBusy = false;
+    }
   }
 
   onDestroy(() => {
@@ -171,6 +204,37 @@
               onAccept={() => approve(entry)}
               onApproveResult={() => approve(entry)}
             />
+          {/if}
+
+          {#if entry.entity_type === "ticket"}
+            <div class="review-revision-box" data-review-revision>
+              <textarea
+                class="review-revision-input"
+                data-review-revision-input
+                rows="2"
+                placeholder="Tell the worker what to change..."
+                bind:value={revisionDraft}
+                disabled={revisionBusy}
+                onkeydown={(event) => {
+                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                    event.preventDefault();
+                    void returnForRevision(entry);
+                  }
+                }}
+              ></textarea>
+              {#if revisionError}
+                <ErrorLine error={revisionError} />
+              {/if}
+              <button
+                type="button"
+                class="button"
+                data-review-revision-send
+                disabled={revisionBusy || !revisionDraft.trim()}
+                onclick={() => void returnForRevision(entry)}
+              >
+                Send back
+              </button>
+            </div>
           {/if}
 
           <div class="review-outside-actions">

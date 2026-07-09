@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Final
 
+from planner.chat import data as chat_data
 from planner.core.contracts import EventKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event
@@ -464,6 +465,28 @@ def approve_review(conn: sqlite3.Connection, ticket_id: str, *, actor: str, now:
         ticket = _load_ticket(conn, ticket_id)
         decision = resolution.decide_approve(ticket, actor)
         return _apply_decision(conn, ticket, decision, now)
+
+
+def return_for_revision(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    message: str,
+    actor: str,
+    now: int,
+) -> Ticket:
+    admission.validate_body(message, "revision guidance")
+    framed_message = (
+        "The user rejected your proposal and provided the following guidance:\n\n"
+        f"{message.strip()}"
+    )
+    with _txn(conn):
+        ticket = _load_ticket(conn, ticket_id)
+        decision = resolution.decide_return_for_revision(ticket, actor)
+        _apply_decision(conn, ticket, decision, now)
+        chat_data.record_message(conn, ticket_id, role="human", text=framed_message, now=now)
+        _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
+        return _load_ticket(conn, ticket_id)
 
 
 def set_state(

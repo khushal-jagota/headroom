@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -47,14 +48,59 @@ def test_project_list_create_duplicate_and_agent_rejection(tmp_path: Path) -> No
             "project_tribe": "Tribe",
             "project_vylo": "Vylo",
         }
+        assert all(project["summary"] == "" for project in listed.json()["projects"])
 
-        created = client.post("/api/projects", json={"name": "Alpha One"})
+        created = client.post(
+            "/api/projects", json={"name": "Alpha One", "summary": "  Repo: /srv/alpha  "}
+        )
         assert created.status_code == 200, created.json()
         assert created.json()["id"] == "project_alpha_one"
         assert created.json()["name"] == "Alpha One"
+        assert created.json()["summary"] == "Repo: /srv/alpha"
+
+        updated = client.patch(
+            f"/api/projects/{created.json()['id']}", json={"summary": "  Lives in ~/alpha  "}
+        )
+        assert updated.status_code == 200, updated.json()
+        assert updated.json()["summary"] == "Lives in ~/alpha"
+
+        cleared = client.patch(f"/api/projects/{created.json()['id']}", json={"summary": ""})
+        assert cleared.status_code == 200, cleared.json()
+        assert cleared.json()["summary"] == ""
+
+        renamed = client.patch(
+            f"/api/projects/{created.json()['id']}", json={"name": "Alpha Renamed"}
+        )
+        assert renamed.status_code == 200, renamed.json()
+        assert renamed.json()["name"] == "Alpha Renamed"
 
         duplicate = client.post("/api/projects", json={"name": "alpha one"})
-        assert duplicate.status_code == 400
+        assert duplicate.status_code == 200
+        duplicate_rename = client.patch(
+            f"/api/projects/{renamed.json()['id']}", json={"name": "alpha one"}
+        )
+        assert duplicate_rename.status_code == 400
+        assert duplicate_rename.json()["error"]["code"] == "validation"
+
+        empty_name = client.patch(f"/api/projects/{renamed.json()['id']}", json={"name": " "})
+        assert empty_name.status_code == 400
+        assert empty_name.json()["error"]["code"] == "validation"
+
+        empty_patch = client.patch(f"/api/projects/{renamed.json()['id']}", json={})
+        assert empty_patch.status_code == 400
+        assert empty_patch.json()["error"]["code"] == "validation"
+
+        duplicate_create = client.post("/api/projects", json={"name": "alpha one"})
+        assert duplicate_create.status_code == 400
+        assert duplicate_create.json()["error"]["code"] == "validation"
+
+        agent_patch = client.patch(
+            f"/api/projects/{renamed.json()['id']}", json={"summary": "Agent edit"}, headers=_AGENT
+        )
+        assert agent_patch.status_code == 400
+        assert agent_patch.json()["error"]["code"] == "agent_forbidden"
+
+        duplicate = duplicate_create
         assert duplicate.json()["error"]["code"] == "validation"
 
         agent = client.post("/api/projects", json={"name": "Agent Project"}, headers=_AGENT)
@@ -65,11 +111,17 @@ def test_project_list_create_duplicate_and_agent_rejection(tmp_path: Path) -> No
     try:
         event = conn.execute(
             "SELECT entity_id, kind, payload FROM events WHERE entity_id = 'project_alpha_one'"
-        ).fetchone()
+            " ORDER BY id"
+        ).fetchall()
     finally:
         conn.close()
-    assert event is not None
-    assert event["kind"] == "project_created"
+    assert event
+    assert event[0]["kind"] == "project_created"
+    assert any(row["kind"] == "project_updated" for row in event)
+    update_payloads = [
+        json.loads(row["payload"]) for row in event if row["kind"] == "project_updated"
+    ]
+    assert {"fields": ["summary"]} in update_payloads
 
 
 def test_project_id_and_legacy_project_compatibility(tmp_path: Path) -> None:

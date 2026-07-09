@@ -149,6 +149,10 @@ class ValueEditBody(TypedDict, total=False):      # PUT /tickets/{id}/value/{fie
     body: str                      # default ""
 
 
+class RevisionMessageBody(TypedDict, total=False):  # POST /tickets/{id}/return-for-revision
+    message: str                   # required non-empty by the writer
+
+
 class ScopeBody(TypedDict, total=False):          # POST /tickets/{id}/scope
     ceiling: str | None            # TicketState value; route requires it (scope_missing)
     at_cap: str | None             # AtCap value; route requires it (scope_missing)

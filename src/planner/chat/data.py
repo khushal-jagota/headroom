@@ -86,6 +86,19 @@ def _append_message(
     return int(inserted)
 
 
+def record_message(
+    conn: sqlite3.Connection,
+    entity_id: str,
+    *,
+    role: str,
+    text: str,
+    now: int,
+    turn_id: str | None = None,
+) -> int:
+    """Append one visible chat message inside the caller's transaction."""
+    return _append_message(conn, entity_id, turn_id=turn_id, role=role, text=text, now=now)
+
+
 def read_state(
     conn: sqlite3.Connection,
     entity_id: str,

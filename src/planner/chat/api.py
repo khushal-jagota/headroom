@@ -142,6 +142,8 @@ async def stream_message(
             ):
                 if chunk.type == "token":
                     yield _sse("token", {"text": chunk.text})
+                elif chunk.type == "activity":
+                    yield _sse("activity", {"label": chunk.text})
                 elif chunk.type == "done":
                     yield _sse(
                         "message_done",

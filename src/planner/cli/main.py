@@ -71,6 +71,11 @@ _ITEM_FIELDS = {
     "sprint": "sprint_id",
 }
 
+_PROJECT_FIELDS = {
+    "name": "name",
+    "summary": "summary",
+}
+
 
 def _read_source(spec: str, as_json: bool) -> str:
     if spec == "-":
@@ -293,16 +298,49 @@ def project_list(as_json: bool) -> None:
 
 @project_group.command("create")
 @click.option("--name", required=True, help="Project display name.")
+@click.option("--summary", default=None, help="Optional project summary text.")
 @json_option
-def project_create(name: str, as_json: bool) -> None:
+def project_create(name: str, summary: str | None, as_json: bool) -> None:
+    body: dict[str, Any] = {"name": name}
+    if summary is not None:
+        body["summary"] = summary
     data = http.send(
         "POST",
         "/api/projects",
         as_json=as_json,
-        json_body={"name": name},
+        json_body=body,
         request_actor="human",
     )
     http.emit(data, as_json, f"{data['id']} {data['name']}")
+
+
+@project_group.command("set")
+@click.argument("project_id")
+@click.argument("field", type=click.Choice(sorted(_PROJECT_FIELDS)))
+@click.option("--value", default=None, help="Set the field to this value.")
+@click.option("--body-file", default=None, help="Read field text from this file, or - for stdin.")
+@click.option("--clear", is_flag=True, default=False, help="Set the field to empty text.")
+@json_option
+def project_set(
+    project_id: str,
+    field: str,
+    value: str | None,
+    body_file: str | None,
+    clear: bool,
+    as_json: bool,
+) -> None:
+    api_field = _PROJECT_FIELDS[field]
+    new_value = read_value_or_file(value, body_file, clear, as_json, field)
+    if field == "name" and new_value is None:
+        http.fail_validation("name cannot be cleared", as_json)
+    data = http.send(
+        "PATCH",
+        f"/api/projects/{project_id}",
+        as_json=as_json,
+        json_body={api_field: "" if new_value is None else new_value},
+        request_actor="human",
+    )
+    http.emit(data, as_json, f"{data['id']} {field} set")
 
 
 # --- day ----------------------------------------------------------------------

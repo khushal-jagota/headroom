@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, untrack } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { fetchJson, startChatTurn } from "../lib/api";
   import { resource } from "../lib/resources";
   import type { ChatStateMessage, ChatStateResponse, ChatTurn, CommandCatalog } from "../lib/types";
@@ -36,7 +36,9 @@
 
   let draft = $state("");
   let error = $state<unknown>(null);
+  let threadElement = $state<HTMLDivElement | null>(null);
   let pollTimer: ReturnType<typeof window.setTimeout> | null = null;
+  let scrollRequest = 0;
 
   function whoForRole(role: string): ChatMessage["who"] {
     const normalized = role.toLowerCase();
@@ -67,9 +69,17 @@
   let activeTurn = $derived(chatState.data?.active_turn || null);
   let pending = $derived(Boolean(activeTurn));
   let pendingWho = $derived(activeTurn?.origin === "worker" ? "worker" : "planner");
-  let pendingLabel = $derived(
-    activeTurn?.activity_label || (activeTurn?.phase === "doing" ? "Working" : "Thinking")
-  );
+
+  function pendingLabelFor(turn: ChatTurn | null): string {
+    const label = turn?.activity_label?.trim();
+    if (label) return label;
+    if (turn?.phase === "queued") return "Queued";
+    if (turn?.phase === "doing") return "Working";
+    if (turn?.phase === "responding") return "Responding";
+    return "Thinking";
+  }
+
+  let pendingLabel = $derived(pendingLabelFor(activeTurn));
 
   function clearPoll(): void {
     if (pollTimer === null) return;
@@ -85,12 +95,25 @@
     }, 500);
   }
 
+  async function scrollThreadToBottom(): Promise<void> {
+    const request = ++scrollRequest;
+    await tick();
+    if (request !== scrollRequest || !threadElement) return;
+    threadElement.scrollTop = threadElement.scrollHeight;
+  }
+
   $effect(() => {
     if (activeTurn && !chatState.loading) {
       schedulePoll();
       return;
     }
     if (!activeTurn) clearPoll();
+  });
+
+  $effect(() => {
+    transcript;
+    pending;
+    void scrollThreadToBottom();
   });
 
   async function submit(text: string, mode: "message" | "command"): Promise<void> {
@@ -116,7 +139,7 @@
     <span class="chat-lbl">{available ? label : `${label} · offline`}</span>
   </div>
 
-  <div class="chat-thread" data-chat-messages>
+  <div class="chat-thread" data-chat-messages bind:this={threadElement}>
     {#if !available}
       <div class="chat-off" data-chat-offline>
         <div>{label} is offline.</div>
@@ -139,7 +162,7 @@
       {#if pending}
         <div class="chat-pending-row" data-chat-pending data-chat-msg={pendingWho}>
           <span class="chat-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span class="chat-pending-label">{pendingLabel}</span>
+          <span class="chat-pending-label" data-chat-activity>{pendingLabel}</span>
         </div>
       {/if}
     {/if}
@@ -152,7 +175,7 @@
   {#if available}
     <ChatComposer
       catalog={commands.data}
-      disabled={pending}
+      submitDisabled={pending}
       initialText={draft}
       placeholder={label === "employee" ? "Message the employee..." : `Message ${label}...`}
       onDraft={(text) => (draft = text)}

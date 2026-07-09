@@ -16,7 +16,8 @@ One screen per part of the system:
   to work until "how far may the worker go next" has been answered, both halves.
 - **Workspace** — today's tickets in a left rail backed by the board resource. The
   rail groups tickets by project, orders rows by ticket progress inside each project,
-  shows the four ticket-stage dots, and can filter visible rows by `ticket_status`.
+  shows the four ticket-stage dots, filters visible rows by `ticket_status`, and can
+  hide done tickets separately.
   The right side opens on the Chief of Staff chat, and selecting a ticket switches it
   to that ticket's current link view.
 - **Ticket** — the whole story of one piece of work: the four blanks, the scope row,

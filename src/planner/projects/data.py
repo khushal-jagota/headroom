@@ -38,6 +38,7 @@ def _row_to_project(row: sqlite3.Row) -> Project:
     return Project(
         id=str(row["id"]),
         name=str(row["name"]),
+        summary=str(row["summary"]),
         created_at=int(row["created_at"]),
         updated_at=int(row["updated_at"]),
     )
@@ -47,6 +48,7 @@ def project_json(project: Project) -> JsonDict:
     return {
         "id": project.id,
         "name": project.name,
+        "summary": project.summary,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
     }
@@ -70,14 +72,16 @@ def seed_default_projects(conn: sqlite3.Connection) -> None:
 
 def list_projects(conn: sqlite3.Connection) -> list[Project]:
     rows = conn.execute(
-        "SELECT id, name, created_at, updated_at FROM projects ORDER BY lower(name), id"
+        "SELECT id, name, summary, created_at, updated_at "
+        "FROM projects ORDER BY lower(name), id"
     ).fetchall()
     return [_row_to_project(row) for row in rows]
 
 
 def read_project(conn: sqlite3.Connection, project_id: str) -> Project:
     row = conn.execute(
-        "SELECT id, name, created_at, updated_at FROM projects WHERE id = ?", (project_id,)
+        "SELECT id, name, summary, created_at, updated_at FROM projects WHERE id = ?",
+        (project_id,),
     ).fetchone()
     if row is None:
         raise PlannerError(ErrorCode.validation, "invalid project_id", {"project_id": project_id})
@@ -86,7 +90,8 @@ def read_project(conn: sqlite3.Connection, project_id: str) -> Project:
 
 def read_project_by_name(conn: sqlite3.Connection, name: str) -> Project:
     row = conn.execute(
-        "SELECT id, name, created_at, updated_at FROM projects WHERE name = ? COLLATE NOCASE",
+        "SELECT id, name, summary, created_at, updated_at "
+        "FROM projects WHERE name = ? COLLATE NOCASE",
         (name.strip(),),
     ).fetchone()
     if row is None:
@@ -115,8 +120,11 @@ def resolve_project(
     return project
 
 
-def create_project(conn: sqlite3.Connection, *, name: str, now: int) -> Project:
+def create_project(
+    conn: sqlite3.Connection, *, name: str, summary: str = "", now: int
+) -> Project:
     clean_name = name.strip()
+    clean_summary = summary.strip()
     if not clean_name:
         raise PlannerError(ErrorCode.validation, "project name is required", {})
 
@@ -138,8 +146,58 @@ def create_project(conn: sqlite3.Connection, *, name: str, now: int) -> Project:
             project_id = f"{base_id}_{suffix}"
             suffix += 1
         conn.execute(
-            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (project_id, clean_name, now, now),
+            "INSERT INTO projects (id, name, summary, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (project_id, clean_name, clean_summary, now, now),
         )
         append_event(conn, project_id, EventKind.project_created, {"name": clean_name}, now)
+    return read_project(conn, project_id)
+
+
+def update_project(
+    conn: sqlite3.Connection,
+    project_id: str,
+    *,
+    name: str | None = None,
+    summary: str | None = None,
+    now: int,
+) -> Project:
+    updates: dict[str, str] = {}
+    if name is not None:
+        clean_name = name.strip()
+        if not clean_name:
+            raise PlannerError(ErrorCode.validation, "project name is required", {})
+        updates["name"] = clean_name
+    if summary is not None:
+        updates["summary"] = summary.strip()
+    if not updates:
+        raise PlannerError(ErrorCode.validation, "no project fields to update", {})
+
+    with _tx(conn):
+        if conn.execute(
+            "SELECT 1 FROM projects WHERE id = ?", (project_id,)
+        ).fetchone() is None:
+            raise PlannerError(
+                ErrorCode.validation, "invalid project_id", {"project_id": project_id}
+            )
+        if "name" in updates:
+            existing = conn.execute(
+                "SELECT id FROM projects WHERE name = ? COLLATE NOCASE", (updates["name"],)
+            ).fetchone()
+            if existing is not None and str(existing["id"]) != project_id:
+                raise PlannerError(
+                    ErrorCode.validation, "project already exists", {"name": updates["name"]}
+                )
+        assignments = ", ".join(f"{field} = ?" for field in updates)
+        params = [*updates.values(), now, project_id]
+        conn.execute(
+            f"UPDATE projects SET {assignments}, updated_at = ? WHERE id = ?", params
+        )
+        append_event(
+            conn,
+            project_id,
+            EventKind.project_updated,
+            {"fields": sorted(updates)},
+            now,
+        )
     return read_project(conn, project_id)

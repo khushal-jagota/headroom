@@ -68,8 +68,8 @@ class CommandRunResult:            # what the gateway adapter returns per /comma
 
 @dataclass(frozen=True)
 class ChatStreamChunk:             # normalized gateway stream chunk for SSE callers
-    type: str                      # "session" (internal) | "token" | "done"
-    text: str = ""                 # token text when type == "token"
+    type: str                      # "session" (internal) | "activity" | "token" | "done"
+    text: str = ""                 # token text, or activity label when type == "activity"
     reply_text: str = ""           # complete reply when type == "done"
     session_key: str = ""          # minted/resumed key when type == "done"
     kind: str = "assistant"        # "assistant" | "system" when type == "done"

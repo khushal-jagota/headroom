@@ -54,6 +54,7 @@ from planner.tickets.contracts import (
     ProposeBody,
     ProposeWithRecapBody,
     RecapBody,
+    RevisionMessageBody,
     ScopeBody,
     StateBody,
     TicketState,
@@ -366,6 +367,20 @@ async def approve_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, sa: S
     reject_agents(ctx)
     now = clk.now_unix()
     ticket = tickets_data.approve_review(conn, ticket_id, actor=ctx.actor, now=now)
+    _poke(sa)
+    return tickets_views.ticket_json(ticket, now)
+
+
+@router.post("/tickets/{ticket_id}/return-for-revision")
+async def return_ticket_for_revision(
+    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa
+) -> JsonDict:
+    body = RevisionMessageBody(message=body_str(raw, "message"))
+    reject_agents(ctx)
+    now = clk.now_unix()
+    ticket = tickets_data.return_for_revision(
+        conn, ticket_id, message=body["message"], actor=ctx.actor, now=now
+    )
     _poke(sa)
     return tickets_views.ticket_json(ticket, now)
 

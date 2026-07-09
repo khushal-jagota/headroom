@@ -58,6 +58,7 @@ export type SprintsResponse = {
 export type ProjectSummary = {
   id: string;
   name: string;
+  summary: string;
   created_at: number;
   updated_at: number;
 };

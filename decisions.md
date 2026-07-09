@@ -1072,3 +1072,12 @@ stage progress, then by the server's existing order inside a stage.
 This supersedes D68's "one active dot" rail choice: the rail now shows all four ticket-stage dots
 because the owner explicitly asked to reintroduce the progress circles. Runtime markers remain
 attached only to the current relevant dot.
+
+## D71 — Chief chat activity rides the existing active-turn channel
+
+Richer Chief of Staff chat status uses the existing server-owned chat turn instead of a separate
+status feed. Gateway prompt streams normalize tool/command events into `activity` chunks; human chat
+turns persist those chunks onto `chat_turns.phase` / `activity_label`, and `ChatPanel` continues to
+poll `GET /api/chat/{entity_id}/state` while a turn is active. This keeps ticket, worker, and Chief
+chat on one state contract and avoids a second live-status source that could drift from transcript
+and session ownership.

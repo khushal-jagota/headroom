@@ -45,6 +45,7 @@ class EventKind(StrEnum):
 
     # --- supplemental: proposals and fields ---
     proposal_filed = "proposal_filed"                # {field, body, proposed_by}
+    approval_returned = "approval_returned"          # {kind, field?} returned for revision
     note_updated = "note_updated"                    # §4.2 notes slot {field}
     recap_updated = "recap_updated"                  # §3.3
     scope_changed = "scope_changed"                  # {ceiling, at_cap, cause}
@@ -55,6 +56,7 @@ class EventKind(StrEnum):
     item_updated = "item_updated"
     sprint_updated = "sprint_updated"
     day_updated = "day_updated"                      # notes/brief manual edits
+    project_updated = "project_updated"
     item_children_changed = "item_children_changed"  # {ticket_id, reason}
 
     # --- supplemental: day lifecycle ---

@@ -425,6 +425,17 @@ def _run_human_turn(
                 if chunk.session_key:
                     persist_session_before_prompt(chunk.session_key)
                 continue
+            if chunk.type == "activity":
+                label = chunk.text.strip() or "Working"
+                chat_data.set_turn_activity(
+                    conn,
+                    turn_id,
+                    entity_id=entity_id,
+                    phase="doing",
+                    activity_label=label,
+                    now=now,
+                )
+                continue
             if chunk.type == "token":
                 chat_data.append_turn_output(
                     conn, turn_id, entity_id=entity_id, delta=chunk.text, now=now
@@ -475,6 +486,22 @@ def _unix_now() -> int:
     return int(time.time())
 
 
+def _gateway_event_activity_label(event_type: str, payload: dict[str, object]) -> str | None:
+    if event_type not in ("tool.start", "tool.delta", "tool.end", "command.start"):
+        return None
+    for key in ("label", "name", "command", "tool_name"):
+        value = str(payload.get(key) or "").strip()
+        if value:
+            return value
+    raw_tool = payload.get("tool")
+    tool = raw_tool if isinstance(raw_tool, dict) else {}
+    for key in ("label", "name"):
+        value = str(tool.get(key) or "").strip()
+        if value:
+            return value
+    return "Working"
+
+
 def start_worker_turn(
     conn: sqlite3.Connection, entity_id: str, *, visible_text: str, now: int
 ) -> ChatTurn:
@@ -510,8 +537,8 @@ def observe_worker_gateway_event(
         delta = str(payload.get("text") or payload.get("delta") or "")
         chat_data.append_turn_output(conn, turn_id, entity_id=entity_id, delta=delta, now=now)
         return
-    if etype in ("tool.start", "tool.delta", "tool.end", "command.start"):
-        label = str(payload.get("label") or payload.get("name") or "Working")
+    label = _gateway_event_activity_label(etype, payload)
+    if label is not None:
         chat_data.set_turn_activity(
             conn, turn_id, entity_id=entity_id, phase="doing", activity_label=label, now=now
         )
