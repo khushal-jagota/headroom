@@ -1054,3 +1054,9 @@ Workspace defaults its right pane to the existing Chief of Staff chat entity. Se
 temporarily switches the right pane back to the current ticket-link view, and the Chief of Staff
 button restores the top-level chat. The rail now renders only the ticket's current stage marker so
 the stage signal is one active dot, not a full lifecycle tracker.
+
+## D69 — Chief of Staff is embedded first, not a primary nav tab
+
+The top-level `#/chief` route remains available for direct links and focused smoke coverage, but the
+primary shell no longer shows a Chief of Staff nav entry. Workspace is the product surface for the
+same top-level chat because it sits beside today's execution set.

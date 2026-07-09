@@ -28,7 +28,7 @@ def test_chief_of_staff_route_nav_and_chat(server, context_factory, open_page) -
         settled=False,
     )
 
-    assert "active" in (page.get_attribute('a.nav-link[data-screen="chief"]', "class") or "")
+    assert page.query_selector('a.nav-link[data-screen="chief"]') is None
     assert page.inner_text("h1") == "Chief of Staff"
     assert page.get_attribute("[data-chat-input]", "placeholder") == "Message Chief of Staff..."
 

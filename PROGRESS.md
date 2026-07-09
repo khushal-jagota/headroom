@@ -1395,6 +1395,7 @@ What changed:
   lifecycle dots.
 - Focused e2e coverage was updated/added for Workspace routing, the embedded Chief of Staff chat,
   legacy `#/board`, and the one-dot stage indicator.
+- Follow-up: removed Chief of Staff from the top nav while keeping `#/chief` as a direct route.
 
 What passed:
 
@@ -1403,6 +1404,8 @@ What passed:
   `TicketRoute.svelte` warnings.
 - `.venv/bin/pytest tests/e2e/test_chief_of_staff.py tests/e2e/test_board_stage_indicators.py -q`
   passed.
+- Follow-up `.venv/bin/pytest tests/e2e/test_chief_of_staff.py -q` passed after removing the Chief
+  nav entry.
 - `.venv/bin/pytest tests/e2e/test_live_chat_state.py
   tests/e2e/test_flows_a.py::test_e22_cli_create_live_board
   tests/e2e/test_flows_a.py::test_e26_chat_panel_echo_and_offline

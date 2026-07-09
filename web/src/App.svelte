@@ -74,7 +74,6 @@
     <span class="shell-brand">Panels</span>
     <nav class="shell-links">
       <a class:active={currentNav("day")} class="nav-link" data-screen="day" href="#/day">Day</a>
-      <a class:active={currentNav("chief")} class="nav-link" data-screen="chief" href="#/chief">Chief of Staff</a>
       <a class:active={currentNav("review")} class="nav-link" data-screen="review" href="#/review">
         Review
         {#if (queues.data?.approvals || []).length > 0}
