@@ -29,6 +29,9 @@ from planner.tickets.contracts import TicketStatus
 
 _log = logging.getLogger("planner.chat")
 
+CHIEF_OF_STAFF_ENTITY_ID = "agent_panels_chief_of_staff"
+TOP_LEVEL_AGENT_ENTITY_IDS = frozenset({CHIEF_OF_STAFF_ENTITY_ID})
+
 
 @contextmanager
 def _txn(conn: sqlite3.Connection) -> Iterator[None]:
@@ -66,6 +69,17 @@ def _resolve(conn: sqlite3.Connection, entity_id: str, now: int) -> tuple[str, s
             )
         day = read_day(conn, entity_id, now)  # §3.4: materializes if absent
         return "day", day.chat_session_key
+    if entity_id in TOP_LEVEL_AGENT_ENTITY_IDS:
+        conn.execute(
+            "INSERT OR IGNORE INTO agent_chat_sessions "
+            "(id, chat_session_key, created_at, updated_at) VALUES (?, NULL, ?, ?)",
+            (entity_id, now, now),
+        )
+        row = conn.execute(
+            "SELECT chat_session_key FROM agent_chat_sessions WHERE id = ?", (entity_id,)
+        ).fetchone()
+        key: str | None = row["chat_session_key"]
+        return "agent_chat_session", key
     raise PlannerError(ErrorCode.not_found, "no chattable entity for id", {"entity_id": entity_id})
 
 
@@ -101,7 +115,12 @@ def _persist_key(
     restarted) or rotated, so stored_key is set but the returned key differs. Persisting the
     re-mint is what stops the dead key being resumed forever. On a lost first-write race no
     event is logged and the winner's key is adopted. Returns the effective key."""
-    table = "tickets" if kind == "ticket" else "days"  # fixed map, never request input
+    table_by_kind = {
+        "ticket": "tickets",
+        "day": "days",
+        "agent_chat_session": "agent_chat_sessions",
+    }
+    table = table_by_kind[kind]  # fixed map, never request input
     with _txn(conn):
         if kind == "ticket" and reject_running_ticket:
             row = conn.execute(

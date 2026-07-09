@@ -15,8 +15,14 @@
   let {
     entityId,
     available,
-    ticketStatus = ""
-  }: { entityId: string; available: boolean; ticketStatus?: string } = $props();
+    ticketStatus = "",
+    label = "employee"
+  }: {
+    entityId: string;
+    available: boolean;
+    ticketStatus?: string;
+    label?: string;
+  } = $props();
   const stableEntityId = untrack(() => entityId);
   const isTicketChat = stableEntityId.startsWith("t_");
 
@@ -191,13 +197,13 @@
 <div class="chat-panel" data-chat-panel>
   <div class="chat-head">
     <span class={`chat-dot ${available ? "chat-dot--on" : "chat-dot--off"}`}></span>
-    <span class="chat-lbl">{available ? "employee" : "employee · offline"}</span>
+    <span class="chat-lbl">{available ? label : `${label} · offline`}</span>
   </div>
 
   <div class="chat-thread" data-chat-messages>
     {#if !available}
       <div class="chat-off" data-chat-offline>
-        <div>The employee is offline.</div>
+        <div>{label} is offline.</div>
         <div class="chat-off-sub">Your draft is saved.</div>
       </div>
     {:else if transcript.length === 0 && !pending && !history.loading}
@@ -227,6 +233,7 @@
       catalog={commands.data}
       disabled={pending}
       initialText={draft}
+      placeholder={label === "employee" ? "Message the employee..." : `Message ${label}...`}
       onDraft={(text) => (draft = text)}
       onSubmit={submit}
     />

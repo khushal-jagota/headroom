@@ -5,6 +5,7 @@
   import { startEventStream, stopEventStream } from "./lib/ws";
   import BacklogRoute from "./routes/BacklogRoute.svelte";
   import BoardRoute from "./routes/BoardRoute.svelte";
+  import ChiefOfStaffRoute from "./routes/ChiefOfStaffRoute.svelte";
   import DayRoute from "./routes/DayRoute.svelte";
   import IdeasRoute from "./routes/IdeasRoute.svelte";
   import ReviewRoute from "./routes/ReviewRoute.svelte";
@@ -48,7 +49,7 @@
     if (route.name === "sprint") {
       return !route.params.sub || route.params.sub === "tracking" || route.params.sub === "overview";
     }
-    return ["day", "review", "board", "backlog", "ideas"].includes(route.name);
+    return ["day", "review", "chief", "board", "backlog", "ideas"].includes(route.name);
   }
 
   onMount(() => {
@@ -72,6 +73,7 @@
     <span class="shell-brand">Panels</span>
     <nav class="shell-links">
       <a class:active={currentNav("day")} class="nav-link" data-screen="day" href="#/day">Day</a>
+      <a class:active={currentNav("chief")} class="nav-link" data-screen="chief" href="#/chief">Chief of Staff</a>
       <a class:active={currentNav("review")} class="nav-link" data-screen="review" href="#/review">
         Review
         {#if (queues.data?.approvals || []).length > 0}
@@ -93,6 +95,8 @@
         <div class="screen screen-enter">
           {#if route.name === "day"}
             <DayRoute />
+          {:else if route.name === "chief"}
+            <ChiefOfStaffRoute />
           {:else if route.name === "review"}
             <ReviewRoute />
           {:else if route.name === "board"}

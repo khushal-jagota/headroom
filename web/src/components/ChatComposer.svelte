@@ -7,12 +7,14 @@
     catalog,
     disabled = false,
     initialText = "",
+    placeholder = "Message the employee...",
     onDraft,
     onSubmit
   }: {
     catalog?: CommandCatalog;
     disabled?: boolean;
     initialText?: string;
+    placeholder?: string;
     onDraft?: (text: string) => void;
     onSubmit: (text: string, mode: "message" | "command") => Promise<void>;
   } = $props();
@@ -123,7 +125,7 @@
     class="chat-ta"
     data-chat-input
     rows="1"
-    placeholder="Message the employee..."
+    {placeholder}
     bind:value={text}
     disabled={disabled || busy}
     oninput={inputChanged}

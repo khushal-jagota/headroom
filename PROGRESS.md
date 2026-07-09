@@ -99,6 +99,98 @@ Immediate next step:
 
 - Owner visual review in the running Panels server.
 
+## Current work cycle (2026-07-09): Chief-of-staff first slice
+
+Owner request: add the `panels-chief-of-staff` repo role skill from the Erdos draft, provision it
+into planner Hermes home, expose a full-pane Chief of Staff chat route, and support its stable
+top-level chat entity without implementing the later server-owned live-turn architecture.
+
+Current implementation:
+
+- Added `skills/panels-chief-of-staff/SKILL.md` from
+  `orchestration/chief-of-staff/erdos-skill-draft.md` without the outer markdown fence.
+- Added `agent_panels_chief_of_staff` as the one supported top-level agent chat entity, backed by
+  `agent_chat_sessions`, so chat history/send/stream/command can persist the same durable
+  `chat_session_key` without a ticket or day id.
+- Added `EntityRoutingGateway` and production server wiring so chief chat traffic uses a separate
+  shared gateway child with `HERMES_TUI_SKILLS=panels-chief-of-staff`, while ticket/day chat and
+  System B keep the worker gateway.
+- Added the `panels-chief-of-staff` skill to planner Hermes home provisioning.
+- Added a full-pane `#/chief` route and primary nav entry using the existing chat thread/composer
+  visual language, with a Chief of Staff label and placeholder.
+- Added focused tests for skill provisioning, chief chat persistence/history/not-found boundary,
+  and the Chief route/nav/chat smoke.
+
+Verification status:
+
+- `.venv/bin/python -m py_compile src/planner/chat/service.py src/planner/core/db.py
+  src/planner/minds/config.py src/planner/core/server.py src/planner/chat/api.py
+  src/planner/minds/shared_gateway.py tests/unit/test_chat_seed.py tests/unit/test_minds.py`
+  passed.
+- `.venv/bin/python -m pytest tests/unit/test_chat_seed.py tests/unit/test_minds.py
+  tests/unit/test_db.py` passed: 52 passed, 1 existing Starlette/httpx deprecation warning.
+- `npm --prefix web run check` passed with the existing three `TicketRoute.svelte` initial-`id`
+  warnings.
+- `npm --prefix web run build` passed with the existing Vite runtime-asset warnings and the same
+  three Svelte warnings. This regenerated `web/dist`.
+- `.venv/bin/python -m pytest tests/e2e/test_chief_of_staff.py` passed.
+- `git diff --check` passed.
+- Independent `codex exec --model gpt-5.5 --sandbox read-only` review first found the chief entity
+  would still run under the worker skill; after the gateway-router fix, the scoped rerun returned
+  `NO VIOLATIONS`.
+
+Immediate next step:
+
+- Ready for owner review. Full `./verify` was not run for this bounded slice.
+
+## Current work cycle (2026-07-09): Chief-of-staff browser verification
+
+Owner reported a browser bug: opening/using Chief of Staff produced `not_found` with message
+`no chattable entity for id`.
+
+Result:
+
+- Reproduced the bug on the already-running `127.0.0.1:8767` server:
+  `GET /api/chat/agent_panels_chief_of_staff/history` and
+  `POST /api/chat/agent_panels_chief_of_staff/send` both returned 404
+  `{"code":"not_found","message":"no chattable entity for id"}`.
+- Identified the cause: the `8767` server process was started before the chief backend code was
+  loaded. It served the new static bundle from disk, but its in-memory Python service still had the
+  old chat resolver and the live DB had no `agent_chat_sessions` table yet.
+- Confirmed the current worktree code on a fresh isolated server resolved the same entity:
+  `GET /api/chat/agent_panels_chief_of_staff/history` returned 200 with empty history, and
+  `POST /api/chat/agent_panels_chief_of_staff/send` returned 200 with the fake echo gateway.
+- Restarted the real Panels server on `127.0.0.1:8767` from `.venv/bin/panels serve`. The same live
+  endpoint now returns 200 and the live `data/planning.db` has `agent_chat_sessions`.
+- Browser-drove `#/chief` on `8767`: primary nav exposes `Chief of Staff`, route renders
+  `section[data-screen="chief"]`, chat is inside the full-pane `.chief-chat-shell` and not a ticket
+  `.chat-rail`, composer is visible with `Message Chief of Staff...`, typing enables the send
+  control, and no console/page/request failures were recorded.
+- Browser-drove existing `#/day` and `#/ticket/t_3x59papc` on `8767`; both rendered, and ticket chat
+  still uses the ticket side rail with the employee composer placeholder.
+- Browser-drove an actual chief chat send on the isolated fake-gateway server; `POST
+  /api/chat/agent_panels_chief_of_staff/stream` returned 200 and the page rendered
+  `echo: browser send check`, with no console/page/request failures.
+
+Verification status:
+
+- Live API before restart: 404 reproduced on `/api/chat/agent_panels_chief_of_staff/history` and
+  `/api/chat/agent_panels_chief_of_staff/send`.
+- Fresh current-worktree API: both endpoints returned 200 on isolated server `127.0.0.1:8799`.
+- Restarted live API: `GET /api/chat/agent_panels_chief_of_staff/history` returned 200 on
+  `127.0.0.1:8767`.
+- Playwright browser verification passed on `8767` for Chief route/nav/full-pane layout/composer,
+  Day route, Ticket route, and zero console/page/request failures. Screenshots saved under
+  `data/chief-browser-verification/`.
+- Playwright browser send passed on isolated fake-gateway server.
+- `.venv/bin/python -m pytest tests/e2e/test_chief_of_staff.py` passed.
+- `git diff --check` passed.
+
+Immediate next step:
+
+- Ready for owner review. The real Panels server is running on `127.0.0.1:8767` from the current
+  worktree.
+
 ## Current work cycle (2026-07-08): Review approval UI QA and scoped fixes
 
 Owner request: QA the just-completed Review approval UI and ticket field-circle encoding, patching

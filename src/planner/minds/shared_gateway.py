@@ -52,6 +52,74 @@ class SharedGatewayBusy(Exception):
         self.session_key = session_key
 
 
+class EntityRoutingGateway:
+    """Route chat calls for named top-level entities to their own gateway child."""
+
+    def __init__(
+        self,
+        default_gateway: SharedGateway,
+        entity_gateways: Mapping[str, SharedGateway],
+    ) -> None:
+        self._default_gateway = default_gateway
+        self._entity_gateways = dict(entity_gateways)
+
+    def _gateway_for(self, entity_id: str) -> SharedGateway:
+        return self._entity_gateways.get(entity_id, self._default_gateway)
+
+    def status(self) -> GatewayStatus:
+        return self._default_gateway.status()
+
+    def status_for_entity(self, entity_id: str) -> GatewayStatus:
+        return self._gateway_for(entity_id).status()
+
+    def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
+        return self._gateway_for(entity_id).history(session_key, entity_id)
+
+    def send(
+        self,
+        session_key: str | None,
+        entity_id: str,
+        text: str,
+        on_session_key: Callable[[str], None] | None = None,
+    ) -> ChatSendResult:
+        return self._gateway_for(entity_id).send(session_key, entity_id, text, on_session_key)
+
+    def stream(
+        self,
+        session_key: str | None,
+        entity_id: str,
+        text: str,
+        mode: str,
+        on_session_key: Callable[[str], None] | None = None,
+    ) -> Iterator[ChatStreamChunk]:
+        yield from self._gateway_for(entity_id).stream(
+            session_key, entity_id, text, mode, on_session_key
+        )
+
+    def catalog(self) -> CommandCatalog:
+        return self._default_gateway.catalog()
+
+    def run_command(
+        self,
+        session_key: str | None,
+        entity_id: str,
+        command: str,
+        on_session_key: Callable[[str], None] | None = None,
+    ) -> CommandRunResult:
+        return self._gateway_for(entity_id).run_command(
+            session_key, entity_id, command, on_session_key
+        )
+
+    def shutdown(self) -> None:
+        seen: set[int] = set()
+        for gateway in (self._default_gateway, *self._entity_gateways.values()):
+            ident = id(gateway)
+            if ident in seen:
+                continue
+            seen.add(ident)
+            gateway.shutdown()
+
+
 class SharedGateway:
     """Lifecycle owner for the planner's one shared worker gateway child."""
 

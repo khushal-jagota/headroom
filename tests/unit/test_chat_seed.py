@@ -21,6 +21,7 @@ from planner.chat.contracts import (
     ChatStreamChunk,
     GatewayStatus,
 )
+from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
 from planner.core.adapters.registry import Adapters, build_adapters
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -335,6 +336,48 @@ def test_chat_send_day_materializes_and_persists(tmp_path: Path) -> None:
     assert _stored_key(db_path, "days", day) == "fake-sess-1"
     assert _events(db_path, day, "day_created") == [{}]
     assert _events(db_path, day, "chat_session_created") == [{"session_key": "fake-sess-1"}]
+
+
+def test_chat_send_chief_of_staff_uses_top_level_agent_session(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/chat/{CHIEF_OF_STAFF_ENTITY_ID}/send",
+            json={"text": "what should I look at?"},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "reply_text": "echo: what should I look at?",
+        "session_key": "fake-sess-1",
+    }
+    assert _stored_key(db_path, "agent_chat_sessions", CHIEF_OF_STAFF_ENTITY_ID) == "fake-sess-1"
+    assert _events(db_path, CHIEF_OF_STAFF_ENTITY_ID, "chat_session_created") == [
+        {"session_key": "fake-sess-1"}
+    ]
+
+
+def test_chat_history_chief_of_staff_empty_without_ticket_or_day(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+
+    with TestClient(app) as client:
+        response = client.get(f"/api/chat/{CHIEF_OF_STAFF_ENTITY_ID}/history")
+
+    assert response.status_code == 200
+    assert response.json() == {"messages": [], "session_key": None}
+    assert _stored_key(db_path, "agent_chat_sessions", CHIEF_OF_STAFF_ENTITY_ID) is None
+    assert _events(db_path, CHIEF_OF_STAFF_ENTITY_ID, "chat_session_created") == []
+
+
+def test_chat_send_unknown_agent_entity_not_found(tmp_path: Path) -> None:
+    app, _ = _make_app(tmp_path)
+
+    with TestClient(app) as client:
+        response = client.post("/api/chat/agent_other/send", json={"text": "x"})
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"
 
 
 def test_chat_send_ticket_not_found(tmp_path: Path) -> None:

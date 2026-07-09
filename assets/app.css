@@ -49,6 +49,7 @@ textarea {
 
 .shell-links {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
 }
 
@@ -87,6 +88,30 @@ textarea {
 
 .shell-content {
   padding: var(--space-5);
+}
+
+.chief-chat-page {
+  min-height: calc(100vh - var(--space-5) - var(--space-5) - var(--space-5) - var(--space-5));
+  display: flex;
+  flex-direction: column;
+}
+
+.chief-chat-head {
+  flex: none;
+  margin-bottom: var(--space-3);
+}
+
+.chief-chat-head h1 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--type-lg);
+  line-height: 1.2;
+}
+
+.chief-chat-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
 }
 
 /* --- Entrance ------------------------------------------------------------ */

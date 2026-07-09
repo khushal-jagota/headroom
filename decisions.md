@@ -2,6 +2,17 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D28 — Chief-of-staff first slice uses a narrow top-level chat entity
+
+The chief-of-staff slice is implemented directly rather than dispatched because it is a bounded
+integration across an existing draft skill, skill provisioning, one chat substrate extension, and one
+Svelte route. The backend adds exactly one named top-level chat entity,
+`agent_panels_chief_of_staff`, with durable session-key storage in a small `agent_chat_sessions`
+table. Production chat routes that entity through a second shared gateway child booted with
+`panels-chief-of-staff`; ticket/day chat and System B continue to use the existing worker gateway.
+This preserves current chat/history/send behavior without requiring a ticket or day id, and does
+not implement the planned server-owned live-turn architecture.
+
 ## D1 — Local commits are made during the run (never pushed)
 
 CLAUDE.md's operating model requires isolated git worktrees for parallel tickets and serial integration; git worktrees can only see committed state, so the run commits locally at integration points. Nothing is ever pushed. This supersedes the global no-auto-commit preference for this unattended goal run, whose own harness history is itself a chain of local commits.

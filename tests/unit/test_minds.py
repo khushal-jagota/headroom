@@ -10,6 +10,8 @@ from typing import Any
 import pytest
 
 import planner.minds as minds
+from planner.chat.contracts import ChatHistory, ChatSendResult, CommandCatalog, GatewayStatus
+from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
 from planner.minds.config import (
     boot_smoke_check,
     hermes_src_root,
@@ -21,7 +23,7 @@ from planner.minds.contracts import RunResult
 from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.gateway import ChildProcess, GatewayChild, GatewayError
 from planner.minds.runner import run_step
-from planner.minds.shared_gateway import CHAT_SOURCE, SESSION_COLS, SharedGateway
+from planner.minds.shared_gateway import CHAT_SOURCE, SESSION_COLS, EntityRoutingGateway, SharedGateway
 
 LIVE_SID = "ab12cd34"
 OTHER_SID = "ff00ff00"
@@ -104,6 +106,58 @@ def shared(fake: FakeGateway) -> SharedGateway:
         spawn=fake.spawn,
         base_env={},
     )
+
+
+class RecordingChatGateway:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.calls: list[tuple[str, str]] = []
+        self.closed = False
+
+    def status(self) -> GatewayStatus:
+        self.calls.append(("status", ""))
+        return GatewayStatus(available=True)
+
+    def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
+        self.calls.append(("history", entity_id))
+        return ChatHistory(messages=(), session_key=session_key)
+
+    def send(self, session_key: str | None, entity_id: str, text: str, on_session_key=None):
+        self.calls.append(("send", entity_id))
+        return ChatSendResult(reply_text=f"{self.name}: {text}", session_key=f"{self.name}-key")
+
+    def stream(self, session_key: str | None, entity_id: str, text: str, mode: str, on_session_key=None):
+        self.calls.append(("stream", entity_id))
+        yield from ()
+
+    def catalog(self) -> CommandCatalog:
+        self.calls.append(("catalog", ""))
+        return CommandCatalog(categories=(), skills=(), canon={}, sub={})
+
+    def run_command(self, session_key: str | None, entity_id: str, command: str, on_session_key=None):
+        self.calls.append(("run_command", entity_id))
+        return ChatSendResult(reply_text=f"{self.name}: {command}", session_key=f"{self.name}-key")
+
+    def shutdown(self) -> None:
+        self.closed = True
+
+
+def test_entity_routing_gateway_sends_chief_entity_to_chief_gateway() -> None:
+    worker = RecordingChatGateway("worker")
+    chief = RecordingChatGateway("chief")
+    gateway = EntityRoutingGateway(
+        worker,  # type: ignore[arg-type]
+        {CHIEF_OF_STAFF_ENTITY_ID: chief},  # type: ignore[dict-item]
+    )
+
+    chief_result = gateway.send(None, CHIEF_OF_STAFF_ENTITY_ID, "hello")
+    ticket_result = gateway.send(None, "t_demo", "hello")
+    gateway.status_for_entity(CHIEF_OF_STAFF_ENTITY_ID)
+
+    assert chief_result.reply_text == "chief: hello"
+    assert ticket_result.reply_text == "worker: hello"
+    assert chief.calls == [("send", CHIEF_OF_STAFF_ENTITY_ID), ("status", "")]
+    assert worker.calls == [("send", "t_demo")]
 
 
 def test_minds_package_exports_shared_contracts_not_run_step() -> None:
@@ -440,10 +494,13 @@ def test_provision_planner_home_skills_symlinks_repo_skills(tmp_path: Path) -> N
 
     panels = tmp_path / "skills" / "panels"
     worker = tmp_path / "skills" / "panels-worker"
+    chief = tmp_path / "skills" / "panels-chief-of-staff"
     assert panels.is_symlink()
     assert worker.is_symlink()
+    assert chief.is_symlink()
     assert (panels / "SKILL.md").exists()
     assert (worker / "SKILL.md").exists()
+    assert (chief / "SKILL.md").exists()
 
 
 def test_boot_smoke_check_with_fake() -> None:

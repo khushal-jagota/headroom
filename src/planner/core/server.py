@@ -78,6 +78,7 @@ def create_app(
         Path(config.logs_dir).mkdir(parents=True, exist_ok=True)
         loops: Any = None
         shared_gateway: Any = None
+        chat_gateway_to_shutdown: Any = None
         if not config.test_mode:  # D6: background loops never run in test mode
             try:
                 module = importlib.import_module("planner.core.loops")
@@ -87,7 +88,8 @@ def create_app(
                     resolve_hermes_python,
                     resolve_planner_home,
                 )
-                from planner.minds.shared_gateway import SharedGateway
+                from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
+                from planner.minds.shared_gateway import EntityRoutingGateway, SharedGateway
             except (ImportError, AttributeError):
                 _log.warning("planner.core.loops unavailable; running without background loops")
             else:
@@ -98,8 +100,18 @@ def create_app(
                     home=planner_home,
                     worker_role=config.worker_skill,
                 )
+                chief_gateway = SharedGateway(
+                    hermes_python=resolve_hermes_python(),
+                    home=planner_home,
+                    worker_role="panels-chief-of-staff",
+                )
+                chat_gateway = EntityRoutingGateway(
+                    shared_gateway,
+                    {CHIEF_OF_STAFF_ENTITY_ID: chief_gateway},
+                )
+                chat_gateway_to_shutdown = chat_gateway
                 app_.state.shared_gateway = shared_gateway
-                app_.state.adapters = Adapters(gateway=shared_gateway)
+                app_.state.adapters = Adapters(gateway=chat_gateway)
                 loops = start(
                     config,
                     clock,
@@ -113,7 +125,9 @@ def create_app(
         finally:
             if loops is not None:
                 await loops.stop()
-            if shared_gateway is not None:
+            if chat_gateway_to_shutdown is not None:
+                chat_gateway_to_shutdown.shutdown()
+            elif shared_gateway is not None:
                 shared_gateway.shutdown()
 
     app = FastAPI(title="planner", version="2.0.0", lifespan=_lifespan)

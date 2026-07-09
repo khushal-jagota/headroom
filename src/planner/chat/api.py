@@ -161,7 +161,11 @@ async def chat_commands(request: Request) -> dict[str, Any]:
 
 @router.get("/chat/{entity_id}/status")
 async def gateway_status(entity_id: str, request: Request) -> dict[str, Any]:
-    # Availability is gateway-wide; {entity_id} keeps the per-entity route shape.
+    # Most adapters are gateway-wide; routed production adapters can answer per entity.
     adapters: Adapters = request.app.state.adapters
-    result = service.status(adapters.gateway)
+    status_for_entity = getattr(adapters.gateway, "status_for_entity", None)
+    if callable(status_for_entity):
+        result = status_for_entity(entity_id)
+    else:
+        result = service.status(adapters.gateway)
     return {"available": result.available}

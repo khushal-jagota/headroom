@@ -10,7 +10,7 @@ from typing import Final
 
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 6
+SCHEMA_VERSION: Final = 7
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -93,6 +93,13 @@ CREATE TABLE IF NOT EXISTS days (
   watchout         TEXT NOT NULL DEFAULT '',         -- overview: Watchout (markdown)
   if_today_lands   TEXT NOT NULL DEFAULT '',         -- overview: If Today Lands (markdown)
   notes            TEXT NOT NULL DEFAULT '',
+  chat_session_key TEXT,
+  created_at       INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_chat_sessions (
+  id               TEXT PRIMARY KEY,
   chat_session_key TEXT,
   created_at       INTEGER NOT NULL,
   updated_at       INTEGER NOT NULL

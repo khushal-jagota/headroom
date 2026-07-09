@@ -11,7 +11,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - Runtime work is split between `runtime/system_a.py` and `runtime/system_b.py`: System A finds runnable tickets on today's board; System B runs one ticket step through the shared Hermes gateway.
 - Gateway and chat code lives in `minds/` and `chat/`. The shared gateway owns Hermes session transport; chat owns human sends, streaming, command catalog, and history.
 - Frontend is Svelte/Vite in `web/`; FastAPI serves the built `web/dist` app at `/` and Vite chunks under `/_app/`. Shared design/runtime assets remain in `assets/`: `tokens.css`, `app.css`, and `markdown.js`.
-- Local agent role skills live in `skills/`, especially `panels`, `panels-worker`, and `panels/panels-ticket-work`.
+- Local agent role skills live in `skills/`, especially `panels` and `panels-worker`; startup exposes those same source directories to the planner Hermes home as symlinks under `data/hermes-home/skills/`.
 - `docs/` is the live plain-language system documentation. `orchestration/*-redesign/` holds current design intent and mockups; `orchestration/tickets/` holds ticket plans, dispatches, and reviews.
 - `data/` is gitignored runtime state: SQLite DBs, WAL/SHM files, logs, locks, Hermes home state, smoke artifacts, and verify output.
 
