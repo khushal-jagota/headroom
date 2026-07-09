@@ -24,6 +24,7 @@
   --accent-text: #f4e3bd;
   --accent-ink: #1c1406;   /* dark text on the amber fill (e.g. Approve) */
   --accent-done: #7fa564;  /* the green done marks */
+  --accent-error: #d85d5d; /* red marks for errored ticket stages */
 
   /* Radius scale — even 4/8/12 progression */
   --radius-sm: 4px;

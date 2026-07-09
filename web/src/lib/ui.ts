@@ -9,6 +9,7 @@ export type FieldStageVisualState =
   | "current-running"
   | "current-waiting"
   | "current-awaiting-approval"
+  | "errored"
   | "upcoming";
 
 export const STATE_ORDER = [
@@ -68,28 +69,49 @@ export function fieldSlot(detail: TicketDetail, name: string): TicketField {
   return detail.fields?.[name] || {};
 }
 
-export function fieldStageVisualState(
-  detail: TicketDetail,
-  fieldName: string
-): FieldStageVisualState {
-  if (detail.state === "done") return "completed";
+export type TicketStageVisualInput = {
+  ticketState: string;
+  ticketStatus?: string | null;
+  fieldName: string;
+  fieldHasProposal?: boolean;
+};
 
-  if (detail.state === "needs_review" && fieldName === "result") {
+export function ticketStageVisualState({
+  ticketState,
+  ticketStatus,
+  fieldName,
+  fieldHasProposal = false
+}: TicketStageVisualInput): FieldStageVisualState {
+  if (ticketState === "done") return "completed";
+
+  if (ticketState === "needs_review" && fieldName === "result") {
     return "current-awaiting-approval";
   }
 
-  if (fieldIsPassed(fieldName, detail.state)) return "completed";
+  if (fieldIsPassed(fieldName, ticketState)) return "completed";
 
-  if (gatingField(detail.state) === fieldName) {
-    const slot = fieldSlot(detail, fieldName);
-    if (detail.ticket_status === "agent_running_step") return "current-running";
-    if (slot.proposal || detail.ticket_status === "awaiting_approval") {
+  if (gatingField(ticketState) === fieldName) {
+    if (ticketStatus === "agent_running_step") return "current-running";
+    if (ticketStatus === "errored") return "errored";
+    if (fieldHasProposal || ticketStatus === "awaiting_approval") {
       return "current-awaiting-approval";
     }
     return "current-waiting";
   }
 
   return "upcoming";
+}
+
+export function fieldStageVisualState(
+  detail: TicketDetail,
+  fieldName: string
+): FieldStageVisualState {
+  return ticketStageVisualState({
+    ticketState: detail.state,
+    ticketStatus: detail.ticket_status,
+    fieldName,
+    fieldHasProposal: Boolean(fieldSlot(detail, fieldName).proposal)
+  });
 }
 
 export function markerLabel(value: string): string {

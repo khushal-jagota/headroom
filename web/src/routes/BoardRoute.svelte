@@ -3,6 +3,11 @@
   import { fetchJson } from "../lib/api";
   import { resource } from "../lib/resources";
   import type { BoardResponse } from "../lib/types";
+  import {
+    FIELD_NAMES,
+    ticketStageVisualState,
+    type FieldStageVisualState
+  } from "../lib/ui";
   import ErrorLine from "../components/ErrorLine.svelte";
 
   const board = resource<BoardResponse>("board", (signal) => fetchJson("/api/board", { signal }));
@@ -32,10 +37,28 @@
       : [...collapsedStates, state];
   }
 
-  function runtimeMarker(card: Record<string, any>): string | null {
-    if (card.ticket_status === "agent_running_step") return "agent-running-step";
-    if (card.ticket_status === "user_takeover") return "user-takeover";
-    if (card.has_pending_proposal) return "pending-proposal";
+  function cardStageState(
+    columnState: string,
+    card: Record<string, any>,
+    fieldName: string
+  ): FieldStageVisualState {
+    return ticketStageVisualState({
+      ticketState: columnState,
+      ticketStatus: card.ticket_status,
+      fieldName,
+      fieldHasProposal: Boolean(card.has_pending_proposal)
+    });
+  }
+
+  function stageMarker(card: Record<string, any>, stageState: FieldStageVisualState): string | null {
+    if (stageState === "current-running") return "agent-running-step";
+    if (stageState === "errored") return "errored";
+    if (stageState === "current-awaiting-approval" && card.has_pending_proposal) {
+      return "pending-proposal";
+    }
+    if (stageState === "current-waiting" && card.ticket_status === "user_takeover") {
+      return "user-takeover";
+    }
     return null;
   }
 
@@ -74,7 +97,6 @@
               {#if !collapsed}
                 <div class="board-workspace-index-items">
                   {#each column.cards as card}
-                    {@const marker = runtimeMarker(card)}
                     <button
                       class:active={selectedCard?.id === card.id}
                       class="board-workspace-item-row"
@@ -84,14 +106,19 @@
                       onclick={() => selectCard(card.id)}
                     >
                       <span class="board-workspace-item-label entity-row-title">{card.title}</span>
-                      {#if marker}
-                        <span
-                          class={`board-workspace-runtime-status board-workspace-runtime-status--${marker}`}
-                          data-marker={marker}
-                        ></span>
-                      {:else}
-                        <span class="board-workspace-runtime-status"></span>
-                      {/if}
+                      <span class="board-workspace-stage-rail" aria-label="Ticket stages">
+                        {#each FIELD_NAMES as name}
+                          {@const stageState = cardStageState(column.state, card, name)}
+                          {@const marker = stageMarker(card, stageState)}
+                          <span
+                            class={`board-workspace-stage-mark fsec-mark fsec-mark--${stageState}`}
+                            data-stage-field={name}
+                            data-stage-state={stageState}
+                            data-marker={marker || undefined}
+                            aria-label={`${name} ${stageState.replace(/-/g, " ")}`}
+                          ></span>
+                        {/each}
+                      </span>
                     </button>
                   {/each}
                 </div>
