@@ -30,6 +30,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.testmode import build_test_router
 from planner.core.ws import tail_events
 from planner.days.api import router as days_router
+from planner.files.api import router as files_router
 from planner.projects.api import router as projects_router
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
@@ -154,6 +155,8 @@ def create_app(
         chat_router,
     ):
         app.include_router(domain_router, prefix="/api")
+
+    app.include_router(files_router)
 
     @app.get("/api/meta")
     async def meta() -> dict[str, Any]:

@@ -11,3 +11,7 @@ Model `gpt-5.5`, read-only sandbox, high reasoning. The full review output was s
 5. **Editable Markdown could serialize preview DOM** — accepted. Hydration is read-only only; edit mode retains ordinary anchors and gets multi-kind round-trip tests.
 6. **Frontend contract too ticket-specific** — accepted. Plan now defines a discriminated public target union and central resolver extensible by future target kinds.
 7. **Dispatch/final verify conflict** — accepted. Implementer runs focused checks; integrator owns the one final `./verify`.
+
+## Follow-up
+
+Codex re-reviewed the revised plan and dispatch with the same model, sandbox, and reasoning level and returned `NO VIOLATIONS`.

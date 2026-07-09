@@ -3,6 +3,37 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-09): Ticket files and centralized previews
+
+Current implementation:
+
+- Standalone ticket work products live beside the configured database under
+  `files/tickets/<ticket_id>/`; canonical fields, notes, proposals, results, and chat remain SQLite
+  Markdown text with ordinary links to those files.
+- A guarded Panels file route rejects unsafe IDs, traversal/encoding tricks, missing/non-file paths,
+  and symlink escapes. Direct responses use `nosniff`; only an explicit raster-image/audio/video MIME
+  allowlist is inline, while Markdown, HTML, SVG, and unknown content is an attachment.
+- `FilePreviewTarget`, `resolvePreview`, and `FilePreview` are the one frontend seam used by read-only
+  Markdown, ticket fields, every persisted chat role, and the full hash preview route. Markdown uses
+  the hardened renderer; HTML uses `srcdoc` in an empty sandbox; editable Markdown is never hydrated.
+- Embedded Markdown/HTML stay compact links; image/video/audio preview inline with preserved aspect;
+  chat media is capped. No upload API, artifact rows, registry, file IDs, or per-stage slots were added.
+
+Verification status:
+
+- Focused classifier/backend/browser checks pass: 28 tests; Svelte check has 0 errors and the three
+  existing `TicketRoute.svelte` warnings; the production bundle was rebuilt.
+- Live browser inspection used real Markdown, HTML, PNG, and MP4 files and confirmed shared field/chat
+  rendering, playable media metadata, safe HTML isolation, compact layout, and the inline-edit
+  save/reload/reopen round trip without generated preview HTML entering the stored source.
+- Codex found frontend target-normalization/origin gaps and an over-broad MIME policy; all were fixed,
+  covered, and the final read-only follow-up reported `NO VIOLATIONS`.
+- Full `./verify` passed cleanly with `VERIFY: PASS`.
+
+Immediate next step:
+
+- Propose the result on ticket `t_c5sb8b0h`.
+
 ## Current work cycle (2026-07-09): Real ticket hard deletion
 
 Current implementation:
@@ -43,8 +74,15 @@ Current result:
   `/var/folders/m1/ghygg_r133nc05srgprf9j5c0000gn/T/architecture-review-20260709-220503.html`.
 - Ranked direct employee-turn ownership first: Review rejection can claim
   `agent_running_step` and return success without delivering guidance when System A is absent.
+- The owner accepted that candidate as follow-up intent: explicit employee turns should go straight
+  to the runner; `SystemA` should become `TicketReadinessLoop`, and `SystemB` should become
+  `EmployeeStepRunner`. This is recorded, not implemented; the current Review route still relays
+  through nullable System A.
 - Proved a second correctness failure with temporary SQLite: a compound Ticket PATCH can return
   validation while preserving an earlier field commit.
+- The owner accepted candidate 2 as follow-up intent: one compound Ticket edit must succeed or fail
+  as a whole, including its events. This is recorded, not implemented; the current route still
+  commits each requested field separately.
 - The other surviving candidates are readiness-wake ownership, frontend resource identity and
   invalidation, the Sprint item read projection, and gateway composition/lifecycle.
 
@@ -59,8 +97,8 @@ Verification status:
 
 Immediate next step:
 
-- The owner selects a candidate; then run the grilling and domain-modeling loop before proposing
-  any interface.
+- Walk through candidate 3, readiness-wake ownership. Keep candidates 1 and 2 as accepted
+  follow-ups; grill their exact interfaces before implementation.
 
 ## Current work cycle (2026-07-09): Direct Review rejection worker turn
 

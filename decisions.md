@@ -2,6 +2,34 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D41 — Ticket files are managed filesystem content behind one preview contract
+
+Canonical ticket fields, notes, proposals, results, and chat remain SQLite text. Standalone work
+products live beside the configured database under `files/tickets/<ticket_id>/` and are referenced by
+ordinary Markdown links. Panels serves only safely resolved regular files; direct active or unknown
+content is an attachment, while HTML previews run in an empty sandbox. The public frontend seam is
+`FilePreviewTarget` plus `FilePreview`, so ticket fields, chat, the full preview route, and future
+surfaces share one classifier and renderer instead of adding per-surface file logic. This ticket adds
+no upload API, artifact rows, file IDs, global registry, or per-stage attachment slots.
+
+## D40 — A compound Ticket edit succeeds or fails as one operation
+
+Candidate 2 from the architecture review is accepted as future work, not implemented in this
+review. When one request edits several Ticket attributes, every requested value and its events must
+commit together; if any requested change is invalid, the Ticket and its event history remain
+unchanged. The current route violates that meaning by calling separately committing field writers
+in sequence. The exact deepened module interface remains to be grilled before implementation.
+
+## D39 — Replace the System A/B codenames with responsibility names
+
+Candidate 1 from the architecture review is accepted as future work, not implemented in this review.
+`SystemA` becomes `TicketReadinessLoop`: it discovers runnable tickets on today's board and wakes
+work. `SystemB` becomes `EmployeeStepRunner`: it owns one employee turn and its settlement. Explicit
+employee turns, including Review revision guidance, go straight to the runner instead of relaying
+through the nullable readiness loop. This preserves readiness behavior while removing a silent
+delivery failure and the opaque System A/B vocabulary. The exact interface remains to be grilled
+before implementation.
+
 ## D38 — Ticket hard deletion compacts Planner history, not Hermes storage
 
 A permanent ticket delete is a deliberate human-only exception to the normal append-only event rule.

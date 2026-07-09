@@ -7,6 +7,7 @@
   import BoardRoute from "./routes/BoardRoute.svelte";
   import ChiefOfStaffRoute from "./routes/ChiefOfStaffRoute.svelte";
   import DayRoute from "./routes/DayRoute.svelte";
+  import FilePreviewRoute from "./routes/FilePreviewRoute.svelte";
   import IdeasRoute from "./routes/IdeasRoute.svelte";
   import ReviewRoute from "./routes/ReviewRoute.svelte";
   import SprintRoute from "./routes/SprintRoute.svelte";
@@ -29,7 +30,11 @@
       window.location.replace("#/day");
       return { name: "day", params: {}, key: "day" };
     }
-    const segments = hash.slice(1).split("/").filter(Boolean);
+    const routeText = hash.slice(1);
+    const queryIndex = routeText.indexOf("?");
+    const path = queryIndex >= 0 ? routeText.slice(0, queryIndex) : routeText;
+    const query = queryIndex >= 0 ? routeText.slice(queryIndex) : "";
+    const segments = path.split("/").filter(Boolean);
     const name = segments[0] || "day";
     const params: Record<string, string> = {};
     if (name === "ticket" && segments[1]) {
@@ -38,7 +43,8 @@
     if (name === "sprint" && segments[1]) {
       params.sub = segments[1];
     }
-    return { name, params, key: segments.join("/") || "day" };
+    const key = segments.join("/") || "day";
+    return { name, params, key: query ? `${key}${query}` : key };
   }
 
   function currentNav(name: string): boolean {
@@ -51,7 +57,7 @@
     if (route.name === "sprint") {
       return !route.params.sub || route.params.sub === "tracking" || route.params.sub === "overview";
     }
-    return ["day", "review", "chief", "workspace", "board", "backlog", "ideas"].includes(route.name);
+    return ["day", "review", "chief", "workspace", "board", "backlog", "ideas", "preview"].includes(route.name);
   }
 
   onMount(() => {
@@ -110,6 +116,8 @@
             <BacklogRoute />
           {:else if route.name === "ideas"}
             <IdeasRoute />
+          {:else if route.name === "preview"}
+            <FilePreviewRoute />
           {/if}
         </div>
       {/key}

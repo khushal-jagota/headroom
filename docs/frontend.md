@@ -49,6 +49,21 @@ share.
 - **The markdown renderer is hardened.** Written text (briefs, notes, ideas) renders
   through a markdown pass built so a crafted link that a browser would quietly treat
   as runnable code is impossible to express.
+- **Ticket files are linked, not stored in fields.** Canonical notes, fields,
+  proposals, results, and chat stay as database text. Standalone files for a ticket
+  live beside the database under `files/tickets/<ticket_id>/`, so the default local
+  path is `data/files/tickets/<ticket_id>/...`. The browser reads them through
+  `/files/tickets/<ticket_id>/<relative-path>`. The server sends `nosniff`; only
+  explicit image, audio, and video types are inline. Markdown, HTML, SVG, and
+  unknown files are attachments when opened directly.
+- **File previews use one contract.** Read-only markdown turns normal links such as
+  `/files/tickets/t_123/notes/plan.md` into the shared file preview component.
+  Markdown files render through the same markdown renderer. HTML files are fetched
+  as text and assigned to an empty-sandbox iframe. Images, video, and audio render
+  inline; unknown files stay as downloads; ordinary external links stay links.
+  The full preview route is `#/preview?source=ticket&ticket=<id>&path=<path>`.
+  Editable markdown does not hydrate previews, so focusing and saving preserves the
+  raw markdown source.
 
 _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 (one route per screen), `web/src/components/` (shared pieces), `web/src/lib/`

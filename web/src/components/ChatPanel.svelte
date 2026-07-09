@@ -166,11 +166,11 @@
     {:else}
       {#each transcript as msg}
         {#if msg.who === "you"}
-          <div class="chat-u" data-chat-msg="you">{msg.text}</div>
+          <div class="chat-u" data-chat-msg="you"><MarkdownBlock text={msg.text} /></div>
         {:else if msg.who === "worker"}
-          <div class="chat-sys" data-chat-msg="worker">{msg.text}</div>
+          <div class="chat-sys" data-chat-msg="worker"><MarkdownBlock text={msg.text} /></div>
         {:else if msg.who === "system"}
-          <div class="chat-sys" data-chat-msg="system">{msg.text}</div>
+          <div class="chat-sys" data-chat-msg="system"><MarkdownBlock text={msg.text} /></div>
         {:else if msg.text.trim()}
           <div class="chat-a" data-chat-msg="planner"><MarkdownBlock text={msg.text} /></div>
         {/if}
