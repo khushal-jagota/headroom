@@ -3,7 +3,7 @@
   import { fetchJson } from "../lib/api";
   import { mutateJson, resource } from "../lib/resources";
   import { PRIORITY_ORDER } from "../lib/ui";
-  import type { BacklogResponse } from "../lib/types";
+  import type { BacklogResponse, ProjectsResponse } from "../lib/types";
   import Chip from "../components/Chip.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
@@ -11,12 +11,14 @@
   const backlog = resource<BacklogResponse>("items:backlog", (signal) =>
     fetchJson("/api/items?sprint_id=null", { signal })
   );
+  const projects = resource<ProjectsResponse>("projects", (signal) =>
+    fetchJson("/api/projects", { signal })
+  );
 
-  const projectOptions = ["Vylo", "Tribe", "Learning", "Other"].map((value) => ({ value, label: value }));
   const priorityOptions = PRIORITY_ORDER.map((value) => ({ value, label: value }));
 
   let title = $state("");
-  let project = $state<string | null>("Vylo");
+  let project = $state<string | null>(null);
   let priority = $state<string | null>("P3");
   let deadline = $state("");
   let body = $state("");
@@ -31,14 +33,24 @@
     }
     return byPriority;
   });
+  let projectOptions = $derived(
+    (projects.data?.projects || []).map((entry) => ({ value: entry.id, label: entry.name }))
+  );
+
+  $effect(() => {
+    const values = projectOptions.map((option) => option.value);
+    if ((!project || !values.includes(project)) && values.length) {
+      project = values[0];
+    }
+  });
 
   async function createItem(): Promise<void> {
-    if (!title.trim()) return;
+    if (!title.trim() || !project) return;
     creating = true;
     createError = null;
     const payload: Record<string, unknown> = {
       title: title.trim(),
-      project,
+      project_id: project,
       priority,
       body
     };
@@ -60,7 +72,10 @@
     }
   }
 
-  onDestroy(() => backlog.dispose());
+  onDestroy(() => {
+    backlog.dispose();
+    projects.dispose();
+  });
 </script>
 
 <section class="backlog-screen" data-screen="backlog">
@@ -98,7 +113,7 @@
             <div class="fl">Description <span class="fl-opt">— optional</span></div>
             <textarea class="in detail-in" rows="2" placeholder="Why it matters, any context. Lives on the item page." data-input="body" bind:value={body}></textarea>
           </div>
-          <button class="commit" type="button" data-commit disabled={creating || !title.trim()} onclick={() => void createItem()}>Add to backlog</button>
+          <button class="commit" type="button" data-commit disabled={creating || !title.trim() || !project} onclick={() => void createItem()}>Add to backlog</button>
         </div>
       </details>
 

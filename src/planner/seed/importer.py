@@ -14,6 +14,7 @@ from planner.core.contracts import EventKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event
 from planner.core.ids import ID_PREFIXES, new_id
+from planner.projects import data as projects_data
 from planner.seed.contracts import (
     MigrationReport,
     ParsedIdea,
@@ -174,13 +175,17 @@ def _import_items(
             items_by_title[item.title] = cast(str, row["id"])
             continue
         item_id = new_id(ID_PREFIXES["sprint_item"])
+        project = projects_data.resolve_project(
+            conn, project_id=None, project_name=item.project, required=True
+        )
+        assert project is not None
         conn.execute(
-            "INSERT INTO sprint_items (id, title, body, status, priority, deadline, project, "
+            "INSERT INTO sprint_items (id, title, body, status, priority, deadline, project_id, "
             "sprint_id, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 item_id, item.title, item.body, item.status.value, item.priority.value,
-                item.deadline, item.project.value, sprint_id, now, now,
+                item.deadline, project.id, sprint_id, now, now,
             ),
         )
         append_event(
@@ -229,7 +234,8 @@ def _import_tickets(
             "result": {"value": None, "proposal": None, "notes": None},
         }
         conn.execute(
-            "INSERT INTO tickets (id, title, state, priority, deadline, project, sprint_item_id, "
+            "INSERT INTO tickets ("
+            "id, title, state, priority, deadline, project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, "
             "chat_session_key, alias, fields, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -273,12 +279,15 @@ def _import_ideas(
             report.duplicates_skipped += 1
             continue
         idea_id = new_id(ID_PREFIXES["idea"])
+        project = projects_data.resolve_project(
+            conn, project_id=None, project_name=idea.project, required=False
+        )
         conn.execute(
-            "INSERT INTO ideas (id, title, body, project, created_at, updated_at) "
+            "INSERT INTO ideas (id, title, body, project_id, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (
                 idea_id, idea.title, idea.body,
-                idea.project.value if idea.project is not None else None, now, now,
+                project.id if project is not None else None, now, now,
             ),
         )
         append_event(

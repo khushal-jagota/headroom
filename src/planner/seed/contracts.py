@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Final
 
-from planner.core.contracts import Priority, Project
+from planner.core.contracts import Priority
 from planner.sprints.contracts import ItemStatus
 from planner.tickets.contracts import TicketState
 
@@ -35,8 +35,10 @@ URGENCY_MAP: Final[dict[str, Priority]] = {
     "critical": Priority.P0, "high": Priority.P1, "medium": Priority.P2, "low": Priority.P3,
 }   # keys compared case-insensitively
 
-# Project headings/labels are the enum's exact strings — identity map.
-PROJECT_MAP: Final[dict[str, Project]] = {p.value: p for p in Project}
+# Legacy markdown project headings/labels from the v1 planning files.
+PROJECT_NAMES: Final[tuple[str, ...]] = ("Vylo", "Tribe", "Learning", "Other")
+PROJECT_MAP: Final[dict[str, str]] = {name: name for name in PROJECT_NAMES}
+DEFAULT_PROJECT_NAME: Final = "Other"
 
 # `Mode:` is dropped (§12); the parser records it nowhere but it is NOT a skipped
 # section (it is a recognised, deliberately-discarded field).
@@ -65,7 +67,7 @@ class ParsedItem:                  # sprint-tracking.md item or deferred.md item
     title: str
     status: ItemStatus
     priority: Priority
-    project: Project
+    project: str
     body: str = ""
     deadline: str | None = None
     deferred: bool = False         # True -> sprint_id stays NULL
@@ -88,7 +90,7 @@ class ParsedTicket:                # workspace.md ticket
 class ParsedIdea:
     title: str
     body: str = ""
-    project: Project | None = None
+    project: str | None = None
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,145 @@
+"""Project catalog reads and writes."""
+
+from __future__ import annotations
+
+import re
+import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
+
+from planner.core.contracts import EventKind, JsonDict
+from planner.core.errors import ErrorCode, PlannerError
+from planner.core.events import append_event
+from planner.projects.contracts import Project
+
+DEFAULT_PROJECTS: tuple[tuple[str, str], ...] = (
+    ("project_vylo", "Vylo"),
+    ("project_tribe", "Tribe"),
+    ("project_learning", "Learning"),
+    ("project_other", "Other"),
+)
+
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+@contextmanager
+def _tx(conn: sqlite3.Connection) -> Iterator[None]:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    else:
+        conn.execute("COMMIT")
+
+
+def _row_to_project(row: sqlite3.Row) -> Project:
+    return Project(
+        id=str(row["id"]),
+        name=str(row["name"]),
+        created_at=int(row["created_at"]),
+        updated_at=int(row["updated_at"]),
+    )
+
+
+def project_json(project: Project) -> JsonDict:
+    return {
+        "id": project.id,
+        "name": project.name,
+        "created_at": project.created_at,
+        "updated_at": project.updated_at,
+    }
+
+
+def project_id_for_name(name: str) -> str:
+    slug = _SLUG_RE.sub("_", name.strip().lower()).strip("_")
+    if not slug:
+        raise PlannerError(ErrorCode.validation, "project name is required", {})
+    return f"project_{slug}"
+
+
+def seed_default_projects(conn: sqlite3.Connection) -> None:
+    for project_id, name in DEFAULT_PROJECTS:
+        conn.execute(
+            "INSERT OR IGNORE INTO projects (id, name, created_at, updated_at) "
+            "VALUES (?, ?, 0, 0)",
+            (project_id, name),
+        )
+
+
+def list_projects(conn: sqlite3.Connection) -> list[Project]:
+    rows = conn.execute(
+        "SELECT id, name, created_at, updated_at FROM projects ORDER BY lower(name), id"
+    ).fetchall()
+    return [_row_to_project(row) for row in rows]
+
+
+def read_project(conn: sqlite3.Connection, project_id: str) -> Project:
+    row = conn.execute(
+        "SELECT id, name, created_at, updated_at FROM projects WHERE id = ?", (project_id,)
+    ).fetchone()
+    if row is None:
+        raise PlannerError(ErrorCode.validation, "invalid project_id", {"project_id": project_id})
+    return _row_to_project(row)
+
+
+def read_project_by_name(conn: sqlite3.Connection, name: str) -> Project:
+    row = conn.execute(
+        "SELECT id, name, created_at, updated_at FROM projects WHERE name = ? COLLATE NOCASE",
+        (name.strip(),),
+    ).fetchone()
+    if row is None:
+        raise PlannerError(ErrorCode.validation, "invalid project", {"project": name})
+    return _row_to_project(row)
+
+
+def resolve_project(
+    conn: sqlite3.Connection,
+    *,
+    project_id: str | None,
+    project_name: str | None,
+    required: bool = False,
+) -> Project | None:
+    by_id = read_project(conn, project_id) if project_id is not None else None
+    by_name = read_project_by_name(conn, project_name) if project_name is not None else None
+    if by_id is not None and by_name is not None and by_id.id != by_name.id:
+        raise PlannerError(
+            ErrorCode.validation,
+            "project_id and project do not match",
+            {"project_id": project_id, "project": project_name},
+        )
+    project = by_id or by_name
+    if project is None and required:
+        raise PlannerError(ErrorCode.validation, "project is required", {})
+    return project
+
+
+def create_project(conn: sqlite3.Connection, *, name: str, now: int) -> Project:
+    clean_name = name.strip()
+    if not clean_name:
+        raise PlannerError(ErrorCode.validation, "project name is required", {})
+
+    with _tx(conn):
+        if conn.execute(
+            "SELECT 1 FROM projects WHERE name = ? COLLATE NOCASE", (clean_name,)
+        ).fetchone() is not None:
+            raise PlannerError(
+                ErrorCode.validation, "project already exists", {"name": clean_name}
+            )
+
+        base_id = project_id_for_name(clean_name)
+        project_id = base_id
+        suffix = 2
+        while (
+            conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone()
+            is not None
+        ):
+            project_id = f"{base_id}_{suffix}"
+            suffix += 1
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (project_id, clean_name, now, now),
+        )
+        append_event(conn, project_id, EventKind.project_created, {"name": clean_name}, now)
+    return read_project(conn, project_id)

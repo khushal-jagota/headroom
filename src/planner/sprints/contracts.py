@@ -1,5 +1,5 @@
 """Sprint domain shapes: sprints, sprint items, ideas, and the item status
-proposal. Stdlib only; Priority/Project imported from core."""
+proposal."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final, TypedDict
 
-from planner.core.contracts import Priority, Project
+from planner.core.contracts import Priority
 
 
 class ItemStatus(StrEnum):         # §3.2
@@ -83,7 +83,8 @@ class SprintItem:                  # §3.2
     status: ItemStatus
     priority: Priority
     deadline: str | None
-    project: Project
+    project_id: str
+    project_name: str
     sprint_id: str | None          # NULL = backlog/deferred
     blocked_by: list[str] = field(default_factory=list)   # ticket ids; non-empty iff blocked
     status_proposal: ItemStatusProposal | None = None
@@ -100,7 +101,8 @@ class SprintItem:                  # §3.2
 
 class CreateItemBody(TypedDict, total=False):     # POST /items
     title: str                     # default ""
-    project: str | None            # Project value; route requires it
+    project: str | None            # legacy project name; route requires project or project_id
+    project_id: str | None
     body: str                      # default ""
     priority: str | None           # Priority value; default P3
     deadline: str | None           # ISO date
@@ -129,7 +131,8 @@ class CreateSprintBody(TypedDict, total=False):   # POST /sprints
 class CreateIdeaBody(TypedDict, total=False):     # POST /ideas
     title: str                     # route requires it non-empty
     body: str                      # default ""
-    project: str | None            # Project value
+    project: str | None            # legacy project name
+    project_id: str | None
 
 
 @dataclass
@@ -137,6 +140,7 @@ class Idea:                        # §3.5
     id: str
     title: str
     body: str
-    project: Project | None
+    project_id: str | None
+    project_name: str | None
     created_at: int
     updated_at: int

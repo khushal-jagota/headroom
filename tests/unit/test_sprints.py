@@ -20,7 +20,6 @@ import inspect
 
 import pytest
 
-from planner.core.contracts import Project
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import read_events_since
 from planner.sprints.contracts import ItemStatus
@@ -67,7 +66,7 @@ def _events(conn, entity_id: str, kind: str) -> list[dict]:
 
 def test_a10_sprint_item_permissions(tmp_db, fake_clock) -> None:
     # Leg 1 — agent todo -> active succeeds, with one exact {from, to, cause} event.
-    item1 = create_item(tmp_db, title="ship it", project=Project.Vylo, clock=fake_clock)
+    item1 = create_item(tmp_db, title="ship it", project_id="project_vylo", clock=fake_clock)
     assert item1.status is ItemStatus.todo
     moved = transition_item_status(tmp_db, item1.id, ItemStatus.active, clock=fake_clock)
     assert moved.status is ItemStatus.active
@@ -77,7 +76,7 @@ def test_a10_sprint_item_permissions(tmp_db, fake_clock) -> None:
 
     # Leg 2 — agent direct active -> done write rejected (and deferred_next_sprint
     # equally, per PROPOSAL_ONLY_STATUSES); status and event log unchanged.
-    item2 = create_item(tmp_db, title="x", project=Project.Vylo, clock=fake_clock)
+    item2 = create_item(tmp_db, title="x", project_id="project_vylo", clock=fake_clock)
     transition_item_status(tmp_db, item2.id, ItemStatus.active, clock=fake_clock)
     with pytest.raises(PlannerError) as ei:
         transition_item_status(tmp_db, item2.id, ItemStatus.done, clock=fake_clock)
@@ -94,7 +93,7 @@ def test_a10_sprint_item_permissions(tmp_db, fake_clock) -> None:
 
     # Leg 3 — done via proposal + human accept succeeds; proposal cleared; exact
     # proposal_filed / proposal_accepted / item_status_changed payloads.
-    item3 = create_item(tmp_db, title="y", project=Project.Vylo, clock=fake_clock)
+    item3 = create_item(tmp_db, title="y", project_id="project_vylo", clock=fake_clock)
     transition_item_status(tmp_db, item3.id, ItemStatus.active, clock=fake_clock)
     proposed = propose_item_status(
         tmp_db, item3.id, ItemStatus.done, note="ready", proposed_by="agent-x", clock=fake_clock
@@ -132,7 +131,7 @@ def test_a10_sprint_item_permissions(tmp_db, fake_clock) -> None:
     # only when every blocker ticket reaches state done.
     _insert_ticket(tmp_db, "t_a", "in_progress")
     _insert_ticket(tmp_db, "t_b", "done")
-    item4 = create_item(tmp_db, title="z", project=Project.Vylo, clock=fake_clock)
+    item4 = create_item(tmp_db, title="z", project_id="project_vylo", clock=fake_clock)
     blocked = transition_item_status(
         tmp_db, item4.id, ItemStatus.blocked, clock=fake_clock, blocked_by=["t_a", "t_b"]
     )
@@ -179,7 +178,7 @@ def test_a20_sprint_overlap(tmp_db, fake_clock) -> None:
 
 
 def test_x06_item_proposal_supersedes_prior(tmp_db, fake_clock) -> None:
-    item = create_item(tmp_db, title="x", project=Project.Vylo, clock=fake_clock)
+    item = create_item(tmp_db, title="x", project_id="project_vylo", clock=fake_clock)
     transition_item_status(tmp_db, item.id, ItemStatus.active, clock=fake_clock)
 
     propose_item_status(
@@ -218,7 +217,7 @@ def test_x06_item_proposal_supersedes_prior(tmp_db, fake_clock) -> None:
 
 
 def test_x06_item_blocked_requires_blockers(tmp_db, fake_clock) -> None:
-    item = create_item(tmp_db, title="x", project=Project.Vylo, clock=fake_clock)
+    item = create_item(tmp_db, title="x", project_id="project_vylo", clock=fake_clock)
 
     with pytest.raises(PlannerError) as ei:
         transition_item_status(
@@ -244,13 +243,14 @@ def test_x06_create_idea_writer_logs_event(tmp_db, fake_clock) -> None:
         tmp_db,
         title="Maybe later",
         body="Worth exploring.",
-        project=Project.Vylo,
+        project_id="project_vylo",
         now=now,
     )
 
     assert idea["title"] == "Maybe later"
     assert idea["body"] == "Worth exploring."
-    assert idea["project"] == "Vylo"
+    assert idea["project_id"] == "project_vylo"
+    assert idea["project_name"] == "Vylo"
     assert _events(tmp_db, idea["id"], "idea_created") == [
         {"title": "Maybe later", "source": "api"}
     ]

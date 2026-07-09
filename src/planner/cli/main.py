@@ -24,7 +24,6 @@ from planner.cli import http
 from planner.tickets.contracts import GATING_FIELD, AtCap, TicketState
 
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
-_PROJECTS = ["Vylo", "Tribe", "Learning", "Other"]
 _FIELDS = ["success", "approach", "plan", "result"]
 _TICKET_ID_ENV = "PLAN_TICKET_ID"
 
@@ -41,6 +40,7 @@ _TICKET_SET_FIELDS = {
     "priority": "priority",
     "deadline": "deadline",
     "project": "project",
+    "project-id": "project_id",
 }
 
 _SPRINT_FIELDS = {
@@ -67,6 +67,7 @@ _ITEM_FIELDS = {
     "priority": "priority",
     "deadline": "deadline",
     "project": "project",
+    "project-id": "project_id",
     "sprint": "sprint_id",
 }
 
@@ -213,6 +214,22 @@ def _format_day(data: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def add_project_selectors(
+    body: dict[str, Any],
+    *,
+    project: str | None,
+    project_id: str | None,
+    required: bool,
+    as_json: bool,
+) -> None:
+    if required and project is None and project_id is None:
+        http.fail_validation("project required: pass --project or --project-id", as_json)
+    if project is not None:
+        body["project"] = project
+    if project_id is not None:
+        body["project_id"] = project_id
+
+
 def json_option(func: Callable[..., Any]) -> Callable[..., Any]:
     return click.option(
         "--json",
@@ -257,6 +274,35 @@ def serve() -> None:
 
     app = create_app(config, clock, adapters, conn_factory)
     uvicorn.run(app, host=HOST, port=config.port)
+
+
+# --- project ------------------------------------------------------------------
+
+
+@main.group("project")
+def project_group() -> None:
+    """List and create projects."""
+
+
+@project_group.command("list")
+@json_option
+def project_list(as_json: bool) -> None:
+    data = http.send("GET", "/api/projects", as_json=as_json, request_actor="human")
+    http.emit(data, as_json, _lines(data["projects"], lambda p: f"{p['id']} {p['name']}"))
+
+
+@project_group.command("create")
+@click.option("--name", required=True, help="Project display name.")
+@json_option
+def project_create(name: str, as_json: bool) -> None:
+    data = http.send(
+        "POST",
+        "/api/projects",
+        as_json=as_json,
+        json_body={"name": name},
+        request_actor="human",
+    )
+    http.emit(data, as_json, f"{data['id']} {data['name']}")
 
 
 # --- day ----------------------------------------------------------------------
@@ -352,7 +398,8 @@ def ticket() -> None:
 @click.option("--title", required=True, help="Ticket title.")
 @click.option("--priority", type=click.Choice(_PRIORITIES), default=None, help="Priority label.")
 @click.option("--deadline", default=None, help="Due date in YYYY-MM-DD form.")
-@click.option("--project", type=click.Choice(_PROJECTS), default=None, help="Project name.")
+@click.option("--project", default=None, help="Project name.")
+@click.option("--project-id", default=None, help="Project id.")
 @click.option("--sprint", default=None, help="Sprint id, current, or none.")
 @click.option("--sprint-item", "sprint_item", default=None, help="Parent sprint item id.")
 @json_option
@@ -361,6 +408,7 @@ def ticket_create(
     priority: str | None,
     deadline: str | None,
     project: str | None,
+    project_id: str | None,
     sprint: str | None,
     sprint_item: str | None,
     as_json: bool,
@@ -370,8 +418,9 @@ def ticket_create(
         body["priority"] = priority
     if deadline is not None:
         body["deadline"] = deadline
-    if project is not None:
-        body["project"] = project
+    add_project_selectors(
+        body, project=project, project_id=project_id, required=False, as_json=as_json
+    )
     if sprint is not None:
         body["sprint_id"] = sprint_value_for_write(sprint, as_json)
     if sprint_item is not None:
@@ -393,7 +442,8 @@ def ticket_show(ticket_id: str | None, as_json: bool) -> None:
 
 @ticket.command("list")
 @click.option("--state", default=None, help="Only show tickets in this state.")
-@click.option("--project", type=click.Choice(_PROJECTS), default=None, help="Only show project.")
+@click.option("--project", default=None, help="Only show project name.")
+@click.option("--project-id", default=None, help="Only show project id.")
 @click.option("--sprint", default=None, help="Sprint id, current, or none.")
 @click.option("--sprint-item", "sprint_item", default=None, help="Only show tickets in this item.")
 @click.option("--day", default=None, help="today or YYYY-MM-DD.")
@@ -401,6 +451,7 @@ def ticket_show(ticket_id: str | None, as_json: bool) -> None:
 def ticket_list(
     state: str | None,
     project: str | None,
+    project_id: str | None,
     sprint: str | None,
     sprint_item: str | None,
     day: str | None,
@@ -410,6 +461,7 @@ def ticket_list(
         {
             "state": state,
             "project": project,
+            "project_id": project_id,
             "sprint_id": sprint_value_for_filter(sprint, as_json),
             "sprint_item_id": sprint_item,
             "day": day,
@@ -442,8 +494,6 @@ def ticket_set(
         http.fail_validation(f"{field} cannot be cleared", as_json)
     if field == "priority" and new_value not in _PRIORITIES:
         http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
-    if field == "project" and new_value is not None and new_value not in _PROJECTS:
-        http.fail_validation("project must be Vylo, Tribe, Learning, or Other", as_json)
     data = http.send(
         "PATCH",
         f"/api/tickets/{ticket_id}",
@@ -717,7 +767,8 @@ def sprint_item() -> None:
 
 @sprint_item.command("create")
 @click.option("--title", required=True, help="Sprint item title.")
-@click.option("--project", type=click.Choice(_PROJECTS), required=True, help="Project name.")
+@click.option("--project", default=None, help="Project name.")
+@click.option("--project-id", default=None, help="Project id.")
 @click.option("--body-file", default=None, help="Optional body file, or - for stdin.")
 @click.option("--priority", type=click.Choice(_PRIORITIES), default=None, help="Priority label.")
 @click.option("--deadline", default=None, help="Due date in YYYY-MM-DD form.")
@@ -725,7 +776,8 @@ def sprint_item() -> None:
 @json_option
 def sprint_item_create(
     title: str,
-    project: str,
+    project: str | None,
+    project_id: str | None,
     body_file: str | None,
     priority: str | None,
     deadline: str | None,
@@ -734,9 +786,11 @@ def sprint_item_create(
 ) -> None:
     body: dict[str, Any] = {
         "title": title,
-        "project": project,
         "body": read_optional_body(body_file, as_json) or "",
     }
+    add_project_selectors(
+        body, project=project, project_id=project_id, required=True, as_json=as_json
+    )
     if priority is not None:
         body["priority"] = priority
     if deadline is not None:
@@ -749,18 +803,21 @@ def sprint_item_create(
 
 @sprint_item.command("list")
 @click.option("--status", default=None, help="Only show items with this status.")
-@click.option("--project", type=click.Choice(_PROJECTS), default=None, help="Only show project.")
+@click.option("--project", default=None, help="Only show project name.")
+@click.option("--project-id", default=None, help="Only show project id.")
 @click.option("--sprint", default=None, help="Sprint id, current, or none.")
 @json_option
 def sprint_item_list(
     status: str | None,
     project: str | None,
+    project_id: str | None,
     sprint: str | None,
     as_json: bool,
 ) -> None:
     params = _drop_none({
         "status": status,
         "project": project,
+        "project_id": project_id,
         "sprint_id": sprint_value_for_filter(sprint, as_json),
     })
     data = http.send("GET", "/api/items", as_json=as_json, params=params, request_actor="human")
@@ -796,12 +853,10 @@ def sprint_item_set(
 ) -> None:
     api_field = _ITEM_FIELDS[field]
     new_value = read_value_or_file(value, body_file, clear, as_json, field)
-    if field in {"title", "priority", "project"} and new_value is None:
+    if field in {"title", "priority", "project", "project-id"} and new_value is None:
         http.fail_validation(f"{field} cannot be cleared", as_json)
     if field == "priority" and new_value not in _PRIORITIES:
         http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
-    if field == "project" and new_value is not None and new_value not in _PROJECTS:
-        http.fail_validation("project must be Vylo, Tribe, Learning, or Other", as_json)
     if field == "sprint" and new_value is not None:
         new_value = sprint_value_for_write(new_value, as_json)
     data = http.send(

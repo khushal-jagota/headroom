@@ -24,6 +24,17 @@ export type SprintsResponse = {
   sprints: SprintSummary[];
 };
 
+export type ProjectSummary = {
+  id: string;
+  name: string;
+  created_at: number;
+  updated_at: number;
+};
+
+export type ProjectsResponse = {
+  projects: ProjectSummary[];
+};
+
 export type TicketField = {
   value?: string | null;
   notes?: string | null;
@@ -41,6 +52,7 @@ export type TicketDetail = {
   at_cap: string;
   priority: string;
   deadline?: string | null;
+  project_id?: string | null;
   project?: string | null;
   sprint_id?: string | null;
   effective_sprint_id?: string | null;
@@ -68,6 +80,7 @@ export type QueueEntry = {
 
 export type QueuesResponse = {
   approvals: QueueEntry[];
+  running_agents: number;
 };
 
 export type BoardResponse = {

@@ -2,7 +2,7 @@
   import { onDestroy } from "svelte";
   import { fetchJson } from "../lib/api";
   import { mutateJson, resource } from "../lib/resources";
-  import type { IdeasResponse } from "../lib/types";
+  import type { IdeasResponse, ProjectsResponse } from "../lib/types";
   import Chip from "../components/Chip.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
@@ -11,14 +11,14 @@
   const ideas = resource<IdeasResponse>("ideas", (signal) =>
     fetchJson("/api/ideas", { signal })
   );
+  const projects = resource<ProjectsResponse>("projects", (signal) =>
+    fetchJson("/api/projects", { signal })
+  );
 
-  const projectOptions = [
+  let projectOptions = $derived([
     { value: null, label: "None" },
-    { value: "Vylo", label: "Vylo" },
-    { value: "Tribe", label: "Tribe" },
-    { value: "Learning", label: "Learning" },
-    { value: "Other", label: "Other" }
-  ];
+    ...(projects.data?.projects || []).map((entry) => ({ value: entry.id, label: entry.name }))
+  ]);
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
   let title = $state("");
@@ -43,7 +43,7 @@
     createError = null;
     const payload: Record<string, unknown> = { title: title.trim() };
     if (detail.trim()) payload.body = detail;
-    if (project) payload.project = project;
+    if (project) payload.project_id = project;
     try {
       await mutateJson("/api/ideas", { method: "POST", body: payload }, ["ideas"]);
       title = "";
@@ -63,7 +63,10 @@
     }
   }
 
-  onDestroy(() => ideas.dispose());
+  onDestroy(() => {
+    ideas.dispose();
+    projects.dispose();
+  });
 </script>
 
 <section class="ideas-screen" data-screen="ideas">

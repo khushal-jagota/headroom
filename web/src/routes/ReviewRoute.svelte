@@ -2,12 +2,12 @@
   import { onDestroy } from "svelte";
   import { fetchJson } from "../lib/api";
   import { mutateJson, resource, ResourceHandle } from "../lib/resources";
-  import { advanceTarget, gatingField } from "../lib/ui";
+  import { fieldStageVisualState, gatingField } from "../lib/ui";
   import type { AnyRecord, QueueEntry, QueuesResponse, TicketDetail } from "../lib/types";
-  import ApprovalBlock from "../components/ApprovalBlock.svelte";
   import Chip from "../components/Chip.svelte";
+  import ContentDisclosure from "../components/ContentDisclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
-  import MarkdownBlock from "../components/MarkdownBlock.svelte";
+  import TicketStageSection from "../components/TicketStageSection.svelte";
 
   const queues = resource<QueuesResponse>("queues", (signal) =>
     fetchJson("/api/queues", { signal })
@@ -23,11 +23,16 @@
   }
 
   let entries = $derived(queues.data?.approvals || []);
+  let runningAgentCount = $derived(queues.data?.running_agents ?? 0);
   let currentEntry = $derived.by<QueueEntry | null>(() => {
     if (!entries.length) return null;
     const live = entries.filter((entry) => !skipped[entryKey(entry)]);
     return live[0] || null;
   });
+
+  function runningAgentsText(count: number): string {
+    return `${count} ${count === 1 ? "agent" : "agents"} in progress`;
+  }
 
   $effect(() => {
     const entry = currentEntry;
@@ -100,22 +105,6 @@
     ));
   }
 
-  function saveNote(ticketId: string, field: string, note: string): Promise<unknown> {
-    return mutateJson(
-      `/api/tickets/${ticketId}/notes/${field}`,
-      { method: "PUT", body: { note } },
-      ["queues", `ticket:${ticketId}`, "board", "sprint:current"]
-    );
-  }
-
-  function saveValue(ticketId: string, field: string, body: string): Promise<unknown> {
-    return mutateJson(
-      `/api/tickets/${ticketId}/value/${field}`,
-      { method: "PUT", body: { body } },
-      ["queues", `ticket:${ticketId}`, "board", "sprint:current"]
-    );
-  }
-
   onDestroy(() => {
     queues.dispose();
     detailResource?.dispose();
@@ -128,7 +117,11 @@
   {:else if queues.loading && !queues.data}
     <div class="quiet-line">Loading review...</div>
   {:else if !entries.length}
-    <div class="quiet-line" data-review-empty>nothing waiting</div>
+    <div class="review-empty-state" data-review-empty>
+      <div class="review-empty-mark" aria-hidden="true"><span></span></div>
+      <div class="review-empty-text">There is nothing to review right now.</div>
+      <div class="review-empty-meta">{runningAgentsText(runningAgentCount)}</div>
+    </div>
   {:else if currentEntry}
     {@const entry = currentEntry}
     {#if detailError}
@@ -156,7 +149,6 @@
           data-kind={entry.kind}
           data-field={["success", "approach", "plan", "result"].includes(entry.kind) ? entry.kind : undefined}
         >
-          <!-- Simple Ticket Title linked to the ticket page -->
           {#if entry.entity_type === "ticket"}
             <a href={`#/ticket/${entry.entity_id}`} class="review-ticket-title">
               {entry.title}
@@ -165,94 +157,64 @@
             <h2 class="review-ticket-title" style="pointer-events: none;">{entry.title}</h2>
           {/if}
 
-          <!-- Recap: Plain Text Section -->
-          {#if detail.recap}
-            <div style="margin-bottom: var(--space-4);">
-              <div style="font-size: var(--type-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faintest); margin-bottom: var(--space-1);">Recap</div>
-              <div style="font-size: var(--type-md); color: var(--text-default); line-height: 1.62;">
-                <MarkdownBlock text={detail.recap} />
-              </div>
-            </div>
-          {/if}
-
-          <!-- Note: Plain Text Section -->
-          {#if ["success", "approach", "plan", "result"].includes(entry.kind) && detail.fields?.[entry.kind]?.notes}
-            <div style="margin-bottom: var(--space-5);">
-              <div style="font-size: var(--type-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faintest); margin-bottom: var(--space-1);">Note</div>
-              <div style="font-size: var(--type-sm); color: var(--text-muted); line-height: 1.55;">
-                <MarkdownBlock text={detail.fields[entry.kind].notes} />
-              </div>
-            </div>
-          {:else if entry.kind === "review" && detail.fields?.result?.notes}
-            <div style="margin-bottom: var(--space-5);">
-              <div style="font-size: var(--type-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faintest); margin-bottom: var(--space-1);">Note</div>
-              <div style="font-size: var(--type-sm); color: var(--text-muted); line-height: 1.55;">
-                <MarkdownBlock text={detail.fields.result.notes} />
-              </div>
-            </div>
-          {:else if entry.kind === "status" && detail.status_proposal?.note}
-            <div style="margin-bottom: var(--space-5);">
-              <div style="font-size: var(--type-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faintest); margin-bottom: var(--space-1);">Note</div>
-              <div style="font-size: var(--type-sm); color: var(--text-muted); line-height: 1.55;">
-                {detail.status_proposal.note}
-              </div>
-            </div>
-          {/if}
-
-          <!-- The Proposed Item (Recessed/Sunken Block) -->
           {#if ["success", "approach", "plan", "result"].includes(entry.kind)}
-            <div class="proposed-recessed-block">
-              <ApprovalBlock
-                mode="gating-pending"
-                field={entry.kind}
-                whatLabel={entry.kind.replace(/_/g, " ")}
-                proposalBody={detail.fields[entry.kind].proposal!.body}
-                proposedBy={detail.fields[entry.kind].proposal!.proposed_by}
-                newState={advanceTarget(detail.state, detail.ceiling)}
-                onApprove={(payload) => accept(entry, payload)}
-              >
-                {#snippet actions()}
-                  <button type="button" class="approval-skip" data-skip onclick={() => skip(entry)}>Skip</button>
-                {/snippet}
-              </ApprovalBlock>
-            </div>
+            <TicketStageSection
+              variant="review"
+              name={entry.kind}
+              slot={detail.fields[entry.kind]}
+              ticketState={detail.state}
+              ceiling={detail.ceiling}
+              stageState={fieldStageVisualState(detail, entry.kind)}
+              recap={detail.recap}
+              showRecap
+              onAccept={(payload) => accept(entry, payload)}
+            />
           {:else if entry.kind === "review"}
-            <div class="proposed-recessed-block">
-              <ApprovalBlock
-                mode="needs_review"
-                field="result"
-                whatLabel="Result"
-                proposalBody={detail.fields.result.value}
-                onApprove={() => approve(entry)}
-              >
-                {#snippet actions()}
-                  <button type="button" class="approval-skip" data-skip onclick={() => skip(entry)}>Skip</button>
-                {/snippet}
-              </ApprovalBlock>
-            </div>
+            <TicketStageSection
+              variant="review"
+              name="result"
+              slot={detail.fields.result}
+              ticketState={detail.state}
+              ceiling={detail.ceiling}
+              stageState={fieldStageVisualState(detail, "result")}
+              recap={detail.recap}
+              showRecap
+              onAccept={() => approve(entry)}
+              onApproveResult={() => approve(entry)}
+            />
           {:else if entry.kind === "status"}
-            <div class="proposed-recessed-block">
-              <div style="font-size: var(--type-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-faint); margin-bottom: var(--space-3);">
-                Proposed Status Change
-              </div>
-              <div style="font-size: var(--type-md); color: var(--text-strong); display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-4);">
-                <span class="pill">{detail.status}</span>
-                <span style="color: var(--text-faint);">→</span>
-                <span class="pill" style="color: var(--text-strong); background: var(--accent-surface);">{detail.status_proposal?.to_status || ""}</span>
-              </div>
-              
-              <hr />
-
-              <div class="approval-actions" style="display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: 0;">
-                <button type="button" class="approval-skip" data-skip onclick={() => skip(entry)}>Skip</button>
-                <button type="button" class="approval-approve" data-accept-status onclick={() => void acceptStatus(entry)}>Accept</button>
+            <div class="approval approval--review">
+              <div class="approval-proposal-shell review-status-proposal">
+                <ContentDisclosure title="Status" section="proposal">
+                  <div class="review-status-change">
+                    <span class="pill">{detail.status}</span>
+                    <span class="review-status-arrow" aria-hidden="true">→</span>
+                    <span class="pill review-status-target">{detail.status_proposal?.to_status || ""}</span>
+                  </div>
+                </ContentDisclosure>
+                <div class="approval-actions">
+                  <div class="approval-control-group">
+                    <button type="button" class="approval-approve" data-accept data-accept-status onclick={() => void acceptStatus(entry)}>Approve</button>
+                  </div>
+                </div>
               </div>
             </div>
           {/if}
+
+          <div class="review-outside-actions">
+            <button type="button" class="approval-skip" data-skip onclick={() => skip(entry)}>Skip</button>
+            {#if entry.entity_type === "ticket"}
+              <a class="review-open-ticket" data-open-ticket href={`#/ticket/${entry.entity_id}`}>Open ticket</a>
+            {/if}
+          </div>
         </div>
       {/if}
     {/if}
   {:else}
-    <div class="quiet-line" data-review-empty>nothing waiting</div>
+    <div class="review-empty-state" data-review-empty>
+      <div class="review-empty-mark" aria-hidden="true"><span></span></div>
+      <div class="review-empty-text">There is nothing to review right now.</div>
+      <div class="review-empty-meta">{runningAgentsText(runningAgentCount)}</div>
+    </div>
   {/if}
 </section>

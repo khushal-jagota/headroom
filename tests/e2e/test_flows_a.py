@@ -157,11 +157,9 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
         settled=True,
     )
 
-    # Accept-impossible ladder: nothing picked -> ceiling only -> both halves.
-    assert page_a.is_disabled(f"{card} [data-accept]")
-    page_a.select_option(f"{card} [data-scope-ceiling]", "none")
-    assert page_a.is_disabled(f"{card} [data-accept]")
-    page_a.check(f'{card} [data-scope-atcap] input[value="stop"]')
+    # Scope defaults to the next stage and then stop.
+    assert page_a.locator(f"{card} [data-scope-ceiling]").input_value() == "needs_approach"
+    assert page_a.locator(f"{card} [data-scope-atcap] select").input_value() == "stop"
     _wait_enabled(page_a, f"{card} [data-accept]")
     page_a.click(f"{card} [data-accept]")
 
@@ -178,7 +176,7 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
 
     d = api.get(server, f"/api/tickets/{tid}")
     assert d["state"] == "needs_approach", d
-    assert d["ceiling"] == "needs_approach", d      # "no further" pins the ceiling
+    assert d["ceiling"] == "needs_approach", d      # default approval scope is next stage
     assert d["at_cap"] == "stop", d
     assert d["fields"]["success"]["value"] == E24_BODY
     assert d["fields"]["success"]["proposal"] is None
@@ -205,7 +203,7 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
     )
     page.locator(f"{card} [data-edit]").blur()
     page.select_option(f"{card} [data-scope-ceiling]", "needs_plan")
-    page.check(f'{card} [data-scope-atcap] input[value="propose"]')
+    page.select_option(f"{card} [data-scope-atcap] select", "propose")
     _wait_enabled(page, f"{card} [data-accept]")
     page.click(f"{card} [data-accept]")
 
@@ -243,7 +241,6 @@ def test_e26_chat_panel_echo_and_offline(
         settled=True,
     )
     assert pending_page.text_content('[data-ticket-status="empty"]') == "status empty"
-    pending_page.wait_for_selector('[data-auto-run-status="not-on-today"]', timeout=WAIT_MS)
     pending_page.route(
         "**/api/chat/*/stream",
         lambda route: route.fulfill(

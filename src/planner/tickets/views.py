@@ -11,7 +11,7 @@ import json
 import sqlite3
 
 from planner.core import links as core_links
-from planner.core.contracts import JsonDict, Project
+from planner.core.contracts import JsonDict
 from planner.sprints.contracts import ItemStatus
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import GATING_FIELD, STATE_ORDER, Ticket, TicketState
@@ -38,7 +38,8 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "state": ticket.state.value,
         "priority": ticket.priority.value,
         "deadline": ticket.deadline,
-        "project": ticket.project.value if ticket.project is not None else None,
+        "project_id": ticket.project_id,
+        "project": ticket.project_name,
         "sprint_item_id": ticket.sprint_item_id,
         "sprint_id": ticket.sprint_id,
         "recap": ticket.recap,
@@ -71,7 +72,7 @@ def list_tickets(
     now: int,
     *,
     state: TicketState | None,
-    project: Project | None,
+    project_id: str | None,
     sprint_id: str | None,
     sprint_item_id: str | None,
     day_id: str | None = None,
@@ -81,9 +82,9 @@ def list_tickets(
     if state is not None:
         clauses.append("state = ?")
         params.append(state.value)
-    if project is not None:
-        clauses.append("project = ?")
-        params.append(project.value)
+    if project_id is not None:
+        clauses.append("project_id = ?")
+        params.append(project_id)
     if sprint_id is not None:
         if sprint_id == "null":
             clauses.append("sprint_id IS NULL")
@@ -179,9 +180,12 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
 
 def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
     rows = conn.execute(
-        "SELECT id, title, state, priority, deadline, project, fields, ticket_status, "
-        "created_at FROM tickets WHERE state != 'dropped' "
-        "AND id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?)",
+        "SELECT tickets.id, tickets.title, tickets.state, tickets.priority, tickets.deadline, "
+        "tickets.project_id, projects.name AS project_name, tickets.fields, tickets.ticket_status, "
+        "tickets.created_at FROM tickets "
+        "LEFT JOIN projects ON projects.id = tickets.project_id "
+        "WHERE tickets.state != 'dropped' "
+        "AND tickets.id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?)",
         (day_id,),
     ).fetchall()
     by_state: dict[str, list[tuple[tuple[int, int, str, int], JsonDict]]] = {
@@ -197,7 +201,8 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
             "title": str(row["title"]),
             "priority": priority,
             "deadline": deadline,
-            "project": str(row["project"]) if row["project"] is not None else None,
+            "project_id": str(row["project_id"]) if row["project_id"] is not None else None,
+            "project": str(row["project_name"]) if row["project_name"] is not None else None,
             "has_pending_proposal": machine.has_pending_gating_proposal(TicketState(state), fields),
             "ticket_status": str(row["ticket_status"]),
         }
@@ -399,7 +404,11 @@ def queues_view(
     item_approval_rows: list[JsonDict],
     item_overdue_rows: list[JsonDict],
 ) -> JsonDict:
+    running_agents = conn.execute(
+        "SELECT COUNT(*) AS count FROM tickets WHERE ticket_status = 'agent_running_step'"
+    ).fetchone()
     return {
         "approvals": _approvals(conn, item_approval_rows),
         "overdue": _overdue(conn, today_iso, item_overdue_rows),
+        "running_agents": int(running_agents["count"] if running_agents is not None else 0),
     }

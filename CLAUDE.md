@@ -4,8 +4,6 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 **PRINCIPLES.md** holds the standing engineering and design rules; they bind unless a live owner decision overrides them.
 
-This repo is the v2 planning system (Python/FastAPI + SQLite + no-build JS). It is built and tested entirely inside this repository: never read from or write to `~/.hermes/planning/` (the live markdown planning system), `~/.hermes/hermes-agent/`, or any other repo. External boundaries (hermes spawn, boundary/replan agent, chat gateway) are adapters with fakes; tests use the fakes, always.
-
 ## Naming and restraint
 - **Name things for exactly what they are.** Descriptive beats concise — an extra word that removes ambiguity costs nothing and prevents confusion later. A name should be self-evident: the ticket's status is `ticket_status`, an employee's session id is `employee_session_id`. When names are right it is obvious where a new thing belongs — a new ticket status obviously goes in the status — so you extend a clear structure instead of guessing or fitting around.
 - **Everything earns its existence; understand before you extend.** When handed something to build or plan, first work out what each existing thing actually *is* and why it exists — never fit around a structure you have not understood. Add nothing without a clear, stated reason: no speculative field, status, guard, or mechanism. If you cannot say plainly why a thing exists, it should not. When a plan — yours or a reviewer's — bolts on something that wasn't asked for or doesn't clearly make sense, cut it, don't accommodate it.

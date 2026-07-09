@@ -1,0 +1,1 @@
+"""Project catalog domain."""

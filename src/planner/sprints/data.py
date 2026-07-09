@@ -14,7 +14,7 @@ from datetime import date
 from typing import NamedTuple, cast
 
 from planner.core.clock import Clock
-from planner.core.contracts import EventKind, Priority, Project
+from planner.core.contracts import EventKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event
 from planner.core.ids import ID_PREFIXES, new_id
@@ -44,7 +44,7 @@ class ItemRead(NamedTuple):
 
 
 _ITEM_PLAIN_FIELDS: frozenset[str] = frozenset(
-    {"title", "body", "priority", "deadline", "project"}
+    {"title", "body", "priority", "deadline", "project_id"}
 )
 _SPRINT_TEXT_FIELDS: frozenset[str] = frozenset(
     KICKOFF_FIELDS + REVIEW_FIELDS + MID_SPRINT_FIELDS + ("name",)
@@ -117,7 +117,8 @@ def _row_to_item(row: sqlite3.Row) -> SprintItem:
         status=ItemStatus(row["status"]),
         priority=Priority(row["priority"]),
         deadline=row["deadline"],
-        project=Project(row["project"]),
+        project_id=row["project_id"],
+        project_name=row["project_name"],
         sprint_id=row["sprint_id"],
         blocked_by=json.loads(row["blocked_by"]),
         status_proposal=_proposal_from_json(row["status_proposal"]),
@@ -134,7 +135,12 @@ def _load_sprint(conn: sqlite3.Connection, sprint_id: str) -> Sprint:
 
 
 def _load_item(conn: sqlite3.Connection, item_id: str) -> SprintItem:
-    row = conn.execute("SELECT * FROM sprint_items WHERE id = ?", (item_id,)).fetchone()
+    row = conn.execute(
+        "SELECT sprint_items.*, projects.name AS project_name "
+        "FROM sprint_items JOIN projects ON projects.id = sprint_items.project_id "
+        "WHERE sprint_items.id = ?",
+        (item_id,),
+    ).fetchone()
     if row is None:
         raise PlannerError(ErrorCode.not_found, "sprint item not found", {"id": item_id})
     return _row_to_item(row)
@@ -304,7 +310,7 @@ def create_item(
     conn: sqlite3.Connection,
     *,
     title: str,
-    project: Project,
+    project_id: str,
     body: str = "",
     priority: Priority = Priority.P3,
     deadline: str | None = None,
@@ -318,7 +324,7 @@ def create_item(
     with _tx(conn):
         conn.execute(
             "INSERT INTO sprint_items ("
-            "id, title, body, status, priority, deadline, project, "
+            "id, title, body, status, priority, deadline, project_id, "
             "sprint_id, blocked_by, status_proposal, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, ?, ?)",
             (
@@ -328,7 +334,7 @@ def create_item(
                 ItemStatus.todo.value,
                 priority.value,
                 deadline,
-                project.value,
+                project_id,
                 sprint_id,
                 now,
                 now,
@@ -338,7 +344,7 @@ def create_item(
             conn,
             item_id,
             EventKind.sprint_item_created,
-            {"title": title, "project": project.value, "sprint_id": sprint_id},
+            {"title": title, "project_id": project_id, "sprint_id": sprint_id},
             now,
         )
     return _load_item(conn, item_id)
@@ -349,7 +355,7 @@ def create_idea(
     *,
     title: str,
     body: str,
-    project: Project | None,
+    project_id: str | None,
     now: int,
 ) -> sqlite3.Row:
     if not title:
@@ -357,14 +363,19 @@ def create_idea(
     idea_id = new_id(ID_PREFIXES["idea"])
     with _tx(conn):
         conn.execute(
-            "INSERT INTO ideas (id, title, body, project, created_at, updated_at) "
+            "INSERT INTO ideas (id, title, body, project_id, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (idea_id, title, body, project.value if project is not None else None, now, now),
+            (idea_id, title, body, project_id, now, now),
         )
         append_event(conn, idea_id, EventKind.idea_created, {"title": title, "source": "api"}, now)
     row = cast(
         sqlite3.Row | None,
-        conn.execute("SELECT * FROM ideas WHERE id = ?", (idea_id,)).fetchone(),
+            conn.execute(
+                "SELECT ideas.*, projects.name AS project_name "
+                "FROM ideas LEFT JOIN projects ON projects.id = ideas.project_id "
+                "WHERE ideas.id = ?",
+                (idea_id,),
+            ).fetchone(),
     )
     assert row is not None
     return row
@@ -387,13 +398,11 @@ def update_item_field(
             stored = Priority(value).value
         except ValueError as exc:
             raise PlannerError(ErrorCode.validation, "invalid priority", {"value": value}) from exc
-    elif field == "project":
+    elif field == "project_id":
         if value is None:
-            raise PlannerError(ErrorCode.validation, "invalid project", {"value": value})
-        try:
-            stored = Project(value).value
-        except ValueError as exc:
-            raise PlannerError(ErrorCode.validation, "invalid project", {"value": value}) from exc
+            raise PlannerError(ErrorCode.validation, "invalid project_id", {"value": value})
+        if conn.execute("SELECT 1 FROM projects WHERE id = ?", (value,)).fetchone() is None:
+            raise PlannerError(ErrorCode.validation, "invalid project_id", {"project_id": value})
     now = clock.now_unix()
     with _tx(conn):
         conn.execute(

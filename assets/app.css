@@ -858,46 +858,48 @@ select {
 }
 
 .scope-ceiling {
-  background: var(--surface-sunken);
-  color: var(--text-default);
-  border: var(--border-hairline) solid var(--text-faint);
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-2);
+  min-width: 9rem;
 }
 
 .scope-picker {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--space-4);
-  background: var(--accent-surface);
-  border-radius: var(--radius-md);
-  padding: var(--space-2) var(--space-3);
+  gap: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--type-sm);
+  font-weight: 600;
 }
 
-.scope-label {
-  display: flex;
+.scope-word {
+  color: var(--text-muted);
+  padding: 0 var(--space-1);
+}
+
+.scope-select {
+  position: relative;
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
-  font-size: var(--type-xs);
-  color: var(--accent-text);
+  color: var(--text-default);
+}
+
+.scope-select select {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--text-default);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  outline: none;
+  padding: 0 var(--space-1);
+  text-decoration: underline;
+  text-decoration-thickness: var(--border-hairline);
+  text-underline-offset: 3px;
 }
 
 .scope-atcap {
-  display: flex;
-  gap: var(--space-3);
-}
-
-.scope-atcap label {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: var(--type-sm);
-  color: var(--accent-text);
-}
-
-.scope-atcap input {
-  accent-color: var(--accent-bright);
+  display: inline-flex;
 }
 
 .proposal-card {
@@ -924,13 +926,67 @@ select {
   padding: var(--space-6) var(--space-4) 128px;
 }
 
+.review-empty-state {
+  min-height: calc(100vh - (var(--space-7) * 4));
+  max-width: calc(var(--space-7) * 8);
+  margin: 0 auto;
+  padding: var(--space-7) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  text-align: center;
+}
+
+.review-empty-mark {
+  position: relative;
+  width: calc(var(--space-7) * 3);
+  height: var(--space-7);
+  overflow: hidden;
+}
+
+.review-empty-mark::before {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: var(--space-3);
+  left: 0;
+  border-top: var(--border-hairline) solid var(--surface-overlay);
+}
+
+.review-empty-mark span {
+  position: absolute;
+  bottom: var(--space-3);
+  left: 50%;
+  width: var(--space-6);
+  height: var(--space-6);
+  background: var(--accent-surface);
+  border: var(--border-hairline) solid var(--accent-bright);
+  border-radius: var(--radius-pill);
+  transform: translateX(-50%) translateY(50%);
+  opacity: 0.72;
+}
+
+.review-empty-text {
+  color: var(--text-strong);
+  font-size: var(--type-lg);
+  font-weight: 600;
+}
+
+.review-empty-meta {
+  color: var(--text-faint);
+  font-size: var(--type-sm);
+}
+
 .review-ticket-title {
   font-size: var(--type-lg);
   font-weight: 600;
   color: var(--text-strong);
   text-decoration: none;
   display: inline-block;
-  margin-bottom: var(--space-4);
+  margin: 0;
+  line-height: 1.25;
   transition: color var(--motion-fast) var(--motion-ease);
 }
 
@@ -938,14 +994,42 @@ select {
   color: var(--accent-bright);
 }
 
+.review-header,
+.review-context {
+  display: flex;
+  flex-direction: column;
+}
+
+.review-header {
+  gap: var(--space-2);
+}
+
+.review-context {
+  gap: var(--space-3);
+}
+
+.modern-review-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.review-outside-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
 .approval-skip {
   font-size: var(--type-sm);
   font-weight: 600;
-  background: var(--surface-overlay);
+  background: transparent;
   color: var(--text-muted);
   border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-pill);
+  padding: var(--space-2) var(--space-6);
   cursor: pointer;
   transition: color var(--motion-fast) var(--motion-ease),
     border-color var(--motion-fast) var(--motion-ease),
@@ -956,6 +1040,19 @@ select {
   color: var(--text-strong);
   border-color: var(--text-faint);
   background: var(--surface-raised);
+}
+
+.review-open-ticket {
+  color: var(--text-muted);
+  font-size: var(--type-sm);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-thickness: var(--border-hairline);
+  text-underline-offset: 3px;
+}
+
+.review-open-ticket:hover {
+  color: var(--text-default);
 }
 
 /* --- Board screen (T16) -------------------------------------------------- */
@@ -1317,11 +1414,87 @@ select {
   font-style: italic;
 }
 
+.content-disclosure {
+  margin: 0;
+}
+
+.content-disclosure + .content-disclosure {
+  margin-top: var(--space-3);
+}
+
+.content-disclosure-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: var(--type-md);
+  font-weight: 600;
+  line-height: 1.3;
+  list-style: none;
+  user-select: none;
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+.content-disclosure-summary::-webkit-details-marker {
+  display: none;
+}
+
+.content-disclosure-summary:hover,
+.content-disclosure[open] > .content-disclosure-summary {
+  color: var(--text-default);
+}
+
+.content-disclosure-title {
+  min-width: 0;
+}
+
+.content-disclosure-chev::before {
+  content: "\203A";
+  color: var(--text-faintest);
+  font-size: var(--type-md);
+}
+
+.content-disclosure[open] > .content-disclosure-summary .content-disclosure-chev::before {
+  content: "\2304";
+}
+
+.content-disclosure-body {
+  color: var(--text-default);
+  font-size: var(--type-md);
+  line-height: 1.58;
+  margin-top: var(--space-2);
+}
+
+.content-disclosure--support .content-disclosure-body {
+  color: var(--text-muted);
+}
+
+.content-disclosure-body .markdown p {
+  margin-bottom: var(--space-2);
+}
+
+.ticket-stage-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.ticket-stage-section--review {
+  gap: var(--space-4);
+}
+
 /* THE APPROVAL — a raised surface (background, no border). */
 .approval {
   background: var(--surface-raised);
   border-radius: var(--radius-lg);
   padding: var(--space-5);
+}
+
+.approval--review {
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
 }
 
 .approval-what {
@@ -1336,7 +1509,16 @@ select {
 .approval-result {
   font-size: var(--type-md);
   line-height: 1.6;
-  color: var(--text-strong);
+  color: var(--text-default);
+}
+
+.approval--review .approval-proposal-shell {
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  padding: var(--space-5) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
 }
 
 .approval-actions {
@@ -1344,7 +1526,35 @@ select {
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-4);
-  margin-top: var(--space-5);
+  margin-top: var(--space-4);
+}
+
+.approval-proposal-shell .approval-actions {
+  margin-top: 0;
+}
+
+.approval-actions--split {
+  justify-content: space-between;
+}
+
+.approval-actions-left,
+.approval-control-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.approval-control-group {
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.review-status-change {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }
 
 /* The amber Approve button — dark ink on the one accent (background, no border). */
@@ -1353,8 +1563,8 @@ select {
   background: var(--accent-bright);
   color: var(--accent-ink);
   border: 0;
-  border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-pill);
+  padding: var(--space-2) var(--space-5);
   cursor: pointer;
   transition: filter var(--motion-fast) var(--motion-ease);
 }
@@ -1368,26 +1578,10 @@ select {
   cursor: default;
 }
 
-/* THE NOTE — a recessed surface (background, no border). */
-.note {
-  background: var(--surface-sunken);
-  border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-4);
-  margin-top: var(--space-4);
-}
-
-.note-head {
-  font-size: var(--type-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  color: var(--text-faintest);
-  margin-bottom: var(--space-2);
-}
-
-.note-body {
-  font-size: var(--type-sm);
-  line-height: 1.5;
-  color: var(--text-muted);
+.approval--review .approval-draft,
+.approval--review .approval-result {
+  font-size: var(--type-md);
+  line-height: 1.58;
 }
 
 /* Collapsible field sections — hairline seam ONLY between rows; body not inset. */
@@ -1416,20 +1610,49 @@ details.fsec > summary:hover {
 
 .fsec-mark {
   flex: none;
-  text-align: center;
-  font-size: var(--type-sm);
+  width: 0.7rem;
+  height: 0.7rem;
+  border: var(--border-strong) solid var(--text-faintest);
+  border-radius: var(--radius-pill);
+  box-sizing: border-box;
 }
 
-.fsec-mark--done {
-  color: var(--accent-done);
+.fsec-mark--completed {
+  background: var(--accent-done);
+  border-color: var(--accent-done);
 }
 
-.fsec-mark--now {
-  color: var(--accent-bright);
+.fsec-mark--current-running {
+  border-color: var(--accent-surface);
+  border-right-color: var(--accent-bright);
+  border-top-color: var(--accent-bright);
+  animation: fsec-stage-spin 900ms linear infinite;
 }
 
-.fsec-mark--todo {
-  color: var(--text-faintest);
+.fsec-mark--current-waiting {
+  border-color: var(--text-faint);
+}
+
+.fsec-mark--current-awaiting-approval {
+  background: var(--accent-bright);
+  border-color: var(--accent-bright);
+}
+
+.fsec-mark--upcoming {
+  border-color: var(--text-faintest);
+  opacity: 0.56;
+}
+
+@keyframes fsec-stage-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fsec-mark--current-running {
+    animation: none;
+  }
 }
 
 .fsec-name {
@@ -1463,8 +1686,8 @@ details.fsec[open] > summary .fsec-chev::before {
   color: var(--text-default);
 }
 
-.fsec-body .note {
-  margin-top: var(--space-1);
+.fsec-body > .content-disclosure {
+  margin-top: var(--space-3);
 }
 
 /* Enum pill — background only, no border; a transparent native <select> overlay. */
@@ -2507,17 +2730,13 @@ details.fsec[open] > summary .fsec-chev::before {
 
 .proposed-recessed-block {
   background: var(--surface-sunken);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-lg);
+  border: 0;
+  border-radius: var(--radius-md);
   padding: var(--space-4) var(--space-5);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .proposed-recessed-block hr {
-  height: 1px;
-  background: var(--border-color);
-  margin: var(--space-4) calc(-1 * var(--space-5)) var(--space-3);
-  border: none;
+  display: none;
 }
 
 .proposed-recessed-block .approval-draft {
@@ -2534,4 +2753,20 @@ details.fsec[open] > summary .fsec-chev::before {
 .proposed-recessed-block .approval-actions {
   margin-top: 0;
   justify-content: space-between;
+}
+
+.review-status-proposal {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.review-status-arrow {
+  color: var(--text-faint);
+}
+
+.review-status-target {
+  color: var(--text-strong);
+  background: var(--accent-surface);
 }

@@ -14,13 +14,6 @@ JsonDict = dict[str, Any]  # event payloads, adapter blobs
 UnixTime = int             # unix seconds
 
 
-class Project(StrEnum):                     # SPEC §3.2, exact strings (capitalised as in SPEC)
-    Vylo = "Vylo"
-    Tribe = "Tribe"
-    Learning = "Learning"
-    Other = "Other"
-
-
 class Priority(StrEnum):                     # SPEC §3.2/§3.3 — homed in core (shared vocabulary)
     P0 = "P0"
     P1 = "P1"
@@ -48,6 +41,7 @@ class EventKind(StrEnum):
     sprint_item_created = "sprint_item_created"
     idea_created = "idea_created"
     day_created = "day_created"                      # §3.4 materialization
+    project_created = "project_created"
 
     # --- supplemental: proposals and fields ---
     proposal_filed = "proposal_filed"                # {field, body, proposed_by}

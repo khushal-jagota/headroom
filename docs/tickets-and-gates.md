@@ -29,6 +29,10 @@ anywhere; workers never can.
 
 _Code paths:_ `src/planner/tickets/` (the ticket state and its fields).
 
+Standalone tickets may point at a project by `project_id`. API responses also include
+`project`, the display name, for compatibility. A ticket under a sprint item does not
+store its own project because the parent item owns that classification.
+
 ## The one rule: proposals and the single door
 
 Workers never change the record directly. A worker that wants to move work forward
@@ -89,6 +93,7 @@ _Code paths:_ `src/planner/core/events.py`.
   notes; it deliberately holds no accept/approve/grant verb.
 - **The front end** (`frontend.md`) — the Ticket, Review, and Board screens that
   render a ticket's story and carry the human's decisions.
+- **Projects** (`projects.md`) — the catalog used by standalone ticket project fields.
 
 ## Deferred
 

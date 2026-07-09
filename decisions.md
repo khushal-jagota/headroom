@@ -894,3 +894,80 @@ Ticket and sprint-item PATCH routes now validate each recognized field's type be
 writer. Wrong-shaped values return the normal validation envelope instead of SQLite coercion,
 `not_found`, or a 500. This preserves the route-body contract and keeps the canonical writers from
 being used as request parsers.
+
+## D57 — Projects are data-backed IDs with legacy name compatibility
+
+Projects are now a catalog table, not a storage/domain enum. `project_id` is the canonical field on
+sprint items, standalone tickets, and ideas; serializers keep returning `project` as the display
+name so existing UI/tests/callers do not break. Write and filter APIs accept both `project_id` and
+legacy `project` name during the transition, but reject a request that supplies mismatched
+selectors. Parented tickets keep `project_id = NULL`; the parent sprint item owns the project.
+
+Project creation is human-only and emits `project_created`, which invalidates the frontend
+`projects` resource. There is intentionally no rename/delete/archive in this first pass.
+
+Implementation note: this slice was implemented directly rather than decomposed into sub-agent
+tickets because this Codex session has no sub-agent dispatch tool exposed; the plan's ticket
+boundaries were still followed as integration phases.
+
+## D58 — Review empty state uses queue-level running-agent count
+
+The Review empty state needs to show agent activity even when no approval is waiting, so
+`/api/queues` now includes a small `running_agents` count derived from tickets with
+`ticket_status = 'agent_running_step'`. This keeps the UI from inferring activity from unrelated
+resources and keeps the count beside the approvals queue it explains. The empty state is rendered
+in both no-approval branches, preserving `data-review-empty`; the approval-present layout is not
+changed in this slice.
+
+## D59 — Segment 1 ticket cleanup stays local to Ticket display
+
+The Segment 1 cleanup was delegated as a small, low-risk UI slice with a narrow Ticket display
+scope. Ticket field empty copy is passed from `TicketRoute` rather than changing `MarkdownBlock`'s
+default, because other screens may intentionally rely on the component's custom/default placeholder
+behavior. The removed `auto` pill also removes its derived status resource/helpers instead of
+leaving a hidden runtime-status model in the Ticket header.
+
+## D60 — Approval scope defaults belong in the shared picker
+
+The Review approval action now uses `ScopePairPicker` as the shared inline control: `Approve` is the
+only accent button, while `until` and `then` are separate selectors. The picker publishes a default
+scope of next stage plus `stop` so every gating approval still submits the backend-required
+`next_ceiling` and `at_cap` payload without making the reviewer choose the common case first.
+
+The focused e2e tests required a `web/dist` rebuild because `panels serve` serves the production
+bundle, not live Svelte source.
+
+## D61 — Segment 4 field circles are lifecycle-derived, not value-derived
+
+The ticket field circle state is now a pure frontend derivation over the already-loaded
+`TicketDetail`. It intentionally ignores whether a field happens to contain text: completed means
+the ticket lifecycle has passed that field, current means the field is the active approval/running
+gate, and upcoming means the lifecycle has not reached it. `needs_review` + `result` is treated as
+`current-awaiting-approval` before the generic passed-field check because `fieldIsPassed("result",
+"needs_review")` remains true for existing edit permissions, while the visual model needs to show
+the final human approval point.
+
+## D62 — Review QA keeps approval scope reset inside the shared picker
+
+During Review UI QA, the approval block's per-proposal reset of the bound scope was kept, and the
+shared `ScopePairPicker` was made responsible for turning that reset back into next stage plus
+`stop`. This keeps the defaulting rule in one component and prevents a previous approval's selector
+choice from leaking into the next same-stage proposal. Status approval also keeps its
+`data-accept-status` selector but now carries generic `data-accept` so Review approval buttons have
+one stable accept selector family.
+
+## D63 — Ticket stages are assembled by one stage-level component
+
+Ticket stages now flow through `TicketStageSection`, which composes the smaller shared primitives:
+`CollapsibleField` for the normal stage shell, `ApprovalBlock` for approval payloads,
+`ContentDisclosure` for Recap/Notes/payload headers, and the existing edit/proposal helpers. Routes
+pass stage data and callbacks; they no longer hand-assemble separate completed/current/approval
+stage layouts.
+
+Review keeps title plus Skip/Open Ticket as page-level affordances, but ticket-stage approvals in
+Review use the same `TicketStageSection` as Ticket detail. Status approvals remain separate because
+they are sprint-item status approvals, not ticket stages.
+
+This slice was implemented directly rather than delegated because the owner did not request
+sub-agent dispatch in this turn and the work crossed tightly coupled Svelte/CSS layout files where
+serial edits were lower risk.

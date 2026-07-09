@@ -4,8 +4,7 @@ body. Pure."""
 
 from __future__ import annotations
 
-from planner.core.contracts import Project
-from planner.seed.contracts import ITEM_STATUS_MAP, ParsedItem, SkippedSection
+from planner.seed.contracts import DEFAULT_PROJECT_NAME, ITEM_STATUS_MAP, ParsedItem, SkippedSection
 from planner.seed.logic.blocks import (
     REASON_PROSE,
     REASON_SECTION,
@@ -68,7 +67,7 @@ def _item_from_bullet(bullet: Bullet, status: ItemStatus) -> ParsedItem:
         title=bullet.text,
         status=status,
         priority=resolve_priority(priority_raw, urgency_raw),
-        project=parse_project(project_raw) or Project.Other,
+        project=parse_project(project_raw) or DEFAULT_PROJECT_NAME,
         body="\n".join(emit_body(body_bullets)),
         deadline=None,
         deferred=False,

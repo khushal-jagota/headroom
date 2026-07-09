@@ -1,9 +1,15 @@
 import type { TicketDetail, TicketField } from "./types";
 
 export const FIELD_NAMES = ["success", "approach", "plan", "result"] as const;
-export const PROJECTS = ["Vylo", "Tribe", "Learning", "Other"];
 export const PRIORITIES = ["P0", "P1", "P2", "P3"];
 export const PRIORITY_ORDER = ["P0", "P1", "P2", "P3"];
+
+export type FieldStageVisualState =
+  | "completed"
+  | "current-running"
+  | "current-waiting"
+  | "current-awaiting-approval"
+  | "upcoming";
 
 export const STATE_ORDER = [
   "needs_success",
@@ -60,6 +66,30 @@ export function fieldIsPassed(field: string, state: string): boolean {
 
 export function fieldSlot(detail: TicketDetail, name: string): TicketField {
   return detail.fields?.[name] || {};
+}
+
+export function fieldStageVisualState(
+  detail: TicketDetail,
+  fieldName: string
+): FieldStageVisualState {
+  if (detail.state === "done") return "completed";
+
+  if (detail.state === "needs_review" && fieldName === "result") {
+    return "current-awaiting-approval";
+  }
+
+  if (fieldIsPassed(fieldName, detail.state)) return "completed";
+
+  if (gatingField(detail.state) === fieldName) {
+    const slot = fieldSlot(detail, fieldName);
+    if (detail.ticket_status === "agent_running_step") return "current-running";
+    if (slot.proposal || detail.ticket_status === "awaiting_approval") {
+      return "current-awaiting-approval";
+    }
+    return "current-waiting";
+  }
+
+  return "upcoming";
 }
 
 export function markerLabel(value: string): string {

@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Final
 
-from planner.core.contracts import EventKind, Priority, Project
+from planner.core.contracts import EventKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event
 from planner.core.ids import ID_PREFIXES, new_id
@@ -50,14 +50,14 @@ def _txn(conn: sqlite3.Connection) -> Iterator[None]:
 
 
 def _row_to_ticket(row: sqlite3.Row) -> Ticket:
-    project_raw = row["project"]
     return Ticket(
         id=row["id"],
         title=row["title"],
         state=TicketState(row["state"]),
         priority=Priority(row["priority"]),
         deadline=row["deadline"],
-        project=Project(project_raw) if project_raw is not None else None,
+        project_id=row["project_id"],
+        project_name=row["project_name"],
         sprint_item_id=row["sprint_item_id"],
         sprint_id=row["sprint_id"],
         recap=row["recap"],
@@ -73,7 +73,12 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
 
 
 def _load_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
-    row = conn.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+    row = conn.execute(
+        "SELECT tickets.*, projects.name AS project_name "
+        "FROM tickets LEFT JOIN projects ON projects.id = tickets.project_id "
+        "WHERE tickets.id = ?",
+        (ticket_id,),
+    ).fetchone()
     if row is None:
         raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
     return _row_to_ticket(row)
@@ -167,7 +172,7 @@ def create_ticket(
     actor: str,
     now: int,
     title_max_chars: int,
-    project: Project | None = None,
+    project_id: str | None = None,
     priority: Priority = Priority.P3,
     deadline: str | None = None,
     sprint_id: str | None = None,
@@ -191,7 +196,7 @@ def create_ticket(
                     "sprint_id is derived from the parent item",
                     {"sprint_item_id": sprint_item_id},
                 )
-            if project is not None:
+            if project_id is not None:
                 raise PlannerError(ErrorCode.validation, "project is derived when parented")
         elif sprint_id is not None:
             exists = conn.execute("SELECT 1 FROM sprints WHERE id = ?", (sprint_id,)).fetchone()
@@ -200,7 +205,8 @@ def create_ticket(
                     ErrorCode.not_found, "sprint not found", {"sprint_id": sprint_id}
                 )
         conn.execute(
-            "INSERT INTO tickets (id, title, state, priority, deadline, project, sprint_item_id, "
+            "INSERT INTO tickets ("
+            "id, title, state, priority, deadline, project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, ticket_status, "
             "chat_session_key, alias, fields, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, NULL, NULL, ?, ?, ?)",
@@ -210,7 +216,7 @@ def create_ticket(
                 TicketState.needs_success.value,
                 priority.value,
                 deadline,
-                project.value if project is not None else None,
+                project_id,
                 sprint_item_id,
                 sprint_id,
                 TicketState.needs_success.value,
@@ -233,7 +239,10 @@ def read_ticket_by_session_key(conn: sqlite3.Connection, session_key: str) -> Ti
     """The ticket whose durable chat_session_key matches — how a worker agent resolves
     'my ticket' from its live HERMES_SESSION_KEY (the shared child binds it per turn)."""
     row = conn.execute(
-        "SELECT * FROM tickets WHERE chat_session_key = ?", (session_key,)
+        "SELECT tickets.*, projects.name AS project_name "
+        "FROM tickets LEFT JOIN projects ON projects.id = tickets.project_id "
+        "WHERE tickets.chat_session_key = ?",
+        (session_key,),
     ).fetchone()
     if row is None:
         raise PlannerError(
@@ -519,24 +528,29 @@ def set_project(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    project: Project | None,
+    project_id: str | None,
     now: int,
 ) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
         if ticket.sprint_item_id is not None:
             raise PlannerError(ErrorCode.validation, "project is derived when parented")
-        prev = ticket.project.value if ticket.project is not None else None
-        new_value = project.value if project is not None else None
+        if project_id is not None and conn.execute(
+            "SELECT 1 FROM projects WHERE id = ?", (project_id,)
+        ).fetchone() is None:
+            raise PlannerError(
+                ErrorCode.validation, "invalid project_id", {"project_id": project_id}
+            )
+        prev = ticket.project_id
         conn.execute(
-            "UPDATE tickets SET project = ?, updated_at = ? WHERE id = ?",
-            (new_value, now, ticket_id),
+            "UPDATE tickets SET project_id = ?, updated_at = ? WHERE id = ?",
+            (project_id, now, ticket_id),
         )
         append_event(
             conn,
             ticket_id,
             EventKind.ticket_updated,
-            {"field": "project", "from": prev, "to": new_value},
+            {"field": "project_id", "from": prev, "to": project_id},
             now,
         )
         return _load_ticket(conn, ticket_id)
@@ -627,9 +641,9 @@ def assign_ticket_to_sprint_item(
             )
         prev_item = ticket.sprint_item_id
         prev_sprint = ticket.sprint_id
-        prev_project = ticket.project.value if ticket.project is not None else None
+        prev_project = ticket.project_id
         conn.execute(
-            "UPDATE tickets SET sprint_item_id = ?, sprint_id = NULL, project = NULL, "
+            "UPDATE tickets SET sprint_item_id = ?, sprint_id = NULL, project_id = NULL, "
             "updated_at = ? WHERE id = ?",
             (sprint_item_id, now, ticket_id),
         )

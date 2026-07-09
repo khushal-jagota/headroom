@@ -1,6 +1,5 @@
 """Ticket domain shapes: the state machine order, the four fields, the scope pair,
-and the ticket row. Stdlib only; Priority/Project are imported from core (shared
-vocabulary), never redeclared."""
+and the ticket row."""
 
 from __future__ import annotations
 
@@ -8,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final, Literal, TypedDict
 
-from planner.core.contracts import Priority, Project
+from planner.core.contracts import Priority
 
 # §3.3 ticket title length cap. The DDL carries the matching literal
 # `CHECK (length(title) <= 200)` as the DB-level backstop; this constant is the
@@ -117,7 +116,8 @@ class CreateTicketBody(TypedDict, total=False):   # POST /tickets
     title: str                     # default ""
     priority: str | None           # Priority value; default P3
     deadline: str | None           # ISO date
-    project: str | None            # Project value
+    project: str | None            # legacy project name
+    project_id: str | None
     sprint_id: str | None
     sprint_item_id: str | None
 
@@ -171,7 +171,8 @@ class Ticket:                      # §3.3 — column names match exactly
     state: TicketState
     priority: Priority             # default P3
     deadline: str | None           # ISO date
-    project: Project | None        # NULL when parented (derived)
+    project_id: str | None         # NULL when parented (derived)
+    project_name: str | None
     sprint_item_id: str | None
     sprint_id: str | None          # writable only when sprint_item_id IS NULL
     recap: str                     # writable only past needs_success

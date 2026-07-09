@@ -11,9 +11,10 @@ from typing import Any
 from fastapi import APIRouter
 
 from planner.core.authctx import reject_agent_fields, reject_agents
-from planner.core.contracts import JsonDict, Priority, Project
+from planner.core.contracts import JsonDict, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import planning_date
+from planner.projects import data as projects_data
 from planner.sprints import data as sprints_data
 from planner.sprints import views as sprints_views
 from planner.sprints.contracts import (
@@ -33,7 +34,7 @@ from planner.tickets.api import Cfg, Clk, Ctx, DbConn, body_opt_str, body_str, p
 router = APIRouter()
 
 _SPRINT_TEXT_FIELDS = ("name",) + KICKOFF_FIELDS + MID_SPRINT_FIELDS + REVIEW_FIELDS
-_ITEM_PLAIN_FIELDS = ("title", "body", "priority", "deadline", "project")
+_ITEM_PLAIN_FIELDS = ("title", "body", "priority", "deadline", "project_id")
 
 
 # --- request-body marshallers (contract shapes in sprints/contracts.py) ---------
@@ -43,6 +44,7 @@ def _marshal_create_item(raw: JsonDict) -> CreateItemBody:
     return CreateItemBody(
         title=body_str(raw, "title"),
         project=body_opt_str(raw, "project"),
+        project_id=body_opt_str(raw, "project_id"),
         body=body_str(raw, "body"),
         priority=body_opt_str(raw, "priority"),
         deadline=body_opt_str(raw, "deadline"),
@@ -67,6 +69,7 @@ def _marshal_create_idea(raw: JsonDict) -> CreateIdeaBody:
         title=body_str(raw, "title"),
         body=body_str(raw, "body"),
         project=body_opt_str(raw, "project"),
+        project_id=body_opt_str(raw, "project_id"),
     )
 
 
@@ -95,16 +98,17 @@ def _marshal_blocked_by(raw: object) -> list[str]:
 @router.post("/items")
 async def create_item(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
     body = _marshal_create_item(raw)
-    if body["project"] is None:
-        raise PlannerError(ErrorCode.validation, "project is required")
-    project = parse_enum(Project, body["project"], "project")
+    project = projects_data.resolve_project(
+        conn, project_id=body["project_id"], project_name=body["project"], required=True
+    )
+    assert project is not None
     priority = parse_enum(Priority, body["priority"], "priority") \
         if body["priority"] is not None else Priority.P3
     _marshal_item_deadline(body["deadline"])
     item = sprints_data.create_item(
         conn,
         title=body["title"],
-        project=project,
+        project_id=project.id,
         body=body["body"],
         priority=priority,
         deadline=body["deadline"],
@@ -116,12 +120,17 @@ async def create_item(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
 
 @router.get("/items")
 async def list_items(conn: DbConn, status: str | None = None, project: str | None = None,
-                     sprint_id: str | None = None) -> JsonDict:
+                     project_id: str | None = None, sprint_id: str | None = None) -> JsonDict:
     status_enum = parse_enum(ItemStatus, status, "status") if status is not None else None
-    project_enum = parse_enum(Project, project, "project") if project is not None else None
+    resolved_project = projects_data.resolve_project(
+        conn, project_id=project_id, project_name=project
+    )
     return {
         "items": sprints_views.list_items(
-            conn, status=status_enum, project=project_enum, sprint_id_filter=sprint_id
+            conn,
+            status=status_enum,
+            project_id=resolved_project.id if resolved_project is not None else None,
+            sprint_id_filter=sprint_id,
         )
     }
 
@@ -155,7 +164,7 @@ async def remove_item_ticket(item_id: str, ticket_id: str, conn: DbConn, ctx: Ct
 @router.patch("/items/{item_id}")
 async def patch_item(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
                      clk: Clk) -> JsonDict:
-    recognized = set(_ITEM_PLAIN_FIELDS) | {"sprint_id", "status", "blocked_by"}
+    recognized = set(_ITEM_PLAIN_FIELDS) | {"project", "sprint_id", "status", "blocked_by"}
     for key in body:
         if key not in recognized:
             raise PlannerError(ErrorCode.validation, "unknown item field", {"field": key})
@@ -165,17 +174,28 @@ async def patch_item(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
         raise PlannerError(ErrorCode.validation, "blocked_by requires status", {})
     # §3.2/§8: an agent's only item write surface is the status transition (todo↔active,
     # blocked); plain fields and sprint moves are human-only.
-    reject_agent_fields(ctx, body, set(_ITEM_PLAIN_FIELDS) | {"sprint_id"})
+    reject_agent_fields(ctx, body, set(_ITEM_PLAIN_FIELDS) | {"project", "sprint_id"})
     for field in _ITEM_PLAIN_FIELDS:
         if field in body:
+            if field == "project_id":
+                continue
             if field == "deadline":
                 value = body_opt_str(body, "deadline")
                 _marshal_item_deadline(value)
-            elif field in ("title", "body", "priority", "project"):
+            elif field in ("title", "body", "priority"):
                 value = body_str(body, field)
             else:
                 value = body[field]
             sprints_data.update_item_field(conn, item_id, field, value, clock=clk)
+    if "project" in body or "project_id" in body:
+        project = projects_data.resolve_project(
+            conn,
+            project_id=body_opt_str(body, "project_id"),
+            project_name=body_opt_str(body, "project"),
+            required=True,
+        )
+        assert project is not None
+        sprints_data.update_item_field(conn, item_id, "project_id", project.id, clock=clk)
     if "sprint_id" in body:
         sprints_data.assign_item_sprint(conn, item_id, body_opt_str(body, "sprint_id"), clock=clk)
     if "status" in body:
@@ -285,14 +305,29 @@ async def current_sprint(conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
 @router.post("/ideas")
 async def create_idea(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
     body = _marshal_create_idea(raw)
-    project = parse_enum(Project, body["project"], "project") \
-        if body["project"] is not None else None
+    project = projects_data.resolve_project(
+        conn, project_id=body["project_id"], project_name=body["project"]
+    )
     idea = sprints_data.create_idea(
-        conn, title=body["title"], body=body["body"], project=project, now=clk.now_unix()
+        conn,
+        title=body["title"],
+        body=body["body"],
+        project_id=project.id if project is not None else None,
+        now=clk.now_unix(),
     )
     return sprints_views.idea_json(idea)
 
 
 @router.get("/ideas")
-async def list_ideas(conn: DbConn) -> JsonDict:
-    return {"ideas": sprints_views.list_ideas(conn)}
+async def list_ideas(
+    conn: DbConn, project: str | None = None, project_id: str | None = None
+) -> JsonDict:
+    resolved_project = projects_data.resolve_project(
+        conn, project_id=project_id, project_name=project
+    )
+    return {
+        "ideas": sprints_views.list_ideas(
+            conn,
+            project_id=resolved_project.id if resolved_project is not None else None,
+        )
+    }

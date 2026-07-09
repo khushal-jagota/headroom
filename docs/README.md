@@ -5,7 +5,8 @@ replaces a folder of markdown files with a small database and a web page. It kee
 track of four kinds of thing — **sprints** (two-week pushes), **sprint items** (the
 meaningful chunks a sprint is made of), **tickets** (pieces of work small enough to
 hand to an AI worker), and **days** (one page per day) — plus a light list of
-**ideas**, things worth remembering that aren't work yet.
+**ideas**, things worth remembering that aren't work yet, and a small **projects**
+catalog used by tickets, sprint items, and ideas.
 
 This is the entry point. Read it to find which system owns a question, then read
 that system's doc.
@@ -63,6 +64,7 @@ describes change, but the history of what happened is never edited or lost.
 - **Sprints** (`sprints.md`) — the Overview (Kickoff / Mid-sprint / Review) and the
   Tracking list.
 - **Backlog & Ideas** (`backlog-and-ideas.md`) — the two catch surfaces.
+- **Projects** (`projects.md`) — the data-backed project catalog.
 
 **The two interfaces**
 

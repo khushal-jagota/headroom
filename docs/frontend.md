@@ -19,7 +19,8 @@ One screen per part of the system:
   set that System A can poll.
 - **Ticket** — the whole story of one piece of work: the four blanks, the scope row,
   live status markers, the `auto` run eligibility chip, chat, and a copy button that
-  produces a plain-text block for pasting anywhere.
+  produces a plain-text block for pasting anywhere. Its project picker is backed by
+  the shared `projects` resource.
 - **Sprint** — the Overview and Tracking tabs (see `sprints.md`).
 - **Backlog** and **Ideas** — the two catch surfaces (see `backlog-and-ideas.md`).
 
@@ -32,7 +33,8 @@ share.
 - **Keyed invalidation, no canonical client store.** The event log is a doorbell.
   Each event maps to resource keys such as `ticket:<id>`, `board`, `queues`, and
   `sprint:current`; ticket events also map to `chat:<id>` so the ticket chat rail
-  can reload the worker's full Hermes trace. Only those resources refetch. There
+  can reload the worker's full Hermes trace. Project events map to `projects`, which
+  refreshes project selectors. Only those resources refetch. There
   is no client-side store mirroring the server — the server is always the source
   of truth. The ticket chat rail refreshes while a worker is running and performs
   a short settled-state retry only while the transcript is empty, because Hermes
@@ -53,6 +55,7 @@ _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 - Every backend doc owns the behaviour its screen projects — **Tickets & the gates**
   (`tickets-and-gates.md`), **Days** (`days.md`), **Sprints** (`sprints.md`),
   **Backlog & Ideas** (`backlog-and-ideas.md`), **Chat** (`chat.md`).
+- **Projects** (`projects.md`) — the shared project selector resource.
 - **`DESIGN.md`** (repo root) — the visual language the tokens implement.
 
 ## Deferred

@@ -3,7 +3,6 @@ sub-bullet sets the project, the rules preamble is one skip entry. Pure."""
 
 from __future__ import annotations
 
-from planner.core.contracts import Project
 from planner.seed.contracts import PROJECT_MAP, ParsedIdea, SkippedSection
 from planner.seed.logic.blocks import (
     REASON_PREAMBLE,
@@ -41,7 +40,7 @@ def parse_ideas(text: str, source_file: str) -> tuple[list[ParsedIdea], list[Ski
 
 
 def _idea_from_bullet(bullet: Bullet) -> ParsedIdea:
-    project: Project | None = None
+    project: str | None = None
     body_bullets: list[Bullet] = []
     for child in bullet.children:
         matched = field_of(child.text)

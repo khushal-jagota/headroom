@@ -42,6 +42,24 @@ def test_ticket_list_day_filter(server, cli, api) -> None:
     assert t_on in all_ids and t_off in all_ids
 
 
+def test_project_create_list_and_project_id_item_filter(server, cli) -> None:
+    project = cli(server, "project", "create", "--name", "Alpha One")
+    assert project["id"] == "project_alpha_one"
+    assert project["name"] == "Alpha One"
+
+    listed_projects = cli(server, "project", "list")
+    assert project["id"] in {entry["id"] for entry in listed_projects["projects"]}
+
+    item = cli(
+        server,
+        "sprint", "item", "create",
+        "--title", "Project id backlog item",
+        "--project-id", project["id"],
+    )
+    listed_items = cli(server, "sprint", "item", "list", "--project-id", project["id"])
+    assert [entry["id"] for entry in listed_items["items"]] == [item["id"]]
+
+
 def test_queue_pickup_command_removed(server) -> None:
     # `queue` is no longer a CLI command group; approval is homed on ticket/sprint item.
     proc = subprocess.run(

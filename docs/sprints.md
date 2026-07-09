@@ -34,7 +34,8 @@ change can be undone if it's ever wanted.
 ## Tracking — the items
 
 Tracking is the sprint's items and, under each, the tickets that carry it, with a
-progress rollup.
+progress rollup. Each sprint item stores a `project_id` from the projects catalog;
+child tickets inherit that classification from the item.
 
 _Code paths:_ `src/planner/sprints/` (the sprint, its items, and the overview
 fields), `web/src/routes/SprintRoute.svelte` (both tabs).
@@ -45,6 +46,7 @@ fields), `web/src/routes/SprintRoute.svelte` (both tabs).
   made of.
 - **The front end** (`frontend.md`) — the two-tab Sprint screen and its edit-in-place
   fields.
+- **Projects** (`projects.md`) — the catalog used by sprint items.
 
 ## Deferred
 

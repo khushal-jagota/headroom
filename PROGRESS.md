@@ -3,6 +3,358 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-09): Shared ticket stage component
+
+Owner request: make Recap and Notes share a slightly larger header/body treatment, extract that
+treatment into one component also used on Ticket detail, make the approval payload inside the
+recessed Review surface use the same collapsible header/content shape, and move Review-only Skip /
+Open Ticket actions outside the recessed approval surface. Follow-up correction: the product concept
+must be one ticket-stage component used for completed stages, current stages, and stages awaiting
+approval; lower-level primitives may still be shared internally.
+
+Result:
+
+- Added `TicketStageSection.svelte` as the stage-level orchestrator for ticket stages.
+- Added `ContentDisclosure.svelte` as the shared collapsible header/body component.
+- `TicketRoute` now loops stages and renders `TicketStageSection`; it no longer separately assembles
+  top-level `ApprovalBlock`, `CollapsibleField`, notes, values, and proposals.
+- `ReviewRoute` now renders the same `TicketStageSection` for ticket-stage approvals; only status
+  approvals keep their separate non-ticket branch.
+- `TicketStageSection` composes `CollapsibleField`, `ApprovalBlock`, `ContentDisclosure`,
+  `InlineEdit`, and `ProposalCard` internally.
+- `ApprovalBlock` now renders the approval payload with the shared collapsible header. In approval
+  layout, the Approve controls sit at the bottom of the recessed approval surface.
+- Active approval/final-review stage rows open by default on Ticket detail, so the in-place approval
+  editor remains visible after moving it into the stage row.
+- Review's Skip and Open Ticket controls now render as their own outside action row.
+- Ticket detail now uses the same component for the top Recap block and field Notes under stage
+  content.
+- Removed the old one-off Review notes and Ticket note CSS paths.
+- Updated the selected minimal Review mock HTML to match the new component structure.
+- Implemented directly rather than dispatching a sub-agent because the current request did not ask
+  for delegation, and the change crossed tightly coupled Svelte/CSS layout files.
+
+Verification status:
+
+- `npm --prefix web run check` passed with the existing three `TicketRoute.svelte` initial-`id`
+  warnings.
+- `npm --prefix web run build` passed with the existing Vite runtime-asset warnings and the same
+  three Svelte warnings. This regenerated `web/dist`.
+- `python3` HTMLParser accepted
+  `orchestration/review-redesign/present-state-minimal-options/selected-direction.html`.
+- `.venv/bin/python -m pytest tests/e2e/test_flows_a.py::test_e23_env_pinned_propose
+  tests/e2e/test_flows_a.py::test_e24_accept_in_review
+  tests/e2e/test_flows_a.py::test_e25_edit_accept_in_review
+  tests/e2e/test_flows_b.py::test_e30_review_approve_to_done` passed.
+- `git diff --check` on the scoped frontend/CSS/mock files passed.
+- Did not run full `./verify`.
+
+Immediate next step:
+
+- Owner visual review in the running Panels server.
+
+## Current work cycle (2026-07-08): Review approval UI QA and scoped fixes
+
+Owner request: QA the just-completed Review approval UI and ticket field-circle encoding, patching
+only small obvious integration issues in the owned frontend/CSS files, with no backend/API changes
+and no full `./verify`. Follow-up owner correction: Review notes belong below the recap at the top
+of the page, before the recessed approval payload, and the text sizing/spacing hierarchy needed a
+pass.
+
+Result:
+
+- Reviewed `ReviewRoute`, `ApprovalBlock`, `ScopePairPicker`, `ui.ts`, `CollapsibleField`,
+  `TicketRoute`, `assets/app.css`, and the focused Review e2e tests.
+- Fixed `ScopePairPicker` so an external bound `scope = null` reset (as `ApprovalBlock` does when a
+  new proposal body arrives) deterministically restores the default next-stage + `stop` scope,
+  instead of preserving a previous same-stage approval choice or leaving the approval disabled.
+- Added the generic `data-accept` selector to status approval's button while keeping the existing
+  `data-accept-status` selector.
+- Moved Review notes into the top context stack directly under recap: title, recap, collapsed notes,
+  then the separate recessed proposal and actions.
+- Tightened Review hierarchy spacing and text sizing so title/recap/notes read as one top context
+  block and the proposal reads as the only approval object.
+- Removed the extra dropdown chevrons from the inline approval scope selectors; the underline is the
+  affordance. Selector text now uses `--text-default` rather than the higher-emphasis
+  `--text-strong`.
+- Updated the selected minimal Review mockup HTML to match the product structure.
+- Confirmed ticket field circles are driven by `fieldStageVisualState(detail, fieldName)` from
+  lifecycle state/proposal/running status, not by stored field text.
+
+Verification status:
+
+- `npm --prefix web run check` passed with the existing three `TicketRoute.svelte` initial-`id`
+  warnings.
+- `npm --prefix web run build` passed with the existing Vite runtime-asset warnings and the same
+  three Svelte warnings. This regenerated `web/dist`.
+- `python3` HTMLParser accepted
+  `orchestration/review-redesign/present-state-minimal-options/selected-direction.html`.
+- `.venv/bin/python -m pytest tests/e2e/test_flows_a.py::test_e24_accept_in_review
+  tests/e2e/test_flows_a.py::test_e25_edit_accept_in_review
+  tests/e2e/test_flows_b.py::test_e30_review_approve_to_done` passed.
+- `git diff --check` on the scoped frontend/CSS files passed.
+- Did not run full `./verify`, per owner instruction.
+
+Immediate next step:
+
+- Ready for owner review.
+
+## Current work cycle (2026-07-08): Segment 4 stage-circle encoding
+
+Owner request: implement approved Segment 4 ticket field circle states without backend/API changes,
+without touching Review UI files, and without inferring field completion from incidental text.
+
+Result:
+
+- Added a pure `fieldStageVisualState(detail, fieldName)` frontend derivation over existing
+  `TicketDetail` data.
+- Changed `CollapsibleField` from glyph input to semantic `stageState`, with `data-stage-state` on
+  each field section.
+- Updated Ticket field rendering to pass lifecycle-derived stage state instead of local mark glyphs.
+- Reworked only `.fsec-mark` field-circle CSS for completed/current/upcoming states, including
+  reduced-motion handling for the running spinner.
+
+Verification status:
+
+- `npm --prefix web run check` passed with the existing three `TicketRoute.svelte` initial-`id`
+  warnings.
+- `npm --prefix web run build` passed with the same existing Svelte warnings and Vite runtime-asset
+  warnings.
+- `git diff --check` on the scoped source/CSS files passed.
+- Did not run full `./verify`, per owner instruction for this slice.
+
+Immediate next step:
+
+- Ready for owner review.
+
+## Current work cycle (2026-07-08): Review approval-present selected direction
+
+Owner request: implement the selected minimal Review approval-present direction in product code.
+
+Current implementation:
+
+- Review approval-present now renders only the ticket title, recap, proposal, collapsed notes when
+  notes exist, and actions.
+- The proposal is the only sunken/recessed surface and no longer has a border in the Review layout.
+- Notes moved below the proposal into a closed-by-default disclosure; no divider is rendered before
+  notes or actions.
+- Actions split Skip on the left from the approval controls on the right.
+- `ScopePairPicker` is now the shared inline `until` stage selector plus `then` stop/propose selector,
+  defaulting to next stage and then stop.
+- Rebuilt `web/dist` because the e2e harness serves the production bundle via `panels serve`.
+
+Verification status:
+
+- `npm --prefix web run check` passed with the existing three `TicketRoute.svelte` initial-`id`
+  warnings.
+- `npm --prefix web run build` passed with the existing Vite runtime-asset warnings and the same
+  `TicketRoute.svelte` warnings.
+- `.venv/bin/python -m pytest tests/e2e/test_flows_a.py::test_e24_accept_in_review
+  tests/e2e/test_flows_a.py::test_e25_edit_accept_in_review
+  tests/e2e/test_flows_b.py::test_e30_review_approve_to_done` passed.
+
+Immediate next step:
+
+- Ready for owner review; stage-circle encoding remains out of scope.
+
+## Current work cycle (2026-07-08): Segment 1 low-risk ticket UI cleanup
+
+Owner request: remove the Ticket header `auto` pill for now, replace awkward Ticket field `(none)`
+empty text, and make notes read as plain supporting text rather than recessed approval payloads.
+
+Result:
+
+- Removed the Ticket header `auto` pill and its derived status helper/resource code from
+  `TicketRoute.svelte`.
+- Kept `MarkdownBlock`'s default placeholder unchanged for other screens, and passed Ticket-only
+  empty copy for recap/stage fields.
+- Changed the Ticket header's empty sprint label from `(none)` to `no sprint`.
+- Made `.note` plain supporting text in `assets/app.css`; the approval surface remains on
+  `.approval`.
+- Updated the one e2e wait that asserted `[data-auto-run-status]`.
+
+Verification status:
+
+- `npm --prefix web run check` passed with the existing three `TicketRoute.svelte` initial-`id`
+  warnings.
+- `npm --prefix web run build` passed with the same existing Svelte warnings and Vite runtime-asset
+  warnings.
+- `.venv/bin/python -m pytest tests/e2e/test_flows_a.py::test_e26_chat_panel_echo_and_offline`
+  passed.
+
+Immediate next step:
+
+- None for this Segment 1 cleanup.
+
+## Current work cycle (2026-07-08): Review empty-state design options
+
+Owner request: implement the Review empty state chosen from the horizon mockup.
+
+Current implementation:
+
+- Replaced the bare Review empty text with a centered horizon-style empty state while preserving
+  `data-review-empty` for e2e selectors.
+- The main empty-state text is exactly: `There is nothing to review right now.`
+- Added `running_agents` to `/api/queues`, counted from tickets whose `ticket_status` is
+  `agent_running_step`, and rendered it as tertiary empty-state text.
+- Kept the present-approval Review layout unchanged.
+- Implemented directly because the slice is small and tightly scoped to the named files.
+
+Verification status:
+
+- `npm --prefix web run check` passed with 0 errors and the three existing
+  `TicketRoute.svelte` initial-`id` warnings.
+- `.venv/bin/python -m ruff check src/planner/tickets/views.py` passed.
+- A focused venv Python probe of `queues_view` passed, returning
+  `{'approvals': [], 'overdue': [], 'running_agents': 1}` for one running ticket.
+- `git diff --check` on the touched files passed.
+
+Immediate next step:
+
+- Ready for owner review.
+
+## Prior work cycle (2026-07-08): Review empty-state design options
+
+Owner note: the Review empty state should be a designed centered waiting state, not a bare
+"nothing waiting" line. It should create calm, communicate that there is nothing to review, and may
+eventually show how many agents are running.
+
+Additional owner dogfood notes to keep in mind for the ticket/review redesign:
+
+- Ticket empty values shown as `(none)` feel odd, including stage fields.
+- Recessed visual treatment should represent the approval payload only; notes should not look
+  recessed.
+- Stage circles should encode state: completed = solid green; current running = rotating outline;
+  current waiting = outline; current awaiting approval = solid accent/orange.
+- Inline editing should preserve rendered structure in place; bullets and spacing should not collapse
+  into a plain textarea experience.
+- Changing a ticket's approval/scope can start an agent immediately, but the chat pane currently
+  gives weak live visibility while the run is in progress. The owner expects clearer in-progress
+  feedback.
+- Ticket header `ticket_status` and derived `auto` status read as duplicated even though they are
+  different concepts; owner says the `auto` pill can go for now.
+- Approval scope should feel like one sentence/action: approve until the next field, then stop by
+  default.
+- Review page needs a UX pass when an approval is present: the current approval surface has double
+  card/layering treatment. The approval-scope behavior fix belongs with the later approval work, but
+  the visual layering issue is its own review-page redesign item.
+- Owner review of Segment 3 mockups: the split-pane/sidebar direction is interesting but wrong for
+  Review. Review should become calmer and lower-information, not add context panels or extra things
+  to read. The approval space only needs to communicate the small amount required to make the
+  decision.
+- Hard rule for Review approval-present state: only show ticket title, recap, proposal, collapsed
+  notes, and actions. If information does not help approve the ticket, it is unnecessary on this
+  screen.
+- Sprint item status may be the wrong model as an explicit editable field. Owner expects it to be
+  derived from child tickets: done when all tickets are done, in progress when any ticket is in
+  progress, etc. This needs a backend/API/frontend model pass, not just copy or styling.
+
+Segmentation decision from first dogfood pass:
+
+- Segment 1: low-risk Ticket UI cleanup — remove `auto`, improve empty field display, make notes
+  non-recessed, reserve recessed treatment for approval payloads.
+- Segment 2: approval action/scope UX — make approval read as one action: approve until next field,
+  then stop by default. Defer until after Segment 1 lands.
+- Segment 3: Review present-approval layout pass — remove double card/layering and improve the
+  approval-present state. First step is static `agy` mockups for owner review.
+- Segment 4: stage-circle encoding — planning pass first; completed/current/running/awaiting
+  approval need distinct circle states.
+- Later: live agent visibility, true in-place markdown editing, and derived sprint-item status.
+
+Dispatch results:
+
+- Worker `Singer` implemented the horizon-style Review empty state, including the queue-level
+  `running_agents` count.
+- Worker `Aquinas` implemented Segment 1 Ticket UI cleanup.
+- Explorer `Galileo` produced a read-only implementation plan for Segment 4 stage-circle encoding.
+- `agy` Gemini Flash generated static Segment 3 Review present-approval mockups under
+  `orchestration/review-redesign/present-state-options/`.
+- Follow-up owner correction: Segment 4 does not need a backend/API shape. The circle visual state
+  should be derived by one pure function from already-loaded ticket/stage state, then passed into the
+  field component.
+- Owner approved the corrected Segment 4 plan. Implementation should add one pure frontend
+  derivation for ticket field circle state, pass that semantic state into `CollapsibleField`, and
+  render circles as: completed = solid green; current running = rotating accent outline; current
+  waiting = plain outline; current awaiting approval = solid accent; upcoming = faint outline. Do
+  not infer completion from incidental field text; use lifecycle position.
+- Follow-up `agy` round generated calmer Segment 3 Review-present mockups under
+  `orchestration/review-redesign/present-state-calm-options/`: no sidebar, no context dashboard, no
+  timeline, only the information needed for the approval decision. The files parse with Python's
+  stdlib `HTMLParser`.
+- Third `agy` round generated strict minimal Segment 3 mockups under
+  `orchestration/review-redesign/present-state-minimal-options/`. The variant files use only the
+  five approved visible elements: ticket title, recap, proposal, collapsed notes, and actions. Hidden
+  generated banners/scripts were removed after generation. The files parse with Python's stdlib
+  `HTMLParser`, and a text scan found no variant references to sidebar/timeline/metadata/status/
+  project/priority/deadline/queue concepts.
+- Owner selected the Variant 01/flat-document direction with changes: the proposal should be
+  recessed because it is the thing being approved, no divider line is needed, Skip belongs on the
+  left, and the right action should use the future shared approval control shape: "Approve until X,
+  then Y." Added `selected-direction.html` under the minimal options folder and linked it from that
+  folder's `index.html`.
+- Owner correction: the approval control cannot be one button. The selected direction now shows
+  Skip on the left, then separate selectors for "Approve until" stage and "then" behavior, plus an
+  Approve button on the right. This should map to the future shared approval-scope component.
+
+Result:
+
+- Added static mockups under `orchestration/review-redesign/empty-state-options/`.
+- The comparison index links to three self-contained variants:
+  - `pulse.html` — a quiet centered pulse line with "Nothing needs review" and agent count.
+  - `telemetry.html` — a small agent activity diagram with active/waiting/blocked counts.
+  - `horizon.html` — a softer waiting state focused on the next proposal.
+- Used `agy` with Gemini Flash for initial concept prompts, then wrote the repo artifacts directly.
+- No product code changed.
+
+Verification status:
+
+- Parsed all four static HTML files with Python's stdlib `HTMLParser`.
+- Did not run `./verify` because this is a static design artifact only.
+
+Immediate next step:
+
+- Await owner preference from the mockups before cutting an implementation ticket.
+
+## Current work cycle (2026-07-08): First-class projects table
+
+Owner request: implement the first-class projects plan so projects are their own table with stable
+IDs, while existing project-name callers keep working during the transition.
+
+Current implementation:
+
+- Added `projects` with default rows for Vylo, Tribe, Learning, and Other.
+- Migrated `sprint_items`, `tickets`, and `ideas` from string `project` columns to `project_id`
+  foreign keys. Parented tickets keep `project_id` null.
+- Added project domain helpers plus `GET /api/projects` and human-only `POST /api/projects`.
+- Ticket, item, and idea create/patch/list paths accept preferred `project_id` and legacy `project`
+  name, reject mismatches, and serialize both `project_id` and display-name `project`.
+- Added CLI `panels project list/create`, `--project-id` selectors, frontend `projects` resources,
+  and `project_created -> projects` event invalidation.
+- Updated seed import and focused migration/API/CLI/frontend tests.
+- Wrote this slice directly because no sub-agent dispatch tool is exposed in this Codex session;
+  the plan's ticket boundaries were followed as local integration phases.
+
+Current hypothesis:
+
+- The remaining risk is full-suite fallout from project filtering and schema-version migration paths.
+
+Verification status:
+
+- Targeted checks passed: `tests/unit/test_projects.py`, compileall for changed sprint modules, and
+  ruff over the patched API/view/test files.
+- The required read-only Codex migration/API review found one real issue: `GET /api/ideas` ignored
+  `project_id`/legacy `project` filters and mismatch validation. That was patched and covered by
+  `tests/unit/test_projects.py`.
+- Final `./verify` passed after the review fix: ruff, mypy, 168 unit tests, compile/static checks,
+  Svelte check, web build, frontend event test, and 22 e2e tests all passed.
+- Known warnings remain: the existing Starlette `TestClient` deprecation warning, the existing
+  `TestClock` collection warnings, and the three existing `TicketRoute.svelte` initial-`id` capture
+  warnings.
+
+Immediate next step:
+
+- Ready for owner review.
+
 ## Current work cycle (2026-07-08): CLI noun-shape implementation
 
 Owner request: build the CLI redesign, then review it.

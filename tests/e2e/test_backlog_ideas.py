@@ -32,7 +32,7 @@ def test_backlog_create_lands_in_priority_group(server, context_factory, open_pa
     # Open the dormant compose, fill it, choose Tribe / P1 via the chip toggles.
     page.click('[data-screen="backlog"] details.make > summary')
     page.fill('[data-create="item"] [data-input="title"]', "Wire the audit log")
-    page.click('[data-create="item"] [data-seg="project"] [data-value="Tribe"]')
+    page.click('[data-create="item"] [data-seg="project"] [data-value="project_tribe"]')
     page.click('[data-create="item"] [data-seg="priority"] [data-value="P1"]')
     page.click('[data-create="item"] [data-commit]')
 

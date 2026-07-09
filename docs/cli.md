@@ -6,6 +6,7 @@ machine-readable JSON with `--json`.
 The command tree matches the system model:
 
 - `day ...` — plan and inspect a day.
+- `project ...` — list and create project catalog rows.
 - `ticket ...` — create, inspect, organize, and approve tickets.
 - `sprint ...` — create, inspect, edit, and populate sprints and sprint items.
 - `worker ...` — worker-only writes such as proposals, recaps, notes, and item status
@@ -20,9 +21,11 @@ in the CLI is approval.
 - **`day show / list-tickets / set / add-ticket / remove-ticket`** — plan a day and
   assign tickets to it. `day show` includes the day's tickets; `day list-tickets`
   returns the ticket list explicitly.
+- **`project list / create`** — inspect and add projects. Project availability is
+  data-backed, not enum-backed.
 - **`ticket create / show / list / set / approve / block / unblock`** — manage
   tickets. `ticket set` names one field (`title`, `priority`, `deadline`, or
-  `project`). Sprint placement is a sprint command, not a ticket setter.
+  `project` / `project-id`). Sprint placement is a sprint command, not a ticket setter.
 - **`ticket copy / events`** — copy one ticket's plain-text packet or inspect its event log.
 - **`sprint create / list / show / set / add-ticket / remove-ticket`** — plan and
   populate sprints. `current` resolves through `/api/sprint/current`; `none` means the
@@ -39,6 +42,10 @@ in the CLI is approval.
 
 _Code paths:_ `src/planner/cli/main.py` (the verbs), `src/planner/cli/http.py`
 (the HTTP call, output, and exit codes).
+
+Project-aware commands accept `--project-id` as the preferred selector and keep
+`--project` as legacy name compatibility. Passing both is allowed only when they
+resolve to the same project.
 
 ## What used to be here and isn't
 

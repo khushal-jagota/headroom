@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panels Review - Document Flow</title>
+  <style>
+    @import url("../../../assets/tokens.css");
+
+    :root {
+      background: var(--surface-base, #1b1917);
+      color: var(--text-default, #dcd8cf);
+      font-family: var(--font-ui, system-ui, sans-serif);
+      font-size: var(--type-md, 15px);
+      line-height: 1.6;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--surface-base);
+      color: var(--text-default);
+      font-family: var(--font-ui);
+      display: flex;
+      justify-content: center;
+      min-height: 100vh;
+      padding: var(--space-7) var(--space-5);
+    }
+
+    .container {
+      width: 100%;
+      max-width: 600px;
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-6);
+    }
+
+    /* Meta Info */
+    .meta {
+      font-family: var(--font-mono);
+      font-size: var(--type-xs);
+      color: var(--text-faint);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      display: flex;
+      gap: var(--space-2);
+      align-items: center;
+    }
+
+    .meta-id {
+      color: var(--accent-bright);
+      font-weight: 600;
+    }
+
+    /* Document Header */
+    .header {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+    }
+
+    .title {
+      font-size: var(--type-lg);
+      font-weight: 600;
+      color: var(--text-strong);
+      margin: 0;
+      line-height: 1.3;
+      letter-spacing: -0.01em;
+    }
+
+    .subtitle {
+      font-size: var(--type-sm);
+      color: var(--text-muted);
+      margin: 0;
+    }
+
+    /* Proposal Text */
+    .proposal {
+      font-size: var(--type-md);
+      color: var(--text-strong);
+      line-height: 1.65;
+      outline: none;
+      white-space: pre-wrap;
+      padding: var(--space-1) 0;
+    }
+
+    /* Notes / Secondary Info */
+    .footnotes {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3);
+      padding-top: var(--space-5);
+      border-top: var(--border-hairline) solid var(--border-color);
+    }
+
+    .footnote-item {
+      font-size: var(--type-sm);
+      color: var(--text-faint);
+      line-height: 1.5;
+    }
+
+    .footnote-label {
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-right: var(--space-1);
+    }
+
+    /* Footer & Controls */
+    .footer {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-4);
+      padding-top: var(--space-4);
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-4);
+      flex-wrap: wrap;
+    }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+    }
+
+    /* Button styles */
+    .btn {
+      font-size: var(--type-sm);
+      font-weight: 600;
+      border-radius: var(--radius-pill);
+      padding: var(--space-2) var(--space-5);
+      cursor: pointer;
+      border: none;
+      transition: all var(--motion-fast) var(--motion-ease);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn-approve {
+      background: var(--accent-bright);
+      color: var(--accent-ink);
+    }
+
+    .btn-approve:hover {
+      filter: brightness(1.1);
+    }
+
+    .btn-skip {
+      background: transparent;
+      color: var(--text-muted);
+      border: var(--border-hairline) solid var(--border-color);
+    }
+
+    .btn-skip:hover {
+      color: var(--text-strong);
+      border-color: var(--text-faint);
+      background: var(--surface-raised);
+    }
+
+    /* Inline Scope Picker */
+    .scope-picker {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      font-size: var(--type-sm);
+      color: var(--text-muted);
+    }
+
+    .select-wrapper {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .scope-select {
+      background: transparent;
+      color: var(--text-strong);
+      border: none;
+      border-bottom: 1px dashed var(--text-faint);
+      padding: 0 var(--space-1);
+      font-family: inherit;
+      font-size: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      outline: none;
+      border-radius: 0;
+      appearance: none;
+    }
+
+    .scope-select:focus {
+      border-bottom-color: var(--accent-bright);
+      color: var(--accent-bright);
+    }
+
+    /* Options buttons for cap ceiling */
+    .scope-cap-toggle {
+      display: inline-flex;
+      background: var(--surface-sunken);
+      border-radius: var(--radius-pill);
+      padding: var(--space-1);
+      border: var(--border-hairline) solid var(--border-color);
+    }
+
+    .scope-cap-btn {
+      background: transparent;
+      color: var(--text-faint);
+      border: none;
+      border-radius: var(--radius-pill);
+      padding: var(--space-1) var(--space-3);
+      font-size: var(--type-xs);
+      font-weight: 600;
+      cursor: pointer;
+      transition: all var(--motion-fast) var(--motion-ease);
+    }
+
+    .scope-cap-btn.active {
+      background: var(--surface-raised);
+      color: var(--text-strong);
+    }
+
+    /* Success Toast */
+    .success-toast {
+      display: none;
+      background: var(--accent-surface);
+      border: var(--border-hairline) solid var(--accent-bright);
+      border-radius: var(--radius-lg);
+      padding: var(--space-4);
+      color: var(--accent-text);
+      align-items: flex-start;
+      gap: var(--space-3);
+      font-size: var(--type-sm);
+      animation: slideDown var(--motion-base) var(--motion-ease);
+    }
+
+    .success-icon {
+      color: var(--accent-done);
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    @keyframes slideDown {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .settled {
+      opacity: 0.4;
+      pointer-events: none;
+      transition: opacity var(--motion-slow) var(--motion-ease);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Success Banner -->
+    <div class="success-toast" id="success-banner">
+      <svg class="success-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="20 6 9 17 4 12"></polyline>
+      </svg>
+      <div>
+        <div style="font-weight: 600; margin-bottom: 2px;">Approach approved.</div>
+        <div style="font-size: var(--type-xs); color: var(--text-muted);">
+          Employee alice is authorized until <span id="final-scope" style="color: var(--accent-text); font-weight: 600;">needs plan</span>.
+        </div>
+      </div>
+    </div>
+
+    <!-- Active Review State -->
+    <div class="container" id="review-content">
+      <!-- Faint Metadata Row -->
+      <div class="meta">
+        <span class="meta-id">TKT-108</span>
+        <span>&bull;</span>
+        <span>Infrastructure</span>
+        <span>&bull;</span>
+        <span>P1</span>
+      </div>
+
+      <!-- Header -->
+      <header class="header">
+        <h1 class="title">Implement streaming updates for Day Route via EventStream</h1>
+        <p class="subtitle">Proposed by worker-alice</p>
+      </header>
+
+      <!-- Proposal visual center -->
+      <main class="proposal" contenteditable="true">Use a single SharedWorker to manage the EventSource connection and broadcast events to all active tabs via BroadcastChannel.
+
+If SharedWorker is not supported in the user's browser (e.g., Safari), fall back gracefully to a standard EventSource per-tab, but implement an aggressive 30-second idle disconnect.</main>
+
+      <!-- Footnotes (Secondary Context) -->
+      <section class="footnotes">
+        <div class="footnote-item">
+          <span class="footnote-label">Recap:</span> Tokenizer initialization is complete. We verified that standard long polling generates too much load on the SQLite db. SSE is selected as the lightweight transport.
+        </div>
+        <div class="footnote-item">
+          <span class="footnote-label">Worker Note:</span> Make sure the client disconnects clean when the window is hidden or the route is disposed.
+        </div>
+      </section>
+
+      <!-- Footer & Controls -->
+      <footer class="footer">
+        <div class="controls">
+          <!-- Left side: Actions -->
+          <div class="actions">
+            <button class="btn btn-approve" id="btn-approve">Approve</button>
+            <button class="btn btn-skip" id="btn-skip">Skip</button>
+          </div>
+
+          <!-- Right side: Scope Picker -->
+          <div class="scope-picker">
+            <span>ceiling:</span>
+            <div class="select-wrapper">
+              <select class="scope-select" id="scope-ceiling">
+                <option value="needs_approach">needs approach</option>
+                <option value="needs_plan" selected>needs plan</option>
+                <option value="in_progress">in progress</option>
+                <option value="needs_review">needs review</option>
+                <option value="done">done</option>
+              </select>
+            </div>
+            <div class="scope-cap-toggle">
+              <button class="scope-cap-btn active" id="btn-stop" onclick="setCap('stop')">then stop</button>
+              <button class="scope-cap-btn" id="btn-propose" onclick="setCap('propose')">then propose</button>
+            </div>
+          </div>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <script>
+    let capMode = 'stop';
+
+    function setCap(mode) {
+      capMode = mode;
+      document.getElementById('btn-stop').classList.toggle('active', mode === 'stop');
+      document.getElementById('btn-propose').classList.toggle('active', mode === 'propose');
+    }
+
+    const btnApprove = document.getElementById('btn-approve');
+    const btnSkip = document.getElementById('btn-skip');
+    const successBanner = document.getElementById('success-banner');
+    const reviewContent = document.getElementById('review-content');
+    const scopeCeiling = document.getElementById('scope-ceiling');
+    const finalScope = document.getElementById('final-scope');
+
+    btnApprove.addEventListener('click', () => {
+      const ceiling = scopeCeiling.options[scopeCeiling.selectedIndex].text;
+      finalScope.textContent = `"${ceiling} (${capMode === 'stop' ? 'then stop' : 'then propose'})"`;
+      successBanner.style.display = 'flex';
+      reviewContent.classList.add('settled');
+    });
+
+    btnSkip.addEventListener('click', () => {
+      reviewContent.classList.add('settled');
+    });
+  </script>
+</body>
+</html>

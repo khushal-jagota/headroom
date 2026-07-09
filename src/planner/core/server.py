@@ -30,6 +30,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.testmode import build_test_router
 from planner.core.ws import tail_events
 from planner.days.api import router as days_router
+from planner.projects.api import router as projects_router
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
 
@@ -133,6 +134,7 @@ def create_app(
 
     for domain_router in (
         tickets_router,
+        projects_router,
         sprints_router,
         days_router,
         chat_router,

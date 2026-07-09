@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from planner.core.contracts import JsonDict, Project
+from planner.core.contracts import JsonDict
 from planner.sprints import data as sprints_data
 from planner.sprints.contracts import ItemStatus, Sprint, SprintItem
 from planner.sprints.logic import DateRange, current_sprint_id
@@ -36,7 +36,8 @@ def item_json(item: SprintItem) -> JsonDict:
         "status": item.status.value,
         "priority": item.priority.value,
         "deadline": item.deadline,
-        "project": item.project.value,
+        "project_id": item.project_id,
+        "project": item.project_name,
         "sprint_id": item.sprint_id,
         "blocked_by": list(item.blocked_by),
         "status_proposal": None if proposal is None else {
@@ -78,7 +79,8 @@ def idea_json(row: sqlite3.Row) -> JsonDict:
         "id": str(row["id"]),
         "title": str(row["title"]),
         "body": str(row["body"]),
-        "project": str(row["project"]) if row["project"] is not None else None,
+        "project_id": str(row["project_id"]) if row["project_id"] is not None else None,
+        "project": str(row["project_name"]) if row["project_name"] is not None else None,
         "created_at": int(row["created_at"]),
         "updated_at": int(row["updated_at"]),
     }
@@ -139,7 +141,7 @@ def list_items(
     conn: sqlite3.Connection,
     *,
     status: ItemStatus | None,
-    project: Project | None,
+    project_id: str | None,
     sprint_id_filter: str | None,
 ) -> list[JsonDict]:
     clauses: list[str] = []
@@ -147,9 +149,9 @@ def list_items(
     if status is not None:
         clauses.append("status = ?")
         params.append(status.value)
-    if project is not None:
-        clauses.append("project = ?")
-        params.append(project.value)
+    if project_id is not None:
+        clauses.append("project_id = ?")
+        params.append(project_id)
     if sprint_id_filter is not None:
         if sprint_id_filter == "null":
             clauses.append("sprint_id IS NULL")
@@ -181,8 +183,16 @@ def list_sprints(conn: sqlite3.Connection) -> list[JsonDict]:
     return [sprint_json(sprints_data.read_sprint(conn, str(r["id"]))) for r in rows]
 
 
-def list_ideas(conn: sqlite3.Connection) -> list[JsonDict]:
-    rows = conn.execute("SELECT * FROM ideas ORDER BY created_at DESC, id").fetchall()
+def list_ideas(conn: sqlite3.Connection, *, project_id: str | None = None) -> list[JsonDict]:
+    where = "WHERE ideas.project_id = ?" if project_id is not None else ""
+    params = (project_id,) if project_id is not None else ()
+    sql = (
+        "SELECT ideas.*, projects.name AS project_name "
+        "FROM ideas LEFT JOIN projects ON projects.id = ideas.project_id "
+        f"{where} "
+        "ORDER BY ideas.created_at DESC, ideas.id"
+    )
+    rows = conn.execute(sql, params).fetchall()
     return [idea_json(r) for r in rows]
 
 

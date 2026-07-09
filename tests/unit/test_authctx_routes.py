@@ -17,7 +17,6 @@ from fastapi.testclient import TestClient
 from planner.core.adapters.registry import build_adapters
 from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
-from planner.core.contracts import Project
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.sprints.data import create_item, create_sprint
@@ -60,7 +59,7 @@ def _ticket(db_path: Path) -> str:
 def _item(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
-        item = create_item(conn, title="Item.", project=Project.Vylo, clock=RealClock())
+        item = create_item(conn, title="Item.", project_id="project_vylo", clock=RealClock())
     finally:
         conn.close()
     return item.id
@@ -72,7 +71,7 @@ def _item_in_sprint(db_path: Path, sprint_id: str) -> str:
         item = create_item(
             conn,
             title="Sprint item.",
-            project=Project.Vylo,
+            project_id="project_vylo",
             sprint_id=sprint_id,
             clock=RealClock(),
         )
@@ -137,7 +136,7 @@ def test_patch_ticket_human_title_and_project_succeed(tmp_path: Path) -> None:
     assert project.status_code == 200, project.json()
     assert project.json()["project"] == "Vylo"
     assert _col(db_path, "tickets", tid, "title") == "Renamed by human"
-    assert _col(db_path, "tickets", tid, "project") == "Vylo"
+    assert _col(db_path, "tickets", tid, "project_id") == "project_vylo"
 
 
 def test_patch_ticket_agent_human_only_field_is_forbidden(tmp_path: Path) -> None:
@@ -152,7 +151,7 @@ def test_patch_ticket_agent_human_only_field_is_forbidden(tmp_path: Path) -> Non
             assert error["detail"]["field"] == field
     # Neither write landed: title/project untouched.
     assert _col(db_path, "tickets", tid, "title") == "Patch me."
-    assert _col(db_path, "tickets", tid, "project") is None
+    assert _col(db_path, "tickets", tid, "project_id") is None
 
 
 def test_patch_ticket_agent_permitted_fields_succeed(tmp_path: Path) -> None:
@@ -189,7 +188,7 @@ def test_patch_ticket_rejects_bad_field_types(tmp_path: Path) -> None:
     assert _col(db_path, "tickets", tid, "title") == "Patch me."
     assert _col(db_path, "tickets", tid, "priority") == "P3"
     assert _col(db_path, "tickets", tid, "deadline") is None
-    assert _col(db_path, "tickets", tid, "project") is None
+    assert _col(db_path, "tickets", tid, "project_id") is None
     assert _col(db_path, "tickets", tid, "sprint_id") is None
 
 
@@ -245,7 +244,7 @@ def test_patch_item_rejects_bad_field_types(tmp_path: Path) -> None:
     assert _col(db_path, "sprint_items", iid, "body") == ""
     assert _col(db_path, "sprint_items", iid, "priority") == "P3"
     assert _col(db_path, "sprint_items", iid, "deadline") is None
-    assert _col(db_path, "sprint_items", iid, "project") == "Vylo"
+    assert _col(db_path, "sprint_items", iid, "project_id") == "project_vylo"
     assert _col(db_path, "sprint_items", iid, "sprint_id") is None
     assert _col(db_path, "sprint_items", iid, "status") == "todo"
 
@@ -265,7 +264,7 @@ def test_item_ticket_routes_parent_and_unparent_existing_ticket(tmp_path: Path) 
 
     assert _col(db_path, "tickets", tid, "sprint_item_id") is None
     assert _col(db_path, "tickets", tid, "sprint_id") == sid
-    assert _col(db_path, "tickets", tid, "project") is None
+    assert _col(db_path, "tickets", tid, "project_id") is None
 
 
 def test_item_ticket_routes_are_human_only(tmp_path: Path) -> None:

@@ -5,31 +5,25 @@
   import {
     FIELD_NAMES,
     PRIORITIES,
-    PROJECTS,
-    STATE_ORDER,
-    advanceTarget,
     ceilingOptions,
-    fieldIsPassed,
+    fieldStageVisualState,
     fieldSlot,
-    gatingField
   } from "../lib/ui";
   import type {
     CurrentSprintResponse,
-    DayResponse,
     GatewayStatus,
+    ProjectsResponse,
     SprintsResponse,
-    TicketDetail,
-    TicketField
+    TicketDetail
   } from "../lib/types";
-  import ApprovalBlock from "../components/ApprovalBlock.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
   import Chip from "../components/Chip.svelte";
-  import CollapsibleField from "../components/CollapsibleField.svelte";
+  import ContentDisclosure from "../components/ContentDisclosure.svelte";
   import EnumPill from "../components/EnumPill.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
-  import ProposalCard from "../components/ProposalCard.svelte";
+  import TicketStageSection from "../components/TicketStageSection.svelte";
 
   let { id }: { id: string } = $props();
 
@@ -39,20 +33,26 @@
   const sprints = resource<SprintsResponse>("sprints", (signal) =>
     fetchJson("/api/sprints", { signal })
   );
+  const projects = resource<ProjectsResponse>("projects", (signal) =>
+    fetchJson("/api/projects", { signal })
+  );
   const chatStatus = resource<GatewayStatus>(`chat-status:${id}`, (signal) =>
     fetchJson(`/api/chat/${id}/status`, { signal })
   );
   const currentSprint = resource<CurrentSprintResponse>("sprint:current", (signal) =>
     fetchJson("/api/sprint/current", { signal })
   );
-  const today = resource<DayResponse>("day:today", (signal) =>
-    fetchJson("/api/day/today", { signal })
-  );
 
   const ticketInvalidations = [`ticket:${id}`, "board", "queues", "sprint:current"];
+  const emptyTicketFieldText = "Not written yet.";
+  const emptyTicketRecapText = "No recap yet.";
 
   let headerError = $state<unknown>(null);
   let copied = $state(false);
+  let projectOptions = $derived([
+    { value: "", label: "(no project)" },
+    ...(projects.data?.projects || []).map((project) => ({ value: project.id, label: project.name }))
+  ]);
 
   function patch(body: Record<string, unknown>): Promise<unknown> {
     return mutateJson(`/api/tickets/${id}`, { method: "PATCH", body }, ticketInvalidations);
@@ -130,7 +130,7 @@
   }
 
   function sprintLabel(sprintId: string | null | undefined): string {
-    if (!sprintId) return "(none)";
+    if (!sprintId) return "no sprint";
     if (sprintId === currentSprint.data?.sprint?.id) return "current";
     return sprints.data?.sprints?.find((sprint) => sprint.id === sprintId)?.name || sprintId;
   }
@@ -144,56 +144,12 @@
     return markers;
   }
 
-  function atOrBeyondCeiling(state: string, ceiling: string): boolean {
-    return STATE_ORDER.indexOf(state) >= STATE_ORDER.indexOf(ceiling);
-  }
-
-  function autoRunStatus(detail: TicketDetail): string {
-    const ticketStatus = detail.ticket_status || "empty";
-    if (ticketStatus === "agent_running_step") return "running";
-    if (ticketStatus === "awaiting_approval") return "awaiting-approval";
-    if (ticketStatus === "user_takeover") return "user-takeover";
-    if (ticketStatus === "errored") return "errored";
-    if (detail.state === "done" || detail.state === "dropped") return "terminal";
-    if (!today.data?.id) return "checking";
-    if (!(detail.day_ids || []).includes(today.data.id)) return "not-on-today";
-    if (detail.blocked) return "blocked";
-    const gating = gatingField(detail.state);
-    if (!gating) return "human-review";
-    if (fieldSlot(detail, gating).proposal) return "awaiting-approval";
-    if (atOrBeyondCeiling(detail.state, detail.ceiling) && detail.at_cap === "stop") {
-      return "stopped-at-limit";
-    }
-    return "eligible";
-  }
-
-  function autoRunLabel(status: string): string {
-    const labels: Record<string, string> = {
-      checking: "checking",
-      running: "running",
-      "awaiting-approval": "awaiting approval",
-      "user-takeover": "user takeover",
-      errored: "errored",
-      terminal: "terminal",
-      "not-on-today": "not on today",
-      blocked: "blocked",
-      "human-review": "human review",
-      "stopped-at-limit": "stopped at limit",
-      eligible: "eligible"
-    };
-    return labels[status] || status.replace(/-/g, " ");
-  }
-
-  function hasValue(slot: TicketField): boolean {
-    return slot.value !== null && slot.value !== undefined && String(slot.value).trim() !== "";
-  }
-
   onDestroy(() => {
     ticket.dispose();
     sprints.dispose();
+    projects.dispose();
     chatStatus.dispose();
     currentSprint.dispose();
-    today.dispose();
   });
 </script>
 
@@ -239,9 +195,9 @@
             </span>
             {#if detail.sprint_item_id === null || detail.sprint_item_id === undefined}
               <EnumPill
-                value={detail.project || ""}
-                options={[{ value: "", label: "(no project)" }, ...PROJECTS.map((project) => ({ value: project, label: project }))]}
-                onChange={(project) => void patch({ project: project || null })}
+                value={detail.project_id || ""}
+                options={projectOptions}
+                onChange={(project_id) => void patch({ project_id: project_id || null })}
               />
             {/if}
             {#if detail.sprint_item_id !== null && detail.sprint_item_id !== undefined}
@@ -259,9 +215,6 @@
             {/each}
             <span data-ticket-status={detail.ticket_status || "empty"}>
               <Chip variant="ticket-status" value={detail.ticket_status || "empty"} />
-            </span>
-            <span class="pill" data-auto-run-status={autoRunStatus(detail)}>
-              <span class="pill-key">auto</span> {autoRunLabel(autoRunStatus(detail))}
             </span>
             <button class="pill pill-button" type="button" data-ticket-takeover-toggle onclick={() => void takeover(detail)}>
               {detail.ticket_status === "user_takeover" ? "Release" : "Take over"}
@@ -295,9 +248,8 @@
 
         <div class="ticket-col">
           <div class="ticket-recap" data-recap>
-            <div class="ticket-block-label">Recap</div>
-            {#if ["needs_approach", "needs_plan", "in_progress", "needs_review", "done"].includes(detail.state)}
-              <div class="ticket-recap-body">
+            <ContentDisclosure title="Recap" tone="support" section="recap">
+              {#if ["needs_approach", "needs_plan", "in_progress", "needs_review", "done"].includes(detail.state)}
                 <InlineEdit
                   value={detail.recap}
                   markdown
@@ -310,101 +262,28 @@
                       ticketInvalidations
                     )}
                 />
-              </div>
-            {:else}
-              <MarkdownBlock text={detail.recap} />
-            {/if}
+              {:else}
+                <MarkdownBlock text={detail.recap} quiet={emptyTicketRecapText} />
+              {/if}
+            </ContentDisclosure>
           </div>
-
-          {#if gatingField(detail.state) && fieldSlot(detail, gatingField(detail.state) || "").proposal}
-            {@const gatingName = gatingField(detail.state) || ""}
-            {@const slot = fieldSlot(detail, gatingName)}
-            <ApprovalBlock
-              mode="gating-pending"
-              field={gatingName}
-              whatLabel={gatingName.replace(/_/g, " ")}
-              proposalBody={slot.proposal?.body || ""}
-              proposedBy={slot.proposal?.proposed_by || ""}
-              note={slot.notes}
-              newState={advanceTarget(detail.state, detail.ceiling)}
-              onApprove={(payload) => acceptField(gatingName, payload)}
-              onNoteSave={(raw) => saveNote(gatingName, raw)}
-            />
-          {:else if detail.state === "needs_review"}
-            {@const slot = fieldSlot(detail, "result")}
-            <ApprovalBlock
-              mode="needs_review"
-              field="result"
-              whatLabel="Result"
-              proposalBody={slot.value || ""}
-              note={slot.notes}
-              onApprove={() => approve()}
-              onValueSave={(raw) => saveValue("result", raw)}
-              onNoteSave={(raw) => saveNote("result", raw)}
-            />
-          {/if}
 
           <div class="fields">
             {#each FIELD_NAMES as name}
               {@const slot = fieldSlot(detail, name)}
-              {@const isDropped = detail.state === "dropped"}
-              {@const isGating = gatingField(detail.state) === name}
-              {@const passed = fieldIsPassed(name, detail.state)}
-              {@const hasProposal = Boolean(slot.proposal)}
-              {@const mark = isDropped ? (hasValue(slot) ? "✓" : "○") : isGating ? "●" : passed || hasValue(slot) ? "✓" : "○"}
-              <CollapsibleField {mark} {name} dataField={name}>
-                {#if isDropped}
-                  <MarkdownBlock text={slot.value} />
-                  {#if slot.proposal}
-                    <div class="ticket-field-proposal">
-                      <div class="proposal-meta">proposed by {slot.proposal.proposed_by}</div>
-                      <MarkdownBlock text={slot.proposal.body} />
-                    </div>
-                  {/if}
-                  <div class="note">
-                    <div class="note-head">Note</div>
-                    <div class="note-body"><InlineEdit value={slot.notes} markdown multiline placeholder="Note..." onSave={(raw) => saveNote(name, raw)} /></div>
-                  </div>
-                {:else if isGating}
-                  {#if hasProposal}
-                    <div class="ticket-field-mirror"><MarkdownBlock text={slot.proposal?.body} /></div>
-                  {:else}
-                    <MarkdownBlock text={slot.value} />
-                    <div class="note">
-                      <div class="note-head">Note</div>
-                      <div class="note-body"><InlineEdit value={slot.notes} markdown multiline placeholder="Note..." onSave={(raw) => saveNote(name, raw)} /></div>
-                    </div>
-                  {/if}
-                {:else if detail.state === "needs_review" && name === "result"}
-                  <MarkdownBlock text={slot.value} />
-                  {#if slot.proposal}
-                    <ProposalCard
-                      proposal={slot.proposal}
-                      newState={advanceTarget(detail.state, detail.ceiling)}
-                      onAccept={(payload) => acceptField(name, payload)}
-                    />
-                  {/if}
-                {:else}
-                  {#if slot.proposal}
-                    <ProposalCard
-                      proposal={slot.proposal}
-                      newState={advanceTarget(detail.state, detail.ceiling)}
-                      onAccept={(payload) => acceptField(name, payload)}
-                    />
-                    {#if hasValue(slot)}<MarkdownBlock text={slot.value} />{/if}
-                  {:else if passed && hasValue(slot)}
-                    <div class="ticket-field-value">
-                      <InlineEdit value={slot.value} markdown multiline placeholder="Value..." onSave={(raw) => saveValue(name, raw)} />
-                    </div>
-                  {:else}
-                    <MarkdownBlock text={slot.value} />
-                  {/if}
-                  <div class="note">
-                    <div class="note-head">Note</div>
-                    <div class="note-body"><InlineEdit value={slot.notes} markdown multiline placeholder="Note..." onSave={(raw) => saveNote(name, raw)} /></div>
-                  </div>
-                {/if}
-              </CollapsibleField>
+              {@const stageState = fieldStageVisualState(detail, name)}
+              <TicketStageSection
+                {name}
+                {slot}
+                {stageState}
+                ticketState={detail.state}
+                ceiling={detail.ceiling}
+                emptyText={emptyTicketFieldText}
+                onAccept={(payload) => acceptField(name, payload)}
+                onApproveResult={() => approve()}
+                onSaveNote={(raw) => saveNote(name, raw)}
+                onSaveValue={(raw) => saveValue(name, raw)}
+              />
             {/each}
           </div>
         </div>

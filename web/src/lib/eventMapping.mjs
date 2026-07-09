@@ -1,4 +1,4 @@
-const ENTITY_PREFIXES = new Set(["t", "si", "s", "day", "idea"]);
+const ENTITY_PREFIXES = new Set(["t", "si", "s", "day", "idea", "project"]);
 
 /**
  * @typedef {{id: number, entity_id: string, kind: string, payload: Record<string, unknown>, created_at: number}} PlannerEvent
@@ -52,7 +52,8 @@ function keysForEntity(entityId, options = {}) {
     }
     return keys;
   }
-  return ["ideas"];
+  if (prefix === "idea") return ["ideas"];
+  return ["projects"];
 }
 
 /**
@@ -66,6 +67,7 @@ function endpointEntityKeys(entityId) {
   if (prefix === "s") return [`sprint:${entityId}`];
   if (prefix === "day") return [`day:${suffixAfter(String(entityId), "day")}`];
   if (prefix === "idea") return ["ideas"];
+  if (prefix === "project") return ["projects"];
   throw new Error(`unknown entity_id prefix: ${String(entityId)}`);
 }
 

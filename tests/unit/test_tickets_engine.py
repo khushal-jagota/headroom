@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from planner.core.contracts import EventKind, Project
+from planner.core.contracts import EventKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import read_events_since
 from planner.tickets import data
@@ -593,8 +593,8 @@ def test_a13_sprint_assignment_rules(
     assert upd[-1].payload == {"field": "sprint_id", "from": None, "to": "sp_test"}
 
     tmp_db.execute(
-        "INSERT INTO sprint_items (id, title, project, sprint_id, created_at, updated_at) "
-        "VALUES ('si_test', 'Parent item', 'Vylo', 'sp_test', ?, ?)",
+        "INSERT INTO sprint_items (id, title, project_id, sprint_id, created_at, updated_at) "
+        "VALUES ('si_test', 'Parent item', 'project_vylo', 'sp_test', ?, ?)",
         (now, now),
     )
     parented = _create(tmp_db, cfg, fake_clock, sprint_item_id="si_test")
@@ -613,7 +613,7 @@ def test_x06_title_and_project_writers_log_events(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
-    ticket = _create(tmp_db, cfg, fake_clock, project=Project.Vylo)
+    ticket = _create(tmp_db, cfg, fake_clock, project_id="project_vylo")
 
     renamed = data.set_title(
         tmp_db,
@@ -622,15 +622,15 @@ def test_x06_title_and_project_writers_log_events(
         title_max_chars=TITLE_MAX_CHARS,
         now=now,
     )
-    updated = data.set_project(tmp_db, ticket.id, project=None, now=now)
+    updated = data.set_project(tmp_db, ticket.id, project_id=None, now=now)
 
     assert renamed.title == "Renamed ticket"
-    assert updated.project is None
+    assert updated.project_id is None
     assert [event.payload for event in _events(tmp_db, cfg, ticket.id, EventKind.ticket_updated)][
         -2:
     ] == [
         {"field": "title", "from": "Test ticket", "to": "Renamed ticket"},
-        {"field": "project", "from": "Vylo", "to": None},
+        {"field": "project_id", "from": "project_vylo", "to": None},
     ]
 
 
@@ -639,18 +639,18 @@ def test_x06_project_writer_preserves_parented_error_shape(
 ) -> None:
     now = fake_clock.now_unix()
     tmp_db.execute(
-        "INSERT INTO sprint_items (id, title, project, created_at, updated_at) "
-        "VALUES ('si_project_parent', 'Parent item', 'Vylo', ?, ?)",
+        "INSERT INTO sprint_items (id, title, project_id, created_at, updated_at) "
+        "VALUES ('si_project_parent', 'Parent item', 'project_vylo', ?, ?)",
         (now, now),
     )
     ticket = _create(tmp_db, cfg, fake_clock, sprint_item_id="si_project_parent")
 
     with pytest.raises(PlannerError) as exc:
-        data.set_project(tmp_db, ticket.id, project=Project.Vylo, now=now)
+        data.set_project(tmp_db, ticket.id, project_id="project_vylo", now=now)
 
     assert exc.value.code is ErrorCode.validation
     assert exc.value.message == "project is derived when parented"
-    assert data.read_ticket(tmp_db, ticket.id).project is None
+    assert data.read_ticket(tmp_db, ticket.id).project_id is None
     assert _events(tmp_db, cfg, ticket.id, EventKind.ticket_updated) == []
 
 

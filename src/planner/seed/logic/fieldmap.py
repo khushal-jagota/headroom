@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import re
 
-from planner.core.contracts import Priority, Project
+from planner.core.contracts import Priority
 from planner.seed.contracts import PRIORITY_MAP, PROJECT_MAP, URGENCY_MAP
 
 _PN_RE = re.compile(r"^(P[0-3]): (.*)$")
@@ -23,7 +23,7 @@ def resolve_priority(priority_raw: str | None, urgency_raw: str | None) -> Prior
     return Priority.P3
 
 
-def parse_project(raw: str | None) -> Project | None:
+def parse_project(raw: str | None) -> str | None:
     if raw is None:
         return None
     return PROJECT_MAP.get(raw.strip())

@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panels - Review Page Minimal Approval States</title>
+  <style>
+    @import url("../../../assets/tokens.css");
+
+    :root {
+      background: var(--surface-sunken, #141210);
+      color: var(--text-default, #dcd8cf);
+      font-family: var(--font-ui, system-ui, sans-serif);
+      font-size: var(--type-md, 15px);
+      line-height: 1.5;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--surface-sunken);
+      color: var(--text-default);
+      font-family: var(--font-ui);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* --- Presentation Header --- */
+    .deck-header {
+      background: var(--surface-base);
+      border-bottom: var(--border-hairline) solid var(--border-color);
+      padding: var(--space-4) var(--space-5);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: var(--space-4);
+      z-index: 10;
+    }
+
+    .deck-brand-block {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-1);
+    }
+
+    .deck-brand {
+      font-size: var(--type-xs);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--accent-bright);
+    }
+
+    .deck-title {
+      font-size: var(--type-md);
+      font-weight: 600;
+      color: var(--text-strong);
+      margin: 0;
+    }
+
+    .deck-desc {
+      font-size: var(--type-xs);
+      color: var(--text-muted);
+      max-width: 460px;
+      line-height: 1.4;
+      margin: var(--space-1) 0 0 0;
+    }
+
+    /* --- Variant Selector Tabs --- */
+    .deck-tabs {
+      display: flex;
+      background: var(--surface-sunken);
+      border-radius: var(--radius-md);
+      border: var(--border-hairline) solid var(--border-color);
+      padding: 4px;
+      gap: 2px;
+    }
+
+    .deck-tab {
+      background: transparent;
+      color: var(--text-muted);
+      border: none;
+      border-radius: var(--radius-sm);
+      padding: var(--space-2) var(--space-4);
+      font-size: var(--type-sm);
+      font-weight: 600;
+      cursor: pointer;
+      transition: all var(--motion-fast) var(--motion-ease);
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 2px;
+      text-align: left;
+    }
+
+    .deck-tab:hover {
+      color: var(--text-strong);
+      background: var(--surface-raised);
+    }
+
+    .deck-tab.active {
+      background: var(--surface-raised);
+      color: var(--accent-bright);
+      border: var(--border-hairline) solid var(--border-color);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+
+    .tab-num {
+      font-size: 9px;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-faintest);
+    }
+
+    .deck-tab.active .tab-num {
+      color: var(--accent-bright);
+    }
+
+    .tab-name {
+      font-size: var(--type-sm);
+    }
+
+    /* --- Preview Shell --- */
+    .preview-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      background: var(--surface-sunken);
+    }
+
+    .preview-meta {
+      background: var(--surface-base);
+      border-bottom: var(--border-hairline) solid var(--surface-sunken);
+      padding: var(--space-2) var(--space-5);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: var(--type-xs);
+      color: var(--text-faint);
+    }
+
+    .preview-url {
+      font-family: var(--font-mono);
+      color: var(--text-faintest);
+      background: var(--surface-sunken);
+      padding: 2px var(--space-3);
+      border-radius: var(--radius-pill);
+      border: var(--border-hairline) solid var(--border-color);
+    }
+
+    .btn-standalone {
+      color: var(--text-muted);
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: var(--space-1);
+      font-weight: 600;
+      transition: color var(--motion-fast) var(--motion-ease);
+    }
+
+    .btn-standalone:hover {
+      color: var(--text-strong);
+    }
+
+    .iframe-wrapper {
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      background: var(--surface-sunken);
+      position: relative;
+    }
+
+    iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: var(--surface-base);
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header class="deck-header">
+    <div class="deck-brand-block">
+      <span class="deck-brand">Panels Review UX</span>
+      <h1 class="deck-title">Round 3: Minimal Present-Approval States</h1>
+      <p class="deck-desc" id="variant-desc">
+        Select a proposal variant below to see how it simplifies and declutters the decision surface.
+      </p>
+    </div>
+
+    <!-- Tabs selector -->
+    <div class="deck-tabs">
+      <button class="deck-tab active" onclick="selectVariant(1, 'variant-1.html')" id="tab-1">
+        <span class="tab-num">Pass 01</span>
+        <span class="tab-name">Flat Document</span>
+      </button>
+      <button class="deck-tab" onclick="selectVariant(2, 'variant-2.html')" id="tab-2">
+        <span class="tab-num">Pass 02</span>
+        <span class="tab-name">Focused Surface</span>
+      </button>
+      <button class="deck-tab" onclick="selectVariant(3, 'variant-3.html')" id="tab-3">
+        <span class="tab-num">Pass 03</span>
+        <span class="tab-name">Payload First</span>
+      </button>
+      <button class="deck-tab" onclick="selectVariant(4, 'selected-direction.html')" id="tab-4">
+        <span class="tab-num">Selected</span>
+        <span class="tab-name">Selected Direction</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Live Preview -->
+  <main class="preview-container">
+    <div class="preview-meta">
+      <span id="preview-filename">variant-1.html</span>
+      <span class="preview-url" id="preview-url-box">orchestration/review-redesign/present-state-minimal-options/variant-1.html</span>
+      <a href="variant-1.html" target="_blank" class="btn-standalone" id="btn-standalone">
+        <span>Open standalone</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+          <polyline points="15 3 21 3 21 9"></polyline>
+          <line x1="10" y1="14" x2="21" y2="3"></line>
+        </svg>
+      </a>
+    </div>
+
+    <div class="iframe-wrapper">
+      <iframe src="variant-1.html" id="preview-frame"></iframe>
+    </div>
+  </main>
+
+  <script>
+    const descriptions = {
+      1: "Elegantly flat document layout: clean typography, inline prose flow, and no card boundaries. Elements flow naturally down the page, establishing context and decision boundaries purely via type scale and spacing.",
+      2: "A cohesive, raised surface: nests the title, recap, proposal, notes, and actions inside a single, dedicated raised card with soft borders and inset styling for the proposal content block.",
+      3: "Maximum focal emphasis on the proposal: strips down spacing and font sizes of headers and notes, applying a prominent left border highlight to the proposal content to immediately command the reviewer's attention.",
+      4: "Selected Direction: Blends Variant 01's flat document flow with a recessed/sunken proposal container, no horizontal divider line, and a split action layout featuring a compact approval control placeholder on the right."
+    };
+
+    function selectVariant(num, filename) {
+      document.querySelectorAll('.deck-tab').forEach(tab => tab.classList.remove('active'));
+      document.getElementById(`tab-${num}`).classList.add('active');
+
+      document.getElementById('preview-frame').src = filename;
+      document.getElementById('preview-filename').textContent = filename;
+      document.getElementById('preview-url-box').textContent = `orchestration/review-redesign/present-state-minimal-options/${filename}`;
+      document.getElementById('btn-standalone').href = filename;
+      document.getElementById('variant-desc').textContent = descriptions[num];
+    }
+
+    // Set initial description
+    document.getElementById('variant-desc').textContent = descriptions[1];
+  </script>
+</body>
+</html>

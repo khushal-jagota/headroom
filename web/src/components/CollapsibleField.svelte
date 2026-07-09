@@ -1,24 +1,29 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import type { FieldStageVisualState } from "../lib/ui";
 
   let {
-    mark,
+    stageState,
     name,
     dataField = name,
+    defaultOpen = false,
     children
-  }: { mark: string; name: string; dataField?: string; children?: Snippet } = $props();
-
-  const kindByMark: Record<string, string> = {
-    "✓": "done",
-    "●": "now",
-    "○": "todo"
-  };
-  let kind = $derived(kindByMark[mark] || "");
+  }: {
+    stageState: FieldStageVisualState;
+    name: string;
+    dataField?: string;
+    defaultOpen?: boolean;
+    children?: Snippet;
+  } = $props();
 </script>
 
-<details class="fsec" data-field={dataField}>
+<details class="fsec" data-field={dataField} data-stage-state={stageState} open={defaultOpen}>
   <summary>
-    <span class={`fsec-mark${kind ? ` fsec-mark--${kind}` : ""}`}>{mark}</span>
+    <span
+      class={`fsec-mark fsec-mark--${stageState}`}
+      role="img"
+      aria-label={stageState.replace(/-/g, " ")}
+    ></span>
     <span class="fsec-name">{name}</span>
     <span class="fsec-chev"></span>
   </summary>

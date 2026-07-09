@@ -90,6 +90,11 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert _count(tmp_db, "ideas") == 3
     assert _count(tmp_db, "links") == 1
     assert _count(tmp_db, "events") == 18
+    default_projects = _rows_by(tmp_db, "SELECT id, name FROM projects", "id")
+    assert default_projects["project_vylo"]["name"] == "Vylo"
+    assert default_projects["project_tribe"]["name"] == "Tribe"
+    assert default_projects["project_learning"]["name"] == "Learning"
+    assert default_projects["project_other"]["name"] == "Other"
 
     # (3) sprint row spot-check.
     sprint = tmp_db.execute(
@@ -107,8 +112,12 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     # (4) item status/priority/project/body mappings.
     items = _rows_by(
         tmp_db,
-        "SELECT id, title, status, priority, project, sprint_id, deadline, body, blocked_by "
-        "FROM sprint_items WHERE sprint_id IS NOT NULL",
+        "SELECT sprint_items.id, sprint_items.title, sprint_items.status, "
+        "sprint_items.priority, sprint_items.project_id, projects.name AS project, "
+        "sprint_items.sprint_id, sprint_items.deadline, sprint_items.body, "
+        "sprint_items.blocked_by "
+        "FROM sprint_items JOIN projects ON projects.id = sprint_items.project_id "
+        "WHERE sprint_items.sprint_id IS NOT NULL",
         "title",
     )
     expected = {
@@ -135,8 +144,11 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     # (5) ticket Readiness mappings by alias.
     tickets = _rows_by(
         tmp_db,
-        "SELECT id, alias, state, priority, chat_session_key, sprint_item_id, sprint_id, "
-        "project, recap, ceiling, at_cap, deadline, fields FROM tickets",
+        "SELECT tickets.id, tickets.alias, tickets.state, tickets.priority, "
+        "tickets.chat_session_key, tickets.sprint_item_id, tickets.sprint_id, "
+        "tickets.project_id, projects.name AS project, tickets.recap, tickets.ceiling, "
+        "tickets.at_cap, tickets.deadline, tickets.fields "
+        "FROM tickets LEFT JOIN projects ON projects.id = tickets.project_id",
         "alias",
     )
     assert tickets["ticket-20260611-onboarding-survey"]["state"] == "needs_success"
@@ -199,6 +211,7 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     item_id = items["Build the import pipeline."]["id"]
     pipeline_row = tickets["ticket-20260611-import-pipeline"]
     assert pipeline_row["sprint_item_id"] == item_id
+    assert pipeline_row["project_id"] is None
     assert pipeline_row["project"] is None
     assert pipeline_row["sprint_id"] is None
     link = tmp_db.execute("SELECT from_id, to_id, kind FROM links").fetchone()
@@ -216,8 +229,11 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     # (10) deferred items.
     deferred = _rows_by(
         tmp_db,
-        "SELECT title, status, priority, project, sprint_id, deadline, body "
-        "FROM sprint_items WHERE sprint_id IS NULL",
+        "SELECT sprint_items.title, sprint_items.status, sprint_items.priority, "
+        "sprint_items.project_id, projects.name AS project, sprint_items.sprint_id, "
+        "sprint_items.deadline, sprint_items.body "
+        "FROM sprint_items JOIN projects ON projects.id = sprint_items.project_id "
+        "WHERE sprint_items.sprint_id IS NULL",
         "title",
     )
     assert len(deferred) == 3
@@ -238,7 +254,12 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
         assert row["deadline"] is None
 
     # (11) ideas.
-    ideas = _rows_by(tmp_db, "SELECT title, project, body FROM ideas", "title")
+    ideas = _rows_by(
+        tmp_db,
+        "SELECT ideas.title, ideas.project_id, projects.name AS project, ideas.body "
+        "FROM ideas LEFT JOIN projects ON projects.id = ideas.project_id",
+        "title",
+    )
     assert ideas["Voice memo inbox for quick capture."]["project"] == "Vylo"
     assert ideas["Voice memo inbox for quick capture."]["body"] == (
         "- Transcribe on arrival and file into the day note."

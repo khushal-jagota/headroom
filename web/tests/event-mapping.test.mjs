@@ -23,6 +23,7 @@ const FALLBACK_KINDS = [
   "item_status_changed",
   "day_ticket_added",
   "ticket_status_changed",
+  "project_created",
   "link_added",
   "link_removed",
   "chat_session_created"
@@ -45,6 +46,9 @@ function sampleEvent(kind) {
   }
   if (kind === "idea_created") {
     return { id: 1, entity_id: "idea_demo", kind, payload: {}, created_at: 1 };
+  }
+  if (kind === "project_created") {
+    return { id: 1, entity_id: "project_demo", kind, payload: {}, created_at: 1 };
   }
   if (kind.startsWith("day_") || kind === "day_created") {
     return {
@@ -86,6 +90,17 @@ assert.throws(
       created_at: 1
     }),
   /unknown entity_id prefix/
+);
+
+assert.deepEqual(
+  keysForEvent({
+    id: 1,
+    entity_id: "project_alpha_one",
+    kind: "project_created",
+    payload: {},
+    created_at: 1
+  }),
+  ["projects"]
 );
 
 assert.deepEqual(

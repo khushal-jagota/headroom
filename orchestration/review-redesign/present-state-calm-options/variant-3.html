@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panels Review - Payload First</title>
+  <style>
+    @import url("../../../assets/tokens.css");
+
+    :root {
+      background: var(--surface-base, #1b1917);
+      color: var(--text-default, #dcd8cf);
+      font-family: var(--font-ui, system-ui, sans-serif);
+      font-size: var(--type-md, 15px);
+      line-height: 1.5;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--surface-base);
+      color: var(--text-default);
+      font-family: var(--font-ui);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: var(--space-6) var(--space-4);
+    }
+
+    .payload-screen {
+      width: 100%;
+      max-width: 580px;
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-4);
+    }
+
+    /* Small, extremely quiet header */
+    .payload-meta {
+      font-family: var(--font-mono);
+      font-size: var(--type-xs);
+      color: var(--text-faint);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .meta-info {
+      color: var(--text-faintest);
+    }
+
+    /* The visual center: Big, direct, editable text of the proposal */
+    .payload-text {
+      font-size: var(--type-lg);
+      line-height: 1.6;
+      color: var(--text-strong);
+      outline: none;
+      white-space: pre-wrap;
+      padding: var(--space-2) 0;
+      letter-spacing: -0.01em;
+      border-left: 2px solid var(--accent-bright);
+      padding-left: var(--space-4);
+    }
+
+    /* Compact Controls Tucked Beneath */
+    .tucked-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-3);
+      flex-wrap: wrap;
+      margin-top: var(--space-3);
+    }
+
+    .btn-group {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+    }
+
+    /* Simple minimal buttons */
+    .btn {
+      font-size: var(--type-sm);
+      font-weight: 600;
+      border-radius: var(--radius-sm);
+      padding: var(--space-2) var(--space-4);
+      cursor: pointer;
+      border: none;
+      transition: all var(--motion-fast) var(--motion-ease);
+    }
+
+    .btn-approve {
+      background: var(--accent-bright);
+      color: var(--accent-ink);
+    }
+
+    .btn-approve:hover {
+      filter: brightness(1.1);
+    }
+
+    .btn-skip {
+      background: transparent;
+      color: var(--text-muted);
+    }
+
+    .btn-skip:hover {
+      color: var(--text-strong);
+      background: var(--surface-raised);
+    }
+
+    /* Minimal Scope Selector */
+    .minimal-scope {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      font-size: var(--type-xs);
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .scope-select {
+      background: transparent;
+      color: var(--accent-bright);
+      border: none;
+      font-family: inherit;
+      font-size: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      outline: none;
+      padding: 0 var(--space-1);
+    }
+
+    .scope-select:focus {
+      text-decoration: underline;
+    }
+
+    .scope-toggle {
+      color: var(--text-faint);
+      cursor: pointer;
+      transition: color var(--motion-fast) var(--motion-ease);
+      font-weight: 600;
+    }
+
+    .scope-toggle:hover {
+      color: var(--text-muted);
+    }
+
+    /* Quiet context disclosure */
+    .context-disclosure {
+      margin-top: var(--space-4);
+      border-top: var(--border-hairline) solid var(--border-color);
+      padding-top: var(--space-4);
+    }
+
+    .context-toggle {
+      background: none;
+      border: none;
+      font-family: var(--font-mono);
+      font-size: var(--type-xs);
+      color: var(--text-faintest);
+      cursor: pointer;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      gap: var(--space-1);
+      transition: color var(--motion-fast) var(--motion-ease);
+    }
+
+    .context-toggle:hover {
+      color: var(--text-faint);
+    }
+
+    .context-content {
+      display: none;
+      margin-top: var(--space-3);
+      font-size: var(--type-sm);
+      color: var(--text-faint);
+      line-height: 1.5;
+      animation: fadeIn var(--motion-base) var(--motion-ease);
+    }
+
+    .context-content p {
+      margin: 0 0 var(--space-2) 0;
+    }
+
+    /* Success Toast */
+    .toast {
+      display: none;
+      background: var(--surface-raised);
+      border-left: 3px solid var(--accent-done);
+      padding: var(--space-4);
+      font-size: var(--type-sm);
+      color: var(--text-strong);
+      align-items: center;
+      gap: var(--space-3);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      animation: slideIn var(--motion-base) var(--motion-ease);
+    }
+
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(-5px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    .settled {
+      opacity: 0.35;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="payload-screen">
+    <!-- Success Banner -->
+    <div class="toast" id="success-toast">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-done)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="20 6 9 17 4 12"></polyline>
+      </svg>
+      <div>
+        <span>Authorized employee to <span id="final-scope" style="color: var(--accent-bright); font-weight: 600;">needs plan then stop</span>.</span>
+      </div>
+    </div>
+
+    <!-- Active Review Block -->
+    <div class="payload-screen" id="review-content">
+      <!-- Minimal metadata -->
+      <div class="payload-meta">
+        <span>TKT-108</span>
+        <span class="meta-info">Alice's proposed approach</span>
+      </div>
+
+      <!-- Proposal Payload First -->
+      <div class="payload-text" contenteditable="true">Use a single SharedWorker to manage the EventSource connection and broadcast events to all active tabs via BroadcastChannel.
+
+If SharedWorker is not supported in the user's browser (e.g., Safari), fall back gracefully to a standard EventSource per-tab, but implement an aggressive 30-second idle disconnect.</div>
+
+      <!-- Tucked controls -->
+      <div class="tucked-controls">
+        <div class="btn-group">
+          <button class="btn btn-approve" id="approve-btn">Approve</button>
+          <button class="btn btn-skip" id="skip-btn">Skip</button>
+        </div>
+
+        <div class="minimal-scope">
+          <span>authorized to:</span>
+          <select class="scope-select" id="scope-select">
+            <option value="needs_approach">needs approach</option>
+            <option value="needs_plan" selected>needs plan</option>
+            <option value="in_progress">in progress</option>
+            <option value="needs_review">needs review</option>
+            <option value="done">done</option>
+          </select>
+          <span class="scope-toggle" id="scope-cap" onclick="toggleCap()">then stop</span>
+        </div>
+      </div>
+
+      <!-- Quiet collapsed context disclosure -->
+      <div class="context-disclosure">
+        <button class="context-toggle" id="toggle-btn" onclick="toggleContext()">
+          <span id="toggle-arrow">▶</span> SHOW CONTEXT
+        </button>
+        <div class="context-content" id="context-content">
+          <p><strong>Recap:</strong> Tokenizer initialization is complete. SQLite load verification showed long polling is too heavy. SSE chosen as transport.</p>
+          <p style="margin-bottom: 0;"><strong>Worker Note:</strong> Ensure client disconnects on tab hide or route disposal.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let capMode = 'stop';
+
+    function toggleCap() {
+      const capText = document.getElementById('scope-cap');
+      if (capMode === 'stop') {
+        capMode = 'propose';
+        capText.textContent = 'then propose';
+      } else {
+        capMode = 'stop';
+        capText.textContent = 'then stop';
+      }
+    }
+
+    function toggleContext() {
+      const content = document.getElementById('context-content');
+      const arrow = document.getElementById('toggle-arrow');
+      if (content.style.display === 'block') {
+        content.style.display = 'none';
+        arrow.textContent = '▶';
+      } else {
+        content.style.display = 'block';
+        arrow.textContent = '▼';
+      }
+    }
+
+    const approveBtn = document.getElementById('approve-btn');
+    const skipBtn = document.getElementById('skip-btn');
+    const successToast = document.getElementById('success-toast');
+    const reviewContent = document.getElementById('review-content');
+    const scopeSelect = document.getElementById('scope-select');
+    const finalScope = document.getElementById('final-scope');
+
+    approveBtn.addEventListener('click', () => {
+      const ceiling = scopeSelect.options[scopeSelect.selectedIndex].text;
+      finalScope.textContent = `${ceiling} and then ${capMode}`;
+      successToast.style.display = 'flex';
+      reviewContent.classList.add('settled');
+    });
+
+    skipBtn.addEventListener('click', () => {
+      reviewContent.classList.add('settled');
+    });
+  </script>
+</body>
+</html>

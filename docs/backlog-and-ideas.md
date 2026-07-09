@@ -14,13 +14,15 @@ the priority on the line, because the group it sits in already says that. To add
 something, a faint "+ New backlog item" sits at the top, closed and out of the way
 until you click it, then opens a small form (title, project, priority, an optional
 deadline, an optional description) with a plain "Add to backlog" button. A new item
-shows up in its group a moment after you add it.
+shows up in its group a moment after you add it. The project selector is loaded from
+the projects catalog, so new projects appear without a code change.
 
 ## Ideas
 
 The opposite: its whole job is to catch a thought before you lose it, so the box to
 write one is always open at the very top and is the biggest thing on the page. Type a
 title and press Enter and it is saved; a longer note and a project are optional.
+The project list is the same data-backed catalog used by backlog items and tickets.
 Below, the ideas are listed newest first. An idea with no note is just a line; one
 with a note gets a small arrow you can click to open and read it. A light date on the
 right — "2d", or "Jul 1" for older ones — tells you roughly when it was captured.
@@ -35,6 +37,7 @@ ideas are their own list (`src/planner/`).
   capture is not wired there.
 - **Sprints** (`sprints.md`) — a backlog item becomes a sprint item once it's placed
   in a sprint.
+- **Projects** (`projects.md`) — where the project list comes from.
 
 ## Deferred
 

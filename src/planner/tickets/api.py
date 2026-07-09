@@ -33,9 +33,10 @@ from planner.core.authctx import (
 )
 from planner.core.clock import Clock
 from planner.core.config import Config
-from planner.core.contracts import JsonDict, LinkKind, Priority, Project
+from planner.core.contracts import JsonDict, LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import planning_date, resolve_day_id
+from planner.projects import data as projects_data
 from planner.runtime.system_a import SystemA
 from planner.sprints import views as sprints_views
 from planner.tickets import data as tickets_data
@@ -63,7 +64,7 @@ router = APIRouter()
 
 # §8: agents drive priority/deadline/day/sprint via `ticket set`; title and project are
 # human-only, so an agent-classified PATCH touching them is agent_forbidden (§14).
-_TICKET_HUMAN_ONLY_FIELDS = ("title", "project")
+_TICKET_HUMAN_ONLY_FIELDS = ("title", "project", "project_id")
 
 
 # --- shared plumbing (imported by the other api modules) -----------------------
@@ -156,6 +157,7 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         priority=body_opt_str(raw, "priority"),
         deadline=body_opt_str(raw, "deadline"),
         project=body_opt_str(raw, "project"),
+        project_id=body_opt_str(raw, "project_id"),
         sprint_id=body_opt_str(raw, "sprint_id"),
         sprint_item_id=body_opt_str(raw, "sprint_item_id"),
     )
@@ -204,15 +206,18 @@ async def create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
     now = clk.now_unix()
     priority = parse_enum(Priority, body["priority"], "priority") \
         if body["priority"] is not None else Priority.P3
-    project = parse_enum(Project, body["project"], "project") \
-        if body["project"] is not None else None
+    project = projects_data.resolve_project(
+        conn,
+        project_id=body["project_id"],
+        project_name=body["project"],
+    )
     ticket = tickets_data.create_ticket(
         conn,
         title=body["title"],
         actor=ctx.actor,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
-        project=project,
+        project_id=project.id if project is not None else None,
         priority=priority,
         deadline=body["deadline"],
         sprint_id=body["sprint_id"],
@@ -224,10 +229,13 @@ async def create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
 
 @router.get("/tickets")
 async def list_tickets(conn: DbConn, cfg: Cfg, clk: Clk, state: str | None = None,
-                       project: str | None = None, sprint_id: str | None = None,
+                       project: str | None = None, project_id: str | None = None,
+                       sprint_id: str | None = None,
                        sprint_item_id: str | None = None, day: str | None = None) -> JsonDict:
     state_enum = parse_enum(TicketState, state, "state") if state is not None else None
-    project_enum = parse_enum(Project, project, "project") if project is not None else None
+    resolved_project = projects_data.resolve_project(
+        conn, project_id=project_id, project_name=project
+    )
     # `day` ('today' | ISO) scopes the list to one day's board via the day_tickets join.
     day_id = resolve_day_id(day, clk.now(), cfg.boundary_hour) if day is not None else None
     return {
@@ -235,7 +243,7 @@ async def list_tickets(conn: DbConn, cfg: Cfg, clk: Clk, state: str | None = Non
             conn,
             clk.now_unix(),
             state=state_enum,
-            project=project_enum,
+            project_id=resolved_project.id if resolved_project is not None else None,
             sprint_id=sprint_id,
             sprint_item_id=sprint_item_id,
             day_id=day_id,
@@ -258,7 +266,7 @@ async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk) -> JsonDict:
 @router.patch("/tickets/{ticket_id}")
 async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
                        cfg: Cfg, clk: Clk) -> JsonDict:
-    recognized = ("title", "priority", "deadline", "project", "sprint_id")
+    recognized = ("title", "priority", "deadline", "project", "project_id", "sprint_id")
     for key in body:
         if key not in recognized:
             raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": key})
@@ -282,10 +290,15 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
         tickets_data.set_deadline(
             conn, ticket_id, deadline=deadline, actor=ctx.actor, now=now
         )
-    if "project" in body:
+    if "project" in body or "project_id" in body:
         project_raw = body_opt_str(body, "project")
-        project = parse_enum(Project, project_raw, "project") if project_raw is not None else None
-        tickets_data.set_project(conn, ticket_id, project=project, now=now)
+        project_id_raw = body_opt_str(body, "project_id")
+        project = projects_data.resolve_project(
+            conn, project_id=project_id_raw, project_name=project_raw
+        )
+        tickets_data.set_project(
+            conn, ticket_id, project_id=project.id if project is not None else None, now=now
+        )
     if "sprint_id" in body:
         sprint_id = body_opt_str(body, "sprint_id")
         tickets_data.set_sprint(
