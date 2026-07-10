@@ -25,7 +25,10 @@ Artifacts complement the ticket record. Success, approach, plan, implementation,
 
 ## Rollover
 
-When a day finishes, it rolls up into the sprint, and a new day is planned.
+The `panels-rollover` skill carries the plan across the 5am boundary. It drafts the
+new day's likely overview and records only obvious carryover candidates pending review.
+It does not put tickets on today until the user agrees; broad sprint reprioritization
+stays in sprint planning.
 
 ## The CLI
 

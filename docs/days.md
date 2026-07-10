@@ -8,14 +8,12 @@ belongs to the day it felt like.
 ```
    5am — the boundary
    ──────────────────
-   close yesterday      count what got done, note what didn't
+   read yesterday       count what got done, note what didn't
         │
-   carry forward        unfinished work becomes today's raw material
-        │
-   future rollover      may draft the overview
-        │               (not wired yet)
+   draft kickoff        write the likely four-field overview
+        │               note obvious carryover pending review
         ▼
-   you read or edit the day's four fields
+   you review           tickets move onto today only after agreement
 ```
 
 ## How a day flows
@@ -23,8 +21,14 @@ belongs to the day it felt like.
 The current Day page is an overview, not a dashboard. It does not show the plan tree,
 today's ticket list, the Review queue, or chat. Each field saves independently when
 you edit it, and a refresh restores the same values from the server. Crossing the
-5am boundary creates the new day record, but it stays empty until a human or a future
-rollover worker writes it.
+5am boundary creates the new day record.
+
+The repo-owned `panels-rollover` role skill prepares the kickoff when the user starts
+rollover or a thin scheduled check finds it missing. An automatic run writes the likely
+four-field overview and records only obvious carryover candidates pending review; it
+never adds tickets to today before the user agrees. The morning check drafts if missing.
+The afternoon check is only a failsafe: it drafts if still missing and otherwise does
+nothing. Broad reprioritization remains sprint-planning work.
 
 ## Quick capture
 
@@ -43,10 +47,10 @@ _Code paths:_ `src/planner/days/` (the day record and 5am planning date),
 
 ## Deferred
 
-- **Automatic rollover writing isn't wired yet.** A new planning date can be
-  materialized, but no worker writes the next day's overview. Trigger: the
-  boundary-rebuild work lands. See `employee-runtime.md`.
+- **The app does not schedule rollover itself.** The repository owns and provisions the
+  rollover role skill, which expects thin morning and afternoon prompts outside the
+  deterministic server runtime. See `employee-runtime.md`.
 
 ---
 
-_Last verified: 2026-07-08._
+_Last verified: 2026-07-10._

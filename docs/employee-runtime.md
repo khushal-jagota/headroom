@@ -106,11 +106,13 @@ The runtime now points at the **`panels-worker`** role skill, and the CLI entry 
 workers use is **`panels`**. By default, a server uses the `hermes-home` directory
 beside its configured planning database, resolved to an absolute path before the
 gateways start. An explicit `PLAN_HERMES_HOME` overrides that location. On startup
-the server links only this repo's `panels`, `panels-worker`, and
-`panels-chief-of-staff` role skills into the selected home. It does not copy or link
-credentials, provider configuration, or global Hermes state; those remain
-configuration owned by the selected home. Ticket chat has been smoked against a
-non-test server and reached the real Hermes worker.
+the server links only this repo's `panels`, `panels-worker`,
+`panels-chief-of-staff`, and `panels-rollover` skills into the selected home. The
+rollover skill is an operating role for manual or thin scheduled prompts, not a
+deterministic server rollover engine. It does not copy or link credentials, provider
+configuration, or global Hermes state; those remain configuration owned by the
+selected home. Ticket chat has been smoked against a non-test server and reached the
+real Hermes worker.
 
 The full live worker loop has also been smoked against fresh non-test databases.
 A ticket placed on today was discovered by TicketReadinessLoop, run by
@@ -143,9 +145,9 @@ today now rings the readiness doorbell without a follow-up scope edit. The ticke
 
 - **No recovery from a failed run.** An errored ticket is stuck — there is no retry
   or clear. Trigger: recovery is designed and built.
-- **Automatic daily rollover writing isn't wired.** The morning boundary materializes
-  days, but no worker writes the overview yet. Trigger: the boundary-rebuild work
-  lands. See `days.md`.
+- **Rollover scheduling stays outside the employee runtime.** The server provisions the
+  role skill, which is designed for thin morning and afternoon Hermes jobs. Trigger:
+  the product decides that Panels itself should own the schedule. See `days.md`.
 - **Chat is not queued behind an active worker step.** If you talk to the same
   employee while its worker step is already running, the send is rejected as
   `already_running`; history remains readable. The UI still shows thinking dots,

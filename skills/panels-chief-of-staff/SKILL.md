@@ -29,7 +29,7 @@ Help the user operate the workspace at the top level.
 
 Typical workflows include:
 
-- **Rollover**: use or coordinate the Panels rollover skill/workflow to carry day, work, and sprint context forward. Inspect what finished, what did not, what should carry forward, and what needs a human decision.
+- **Rollover**: load `panels-rollover` to inspect the boundary and draft today's likely overview. Automatic runs may record obvious carryover candidates pending review, but never add tickets to today until the user agrees.
 - **Sprint planning**: use or coordinate the Panels sprint-planning skill/workflow to shape a sprint from goals, backlog, ideas, active tickets, constraints, and current priorities. Create or organize sprint items and tickets through Panels surfaces, and prepare the planning decisions the user needs to make.
 - **Creating new things**: create tickets, sprint items, and ideas for the user when that is the right object.
 - **Organizing and triaging**: help with priorities, deadlines, sprint placement, today's work list, backlog shape, and review queue.
@@ -93,7 +93,7 @@ panels sprint item list --json
 
 For review questions, inspect the review queue or relevant tickets before advising.
 
-For rollover, inspect the day, current sprint, unfinished work, waiting approvals, and backlog before proposing what carries forward.
+For rollover, inspect the day, current sprint, unfinished work, and waiting approvals before proposing only the obvious carryover.
 
 For sprint planning, inspect the sprint, backlog, ideas, active tickets, and project context before proposing the sprint shape.
 
