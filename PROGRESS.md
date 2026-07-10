@@ -52,10 +52,19 @@ orchestration/ui-redesign/ holds PLAN.md + t_ui01..t_ui06 (Codex spec review don
 folded in, committed at 097d4ec). Design-review screenshot harness works end to end
 (orchestration/ui-redesign/design-review/shoot.py: temp server + CLI/API seeding incl. a pending
 plan proposal + Playwright captures of app and mockups — gotcha: never pre-set scope before
-proposing, proposals inside the ceiling auto-resolve). Wave 1 (t_ui01 foundations/shell) is
-dispatched to the persistent Opus implementer (agent: ui-implementer). Pipeline per wave: Codex
+proposing, proposals inside the ceiling auto-resolve). Pipeline per wave: Codex
 code review (xhigh for t_ui02/03) + design review vs mockups + orchestrator-only serial
-./verify + one commit per green wave.
+./verify + one commit per green wave. Owner ruling mid-wave-1 (D89): the UI is the spec, tests
+follow — PLAN ground rule 2 rewritten. Wave 1 (t_ui01) LANDED: Codex clean, design review
+FAITHFUL 6/6, verify PASS, committed d4e81ae (one verify retry: my shoot.py tripped ruff E501,
+wrapped lines). Wave 2 (t_ui02 ticket document) dispatched to ui-implementer with the D89
+ruling and wave-1 lessons. Wave 2 (t_ui02) implemented and reported (3 test translations, none
+weakened; ask depth scoped to the ticket screen; chat bodies serif globally); Codex xhigh +
+design review running. Design pass additions: embeds mockup previews.html rev 2 (D90/D91 — one
+container + bar for every kind incl. images; downloads = bar only). FOLLOW-UPS QUEUED by the
+owner, not yet scoped: (1) embeds implementation (after mockup approval; overlaps preview CSS —
+slot between UI waves); (2) a PERF pass ("perf, that's a follow up now as well" — scope TBD with
+the owner when picked up).
 
 ## Current work cycle (2026-07-10): Approved architecture deepening 1–3
 

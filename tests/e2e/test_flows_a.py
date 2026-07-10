@@ -394,7 +394,7 @@ def test_e26_chat_panel_echo_and_offline(
         'section[data-screen="ticket"] [data-chat] [data-chat-input]',
         settled=True,
     )
-    assert pending_page.text_content('[data-ticket-status="empty"]') == "status empty"
+    assert pending_page.inner_text('[data-ticket-status="empty"]').strip() == "empty"
     pending_page.fill("[data-chat] [data-chat-input]", "hold before first token")
     pending_page.click("[data-chat] [data-chat-send]")
     pending_page.wait_for_selector("[data-chat] [data-chat-pending]", timeout=WAIT_MS)
@@ -844,6 +844,11 @@ def test_ticket_user_note_renders_as_own_intake_block(server, context_factory, o
         f'section[data-screen="ticket"][data-ticket-id="{tid}"] [data-user-note]',
         settled=True,
     )
+    # The user note now lives in the stage spine, collapsed by default; open it before
+    # reading or editing its body.
+    assert page.locator("[data-user-note] details[open]").count() == 0
+    page.click("[data-user-note] .disclosure-summary")
+    page.wait_for_selector("[data-user-note] details[open]", timeout=WAIT_MS)
     assert "Preserve this intake boundary." in page.inner_text("[data-user-note]")
     assert page.query_selector("[data-user-note] [data-markdown-inline-edit]") is not None
     user_note_editor = page.locator("[data-user-note] [data-markdown-inline-edit]")
@@ -874,6 +879,8 @@ def test_ticket_user_note_renders_as_own_intake_block(server, context_factory, o
         f'section[data-screen="ticket"][data-ticket-id="{empty_tid}"] [data-user-note]',
         settled=True,
     )
+    empty_page.click("[data-user-note] .disclosure-summary")
+    empty_page.wait_for_selector("[data-user-note] details[open]", timeout=WAIT_MS)
     assert "No user note yet." not in empty_page.inner_text("[data-user-note]")
     assert (
         empty_page.get_attribute("[data-user-note] [data-markdown-inline-edit]", "data-ph")

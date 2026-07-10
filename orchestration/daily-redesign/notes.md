@@ -180,6 +180,30 @@ The remaining screens, mocked in the same voice after the daily set was approved
 
 All seven navs are wired together so the whole app can be clicked through.
 
+## Embeds (`previews.html`) — the file-preview family, re-voiced
+
+Added at the owner's direction as part of the design pass (separate from the
+screen redesigns; today's behavior is in FilePreview.svelte — images/video/audio
+embed, markdown expands inline depth-limited, HTML is a card with a small empty-
+sandbox iframe, external/download are buttoned cards).
+
+- **One container, one bar (owner-directed rev 2).** EVERY kind — images
+  included — is the same recessed container with the same bar at the top:
+  file name (link) · kind · action ›. The body beneath varies: the image flush
+  under the bar, the HTML window, the quoted markdown, the audio player — or
+  **nothing at all**: a download or external link is just the bar with the
+  verb changed (`download ›` / `open link ›`). Maximum consistency; the verb
+  is the only thing that moves.
+- **Recessed, never raised**: embeds are supporting material, so they sit on
+  the sunk surface (background only). Only the ask is ever raised (P3).
+- **HTML is a window, not a peephole**: full-width frame at real height
+  (~430px), the page rendering inside, `expand ⌄` grows it in place, `open
+  full ›` keeps the full-page route. (Implementation will need the sandbox and
+  relative-asset decisions made deliberately; the design assumes the page
+  actually renders.)
+- **Markdown is quoted words**: serif body one tint quieter than the host
+  document, so the boundary between documents stays legible.
+
 ## Dials the owner can turn
 
 1. **The serif itself.** Newsreader is the pick (reads well small, warm, quiet

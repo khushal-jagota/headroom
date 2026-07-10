@@ -280,6 +280,9 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
     )
     direct_anchor = f'a[href="/files/tickets/{ticket_id}/notes/space%20name.md"]'
     assert field.locator(direct_anchor).count() == 0
+    # The user note is a collapsed stage row by default; open it to render its body.
+    page.click("[data-user-note] .disclosure-summary")
+    page.wait_for_selector("[data-user-note] details[open]", timeout=WAIT_MS)
     page.locator('[data-user-note] [data-file-preview-kind="image"]').first.wait_for(
         state="visible",
         timeout=WAIT_MS,

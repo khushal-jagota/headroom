@@ -1542,3 +1542,21 @@ mockup exactly, then update tests to the new UI (e.g. a test now opens the colla
 disclosure before typing); where a UI test is brittle or low-value, simplify the test rather
 than contort anything; ./verify still ends green because it is the project's definition of
 done, not because tests get a vote on the design.
+
+## D90 — Embeds mockup added to the design pass
+
+Owner directed the file-preview/embedding design be worked as part of the current design pass
+(mockups first, separate from the UI-redesign implementation waves). previews.html added to
+orchestration/daily-redesign/: one whisper-header primitive across every preview kind; embeds
+recessed (supporting material never raised); images/video as the surface; HTML as a real window
+(tall frame, expand-in-place, open-full route kept); markdown as quieter quoted serif;
+download/external as one-line rows. Implementation deferred until the owner approves the
+direction; it will be its own ticket slotted between UI waves (FilePreview.svelte + preview CSS
+overlap app.css).
+
+## D91 — Embeds rev 2: one container + bar for every kind, downloads are bar-only
+
+Owner direction on the embeds mockup: full consistency — every embed, images included, is the
+same recessed container with the bar at the top (name · kind · action) and the content on it;
+downloads/external links are just the bar with the verb changed (download ›/open link ›) and no
+body. The transparent-media special case and the separate slim-row treatment are gone.

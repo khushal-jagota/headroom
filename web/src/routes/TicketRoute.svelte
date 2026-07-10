@@ -16,7 +16,6 @@
     SprintsResponse,
     TicketDetail
   } from "../lib/types";
-  import Button from "../components/Button.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
@@ -147,6 +146,18 @@
     return markers;
   }
 
+  const STATUS_DISPLAY: Record<string, string> = {
+    empty: "empty",
+    agent_running_step: "running step",
+    awaiting_approval: "awaiting approval",
+    user_takeover: "user takeover",
+    errored: "errored"
+  };
+
+  function statusDisplay(status: string): string {
+    return STATUS_DISPLAY[status] || status.replace(/_/g, " ");
+  }
+
   onDestroy(() => {
     ticket.dispose();
     sprints.dispose();
@@ -175,7 +186,14 @@
               onSave={(raw) => patch({ title: raw })}
             />
           </div>
-          <div class="ticket-meta">
+          <div class="ticket-facts">
+            <span
+              class="ticket-status-display"
+              class:ticket-status-display--attention={(detail.ticket_status || "empty") === "awaiting_approval"}
+              data-ticket-status={detail.ticket_status || "empty"}
+            >
+              <span class="ticket-status-dot"></span>{statusDisplay(detail.ticket_status || "empty")}
+            </span>
             <EnumPill
               value={detail.priority}
               options={PRIORITIES.map((priority) => ({ value: priority, label: priority }))}
@@ -213,29 +231,27 @@
             {#each markerFor(detail) as marker}
               <span data-marker={marker}><Chip variant={marker} value={marker} /></span>
             {/each}
-            <span data-ticket-status={detail.ticket_status || "empty"}>
-              <Chip variant="ticket-status" value={detail.ticket_status || "empty"} />
-            </span>
-            <Button variant="pill" data-ticket-takeover-toggle="" onclick={() => void takeover(detail)}>
+            <span class="ticket-facts-gap"></span>
+            <button class="ticket-act" data-ticket-takeover-toggle="" onclick={() => void takeover(detail)}>
               {detail.ticket_status === "user_takeover" ? "Release" : "Take over"}
-            </Button>
-            <Button variant="pill" data-copy="" onclick={() => void copyTicket()}>
+            </button>
+            <button class="ticket-act" data-copy="" onclick={() => void copyTicket()}>
               {copied ? "Copied" : "Copy"}
-            </Button>
+            </button>
           </div>
           {#if detail.state !== "done"}
-            <div class="ticket-scope">
-              <span data-scope-ceiling>
+            <div class="ticket-leash">
+              approved until
+              <span class="ticket-leash-sel" data-scope-ceiling>
                 <EnumPill
-                  keyLabel="approved until"
                   value={detail.ceiling}
                   options={ceilingOptions(detail.state)}
                   onChange={(ceiling) => void saveScope({ ceiling, at_cap: detail.at_cap })}
                 />
               </span>
-              <span data-scope-atcap>
+              then
+              <span class="ticket-leash-sel" data-scope-atcap>
                 <EnumPill
-                  keyLabel="then"
                   value={detail.at_cap}
                   options={[{ value: "stop", label: "stop" }, { value: "propose", label: "propose" }]}
                   onChange={(at_cap) => void saveScope({ ceiling: detail.ceiling, at_cap })}
@@ -247,18 +263,6 @@
         </header>
 
         <div class="ticket-col">
-          <div class="ticket-user-note" data-user-note>
-            <Disclosure title="User note" variant="support" defaultOpen={true} data-content-section="user-note">
-              <InlineEdit
-                value={detail.user_note || ""}
-                markdown
-                multiline
-                placeholder="Preserve user guidance, source context, and boundaries..."
-                onSave={(raw) => patch({ user_note: raw })}
-              />
-            </Disclosure>
-          </div>
-
           <div class="ticket-recap" data-recap>
             <Disclosure title="Recap" variant="support" defaultOpen={true} data-content-section="recap">
               {#if ["needs_approach", "needs_plan", "in_progress", "needs_review", "done"].includes(detail.state)}
@@ -281,6 +285,25 @@
           </div>
 
           <div class="fields">
+            <div class="ticket-user-note" data-user-note>
+              <Disclosure
+                variant="stage"
+                defaultOpen={false}
+                data-content-section="user-note"
+              >
+                {#snippet summary()}
+                  <span class="stage-mark stage-mark--blank"></span>
+                  <span class="disclosure-stage-name">User note</span>
+                {/snippet}
+                <InlineEdit
+                  value={detail.user_note || ""}
+                  markdown
+                  multiline
+                  placeholder="Preserve user guidance, source context, and boundaries..."
+                  onSave={(raw) => patch({ user_note: raw })}
+                />
+              </Disclosure>
+            </div>
             {#each FIELD_NAMES as name}
               {@const slot = fieldSlot(detail, name)}
               {@const stageState = fieldStageVisualState(detail, name)}
