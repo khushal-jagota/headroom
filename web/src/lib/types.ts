@@ -46,6 +46,17 @@ export type ChatStateResponse = {
   session_key?: string | null;
 };
 
+export type ChatImageUploadResponse = {
+  reference: string;
+  markdown: string;
+};
+
+export type StartChatTurnBody = {
+  text: string;
+  mode: "message" | "command";
+  image_reference?: string;
+};
+
 export type SprintSummary = {
   id: string;
   name: string;

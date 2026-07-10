@@ -11,7 +11,7 @@ from typing import Final
 
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 11
+SCHEMA_VERSION: Final = 12
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -133,6 +133,14 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_chat_messages_entity ON chat_messages(entity_id, id);
+
+CREATE TABLE IF NOT EXISTS pending_worker_context (
+  worker_entity_id TEXT NOT NULL,
+  context_key      TEXT NOT NULL,
+  text             TEXT NOT NULL,
+  revision         INTEGER NOT NULL CHECK (revision >= 1),
+  PRIMARY KEY (worker_entity_id, context_key)
+);
 
 CREATE TABLE IF NOT EXISTS day_tickets (
   day_id    TEXT NOT NULL REFERENCES days(id),

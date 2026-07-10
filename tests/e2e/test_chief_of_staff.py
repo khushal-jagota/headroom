@@ -50,7 +50,7 @@ def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
     server, context_factory, open_page, cli, api
 ) -> None:
     tid = cli(server, "ticket", "create", "--title", "Workspace selectable ticket")["id"]
-    api.human_post(server, "/api/day/today/tickets", {"ticket_id": tid})
+    api.direct_post(server, "/api/day/today/tickets", {"ticket_id": tid})
 
     page = open_page(
         context_factory(),
@@ -112,7 +112,7 @@ def test_workspace_ticket_route_restores_on_load_refresh_and_history(
     )["id"]
     other_id = cli(server, "ticket", "create", "--title", "Other workspace ticket")["id"]
     for ticket_id in (first_id, second_id, other_id):
-        api.human_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
+        api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
     first_ticket = _workspace_ticket(first_id)
     second_ticket = _workspace_ticket(second_id)
     encoded_first_id = first_id.replace("_", "%5F", 1)

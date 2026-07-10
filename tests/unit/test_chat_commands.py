@@ -1,5 +1,5 @@
 """Slash-commands + skills (spike 02): the catalog endpoint (shape + TTL cache +
-human-only), and running a /command (skill -> assistant, display -> system) with the
+direct-only), and running a /command (skill -> assistant, display -> system) with the
 same first-reply key-persist + one chat_session_created event as send. Driven through
 a TestClient over create_app with the fake (echo) gateway — no real gateway, ever."""
 

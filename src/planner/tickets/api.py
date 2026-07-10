@@ -28,8 +28,9 @@ from planner.core import links as core_links
 from planner.core.authctx import (
     RequestContext,
     reject_agent_fields,
-    reject_agents,
     request_context,
+    require_chief,
+    require_direct_write,
 )
 from planner.core.clock import Clock
 from planner.core.config import Config
@@ -47,6 +48,7 @@ from planner.tickets.contracts import (
     AcceptBody,
     AtCap,
     CreateTicketBody,
+    CreateTicketFromExternalWorkBody,
     FieldName,
     LinkBody,
     NextCeiling,
@@ -54,6 +56,7 @@ from planner.tickets.contracts import (
     ProposeBody,
     ProposeWithRecapBody,
     RecapBody,
+    ReconcileTicketFromExternalWorkBody,
     RevisionMessageBody,
     ScopeBody,
     StateBody,
@@ -63,9 +66,9 @@ from planner.tickets.contracts import (
 
 router = APIRouter()
 
-# §8: agents drive priority/deadline/day/sprint via `ticket set`; title and project are
-# human-only, so an agent-classified PATCH touching them is agent_forbidden (§14).
-_TICKET_HUMAN_ONLY_FIELDS = ("title", "project", "project_id", "user_note")
+# §8: workers drive priority/deadline/day/sprint via `ticket set`; title, project, and
+# user note are direct-only, so an attributed non-Chief PATCH is agent_forbidden.
+_TICKET_DIRECT_ONLY_FIELDS = ("title", "project", "project_id", "user_note")
 
 
 # --- shared plumbing (imported by the other api modules) -----------------------
@@ -165,6 +168,94 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
     )
 
 
+_EXTERNAL_RECONCILE_KEYS = frozenset(
+    {"state", "user_note", "recap", "success", "approach", "plan", "result"}
+)
+_EXTERNAL_CREATE_KEYS = _EXTERNAL_RECONCILE_KEYS | frozenset(
+    {
+        "title",
+        "priority",
+        "deadline",
+        "project",
+        "project_id",
+        "sprint_id",
+        "sprint_item_id",
+    }
+)
+
+
+def _reject_unknown_external_keys(raw: JsonDict, allowed: frozenset[str]) -> None:
+    unknown = [key for key in raw if key not in allowed]
+    if unknown:
+        raise PlannerError(
+            ErrorCode.validation,
+            "unknown external-work field",
+            {"field": unknown[0]},
+        )
+
+
+def _marshal_external_reconcile(raw: JsonDict) -> ReconcileTicketFromExternalWorkBody:
+    _reject_unknown_external_keys(raw, _EXTERNAL_RECONCILE_KEYS)
+    missing = [key for key in ("state", "user_note") if key not in raw]
+    if missing:
+        raise PlannerError(
+            ErrorCode.validation,
+            "external-work reconciliation requires state and user_note",
+            {"missing": missing},
+        )
+    body = ReconcileTicketFromExternalWorkBody(
+        state=body_str(raw, "state"),
+        user_note=body_str(raw, "user_note"),
+    )
+    for key in ("recap", "success", "approach", "plan", "result"):
+        if key in raw:
+            body[key] = body_str(raw, key)
+    return body
+
+
+def _marshal_external_create(raw: JsonDict) -> CreateTicketFromExternalWorkBody:
+    _reject_unknown_external_keys(raw, _EXTERNAL_CREATE_KEYS)
+    if "title" not in raw:
+        raise PlannerError(
+            ErrorCode.validation,
+            "external-work creation requires title",
+            {"missing": ["title"]},
+        )
+    common_raw = {key: value for key, value in raw.items() if key in _EXTERNAL_RECONCILE_KEYS}
+    common = _marshal_external_reconcile(common_raw)
+    body = CreateTicketFromExternalWorkBody(
+        state=common["state"],
+        user_note=common["user_note"],
+        title=body_str(raw, "title"),
+    )
+    for key in ("recap", "success", "approach", "plan", "result"):
+        if key in common:
+            body[key] = common[key]
+    if "priority" in raw:
+        body["priority"] = body_opt_str(raw, "priority")
+    if "deadline" in raw:
+        body["deadline"] = body_opt_str(raw, "deadline")
+    if "project" in raw:
+        body["project"] = body_opt_str(raw, "project")
+    if "project_id" in raw:
+        body["project_id"] = body_opt_str(raw, "project_id")
+    if "sprint_id" in raw:
+        body["sprint_id"] = body_opt_str(raw, "sprint_id")
+    if "sprint_item_id" in raw:
+        body["sprint_item_id"] = body_opt_str(raw, "sprint_item_id")
+    return body
+
+
+def _external_values(
+    body: ReconcileTicketFromExternalWorkBody,
+) -> dict[FieldName, str]:
+    values: dict[FieldName, str] = {}
+    for field in FieldName:
+        if field.value in body:
+            values[field] = body[field.value]
+    return values
+
+
 def _marshal_accept(raw: JsonDict) -> AcceptBody:
     return AcceptBody(
         edited_body=body_opt_str(raw, "edited_body"),
@@ -230,6 +321,67 @@ async def create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
     return tickets_views.ticket_json(ticket, now)
 
 
+@router.post("/chief/tickets/from-external-work")
+async def create_ticket_from_external_work(
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa
+) -> JsonDict:
+    require_chief(ctx)
+    body = _marshal_external_create(raw)
+    target_state = parse_enum(TicketState, body["state"], "state")
+    priority_raw = body.get("priority")
+    priority = (
+        parse_enum(Priority, priority_raw, "priority")
+        if priority_raw is not None
+        else Priority.P3
+    )
+    project = projects_data.resolve_project(
+        conn,
+        project_id=body.get("project_id"),
+        project_name=body.get("project"),
+    )
+    now = clk.now_unix()
+    ticket = tickets_data.create_ticket_from_external_work(
+        conn,
+        title=body["title"],
+        user_note=body["user_note"],
+        target_state=target_state,
+        provided_values=_external_values(body),
+        recap=body.get("recap"),
+        actor=ctx.actor,
+        now=now,
+        title_max_chars=TITLE_MAX_CHARS,
+        project_id=project.id if project is not None else None,
+        priority=priority,
+        deadline=body.get("deadline"),
+        sprint_id=body.get("sprint_id"),
+        sprint_item_id=body.get("sprint_item_id"),
+    )
+    _poke(sa)
+    return tickets_views.ticket_json(ticket, now)
+
+
+@router.post("/chief/tickets/{ticket_id}/reconcile-from-external-work")
+async def reconcile_ticket_from_external_work(
+    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa
+) -> JsonDict:
+    require_chief(ctx)
+    body = _marshal_external_reconcile(raw)
+    target_state = parse_enum(TicketState, body["state"], "state")
+    now = clk.now_unix()
+    ticket = tickets_data.reconcile_ticket_from_external_work(
+        conn,
+        ticket_id,
+        user_note=body["user_note"],
+        target_state=target_state,
+        provided_values=_external_values(body),
+        recap=body.get("recap"),
+        actor=ctx.actor,
+        now=now,
+    )
+    _poke(sa)
+    return tickets_views.ticket_json(ticket, now)
+
+
 @router.get("/tickets")
 async def list_tickets(conn: DbConn, cfg: Cfg, clk: Clk, state: str | None = None,
                        project: str | None = None, project_id: str | None = None,
@@ -268,7 +420,7 @@ async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk) -> JsonDict:
 
 @router.delete("/tickets/{ticket_id}")
 async def delete_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa) -> JsonDict:
-    reject_agents(ctx)
+    require_direct_write(ctx)
     deleted = tickets_data.delete_ticket(
         conn, ticket_id, actor=ctx.actor, now=clk.now_unix()
     )
@@ -295,7 +447,7 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
             raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": key})
     if not body:
         raise PlannerError(ErrorCode.validation, "no ticket fields to update", {})
-    reject_agent_fields(ctx, body, _TICKET_HUMAN_ONLY_FIELDS)
+    reject_agent_fields(ctx, body, _TICKET_DIRECT_ONLY_FIELDS)
     now = clk.now_unix()
     if "title" in body:
         tickets_data.set_title(
@@ -303,11 +455,16 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
             ticket_id,
             title=body_str(body, "title"),
             title_max_chars=TITLE_MAX_CHARS,
+            actor=ctx.actor,
             now=now,
         )
     if "user_note" in body:
         tickets_data.set_user_note(
-            conn, ticket_id, user_note=body_str(body, "user_note"), now=now
+            conn,
+            ticket_id,
+            user_note=body_str(body, "user_note"),
+            actor=ctx.actor,
+            now=now,
         )
     if "priority" in body:
         priority = parse_enum(Priority, body_str(body, "priority"), "priority")
@@ -324,7 +481,11 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
             conn, project_id=project_id_raw, project_name=project_raw
         )
         tickets_data.set_project(
-            conn, ticket_id, project_id=project.id if project is not None else None, now=now
+            conn,
+            ticket_id,
+            project_id=project.id if project is not None else None,
+            actor=ctx.actor,
+            now=now,
         )
     if "sprint_id" in body:
         sprint_id = body_opt_str(body, "sprint_id")
@@ -369,7 +530,7 @@ async def propose_field(ticket_id: str, field: str, raw: dict[str, Any], conn: D
 async def accept_field(ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                        clk: Clk, sa: Sa) -> JsonDict:
     body = _marshal_accept(raw)
-    reject_agents(ctx)
+    require_direct_write(ctx)
     field_enum = parse_enum(FieldName, field, "field")
     now = clk.now_unix()
     next_ceiling = _parse_next_ceiling(body["next_ceiling"])
@@ -390,7 +551,7 @@ async def accept_field(ticket_id: str, field: str, raw: dict[str, Any], conn: Db
 
 @router.post("/tickets/{ticket_id}/approve")
 async def approve_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa) -> JsonDict:
-    reject_agents(ctx)
+    require_direct_write(ctx)
     now = clk.now_unix()
     ticket = tickets_data.approve_review(conn, ticket_id, actor=ctx.actor, now=now)
     _poke(sa)
@@ -402,7 +563,7 @@ async def return_ticket_for_revision(
     ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa
 ) -> JsonDict:
     body = RevisionMessageBody(message=body_str(raw, "message"))
-    reject_agents(ctx)
+    require_direct_write(ctx)
     now = clk.now_unix()
     ticket, framed_message = tickets_data.return_for_revision(
         conn, ticket_id, message=body["message"], actor=ctx.actor, now=now
@@ -444,7 +605,7 @@ async def put_recap(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
 async def put_value(ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                     clk: Clk, sa: Sa) -> JsonDict:
     body = ValueEditBody(body=body_str(raw, "body"))
-    reject_agents(ctx)
+    require_direct_write(ctx)
     field_enum = parse_enum(FieldName, field, "field")
     now = clk.now_unix()
     ticket = tickets_data.edit_field_value(
@@ -458,7 +619,7 @@ async def put_value(ticket_id: str, field: str, raw: dict[str, Any], conn: DbCon
 async def scope_ticket(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                        clk: Clk, sa: Sa) -> JsonDict:
     body = ScopeBody(ceiling=body_opt_str(raw, "ceiling"), at_cap=body_opt_str(raw, "at_cap"))
-    reject_agents(ctx)
+    require_direct_write(ctx)
     now = clk.now_unix()
     ceiling_raw = body["ceiling"]
     at_cap_raw = body["at_cap"]
@@ -491,7 +652,7 @@ async def scope_ticket(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: C
 async def set_state(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                     clk: Clk, sa: Sa) -> JsonDict:
     body = StateBody(to=body_str(raw, "to"))
-    reject_agents(ctx)
+    require_direct_write(ctx)
     now = clk.now_unix()
     to_state = parse_enum(TicketState, body["to"], "state")
     ticket = tickets_data.set_state(conn, ticket_id, new_state=to_state, actor=ctx.actor, now=now)
@@ -501,7 +662,7 @@ async def set_state(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
 
 @router.post("/tickets/{ticket_id}/drop")
 async def drop_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa) -> JsonDict:
-    reject_agents(ctx)
+    require_direct_write(ctx)
     now = clk.now_unix()
     ticket = tickets_data.drop_ticket(conn, ticket_id, actor=ctx.actor, now=now)
     _poke(sa)  # a drop retires the ticket; the runnable guard skips any stale wake
@@ -510,7 +671,7 @@ async def drop_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa) 
 
 @router.post("/tickets/{ticket_id}/takeover")
 async def take_over_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
-    reject_agents(ctx)
+    require_direct_write(ctx)
     now = clk.now_unix()
     ticket = tickets_data.take_over_ticket(conn, ticket_id, now=now)
     return tickets_views.ticket_json(ticket, now)
@@ -518,7 +679,7 @@ async def take_over_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> 
 
 @router.post("/tickets/{ticket_id}/release")
 async def release_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa) -> JsonDict:
-    reject_agents(ctx)
+    require_direct_write(ctx)
     now = clk.now_unix()
     ticket = tickets_data.release_ticket(conn, ticket_id, now=now)
     _poke(sa)

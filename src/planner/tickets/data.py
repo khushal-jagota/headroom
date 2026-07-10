@@ -8,7 +8,7 @@ clock arrives as now (unix seconds) and the title limit as an argument."""
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import Final
 
@@ -17,6 +17,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event, delete_entity_history
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.days import data as days_data
+from planner.tickets import worker_context as ticket_worker_context
 from planner.tickets.contracts import (
     AtCap,
     FieldName,
@@ -28,7 +29,7 @@ from planner.tickets.contracts import (
     TicketState,
     TicketStatus,
 )
-from planner.tickets.logic import admission, fields_codec, machine, resolution
+from planner.tickets.logic import admission, external_work, fields_codec, machine, resolution
 from planner.tickets.logic.decisions import Decision
 
 
@@ -269,6 +270,160 @@ def create_ticket(
         return _load_ticket(conn, ticket_id)
 
 
+def create_ticket_from_external_work(
+    conn: sqlite3.Connection,
+    *,
+    title: str,
+    user_note: str,
+    target_state: TicketState,
+    provided_values: Mapping[FieldName, str],
+    actor: str,
+    now: int,
+    title_max_chars: int,
+    recap: str | None = None,
+    project_id: str | None = None,
+    priority: Priority = Priority.P3,
+    deadline: str | None = None,
+    sprint_id: str | None = None,
+    sprint_item_id: str | None = None,
+) -> Ticket:
+    admission.validate_title(title, title_max_chars)
+    admission.validate_body(user_note, "user note")
+    admission.validate_deadline(deadline)
+    if recap is not None:
+        admission.validate_body(recap, "recap")
+    ticket_id = new_id(ID_PREFIXES["ticket"])
+    with _txn(conn):
+        if sprint_item_id is not None:
+            if conn.execute(
+                "SELECT 1 FROM sprint_items WHERE id = ?", (sprint_item_id,)
+            ).fetchone() is None:
+                raise PlannerError(
+                    ErrorCode.not_found,
+                    "sprint item not found",
+                    {"sprint_item_id": sprint_item_id},
+                )
+            if sprint_id is not None:
+                raise PlannerError(
+                    ErrorCode.sprint_derived,
+                    "sprint_id is derived from the parent item",
+                    {"sprint_item_id": sprint_item_id},
+                )
+            if project_id is not None:
+                raise PlannerError(ErrorCode.validation, "project is derived when parented")
+        elif sprint_id is not None and conn.execute(
+            "SELECT 1 FROM sprints WHERE id = ?", (sprint_id,)
+        ).fetchone() is None:
+            raise PlannerError(
+                ErrorCode.not_found, "sprint not found", {"sprint_id": sprint_id}
+            )
+
+        conn.execute(
+            "INSERT INTO tickets ("
+            "id, title, state, priority, deadline, project_id, sprint_item_id, "
+            "sprint_id, recap, user_note, ceiling, at_cap, ticket_status, "
+            "chat_session_key, alias, fields, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            (
+                ticket_id,
+                title,
+                TicketState.needs_success.value,
+                priority.value,
+                deadline,
+                project_id,
+                sprint_item_id,
+                sprint_id,
+                user_note,
+                TicketState.needs_success.value,
+                AtCap.propose.value,
+                TicketStatus.empty.value,
+                fields_codec.fields_to_json(TicketFields()),
+                now,
+                now,
+            ),
+        )
+        append_event(conn, ticket_id, EventKind.ticket_created, {}, now)
+        _append_item_children_changed(conn, sprint_item_id, ticket_id, "created", now)
+        ticket = _load_ticket(conn, ticket_id)
+        values_decision, position_decision = external_work.decide_external_work(
+            ticket, target_state, provided_values
+        )
+        ticket = _apply_decision(conn, ticket, values_decision, now)
+        if recap is not None:
+            conn.execute(
+                "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?",
+                (recap, now, ticket_id),
+            )
+            append_event(conn, ticket_id, EventKind.recap_updated, {}, now)
+            ticket = _load_ticket(conn, ticket_id)
+        ticket = _apply_decision(conn, ticket, position_decision, now)
+        return ticket
+
+
+def reconcile_ticket_from_external_work(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    user_note: str,
+    target_state: TicketState,
+    provided_values: Mapping[FieldName, str],
+    actor: str,
+    now: int,
+    recap: str | None = None,
+) -> Ticket:
+    admission.validate_body(user_note, "user note")
+    if recap is not None:
+        admission.validate_body(recap, "recap")
+    with _txn(conn):
+        ticket = _load_ticket(conn, ticket_id)
+        if ticket.ticket_status not in (TicketStatus.empty, TicketStatus.errored):
+            raise PlannerError(
+                ErrorCode.already_running,
+                "ticket control is active",
+                {"ticket_id": ticket_id, "ticket_status": ticket.ticket_status.value},
+            )
+        running_turn = conn.execute(
+            "SELECT 1 FROM chat_turns WHERE entity_id = ? AND status = 'running' LIMIT 1",
+            (ticket_id,),
+        ).fetchone()
+        if running_turn is not None:
+            raise PlannerError(
+                ErrorCode.already_running,
+                "ticket chat turn is running",
+                {"ticket_id": ticket_id},
+            )
+
+        values_decision, position_decision = external_work.decide_external_work(
+            ticket, target_state, provided_values
+        )
+        if user_note != ticket.user_note:
+            conn.execute(
+                "UPDATE tickets SET user_note = ?, updated_at = ? WHERE id = ?",
+                (user_note, now, ticket_id),
+            )
+            append_event(
+                conn,
+                ticket_id,
+                EventKind.ticket_updated,
+                {"field": "user_note", "from": ticket.user_note, "to": user_note},
+                now,
+            )
+            ticket = _load_ticket(conn, ticket_id)
+        ticket = _apply_decision(conn, ticket, values_decision, now)
+        if recap is not None and recap != ticket.recap:
+            conn.execute(
+                "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?",
+                (recap, now, ticket_id),
+            )
+            append_event(conn, ticket_id, EventKind.recap_updated, {}, now)
+            ticket = _load_ticket(conn, ticket_id)
+        ticket = _apply_decision(conn, ticket, position_decision, now)
+        if ticket.ticket_status is TicketStatus.errored:
+            _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
+            ticket = _load_ticket(conn, ticket_id)
+        return ticket
+
+
 def read_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
     return _load_ticket(conn, ticket_id)
 
@@ -442,6 +597,8 @@ def accept_proposal(
         ticket = _load_ticket(conn, ticket_id)
         decision = resolution.decide_accept(ticket, field, actor, edited_body, next_ceiling, at_cap)
         _apply_decision(conn, ticket, decision, now)
+        if edited_body is not None:
+            ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
         return _load_ticket(conn, ticket_id)
 
@@ -472,7 +629,9 @@ def edit_field_value(
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
         decision = resolution.decide_edit_value(ticket, field, new_body, actor)
-        return _apply_decision(conn, ticket, decision, now)
+        updated = _apply_decision(conn, ticket, decision, now)
+        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
+        return updated
 
 
 def approve_review(conn: sqlite3.Connection, ticket_id: str, *, actor: str, now: int) -> Ticket:
@@ -533,7 +692,7 @@ def delete_ticket(
     before cleanup. All ticket-owned Planner history is removed; the one surviving
     ticket event is the minimal deletion audit and invalidation doorbell.
     """
-    admission.require_human(actor, "delete_ticket")
+    admission.require_direct_actor(actor, "delete_ticket")
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
         running_turn = conn.execute(
@@ -598,6 +757,7 @@ def delete_ticket(
         else:
             conn.execute("DELETE FROM chat_messages WHERE entity_id = ?", (ticket_id,))
         conn.execute("DELETE FROM chat_turns WHERE entity_id = ?", (ticket_id,))
+        conn.execute("DELETE FROM pending_worker_context WHERE worker_entity_id = ?", (ticket_id,))
 
         for day_id in day_ids:
             days_data.remove_day_ticket(conn, day_id, ticket_id, now)
@@ -654,7 +814,9 @@ def change_scope(
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
         decision = resolution.decide_scope_change(ticket, ceiling, at_cap, actor)
-        return _apply_decision(conn, ticket, decision, now)
+        updated = _apply_decision(conn, ticket, decision, now)
+        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
+        return updated
 
 
 def set_field_user_note(
@@ -676,6 +838,7 @@ def set_field_user_note(
             (fields_codec.fields_to_json(new_fields), now, ticket_id),
         )
         append_event(conn, ticket_id, EventKind.note_updated, {"field": field.value}, now)
+        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket(conn, ticket_id)
 
 
@@ -699,6 +862,7 @@ def set_user_note(
     ticket_id: str,
     *,
     user_note: str,
+    actor: str,
     now: int,
 ) -> Ticket:
     with _txn(conn):
@@ -715,6 +879,7 @@ def set_user_note(
             {"field": "user_note", "from": prev, "to": user_note},
             now,
         )
+        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket(conn, ticket_id)
 
 
@@ -728,6 +893,7 @@ def write_recap(
             "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?", (body, now, ticket_id)
         )
         append_event(conn, ticket_id, EventKind.recap_updated, {}, now)
+        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket(conn, ticket_id)
 
 
@@ -737,6 +903,7 @@ def set_title(
     *,
     title: str,
     title_max_chars: int,
+    actor: str,
     now: int,
 ) -> Ticket:
     admission.validate_title(title, title_max_chars)
@@ -753,6 +920,7 @@ def set_title(
             {"field": "title", "from": prev, "to": title},
             now,
         )
+        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket(conn, ticket_id)
 
 
@@ -761,6 +929,7 @@ def set_project(
     ticket_id: str,
     *,
     project_id: str | None,
+    actor: str,
     now: int,
 ) -> Ticket:
     with _txn(conn):
@@ -785,6 +954,7 @@ def set_project(
             {"field": "project_id", "from": prev, "to": project_id},
             now,
         )
+        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket(conn, ticket_id)
 
 
@@ -805,6 +975,7 @@ def set_priority(
             {"field": "priority", "from": prev, "to": priority.value},
             now,
         )
+        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket(conn, ticket_id)
 
 
@@ -826,6 +997,7 @@ def set_deadline(
             {"field": "deadline", "from": prev, "to": deadline},
             now,
         )
+        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket(conn, ticket_id)
 
 
@@ -851,6 +1023,7 @@ def set_sprint(
             {"field": "sprint_id", "from": prev, "to": sprint_id},
             now,
         )
+        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket(conn, ticket_id)
 
 

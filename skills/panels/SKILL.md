@@ -25,12 +25,13 @@ When a day finishes, it rolls up into the sprint, and a new day is planned.
 
 Everything runs through the `panels` command — run `panels --help` to see what it can do. It talks to the Panels server and database.
 
-The command groups are the system's nouns:
+The command groups describe both the object being changed and the operation's authority:
 
 - `panels day ...` for planning and operating on a day.
-- `panels ticket ...` for creating, inspecting, organizing, and approving tickets.
+- `panels ticket ...` for ordinary, actor-neutral ticket creation, inspection, organization, and approval.
 - `panels sprint ...` and `panels sprint item ...` for planning and populating sprints.
-- `panels worker ...` for worker-only writes such as proposals, recaps, notes, and item status proposals.
+- `panels worker ...` for the gated worker flow: proposals, recaps, and notes.
+- `panels chief ...` only for importing reality established outside Panels. Its two explicit operations reconcile an existing ticket or create a populated ticket from external work; it is not a general ticket-editing surface.
 
 ## Skills
 

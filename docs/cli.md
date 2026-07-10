@@ -10,10 +10,12 @@ The command tree matches the system model:
 - `ticket ...` — create, inspect, organize, and approve tickets.
 - `sprint ...` — create, inspect, edit, and populate sprints and sprint items.
 - `worker ...` — worker-only writes such as ticket proposals, recaps, and notes.
+- `chief ...` — explicit intake of work completed outside Panels.
 
-The CLI does not expose internal runtime controls. Ticket `state`, `ticket_status`,
-run claiming, takeover, and release remain code-owned. The only human resolution verb
-in the CLI is approval.
+Ordinary command groups do not expose internal runtime controls. Ticket `ticket_status`,
+run claiming, takeover, and release remain code-owned. The exceptional `chief` group can
+establish a coherent ticket state from externally completed work; it is not a generic
+state setter.
 
 ## The verbs
 
@@ -26,7 +28,7 @@ in the CLI is approval.
   tickets. `ticket create` can take a `--user-note` / `--user-note-file` intake
   note. `ticket set` names one field (`title`, `user-note`, `priority`, `deadline`,
   or `project` / `project-id`). Sprint placement is a sprint command, not a ticket
-  setter. `ticket delete` is a permanent human action and requires `--yes`.
+  setter. `ticket delete` is a permanent direct operation and requires `--yes`.
 - **`ticket copy / events`** — copy one ticket's plain-text packet or inspect its event log.
 - **`sprint create / list / show / set / add-ticket / remove-ticket`** — plan and
   populate sprints. `current` resolves through `/api/sprint/current`; `none` means the
@@ -39,6 +41,11 @@ in the CLI is approval.
   infers the current gating field from ticket state and requires a short recap
   (`--recap` or `--recap-file`) in the same request. `worker note` preserves
   field-specific user guidance without changing the field's value.
+- **`chief reconcile-ticket-from-external-work / create-ticket-from-external-work`** —
+  record reality established outside Panels. Both require an explicit Chief request,
+  a complete user note preserving the report and reconciliation reasoning, and the
+  exact settled field prefix for the target state. Reconciliation refuses pending or
+  active ticket work; both operations leave the ticket stopped at the imported state.
 - **`serve`** — run the server and background worker runtime in the foreground.
   It may be launched from outside the repository; the app shell, static assets, and
   checked-in config are resolved from the repository root.
@@ -67,10 +74,10 @@ lease; the employee runtime runs one step at a time and writes status itself (se
 
 ## Deferred
 
-- **No importer verb.** The old `plan seed` markdown importer is gone; bringing data
-  in from the old markdown planner has no command today. Trigger: a decision to
-  support import again.
+- **No general importer verb.** The old `plan seed` markdown importer is gone. Chief
+  external-work intake reconciles a reported outcome; it does not ingest old planner
+  documents. Trigger: a decision to support document import again.
 
 ---
 
-_Last verified: 2026-07-09._
+_Last verified: 2026-07-10._

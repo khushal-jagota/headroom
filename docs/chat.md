@@ -19,6 +19,19 @@ button appears whenever the bottom of the conversation is meaningfully below the
 viewport, even when no new content has arrived. Using it, or manually returning near
 the bottom, resumes following.
 
+The small image button directly beside `/` can add one image to a message. A message
+may contain text and an image or only an image. Panels keeps the selected image in the
+composer until the turn starts successfully, so an upload or start error can be
+retried without choosing the file again. Invalid selections show the normal quiet
+chat error and do not start a turn.
+
+Chat images for tickets, days, and the Chief of Staff share the managed
+`files/chats/<entity-id>/` tree. The visible human line remains ordinary Markdown
+with a managed-file link, and the shared file preview renders that link inline both
+immediately and after a reload. Delivery to the AI is separate: Panels attaches the
+saved image to the live Hermes session immediately before submitting that turn's
+prompt. A transcript preview by itself is not proof that the AI received the image.
+
 Hermes is still the transport. The planner stores the durable `chat_session_key`
 before submitting a prompt, so tools inside a worker turn can resolve their ticket
 immediately. The visible transcript and live activity indicator belong to Panels:

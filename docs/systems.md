@@ -32,9 +32,10 @@ else is a surface, a worker, or a projection of that record.
                               Hermes employee
 ```
 
-The important separation is simple: the server owns truth, workers propose, and the
-human resolves decisions. The event log is not the data model. It is a doorbell that
-tells screens which server resources to refetch.
+The important separation is simple: the server owns truth, ticket workers propose, and
+direct product operations resolve decisions. Those operations are not assumed to be
+human merely because no actor header is present. The event log is not the data model;
+it is a doorbell that tells screens which server resources to refetch.
 
 ## The Systems
 
@@ -96,6 +97,20 @@ the ticket either stops or parks the next proposal for approval.
 Code paths: `src/planner/tickets/contracts.py`,
 `src/planner/tickets/logic/machine.py`,
 `src/planner/tickets/logic/resolution.py`, `src/planner/tickets/data.py`.
+
+Chief external-work intake is a second, explicit canonical path for reality already
+established outside Panels. It creates or reconciles a coherent settled-field prefix,
+sets the ticket to the reported state, and stops there. It refuses pending proposals,
+active control, running turns, backward moves, and malformed field prefixes. The report
+and reconciliation reasoning live in the existing ticket note; ordinary ticket and
+sprint-item events remain the audit and invalidation signals.
+
+Request identity is operational provenance in this local, same-user app, not an
+authentication credential. A request without `X-Plan-Actor` is **unattributed**, not
+implicitly human. Production gateways set `worker` or `chief`; direct-only routes allow
+unattributed and Chief requests while rejecting the worker role. This prevents the
+normal worker and Chief paths from confusing their authority, but it is not a security
+barrier against a local process that deliberately forges headers or environment values.
 
 ### 4. The Employee Runtime
 
@@ -173,17 +188,20 @@ Code paths: `web/src/App.svelte`, `web/src/routes/`, `web/src/lib/resources.svel
 
 ### 8. The CLI And Authority System
 
-`panels` is the product and worker CLI. Its command groups match the domain model:
-`day`, `ticket`, `sprint`, and `worker`. Product commands are headerless human
-requests; worker commands send `X-Plan-Actor`.
+`panels` is the product and worker CLI. Its command groups are `project`, `day`,
+`ticket`, `sprint`, `sprint item`, `worker`, and `chief`. Ordinary commands preserve an
+ambient `PLAN_ACTOR` when one exists and otherwise send no actor. Worker commands send
+the ambient role or the `agent` fallback. Chief commands never synthesize Chief identity;
+production starts the worker and Chief gateways with explicit `worker` and `chief` roles.
 
-The CLI can plan days, create and organize tickets, plan sprints and sprint items,
-and file worker proposals/recaps/notes. It has no runtime-control authority: no run
-claiming, takeover, release, ticket status edits, or direct state jumps. Approval is
-the one human resolution command exposed here.
+Ordinary groups can plan days, manage tickets, plan sprints, and file worker
+proposals/recaps/notes without exposing runtime controls. The exceptional Chief group
+has two external-work operations that establish a coherent imported state; it is not a
+generic state setter.
 
-The server classifies requests with `X-Plan-Actor`: no header means the human; any
-actor header means an agent. Human-only routes reject agent-classified requests.
+The server classifies a missing `X-Plan-Actor` as **unattributed**, not human. `chief` is
+the explicit Chief role; every other non-empty value is an attributed non-Chief agent.
+Direct-only routes allow unattributed and Chief requests while rejecting worker agents.
 
 Code paths: `src/planner/cli/main.py`, `src/planner/cli/http.py`,
 `src/planner/core/authctx.py`.
@@ -241,4 +259,4 @@ less clean than the rest.
 
 ---
 
-_Last verified: 2026-07-09._
+_Last verified: 2026-07-10._

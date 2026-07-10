@@ -392,6 +392,7 @@ def test_worker_does_not_prompt_if_session_key_claim_is_lost(tmp_path: Path) -> 
         def run_ticket_step(
             self,
             session_key: str | None,
+            entity_id: str,
             prompt_text: str,
             on_event: OnEvent | None = None,
             on_session_key: Callable[[str], None] | None = None,
@@ -428,6 +429,7 @@ def test_worker_rechecks_existing_session_key_ownership_before_prompt(tmp_path: 
         def run_ticket_step(
             self,
             session_key: str | None,
+            entity_id: str,
             prompt_text: str,
             on_event: OnEvent | None = None,
             on_session_key: Callable[[str], None] | None = None,
@@ -462,6 +464,7 @@ def test_worker_error_does_not_overwrite_lost_ownership(tmp_path: Path) -> None:
         def run_ticket_step(
             self,
             session_key: str | None,
+            entity_id: str,
             prompt_text: str,
             on_event: OnEvent | None = None,
             on_session_key: Callable[[str], None] | None = None,

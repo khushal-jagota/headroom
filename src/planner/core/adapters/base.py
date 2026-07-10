@@ -8,6 +8,7 @@ through this protocol in tests."""
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Protocol
 
 from planner.chat.contracts import (
@@ -37,6 +38,7 @@ class GatewayAdapter(Protocol):
         text: str,
         mode: str,
         on_session_key: Callable[[str], None] | None = None,
+        image_path: Path | None = None,
     ) -> Iterator[ChatStreamChunk]: ...
     def interrupt(self, session_key: str, entity_id: str) -> None: ...
     # The gateway's own command/skill registry — stateless, gateway-wide, cached above.

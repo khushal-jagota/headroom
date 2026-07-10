@@ -94,7 +94,7 @@ def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api)
     assert page_a.query_selector(card) is None
 
     flushes_b = page_b.evaluate("window.__plannerDebug.flushes")
-    api.human_post(server, "/api/day/today/tickets", {"ticket_id": tid})
+    api.direct_post(server, "/api/day/today/tickets", {"ticket_id": tid})
 
     # No reload, no goto: the card can only arrive via a WS-flush re-render after
     # the ticket is explicitly added to today's board.
@@ -294,6 +294,11 @@ def test_markdown_approval_focus_noop_keeps_raw_source(
     d = api.get(server, f"/api/tickets/{tid}")
     assert d["fields"]["success"]["value"] == NOOP_MARKDOWN_BODY
     assert d["fields"]["success"]["proposal"] is None
+    with sqlite3.connect(server.db_path) as conn:
+        assert conn.execute(
+            "SELECT context_key FROM pending_worker_context WHERE worker_entity_id = ?",
+            (tid,),
+        ).fetchall() == []
 
 
 def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api):
@@ -350,6 +355,12 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
     assert d["ceiling"] == "needs_plan", d
     assert d["at_cap"] == "propose", d
     assert d["state"] == "needs_approach", d
+    with sqlite3.connect(server.db_path) as conn:
+        assert conn.execute(
+            "SELECT context_key, revision FROM pending_worker_context "
+            "WHERE worker_entity_id = ?",
+            (tid,),
+        ).fetchall() == [("ticket_changed", 1)]
 
     # Renders as the field value on Ticket.
     ticket_page = open_page(
@@ -648,8 +659,8 @@ def test_e26_chat_panel_echo_and_offline(
 def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
     tid = cli(server, "ticket", "create", "--title", "T18 chain ticket")["id"]
 
-    # Human scope (no headers -> /scope accepts it): ceiling needs_plan, at_cap propose.
-    g = api.human_post(
+    # Unattributed direct scope: ceiling needs_plan, at_cap propose.
+    g = api.direct_post(
         server, f"/api/tickets/{tid}/scope", {"ceiling": "needs_plan", "at_cap": "propose"}
     )
     assert g["ceiling"] == "needs_plan", g
@@ -835,6 +846,25 @@ def test_ticket_user_note_renders_as_own_intake_block(server, context_factory, o
     )
     assert "Preserve this intake boundary." in page.inner_text("[data-user-note]")
     assert page.query_selector("[data-user-note] [data-markdown-inline-edit]") is not None
+    user_note_editor = page.locator("[data-user-note] [data-markdown-inline-edit]")
+    user_note_editor.focus()
+    user_note_editor.evaluate(SELECT_NODE_CONTENTS)
+    page.keyboard.type("Updated intake boundary.")
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith(f"/api/tickets/{tid}")
+    ):
+        user_note_editor.blur()
+    page.wait_for_function(
+        "() => document.querySelector('[data-user-note]')?.textContent?.includes("
+        "'Updated intake boundary.')"
+    )
+    with sqlite3.connect(server.db_path) as conn:
+        assert conn.execute(
+            "SELECT context_key, revision FROM pending_worker_context "
+            "WHERE worker_entity_id = ?",
+            (tid,),
+        ).fetchall() == [("ticket_changed", 1)]
 
     empty_tid = cli(server, "ticket", "create", "--title", "Empty user note UI ticket")["id"]
     empty_page = open_page(

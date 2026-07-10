@@ -1,16 +1,20 @@
 <script lang="ts">
   import FilePreview from "../components/FilePreview.svelte";
   import type { FilePreviewTarget } from "../lib/filePreview";
-  import { ticketFileTarget } from "../lib/filePreview";
+  import { chatFileTarget, ticketFileTarget } from "../lib/filePreview";
 
   function parseTarget(): FilePreviewTarget | null {
     const hash = window.location.hash;
     const queryIndex = hash.indexOf("?");
     const params = new URLSearchParams(queryIndex >= 0 ? hash.slice(queryIndex + 1) : "");
-    if (params.get("source") !== "ticket") return null;
-    const ticketId = params.get("ticket") || "";
     const path = params.get("path") || "";
-    return ticketFileTarget(ticketId, path);
+    if (params.get("source") === "ticket") {
+      return ticketFileTarget(params.get("ticket") || "", path);
+    }
+    if (params.get("source") === "chat") {
+      return chatFileTarget(params.get("entity") || "", path);
+    }
+    return null;
   }
 
   let target = $derived(parseTarget());

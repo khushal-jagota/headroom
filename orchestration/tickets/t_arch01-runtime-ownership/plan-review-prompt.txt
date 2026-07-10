@@ -1,0 +1,21 @@
+You are the final independent plan reviewer. Do not implement, edit, delegate, or invoke another reviewer.
+
+Review `orchestration/tickets/t_arch01-runtime-ownership/plan.md` against:
+
+- `orchestration/tickets/t_arch01-runtime-ownership/ticket.md`
+- `AGENTS.md`, `PRINCIPLES.md`, `CONTEXT.md`, and the live docs
+- the current authoritative dirty implementation and tests
+
+Inspect at minimum the current runtime modules, `core/loops.py`, `core/server.py`, Ticket revision API/data/resolution, worker chat/session settlement, worker-context submission boundary, runtime/revision/core-loop tests, and the existing browser revision flow.
+
+Find concrete violations, missing decisions, or unnecessary machinery. Pay particular attention to:
+
+1. Whether an HTTP success proves an in-process employee handoff was accepted before Ticket mutation, including DB failure cancellation and runner-stop races.
+2. Whether runner construction is truly independent of dispatch and the polling lock, while the readiness loop stays optional.
+3. Shutdown ordering and draining without a durable queue or gateway redesign.
+4. Full execution-time automatic eligibility, including today's-board membership.
+5. Exact Hermes delivery, same-session and no-Panels-chat semantics, and preservation of pending worker context at the existing gateway boundary.
+6. Hermetic test-mode behavior without reintroducing nullable-success behavior.
+7. Exact source/test/doc rename scope and explicit exclusions.
+
+Use file/line citations. End with exactly `NO VIOLATIONS` or a numbered list of violations. Do not propose work outside the ticket.

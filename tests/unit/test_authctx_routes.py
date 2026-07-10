@@ -1,8 +1,8 @@
 """§8 route boundary regression: the HTTP PATCH surfaces enforce the same agent write
-boundary the CLI does. PATCH /api/tickets/{id} gates human-only fields (an agent may
+boundary the CLI does. PATCH /api/tickets/{id} gates direct-only fields (an agent may
 still set the agent-permitted priority/deadline); PATCH /api/items/{id} has no status
 write surface because item status is derived; PATCH /api/sprints/{id} and
-PATCH /api/day/{date} are human-only. Human requests behave exactly as before on every
+PATCH /api/day/{date} are direct-only. Unattributed requests behave as before on every
 route. The old carried-claim gate is gone (the ticket's code-owned status is the lock
 now). Supporting tests, no §18.3 anchor."""
 
@@ -50,7 +50,9 @@ def _make_app(tmp_path: Path) -> tuple[object, Path]:
 def _ticket(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
-        ticket = create_ticket(conn, title="Patch me.", actor="human", now=0, title_max_chars=200)
+        ticket = create_ticket(
+            conn, title="Patch me.", actor="unattributed", now=0, title_max_chars=200
+        )
     finally:
         conn.close()
     return ticket.id
@@ -104,16 +106,16 @@ def _priority(db_path: Path, ticket_id: str) -> str:
     return str(_col(db_path, "tickets", ticket_id, "priority"))
 
 
-# --- PATCH /tickets/{id}: human-only fields + agent-permitted fields (§8/§14) -----
+# --- PATCH /tickets/{id}: direct-only fields + agent-permitted fields (§8/§14) -----
 
 
-def test_patch_ticket_human_and_agent_priority_succeed(tmp_path: Path) -> None:
+def test_patch_ticket_unattributed_and_agent_priority_succeed(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)
     with TestClient(app) as client:
-        human = client.patch(f"/api/tickets/{tid}", json={"priority": "P1"})
-        assert human.status_code == 200
-        assert human.json()["priority"] == "P1"
+        unattributed = client.patch(f"/api/tickets/{tid}", json={"priority": "P1"})
+        assert unattributed.status_code == 200
+        assert unattributed.json()["priority"] == "P1"
         agent = client.patch(
             f"/api/tickets/{tid}",
             json={"priority": "P2"},
@@ -124,22 +126,22 @@ def test_patch_ticket_human_and_agent_priority_succeed(tmp_path: Path) -> None:
     assert _priority(db_path, tid) == "P2"
 
 
-def test_patch_ticket_human_title_and_project_succeed(tmp_path: Path) -> None:
+def test_patch_ticket_unattributed_title_and_project_succeed(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)
     with TestClient(app) as client:
-        title = client.patch(f"/api/tickets/{tid}", json={"title": "Renamed by human"})
+        title = client.patch(f"/api/tickets/{tid}", json={"title": "Renamed directly"})
         project = client.patch(f"/api/tickets/{tid}", json={"project": "Vylo"})
 
     assert title.status_code == 200, title.json()
-    assert title.json()["title"] == "Renamed by human"
+    assert title.json()["title"] == "Renamed directly"
     assert project.status_code == 200, project.json()
     assert project.json()["project"] == "Vylo"
-    assert _col(db_path, "tickets", tid, "title") == "Renamed by human"
+    assert _col(db_path, "tickets", tid, "title") == "Renamed directly"
     assert _col(db_path, "tickets", tid, "project_id") == "project_vylo"
 
 
-def test_patch_ticket_agent_human_only_field_is_forbidden(tmp_path: Path) -> None:
+def test_patch_ticket_agent_direct_only_field_is_forbidden(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)
     with TestClient(app) as client:
@@ -192,7 +194,7 @@ def test_patch_ticket_rejects_bad_field_types(tmp_path: Path) -> None:
     assert _col(db_path, "tickets", tid, "sprint_id") is None
 
 
-# --- PATCH /items/{id}: status is derived; fields/sprint remain human-only --------
+# --- PATCH /items/{id}: status is derived; fields/sprint remain direct-only --------
 
 
 def test_patch_item_agent_plain_field_or_sprint_is_forbidden(tmp_path: Path) -> None:
@@ -271,7 +273,7 @@ def test_item_ticket_routes_parent_and_unparent_existing_ticket(tmp_path: Path) 
     assert _col(db_path, "tickets", tid, "project_id") is None
 
 
-def test_item_ticket_routes_are_human_only(tmp_path: Path) -> None:
+def test_item_ticket_routes_are_direct_only(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     sid = _sprint(db_path)
     iid = _item_in_sprint(db_path, sid)
@@ -288,10 +290,10 @@ def test_item_ticket_routes_are_human_only(tmp_path: Path) -> None:
     assert _col(db_path, "tickets", tid, "sprint_item_id") is None
 
 
-# --- PATCH /sprints/{id}: human-only (§8) ---------------------------------------
+# --- PATCH /sprints/{id}: direct-only (§8) --------------------------------------
 
 
-def test_patch_sprint_agent_is_forbidden_human_succeeds(tmp_path: Path) -> None:
+def test_patch_sprint_agent_is_forbidden_unattributed_succeeds(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     sid = _sprint(db_path)
     with TestClient(app) as client:
@@ -299,10 +301,10 @@ def test_patch_sprint_agent_is_forbidden_human_succeeds(tmp_path: Path) -> None:
         assert agent.status_code == 400
         assert agent.json()["error"]["code"] == "agent_forbidden"
         assert _col(db_path, "sprints", sid, "name") == "S1"  # unchanged
-        human = client.patch(f"/api/sprints/{sid}", json={"name": "Human edit"})
-    assert human.status_code == 200
-    assert human.json()["name"] == "Human edit"
-    assert _col(db_path, "sprints", sid, "name") == "Human edit"
+        unattributed = client.patch(f"/api/sprints/{sid}", json={"name": "Direct edit"})
+    assert unattributed.status_code == 200
+    assert unattributed.json()["name"] == "Direct edit"
+    assert _col(db_path, "sprints", sid, "name") == "Direct edit"
 
 
 def test_patch_sprint_marshals_bad_field_types(tmp_path: Path) -> None:
@@ -331,10 +333,10 @@ def test_patch_sprint_marshals_bad_field_types(tmp_path: Path) -> None:
     assert _col(db_path, "sprints", sid, "mid_where_we_stand") == "Halfway, tracking."
 
 
-# --- PATCH /day/{date}: human-only (§8) -----------------------------------------
+# --- PATCH /day/{date}: direct-only (§8) ----------------------------------------
 
 
-def test_patch_day_agent_is_forbidden_human_succeeds(tmp_path: Path) -> None:
+def test_patch_day_agent_is_forbidden_unattributed_succeeds(tmp_path: Path) -> None:
     app, _db_path = _make_app(tmp_path)
     with TestClient(app) as client:
         agent = client.patch(
@@ -342,15 +344,15 @@ def test_patch_day_agent_is_forbidden_human_succeeds(tmp_path: Path) -> None:
         )
         assert agent.status_code == 400
         assert agent.json()["error"]["code"] == "agent_forbidden"
-        human = client.patch("/api/day/2026-07-05", json={"focus": "Human focus"})
-    assert human.status_code == 200
-    assert human.json()["focus"] == "Human focus"
+        unattributed = client.patch("/api/day/2026-07-05", json={"focus": "Direct focus"})
+    assert unattributed.status_code == 200
+    assert unattributed.json()["focus"] == "Direct focus"
 
 
-# --- POST /chat/{id}/send: human-only (§8/§11) ----------------------------------
+# --- POST /chat/{id}/send: direct-only (§8/§11) ---------------------------------
 
 
-def test_chat_send_agent_is_forbidden_human_succeeds(tmp_path: Path) -> None:
+def test_chat_send_agent_is_forbidden_unattributed_succeeds(tmp_path: Path) -> None:
     app, _db_path = _make_app(tmp_path)
     entity = "day_2026-07-05"  # a chattable day entity (materializes on read)
     with TestClient(app) as client:
@@ -359,6 +361,6 @@ def test_chat_send_agent_is_forbidden_human_succeeds(tmp_path: Path) -> None:
         )
         assert agent.status_code == 400
         assert agent.json()["error"]["code"] == "agent_forbidden"
-        human = client.post(f"/api/chat/{entity}/send", json={"text": "hi"})
-    assert human.status_code == 200
-    assert human.json()["reply_text"] == "echo: hi"  # fake gateway echoes the human's text
+        unattributed = client.post(f"/api/chat/{entity}/send", json={"text": "hi"})
+    assert unattributed.status_code == 200
+    assert unattributed.json()["reply_text"] == "echo: hi"

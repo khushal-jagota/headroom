@@ -211,6 +211,7 @@ class SystemB:
             try:
                 result = self._gateway.run_ticket_step(
                     pre.chat_session_key,
+                    ticket_id,
                     prompt,
                     observe_gateway_event,
                     on_session_key=persist_session_key,

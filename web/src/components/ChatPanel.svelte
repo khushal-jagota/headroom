@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
-  import { fetchJson, pauseChatTurn, startChatTurn } from "../lib/api";
+  import { fetchJson, pauseChatTurn, startChatTurn, uploadChatImage } from "../lib/api";
   import { resource } from "../lib/resources";
   import type { ChatStateMessage, ChatStateResponse, ChatTurn, CommandCatalog } from "../lib/types";
   import ChatComposer from "./ChatComposer.svelte";
@@ -150,14 +150,29 @@
     });
   });
 
-  async function submit(text: string, mode: "message" | "command"): Promise<void> {
+  async function submit(
+    text: string,
+    mode: "message" | "command",
+    image?: File
+  ): Promise<boolean> {
     error = null;
     try {
-      await startChatTurn(stableEntityId, { text, mode });
+      const uploaded = image ? await uploadChatImage(stableEntityId, image) : null;
+      await startChatTurn(stableEntityId, {
+        text,
+        mode,
+        ...(uploaded ? { image_reference: uploaded.reference } : {})
+      });
+    } catch (err) {
+      error = err;
+      return false;
+    }
+    try {
       await chatState.refresh();
     } catch (err) {
       error = err;
     }
+    return true;
   }
 
   async function pauseActiveTurn(): Promise<void> {
@@ -246,6 +261,7 @@
       onDraft={(text) => (draft = text)}
       onSubmit={submit}
       onPause={pauseActiveTurn}
+      onError={(err) => (error = err)}
     />
   {/if}
 </div>

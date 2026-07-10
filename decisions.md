@@ -2,6 +2,91 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D52 — Checkpoint the verified concurrent tree before architecture implementation
+
+The current dirty tree contains the completed Chief external-work, worker-context, and chat-image
+work whose integrated `./verify` is recorded in PROGRESS, plus planning-only records for the three
+approved architecture tickets. Commit that tree locally as one fixed checkpoint before production
+implementation. This preserves every concurrent change, gives plan/implementation reviewers an
+unambiguous diff base, and lets the three overlapping tickets integrate serially. Nothing is pushed;
+the checkpoint does not claim a new verification run for the planning-only records.
+
+## D51 — Ordinary Ticket PATCH is one actor-neutral atomic edit
+
+Implement D40 as one typed ordinary edit whose complete intended Ticket is validated and
+committed in one transaction. Keep the existing per-field events, but emit them only for actual
+changes in stable order and write pending worker context once for the compound edit. A no-op does
+not touch time, events, or context. Chief external-work reconciliation remains a separate operation;
+its superficially similar multi-column write has different authority, safety, state, and event
+meaning. Ordinary PATCH does not ring readiness and requires no frontend change.
+
+## D50 — Readiness ringing belongs to domain actions and is best effort
+
+The database and periodic scan remain the truth. A one-method readiness doorbell only shortens the
+wait after committed actions that may affect eligibility. Ticket, day-placement, and blocker-link
+action modules own the write-then-ring sequence; routes do not import or poke the readiness loop.
+Delivery failures are logged and cannot fail a committed action. A process without the polling lock
+uses a no-op doorbell. The accepted conservative ring set includes the three audited omissions:
+takeover, blocker-link creation, and day removal. There is no event bus, durable queue, IPC wake, or
+generic mutation module.
+
+## D49 — Direct revision reserves the employee runner before Ticket mutation
+
+Implement D39 with `TicketReadinessLoop` and `EmployeeStepRunner`. The runner exists with the worker
+gateway even when automatic dispatch is disabled or another process owns the polling lock. Review
+revision guidance reserves a parked in-process handoff before clearing the proposal and claiming the
+Ticket; commit releases it and failure cancels it. This makes an HTTP success evidence that delivery
+was accepted without adding a durable queue. Shutdown rejects new reservations and drains accepted
+work. Automatic execution also rechecks today's-board membership before claim, closing the audited
+stale-discovery race. SharedGateway correlation, durable recovery, gateway composition, and frontend
+work remain outside this change.
+
+## D48 — Chief external-work intake is an explicit atomic ticket operation
+
+Work completed outside Panels is reconciled through two explicit commands under the existing
+`panels chief` group: reconcile an aligned ticket or create a populated ticket. It is not a new
+domain object, a generic state setter, or a worker power. The writer reuses canonical ticket
+fields, notes, scope, status, events, and readiness behavior, and applies the complete imported
+state in one `BEGIN IMMEDIATE` transaction after checking proposals, active control, and chat
+turns under that same lock.
+
+Ordinary product operations are unattributed when no actor header exists; absence is not proof
+that a human acted. Worker calls remain attributed and gated, while external-work routes require
+the explicit Chief role. `PLAN_ACTOR` is an operational boundary for the trusted local same-user
+runtime, not an authentication credential or adversarial security boundary. Production gateway
+wiring sets worker and Chief role environments while preserving unrelated environment values.
+Source skills encode the operation map: Chief owns the detailed workflow, the general Panels
+skill maps the groups, and the worker skill adds only `Never invoke panels chief`.
+
+## D47 — Pending worker context is a generic keyed delivery subsystem
+
+Worker awareness is durable state keyed by `(worker_entity_id, context_key)`, not a ticket Boolean,
+append-only notice queue, event-log convention, or Panels chat row. Producer domains own key names and
+text; the generic `worker_context` package owns coalescing storage, deterministic prompt composition,
+snapshots, and exact-revision acknowledgement. `SharedGateway` knows only the generic service and adds
+its prepared suffix at actual `prompt.submit` boundaries. It acknowledges immediately after Hermes
+accepts the submit, so pre-submit failures retain context and an older receipt cannot clear a newer
+revision. The first ticket-owned key is `ticket_changed`; adding another producer key does not change
+gateway or runtime code. Internal context is stripped from direct Hermes history, while Panels stores
+the original visible text. Image attachment remains before submission and therefore before
+acknowledgement.
+
+## D46 — Chat images are managed by chat and delivered through Hermes native vision
+
+Store uploaded images under `files/chats/<entity_id>/` for every chattable entity instead of putting
+Chief/day images into ticket folders or adding attachment records. Panels persists an ordinary
+managed-file Markdown reference as the visible human message and routes that reference through the
+existing `FilePreviewTarget` / `FilePreview` seam. The backend separately resolves the same-entity
+managed file and queues it with Hermes `image.attach` immediately before `prompt.submit`; a Panels
+chat row alone is never treated as delivery. Uploads are bounded, sniffed before atomic publication,
+and named from the sniffed type. The composer adds only one image affordance directly beside `/` and
+preserves its existing interaction model.
+
+Image validation establishes each supported container's required structure rather than accepting a
+magic prefix, while retaining valid animated WebP. Publication and reads reject symlinked managed
+roots/entity directories; atomic publication uses a no-follow directory descriptor. A pending image
+is intentionally excluded from slash commands and remains selected for the user's next message.
+
 ## D45 — Chat follows only while the reader remains near the bottom
 
 D45 supersedes D35 after the owner's correction. The shared chat panel opens at the latest message
@@ -13,7 +98,7 @@ manually returning near the bottom resumes follow mode.
 
 ## D44 — Permanent ticket deletion stays outside normal UI
 
-Keep the existing human-only delete writer and explicit `panels ticket delete <id> --yes` command,
+Keep the existing direct-only delete writer and explicit `panels ticket delete <id> --yes` command,
 but expose no delete control on standalone or Workspace-embedded ticket screens. The route therefore
 loses the entire delete-only client path rather than hiding or conditionally rendering it. Browser
 coverage checks both the accessible button name and the former data hook on both ticket surfaces.
@@ -1242,3 +1327,34 @@ status filter, collapsed projects, or Hide done choice. Card and Chief of Staff 
 history entries. Once a settled board proves a routed ticket is absent, Workspace replaces that stale
 entry with `#/workspace`; this covers invalid links and ticket disappearance without adding a second
 selection store.
+
+## D74 — Same-session completion ownership must be causal
+
+The Chief of Staff interruption loop and the immediate ticket-worker interruption are one gateway
+boundary defect. A Hermes `message.complete` identified only by live session ID cannot safely be
+treated as the completion of whichever Panels caller is currently draining that session. The current
+broadcast fan-out lets a new prompt consume an older human or internal background turn's interrupted
+completion, while the real new prompt continues orphaned from Panels.
+
+The diagnosis was split into three read-only delegated checks: live artifact correlation, intended
+chat semantics, and a deterministic reproduction. The chosen feedback loop uses the real
+`SharedGateway` with `FakeGateway`; a second FastAPI/SQLite harness proves the same failure reaches the
+Chief transcript. No fix is authorized in this cycle. A future fix must begin with the failing Chief
+API regression and correct completion ownership at the gateway/session boundary rather than adding
+ticket-specific retries or filtering the interruption string in the UI.
+
+## D75 — Use one owned turn identity from Panels state through Hermes completion
+
+The complete correction will pass the already-durable Panels human or worker `ChatTurn.id` into a
+versioned Hermes turn submission. Hermes retains that ID in a non-merging queued envelope, tags every
+turn-scoped event with it, gives internal work separate IDs, produces exactly one terminal event per
+accepted turn, and interrupts only the requested active or queued ID. Repeated submission of the same
+ID and envelope is idempotent; reuse with different input is a protocol error.
+
+Panels registers a drain by `(live_session_id, turn_id)` before submission and routes only matching
+events to it. The transport behavior stays private behind the shared gateway; Chief chat, ticket chat,
+commands, and System B only pass their existing turn ID. Unsupported Hermes versions fail closed.
+A Panels-only session lock was rejected as the final fix because it cannot distinguish Hermes-created
+background turns. A general unbounded FIFO was also rejected as unnecessary; the current product needs
+only non-merging accepted-turn semantics and an explicit queue-capacity policy. Image and command
+inputs must be made part of the owned turn before their old session-global paths are removed.

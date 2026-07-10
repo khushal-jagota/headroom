@@ -236,18 +236,18 @@ def api() -> SimpleNamespace:
         assert resp.status_code < 300, f"GET {path} -> {resp.status_code}: {resp.text}"
         return resp.json()
 
-    def human_post(server: ServerHandle, path: str, json_body: dict) -> dict:
-        # No X-Plan-* headers: authctx classifies a header-less request as the human,
-        # which is what /scope and /accept require.
+    def direct_post(server: ServerHandle, path: str, json_body: dict) -> dict:
+        # No X-Plan-* headers: authctx classifies this request as unattributed,
+        # which direct-only /scope and /accept permit.
         resp = httpx.post(server.base + path, json=json_body, timeout=10.0)
         assert resp.status_code < 300, f"POST {path} -> {resp.status_code}: {resp.text}"
         return resp.json()
 
-    def human_patch(server: ServerHandle, path: str, json_body: dict) -> dict:
-        # Header-less PATCH → the human. The day brief writer is human-only
-        # (days/api.py reject_agents), so this is how a test seeds/edits a brief.
+    def direct_patch(server: ServerHandle, path: str, json_body: dict) -> dict:
+        # A headerless PATCH is unattributed. The day brief writer is direct-only,
+        # so this is how a test seeds or edits a brief.
         resp = httpx.patch(server.base + path, json=json_body, timeout=10.0)
         assert resp.status_code < 300, f"PATCH {path} -> {resp.status_code}: {resp.text}"
         return resp.json()
 
-    return SimpleNamespace(get=get, human_post=human_post, human_patch=human_patch)
+    return SimpleNamespace(get=get, direct_post=direct_post, direct_patch=direct_patch)

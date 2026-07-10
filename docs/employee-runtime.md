@@ -53,6 +53,24 @@ You reach the employee through the ticket's chat, and you can run a skill into i
 from the slash menu — both go to the same live worker over the same gateway. Those
 are their own system; see `chat.md`.
 
+### Pending context
+
+Panels keeps a small keyed set of facts that an employee must receive with its next
+model-bound turn. Repeating the same fact refreshes one key instead of creating a
+queue of duplicate messages. For example, a human ticket edit sets `ticket_changed`,
+which tells the employee to reread the ticket.
+
+The shared worker gateway adds every pending item immediately before it submits the
+next Hermes prompt. This covers an automatic step, a human message, and a model-backed
+slash command. Commands that do not submit a prompt do not consume anything. After
+Hermes accepts the prompt, Panels acknowledges the exact key revisions it sent. A
+failed or busy submission keeps them pending, and a newer revision written during a
+send cannot be erased by the older acknowledgement.
+
+Panels chat rows and event rows remain display and audit records. They are not this
+delivery mechanism. The generic storage, contracts, and composition live in
+`src/planner/worker_context/`; ticket-specific keys live with the ticket domain.
+
 ## When a run fails: errors in the event log
 
 When an employee's run goes wrong, the ticket's history tells you why. A failed run

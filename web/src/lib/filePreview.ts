@@ -1,5 +1,6 @@
 export type FilePreviewTarget =
   | { kind: "ticket-file"; ticketId: string; path: string }
+  | { kind: "chat-file"; entityId: string; path: string }
   | { kind: "external-link"; href: string; label?: string };
 
 export type FilePreviewKind =
@@ -27,6 +28,7 @@ const IMAGE_EXTENSIONS = new Set(["avif", "bmp", "gif", "jpeg", "jpg", "png", "w
 const VIDEO_EXTENSIONS = new Set(["m4v", "mov", "mp4", "ogg", "ogv", "webm"]);
 const AUDIO_EXTENSIONS = new Set(["aac", "flac", "m4a", "mp3", "oga", "ogg", "opus", "wav", "webm"]);
 const TICKET_ID_RE = /^t_[a-z0-9]+$/;
+const ENTITY_ID_RE = /^[A-Za-z0-9_-]+$/;
 const RESIDUAL_UNSAFE_RE = /%(?:25|2e|2f|5c)/i;
 const MAX_MARKDOWN_EMBED_DEPTH = 2;
 
@@ -38,14 +40,17 @@ export function resolvePreview(target: FilePreviewTarget): ResolvedPreview {
       href: target.href,
       label: target.label || target.href,
       displayHref: displayHrefForExternal(target.href),
-      actionLabel: "Open external link",
+      actionLabel: "Open external link"
     };
   }
 
-  if (!ticketFileTarget(target.ticketId, target.path)) {
+  if (target.kind === "ticket-file" && !ticketFileTarget(target.ticketId, target.path)) {
     throw new Error("unsafe ticket file target");
   }
-  const href = ticketFileHref(target);
+  if (target.kind === "chat-file" && !chatFileTarget(target.entityId, target.path)) {
+    throw new Error("unsafe chat file target");
+  }
+  const href = target.kind === "ticket-file" ? ticketFileHref(target) : chatFileHref(target);
   const label = filenameLabel(target.path);
   const previewHref = previewHashHref(target);
   const extension = extensionFor(target.path);
@@ -76,6 +81,8 @@ export function markdownExpansionFor(
 export function targetFromHref(href: string, label = ""): FilePreviewTarget {
   const ticketTarget = ticketFileTargetFromHref(href);
   if (ticketTarget) return ticketTarget;
+  const chatTarget = chatFileTargetFromHref(href);
+  if (chatTarget) return chatTarget;
   return { kind: "external-link", href, label: label || href };
 }
 
@@ -83,16 +90,28 @@ export function ticketFileTarget(
   ticketId: string,
   path: string
 ): Extract<FilePreviewTarget, { kind: "ticket-file" }> | null {
-  if (!TICKET_ID_RE.test(ticketId) || !path || path.startsWith("/") || path.includes("\\")) {
-    return null;
-  }
-  if (RESIDUAL_UNSAFE_RE.test(path)) return null;
-  const segments = path.split("/");
-  if (segments.some((segment) => !segment || segment === "." || segment === "..")) return null;
+  if (!TICKET_ID_RE.test(ticketId) || !safeManagedPath(path)) return null;
   return { kind: "ticket-file", ticketId, path };
 }
 
-export function previewHashHref(target: Extract<FilePreviewTarget, { kind: "ticket-file" }>): string {
+export function chatFileTarget(
+  entityId: string,
+  path: string
+): Extract<FilePreviewTarget, { kind: "chat-file" }> | null {
+  if (!ENTITY_ID_RE.test(entityId) || !safeManagedPath(path)) return null;
+  return { kind: "chat-file", entityId, path };
+}
+
+export function previewHashHref(
+  target: Extract<FilePreviewTarget, { kind: "ticket-file" | "chat-file" }>
+): string {
+  if (target.kind === "chat-file") {
+    return (
+      "#/preview?source=chat" +
+      `&entity=${encodeURIComponent(target.entityId)}` +
+      `&path=${encodeURIComponent(target.path)}`
+    );
+  }
   return (
     "#/preview?source=ticket" +
     `&ticket=${encodeURIComponent(target.ticketId)}` +
@@ -101,14 +120,28 @@ export function previewHashHref(target: Extract<FilePreviewTarget, { kind: "tick
 }
 
 export function ticketFileHref(target: Extract<FilePreviewTarget, { kind: "ticket-file" }>): string {
-  const path = target.path
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
+  const path = encodedManagedPath(target.path);
   return `/files/tickets/${encodeURIComponent(target.ticketId)}/${path}`;
 }
 
+export function chatFileHref(target: Extract<FilePreviewTarget, { kind: "chat-file" }>): string {
+  const path = encodedManagedPath(target.path);
+  return `/files/chats/${encodeURIComponent(target.entityId)}/${path}`;
+}
+
 function ticketFileTargetFromHref(href: string): FilePreviewTarget | null {
+  const parts = managedHrefParts(href, "/files/tickets/");
+  if (!parts) return null;
+  return ticketFileTarget(parts.entityId, parts.path);
+}
+
+function chatFileTargetFromHref(href: string): FilePreviewTarget | null {
+  const parts = managedHrefParts(href, "/files/chats/");
+  if (!parts) return null;
+  return chatFileTarget(parts.entityId, parts.path);
+}
+
+function managedHrefParts(href: string, prefix: string): { entityId: string; path: string } | null {
   const localOrigin = typeof window === "undefined" ? "http://planner.local" : window.location.origin;
   try {
     if (new URL(href, localOrigin).origin !== localOrigin) return null;
@@ -116,19 +149,32 @@ function ticketFileTargetFromHref(href: string): FilePreviewTarget | null {
     return null;
   }
   const pathname = rawPathnameFromHref(href);
-  const prefix = "/files/tickets/";
   if (!pathname.startsWith(prefix)) return null;
   const rest = pathname.slice(prefix.length);
   const slash = rest.indexOf("/");
   if (slash <= 0 || slash === rest.length - 1) return null;
   try {
-    return ticketFileTarget(
-      decodeURIComponent(rest.slice(0, slash)),
-      decodeURIComponent(rest.slice(slash + 1))
-    );
+    return {
+      entityId: decodeURIComponent(rest.slice(0, slash)),
+      path: decodeURIComponent(rest.slice(slash + 1))
+    };
   } catch {
     return null;
   }
+}
+
+function safeManagedPath(path: string): boolean {
+  if (!path || path.startsWith("/") || path.includes("\\") || RESIDUAL_UNSAFE_RE.test(path)) {
+    return false;
+  }
+  return !path.split("/").some((segment) => !segment || segment === "." || segment === "..");
+}
+
+function encodedManagedPath(path: string): string {
+  return path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
 }
 
 function rawPathnameFromHref(href: string): string {

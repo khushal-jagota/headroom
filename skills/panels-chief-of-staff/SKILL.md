@@ -47,19 +47,29 @@ Panels workflow skill names:
 - `panels-rollover` — use this for carrying day, ticket, review, and sprint context across a day boundary. It should guide what finished, what carries forward, what needs review, and what requires a human decision.
 - `panels-sprint-planning` — use this for shaping or reconciling sprint work: goals, sprint items, backlog, ideas, active tickets, constraints, and priorities.
 
-When a request is really a rollover or sprint-planning workflow, load or invoke the matching skill and use it for the workflow shape. This chief-of-staff skill remains the top-level coordinator: inspect the real workspace first, use Panels CLI/API surfaces for allowed organizing actions, and present human-only decisions clearly instead of bypassing them.
+When a request is really a rollover or sprint-planning workflow, load or invoke the matching skill and use it for the workflow shape. This chief-of-staff skill remains the top-level coordinator: inspect the real workspace first, use Panels CLI/API surfaces for allowed organizing actions, and present user decisions clearly instead of bypassing them.
+
+## Work completed outside Panels
+
+Use `panels chief` only when the user reports that real work was already completed outside Panels and the record now needs to match that reality.
+
+1. Search the current tickets first. Reconcile an existing aligned ticket rather than creating a duplicate.
+2. Use `panels chief reconcile-ticket-from-external-work <ticket-id>` for an existing ticket, or `panels chief create-ticket-from-external-work` when no aligned ticket exists.
+3. Preserve the user's report and your reconciliation reasoning in the complete ticket note passed with `--user-note-file`. When reconciling, include any existing note that must remain.
+4. Supply the exact settled field prefix required by the target state. External intake leaves the ticket stopped at that state; it does not create proposals or imitate worker progress.
+5. Read the resulting ticket back with `panels ticket show <id> --json` and report the ticket id and resulting state.
+
+Do not use these commands for ordinary ticket edits, convenient state jumps, or work a ticket worker is doing inside Panels. Clear ambiguity with the user instead of importing a claim you cannot reconcile confidently.
 
 ## Authority boundary
 
 You act through the `panels` CLI and the Panels API. The server is the source of truth. Never edit the database or files directly to change Panels state.
 
-You may perform ordinary planning or agent-permitted operations, such as reading state, creating work, and organizing work through supported commands. Discover the current command surface with `panels --help` and the relevant group help, for example `panels day --help`, `panels ticket --help`, `panels sprint --help`, and `panels sprint item --help`. Prefer `--json` when reading state or when a structured result will prevent ambiguity.
+You may perform supported ordinary planning operations through `panels day`, `panels ticket`, and `panels sprint`. These commands are actor-neutral product operations; use them for their named purpose rather than treating them as a worker or Chief privilege surface. Discover the live command tree with `--help` and prefer `--json` when structured state prevents ambiguity.
 
-Do not use worker-only commands as your normal planning interface. Worker commands belong to ticket workers and proposal-specific flows.
+Do not use worker-only commands as your planning interface. Worker commands belong to ticket workers and proposal-specific flows.
 
-You must not perform human-only decisions yourself. Instead, explain the proposed action and ask the human to apply or approve it.
-
-If a command is rejected as human-only, do not work around it. Treat that as the correct boundary and present the action for the human.
+Do not invent a user decision. When a change depends on judgment the user has not supplied, explain the choice and ask instead of using an available command as implicit permission.
 
 ## Operating style
 

@@ -12,6 +12,8 @@ import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import date
+from pathlib import Path
+from urllib.parse import quote, unquote, urlsplit
 
 from planner.chat import data as chat_data
 from planner.chat.contracts import (
@@ -30,12 +32,14 @@ from planner.core.contracts import EventKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event
 from planner.days.data import read_day
+from planner.files.logic.paths import resolve_chat_file
 from planner.tickets.contracts import TicketStatus
 
 _log = logging.getLogger("planner.chat")
 
 CHIEF_OF_STAFF_ENTITY_ID = "agent_panels_chief_of_staff"
 TOP_LEVEL_AGENT_ENTITY_IDS = frozenset({CHIEF_OF_STAFF_ENTITY_ID})
+_IMAGE_ONLY_MODEL_CUE = "Please respond to the attached image."
 
 
 @contextmanager
@@ -86,6 +90,13 @@ def _resolve(conn: sqlite3.Connection, entity_id: str, now: int) -> tuple[str, s
         agent_key: str | None = row["chat_session_key"]
         return "agent_chat_session", agent_key
     raise PlannerError(ErrorCode.not_found, "no chattable entity for id", {"entity_id": entity_id})
+
+
+def resolve_chattable_entity(
+    conn: sqlite3.Connection, entity_id: str, now: int
+) -> tuple[str, str | None]:
+    """Validate or materialize the same entity boundary used by chat turns."""
+    return _resolve(conn, entity_id, now)
 
 
 def _reject_if_ticket_worker_running(conn: sqlite3.Connection, entity_id: str) -> None:
@@ -205,6 +216,11 @@ def send(
         effective_key = _persist_key(conn, kind, entity_id, effective_key, result.session_key, now)
     if effective_key != result.session_key:  # lost the first-write race; adopt the winner
         result = ChatSendResult(reply_text=result.reply_text, session_key=effective_key)
+    chat_data.record_message(conn, entity_id, role="human", text=text, now=now)
+    if result.reply_text:
+        chat_data.record_message(
+            conn, entity_id, role="assistant", text=result.reply_text, now=now
+        )
     return result
 
 
@@ -336,6 +352,7 @@ def stream(
     _reject_if_ticket_worker_running(conn, entity_id)
     entity_kind, stored_key = _resolve(conn, entity_id, now)
     effective_key = stored_key
+    chat_data.record_message(conn, entity_id, role="human", text=text, now=now)
 
     def persist_session_before_prompt(session_key: str) -> None:
         nonlocal effective_key
@@ -367,6 +384,14 @@ def stream(
                 session_key = _persist_key(
                     conn, entity_kind, entity_id, effective_key, session_key, now
                 )
+            if chunk.reply_text:
+                chat_data.record_message(
+                    conn,
+                    entity_id,
+                    role="system" if chunk.kind == "system" else "assistant",
+                    text=chunk.reply_text,
+                    now=now,
+                )
             yield ChatStreamChunk(
                 type="done",
                 reply_text=chunk.reply_text,
@@ -389,6 +414,9 @@ def start_human_turn(
     mode: str,
     now: int,
     now_fn: Callable[[], int] | None = None,
+    *,
+    image_reference: str | None = None,
+    db_path: str | Path | None = None,
 ) -> ChatTurn:
     if mode not in ("message", "command"):
         raise PlannerError(ErrorCode.validation, "mode must be message or command")
@@ -396,13 +424,20 @@ def start_human_turn(
     try:
         _reject_if_ticket_worker_running(conn, entity_id)
         _resolve(conn, entity_id, now)
+        image_path = (
+            _resolve_turn_image(db_path, entity_id, image_reference)
+            if image_reference is not None
+            else None
+        )
+        visible_text = _visible_human_text(text, image_reference)
+        model_text = text or _IMAGE_ONLY_MODEL_CUE
         turn = chat_data.start_turn(
             conn,
             entity_id,
             origin="human",
             mode=mode,
             visible_role="human",
-            visible_text=text,
+            visible_text=visible_text,
             output_role="system" if mode == "command" else "assistant",
             phase="thinking",
             activity_label="Thinking",
@@ -413,7 +448,16 @@ def start_human_turn(
 
     thread = threading.Thread(
         target=_run_human_turn,
-        args=(conn_factory, gateway, entity_id, turn.id, text, mode, now_fn or _unix_now),
+        args=(
+            conn_factory,
+            gateway,
+            entity_id,
+            turn.id,
+            model_text,
+            mode,
+            now_fn or _unix_now,
+            image_path,
+        ),
         name=f"chat-turn-{turn.id}",
         daemon=True,
     )
@@ -429,6 +473,7 @@ def _run_human_turn(
     text: str,
     mode: str,
     now_fn: Callable[[], int],
+    image_path: Path | None = None,
 ) -> None:
     conn = conn_factory()
     try:
@@ -456,7 +501,19 @@ def _run_human_turn(
             )
 
         output_role = "system" if mode == "command" else "assistant"
-        chunks = gateway.stream(stored_key, entity_id, text, mode, persist_session_before_prompt)
+        if image_path is None:
+            chunks = gateway.stream(
+                stored_key, entity_id, text, mode, persist_session_before_prompt
+            )
+        else:
+            chunks = gateway.stream(
+                stored_key,
+                entity_id,
+                text,
+                mode,
+                persist_session_before_prompt,
+                image_path=image_path,
+            )
         for chunk in chunks:
             now = now_fn()
             if chunk.type == "session":
@@ -516,6 +573,42 @@ def _run_human_turn(
         )
     finally:
         conn.close()
+
+
+def _resolve_turn_image(
+    db_path: str | Path | None, entity_id: str, image_reference: str
+) -> Path:
+    if db_path is None:
+        raise PlannerError(ErrorCode.validation, "image storage is unavailable")
+    parsed = urlsplit(image_reference)
+    if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment:
+        raise PlannerError(ErrorCode.validation, "image reference must be a managed chat file")
+    parts = parsed.path.split("/")
+    if len(parts) < 5 or parts[:4] != ["", "files", "chats", entity_id]:
+        raise PlannerError(
+            ErrorCode.validation,
+            "image reference must belong to this chat",
+            {"entity_id": entity_id},
+        )
+    relative_path = unquote("/".join(parts[4:]))
+    try:
+        chat_file = resolve_chat_file(db_path, entity_id, relative_path)
+    except ValueError as exc:
+        raise PlannerError(ErrorCode.validation, "invalid managed chat image") from exc
+    canonical_reference = (
+        f"/files/chats/{quote(chat_file.entity_id, safe='')}/"
+        f"{quote(chat_file.relative_path, safe='/')}"
+    )
+    if image_reference != canonical_reference:
+        raise PlannerError(ErrorCode.validation, "image reference is not canonical")
+    return chat_file.absolute_path
+
+
+def _visible_human_text(text: str, image_reference: str | None) -> str:
+    if image_reference is None:
+        return text
+    markdown = f"![Attached image]({image_reference})"
+    return f"{text}\n\n{markdown}" if text else markdown
 
 
 def _unix_now() -> int:
@@ -650,6 +743,15 @@ def run_command(
     if effective_key != result.session_key:
         result = CommandRunResult(
             reply_text=result.reply_text, session_key=effective_key, kind=result.kind
+        )
+    chat_data.record_message(conn, entity_id, role="human", text=command, now=now)
+    if result.reply_text:
+        chat_data.record_message(
+            conn,
+            entity_id,
+            role="system" if result.kind == "system" else "assistant",
+            text=result.reply_text,
+            now=now,
         )
     return result
 

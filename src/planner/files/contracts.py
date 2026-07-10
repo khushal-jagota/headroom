@@ -1,4 +1,4 @@
-"""Contracts for managed ticket files."""
+"""Contracts for managed files."""
 
 from __future__ import annotations
 
@@ -9,6 +9,13 @@ from pathlib import Path
 @dataclass(frozen=True)
 class TicketFile:
     ticket_id: str
+    relative_path: str
+    absolute_path: Path
+
+
+@dataclass(frozen=True)
+class ChatFile:
+    entity_id: str
     relative_path: str
     absolute_path: Path
 

@@ -1,3 +1,5 @@
+import type { ChatImageUploadResponse, StartChatTurnBody } from "./types";
+
 export type JsonValue =
   | null
   | boolean
@@ -167,11 +169,56 @@ export async function streamChat(
 
 export async function startChatTurn(
   entityId: string,
-  body: { text: string; mode: "message" | "command" }
+  body: StartChatTurnBody
 ): Promise<unknown> {
   return fetchJson(`/api/chat/${encodeURIComponent(entityId)}/turns`, {
     method: "POST",
     body
+  });
+}
+
+export async function uploadChatImage(
+  entityId: string,
+  file: File
+): Promise<ChatImageUploadResponse> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/chat/${encodeURIComponent(entityId)}/images`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-Filename": encodeURIComponent(file.name)
+      },
+      body: file
+    });
+  } catch {
+    throw new PlannerFetchError("network error", "network");
+  }
+
+  const raw = await response.text();
+  let parsed: unknown = null;
+  try {
+    parsed = raw === "" ? {} : JSON.parse(raw);
+  } catch {
+    if (response.ok) {
+      throw new PlannerFetchError("invalid JSON in response", "bad_json", {
+        status: response.status
+      });
+    }
+  }
+  if (response.ok) return parsed as ChatImageUploadResponse;
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    "error" in parsed &&
+    parsed.error &&
+    typeof parsed.error === "object" &&
+    "code" in parsed.error
+  ) {
+    throw makePlannerError(parsed.error as JsonObject, response.status);
+  }
+  throw new PlannerFetchError(`HTTP ${response.status}`, "http_error", {
+    status: response.status
   });
 }
 

@@ -14,7 +14,7 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import StreamingResponse
 
 from planner.chat import service
-from planner.chat.contracts import CommandCatalog
+from planner.chat.contracts import ChatTurnRequest, CommandCatalog
 from planner.core import authctx
 from planner.core.adapters.base import GatewayAdapter
 from planner.core.adapters.registry import Adapters
@@ -49,7 +49,7 @@ def _sse(event: str, data: dict[str, Any]) -> str:
 async def send_message(
     entity_id: str, body: dict[str, Any], request: Request
 ) -> dict[str, Any]:
-    authctx.reject_agents(authctx.request_context(request))  # §11/§8: chat is human-only.
+    authctx.require_direct_write(authctx.request_context(request))  # §11/§8: chat is direct-only.
     text = body.get("text")
     if not isinstance(text, str):
         raise PlannerError(ErrorCode.validation, "text is required")
@@ -66,7 +66,7 @@ async def send_message(
 
 @router.get("/chat/{entity_id}/history")
 async def chat_history(entity_id: str, request: Request) -> dict[str, Any]:
-    authctx.reject_agents(authctx.request_context(request))  # §11/§8: chat is human-only.
+    authctx.require_direct_write(authctx.request_context(request))  # §11/§8: chat is direct-only.
     clock: Clock = request.app.state.clock
     adapters: Adapters = request.app.state.adapters
     conn_factory: Callable[[], sqlite3.Connection] = request.app.state.conn_factory
@@ -80,7 +80,7 @@ async def chat_history(entity_id: str, request: Request) -> dict[str, Any]:
 
 @router.get("/chat/{entity_id}/state")
 async def chat_state(entity_id: str, request: Request) -> dict[str, Any]:
-    authctx.reject_agents(authctx.request_context(request))  # §11/§8: chat is human-only.
+    authctx.require_direct_write(authctx.request_context(request))  # §11/§8: chat is direct-only.
     clock: Clock = request.app.state.clock
     adapters: Adapters = request.app.state.adapters
     conn_factory: Callable[[], sqlite3.Connection] = request.app.state.conn_factory
@@ -96,13 +96,23 @@ async def chat_state(entity_id: str, request: Request) -> dict[str, Any]:
 async def start_chat_turn(
     entity_id: str, body: dict[str, Any], request: Request
 ) -> dict[str, Any]:
-    authctx.reject_agents(authctx.request_context(request))  # §11/§8: chat is human-only.
+    authctx.require_direct_write(authctx.request_context(request))  # §11/§8: chat is direct-only.
     text = body.get("text")
-    if not isinstance(text, str) or not text.strip():
+    image_reference = body.get("image_reference")
+    if not isinstance(text, str):
         raise PlannerError(ErrorCode.validation, "text is required")
     mode = body.get("mode", "message")
     if mode not in ("message", "command"):
         raise PlannerError(ErrorCode.validation, "mode must be message or command")
+    if image_reference is not None and not isinstance(image_reference, str):
+        raise PlannerError(ErrorCode.validation, "image_reference must be a string")
+    turn_request = ChatTurnRequest(
+        text=text.strip(), mode=mode, image_reference=image_reference
+    )
+    if not turn_request.text and turn_request.image_reference is None:
+        raise PlannerError(ErrorCode.validation, "text is required")
+    if turn_request.image_reference is not None and turn_request.mode != "message":
+        raise PlannerError(ErrorCode.validation, "images are supported only for messages")
     clock: Clock = request.app.state.clock
     adapters: Adapters = request.app.state.adapters
     conn_factory: Callable[[], sqlite3.Connection] = request.app.state.conn_factory
@@ -110,17 +120,19 @@ async def start_chat_turn(
         conn_factory,
         adapters.gateway,
         entity_id,
-        text.strip(),
-        mode,
+        turn_request.text,
+        turn_request.mode,
         clock.now_unix(),
         clock.now_unix,
+        image_reference=turn_request.image_reference,
+        db_path=request.app.state.config.db_path,
     )
     return asdict(result)
 
 
 @router.post("/chat/{entity_id}/pause")
 async def pause_chat_turn(entity_id: str, request: Request) -> dict[str, Any]:
-    authctx.reject_agents(authctx.request_context(request))  # chat pause is human-only.
+    authctx.require_direct_write(authctx.request_context(request))  # chat pause is direct-only.
     clock: Clock = request.app.state.clock
     adapters: Adapters = request.app.state.adapters
     conn_factory: Callable[[], sqlite3.Connection] = request.app.state.conn_factory
@@ -136,7 +148,7 @@ async def pause_chat_turn(entity_id: str, request: Request) -> dict[str, Any]:
 async def stream_message(
     entity_id: str, body: dict[str, Any], request: Request
 ) -> StreamingResponse:
-    authctx.reject_agents(authctx.request_context(request))  # §11/§8: chat is human-only.
+    authctx.require_direct_write(authctx.request_context(request))  # §11/§8: chat is direct-only.
     text = body.get("text")
     if not isinstance(text, str) or not text.strip():
         raise PlannerError(ErrorCode.validation, "text is required")
@@ -187,7 +199,7 @@ async def stream_message(
 async def run_chat_command(
     entity_id: str, body: dict[str, Any], request: Request
 ) -> dict[str, Any]:
-    authctx.reject_agents(authctx.request_context(request))  # §11/§8: chat is human-only.
+    authctx.require_direct_write(authctx.request_context(request))  # §11/§8: chat is direct-only.
     command = body.get("command")
     if not isinstance(command, str) or not command.strip():
         raise PlannerError(ErrorCode.validation, "command is required")
@@ -206,9 +218,9 @@ async def run_chat_command(
 
 @router.get("/chat/commands")
 async def chat_commands(request: Request) -> dict[str, Any]:
-    # The gateway command/skill catalog for the "/" menu. Human-only, gateway-wide,
+    # The gateway command/skill catalog for the "/" menu. Direct-only, gateway-wide,
     # and cached (never a child spawn per request); ?refresh=1 busts the cache.
-    authctx.reject_agents(authctx.request_context(request))
+    authctx.require_direct_write(authctx.request_context(request))
     adapters: Adapters = request.app.state.adapters
     refresh = request.query_params.get("refresh") == "1"
     catalog = _cached_catalog(request.app, adapters.gateway, refresh)

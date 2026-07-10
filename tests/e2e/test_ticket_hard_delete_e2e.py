@@ -58,7 +58,7 @@ def test_ticket_ui_has_no_delete_control(
         "--title",
         TITLE,
     )["id"]
-    api.human_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
+    api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
 
     ctx = context_factory()
     page = open_page(

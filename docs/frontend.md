@@ -66,7 +66,9 @@ share.
   empty sandbox and a new-tab action to the full Panels preview route. Images,
   video, and audio render inline; unknown files stay as download cards; ordinary
   external links stay external-link cards with deterministic host text. The full
-  preview route is `#/preview?source=ticket&ticket=<id>&path=<path>`.
+  preview route is `#/preview?source=ticket&ticket=<id>&path=<path>`. Chat images
+  under `/files/chats/<entity-id>/...` use this same component and resolver rather
+  than a chat-only renderer.
 - **Editable Markdown stays one surface.** Ticket notes, recaps, passed fields,
   approval drafts, and future Markdown surfaces remain directly editable with their
   existing focus, blur/save, keyboard, paste, and Escape behavior. Links stay mounted

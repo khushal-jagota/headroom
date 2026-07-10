@@ -3,7 +3,193 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
-## Current work cycle (2026-07-10): Normal chat auto-scroll
+## Current work cycle (2026-07-10): Approved architecture deepening 1–3
+
+Current scope:
+
+- `t_arch01` replaces System A/B with `TicketReadinessLoop` and `EmployeeStepRunner`, makes
+  the runner independent of automatic dispatch, and requires an accepted runner reservation
+  before a Review return-for-revision mutates its Ticket.
+- `t_arch02` moves readiness wakes out of routes and behind best-effort domain action doorbells.
+  The audited wake set closes missing takeover, blocker-link creation, and day-removal paths;
+  the timer/database remain canonical.
+- `t_arch03` makes an ordinary multi-attribute Ticket PATCH one transaction, preserves existing
+  per-field events for actual changes, writes worker context once, and makes no-op edits inert.
+- Candidates 4 and 6 remain deferred. Candidate 5 remains rejected. The diagnosed same-session
+  Hermes completion-correlation defect is explicitly outside this work.
+
+Verification status:
+
+- Three independent read-only audits traced runtime ownership, every readiness predicate input and
+  wake site, and ordinary Ticket PATCH behavior on the current dirty tree.
+- The PATCH audit reproduced a partial commit after a later invalid field and false events/context
+  for unchanged values. The readiness audit found the three missing rings above plus a stale-start
+  race after day removal. The runtime audit confirmed direct revision can return success without a
+  Hermes turn whenever System A is absent.
+- Contract-scoped tickets and RED acceptance seams are recorded under `orchestration/tickets/`.
+- Three delegated implementation plans were independently reviewed by Codex in read-only xhigh
+  mode. The atomic-edit plan passed immediately. Runtime ownership's two findings (strict stored-
+  session resume and running-Chat collision safety) and readiness ringing's five coverage/doc
+  findings were accepted, added to the contracts/plans, and both follow-up reviews returned
+  `NO VIOLATIONS`.
+- No production implementation or verification run has started in this cycle yet. The concurrent
+  Chief/worker-context/chat-image work remains the last full-`./verify` baseline.
+
+Immediate next step:
+
+- Checkpoint the already-verified concurrent work plus reviewed plans, then implement `t_arch01`,
+  `t_arch02`, and `t_arch03` serially under TDD and independent implementation review.
+
+## Completed work cycle (2026-07-10): Chief external-work intake
+
+Current implementation:
+
+- `panels chief reconcile-ticket-from-external-work <ticket-id>` reconciles an existing
+  ticket, while `panels chief create-ticket-from-external-work` creates a populated ticket
+  when no aligned record exists. Both support terse and JSON output plus file-backed long
+  Markdown inputs.
+- Ordinary CLI operations are actor-neutral: no actor header means unattributed, not human.
+  Worker operations remain attributed and gated. Chief external-work requests require the
+  explicit Chief actor supplied by the production gateway role environment.
+- External-work writers validate the exact settled-field prefix for the target state, refuse
+  backward moves, pending proposals, active ticket control, and active chat turns, and commit
+  fields, note, recap, scope, state, status normalization, existing events, and readiness wake
+  as one transaction. Parent sprint-item invalidations use the existing event contract.
+- Source skills now map ordinary `ticket`, gated `worker`, and exceptional `chief` operations.
+  The worker skill adds only `Never invoke panels chief`; runtime skill paths remain source
+  symlinks.
+
+Verification status:
+
+- The live disposable-server CLI smoke passed both create and reconcile flows, terse/JSON
+  output, read-back, and non-Chief rejection: 2 tests passed.
+- Codex's implementation review found four contract/documentation issues, then two stale
+  source phrases, then stale test terminology. Every finding was corrected; the final
+  high-effort follow-up returned `NO VIOLATIONS`.
+- The first integrated `./verify` correctly exposed two cross-ticket merge regressions: a
+  removed authority helper still used by chat-image upload and worker context still keyed to
+  the legacy `human` actor. Existing failing unit/browser tests covered both. The repair uses
+  `require_direct_write` and the canonical direct-actor set; all focused regressions passed.
+- Final `./verify` passed: Ruff, Mypy across 97 source files, 279 unit tests, compile/static
+  and frontend gates, 56 browser tests, and `VERIFY: PASS`.
+
+Immediate next step:
+
+- Propose the evidence-backed result on `t_bg70adpd` for owner review.
+
+## Current diagnosis (2026-07-10): Same-session Hermes completions are misattributed
+
+Current finding:
+
+- The Chief of Staff interruption loop and ticket `t_ps65qk4j`'s immediate `0.0s` worker error are
+  the same gateway defect, not separate model failures and not an image-attachment defect.
+- `GatewayChild` routes turn events only by live session ID and broadcasts them to every open drain.
+  `SharedGateway` then accepts the first `message.complete` on that session as the completion for the
+  caller's submitted prompt. The event carries no Panels turn or prompt correlation identity.
+- When a new prompt collides with an active human turn, preflight compression, memory review, or async
+  delegation delivery, the new Panels caller can consume the older operation's `interrupted`
+  completion. The real new prompt then continues inside Hermes with no Panels listener to persist it.
+- This explains why Chief and only some tickets fail: an idle session works; a session with overlapping
+  internal or user work can cross-wire its completions.
+
+Verification status:
+
+- Live SQLite rows, Hermes state, and `agent.log` align the `8.5s` and `17.6s` Chief interruption text
+  with the preceding prompts; the real `hello?` answer completed in Hermes but never reached Panels.
+- The ticket worker's `0.0s` completion belonged to colliding Hermes background review/delegation work;
+  the actual worker prompt started immediately afterward and continued despite Panels marking the
+  ticket `errored`.
+- A hermetic `SharedGateway` overlap harness reproduces the exact misattribution in 0.1 seconds on two
+  independent runs. A full FastAPI/SQLite Chief harness reproduces the visible transcript in 0.3 seconds.
+- Existing pause, active-turn, and gateway tests pass because none overlaps interrupt completion and a
+  new prompt on the same live session. No implementation was changed and `./verify` was not rerun.
+
+Fix design:
+
+- Reusing the existing Panels `ChatTurn.id` / worker-turn ID as a causal Hermes turn ID is the
+  smallest complete fix. Hermes must retain it while queued, put it on every turn-scoped event, give
+  its own background turns different IDs, and make interrupt target the exact ID.
+- Panels must register and route drains by `(live_session_id, turn_id)` before submitting. It must no
+  longer accept the first session-level `message.complete` as the caller's result.
+- Hermes must never merge two differently identified queued turns. A bounded one-turn queue is enough
+  for the current product; a general FIFO is not required. Same-ID retries must be idempotent so a lost
+  JSON-RPC acknowledgement cannot run the model twice.
+- Session serialization is only a containment option for the visible stop race. It cannot prove
+  ownership when Hermes starts memory, goal, delegation, or notification turns itself, so it is not
+  the final correction.
+- The new protocol must fail closed when unsupported. Image and prompt-producing command paths must
+  migrate atomically or stay behind a temporary session lane until they do; neither may keep the old
+  session-level first-completion drain.
+
+Immediate next step:
+
+- If implementation is authorized, first land deterministic failures for stop A + queued B, internal
+  turn I between them, a completion before the submit acknowledgement, delayed stop A after B starts,
+  and duplicate-submit retry. Then add the owned-turn protocol in Hermes, migrate Panels routing and
+  all prompt-producing callers, and run the full Chief and employee-step regressions through `./verify`.
+
+## Completed work cycle (2026-07-10): Worker awareness of user ticket edits
+
+Current implementation:
+
+- `planner/worker_context/` is a first-class keyed subsystem with contracts, SQLite persistence,
+  prompt composition, and exact-revision acknowledgement. Repeated writes to one key coalesce while
+  independent keys coexist.
+- The ticket domain owns `ticket_changed` and sets it for human edited approvals and direct Ticket or
+  Review edits. Unedited approvals and agent-owned proposals, recaps, and notes do not set it.
+- `SharedGateway` attaches generic pending context at every real `prompt.submit` boundary and
+  acknowledges only after Hermes accepts the submission. Busy, attach, and submit failures retain it;
+  a newer revision written during delivery survives an older acknowledgement.
+- Automatic employee steps, human sends, streaming sends, and model-backed commands share the
+  boundary. Pure commands consume nothing. Panels-visible chat and direct history retain the original
+  human text rather than the internal model suffix.
+
+Verification status:
+
+- Focused integration passed 158 worker-context, gateway, ticket, chat, and chat-image unit tests,
+  plus the Review/Ticket edit flows and all six chat-image browser tests.
+- The first Codex implementation review found one visible-history leak. The fix persisted original
+  visible legacy messages and normalized direct Hermes history; the follow-up reported no violations.
+  A final review of the integrated worker-context and chat-image diff also returned `NO VIOLATIONS`.
+- Final `./verify` passed: Ruff, Mypy across 96 source files, 259 unit tests, compile/static and
+  frontend gates, 54 browser tests, and `VERIFY: PASS`.
+
+Immediate next step:
+
+- Propose the verified result on `t_39r5y32c` for owner review.
+
+## Completed work cycle (2026-07-10): Chat image attachments
+
+Current implementation:
+
+- Accepted design and reviewed implementation dispatch are recorded under
+  `orchestration/tickets/t_ps65qk4j-chat-images/`.
+- The image capability is deliberately chat-owned and entity-scoped: ticket, day, and Chief use one
+  managed storage convention rather than forcing non-ticket images into ticket folders.
+- Panels transcript text retains an ordinary managed-file Markdown reference while the same saved
+  image reaches the actual Hermes turn through native `image.attach` immediately before prompt submit.
+- The image affordance is directly beside `/` in the existing composer, with no chat-box
+  redesign or regression to text, command, draft, pause, send, or scrolling behavior.
+- Image-only and text-plus-image sends work for ticket, day, and Chief chat. Managed image references
+  survive navigation/reload through the centralized preview path.
+
+Verification status:
+
+- Focused verification is green: 30 chat-image unit tests, 31 gateway tests, 20 relevant browser tests,
+  the shared preview Node test, Svelte check with 0 errors, ticket-owned Ruff, and `git diff --check`.
+- Codex's implementation review found malformed image acceptance, symlink publication/resolution, a
+  pending-image slash-command regression, and animated WebP compatibility. Each received a failing
+  regression first; the final high-effort follow-up returned `NO VIOLATIONS`.
+- Both delegated recovery runs timed out without summaries. The parent re-read, completed, and executed
+  their partial work rather than accepting it from self-report.
+- Full `./verify` passed on the settled shared worktree: Ruff passed, Mypy passed across 96 source files,
+  259 unit tests passed, frontend check/build passed, 54 browser tests passed, and `VERIFY: PASS`.
+
+Immediate next step:
+
+- The evidence-shaped result is proposed on `t_ps65qk4j` and awaits owner review.
+
+## Completed work cycle (2026-07-10): Normal chat auto-scroll
 
 Current implementation:
 
@@ -23,10 +209,6 @@ Verification status:
   gaps; both were strengthened and the follow-up returned `RESOLVED`.
 - Full `./verify` passed on the settled shared worktree: Ruff and Mypy passed, 211 unit tests
   passed, frontend check/build passed, 48 E2E tests passed, and `VERIFY: PASS`.
-
-Immediate next step:
-
-- Propose the result on ticket `t_bpy3g36e`.
 
 ## Completed work cycle (2026-07-10): Remove the ticket delete control
 

@@ -8,7 +8,7 @@ WAIT_MS = 10_000
 
 
 def _add_today(api, server, ticket_id: str) -> None:
-    api.human_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
+    api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
 
 
 def _set_ticket_status(server, ticket_id: str, status: str) -> None:

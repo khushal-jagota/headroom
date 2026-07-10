@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Final, Literal, TypedDict
+from typing import Final, Literal, NotRequired, TypedDict
 
 from planner.core.contracts import Priority
 
@@ -22,7 +22,7 @@ class TicketState(StrEnum):        # §4.1, exact order
     in_progress = "in_progress"
     needs_review = "needs_review"
     done = "done"
-    dropped = "dropped"            # terminal, human-only, outside the linear order
+    dropped = "dropped"            # terminal, direct-only, outside the linear order
 
 
 # Linear pipeline order (dropped excluded). Index comparison implements "<= ceiling".
@@ -53,7 +53,7 @@ class TicketStatus(StrEnum):       # durable state-of-control, written by data-l
     errored = "errored"
 
 
-# §4.2 table — gating field per pre-terminal state. needs_review has none (human approve).
+# §4.2 table — gating field per pre-terminal state. needs_review has no proposal gate.
 GATING_FIELD: Final[dict[TicketState, FieldName]] = {
     TicketState.needs_success: FieldName.success,
     TicketState.needs_approach: FieldName.approach,
@@ -100,16 +100,15 @@ NextCeiling = TicketState | Literal["none"]    # valid TicketState values are ST
 
 
 @dataclass(frozen=True)
-class ScopePair:                   # required on every human accept/edit-accept
+class ScopePair:                   # required on every direct accept/edit-accept
     next_ceiling: NextCeiling
     at_cap: AtCap
 
 
 # --- request bodies (§9 wire shapes) ---
-# Every key is optional on the wire: an absent key takes the documented default,
-# unknown keys are ignored. The api layer marshals the raw JSON dict into these
-# shapes; a null or wrong-typed value raises ErrorCode.validation. Enum-valued
-# keys carry the string form and are parsed against the contract enums in api.
+# Most legacy bodies below are partial wire shapes: an absent key takes its documented
+# default and unknown keys are ignored. External-work bodies are intentionally strict:
+# required keys are encoded here and their API marshal rejects unknown keys.
 
 
 class CreateTicketBody(TypedDict, total=False):   # POST /tickets
@@ -123,6 +122,26 @@ class CreateTicketBody(TypedDict, total=False):   # POST /tickets
     sprint_item_id: str | None
 
 
+class ReconcileTicketFromExternalWorkBody(TypedDict):
+    state: str
+    user_note: str
+    recap: NotRequired[str]
+    success: NotRequired[str]
+    approach: NotRequired[str]
+    plan: NotRequired[str]
+    result: NotRequired[str]
+
+
+class CreateTicketFromExternalWorkBody(ReconcileTicketFromExternalWorkBody):
+    title: str
+    priority: NotRequired[str | None]
+    deadline: NotRequired[str | None]
+    project: NotRequired[str | None]
+    project_id: NotRequired[str | None]
+    sprint_id: NotRequired[str | None]
+    sprint_item_id: NotRequired[str | None]
+
+
 class ProposeBody(TypedDict, total=False):        # POST /tickets/{id}/propose/{field}
     body: str                      # default ""
 
@@ -133,7 +152,7 @@ class ProposeWithRecapBody(TypedDict, total=False):  # POST /tickets/{id}/propos
 
 
 class AcceptBody(TypedDict, total=False):         # POST /tickets/{id}/accept/{field}
-    edited_body: str | None        # human edit applied before resolution
+    edited_body: str | None        # direct edit applied before resolution
     next_ceiling: str | None       # TicketState value or NO_FURTHER; scope pair (§4.4.7)
     at_cap: str | None             # AtCap value; scope pair (§4.4.7)
 

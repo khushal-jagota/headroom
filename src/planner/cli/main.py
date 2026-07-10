@@ -6,6 +6,7 @@ The command tree mirrors the product model:
 * ticket: create, inspect, organize, and approve tickets
 * sprint: create, inspect, edit, and populate sprints and sprint items
 * worker: worker-only writes such as proposals, recaps, and notes
+* chief: import work completed outside Panels
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ import click
 from click.core import ParameterSource
 
 from planner.cli import http
-from planner.tickets.contracts import GATING_FIELD, AtCap, TicketState
+from planner.tickets.contracts import GATING_FIELD, STATE_ORDER, AtCap, TicketState
 
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
 _FIELDS = ["success", "approach", "plan", "result"]
@@ -173,7 +174,7 @@ def _lines(rows: list[Any], fmt: Callable[[Any], str]) -> str:
 
 
 def _current_sprint_id(as_json: bool) -> str:
-    data = http.send("GET", "/api/sprint/current", as_json=as_json, request_actor="human")
+    data = http.send("GET", "/api/sprint/current", as_json=as_json, request_actor="ordinary")
     sprint = data.get("sprint") if isinstance(data, dict) else None
     if sprint is None:
         http.fail_validation("no current sprint", as_json)
@@ -293,7 +294,7 @@ def project_group() -> None:
 @project_group.command("list")
 @json_option
 def project_list(as_json: bool) -> None:
-    data = http.send("GET", "/api/projects", as_json=as_json, request_actor="human")
+    data = http.send("GET", "/api/projects", as_json=as_json, request_actor="ordinary")
     http.emit(data, as_json, _lines(data["projects"], lambda p: f"{p['id']} {p['name']}"))
 
 
@@ -310,7 +311,7 @@ def project_create(name: str, summary: str | None, as_json: bool) -> None:
         "/api/projects",
         as_json=as_json,
         json_body=body,
-        request_actor="human",
+        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{data['id']} {data['name']}")
 
@@ -339,7 +340,7 @@ def project_set(
         f"/api/projects/{project_id}",
         as_json=as_json,
         json_body={api_field: "" if new_value is None else new_value},
-        request_actor="human",
+        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{data['id']} {field} set")
 
@@ -356,7 +357,7 @@ def day() -> None:
 @click.option("--date", "date_", default="today", help="today or YYYY-MM-DD.")
 @json_option
 def day_show(date_: str, as_json: bool) -> None:
-    data = http.send("GET", f"/api/day/{date_}", as_json=as_json, request_actor="human")
+    data = http.send("GET", f"/api/day/{date_}", as_json=as_json, request_actor="ordinary")
     http.emit(data, as_json, _format_day(data))
 
 
@@ -364,7 +365,7 @@ def day_show(date_: str, as_json: bool) -> None:
 @click.option("--date", "date_", default="today", help="today or YYYY-MM-DD.")
 @json_option
 def day_list_tickets(date_: str, as_json: bool) -> None:
-    data = http.send("GET", f"/api/day/{date_}", as_json=as_json, request_actor="human")
+    data = http.send("GET", f"/api/day/{date_}", as_json=as_json, request_actor="ordinary")
     payload = {"id": data["id"], "tickets": data["tickets"]}
     http.emit(payload, as_json, _format_tickets(data["tickets"]))
 
@@ -391,7 +392,7 @@ def day_set(
         f"/api/day/{date_}",
         as_json=as_json,
         json_body={api_field: "" if new_value is None else new_value},
-        request_actor="human",
+        request_actor="ordinary",
     )
     http.emit(data, as_json, f"day {data['id']} {field} set")
 
@@ -406,7 +407,7 @@ def day_add_ticket(ticket_id: str, date_: str, as_json: bool) -> None:
         f"/api/day/{date_}/tickets",
         as_json=as_json,
         json_body={"ticket_id": ticket_id},
-        request_actor="human",
+        request_actor="ordinary",
     )
     http.emit(data, as_json, f"day {data['id']}: {len(data['tickets'])} ticket(s)")
 
@@ -420,7 +421,7 @@ def day_remove_ticket(ticket_id: str, date_: str, as_json: bool) -> None:
         "DELETE",
         f"/api/day/{date_}/tickets/{ticket_id}",
         as_json=as_json,
-        request_actor="human",
+        request_actor="ordinary",
     )
     http.emit(data, as_json, f"day {data['id']}: {len(data['tickets'])} ticket(s)")
 
@@ -477,7 +478,7 @@ def ticket_create(
     if sprint_item is not None:
         body["sprint_item_id"] = sprint_item
     data = http.send(
-        "POST", "/api/tickets", as_json=as_json, json_body=body, request_actor="human"
+        "POST", "/api/tickets", as_json=as_json, json_body=body, request_actor="ordinary"
     )
     http.emit(data, as_json, f"{data['id']} {data['state']}")
 
@@ -487,7 +488,7 @@ def ticket_create(
 @json_option
 def ticket_show(ticket_id: str | None, as_json: bool) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
-    data = http.send("GET", f"/api/tickets/{tid}", as_json=as_json, request_actor="human")
+    data = http.send("GET", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary")
     http.emit(data, as_json, f"{data['id']} {data['state']} {data['priority']} {data['title']}")
 
 
@@ -505,7 +506,7 @@ def ticket_delete(ticket_id: str | None, yes: bool, as_json: bool) -> None:
     if not yes:
         http.fail_validation("permanent deletion requires --yes", as_json)
     data = http.send(
-        "DELETE", f"/api/tickets/{tid}", as_json=as_json, request_actor="human"
+        "DELETE", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary"
     )
     http.emit(data, as_json, f"{tid} permanently deleted")
 
@@ -538,7 +539,7 @@ def ticket_list(
         }
     )
     data = http.send(
-        "GET", "/api/tickets", as_json=as_json, params=params, request_actor="human"
+        "GET", "/api/tickets", as_json=as_json, params=params, request_actor="ordinary"
     )
     http.emit(data, as_json, _format_tickets(data["tickets"]))
 
@@ -571,7 +572,7 @@ def ticket_set(
         f"/api/tickets/{ticket_id}",
         as_json=as_json,
         json_body={api_field: new_value},
-        request_actor="human",
+        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{data['id']} {field} set")
 
@@ -595,13 +596,13 @@ def ticket_approve(
     as_json: bool,
 ) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
-    detail = http.send("GET", f"/api/tickets/{tid}", as_json=as_json, request_actor="human")
+    detail = http.send("GET", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary")
     state = TicketState(detail["state"])
     if state is TicketState.needs_review:
         if ceiling is not None or at_cap is not None or edit_file is not None:
             http.fail_validation("review approval does not accept scope or edited body", as_json)
         data = http.send(
-            "POST", f"/api/tickets/{tid}/approve", as_json=as_json, request_actor="human"
+            "POST", f"/api/tickets/{tid}/approve", as_json=as_json, request_actor="ordinary"
         )
         http.emit(data, as_json, f"{data['id']} approved")
     field = GATING_FIELD.get(state)
@@ -620,7 +621,7 @@ def ticket_approve(
         f"/api/tickets/{tid}/accept/{field.value}",
         as_json=as_json,
         json_body=payload,
-        request_actor="human",
+        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{data['id']} approved {field.value}")
 
@@ -635,7 +636,7 @@ def ticket_block(ticket_id: str, blocker_id: str, as_json: bool) -> None:
         "/api/links",
         as_json=as_json,
         json_body={"from_id": blocker_id, "to_id": ticket_id, "kind": "blocks"},
-        request_actor="human",
+        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} blocked by {blocker_id}")
 
@@ -650,7 +651,7 @@ def ticket_unblock(ticket_id: str, blocker_id: str, as_json: bool) -> None:
         "/api/links",
         as_json=as_json,
         params={"from_id": blocker_id, "to_id": ticket_id, "kind": "blocks"},
-        request_actor="human",
+        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} unblocked from {blocker_id}")
 
@@ -661,7 +662,7 @@ def ticket_unblock(ticket_id: str, blocker_id: str, as_json: bool) -> None:
 def ticket_copy(ticket_id: str | None, as_json: bool) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
     text = http.send_text(
-        "GET", f"/api/tickets/{tid}/copy-text", as_json=as_json, request_actor="human"
+        "GET", f"/api/tickets/{tid}/copy-text", as_json=as_json, request_actor="ordinary"
     )
     http.emit({"text": text}, as_json, text)
 
@@ -672,7 +673,7 @@ def ticket_copy(ticket_id: str | None, as_json: bool) -> None:
 def ticket_events(ticket_id: str | None, as_json: bool) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
     data = http.send(
-        "GET", f"/api/tickets/{tid}/events", as_json=as_json, request_actor="human"
+        "GET", f"/api/tickets/{tid}/events", as_json=as_json, request_actor="ordinary"
     )
     http.emit(
         data,
@@ -718,7 +719,7 @@ def sprint_create(
         "premortem": premortem,
     }
     data = http.send(
-        "POST", "/api/sprints", as_json=as_json, json_body=body, request_actor="human"
+        "POST", "/api/sprints", as_json=as_json, json_body=body, request_actor="ordinary"
     )
     http.emit(data, as_json, f"{data['id']} {data['name']}")
 
@@ -726,7 +727,7 @@ def sprint_create(
 @sprint.command("list")
 @json_option
 def sprint_list(as_json: bool) -> None:
-    data = http.send("GET", "/api/sprints", as_json=as_json, request_actor="human")
+    data = http.send("GET", "/api/sprints", as_json=as_json, request_actor="ordinary")
     http.emit(
         data,
         as_json,
@@ -742,7 +743,7 @@ def sprint_list(as_json: bool) -> None:
 @json_option
 def sprint_show(sprint_id: str | None, as_json: bool) -> None:
     if sprint_id is None or sprint_id == "current":
-        data = http.send("GET", "/api/sprint/current", as_json=as_json, request_actor="human")
+        data = http.send("GET", "/api/sprint/current", as_json=as_json, request_actor="ordinary")
         current = data["sprint"]
         human = (
             "no current sprint"
@@ -751,7 +752,7 @@ def sprint_show(sprint_id: str | None, as_json: bool) -> None:
         )
         http.emit(data, as_json, human)
     data = http.send(
-        "GET", f"/api/sprints/{sprint_id}", as_json=as_json, request_actor="human"
+        "GET", f"/api/sprints/{sprint_id}", as_json=as_json, request_actor="ordinary"
     )
     human = f"{data['id']} {data['date_start']}..{data['date_end']} {data['name']}"
     http.emit(data, as_json, human)
@@ -784,7 +785,7 @@ def sprint_set(
         f"/api/sprints/{resolved_sprint_id}",
         as_json=as_json,
         json_body={api_field: "" if new_value is None else new_value},
-        request_actor="human",
+        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{data['id']} {field} set")
 
@@ -802,7 +803,7 @@ def sprint_add_ticket(ticket_id: str, sprint: str, as_json: bool) -> None:
         f"/api/tickets/{ticket_id}",
         as_json=as_json,
         json_body={"sprint_id": target},
-        request_actor="human",
+        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} added to sprint {target}")
 
@@ -816,7 +817,7 @@ def sprint_remove_ticket(ticket_id: str, sprint: str, as_json: bool) -> None:
     if target is None:
         http.fail_validation("sprint remove-ticket requires a sprint id or current", as_json)
     detail = http.send(
-        "GET", f"/api/tickets/{ticket_id}", as_json=as_json, request_actor="human"
+        "GET", f"/api/tickets/{ticket_id}", as_json=as_json, request_actor="ordinary"
     )
     if detail["sprint_item_id"] is not None:
         http.fail_validation("ticket is parented under a sprint item", as_json)
@@ -827,7 +828,7 @@ def sprint_remove_ticket(ticket_id: str, sprint: str, as_json: bool) -> None:
         f"/api/tickets/{ticket_id}",
         as_json=as_json,
         json_body={"sprint_id": None},
-        request_actor="human",
+        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} removed from sprint")
 
@@ -869,7 +870,9 @@ def sprint_item_create(
         body["deadline"] = deadline
     if sprint is not None:
         body["sprint_id"] = sprint_value_for_write(sprint, as_json)
-    data = http.send("POST", "/api/items", as_json=as_json, json_body=body, request_actor="human")
+    data = http.send(
+        "POST", "/api/items", as_json=as_json, json_body=body, request_actor="ordinary"
+    )
     http.emit(data, as_json, f"{data['id']} {data['status']}")
 
 
@@ -892,7 +895,7 @@ def sprint_item_list(
         "project_id": project_id,
         "sprint_id": sprint_value_for_filter(sprint, as_json),
     })
-    data = http.send("GET", "/api/items", as_json=as_json, params=params, request_actor="human")
+    data = http.send("GET", "/api/items", as_json=as_json, params=params, request_actor="ordinary")
     http.emit(
         data,
         as_json,
@@ -904,7 +907,7 @@ def sprint_item_list(
 @click.argument("item_id")
 @json_option
 def sprint_item_show(item_id: str, as_json: bool) -> None:
-    data = http.send("GET", f"/api/items/{item_id}", as_json=as_json, request_actor="human")
+    data = http.send("GET", f"/api/items/{item_id}", as_json=as_json, request_actor="ordinary")
     http.emit(data, as_json, f"{data['id']} {data['status']} {data['priority']} {data['title']}")
 
 
@@ -936,7 +939,7 @@ def sprint_item_set(
         f"/api/items/{item_id}",
         as_json=as_json,
         json_body={api_field: new_value},
-        request_actor="human",
+        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{data['id']} {field} set")
 
@@ -951,7 +954,7 @@ def sprint_item_add_ticket(item_id: str, ticket_id: str, as_json: bool) -> None:
         f"/api/items/{item_id}/tickets",
         as_json=as_json,
         json_body={"ticket_id": ticket_id},
-        request_actor="human",
+        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} added to {item_id}")
 
@@ -965,9 +968,154 @@ def sprint_item_remove_ticket(item_id: str, ticket_id: str, as_json: bool) -> No
         "DELETE",
         f"/api/items/{item_id}/tickets/{ticket_id}",
         as_json=as_json,
-        request_actor="human",
+        request_actor="ordinary",
     )
     http.emit(data, as_json, f"{ticket_id} removed from {item_id}")
+
+
+# --- chief --------------------------------------------------------------------
+
+
+def _external_work_body(
+    *,
+    state: str,
+    user_note_file: str,
+    recap_file: str | None,
+    success_file: str | None,
+    approach_file: str | None,
+    plan_file: str | None,
+    result_file: str | None,
+    as_json: bool,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "state": state,
+        "user_note": read_required_option_body(user_note_file, as_json, "user-note"),
+    }
+    for key, source in (
+        ("recap", recap_file),
+        ("success", success_file),
+        ("approach", approach_file),
+        ("plan", plan_file),
+        ("result", result_file),
+    ):
+        if source is not None:
+            body[key] = _read_source(source, as_json)
+    return body
+
+
+@main.group("chief")
+def chief() -> None:
+    """Import work already completed outside Panels."""
+
+
+@chief.command("reconcile-ticket-from-external-work")
+@click.argument("ticket_id")
+@click.option("--state", required=True, type=click.Choice([state.value for state in STATE_ORDER]))
+@click.option("--user-note-file", required=True, help="Complete resulting ticket note file, or -.")
+@click.option("--recap-file", default=None, help="Read the recap from this file, or -.")
+@click.option("--success-file", default=None, help="Read settled success from this file, or -.")
+@click.option("--approach-file", default=None, help="Read settled approach from this file, or -.")
+@click.option("--plan-file", default=None, help="Read settled plan from this file, or -.")
+@click.option("--result-file", default=None, help="Read settled result from this file, or -.")
+@json_option
+def chief_reconcile_ticket_from_external_work(
+    ticket_id: str,
+    state: str,
+    user_note_file: str,
+    recap_file: str | None,
+    success_file: str | None,
+    approach_file: str | None,
+    plan_file: str | None,
+    result_file: str | None,
+    as_json: bool,
+) -> None:
+    body = _external_work_body(
+        state=state,
+        user_note_file=user_note_file,
+        recap_file=recap_file,
+        success_file=success_file,
+        approach_file=approach_file,
+        plan_file=plan_file,
+        result_file=result_file,
+        as_json=as_json,
+    )
+    data = http.send(
+        "POST",
+        f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
+        as_json=as_json,
+        json_body=body,
+        request_actor="chief",
+    )
+    http.emit(
+        data,
+        as_json,
+        f"{data['id']} external work reconciled {data['state']}",
+    )
+
+
+@chief.command("create-ticket-from-external-work")
+@click.option("--title", required=True, help="Ticket title.")
+@click.option("--state", required=True, type=click.Choice([state.value for state in STATE_ORDER]))
+@click.option("--user-note-file", required=True, help="Complete resulting ticket note file, or -.")
+@click.option("--recap-file", default=None, help="Read the recap from this file, or -.")
+@click.option("--success-file", default=None, help="Read settled success from this file, or -.")
+@click.option("--approach-file", default=None, help="Read settled approach from this file, or -.")
+@click.option("--plan-file", default=None, help="Read settled plan from this file, or -.")
+@click.option("--result-file", default=None, help="Read settled result from this file, or -.")
+@click.option("--priority", type=click.Choice(_PRIORITIES), default=None, help="Priority label.")
+@click.option("--deadline", default=None, help="Due date in YYYY-MM-DD form.")
+@click.option("--project", default=None, help="Project name.")
+@click.option("--project-id", default=None, help="Project id.")
+@click.option("--sprint", default=None, help="Sprint id, current, or none.")
+@click.option("--sprint-item", "sprint_item", default=None, help="Parent sprint item id.")
+@json_option
+def chief_create_ticket_from_external_work(
+    title: str,
+    state: str,
+    user_note_file: str,
+    recap_file: str | None,
+    success_file: str | None,
+    approach_file: str | None,
+    plan_file: str | None,
+    result_file: str | None,
+    priority: str | None,
+    deadline: str | None,
+    project: str | None,
+    project_id: str | None,
+    sprint: str | None,
+    sprint_item: str | None,
+    as_json: bool,
+) -> None:
+    body = _external_work_body(
+        state=state,
+        user_note_file=user_note_file,
+        recap_file=recap_file,
+        success_file=success_file,
+        approach_file=approach_file,
+        plan_file=plan_file,
+        result_file=result_file,
+        as_json=as_json,
+    )
+    body["title"] = title
+    if priority is not None:
+        body["priority"] = priority
+    if deadline is not None:
+        body["deadline"] = deadline
+    add_project_selectors(
+        body, project=project, project_id=project_id, required=False, as_json=as_json
+    )
+    if sprint is not None:
+        body["sprint_id"] = sprint_value_for_write(sprint, as_json)
+    if sprint_item is not None:
+        body["sprint_item_id"] = sprint_item
+    data = http.send(
+        "POST",
+        "/api/chief/tickets/from-external-work",
+        as_json=as_json,
+        json_body=body,
+        request_actor="chief",
+    )
+    http.emit(data, as_json, f"{data['id']} external work created {data['state']}")
 
 
 # --- worker -------------------------------------------------------------------

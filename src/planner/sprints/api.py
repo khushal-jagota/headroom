@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from planner.core.authctx import reject_agent_fields, reject_agents
+from planner.core.authctx import reject_agent_fields, require_direct_write
 from planner.core.contracts import JsonDict, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import planning_date
@@ -136,7 +136,7 @@ async def get_item(item_id: str, conn: DbConn) -> JsonDict:
 @router.post("/items/{item_id}/tickets")
 async def add_item_ticket(item_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                           clk: Clk) -> JsonDict:
-    reject_agents(ctx)
+    require_direct_write(ctx)
     body = AddItemTicketBody(ticket_id=body_str(raw, "ticket_id"))
     tickets_data.assign_ticket_to_sprint_item(
         conn, body["ticket_id"], sprint_item_id=item_id, actor=ctx.actor, now=clk.now_unix()
@@ -147,7 +147,7 @@ async def add_item_ticket(item_id: str, raw: dict[str, Any], conn: DbConn, ctx: 
 @router.delete("/items/{item_id}/tickets/{ticket_id}")
 async def remove_item_ticket(item_id: str, ticket_id: str, conn: DbConn, ctx: Ctx,
                              clk: Clk) -> JsonDict:
-    reject_agents(ctx)
+    require_direct_write(ctx)
     tickets_data.remove_ticket_from_sprint_item(
         conn, ticket_id, sprint_item_id=item_id, actor=ctx.actor, now=clk.now_unix()
     )
@@ -164,7 +164,7 @@ async def patch_item(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
     if not body:
         raise PlannerError(ErrorCode.validation, "no item fields to update", {})
     # Sprint item status is derived from child tickets and blocking links; item patching is
-    # only for plain human-editable fields and sprint placement.
+    # only for plain direct-editable fields and sprint placement.
     reject_agent_fields(ctx, body, set(_ITEM_PLAIN_FIELDS) | {"project", "sprint_id"})
     for field in _ITEM_PLAIN_FIELDS:
         if field in body:
@@ -198,7 +198,7 @@ async def patch_item(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
 @router.post("/sprints")
 async def create_sprint(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
     body = _marshal_create_sprint(raw)
-    reject_agents(ctx)
+    require_direct_write(ctx)
     for label, value in (("date_start", body["date_start"]), ("date_end", body["date_end"])):
         try:
             date.fromisoformat(value)
@@ -231,7 +231,7 @@ async def get_sprint(sprint_id: str, conn: DbConn) -> JsonDict:
 @router.patch("/sprints/{sprint_id}")
 async def patch_sprint(sprint_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
                        clk: Clk) -> JsonDict:
-    reject_agents(ctx)  # §8: agents get `sprint show` only — no sprint edit surface.
+    require_direct_write(ctx)  # §8: agents get `sprint show` only — no sprint edit surface.
     recognized = set(_SPRINT_TEXT_FIELDS) | {"date_start", "date_end"}
     for key in body:
         if key not in recognized:

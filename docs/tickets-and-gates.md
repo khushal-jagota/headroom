@@ -13,8 +13,8 @@ one door — the resolution engine.
    condition     (how,          (step-      (the work         (result waits       │
    (what is       roughly)       by-step)    happens)          for checking)       │
     "done"?)                                                                        │
-        └──────────────────  the human may jump a ticket anywhere  ─────────────────┘
-                             dropped: any point, human only
+        └────────────────  direct resolution may jump a ticket anywhere  ───────────────┘
+                             dropped: any point, direct operation only
 ```
 
 ## The stages
@@ -24,8 +24,8 @@ an **approach** (how, roughly?), a **plan** (concretely, step by step), then the
 happens (**in progress**), then the result waits for checking (**needs review**), and
 finally it is **done**. Each stage has exactly one blank to fill; filling it — and
 having that accepted — is what moves the ticket one stage forward. A ticket can also
-be **dropped** at any point, only by the human. The human can always jump a ticket
-anywhere; workers never can.
+be **dropped** at any point through a direct product operation. Direct operations can
+also jump a ticket; workers never can.
 
 A ticket also has a **user note**. This is not one of the four blanks and it does not
 advance the ticket. It preserves intake context: the user's original wording, source
@@ -34,6 +34,20 @@ the user's direction without mixing that direction into success, approach, plan,
 result.
 
 _Code paths:_ `src/planner/tickets/` (the ticket state and its fields).
+
+### Work completed outside Panels
+
+When work was completed elsewhere, the Chief can reconcile an existing ticket or create
+one already populated through the explicit `panels chief` external-work commands. This
+is not a worker proposal and not a general state bypass. The operation requires a
+complete ticket note, an exact settled-field prefix for the target state, and a Chief
+request. It refuses backward moves, pending proposals, active ticket control, and
+running chat turns. The resulting scope stops at the imported state, so the worker does
+not continue automatically.
+
+The create or reconciliation writer commits all fields, note, recap, state, scope,
+status normalization, and existing event signals together. A validation or concurrency
+failure leaves both the ticket and its event history unchanged.
 
 Standalone tickets may point at a project by `project_id`. API responses also include
 `project`, the display name, for compatibility. A ticket under a sprint item does not
@@ -101,14 +115,14 @@ _Code paths:_ `web/src/routes/TicketRoute.svelte` (the scope row),
 ## Permanent deletion
 
 Dropping a ticket keeps its record. Permanent deletion is different: it is a
-human-only capability for a ticket created by mistake. The ticket UI intentionally
+direct-only capability for a ticket created by mistake. The ticket UI intentionally
 has no delete control; deletion remains a manual API or CLI operation, and the CLI
 requires `--yes`. The operation is blocked while ticket activity is still running.
 One transaction removes the ticket from days, sprint views, links, Review, Workspace,
 and Panels chat. Other tickets and day ordering stay intact.
 
 The deletion also replaces that ticket's old event history with one small deletion
-record containing its identity, the human actor, and the time. This is the only
+record containing its identity, the direct actor, and the time. This is the only
 exception to normal append-only event history. The separate stored Hermes session is
 outside Panels' record and is not erased; once the ticket row is gone, Panels no
 longer has a route that resolves or resumes it.
@@ -146,4 +160,4 @@ _Code paths:_ `src/planner/core/events.py`.
 
 ---
 
-_Last verified: 2026-07-09._
+_Last verified: 2026-07-10._

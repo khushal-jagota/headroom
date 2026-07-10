@@ -1,0 +1,21 @@
+You are the final independent plan reviewer. Do not implement, edit, delegate, or invoke another reviewer.
+
+Review `orchestration/tickets/t_arch03-atomic-ticket-edit/plan.md` against:
+
+- `orchestration/tickets/t_arch03-atomic-ticket-edit/ticket.md`
+- `AGENTS.md`, `PRINCIPLES.md`, `CONTEXT.md`, and the live docs
+- the current authoritative dirty implementation and tests, including Chief external-work and worker-context changes
+
+Inspect the PATCH parser/auth path, all six one-field writers and callers, Ticket contracts/admission rules, project/sprint resolution, event payloads, pending worker context, Chief external-work writers/tests, and frontend Ticket save behavior.
+
+Find concrete violations, missing decisions, or unnecessary machinery. Pay particular attention to:
+
+1. Whole-request parsing, field-level authority, validation, and one `BEGIN IMMEDIATE` before any durable effect.
+2. Exact nullable/omitted semantics for all six attributes and project/project_id matching.
+3. Validation of the intended final Ticket and parent-derived restrictions.
+4. Actual-change detection, stable existing event payload/order, one worker-context write, and a true no-op that preserves `updated_at`.
+5. Preservation of actor-neutral ordinary edits, worker permissions, Chief ordinary access, and separate Chief reconciliation semantics.
+6. Complete RED tests for late rejection rollback and mixed permitted/forbidden worker requests.
+7. No frontend, migration, new event, generic patch engine, readiness, CLI, or Chief-writer expansion.
+
+Use file/line citations. End with exactly `NO VIOLATIONS` or a numbered list of violations. Do not propose work outside the ticket.

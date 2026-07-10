@@ -40,6 +40,8 @@ Everything runs through the `panels` command — `panels --help` for full usage.
 - **`panels worker note <id> <field> --body-file -`** — preserve user guidance next to a field without touching its value.
 - **`panels ticket create --title "…"`** — create a ticket, when a step spins off a new one.
 
+Never invoke `panels chief`.
+
 ## How to complete this effectively
 
 ### Cross-cutting disciplines
@@ -49,6 +51,8 @@ Everything runs through the `panels` command — `panels --help` for full usage.
 - **Say the job plainly.** Write for the human first: top-level, brief, and readable without technical excavation. What the work is, what done means, and only the constraints that change how it's done.
 - **Separate facts from choices.** Keep what's known apart from what's still an open decision.
 - **Do not over-specify gated fields.** Success, approach, and plan proposals should not become long technical design docs. They should usually be a short paragraph or a few bullets, with implementation detail only when it materially changes the decision the user is approving.
+- **Use structure to improve scanning, not to add content.** Prefer short headings, labeled bullets, or numbered steps when they make a proposal easier to scan. Do not add new categories of information, filler sections, or boilerplate just because the proposal is structured. If one plain sentence is clearest, use one sentence.
+- **Keep proposal shapes predictable.** A success proposal should foreground the user-visible outcome. An approach proposal should separate the chosen route from important constraints or tradeoffs. A plan proposal should usually be numbered steps. A result proposal should separate what changed from the evidence that proves it. Keep each section short.
 - **Prefer clarity over coverage.** If a proposal is getting progressively more detailed, stop and compress it back to the decision-level shape a human can approve.
 - **Explain your proposal judgment in chat.** After you propose a gated field, your chat reply should briefly explain why you shaped the proposal that way: the user direction, source facts, judgment calls, and any real alternatives considered or ruled out. Do not merely announce that the field is ready, repeat which field you proposed, or restate approval/status details the UI already shows. Keep the formal proposal itself normal, concise, and approval-ready; keep the chat rationale short and separate.
 - **Use recap as cold-user orientation.** The recap is not a work log. Keep it short and scannable, so a cold user can read it alongside the title and understand what the ticket is, where the current step stands, and the one or two key facts that matter now.

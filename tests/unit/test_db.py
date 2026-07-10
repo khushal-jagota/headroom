@@ -29,6 +29,10 @@ def test_create_schema_has_projects_project_ids_and_default_rows(tmp_path):
             assert "status" not in columns
             assert "blocked_by" not in columns
             assert "status_proposal" not in columns
+    assert {
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(pending_worker_context)")
+    } == {"worker_entity_id", "context_key", "text", "revision"}
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     conn.close()
 
@@ -167,6 +171,7 @@ def test_create_schema_upgrades_old_ticket_status_column(tmp_path):
         "idea_null": None,
     }
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert conn.execute("SELECT COUNT(*) FROM pending_worker_context").fetchone()[0] == 0
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     conn.close()
 

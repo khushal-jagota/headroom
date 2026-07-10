@@ -30,15 +30,16 @@ def _url(path: str) -> str:
     return _base_url().rstrip("/") + path
 
 
-RequestActor = Literal["agent", "human"]
+RequestActor = Literal["ordinary", "worker", "chief"]
 
 
 def _headers(request_actor: RequestActor) -> dict[str, str]:
-    if request_actor == "human":
-        return {}
-    # X-Plan-Actor classifies the request as an agent. Headerless requests are the
-    # local human/product CLI.
-    return {"X-Plan-Actor": os.environ.get("PLAN_ACTOR", "").strip() or "agent"}
+    ambient = os.environ.get("PLAN_ACTOR", "").strip()
+    if request_actor == "worker":
+        return {"X-Plan-Actor": ambient or "agent"}
+    if ambient:
+        return {"X-Plan-Actor": ambient}
+    return {}
 
 
 def send(
@@ -48,7 +49,7 @@ def send(
     as_json: bool,
     json_body: Any | None = None,
     params: dict[str, Any] | None = None,
-    request_actor: RequestActor = "agent",
+    request_actor: RequestActor = "worker",
 ) -> Any:
     """Execute one request and apply the failure half of the exit contract. Transport
     failure -> stderr + exit 2. Non-2xx (or a 2xx body that still carries an "error"
@@ -81,7 +82,7 @@ def send_text(
     *,
     as_json: bool,
     params: dict[str, Any] | None = None,
-    request_actor: RequestActor = "agent",
+    request_actor: RequestActor = "worker",
 ) -> str:
     try:
         resp = httpx.request(

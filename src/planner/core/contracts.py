@@ -109,7 +109,7 @@ class ErrorCode(StrEnum):
     link_cycle = "link_cycle"                      # §3.6 blocks/parent_child transitive cycle
     link_invalid = "link_invalid"                  # self-link, second belongs_to, bad endpoints
     sprint_derived = "sprint_derived"              # §3.3 sprint_id write on a parented ticket
-    agent_forbidden = "agent_forbidden"            # claim/agent request hits a human-only action
+    agent_forbidden = "agent_forbidden"            # attributed agent hits a direct-only action
     gateway_offline = "gateway_offline"            # §11
     already_running = "already_running"            # Hermes 4009 session busy
     not_found = "not_found"

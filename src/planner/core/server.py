@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 import sqlite3
 import threading
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,7 @@ from planner.files.api import router as files_router
 from planner.projects.api import router as projects_router
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
+from planner.worker_context.contracts import WorkerContextService
 
 _log = logging.getLogger("planner.server")
 
@@ -67,6 +69,34 @@ def http_status_for(code: ErrorCode) -> int:
     return _STATUS_BY_CODE.get(code, 400)
 
 
+def _build_role_gateways(
+    *,
+    hermes_python: Path,
+    planner_home: Path,
+    worker_role: str,
+    environ: Mapping[str, str],
+    worker_context: WorkerContextService | None = None,
+) -> tuple[Any, Any]:
+    """Build the two gateway children with explicit, preserved role environments."""
+    from planner.minds.shared_gateway import SharedGateway
+
+    base_env = dict(environ)
+    worker_gateway = SharedGateway(
+        hermes_python=hermes_python,
+        home=planner_home,
+        worker_role=worker_role,
+        base_env={**base_env, "PLAN_ACTOR": "worker"},
+        worker_context=worker_context,
+    )
+    chief_gateway = SharedGateway(
+        hermes_python=hermes_python,
+        home=planner_home,
+        worker_role="panels-chief-of-staff",
+        base_env={**base_env, "PLAN_ACTOR": "chief"},
+    )
+    return worker_gateway, chief_gateway
+
+
 def create_app(
     config: Config,
     clock: Clock,
@@ -90,21 +120,19 @@ def create_app(
                     resolve_hermes_python,
                     resolve_planner_home,
                 )
-                from planner.minds.shared_gateway import EntityRoutingGateway, SharedGateway
+                from planner.minds.shared_gateway import EntityRoutingGateway
+                from planner.worker_context.service import SqliteWorkerContextService
             except (ImportError, AttributeError):
                 _log.warning("planner.core.loops unavailable; running without background loops")
             else:
                 planner_home = resolve_planner_home()
                 provision_planner_home_skills(planner_home)
-                shared_gateway = SharedGateway(
+                shared_gateway, chief_gateway = _build_role_gateways(
                     hermes_python=resolve_hermes_python(),
-                    home=planner_home,
+                    planner_home=planner_home,
                     worker_role=config.worker_skill,
-                )
-                chief_gateway = SharedGateway(
-                    hermes_python=resolve_hermes_python(),
-                    home=planner_home,
-                    worker_role="panels-chief-of-staff",
+                    environ=os.environ,
+                    worker_context=SqliteWorkerContextService(conn_factory),
                 )
                 chat_gateway = EntityRoutingGateway(
                     shared_gateway,

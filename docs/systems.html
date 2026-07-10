@@ -822,21 +822,22 @@
           <details>
             <summary>
               <span class="number">08</span>
-              <span><strong>The CLI And Authority System</strong><span>Day, ticket, sprint, and worker actions.</span></span>
+              <span><strong>The CLI And Authority System</strong><span>Ordinary, worker, and Chief actions.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                <code>panels</code> speaks HTTP to the server. Its command groups are
-                <code>day</code>, <code>ticket</code>, <code>sprint</code>, and
-                <code>worker</code>. Product commands are headerless human requests;
-                worker commands send <code>X-Plan-Actor</code>. Approval is the one
-                human resolution command exposed here; runtime controls and direct
-                ticket state/status edits are not CLI actions.
+                <code>panels</code> speaks HTTP to the server. Its command groups include
+                <code>project</code>, <code>day</code>, <code>ticket</code>,
+                <code>sprint</code>, <code>worker</code>, and <code>chief</code>.
+                Ordinary commands preserve an ambient actor or send none; production
+                worker and Chief gateways set their roles explicitly. Chief external-work
+                intake is exceptional and is not a generic state setter.
               </p>
               <p>
-                The server classifies requests with <code>X-Plan-Actor</code>. No
-                header means human. Any actor header means agent. Human-only routes
-                reject agent-classified requests.
+                A missing <code>X-Plan-Actor</code> means unattributed, not human.
+                <code>chief</code> is explicit; every other non-empty actor is an
+                attributed non-Chief agent. Direct-only routes allow unattributed and
+                Chief requests while rejecting worker agents.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/cli/main.py</code>,

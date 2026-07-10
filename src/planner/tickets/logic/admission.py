@@ -1,6 +1,5 @@
-"""Write admission: who may write what, when. The §4.3 agent-proposal matrix,
-the human-only gate (§7.6), recap/sprint/title/deadline/body validators (§3.3).
-Pure: contracts + machine only; raises PlannerError as the rejection."""
+"""Write admission: who may write what, when. The proposal matrix, direct-write
+gate, and ticket body/title/deadline validators. Pure domain rules only."""
 
 from __future__ import annotations
 
@@ -11,18 +10,23 @@ from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import AtCap, FieldName, TicketState
 from planner.tickets.logic import machine
 
-HUMAN_ACTOR: Final[str] = "human"
+# Compatibility for direct domain callers and historical fixtures. Request
+# classification never synthesizes this value; live callers are unattributed or Chief.
+_LEGACY_DIRECT_ACTOR: Final[str] = "human"
+DIRECT_ACTORS: Final[frozenset[str]] = frozenset(
+    {"unattributed", "chief", _LEGACY_DIRECT_ACTOR}
+)
 
 
-def is_human(actor: str) -> bool:
-    return actor == HUMAN_ACTOR
+def is_direct_actor(actor: str) -> bool:
+    return actor in DIRECT_ACTORS
 
 
-def require_human(actor: str, action: str) -> None:
-    if actor != HUMAN_ACTOR:
+def require_direct_actor(actor: str, action: str) -> None:
+    if not is_direct_actor(actor):
         raise PlannerError(
             ErrorCode.agent_forbidden,
-            f"{action} is a human-only action",
+            f"{action} is a direct-only action",
             {"action": action, "actor": actor},
         )
 

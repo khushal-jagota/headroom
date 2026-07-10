@@ -8,6 +8,7 @@ placeholder and never owns a GatewayChild.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from planner.chat.contracts import (
@@ -64,6 +65,7 @@ class RealGatewayAdapter:
         text: str,
         mode: str,
         on_session_key: Callable[[str], None] | None = None,
+        image_path: Path | None = None,
     ) -> Iterator[ChatStreamChunk]:
         raise self._offline()
 

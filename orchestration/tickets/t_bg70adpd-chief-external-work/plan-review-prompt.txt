@@ -1,0 +1,21 @@
+You are the final independent plan reviewer. Do not invoke another reviewer or delegate. Review ticket t_bg70adpd against AGENTS.md, PRINCIPLES.md, the accepted contract in orchestration/tickets/t_bg70adpd-chief-external-work/ticket.md, and the current implementation/tests.
+
+Inspect at minimum:
+- src/planner/cli/main.py and src/planner/cli/http.py
+- src/planner/core/authctx.py
+- src/planner/tickets/api.py, contracts.py, data.py, events.py
+- src/planner/tickets/logic/admission.py, resolution.py, decisions.py, machine.py
+- src/planner/core/server.py and src/planner/minds/shared_gateway.py
+- tests/unit/test_authctx_routes.py, test_value_edit_api.py, test_minds.py
+- tests/e2e/test_cli_verbs.py
+- skills/panels/SKILL.md, skills/panels-worker/SKILL.md, skills/panels-chief-of-staff/SKILL.md
+- docs/systems.md and docs/tickets-and-gates.md
+
+Return concrete violations or missing decisions in the accepted plan, especially:
+1. Whether ordinary actor-neutral ticket commands, explicit Chief commands, and worker restrictions can be represented truthfully without creating a worker bypass.
+2. The narrowest coherent payload and invariants for reconciling an existing ticket and creating an already-populated one.
+3. Transactionality, pending proposals, active ticket control, state/ceiling/status consistency, event completeness, and readiness invalidation.
+4. Exact CLI test and skill-update obligations.
+5. Any unnecessary machinery that should be cut.
+
+Use file/line citations. End with either `NO VIOLATIONS` or a numbered list of violations. Do not implement anything.

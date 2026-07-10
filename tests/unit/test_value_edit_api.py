@@ -1,5 +1,5 @@
 """API-level tests for PUT /api/tickets/{id}/value/{field} (Decision B). Exercises
-ValueEditBody marshalling, the reject_agents human-only gate, bad-field validation,
+ValueEditBody marshalling, the direct-only gate, bad-field validation,
 the ticket_json response shape, and that the edit lands a field_value_edited event
 on GET /api/tickets/{id}/events (the _apply_decision appender path). Supporting tests,
 no §18.3 anchor.

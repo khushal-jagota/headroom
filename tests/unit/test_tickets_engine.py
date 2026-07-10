@@ -70,7 +70,11 @@ def test_ticket_and_field_user_notes_round_trip_with_legacy_field_notes(
     assert t.user_note == "intake direction"
 
     t = data.set_user_note(
-        tmp_db, t.id, user_note="updated intake direction", now=fake_clock.now_unix()
+        tmp_db,
+        t.id,
+        user_note="updated intake direction",
+        actor="human",
+        now=fake_clock.now_unix(),
     )
     assert t.user_note == "updated intake direction"
 
@@ -493,7 +497,7 @@ def test_a06_edit_accept_stores_edited_text(
     assert accepted[-1].payload == {
         "field": "success",
         "body": "edited body exactly",
-        "resolved_by": "human",
+        "resolved_by": "direct",
         "edited": True,
     }
 
@@ -502,7 +506,7 @@ def test_a06_edit_accept_stores_edited_text(
     assert changed[-1].payload == {
         "from": "needs_success",
         "to": "needs_approach",
-        "cause": "human_accept",
+        "cause": "direct_accept",
     }
     assert t.ceiling is TicketState.needs_approach
     assert t.at_cap is AtCap.propose
@@ -660,9 +664,10 @@ def test_x06_title_and_project_writers_log_events(
         ticket.id,
         title="Renamed ticket",
         title_max_chars=TITLE_MAX_CHARS,
+        actor="human",
         now=now,
     )
-    updated = data.set_project(tmp_db, ticket.id, project_id=None, now=now)
+    updated = data.set_project(tmp_db, ticket.id, project_id=None, actor="human", now=now)
 
     assert renamed.title == "Renamed ticket"
     assert updated.project_id is None
@@ -686,7 +691,9 @@ def test_x06_project_writer_preserves_parented_error_shape(
     ticket = _create(tmp_db, cfg, fake_clock, sprint_item_id="si_project_parent")
 
     with pytest.raises(PlannerError) as exc:
-        data.set_project(tmp_db, ticket.id, project_id="project_vylo", now=now)
+        data.set_project(
+            tmp_db, ticket.id, project_id="project_vylo", actor="human", now=now
+        )
 
     assert exc.value.code is ErrorCode.validation
     assert exc.value.message == "project is derived when parented"

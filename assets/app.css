@@ -978,7 +978,7 @@ textarea {
   display: block;
 }
 .chat-ta::placeholder { color: var(--text-faintest); }
-.chat-foot { display: flex; align-items: center; justify-content: space-between; margin-top: var(--space-1); }
+.chat-foot { display: flex; align-items: center; justify-content: flex-start; margin-top: var(--space-1); }
 .chat-slash {
   background: none;
   border: none;
@@ -991,7 +991,25 @@ textarea {
   line-height: 1.2;
 }
 .chat-slash:hover { color: var(--text-muted); background: var(--surface-overlay); }
+.chat-image {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  background: none;
+  border: none;
+  color: var(--text-faintest);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+}
+.chat-image:hover { color: var(--text-muted); background: var(--surface-overlay); }
+.chat-image.on { color: var(--accent-bright); background: var(--surface-overlay); }
+.chat-image:disabled { opacity: 0.5; cursor: default; }
+.chat-image svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.2; }
+.chat-image-input { display: none; }
 .chat-send {
+  margin-left: auto;
   width: 26px; height: 26px;
   border: none;
   border-radius: var(--radius-md);

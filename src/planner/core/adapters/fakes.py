@@ -6,6 +6,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from planner.chat.contracts import (
     ChatHistory,
@@ -112,6 +113,7 @@ class EchoGatewayAdapter:
         text: str,
         mode: str,
         on_session_key: Callable[[str], None] | None = None,
+        image_path: Path | None = None,
     ) -> Iterator[ChatStreamChunk]:
         if mode == "command":
             result = self.run_command(session_key, entity_id, text, on_session_key)
@@ -210,6 +212,7 @@ class OfflineGatewayAdapter:
         text: str,
         mode: str,
         on_session_key: Callable[[str], None] | None = None,
+        image_path: Path | None = None,
     ) -> Iterator[ChatStreamChunk]:
         raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
 

@@ -72,12 +72,12 @@ SO_MID_STAND = "SO halfway in, the bet is tracking."
 
 
 def _set_now(api, server, iso):
-    return api.human_post(server, "/api/test/set-now", {"now": iso})
+    return api.direct_post(server, "/api/test/set-now", {"now": iso})
 
 
 def _scope_and_advance(server, api, cli, tid, ceiling, bodies):
-    # Human scope (header-less → human; scope_ticket rejects agents, tickets/api.py:359).
-    g = api.human_post(
+    # Unattributed direct scope; attributed worker agents are rejected.
+    g = api.direct_post(
         server, f"/api/tickets/{tid}/scope", {"ceiling": ceiling, "at_cap": "propose"}
     )
     assert g["ceiling"] == ceiling and g["at_cap"] == "propose", g
@@ -173,7 +173,7 @@ def test_e29_day_overview_structured_and_edit(server, context_factory, open_page
     # Seed the four overview fields on the current planning day (baseline 2026-07-04)
     # in one PATCH, then amend two of them in place — a scalar (focus) and a markdown
     # body (watchout) — each editing on its own, no whole-blob re-serialize.
-    api.human_patch(
+    api.direct_patch(
         server,
         f"/api/day/{DAY_PREV}",
         {
@@ -231,7 +231,7 @@ def test_e29_day_overview_structured_and_edit(server, context_factory, open_page
 
 
 def test_day_markdown_focus_noop_keeps_raw_source(server, context_factory, open_page, api):
-    api.human_patch(
+    api.direct_patch(
         server,
         f"/api/day/{DAY_PREV}",
         {"watchout": DAY_NOOP_MARKDOWN},
@@ -330,8 +330,8 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     # Human-author a day overview on the next planning date (for the third
     # reload-restore surface below).
     _set_now(api, server, NOW_0501)
-    api.human_post(server, "/api/day/today/tickets", {"ticket_id": mid})
-    api.human_patch(
+    api.direct_post(server, "/api/day/today/tickets", {"ticket_id": mid})
+    api.direct_patch(
         server,
         f"/api/day/{DAY_CUR}",
         {
@@ -401,7 +401,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
 
 
 def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cli, api):
-    s = api.human_post(
+    s = api.direct_post(
         server,
         "/api/sprints",
         {"name": E32_SPRINT_NAME, "date_start": E32_START, "date_end": E32_END},
@@ -473,7 +473,7 @@ def test_sprint_overview_fields_and_edit(server, context_factory, open_page, api
     # A current sprint (its 2-week range contains the baseline planning date), seeded
     # with Kickoff content at create → the Overview opens kickoff-open (Kickoff open,
     # Mid-sprint + Sprint Review collapsed until they have content).
-    api.human_post(
+    api.direct_post(
         server,
         "/api/sprints",
         {

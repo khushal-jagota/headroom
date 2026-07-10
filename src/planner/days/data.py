@@ -122,7 +122,7 @@ def remove_day_ticket(
     conn.execute("UPDATE days SET updated_at = ? WHERE id = ?", (now_unix, day_id))
 
 
-# The human-editable day text fields (the four overview fields + notes). The api
+# The direct-editable day text fields (the four overview fields + notes). The api
 # validates the field name against this set before calling set_day_field, so the
 # column name is safe to interpolate.
 DAY_TEXT_FIELDS = ("focus", "brief_take", "watchout", "if_today_lands", "notes")

@@ -29,6 +29,12 @@ from planner.minds.shared_gateway import (
     SESSION_COLS,
     EntityRoutingGateway,
     SharedGateway,
+    SharedGatewayBusy,
+)
+from planner.worker_context.contracts import (
+    PendingWorkerContext,
+    PreparedWorkerPrompt,
+    WorkerContextReceipt,
 )
 
 LIVE_SID = "ab12cd34"
@@ -104,14 +110,45 @@ class Spawner:
         return child.spawn(argv, env)
 
 
-def shared(fake: FakeGateway) -> SharedGateway:
+def shared(fake: FakeGateway, worker_context=None) -> SharedGateway:
     return SharedGateway(
         hermes_python=HERMES_PY,
         home="/tmp/planner-home",
         worker_role="planner-worker",
         spawn=fake.spawn,
         base_env={},
+        worker_context=worker_context,
     )
+
+
+class RecordingWorkerContext:
+    def __init__(self) -> None:
+        self.pending: dict[str, tuple[PendingWorkerContext, ...]] = {}
+        self.prepare_calls: list[tuple[str, str]] = []
+        self.acknowledgements: list[tuple[str, tuple[tuple[str, int], ...]]] = []
+
+    def set(self, entity_id: str, *items: PendingWorkerContext) -> None:
+        self.pending[entity_id] = items
+
+    def prepare(self, worker_entity_id: str, prompt_text: str) -> PreparedWorkerPrompt:
+        self.prepare_calls.append((worker_entity_id, prompt_text))
+        items = self.pending.get(worker_entity_id, ())
+        if not items:
+            return PreparedWorkerPrompt(prompt_text, ())
+        context_lines = "\n".join(f"- {item.text}" for item in items)
+        return PreparedWorkerPrompt(
+            f"{prompt_text}\n\n[Pending worker context]\n{context_lines}"
+            "\n[/Pending worker context]",
+            tuple(WorkerContextReceipt(item.context_key, item.revision) for item in items),
+        )
+
+    def acknowledge(self, worker_entity_id: str, receipts) -> None:
+        pairs = tuple((receipt.context_key, receipt.revision) for receipt in receipts)
+        self.acknowledgements.append((worker_entity_id, pairs))
+        current = self.pending.get(worker_entity_id, ())
+        self.pending[worker_entity_id] = tuple(
+            item for item in current if (item.context_key, item.revision) not in pairs
+        )
 
 
 class RecordingChatGateway:
@@ -177,6 +214,14 @@ def test_entity_routing_gateway_sends_chief_entity_to_chief_gateway() -> None:
     assert ticket_result.reply_text == "worker: hello"
     assert chief.calls == [("send", CHIEF_OF_STAFF_ENTITY_ID), ("status", "")]
     assert worker.calls == [("send", "t_demo")]
+
+
+def test_entity_routing_gateway_keeps_ordinary_stream_caller_compatible() -> None:
+    worker = RecordingChatGateway("worker")
+    gateway = EntityRoutingGateway(worker, {})  # type: ignore[arg-type]
+
+    assert list(gateway.stream(None, "t_demo", "hello", "message")) == []
+    assert worker.calls == [("stream", "t_demo")]
 
 
 def test_minds_package_exports_shared_contracts_not_run_step() -> None:
@@ -363,7 +408,14 @@ def test_shared_gateway_history_resumes_and_preserves_full_trace() -> None:
                         "session_id": LIVE_SID,
                         "resumed": "20260708_090000_rotated",
                         "messages": [
-                            {"role": "user", "content": "human asks", "created_at": 10},
+                            {
+                                "role": "user",
+                                "content": (
+                                    "human asks\n\n[Pending worker context]\n- Ticket changed."
+                                    "\n[/Pending worker context]"
+                                ),
+                                "created_at": 10,
+                            },
                             {
                                 "role": "system",
                                 "content": [{"text": "worker prompt"}, {"text": "context"}],
@@ -460,6 +512,131 @@ def test_shared_gateway_respawns_after_child_death() -> None:
     assert fake2.closed is True
 
 
+def test_shared_gateway_delivers_and_acknowledges_context_for_sync_and_stream_human_sends() -> None:
+    context = RecordingWorkerContext()
+    context.set(
+        "t_sync",
+        PendingWorkerContext("alpha", "Alpha changed.", 2),
+        PendingWorkerContext("beta", "Beta changed.", 4),
+    )
+    context.set("t_stream", PendingWorkerContext("ticket_changed", "Ticket changed.", 7))
+    fake = FakeGateway(
+        {
+            "session.create": [
+                create_reply(LIVE_SID, STORED_KEY),
+                create_reply(OTHER_SID, OTHER_KEY),
+            ],
+            "prompt.submit": [
+                submit_reply(complete_ev(LIVE_SID, text="sync reply")),
+                submit_reply(complete_ev(OTHER_SID, text="stream reply")),
+            ],
+        }
+    )
+    gateway = shared(fake, context)
+    try:
+        sync = gateway.send(None, "t_sync", "original sync")
+        streamed = list(gateway.stream(None, "t_stream", "original stream", "message"))
+    finally:
+        gateway.shutdown()
+
+    submits = [
+        frame["params"]["text"]
+        for frame in fake.sent
+        if frame["method"] == "prompt.submit"
+    ]
+    assert submits == [
+        "original sync\n\n[Pending worker context]\n- Alpha changed.\n- Beta changed."
+        "\n[/Pending worker context]",
+        "original stream\n\n[Pending worker context]\n- Ticket changed."
+        "\n[/Pending worker context]",
+    ]
+    assert sync.reply_text == "sync reply"
+    assert streamed[-1].reply_text == "stream reply"
+    assert context.prepare_calls == [
+        ("t_sync", "original sync"),
+        ("t_stream", "original stream"),
+    ]
+    assert context.acknowledgements == [
+        ("t_sync", (("alpha", 2), ("beta", 4))),
+        ("t_stream", (("ticket_changed", 7),)),
+    ]
+
+
+def test_shared_gateway_delivers_context_for_sync_and_stream_model_backed_commands_only() -> None:
+    context = RecordingWorkerContext()
+    for entity_id in ("t_sync_command", "t_stream_command", "t_pure_command"):
+        context.set(entity_id, PendingWorkerContext("ticket_changed", "Ticket changed.", 1))
+    fake = FakeGateway(
+        {
+            "session.create": [
+                create_reply(LIVE_SID, STORED_KEY),
+                create_reply(OTHER_SID, OTHER_KEY),
+                create_reply("pure-sid", "pure-key"),
+            ],
+            "slash.exec": [
+                Reply(result={"type": "skill", "message": "sync command prompt"}),
+                Reply(result={"type": "send", "message": "stream command prompt"}),
+                Reply(result={"output": "pure output"}),
+            ],
+            "prompt.submit": [
+                submit_reply(complete_ev(LIVE_SID, text="sync command reply")),
+                submit_reply(complete_ev(OTHER_SID, text="stream command reply")),
+            ],
+        }
+    )
+    gateway = shared(fake, context)
+    try:
+        sync = gateway.run_command(None, "t_sync_command", "/skill")
+        streamed = list(gateway.stream(None, "t_stream_command", "/skill", "command"))
+        pure = gateway.run_command(None, "t_pure_command", "/status")
+    finally:
+        gateway.shutdown()
+
+    submits = [
+        frame["params"]["text"]
+        for frame in fake.sent
+        if frame["method"] == "prompt.submit"
+    ]
+    assert submits == [
+        "sync command prompt\n\n[Pending worker context]\n- Ticket changed."
+        "\n[/Pending worker context]",
+        "stream command prompt\n\n[Pending worker context]\n- Ticket changed."
+        "\n[/Pending worker context]",
+    ]
+    assert sync.kind == "assistant"
+    assert streamed[-1].kind == "assistant"
+    assert pure.reply_text == "pure output"
+    assert context.prepare_calls == [
+        ("t_sync_command", "sync command prompt"),
+        ("t_stream_command", "stream command prompt"),
+    ]
+    assert context.pending["t_pure_command"]
+
+
+def test_shared_gateway_retains_context_when_prompt_submit_is_busy_or_errors() -> None:
+    for error in ((4009, "busy"), (4999, "failed")):
+        context = RecordingWorkerContext()
+        context.set("t_demo", PendingWorkerContext("ticket_changed", "Ticket changed.", 3))
+        fake = FakeGateway(
+            {
+                "session.create": [create_reply()],
+                "prompt.submit": [Reply(error=error)],
+            }
+        )
+        gateway = shared(fake, context)
+        try:
+            if error[0] == 4009:
+                with pytest.raises(SharedGatewayBusy, match="session busy"):
+                    gateway.run_ticket_step(None, "t_demo", "worker prompt")
+            else:
+                result = gateway.run_ticket_step(None, "t_demo", "worker prompt")
+                assert result.status == "errored"
+        finally:
+            gateway.shutdown()
+        assert context.acknowledgements == []
+        assert context.pending["t_demo"]
+
+
 def test_shared_gateway_run_reuses_child_for_multiple_sessions() -> None:
     fake = FakeGateway(
         {
@@ -474,8 +651,8 @@ def test_shared_gateway_run_reuses_child_for_multiple_sessions() -> None:
         }
     )
     gateway = shared(fake)
-    one = gateway.run_ticket_step(None, "one")
-    two = gateway.run_ticket_step(None, "two")
+    one = gateway.run_ticket_step(None, "t_one", "one")
+    two = gateway.run_ticket_step(None, "t_two", "two")
     assert one.text == "one"
     assert two.text == "two"
     assert fake.sent_methods() == [
@@ -499,7 +676,7 @@ def test_shared_gateway_interrupt_resolves_stored_key_to_live_session() -> None:
     gateway = shared(fake)
     results: list[RunResult] = []
     turn = threading.Thread(
-        target=lambda: results.append(gateway.run_ticket_step(None, "in flight"))
+        target=lambda: results.append(gateway.run_ticket_step(None, "t_demo", "in flight"))
     )
 
     try:
@@ -528,6 +705,125 @@ def test_shared_gateway_interrupt_maps_live_session_not_found_to_not_found() -> 
         gateway.shutdown()
 
     assert caught.value.code == ErrorCode.not_found
+
+
+def test_shared_gateway_attaches_image_on_live_session_before_prompt_submit() -> None:
+    image_path = Path("/tmp/chat-image.png")
+    fake = FakeGateway(
+        {
+            "session.resume": [resume_reply(LIVE_SID, STORED_KEY)],
+            "image.attach": [Reply(result={"attached": True})],
+            "prompt.submit": [submit_reply(complete_ev(LIVE_SID, text="seen"))],
+        }
+    )
+    gateway = shared(fake)
+
+    try:
+        chunks = list(
+            gateway.stream(
+                STORED_KEY,
+                "t_demo",
+                "describe it",
+                "message",
+                image_path=image_path,
+            )
+        )
+    finally:
+        gateway.shutdown()
+
+    assert chunks[-1].reply_text == "seen"
+    assert fake.sent_methods() == ["session.resume", "image.attach", "prompt.submit"]
+    assert fake.sent[1]["params"] == {"session_id": LIVE_SID, "path": str(image_path)}
+    assert fake.sent[2]["params"] == {"session_id": LIVE_SID, "text": "describe it"}
+
+
+def test_shared_gateway_attach_failure_does_not_submit_prompt() -> None:
+    context = RecordingWorkerContext()
+    context.set("t_demo", PendingWorkerContext("ticket_changed", "Ticket changed.", 9))
+    fake = FakeGateway(
+        {
+            "session.create": [create_reply(LIVE_SID, STORED_KEY)],
+            "image.attach": [Reply(error=(4000, "bad image"))],
+            "prompt.submit": [submit_reply(complete_ev(LIVE_SID, text="must not run"))],
+        }
+    )
+    gateway = shared(fake, context)
+
+    try:
+        with pytest.raises(PlannerError) as caught:
+            list(
+                gateway.stream(
+                    None,
+                    "t_demo",
+                    "describe it",
+                    "message",
+                    image_path=Path("/tmp/chat-image.png"),
+                )
+            )
+    finally:
+        gateway.shutdown()
+
+    assert caught.value.code == ErrorCode.gateway_offline
+    assert fake.sent_methods() == ["session.create", "image.attach"]
+    assert context.acknowledgements == []
+    assert context.pending["t_demo"]
+
+
+def test_shared_gateway_detaches_image_when_prompt_submit_fails_before_next_turn() -> None:
+    image_path = Path("/tmp/chat-image.png")
+    context = RecordingWorkerContext()
+    context.set("t_demo", PendingWorkerContext("ticket_changed", "Ticket changed.", 10))
+    fake = FakeGateway(
+        {
+            "session.create": [create_reply(LIVE_SID, STORED_KEY)],
+            "session.resume": [resume_reply(LIVE_SID, STORED_KEY)],
+            "image.attach": [Reply(result={"attached": True})],
+            "image.detach": [Reply(result={"detached": True})],
+            "prompt.submit": [
+                Reply(error=(4000, "submit failed")),
+                submit_reply(complete_ev(LIVE_SID, text="clean next turn")),
+            ],
+        }
+    )
+    gateway = shared(fake, context)
+
+    try:
+        with pytest.raises(PlannerError) as caught:
+            list(
+                gateway.stream(
+                    None,
+                    "t_demo",
+                    "first turn",
+                    "message",
+                    image_path=image_path,
+                )
+            )
+        next_chunks = list(gateway.stream(STORED_KEY, "t_demo", "next turn", "message"))
+    finally:
+        gateway.shutdown()
+
+    assert caught.value.code == ErrorCode.gateway_offline
+    assert next_chunks[-1].reply_text == "clean next turn"
+    assert fake.sent_methods() == [
+        "session.create",
+        "image.attach",
+        "prompt.submit",
+        "image.detach",
+        "session.resume",
+        "prompt.submit",
+    ]
+    assert fake.sent[3]["params"] == {"session_id": LIVE_SID, "path": str(image_path)}
+    submit_texts = [
+        frame["params"]["text"]
+        for frame in fake.sent
+        if frame["method"] == "prompt.submit"
+    ]
+    expected_suffix = (
+        "\n\n[Pending worker context]\n- Ticket changed.\n[/Pending worker context]"
+    )
+    assert submit_texts == [f"first turn{expected_suffix}", f"next turn{expected_suffix}"]
+    assert context.acknowledgements == [("t_demo", (("ticket_changed", 10),))]
+    assert context.pending["t_demo"] == ()
 
 
 def test_resolve_hermes_python_precedence() -> None:

@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from planner.core.authctx import reject_agents
+from planner.core.authctx import require_direct_write
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.projects import data as projects_data
@@ -38,7 +38,7 @@ async def list_projects(conn: DbConn) -> JsonDict:
 
 @router.post("/projects")
 async def create_project(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
-    reject_agents(ctx)
+    require_direct_write(ctx)
     body = _marshal_create_project(raw)
     project = projects_data.create_project(
         conn, name=body["name"], summary=body["summary"], now=clk.now_unix()
@@ -50,7 +50,7 @@ async def create_project(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) 
 async def update_project(
     project_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
-    reject_agents(ctx)
+    require_direct_write(ctx)
     body = _marshal_update_project(raw)
     project = projects_data.update_project(
         conn,

@@ -7,6 +7,13 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
+class ChatTurnRequest:
+    text: str
+    mode: str = "message"
+    image_reference: str | None = None
+
+
+@dataclass(frozen=True)
 class ChatStateMessage:
     id: int
     role: str                      # product role: "human" | "assistant" | "system" | "worker"

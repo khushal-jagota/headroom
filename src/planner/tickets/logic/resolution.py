@@ -1,6 +1,6 @@
 """§4.4 resolution semantics as pure Decisions. _accept_gating_proposal is the
 sole constructor of any Decision that traverses the gating-acceptance edges 1-5
-(auto and human alike); _state_change is the sole constructor of state_changed
+(auto and direct alike); _state_change is the sole constructor of state_changed
 EventSpecs. Together with data._apply_decision (the sole appender) this is the
 "one canonical writer per transition" guarantee (§4.4.6)."""
 
@@ -24,14 +24,14 @@ from planner.tickets.logic import admission, fields_codec, machine
 from planner.tickets.logic.decisions import Decision, EventSpec
 
 CAUSE_AUTO_ACCEPT: Final[str] = "auto_accept"
-CAUSE_HUMAN_ACCEPT: Final[str] = "human_accept"
+CAUSE_DIRECT_ACCEPT: Final[str] = "direct_accept"
 CAUSE_REVIEW_APPROVE: Final[str] = "review_approve"
-CAUSE_HUMAN_STATE_JUMP: Final[str] = "human_state_jump"
+CAUSE_DIRECT_STATE_JUMP: Final[str] = "direct_state_jump"
 CAUSE_DROP: Final[str] = "drop"
 CAUSE_ONWARD_SCOPE: Final[str] = "onward_scope"
-CAUSE_HUMAN_SCOPE: Final[str] = "human_scope"
+CAUSE_DIRECT_SCOPE: Final[str] = "direct_scope"
 RESOLVED_BY_AUTO: Final[str] = "auto"
-RESOLVED_BY_HUMAN: Final[str] = "human"
+RESOLVED_BY_DIRECT: Final[str] = "direct"
 
 
 def _state_change(old: TicketState, new: TicketState, cause: str) -> EventSpec:
@@ -178,7 +178,7 @@ def decide_accept(
     next_ceiling: NextCeiling | None,
     at_cap: AtCap | None,
 ) -> Decision:
-    admission.require_human(actor, "accept_proposal")
+    admission.require_direct_actor(actor, "accept_proposal")
     if edited_body is not None:
         admission.validate_body(edited_body, "edit-accept text")
     edited = edited_body is not None
@@ -201,10 +201,10 @@ def decide_accept(
             ticket,
             field,
             stored_body=stored_body,
-            resolved_by=RESOLVED_BY_HUMAN,
+            resolved_by=RESOLVED_BY_DIRECT,
             edited=edited,
             scope=scope,
-            cause=CAUSE_HUMAN_ACCEPT,
+            cause=CAUSE_DIRECT_ACCEPT,
         )
     new_slot = FieldSlot(value=stored_body, proposal=None, user_note=slot.user_note)
     new_fields = fields_codec.with_slot(ticket.fields, field, new_slot)
@@ -214,7 +214,7 @@ def decide_accept(
             {
                 "field": field.value,
                 "body": stored_body,
-                "resolved_by": RESOLVED_BY_HUMAN,
+                "resolved_by": RESOLVED_BY_DIRECT,
                 "edited": edited,
             },
         ),
@@ -225,11 +225,11 @@ def decide_accept(
 def decide_edit_value(
     ticket: Ticket, field: FieldName, new_body: str, actor: str
 ) -> Decision:
-    """§4.2 human edit of an already-*passed* settled value. The value stays written
-    solely by the resolution engine; this is a tightly-guarded human write path that
+    """§4.2 direct edit of an already-*passed* settled value. The value stays written
+    solely by the resolution engine; this is a tightly-guarded direct write path that
     never touches state/ceiling. It rejects dropped tickets, an unset value, a field
     carrying a live proposal, and the current gating or any future field."""
-    admission.require_human(actor, "edit_field_value")
+    admission.require_direct_actor(actor, "edit_field_value")
     admission.validate_body(new_body, "field value")
     if ticket.state is TicketState.dropped:
         raise PlannerError(
@@ -261,7 +261,7 @@ def decide_edit_value(
 
 
 def decide_approve(ticket: Ticket, actor: str) -> Decision:
-    admission.require_human(actor, "approve_review")
+    admission.require_direct_actor(actor, "approve_review")
     if ticket.ticket_status is TicketStatus.agent_running_step:
         raise PlannerError(
             ErrorCode.already_running,
@@ -279,7 +279,7 @@ def decide_approve(ticket: Ticket, actor: str) -> Decision:
 
 
 def decide_return_for_revision(ticket: Ticket, actor: str) -> Decision:
-    admission.require_human(actor, "return_for_revision")
+    admission.require_direct_actor(actor, "return_for_revision")
     if ticket.ticket_status is TicketStatus.agent_running_step:
         raise PlannerError(
             ErrorCode.already_running,
@@ -319,19 +319,19 @@ def decide_return_for_revision(ticket: Ticket, actor: str) -> Decision:
 
 
 def decide_state_jump(ticket: Ticket, new_state: TicketState, actor: str) -> Decision:
-    admission.require_human(actor, "set_state")
+    admission.require_direct_actor(actor, "set_state")
     if new_state is TicketState.dropped:
         raise PlannerError(ErrorCode.validation, "use the drop action")
     if ticket.state is TicketState.dropped:
         raise PlannerError(ErrorCode.validation, "dropped is terminal")
     if new_state is ticket.state:
         raise PlannerError(ErrorCode.validation, "ticket already in that state")
-    events = (_state_change(ticket.state, new_state, CAUSE_HUMAN_STATE_JUMP),)
+    events = (_state_change(ticket.state, new_state, CAUSE_DIRECT_STATE_JUMP),)
     return Decision(events=events, new_state=new_state)
 
 
 def decide_drop(ticket: Ticket, actor: str) -> Decision:
-    admission.require_human(actor, "drop_ticket")
+    admission.require_direct_actor(actor, "drop_ticket")
     if ticket.state is TicketState.done:
         raise PlannerError(
             ErrorCode.validation, "done tickets cannot be dropped", {"state": "done"}
@@ -347,12 +347,12 @@ def decide_drop(ticket: Ticket, actor: str) -> Decision:
 def decide_scope_change(
     ticket: Ticket, ceiling: TicketState, at_cap: AtCap, actor: str
 ) -> Decision:
-    admission.require_human(actor, "change_scope")
+    admission.require_direct_actor(actor, "change_scope")
     machine.validate_ceiling(ceiling)
     events = (
         EventSpec(
             EventKind.scope_changed,
-            {"ceiling": ceiling.value, "at_cap": at_cap.value, "cause": CAUSE_HUMAN_SCOPE},
+            {"ceiling": ceiling.value, "at_cap": at_cap.value, "cause": CAUSE_DIRECT_SCOPE},
         ),
     )
     return Decision(events=events, new_ceiling=ceiling, new_at_cap=at_cap)
