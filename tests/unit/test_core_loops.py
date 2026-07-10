@@ -331,7 +331,11 @@ def test_server_lifespan_drains_runtime_before_shutting_down_gateways(
         lambda **_kwargs: (RecordingGateway("worker"), RecordingGateway("chief")),
     )
     monkeypatch.setattr(minds_config, "resolve_hermes_python", lambda: Path(sys.executable))
-    monkeypatch.setattr(minds_config, "resolve_planner_home", lambda: tmp_path / "home")
+    monkeypatch.setattr(
+        minds_config,
+        "resolve_planner_home",
+        lambda *, default: tmp_path / "home",
+    )
     monkeypatch.setattr(minds_config, "provision_planner_home_skills", lambda _home: None)
 
     def conn_factory():
@@ -345,3 +349,74 @@ def test_server_lifespan_drains_runtime_before_shutting_down_gateways(
         assert app.state.readiness_doorbell is runtime.readiness_doorbell
 
     assert order == ["runtime.stop", "worker.shutdown", "chief.shutdown"]
+
+
+def test_server_lifespan_uses_absolute_database_adjacent_hermes_home_across_cwds(
+    tmp_path: Path,
+    fake_clock: TestClock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_root = tmp_path / "configured-data"
+    other_worktree = tmp_path / "other-worktree"
+    other_worktree.mkdir()
+    config = load_config(
+        path=None,
+        env={
+            "PLAN_DB_PATH": str(database_root / "planning.db"),
+            "PLAN_LOGS_DIR": str(tmp_path / "logs"),
+            "PLAN_GATEWAY_ADAPTER": "fake",
+        },
+    )
+    provisioned_homes: list[Path] = []
+    gateway_homes: list[Path] = []
+
+    class RecordingGateway:
+        def shutdown(self) -> None:
+            return None
+
+    class RecordingRuntime:
+        employee_step_runner = object()
+        ticket_readiness_loop = None
+        readiness_doorbell = NoOpReadinessDoorbell()
+
+        async def stop(self) -> None:
+            return None
+
+    real_import_module = server_module.importlib.import_module
+    monkeypatch.setattr(
+        server_module.importlib,
+        "import_module",
+        lambda name: (
+            SimpleNamespace(start_background_loops=lambda *_args, **_kwargs: RecordingRuntime())
+            if name == "planner.core.loops"
+            else real_import_module(name)
+        ),
+    )
+
+    def build_role_gateways(**kwargs):
+        gateway_homes.extend([kwargs["planner_home"], kwargs["planner_home"]])
+        return RecordingGateway(), RecordingGateway()
+
+    monkeypatch.setattr(server_module, "_build_role_gateways", build_role_gateways)
+    monkeypatch.setattr(minds_config, "resolve_hermes_python", lambda: Path(sys.executable))
+    monkeypatch.setattr(
+        minds_config,
+        "provision_planner_home_skills",
+        provisioned_homes.append,
+    )
+    monkeypatch.delenv("PLAN_HERMES_HOME", raising=False)
+    monkeypatch.chdir(other_worktree)
+
+    def conn_factory():
+        return connect(config.db_path)
+
+    app = create_app(config, fake_clock, build_adapters(config), conn_factory)
+    from fastapi.testclient import TestClient
+
+    with TestClient(app):
+        pass
+
+    expected_home = (database_root / "hermes-home").resolve(strict=False)
+    assert provisioned_homes == [expected_home]
+    assert gateway_homes == [expected_home, expected_home]
+    assert expected_home != (other_worktree / "data/hermes-home").resolve(strict=False)

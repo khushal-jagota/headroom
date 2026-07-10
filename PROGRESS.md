@@ -3,6 +3,56 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-10): repair Chief `/new` and fresh-session startup
+
+Current build stage:
+
+- The exact live failure is reproduced and minimized. Two contract-scoped repairs are planned under
+  `orchestration/chief-new-repair/`: native `/new` session creation and database-adjacent default
+  Hermes-home resolution.
+- Both delegated implementation plans passed independent read-only review after three concrete
+  t_new01 test gaps were folded in. t_new02 is implemented and independently reviewed clean;
+  t_new01 implementation is now delegated regression-first.
+- The existing unrelated modified frontend-worktree pointer is preserved.
+
+What just passed:
+
+- The API-level feedback loop reproduced the exact symptom: a Chief message is committed, then its
+  SSE stream returns `gateway_offline` / `chat gateway stream failed` with the underlying detail
+  `No inference provider configured` and no assistant output.
+- Live database evidence proves the two `/new` attempts each timed out after exactly 45 seconds and
+  later messages settled errored rather than being lost by the UI.
+- Process and SQLite evidence proves the listener serves canonical `data/planning.db` while its
+  gateway uses an unconfigured frontend-worktree-local Hermes home. The fresh session selected the
+  unauthenticated default model and stored no messages.
+- Source tracing proves `/new` enters Hermes's noninteractive slash worker, waits on an unavailable
+  destructive confirmation, and cannot return a rotated session identity.
+- The stale live listener was restarted with the canonical absolute `PLAN_HERMES_HOME`. The exact
+  recovery probe completed with assistant text `OK` on a configured canonical Hermes session, so
+  ordinary Chief chat is operational while the durable fix is built.
+- Codex plan review: t_new02 returned `NO VIOLATIONS`; t_new01 initially found missing old-key stream,
+  two-entry-point literal-boundary, and callback-after-binding assertions. All three were added and
+  the follow-up returned `NO VIOLATIONS`.
+- t_new02's resolver test failed RED on the missing caller-default seam, and its server lifespan test
+  failed RED by selecting cwd-local `data/hermes-home`. Both passed GREEN after the minimal resolver
+  and startup wiring changes; the final focused three-test run and `git diff --check` passed.
+- Independent read-only t_new02 implementation review returned `NO VIOLATIONS`.
+
+Current hypothesis:
+
+- A dedicated `session.create` path for exact `/new`, plus tying the implicit Hermes home to the
+  configured planning database directory, closes both confirmed causes without changing contracts,
+  credentials, upstream Hermes, or the UI.
+
+Next step:
+
+- Finish and review t_new01, then run the combined focused checks and canonical `./verify`. Integrate
+  into the live frontend worktree only after the main tree is green.
+
+Blockers:
+
+- None.
+
 ## Live recovery follow-up (2026-07-10): Ticket lifecycle migration startup
 
 Restarting the real Panels server after the lifecycle rename exposed two migration gaps that the

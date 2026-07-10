@@ -1945,8 +1945,19 @@ def test_hermes_src_root() -> None:
 
 def test_resolve_planner_home() -> None:
     assert resolve_planner_home(None, env={}) == Path("data/hermes-home")
-    assert resolve_planner_home("/explicit", env={"PLAN_HERMES_HOME": "/env"}) == Path("/explicit")
-    assert resolve_planner_home(None, env={"PLAN_HERMES_HOME": "/env"}) == Path("/env")
+    assert resolve_planner_home(None, env={}, default="/database/hermes-home") == Path(
+        "/database/hermes-home"
+    )
+    assert resolve_planner_home(
+        None,
+        env={"PLAN_HERMES_HOME": "/env"},
+        default="/database/hermes-home",
+    ) == Path("/env")
+    assert resolve_planner_home(
+        "/explicit",
+        env={"PLAN_HERMES_HOME": "/env"},
+        default="/database/hermes-home",
+    ) == Path("/explicit")
     expanded = resolve_planner_home(None, env={"PLAN_HERMES_HOME": "~/homey"})
     assert expanded == Path("~/homey").expanduser()
 

@@ -126,7 +126,10 @@ def create_app(
             except (ImportError, AttributeError):
                 _log.warning("planner.core.loops unavailable; running without background loops")
             else:
-                planner_home = resolve_planner_home()
+                planner_home_default = (
+                    Path(config.db_path).expanduser().parent / "hermes-home"
+                ).resolve(strict=False)
+                planner_home = resolve_planner_home(default=planner_home_default)
                 provision_planner_home_skills(planner_home)
                 shared_gateway, chief_gateway = _build_role_gateways(
                     hermes_python=resolve_hermes_python(),

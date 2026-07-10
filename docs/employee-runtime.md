@@ -103,13 +103,14 @@ stuck ticket from a mystery into something you can debug.
 ## What is proved
 
 The runtime now points at the **`panels-worker`** role skill, and the CLI entry point
-workers use is **`panels`**. The shared gateway can use `PLAN_HERMES_HOME` so it sees
-the same skills and credentials as the configured Hermes home. On startup the server
-links this repo's `panels` and `panels-worker` skills into that home, so the role
-skills are present even when the default dedicated home starts empty. Provider/model
-credentials are still home configuration: the dedicated home needs its own `.env` and
-`config.yaml` links or files before a live worker can initialize. Ticket chat has
-been smoked against a non-test server and reached the real Hermes worker.
+workers use is **`panels`**. By default, a server uses the `hermes-home` directory
+beside its configured planning database, resolved to an absolute path before the
+gateways start. An explicit `PLAN_HERMES_HOME` overrides that location. On startup
+the server links only this repo's `panels`, `panels-worker`, and
+`panels-chief-of-staff` role skills into the selected home. It does not copy or link
+credentials, provider configuration, or global Hermes state; those remain
+configuration owned by the selected home. Ticket chat has been smoked against a
+non-test server and reached the real Hermes worker.
 
 The full live worker loop has also been smoked against fresh non-test databases.
 A ticket placed on today was discovered by TicketReadinessLoop, run by

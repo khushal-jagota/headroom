@@ -1761,3 +1761,22 @@ drop/rename swap before restoring enforcement and checking all references.
 No canonical data is edited around the migration to make it pass. The migration must accept the
 real valid data shape. This was fixed inline rather than cut as a worker Ticket because the current
 server could not start and the change is confined to the migration plus its regression seam.
+
+## D96 — `/new` is a native Panels session transition
+
+The live Chief `/new` attempts proved the earlier spike-03 assumption false. `slash.exec` sends the
+command to a separate noninteractive Hermes CLI worker, where destructive confirmation cannot be
+answered; it times out after 45 seconds and cannot return the new live or durable session identity.
+Panels will handle exact `/new` before ordinary command dispatch by creating and binding one fresh
+Hermes session, persisting that key, and using the same ordered ingress for its next message. Hermes
+source is unchanged and no general session-command framework is added.
+
+## D97 — The planning database owns the default Hermes-home location
+
+The live listener served the canonical absolute planning database from a frontend git worktree while
+its relative `data/hermes-home` resolved inside that worktree. Product state and Hermes state became
+split: the fresh session selected an unauthenticated default model and every prompt failed. When no
+explicit `PLAN_HERMES_HOME` is set, startup will derive the dedicated home from the configured database
+directory. This preserves worktree isolation when the database is worktree-local and preserves live
+session/config identity when the database is canonical. Credentials remain operator-owned; startup
+does not copy or link them.

@@ -45,11 +45,14 @@ def hermes_src_root(hermes_python: Path | str) -> Path:
 
 
 def resolve_planner_home(
-    value: str | None = None, env: Mapping[str, str] | None = None
+    value: str | None = None,
+    env: Mapping[str, str] | None = None,
+    *,
+    default: Path | str = DEFAULT_PLANNER_HOME,
 ) -> Path:
     """Resolve the planner home: explicit value → env → default; then expanduser."""
     source = env if env is not None else os.environ
-    chosen = value or source.get(ENV_PLANNER_HOME) or DEFAULT_PLANNER_HOME
+    chosen = value or source.get(ENV_PLANNER_HOME) or default
     return Path(chosen).expanduser()
 
 
