@@ -240,11 +240,18 @@ class SharedGateway:
         prompt_text: str,
         on_event: OnEvent | None = None,
         on_session_key: Callable[[str], None] | None = None,
+        *,
+        require_existing_session: bool = False,
     ) -> RunResult:
         resolved_key = session_key
         try:
             child = self._child_or_spawn()
-            live_sid, resolved_key = self._resume_or_create(child, session_key, SESSION_SOURCE)
+            live_sid, resolved_key = self._resume_or_create(
+                child,
+                session_key,
+                SESSION_SOURCE,
+                allow_create=not require_existing_session,
+            )
             if resolved_key and on_session_key is not None:
                 on_session_key(resolved_key)
             return self._submit_and_drain(
@@ -512,7 +519,12 @@ class SharedGateway:
         return env
 
     def _resume_or_create(
-        self, child: GatewayChild, session_key: str | None, source: str
+        self,
+        child: GatewayChild,
+        session_key: str | None,
+        source: str,
+        *,
+        allow_create: bool = True,
     ) -> tuple[str, str]:
         if session_key:
             try:
@@ -530,6 +542,12 @@ class SharedGateway:
                     raise SharedGatewayBusy(session_key) from exc
                 if exc.code != NOT_FOUND_CODE:
                     raise
+                if not allow_create:
+                    raise
+        elif not allow_create:
+            raise GatewayRpcError(NOT_FOUND_CODE, "existing session is required")
+        if not allow_create:
+            raise GatewayRpcError(NOT_FOUND_CODE, "existing session was not found")
         created = child.request(
             "session.create",
             {"source": source, "cols": SESSION_COLS},

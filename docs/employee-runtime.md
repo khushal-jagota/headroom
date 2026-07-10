@@ -12,8 +12,8 @@ Around each employee runs a small loop that decides _when_ to make it act, runs 
 step at a time, and feeds an approval straight back in.
 
 ```
-   System A (the poll)                     System B (one step)
-   ───────────────────                     ───────────────────
+   TicketReadinessLoop                     EmployeeStepRunner
+   ───────────────────                     ──────────────────
    scan today's tickets for ones           use the shared gateway · resume the
    READY to move                           ticket's mind · submit one prompt
         │  fire ─────────────────────────► watch the single run end
@@ -24,16 +24,24 @@ step at a time, and feeds an approval straight back in.
    (a timer is only the backstop)
 ```
 
-## The loop: System A and System B
+## Discovery and execution
 
-**System A** polls today's tickets and picks the ones that are _ready_ — able to
-move and not already in flight — then fires the employee for each. It never touches
-the AI itself. **System B** runs one step through the shared persistent Hermes
-gateway child: it assembles the prompt, resumes (or creates) the ticket's durable
-session, submits one turn, and watches for the single run to end — then writes the
-runtime status through the ticket data writers. Proposals, approvals, takeover,
-release, and runtime start/finish/error all use those same writer functions, so
+**TicketReadinessLoop** polls today's tickets and picks the ones that are _ready_ —
+able to move and not already in flight — then passes each Ticket id to the employee
+runner. It never touches the AI or writes Ticket state. **EmployeeStepRunner** owns
+one step through the shared persistent Hermes gateway child: it rechecks readiness,
+claims the Ticket, assembles the prompt, resumes or creates the Ticket's durable
+session, submits one turn, and watches for the run to end. It then writes runtime
+status through the Ticket data writers. Proposals, approvals, takeover, release,
+and runtime start/finish/error all use those same writer functions, so
 "the code owns the state, the worker only proposes" holds even here.
+
+The runner exists whenever the worker gateway exists. Readiness polling is optional:
+it may be disabled or another process may own the polling lock. Returning Review work
+for revision therefore reserves a runner thread directly before changing the Ticket,
+then releases that handoff after commit. The revision resumes the stored Hermes session
+strictly. If that session is stale, Panels records an errored employee turn instead of
+silently creating a different conversation.
 
 One employee is one ticket session, so Hermes' per-session busy guard keeps one turn
 in flight for that ticket while the shared child can hold many sessions. An approval
@@ -43,7 +51,8 @@ only a backstop. A ticket that is not on today is outside the automatic run set 
 when its status is `empty`; it does not appear on the Board, and the ticket page
 shows this as `auto not on today`.
 
-_Code paths:_ `src/planner/runtime/system_a.py`, `src/planner/runtime/system_b.py`,
+_Code paths:_ `src/planner/runtime/ticket_readiness_loop.py`,
+`src/planner/runtime/employee_step_runner.py`,
 `src/planner/minds/` (the employee primitive: the shared gateway child and its
 per-session busy guard).
 
@@ -91,19 +100,20 @@ credentials are still home configuration: the dedicated home needs its own `.env
 been smoked against a non-test server and reached the real Hermes worker.
 
 The full live worker loop has also been smoked against fresh non-test databases.
-A ticket placed on today was picked up by System A, run by System B, and parked at
+A ticket placed on today was discovered by TicketReadinessLoop, run by
+EmployeeStepRunner, and parked at
 `awaiting_approval` after the employee filed a proposal. The same durable Hermes
-session history showed the System B prompt and worker reply in ticket chat.
+session history showed the employee-step prompt and worker reply in ticket chat.
 
 A second smoke used a long poll interval to prove that a settled success-condition
 edit is a wake event, not just something the timer eventually notices: editing the
-success value poked System A and the employee filed the next approach proposal.
-System B persists a created or resumed `chat_session_key` before submitting the
+success value poked TicketReadinessLoop and the employee filed the next approach proposal.
+EmployeeStepRunner persists a created or resumed `chat_session_key` before submitting the
 prompt, so a worker calling `panels worker my-ticket` during its own turn can resolve
 the current ticket immediately.
 
 A live smoke on the default DB also proved that adding a new harmless ticket to
-today now wakes System A without a follow-up scope edit. The ticket moved to
+today now wakes TicketReadinessLoop without a follow-up scope edit. The ticket moved to
 `agent_running_step` on the immediate read after the day add, then parked at
 `awaiting_approval` with a success proposal.
 
@@ -132,4 +142,4 @@ today now wakes System A without a follow-up scope edit. The ticket moved to
 
 ---
 
-_Last verified: 2026-07-08._
+_Last verified: 2026-07-10._

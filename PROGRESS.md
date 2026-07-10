@@ -7,9 +7,9 @@ things stand right now, not a history log.
 
 Current scope:
 
-- `t_arch01` replaces System A/B with `TicketReadinessLoop` and `EmployeeStepRunner`, makes
-  the runner independent of automatic dispatch, and requires an accepted runner reservation
-  before a Review return-for-revision mutates its Ticket.
+- `t_arch01` has replaced System A/B with `TicketReadinessLoop` and `EmployeeStepRunner`,
+  made the runner independent of automatic dispatch, and now requires an accepted runner
+  reservation before a Review return-for-revision mutates its Ticket.
 - `t_arch02` moves readiness wakes out of routes and behind best-effort domain action doorbells.
   The audited wake set closes missing takeover, blocker-link creation, and day-removal paths;
   the timer/database remain canonical.
@@ -24,21 +24,30 @@ Verification status:
   wake site, and ordinary Ticket PATCH behavior on the current dirty tree.
 - The PATCH audit reproduced a partial commit after a later invalid field and false events/context
   for unchanged values. The readiness audit found the three missing rings above plus a stale-start
-  race after day removal. The runtime audit confirmed direct revision can return success without a
-  Hermes turn whenever System A is absent.
+  race after day removal. The runtime audit confirmed direct revision could return success without a
+  Hermes turn whenever no readiness loop existed.
 - Contract-scoped tickets and RED acceptance seams are recorded under `orchestration/tickets/`.
 - Three delegated implementation plans were independently reviewed by Codex in read-only xhigh
   mode. The atomic-edit plan passed immediately. Runtime ownership's two findings (strict stored-
   session resume and running-Chat collision safety) and readiness ringing's five coverage/doc
   findings were accepted, added to the contracts/plans, and both follow-up reviews returned
   `NO VIOLATIONS`.
-- No production implementation or verification run has started in this cycle yet. The concurrent
-  Chief/worker-context/chat-image work remains the last full-`./verify` baseline.
+- `t_arch01` implementation is complete. Its focused gate passes 147 unit tests, its Review
+  return-for-revision browser test passes, Ruff passes, Mypy passes across 99 source files, and
+  `git diff --check` passes.
+- Independent implementation review found five valid gaps: stale live naming, stale build memory,
+  and missing proofs for a released-run shutdown drain, full readiness recheck, and retained-runner
+  usability after readiness-loop construction failure. All five are resolved. Both the independent
+  follow-up and the required Codex xhigh follow-up returned `NO VIOLATIONS`.
+- `t_arch02` and `t_arch03` have reviewed plans, but implementation has not begun for either.
+- No full `./verify` has run in this architecture cycle. The concurrent Chief/worker-context/
+  chat-image work remains the last full-`./verify` baseline.
 
 Immediate next step:
 
-- Checkpoint the already-verified concurrent work plus reviewed plans, then implement `t_arch01`,
-  `t_arch02`, and `t_arch03` serially under TDD and independent implementation review.
+- Commit the clean `t_arch01` integration slice, then implement and review `t_arch02`. Keep
+  `t_arch03` queued behind it and run the authoritative full `./verify` only after all three
+  architecture tickets integrate.
 
 ## Completed work cycle (2026-07-10): Chief external-work intake
 

@@ -47,19 +47,19 @@ def _ticket(db_path: Path) -> str:
         conn.close()
 
 
-def test_add_day_ticket_pokes_system_a_after_successful_add(tmp_path: Path) -> None:
+def test_add_day_ticket_pokes_readiness_loop_after_successful_add(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     ticket_id = _ticket(db_path)
 
-    class FakeSystemA:
+    class ReadinessLoopSpy:
         def __init__(self) -> None:
             self.pokes = 0
 
         def poke(self) -> None:
             self.pokes += 1
 
-    fake_system_a = FakeSystemA()
-    app.state.system_a = fake_system_a
+    readiness_loop = ReadinessLoopSpy()
+    app.state.ticket_readiness_loop = readiness_loop
 
     with TestClient(app) as client:
         response = client.post("/api/day/today/tickets", json={"ticket_id": ticket_id})
@@ -68,4 +68,4 @@ def test_add_day_ticket_pokes_system_a_after_successful_add(tmp_path: Path) -> N
     assert response.status_code == 200, response.json()
     assert duplicate.status_code == 200, duplicate.json()
     assert response.json()["tickets"][0]["id"] == ticket_id
-    assert fake_system_a.pokes == 1
+    assert readiness_loop.pokes == 1

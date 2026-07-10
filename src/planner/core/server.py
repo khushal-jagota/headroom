@@ -28,7 +28,7 @@ from planner.core.adapters.registry import Adapters
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.testmode import build_test_router
+from planner.core.testmode import TestModeAcceptingEmployeeRevisionRunner, build_test_router
 from planner.core.ws import tail_events
 from planner.days.api import router as days_router
 from planner.files.api import router as files_router
@@ -141,14 +141,19 @@ def create_app(
                 chat_gateway_to_shutdown = chat_gateway
                 app_.state.shared_gateway = shared_gateway
                 app_.state.adapters = Adapters(gateway=chat_gateway)
-                loops = start(
-                    config,
-                    clock,
-                    shared_gateway=shared_gateway,
-                )
-                # Expose System A for the API poke seam (readiness-changing endpoints wake it).
-                # None in test mode (loops never start) -> the poke is a null-guarded no-op.
-                app_.state.system_a = loops.system_a
+                try:
+                    loops = start(
+                        config,
+                        clock,
+                        shared_gateway=shared_gateway,
+                    )
+                except Exception:
+                    _log.exception(
+                        "employee runtime composition failed; direct revisions unavailable"
+                    )
+                else:
+                    app_.state.employee_step_runner = loops.employee_step_runner
+                    app_.state.ticket_readiness_loop = loops.ticket_readiness_loop
         try:
             yield
         finally:
@@ -164,7 +169,10 @@ def create_app(
     app.state.clock = clock
     app.state.adapters = adapters
     app.state.conn_factory = conn_factory
-    app.state.system_a = None  # set by the lifespan when background loops start (non-test only)
+    app.state.ticket_readiness_loop = None
+    app.state.employee_step_runner = (
+        TestModeAcceptingEmployeeRevisionRunner() if config.test_mode else None
+    )
     app.state.shared_gateway = None
     # GET /api/chat/commands TTL cache: (CommandCatalog, expiry_monotonic) | None, plus a
     # lock so concurrent cache misses spawn at most one gateway child (chat/api.py).

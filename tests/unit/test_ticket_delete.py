@@ -232,7 +232,7 @@ def test_delete_ticket_api_is_human_only_and_returns_affected_resources(tmp_path
 
     with TestClient(app) as client:
         poke_spy = _PokeSpy()
-        app.state.system_a = poke_spy
+        app.state.ticket_readiness_loop = poke_spy
         forbidden = client.delete(
             f"/api/tickets/{target.id}", headers={"X-Plan-Actor": "agent"}
         )

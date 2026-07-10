@@ -1,7 +1,4 @@
-"""Machine-wide advisory lock, relocated intact from the removed dispatch runtime
-(notes.md "DECIDED KEEP · dispatcher machine-lock"). Nothing in W3a consumes it —
-it is preserved here for W3b's System A, which needs a singleton machine guard so
-only one readiness poll drives the board per machine.
+"""Machine-wide advisory lock for the singleton Ticket readiness poller.
 
 The lock is acquired once per path and then held by the process (released only on
 process exit or an explicit release). One cached OS fd per lock path."""

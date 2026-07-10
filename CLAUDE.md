@@ -8,7 +8,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - Python ≥ 3.12 backend in `src/planner/`, with FastAPI wiring in `src/planner/core/server.py` and SQLite schema/migrations in `src/planner/core/db.py`.
 - Domain code is grouped by system: `tickets/`, `sprints/`, `days/`, `projects/`, and `chat/`. Contracts live in each domain's `contracts.py`; framework-free rules live in `logic/`; HTTP routes live in `api.py`.
 - `panels` is the CLI entry point (`planner.cli.main:main`); `python -m planner` delegates to it. Important command groups are `serve`, `project`, `day`, `ticket`, `sprint`, `sprint item`, and `worker`.
-- Runtime work is split between `runtime/system_a.py` and `runtime/system_b.py`: System A finds runnable tickets on today's board; System B runs one ticket step through the shared Hermes gateway.
+- Runtime work is split between `runtime/ticket_readiness_loop.py` and `runtime/employee_step_runner.py`: the optional readiness loop discovers runnable Tickets on today's board; the always-composed employee runner owns one Ticket step through the shared Hermes gateway.
 - Gateway and chat code lives in `minds/` and `chat/`. The shared gateway owns Hermes session transport; chat owns human sends, streaming, command catalog, and history.
 - Frontend is Svelte/Vite in `web/`; FastAPI serves the built `web/dist` app at `/` and Vite chunks under `/_app/`. Shared design/runtime assets remain in `assets/`: `tokens.css`, `app.css`, and `markdown.js`.
 - Local agent role skills live in `skills/`, especially `panels` and `panels-worker`; startup exposes those same source directories to the planner Hermes home as symlinks under `data/hermes-home/skills/`.

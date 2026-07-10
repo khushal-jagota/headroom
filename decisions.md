@@ -2,6 +2,16 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D53 — Acceptance tests must make runtime ownership removable only by failing
+
+The first runtime implementation review found no production defect, but its independent standards
+and specification axes identified five valid evidence gaps. All were accepted. Live guidance and
+build memory now use the responsibility names; shutdown is proved with a released gateway-bound
+turn, readiness is proved with today's membership still present but another predicate invalidated,
+and loop-construction failure is proved to leave a usable direct-revision runner. These tests are
+required because a non-null object or a short-circuited guard is not evidence that the owned
+behavior works. Both follow-up reviewers returned `NO VIOLATIONS` before integration.
+
 ## D52 — Checkpoint the verified concurrent tree before architecture implementation
 
 The current dirty tree contains the completed Chief external-work, worker-context, and chat-image

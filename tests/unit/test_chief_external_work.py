@@ -266,7 +266,7 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
         def poke(self) -> None:
             self.count += 1
     pokes = Pokes()
-    app.state.system_a = pokes
+    app.state.ticket_readiness_loop = pokes
     with TestClient(app) as client:
         invalid = client.post(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
@@ -327,7 +327,7 @@ def test_create_external_work_emits_exact_existing_events_and_pokes(tmp_path: Pa
         def poke(self) -> None:
             self.count += 1
     pokes = Pokes()
-    app.state.system_a = pokes
+    app.state.ticket_readiness_loop = pokes
     with TestClient(app) as client:
         response = client.post(
             "/api/chief/tickets/from-external-work",

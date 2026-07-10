@@ -585,12 +585,12 @@
                 <span>keyed UI refetch</span>
               </div>
               <div>
-                <strong>System A</strong>
+                <strong>TicketReadinessLoop</strong>
                 <span>today readiness poll</span>
               </div>
             </li>
             <li>
-              <strong>System B</strong>
+              <strong>EmployeeStepRunner</strong>
               <span>one Hermes worker step</span>
             </li>
           </ol>
@@ -614,7 +614,7 @@
           </li>
           <li>
             <strong>Why did work run?</strong>
-            <span>Employee Runtime. System A finds runnable tickets; System B runs one worker step.</span>
+            <span>Employee Runtime. TicketReadinessLoop finds runnable Tickets; EmployeeStepRunner runs one worker step.</span>
           </li>
           <li>
             <strong>Where is chat?</strong>
@@ -677,7 +677,7 @@
               </p>
               <p>
                 The Board is today's execution board, not an all-ticket inventory.
-                System A starts from the same today membership, then narrows to
+                TicketReadinessLoop starts from the same today membership, then narrows to
                 empty, non-terminal tickets that pass readiness.
               </p>
               <p class="code-paths">
@@ -719,25 +719,25 @@
           <details>
             <summary>
               <span class="number">04</span>
-              <span><strong>The Employee Runtime</strong><span>System A readiness and System B one-step work.</span></span>
+              <span><strong>The Employee Runtime</strong><span>Optional readiness discovery and always-available step execution.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                System A polls today's tickets whose <code>ticket_status</code> is
+                TicketReadinessLoop polls today's Tickets whose <code>ticket_status</code> is
                 <code>empty</code>, then applies readiness: not terminal, has a
                 next field, no pending proposal there, not blocked, and not stopped
                 at the scope limit.
               </p>
               <p>
-                System B marks the ticket running, resumes or creates its Hermes
+                EmployeeStepRunner marks the Ticket running, resumes or creates its Hermes
                 session, submits one prompt, and settles runtime status when the
                 turn ends. A parked proposal becomes <code>awaiting_approval</code>;
                 auto-accepted work can return to <code>empty</code>.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/runtime/readiness.py</code>,
-                <code>src/planner/runtime/system_a.py</code>,
-                <code>src/planner/runtime/system_b.py</code>,
+                <code>src/planner/runtime/ticket_readiness_loop.py</code>,
+                <code>src/planner/runtime/employee_step_runner.py</code>,
                 <code>src/planner/core/loops.py</code>
               </p>
             </div>
@@ -777,7 +777,7 @@
             <div class="detail-body">
               <p>
                 Ticket chat and automatic worker steps use the same durable ticket
-                session. System B stores a new or resumed session key before
+                session. EmployeeStepRunner stores a new or resumed session key before
                 submitting the worker prompt, so worker tools can resolve their
                 ticket during the turn.
               </p>

@@ -38,8 +38,10 @@ from planner.core.contracts import JsonDict, LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import planning_date, resolve_day_id
 from planner.projects import data as projects_data
-from planner.runtime.system_a import SystemA
+from planner.runtime.contracts import EmployeeRevisionRunner
+from planner.runtime.ticket_readiness_loop import TicketReadinessLoop
 from planner.sprints import views as sprints_views
+from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
 from planner.tickets.contracts import (
@@ -90,25 +92,37 @@ async def db_conn(request: Request) -> AsyncIterator[sqlite3.Connection]:
         conn.close()
 
 
-def get_system_a(request: Request) -> SystemA | None:
-    """The running System A (readiness poll), or None in test mode / before startup. The
-    readiness-changing endpoints poke it so an approval / unblock / create drives the next
-    step immediately instead of waiting a poll tick."""
-    system_a: SystemA | None = getattr(request.app.state, "system_a", None)
-    return system_a
+def get_ticket_readiness_loop(request: Request) -> TicketReadinessLoop | None:
+    """Return the optional readiness poller owned by this process."""
+    loop: TicketReadinessLoop | None = getattr(
+        request.app.state, "ticket_readiness_loop", None
+    )
+    return loop
+
+
+def get_employee_revision_runner(request: Request) -> EmployeeRevisionRunner | None:
+    runner: EmployeeRevisionRunner | None = getattr(
+        request.app.state, "employee_step_runner", None
+    )
+    return runner
 
 
 DbConn = Annotated[sqlite3.Connection, Depends(db_conn)]
 Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
 Clk = Annotated[Clock, Depends(get_clock)]
-Sa = Annotated[SystemA | None, Depends(get_system_a)]
+TicketLoop = Annotated[
+    TicketReadinessLoop | None, Depends(get_ticket_readiness_loop)
+]
+EmployeeRunner = Annotated[
+    EmployeeRevisionRunner | None, Depends(get_employee_revision_runner)
+]
 
 
-def _poke(system_a: SystemA | None) -> None:
-    """Null-guarded fast-path wake (no-op in test mode where System A never runs)."""
-    if system_a is not None:
-        system_a.poke()
+def _poke(ticket_readiness_loop: TicketReadinessLoop | None) -> None:
+    """Null-guarded temporary fast-path wake for local readiness discovery."""
+    if ticket_readiness_loop is not None:
+        ticket_readiness_loop.poke()
 
 
 @contextmanager
@@ -294,7 +308,7 @@ def _parse_scope_at_cap(raw: str | None) -> AtCap | None:
 
 @router.post("/tickets")
 async def create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
-                        clk: Clk, sa: Sa) -> JsonDict:
+                        clk: Clk, readiness_loop: TicketLoop) -> JsonDict:
     body = _marshal_create_ticket(raw)
     now = clk.now_unix()
     priority = parse_enum(Priority, body["priority"], "priority") \
@@ -317,13 +331,14 @@ async def create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
         sprint_id=body["sprint_id"],
         sprint_item_id=body["sprint_item_id"],
     )
-    _poke(sa)  # a fresh empty ticket may be ready at once — don't wait a poll tick
+    _poke(readiness_loop)  # a fresh empty Ticket may be ready at once
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/chief/tickets/from-external-work")
 async def create_ticket_from_external_work(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk,
+    readiness_loop: TicketLoop
 ) -> JsonDict:
     require_chief(ctx)
     body = _marshal_external_create(raw)
@@ -356,13 +371,14 @@ async def create_ticket_from_external_work(
         sprint_id=body.get("sprint_id"),
         sprint_item_id=body.get("sprint_item_id"),
     )
-    _poke(sa)
+    _poke(readiness_loop)
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/chief/tickets/{ticket_id}/reconcile-from-external-work")
 async def reconcile_ticket_from_external_work(
-    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa
+    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk,
+    readiness_loop: TicketLoop
 ) -> JsonDict:
     require_chief(ctx)
     body = _marshal_external_reconcile(raw)
@@ -378,7 +394,7 @@ async def reconcile_ticket_from_external_work(
         actor=ctx.actor,
         now=now,
     )
-    _poke(sa)
+    _poke(readiness_loop)
     return tickets_views.ticket_json(ticket, now)
 
 
@@ -419,12 +435,14 @@ async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk) -> JsonDict:
 
 
 @router.delete("/tickets/{ticket_id}")
-async def delete_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa) -> JsonDict:
+async def delete_ticket(
+    ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, readiness_loop: TicketLoop
+) -> JsonDict:
     require_direct_write(ctx)
     deleted = tickets_data.delete_ticket(
         conn, ticket_id, actor=ctx.actor, now=clk.now_unix()
     )
-    _poke(sa)  # deleting a blocker can make a surviving ticket runnable immediately
+    _poke(readiness_loop)  # deleting a blocker can make a surviving Ticket ready
     return {
         "ok": True,
         "ticket_id": deleted.ticket_id,
@@ -528,7 +546,7 @@ async def propose_field(ticket_id: str, field: str, raw: dict[str, Any], conn: D
 
 @router.post("/tickets/{ticket_id}/accept/{field}")
 async def accept_field(ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                       clk: Clk, sa: Sa) -> JsonDict:
+                       clk: Clk, readiness_loop: TicketLoop) -> JsonDict:
     body = _marshal_accept(raw)
     require_direct_write(ctx)
     field_enum = parse_enum(FieldName, field, "field")
@@ -545,31 +563,41 @@ async def accept_field(ticket_id: str, field: str, raw: dict[str, Any], conn: Db
         next_ceiling=next_ceiling,
         at_cap=at_cap,
     )
-    _poke(sa)  # the approve gate: set off the next step (bundled propose->approve)
+    _poke(readiness_loop)  # the approval gate can expose the next step
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/approve")
-async def approve_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa) -> JsonDict:
+async def approve_ticket(
+    ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, readiness_loop: TicketLoop
+) -> JsonDict:
     require_direct_write(ctx)
     now = clk.now_unix()
     ticket = tickets_data.approve_review(conn, ticket_id, actor=ctx.actor, now=now)
-    _poke(sa)
+    _poke(readiness_loop)
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/return-for-revision")
 async def return_ticket_for_revision(
-    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa
+    ticket_id: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    employee_runner: EmployeeRunner,
 ) -> JsonDict:
     body = RevisionMessageBody(message=body_str(raw, "message"))
     require_direct_write(ctx)
     now = clk.now_unix()
-    ticket, framed_message = tickets_data.return_for_revision(
-        conn, ticket_id, message=body["message"], actor=ctx.actor, now=now
+    ticket = tickets_actions.return_ticket_for_revision(
+        conn,
+        ticket_id,
+        message=body["message"],
+        actor=ctx.actor,
+        now=now,
+        employee_revision_runner=employee_runner,
     )
-    if sa is not None:
-        sa.send_to_claimed_worker(ticket_id, framed_message)
     return tickets_views.ticket_json(ticket, now)
 
 
@@ -603,7 +631,7 @@ async def put_recap(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
 
 @router.put("/tickets/{ticket_id}/value/{field}")
 async def put_value(ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                    clk: Clk, sa: Sa) -> JsonDict:
+                    clk: Clk, readiness_loop: TicketLoop) -> JsonDict:
     body = ValueEditBody(body=body_str(raw, "body"))
     require_direct_write(ctx)
     field_enum = parse_enum(FieldName, field, "field")
@@ -611,13 +639,13 @@ async def put_value(ticket_id: str, field: str, raw: dict[str, Any], conn: DbCon
     ticket = tickets_data.edit_field_value(
         conn, ticket_id, field=field_enum, new_body=body["body"], actor=ctx.actor, now=now
     )
-    _poke(sa)
+    _poke(readiness_loop)
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/scope")
 async def scope_ticket(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                       clk: Clk, sa: Sa) -> JsonDict:
+                       clk: Clk, readiness_loop: TicketLoop) -> JsonDict:
     body = ScopeBody(ceiling=body_opt_str(raw, "ceiling"), at_cap=body_opt_str(raw, "at_cap"))
     require_direct_write(ctx)
     now = clk.now_unix()
@@ -644,28 +672,30 @@ async def scope_ticket(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: C
     ticket = tickets_data.change_scope(
         conn, ticket_id, ceiling=ceiling, at_cap=at_cap, actor=ctx.actor, now=now
     )
-    _poke(sa)  # a raised ceiling may unblock the next auto-advance
+    _poke(readiness_loop)  # a raised ceiling may expose the next step
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/state")
 async def set_state(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                    clk: Clk, sa: Sa) -> JsonDict:
+                    clk: Clk, readiness_loop: TicketLoop) -> JsonDict:
     body = StateBody(to=body_str(raw, "to"))
     require_direct_write(ctx)
     now = clk.now_unix()
     to_state = parse_enum(TicketState, body["to"], "state")
     ticket = tickets_data.set_state(conn, ticket_id, new_state=to_state, actor=ctx.actor, now=now)
-    _poke(sa)
+    _poke(readiness_loop)
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/drop")
-async def drop_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa) -> JsonDict:
+async def drop_ticket(
+    ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, readiness_loop: TicketLoop
+) -> JsonDict:
     require_direct_write(ctx)
     now = clk.now_unix()
     ticket = tickets_data.drop_ticket(conn, ticket_id, actor=ctx.actor, now=now)
-    _poke(sa)  # a drop retires the ticket; the runnable guard skips any stale wake
+    _poke(readiness_loop)  # the runner rejects any stale discovery
     return tickets_views.ticket_json(ticket, now)
 
 
@@ -678,11 +708,13 @@ async def take_over_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> 
 
 
 @router.post("/tickets/{ticket_id}/release")
-async def release_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa) -> JsonDict:
+async def release_ticket(
+    ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, readiness_loop: TicketLoop
+) -> JsonDict:
     require_direct_write(ctx)
     now = clk.now_unix()
     ticket = tickets_data.release_ticket(conn, ticket_id, now=now)
-    _poke(sa)
+    _poke(readiness_loop)
     return tickets_views.ticket_json(ticket, now)
 
 
@@ -712,13 +744,14 @@ async def add_link(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> Jso
 
 
 @router.delete("/links")
-async def remove_link(conn: DbConn, ctx: Ctx, clk: Clk, sa: Sa, from_id: str, to_id: str,
+async def remove_link(conn: DbConn, ctx: Ctx, clk: Clk,
+                      readiness_loop: TicketLoop, from_id: str, to_id: str,
                       kind: str) -> JsonDict:
     kind_enum = parse_enum(LinkKind, kind, "kind")
     now = clk.now_unix()
     with txn(conn):
         core_links.remove_link(conn, from_id, to_id, kind_enum, now)
-    _poke(sa)  # removing a blocks link can make the target ready (unblock -> poke)
+    _poke(readiness_loop)  # removing a block can make the target ready
     return {"ok": True}
 
 

@@ -24,11 +24,11 @@ else is a surface, a worker, or a projection of that record.
        +-------------+-------------+
        |                           |
        v                           v
-  WebSocket doorbell          System A readiness poll
+  WebSocket doorbell          TicketReadinessLoop
   keyed UI refetch            today runnable tickets
                                    |
                                    v
-                              System B one step
+                              EmployeeStepRunner
                               Hermes employee
 ```
 
@@ -68,7 +68,7 @@ These are the things the planner is made of:
   a ticket from becoming runnable.
 
 The Board is not an inventory. It is today's execution board: tickets attached to
-today's day. System A starts from that same today membership, then narrows further
+today's day. TicketReadinessLoop starts from that same today membership, then narrows further
 to empty, non-terminal tickets that pass readiness. A ticket can exist and be ready
 in every other way, but if it is not on today's day, it will not auto-run.
 
@@ -116,21 +116,22 @@ barrier against a local process that deliberately forges headers or environment 
 
 The runtime has two systems.
 
-**System A** is readiness. It polls today's tickets whose `ticket_status` is `empty`,
+**TicketReadinessLoop** discovers readiness. It polls today's Tickets whose `ticket_status` is `empty`,
 then applies the readiness predicate: not terminal, has a next gating field, no
 pending proposal on that field, not blocked, and not stopped at its scope limit.
 
-**System B** is one worker step. It marks the ticket `agent_running_step`, resumes or
+**EmployeeStepRunner** owns one worker step. It marks the Ticket `agent_running_step`, resumes or
 creates that ticket's Hermes session, submits one prompt, then settles the runtime
 status when the turn ends. If the worker parks a proposal, the ticket becomes
 `awaiting_approval`; if the proposal auto-accepted and more work is allowed, it
-returns to `empty` so System A can run the next step.
+returns to `empty` so TicketReadinessLoop can discover the next step.
 
-System A can be poked by readiness-changing writes, so the timer is a backstop rather
+TicketReadinessLoop can be poked by readiness-changing writes, so the timer is a backstop rather
 than the normal user experience.
 
 Code paths: `src/planner/runtime/readiness.py`,
-`src/planner/runtime/system_a.py`, `src/planner/runtime/system_b.py`,
+`src/planner/runtime/ticket_readiness_loop.py`,
+`src/planner/runtime/employee_step_runner.py`,
 `src/planner/core/loops.py`.
 
 ### 5. The Hermes Gateway System
@@ -159,7 +160,7 @@ Ticket chat, Chief of Staff chat, and automatic worker steps use the same chat-s
 contract. A chat state is durable messages plus one optional active turn. The active
 turn carries the phase, activity label, partial output, session key, and error.
 
-System B stores a newly created or resumed session key before submitting the worker
+EmployeeStepRunner stores a newly created or resumed session key before submitting the worker
 prompt, so tools inside the worker can resolve their ticket while the turn is still
 active. It also records the worker turn in chat state, so the UI does not infer
 activity from ticket status.

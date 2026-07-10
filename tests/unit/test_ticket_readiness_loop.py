@@ -1,15 +1,16 @@
-"""System A (W3b): the readiness poll + fast path, and the pure readiness predicate.
+"""TicketReadinessLoop discovery and the pure readiness predicate.
 
 Hermetic against minds/fake.py — no subprocess, no model calls; the gateway child is injected
 through the spawn seam and a fresh FakeGateway is handed out per spawn. The "agent files a
 proposal during its run" is simulated by driving the REAL tickets_data.file_proposal writer on
 prompt.submit, so auto-accept/park below/at ceiling flows through the production resolution
 engine. Split into: (1) direct is_runnable predicate tests (no threads); (2) poll_once +
-loop/poke/on_idle integration tests through a fake System B."""
+loop/poke/on-idle integration tests through a fake employee gateway."""
 
 from __future__ import annotations
 
 import json
+import sys
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -17,25 +18,25 @@ from pathlib import Path
 from typing import Any
 
 from planner.core import links as core_links
-from planner.core.clock import RealClock, TestClock
+from planner.core.clock import TestClock
 from planner.core.contracts import LinkKind
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
 from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.shared_gateway import SharedGateway
 from planner.runtime import readiness
-from planner.runtime.system_a import SystemA
-from planner.runtime.system_b import SystemB
+from planner.runtime.employee_step_runner import EmployeeStepRunner
+from planner.runtime.ticket_readiness_loop import TicketReadinessLoop
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, FieldName, Ticket, TicketState, TicketStatus
 
 HOME = "/tmp/planner-home"
-HERMES_PY = "/x/hermes-agent/venv/bin/python"
+HERMES_PY = sys.executable
 LIVE_SID = "live-sid"
 STORED_KEY = "stored-key-1"
 ROLE = "planning-worker"
 
-# System A is scoped to TODAY's day (owner ruling). Pin the clock so "today" is deterministic:
+# Discovery is scoped to TODAY. Pin the clock so "today" is deterministic:
 # planning_date(2026-07-06 12:00, boundary 5) = 2026-07-06 -> day_2026-07-06.
 BOUNDARY_HOUR = 5
 FIXED_NOW = datetime(2026, 7, 6, 12, 0, 0).astimezone()
@@ -154,7 +155,7 @@ def _add_to_day(db: str, tid: str, day_id: str = TODAY_DAY_ID) -> None:
         conn.close()
 
 
-# --- fake-gateway scripting (mirrors test_system_b) ---------------------------
+# --- fake-gateway scripting ---------------------------------------------------
 
 
 def _create_reply(sid: str = LIVE_SID, key: str = STORED_KEY) -> Reply:
@@ -206,7 +207,7 @@ class _ProposingFake(FakeGateway):
         super().send(line)
 
 
-def _system_b(db: str, fake: FakeGateway) -> SystemB:
+def _runner(db: str, fake: FakeGateway) -> EmployeeStepRunner:
     gateway = SharedGateway(
         hermes_python=HERMES_PY,
         home=HOME,
@@ -214,12 +215,22 @@ def _system_b(db: str, fake: FakeGateway) -> SystemB:
         spawn=fake.spawn,
         base_env={},
     )
-    return SystemB(db, RealClock(), gateway=gateway)
+    return EmployeeStepRunner(
+        db,
+        TestClock(FIXED_NOW),
+        gateway=gateway,
+        boundary_hour=BOUNDARY_HOUR,
+    )
 
 
-def _system_a(db: str, sb: SystemB) -> SystemA:
+def _loop(db: str, runner: EmployeeStepRunner) -> TicketReadinessLoop:
     # Pinned clock so the day-scoped candidate query resolves "today" = TODAY_DAY_ID.
-    return SystemA(db, TestClock(FIXED_NOW), sb, role=ROLE, boundary_hour=BOUNDARY_HOUR)
+    return TicketReadinessLoop(
+        db,
+        TestClock(FIXED_NOW),
+        runner,
+        boundary_hour=BOUNDARY_HOUR,
+    )
 
 
 def _wait_until(predicate: Callable[[], bool], timeout: float = 10.0) -> bool:
@@ -322,7 +333,7 @@ def test_is_runnable_below_ceiling_after_auto_accept_is_true(tmp_path: Path) -> 
         conn.close()
 
 
-# --- System A poll_once + fast path (integration through a fake System B) -----
+# --- readiness poll + fast path -----------------------------------------------
 
 
 def test_poll_sets_off_a_ready_ticket(tmp_path: Path) -> None:
@@ -333,15 +344,39 @@ def test_poll_sets_off_a_ready_ticket(tmp_path: Path) -> None:
         _create_script(_complete_ev()),
         on_submit=lambda: _file_proposal(db, tid, "success", "b"),
     )
-    sb = _system_b(db, fake)
-    sa = _system_a(db, sb)
+    runner = _runner(db, fake)
+    loop = _loop(db, runner)
 
-    assert sa.poll_once() == [tid]
-    assert sb.wait_idle(10.0)
+    assert loop.poll_once() == [tid]
+    assert runner.wait_idle(10.0)
 
     ticket = _read(db, tid)
     assert ticket.ticket_status == TicketStatus.awaiting_approval
     assert "session.create" in fake.sent_methods()          # kickoff = step 0 through create
+
+
+def test_poll_passes_only_ticket_id_to_runner_interface(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+    _add_to_day(db, tid)
+
+    class RecordingRunner:
+        def __init__(self) -> None:
+            self.ticket_ids: list[str] = []
+
+        def run_ready_step(self, ticket_id: str) -> None:
+            self.ticket_ids.append(ticket_id)
+
+    runner = RecordingRunner()
+    loop = TicketReadinessLoop(
+        db,
+        TestClock(FIXED_NOW),
+        runner,  # type: ignore[arg-type]
+        boundary_hour=BOUNDARY_HOUR,
+    )
+
+    assert loop.poll_once() == [tid]
+    assert runner.ticket_ids == [tid]
 
 
 def test_poll_excludes_every_non_runnable_ticket(tmp_path: Path) -> None:
@@ -381,9 +416,9 @@ def test_poll_excludes_every_non_runnable_ticket(tmp_path: Path) -> None:
     ):
         _add_to_day(db, tid)
 
-    sb = _system_b(db, FakeGateway({}))  # must never be used
-    sa = _system_a(db, sb)
-    assert sa.poll_once() == []       # nothing ready -> nothing set off
+    runner = _runner(db, FakeGateway({}))  # must never be used
+    loop = _loop(db, runner)
+    assert loop.poll_once() == []       # nothing ready -> nothing started
 
 
 def test_fast_path_poke_sets_off_before_the_timer(tmp_path: Path) -> None:
@@ -393,23 +428,23 @@ def test_fast_path_poke_sets_off_before_the_timer(tmp_path: Path) -> None:
         _create_script(_complete_ev()),
         on_submit=lambda: _file_proposal(db, tid_box[0], "success", "b"),
     )
-    sb = _system_b(db, fake)
-    sa = _system_a(db, sb)
-    sa.start(60)  # long interval: only a poke (not the timer) can drive it inside the budget
+    runner = _runner(db, fake)
+    loop = _loop(db, runner)
+    loop.start(60)  # only a poke, not the timer, can drive it inside the budget
     try:
         time.sleep(0.3)               # let the first (empty) poll run and enter the wait
         tid = _new_ticket(db)
         _add_to_day(db, tid)          # on today -> in scope
         tid_box.append(tid)
-        sa.poke()
-        # the poke drove the set_off well under 60s (wait on the effect, not wait_idle, which
+        loop.poke()
+        # the poke drove the employee step well under 60s (wait on the effect, not wait_idle, which
         # would race ahead of the loop thread's async poll+submit).
         assert _wait_until(
             lambda: _read(db, tid).ticket_status == TicketStatus.awaiting_approval,
             10.0,
         )
     finally:
-        sa.stop()
+        loop.stop()
 
 
 def test_on_idle_drives_the_auto_advance_chain(tmp_path: Path) -> None:
@@ -429,14 +464,14 @@ def test_on_idle_drives_the_auto_advance_chain(tmp_path: Path) -> None:
             lambda: _file_proposal(db, tid, "approach", "a"),
         ],
     )
-    sb = _system_b(db, fake)
-    sa = _system_a(db, sb)
-    sb.set_idle_callback(sa.poke)  # loops.py wires this in production
-    sa.start(30)  # long interval: the on_idle poke, not the timer, advances the chain
+    runner = _runner(db, fake)
+    loop = _loop(db, runner)
+    runner.set_idle_callback(loop.poke)  # loops.py wires this in production
+    loop.start(30)  # the on-idle poke, not the timer, advances the chain
     try:
         assert _wait_until(lambda: _read(db, tid).fields.approach.proposal is not None, 10.0)
     finally:
-        sa.stop()
+        loop.stop()
 
     ticket = _read(db, tid)
     assert ticket.state is TicketState.needs_approach       # step 0 auto-accepted + advanced
@@ -458,13 +493,13 @@ def test_poll_is_scoped_to_today(tmp_path: Path) -> None:
         _create_script(_complete_ev()),
         on_submit=lambda: _file_proposal(db, tid, "success", "b"),
     )
-    sb = _system_b(db, fake)
-    sa = _system_a(db, sb)
+    runner = _runner(db, fake)
+    loop = _loop(db, runner)
 
-    assert sa.poll_once() == []          # backlog -> out of scope, never spawned
+    assert loop.poll_once() == []          # backlog -> out of scope, never spawned
     _add_to_day(db, tid)                 # now on today's day
-    assert sa.poll_once() == [tid]       # in scope + runnable -> set off
-    assert sb.wait_idle(10.0)
+    assert loop.poll_once() == [tid]       # in scope + runnable -> set off
+    assert runner.wait_idle(10.0)
     assert _read(db, tid).ticket_status == TicketStatus.awaiting_approval
 
 
@@ -472,15 +507,15 @@ def test_poll_excludes_ticket_on_another_day(tmp_path: Path) -> None:
     db = _db(tmp_path)
     tid = _new_ticket(db)                 # fresh + runnable
     _add_to_day(db, tid, OTHER_DAY_ID)    # but on yesterday, not today
-    sb = _system_b(db, FakeGateway({}))      # must never be used
-    sa = _system_a(db, sb)
-    assert sa.poll_once() == []           # other-day ticket is out of scope
+    runner = _runner(db, FakeGateway({}))      # must never be used
+    loop = _loop(db, runner)
+    assert loop.poll_once() == []           # other-day Ticket is out of scope
 
 
 def test_poll_sets_off_today_ticket_after_approval_advance(tmp_path: Path) -> None:
     # The owner's primary flow: a ticket on today whose prior step advanced (state moved on,
     # gating field empty, still below ceiling) is set off for its NEXT step on the next poll —
-    # exactly what the approve fast-path poke triggers (re-derive readiness -> set_off).
+    # exactly what the approve fast-path poke triggers (re-derive readiness -> run a step).
     db = _db(tmp_path)
     tid = _new_ticket(db, ceiling=TicketState.needs_approach)
     _add_to_day(db, tid)
@@ -492,8 +527,8 @@ def test_poll_sets_off_today_ticket_after_approval_advance(tmp_path: Path) -> No
         _resume_script(STORED_KEY, _complete_ev()),
         on_submit=lambda: _file_proposal(db, tid, "approach", "a"),
     )
-    sb = _system_b(db, fake)
-    sa = _system_a(db, sb)
-    assert sa.poll_once() == [tid]                          # in scope + runnable -> next step
-    assert sb.wait_idle(10.0)
+    runner = _runner(db, fake)
+    loop = _loop(db, runner)
+    assert loop.poll_once() == [tid]                          # ready -> next step
+    assert runner.wait_idle(10.0)
     assert _read(db, tid).ticket_status == TicketStatus.awaiting_approval

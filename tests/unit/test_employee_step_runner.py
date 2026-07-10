@@ -1,33 +1,41 @@
-"""System B against a hermetic shared fake gateway."""
+"""EmployeeStepRunner against a hermetic shared fake gateway."""
 
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from planner.chat import service as chat_service
 from planner.core.clock import RealClock
 from planner.core.contracts import EventKind
 from planner.core.db import connect, create_schema
+from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import read_events_since
+from planner.days import data as days_data
+from planner.days.logic import dates
 from planner.minds.contracts import OnEvent, RunResult
 from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.shared_gateway import SharedGateway
 from planner.runtime import readiness
-from planner.runtime.system_b import SystemB
+from planner.runtime.employee_step_runner import EmployeeStepRunner
+from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
 from planner.tickets.contracts import AtCap, FieldName, TicketState, TicketStatus
 
 HOME = "/tmp/planner-home"
-HERMES_PY = "/x/hermes-agent/venv/bin/python"
+HERMES_PY = sys.executable
 LIVE_SID = "live-sid"
 STORED_KEY = "stored-key-1"
 ROLE = "planning-worker"
+BOUNDARY_HOUR = 5
 
 
 def _create_reply(sid: str = LIVE_SID, key: str = STORED_KEY) -> Reply:
@@ -86,6 +94,8 @@ def _new_ticket(db_path: str, *, ceiling: TicketState | None = None) -> str:
             tickets_data.change_scope(
                 conn, ticket.id, ceiling=ceiling, at_cap=AtCap.propose, actor="human", now=0
             )
+        today_id = dates.resolve_day_id("today", RealClock().now(), BOUNDARY_HOUR)
+        days_data.add_day_ticket(conn, today_id, ticket.id, 0)
         return ticket.id
     finally:
         conn.close()
@@ -154,7 +164,7 @@ def _status_events(db_path: str, ticket_id: str) -> list[dict[str, Any]]:
     ]
 
 
-def _system_b(db_path: str, fake: FakeGateway) -> SystemB:
+def _runner(db_path: str, fake: FakeGateway) -> EmployeeStepRunner:
     gateway = SharedGateway(
         hermes_python=HERMES_PY,
         home=HOME,
@@ -162,7 +172,12 @@ def _system_b(db_path: str, fake: FakeGateway) -> SystemB:
         spawn=fake.spawn,
         base_env={},
     )
-    return SystemB(db_path, RealClock(), gateway=gateway)
+    return EmployeeStepRunner(
+        db_path,
+        RealClock(),
+        gateway=gateway,
+        boundary_hour=BOUNDARY_HOUR,
+    )
 
 
 def _gateway(fake: FakeGateway) -> SharedGateway:
@@ -184,9 +199,9 @@ def test_kickoff_parked_proposal_awaits_approval(tmp_path: Path) -> None:
         _create_script(_complete_ev()),
         on_submit=lambda: _file_proposal(db, tid, "success", "the success body"),
     )
-    sb = _system_b(db, fake)
-    sb.set_off(tid, ROLE, "do step 0")
-    assert sb.wait_idle(10.0)
+    runner = _runner(db, fake)
+    runner.run_ready_step(tid)
+    assert runner.wait_idle(10.0)
 
     ticket = _read(db, tid)
     assert ticket.ticket_status == TicketStatus.awaiting_approval
@@ -206,9 +221,9 @@ def test_auto_accepted_proposal_completion_clears_to_empty(tmp_path: Path) -> No
         _create_script(_complete_ev()),
         on_submit=lambda: _file_proposal(db, tid, "success", "the success body"),
     )
-    sb = _system_b(db, fake)
-    sb.set_off(tid, ROLE, "do step 0")
-    assert sb.wait_idle(10.0)
+    runner = _runner(db, fake)
+    runner.run_ready_step(tid)
+    assert runner.wait_idle(10.0)
 
     ticket = _read(db, tid)
     assert ticket.state == TicketState.needs_approach
@@ -222,9 +237,9 @@ def test_complete_with_no_proposal_is_empty_not_errored(tmp_path: Path) -> None:
     tid = _new_ticket(db)
 
     fake = FakeGateway(_create_script(_complete_ev()))
-    sb = _system_b(db, fake)
-    sb.set_off(tid, ROLE, "do step 0")
-    assert sb.wait_idle(10.0)
+    runner = _runner(db, fake)
+    runner.run_ready_step(tid)
+    assert runner.wait_idle(10.0)
 
     ticket = _read(db, tid)
     assert ticket.ticket_status == TicketStatus.empty
@@ -238,7 +253,10 @@ def test_complete_with_no_proposal_is_empty_not_errored(tmp_path: Path) -> None:
 def test_worker_step_prompt_and_reply_are_visible_in_chat_history(tmp_path: Path) -> None:
     db = _db(tmp_path)
     tid = _new_ticket(db)
-    prompt = "work this ticket now"
+    prompt = (
+        f"Work ticket {tid} — T. It is in state 'needs_success'; "
+        "take the next step and propose the 'success' field for approval."
+    )
     fake = FakeGateway(
         {
             "session.create": [_create_reply()],
@@ -266,10 +284,15 @@ def test_worker_step_prompt_and_reply_are_visible_in_chat_history(tmp_path: Path
         }
     )
     gateway = _gateway(fake)
-    sb = SystemB(db, RealClock(), gateway=gateway)
+    runner = EmployeeStepRunner(
+        db,
+        RealClock(),
+        gateway=gateway,
+        boundary_hour=BOUNDARY_HOUR,
+    )
     try:
-        sb.set_off(tid, ROLE, prompt)
-        assert sb.wait_idle(10.0)
+        runner.run_ready_step(tid)
+        assert runner.wait_idle(10.0)
         conn = connect(db)
         try:
             history = chat_service.history(conn, gateway, tid, 0)
@@ -299,29 +322,33 @@ def test_claimed_rejection_turn_revises_result_in_same_session_without_chat_copy
     db = _db(tmp_path)
     tid = _needs_review_ticket(db)
     _set_key(db, tid, STORED_KEY)
-    conn = connect(db)
-    try:
-        ticket, prompt = tickets_data.return_for_revision(
-            conn,
-            tid,
-            message="Add evidence.",
-            actor="human",
-            now=1,
-        )
-    finally:
-        conn.close()
-    assert ticket.state is TicketState.needs_review
-    assert ticket.ticket_status is TicketStatus.agent_running_step
-
     fake = _ProposingFake(
         _resume_script(STORED_KEY, _complete_ev()),
         on_submit=lambda: _file_current_proposal(db, tid, "revised result with evidence"),
     )
     gateway = _gateway(fake)
-    sb = SystemB(db, RealClock(), gateway=gateway)
+    runner = EmployeeStepRunner(
+        db,
+        RealClock(),
+        gateway=gateway,
+        boundary_hour=BOUNDARY_HOUR,
+    )
     try:
-        sb.set_off_claimed(tid, ROLE, prompt)
-        assert sb.wait_idle(10.0)
+        conn = connect(db)
+        try:
+            ticket = tickets_actions.return_ticket_for_revision(
+                conn,
+                tid,
+                message="Add evidence.",
+                actor="human",
+                now=1,
+                employee_revision_runner=runner,
+            )
+        finally:
+            conn.close()
+        assert ticket.state is TicketState.needs_review
+        assert ticket.ticket_status is TicketStatus.agent_running_step
+        assert runner.wait_idle(10.0)
         conn = connect(db)
         try:
             state = chat_service.state(conn, gateway, tid, 2)
@@ -374,10 +401,10 @@ def test_created_session_key_is_queryable_before_prompt_submit(tmp_path: Path) -
             super().send(line)
 
     fake = InspectingFake(_create_script(_complete_ev()))
-    sb = _system_b(db, fake)
+    runner = _runner(db, fake)
 
-    sb.set_off(tid, ROLE, "step")
-    assert sb.wait_idle(10.0)
+    runner.run_ready_step(tid)
+    assert runner.wait_idle(10.0)
 
     assert _read(db, tid).chat_session_key == STORED_KEY
 
@@ -408,9 +435,11 @@ def test_worker_does_not_prompt_if_session_key_claim_is_lost(tmp_path: Path) -> 
             return RunResult("complete", "ok", None, STORED_KEY, None)
 
     gateway = ClaimLostGateway()
-    sb = SystemB(db, RealClock(), gateway=gateway)  # type: ignore[arg-type]
-    sb.set_off(tid, ROLE, "step")
-    assert sb.wait_idle(10.0)
+    runner = EmployeeStepRunner(
+        db, RealClock(), gateway=gateway, boundary_hour=BOUNDARY_HOUR  # type: ignore[arg-type]
+    )
+    runner.run_ready_step(tid)
+    assert runner.wait_idle(10.0)
 
     ticket = _read(db, tid)
     assert gateway.prompted is False
@@ -446,9 +475,11 @@ def test_worker_rechecks_existing_session_key_ownership_before_prompt(tmp_path: 
             return RunResult("complete", "ok", None, STORED_KEY, None)
 
     gateway = ClaimLostGateway()
-    sb = SystemB(db, RealClock(), gateway=gateway)  # type: ignore[arg-type]
-    sb.set_off(tid, ROLE, "step")
-    assert sb.wait_idle(10.0)
+    runner = EmployeeStepRunner(
+        db, RealClock(), gateway=gateway, boundary_hour=BOUNDARY_HOUR  # type: ignore[arg-type]
+    )
+    runner.run_ready_step(tid)
+    assert runner.wait_idle(10.0)
 
     ticket = _read(db, tid)
     assert gateway.prompted is False
@@ -479,9 +510,11 @@ def test_worker_error_does_not_overwrite_lost_ownership(tmp_path: Path) -> None:
             return RunResult("errored", "", None, STORED_KEY, "boom")
 
     gateway = ErrorAfterTakeoverGateway()
-    sb = SystemB(db, RealClock(), gateway=gateway)  # type: ignore[arg-type]
-    sb.set_off(tid, ROLE, "step")
-    assert sb.wait_idle(10.0)
+    runner = EmployeeStepRunner(
+        db, RealClock(), gateway=gateway, boundary_hour=BOUNDARY_HOUR  # type: ignore[arg-type]
+    )
+    runner.run_ready_step(tid)
+    assert runner.wait_idle(10.0)
 
     ticket = _read(db, tid)
     assert ticket.ticket_status == TicketStatus.user_takeover
@@ -497,9 +530,9 @@ def test_gateway_error_event_errors(tmp_path: Path) -> None:
     tid = _new_ticket(db)
 
     fake = FakeGateway(_create_script(ev("error", LIVE_SID, {"message": "boom"})))
-    sb = _system_b(db, fake)
-    sb.set_off(tid, ROLE, "do step 0")
-    assert sb.wait_idle(10.0)
+    runner = _runner(db, fake)
+    runner.run_ready_step(tid)
+    assert runner.wait_idle(10.0)
 
     ticket = _read(db, tid)
     assert ticket.ticket_status == TicketStatus.errored
@@ -515,9 +548,9 @@ def test_gateway_busy_4009_is_skip_not_error(tmp_path: Path) -> None:
     fake = FakeGateway(
         {"session.create": [_create_reply()], "prompt.submit": [Reply(error=(4009, "busy"))]}
     )
-    sb = _system_b(db, fake)
-    sb.set_off(tid, ROLE, "do step 0")
-    assert sb.wait_idle(10.0)
+    runner = _runner(db, fake)
+    runner.run_ready_step(tid)
+    assert runner.wait_idle(10.0)
 
     ticket = _read(db, tid)
     assert ticket.ticket_status == TicketStatus.empty
@@ -528,7 +561,7 @@ def test_gateway_busy_4009_is_skip_not_error(tmp_path: Path) -> None:
     ]
 
 
-def test_concurrent_same_ticket_setoff_only_one_prompt_runs(tmp_path: Path) -> None:
+def test_concurrent_same_ticket_runs_only_one_prompt(tmp_path: Path) -> None:
     db = _db(tmp_path)
     tid = _new_ticket(db)
     reached = threading.Event()
@@ -542,13 +575,13 @@ def test_concurrent_same_ticket_setoff_only_one_prompt_runs(tmp_path: Path) -> N
             super().send(line)
 
     fake = _BlockingFake(_create_script(_complete_ev()))
-    sb = _system_b(db, fake)
-    sb.set_off(tid, ROLE, "step 1")
+    runner = _runner(db, fake)
+    runner.run_ready_step(tid)
     assert reached.wait(10.0)
-    sb.set_off(tid, ROLE, "step 1 duplicate")
+    runner.run_ready_step(tid)
     time.sleep(0.2)
     release.set()
-    assert sb.wait_idle(10.0)
+    assert runner.wait_idle(10.0)
 
     assert fake.sent_methods().count("prompt.submit") == 1
     assert _read(db, tid).ticket_status == TicketStatus.empty
@@ -563,9 +596,9 @@ def test_existing_key_is_resumed_and_rotated_tip_persisted(tmp_path: Path) -> No
         _resume_script("rotated-key", _complete_ev()),
         on_submit=lambda: _file_proposal(db, tid, "success", "body"),
     )
-    sb = _system_b(db, fake)
-    sb.set_off(tid, ROLE, "step")
-    assert sb.wait_idle(10.0)
+    runner = _runner(db, fake)
+    runner.run_ready_step(tid)
+    assert runner.wait_idle(10.0)
 
     resume_frame = next(f for f in fake.sent if f.get("method") == "session.resume")
     assert resume_frame["params"]["session_id"] == STORED_KEY
@@ -586,9 +619,14 @@ def test_spawn_crash_errors_never_stuck_running(tmp_path: Path) -> None:
         spawn=_boom,
         base_env={},
     )
-    sb = SystemB(db, RealClock(), gateway=gateway)
-    sb.set_off(tid, ROLE, "step")
-    assert sb.wait_idle(10.0)
+    runner = EmployeeStepRunner(
+        db,
+        RealClock(),
+        gateway=gateway,
+        boundary_hour=BOUNDARY_HOUR,
+    )
+    runner.run_ready_step(tid)
+    assert runner.wait_idle(10.0)
 
     assert _read(db, tid).ticket_status == TicketStatus.errored
     assert [e["ticket_status"] for e in _status_events(db, tid)] == [
@@ -597,22 +635,162 @@ def test_spawn_crash_errors_never_stuck_running(tmp_path: Path) -> None:
     ]
 
 
-def test_set_off_guard_skips_a_no_longer_runnable_ticket(tmp_path: Path) -> None:
+def test_runner_rechecks_today_membership_before_claim(tmp_path: Path) -> None:
     db = _db(tmp_path)
     tid = _new_ticket(db)
     conn = connect(db)
     try:
-        tickets_data.drop_ticket(conn, tid, actor="human", now=0)
+        today_id = dates.resolve_day_id("today", RealClock().now(), BOUNDARY_HOUR)
+        days_data.remove_day_ticket(conn, today_id, tid, 0)
     finally:
         conn.close()
 
     fake = FakeGateway({})
-    sb = _system_b(db, fake)
-    sb.set_off(tid, ROLE, "step", guard=readiness.is_runnable)
-    assert sb.wait_idle(10.0)
+    runner = _runner(db, fake)
+    runner.run_ready_step(tid)
+    assert runner.wait_idle(10.0)
 
     ticket = _read(db, tid)
-    assert ticket.state == TicketState.dropped
+    assert ticket.state == TicketState.needs_success
     assert ticket.ticket_status == TicketStatus.empty
     assert fake.sent_methods() == []
     assert _status_events(db, tid) == []
+
+
+def test_runner_rechecks_readiness_predicate_before_claim(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+    conn = connect(db)
+    try:
+        today_id = dates.resolve_day_id("today", RealClock().now(), BOUNDARY_HOUR)
+        assert conn.execute(
+            "SELECT 1 FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
+            (today_id, tid),
+        ).fetchone()
+        assert readiness.is_runnable(conn, tickets_data.read_ticket(conn, tid))
+        tickets_data.change_scope(
+            conn,
+            tid,
+            ceiling=TicketState.needs_success,
+            at_cap=AtCap.stop,
+            actor="human",
+            now=1,
+        )
+        assert not readiness.is_runnable(conn, tickets_data.read_ticket(conn, tid))
+    finally:
+        conn.close()
+
+    fake = FakeGateway({})
+    runner = _runner(db, fake)
+    runner.run_ready_step(tid)
+    assert runner.wait_idle(10.0)
+
+    ticket = _read(db, tid)
+    assert ticket.state == TicketState.needs_success
+    assert ticket.ticket_status == TicketStatus.empty
+    assert fake.sent_methods() == []
+    assert _status_events(db, tid) == []
+
+
+def test_cancelled_revision_reservation_drains_without_submitting(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+    fake = FakeGateway({})
+    runner = _runner(db, fake)
+
+    handoff = runner.reserve_revision(tid, "revise it")
+    handoff.cancel()
+
+    assert runner.wait_idle(10.0)
+    assert fake.sent_methods() == []
+    assert _read(db, tid).ticket_status is TicketStatus.empty
+
+
+def test_stop_rejects_new_reservations_and_drains_accepted_parked_work(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+    runner = _runner(db, FakeGateway({}))
+    handoff = runner.reserve_revision(tid, "revise it")
+    stopped = threading.Event()
+
+    stop_thread = threading.Thread(target=lambda: (runner.stop(), stopped.set()))
+    stop_thread.start()
+    assert not stopped.wait(0.2)
+    with pytest.raises(PlannerError) as caught:
+        runner.reserve_revision(tid, "too late")
+    assert caught.value.code is ErrorCode.gateway_offline
+
+    handoff.cancel()
+    stop_thread.join(10.0)
+
+    assert stopped.is_set()
+    assert runner.wait_idle(0)
+
+
+def test_stop_waits_for_released_revision_run_and_rejects_new_work(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    tid = _needs_review_ticket(db)
+    _set_key(db, tid, STORED_KEY)
+    prompt_reached = threading.Event()
+    finish_prompt = threading.Event()
+
+    class BlockingRevisionGateway(FakeGateway):
+        def send(self, line: str) -> None:
+            if json.loads(line).get("method") == "prompt.submit":
+                prompt_reached.set()
+                assert finish_prompt.wait(10.0)
+            super().send(line)
+
+    fake = BlockingRevisionGateway(_resume_script(STORED_KEY, _complete_ev()))
+    gateway = _gateway(fake)
+    runner = EmployeeStepRunner(
+        db,
+        RealClock(),
+        gateway=gateway,
+        boundary_hour=BOUNDARY_HOUR,
+    )
+    stop_thread: threading.Thread | None = None
+    stopped = threading.Event()
+    try:
+        conn = connect(db)
+        try:
+            ticket = tickets_actions.return_ticket_for_revision(
+                conn,
+                tid,
+                message="Add evidence.",
+                actor="human",
+                now=1,
+                employee_revision_runner=runner,
+            )
+        finally:
+            conn.close()
+        assert ticket.ticket_status is TicketStatus.agent_running_step
+        assert prompt_reached.wait(10.0)
+
+        def stop_runner() -> None:
+            runner.stop()
+            stopped.set()
+
+        stop_thread = threading.Thread(target=stop_runner)
+        stop_thread.start()
+        assert not stopped.wait(0.2)
+        with pytest.raises(PlannerError) as caught:
+            runner.reserve_revision(tid, "too late")
+        assert caught.value.code is ErrorCode.gateway_offline
+
+        finish_prompt.set()
+        stop_thread.join(10.0)
+
+        assert stopped.is_set()
+        assert runner.wait_idle(0)
+        assert fake.sent_methods().count("prompt.submit") == 1
+    finally:
+        finish_prompt.set()
+        if stop_thread is not None:
+            stop_thread.join(10.0)
+        runner.stop()
+        gateway.shutdown()

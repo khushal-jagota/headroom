@@ -652,18 +652,24 @@ def return_for_revision(
     message: str,
     actor: str,
     now: int,
-) -> tuple[Ticket, str]:
+) -> Ticket:
     admission.validate_body(message, "revision guidance")
-    framed_message = (
-        "The user rejected your proposal and provided the following guidance:\n\n"
-        f"{message.strip()}"
-    )
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
         decision = resolution.decide_return_for_revision(ticket, actor)
+        running_turn = conn.execute(
+            "SELECT 1 FROM chat_turns WHERE entity_id = ? AND status = 'running' LIMIT 1",
+            (ticket_id,),
+        ).fetchone()
+        if running_turn is not None:
+            raise PlannerError(
+                ErrorCode.already_running,
+                "ticket chat turn is running",
+                {"ticket_id": ticket_id},
+            )
         _apply_decision(conn, ticket, decision, now)
         _write_ticket_status(conn, ticket_id, TicketStatus.agent_running_step, now)
-        return _load_ticket(conn, ticket_id), framed_message
+        return _load_ticket(conn, ticket_id)
 
 
 def set_state(

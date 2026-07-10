@@ -637,6 +637,54 @@ def test_shared_gateway_retains_context_when_prompt_submit_is_busy_or_errors() -
         assert context.pending["t_demo"]
 
 
+def test_shared_gateway_strict_existing_session_does_not_create_submit_or_consume_context() -> None:
+    context = RecordingWorkerContext()
+    context.set("t_demo", PendingWorkerContext("ticket_changed", "Ticket changed.", 3))
+    fake = FakeGateway(
+        {
+            "session.resume": [Reply(error=(4007, "stored session not found"))],
+            "session.create": [create_reply()],
+            "prompt.submit": [submit_reply(complete_ev())],
+        }
+    )
+    gateway = shared(fake, context)
+    try:
+        result = gateway.run_ticket_step(
+            STORED_KEY,
+            "t_demo",
+            "revision guidance",
+            require_existing_session=True,
+        )
+    finally:
+        gateway.shutdown()
+
+    assert result.status == "errored"
+    assert result.session_key == STORED_KEY
+    assert fake.sent_methods() == ["session.resume"]
+    assert context.prepare_calls == []
+    assert context.acknowledgements == []
+    assert context.pending["t_demo"]
+
+
+def test_shared_gateway_default_resume_not_found_still_creates_and_submits() -> None:
+    fake = FakeGateway(
+        {
+            "session.resume": [Reply(error=(4007, "stored session not found"))],
+            "session.create": [create_reply()],
+            "prompt.submit": [submit_reply(complete_ev())],
+        }
+    )
+    gateway = shared(fake)
+    try:
+        result = gateway.run_ticket_step(STORED_KEY, "t_demo", "automatic step")
+    finally:
+        gateway.shutdown()
+
+    assert result.status == "complete"
+    assert result.session_key == STORED_KEY
+    assert fake.sent_methods() == ["session.resume", "session.create", "prompt.submit"]
+
+
 def test_shared_gateway_run_reuses_child_for_multiple_sessions() -> None:
     fake = FakeGateway(
         {
