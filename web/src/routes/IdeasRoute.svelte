@@ -6,7 +6,10 @@
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
+  import ListRow from "../components/ListRow.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
+  import ScreenHeader from "../components/ScreenHeader.svelte";
+  import SectionHeading from "../components/SectionHeading.svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
 
   const ideas = resource<IdeasResponse>("ideas", (signal) =>
@@ -72,12 +75,11 @@
 
 <section class="ideas-screen" data-screen="ideas">
   <div class="doc">
-    <header class="head">
-      <div class="row">
-        <div class="title">Ideas</div>
-        <div class="meta"><span class="pill">{ideas.data?.ideas?.length || 0}</span></div>
-      </div>
-    </header>
+    <ScreenHeader title="Ideas">
+      {#snippet meta()}
+        <span class="pill">{ideas.data?.ideas?.length || 0}</span>
+      {/snippet}
+    </ScreenHeader>
     <div class="col">
       <section class="capture" data-create="idea">
         {#if createError}<ErrorLine error={createError} />{/if}
@@ -119,25 +121,26 @@
         {:else if !(ideas.data?.ideas || []).length}
           <div class="quiet-line">No ideas yet.</div>
         {:else}
-          <div class="glabel">Captured</div>
+          <SectionHeading label="Captured" />
           {#each ideas.data?.ideas || [] as idea}
             {@const hasBody = idea.body !== null && idea.body !== undefined && String(idea.body).trim() !== ""}
             {#if hasBody}
               <Disclosure variant="idea" chevron="leading" data-idea-id={idea.id}>
                 {#snippet summary()}
-                  <span class="it entity-row-title">{idea.title}</span>
+                  <span class="it list-row-title">{idea.title}</span>
                   {#if idea.project}<Chip variant="project" value={idea.project} />{/if}
                   <span class="when">{relDate(idea.created_at)}</span>
                 {/snippet}
                 <MarkdownBlock text={idea.body} />
               </Disclosure>
             {:else}
-              <div class="flat" data-idea-id={idea.id}>
-                <span class="chev"></span>
-                <span class="it entity-row-title">{idea.title}</span>
-                {#if idea.project}<Chip variant="project" value={idea.project} />{/if}
-                <span class="when">{relDate(idea.created_at)}</span>
-              </div>
+              <ListRow variant="idea" title={idea.title} data-idea-id={idea.id}>
+                {#snippet leading()}<span class="chev"></span>{/snippet}
+                {#snippet trailing()}
+                  {#if idea.project}<Chip variant="project" value={idea.project} />{/if}
+                  <span class="when">{relDate(idea.created_at)}</span>
+                {/snippet}
+              </ListRow>
             {/if}
           {/each}
         {/if}

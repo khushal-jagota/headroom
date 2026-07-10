@@ -10,8 +10,12 @@ This worktree branch carries only the frontend consolidation program — five se
 the branch: PASS (all gates, 56 e2e). Status: t_fe01 (Disclosure + StageMark) landed green —
 Codex diff review's single finding (glyph-swap vs rotation for the open chevron) refuted as
 within PLAN.md's normalization tolerance; one orchestrator fix (double chevron on board project
-headings, chevron="none"). t_fe02–t_fe05 pending, same pipeline: implementer sub-agent, Codex
-diff review, full serial `./verify`, branch commit per green wave. The architecture-deepening section below is
+headings, chevron="none"). t_fe02 (ListRow/SectionHeading/ScreenHeader, dead EntityRow and
+day-ticket-row removed) landed green — Codex's three diff findings all accepted and fixed by the
+orchestrator (data-card/data-project-section exact empty values through component spreads, variant
+hover rules collapsed into one element-qualified base pair, provenance comment trimmed).
+t_fe03–t_fe05 pending, same pipeline: implementer sub-agent, Codex diff review, full serial
+`./verify`, branch commit per green wave. The architecture-deepening section below is
 the main tree's cycle and is not part of this branch's work.
 
 ## Current work cycle (2026-07-10): Approved architecture deepening 1–3

@@ -7,7 +7,10 @@
   import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
+  import ListRow from "../components/ListRow.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
+  import ScreenHeader from "../components/ScreenHeader.svelte";
+  import SectionHeading from "../components/SectionHeading.svelte";
 
   let { sub = "tracking" }: { sub?: string } = $props();
   const current = resource<CurrentSprintResponse>("sprint:current", (signal) =>
@@ -83,8 +86,8 @@
     {@const sprint = current.data.sprint}
     {@const groups = current.data.groups || {}}
     <div class="doc">
-      <header class="sprint-header">
-        <div class="sprint-header-row">
+      <ScreenHeader class="sprint-header">
+        {#snippet titleContent()}
           <h1 class="screen-title">
             <InlineEdit
               value={sprint.name}
@@ -92,14 +95,14 @@
               onSave={(raw) => saveSprint(sprint.id, "name", raw)}
             />
           </h1>
-          <div class="sprint-meta">
-            <span class="pill sprint-dates-pill">
-              <span class="pill-key">dates</span>
-              <span class="sprint-dates">{sprint.date_start} – {sprint.date_end}</span>
-            </span>
-          </div>
-        </div>
-      </header>
+        {/snippet}
+        {#snippet meta()}
+          <span class="pill sprint-dates-pill">
+            <span class="pill-key">dates</span>
+            <span class="sprint-dates">{sprint.date_start} – {sprint.date_end}</span>
+          </span>
+        {/snippet}
+      </ScreenHeader>
       <div class="col">
         <nav class="tabs">
           <a class={`tab${overview ? " cur" : ""}`} href="#/sprint/overview">Sprint Overview</a>
@@ -145,11 +148,11 @@
           </section>
           {#each liveOrder as status}
             <div class="grp" data-status-group={status}>
-              <div class="glabel">{groupLabel[status]} <span class="n">· {(groups[status] || []).length}</span></div>
+              <SectionHeading label={groupLabel[status]} count={(groups[status] || []).length} />
               {#each groups[status] || [] as item}
                 <Disclosure variant="item" chevron="leading" data-item-id={item.id}>
                   {#snippet summary()}
-                    <span class="it entity-row-title">{item.title}</span>
+                    <span class="it list-row-title">{item.title}</span>
                     <span class="chips">
                       <Chip variant="priority" value={item.priority} />
                       <Chip variant="project" value={item.project} />
@@ -164,11 +167,10 @@
                   <div class="tkts">
                     {#if (item.tickets || []).length}
                       {#each item.tickets || [] as ticket}
-                        <a class="tk" href={`#/ticket/${ticket.id}`} data-ticket-id={ticket.id}>
-                          <span class={`st st--${ticket.state}`}>{prettyState(ticket.state)}</span>
-                          <span class="tt">{ticket.title}</span>
-                          <span class="pr">{ticket.priority}</span>
-                        </a>
+                        <ListRow variant="ticket" title={ticket.title} href={`#/ticket/${ticket.id}`} data-ticket-id={ticket.id}>
+                          {#snippet leading()}<span class={`st st--${ticket.state}`}>{prettyState(ticket.state)}</span>{/snippet}
+                          {#snippet trailing()}<span class="pr">{ticket.priority}</span>{/snippet}
+                        </ListRow>
                       {/each}
                     {:else}
                       <div class="none">No tickets on this item yet.</div>
@@ -182,13 +184,13 @@
             {#if (groups[status] || []).length}
               <Disclosure variant="settled">
                 {#snippet summary()}
-                  <span class={`glabel2${status === "done" ? " glabel2--done" : ""}`}>{groupLabel[status]} · {(groups[status] || []).length}</span>
+                  <SectionHeading label={groupLabel[status]} count={(groups[status] || []).length} variant={status === "done" ? "done" : "settled"} />
                 {/snippet}
                 <div class="grp settled" data-status-group={status}>
                   {#each groups[status] || [] as item}
                     <Disclosure variant="item" chevron="leading" data-item-id={item.id}>
                       {#snippet summary()}
-                        <span class="it entity-row-title">{item.title}</span>
+                        <span class="it list-row-title">{item.title}</span>
                         <span class="chips"><Chip variant="priority" value={item.priority} /><Chip variant="project" value={item.project} /></span>
                         <span class="count">{countText(item.tickets)}</span>
                       {/snippet}
@@ -202,15 +204,14 @@
             {@const looseTickets = current.data.loose_tickets}
             <Disclosure variant="settled">
               {#snippet summary()}
-                <span class="glabel2">Loose tickets · {looseTickets.length}</span>
+                <SectionHeading label="Loose tickets" count={looseTickets.length} variant="settled" />
               {/snippet}
               <div class="tkts" data-loose>
                 {#each looseTickets as ticket}
-                  <a class="tk" href={`#/ticket/${ticket.id}`} data-ticket-id={ticket.id}>
-                    <span class={`st st--${ticket.state}`}>{prettyState(ticket.state)}</span>
-                    <span class="tt entity-row-title">{ticket.title}</span>
-                    <span class="pr">{ticket.priority}</span>
-                  </a>
+                  <ListRow variant="ticket" title={ticket.title} href={`#/ticket/${ticket.id}`} data-ticket-id={ticket.id}>
+                    {#snippet leading()}<span class={`st st--${ticket.state}`}>{prettyState(ticket.state)}</span>{/snippet}
+                    {#snippet trailing()}<span class="pr">{ticket.priority}</span>{/snippet}
+                  </ListRow>
                 {/each}
               </div>
             </Disclosure>

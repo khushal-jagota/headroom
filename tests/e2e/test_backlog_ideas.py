@@ -38,7 +38,7 @@ def test_backlog_create_lands_in_priority_group(server, context_factory, open_pa
 
     # The WS flush re-renders; the new item appears under its priority group.
     page.wait_for_selector('[data-priority-group="P1"] [data-item-id]', timeout=WAIT_MS)
-    assert _texts(page, '[data-priority-group="P1"] [data-item-id] .entity-row-title') == [
+    assert _texts(page, '[data-priority-group="P1"] [data-item-id] .list-row-title') == [
         "Wire the audit log"
     ]
     # The row states project, not priority.
@@ -56,8 +56,8 @@ def test_ideas_capture_flat_and_disclosure(server, context_factory, open_page):
     # A title-only capture → a FLAT row with no disclosure.
     page.fill('[data-create="idea"] [data-input="title"]', "Dark mode only, skip the light theme")
     page.click('[data-create="idea"] [data-commit]')
-    page.wait_for_selector('[data-ideas] .flat[data-idea-id]', timeout=WAIT_MS)
-    flat = page.query_selector('[data-ideas] .flat[data-idea-id]')
+    page.wait_for_selector('[data-ideas] div.list-row[data-idea-id]', timeout=WAIT_MS)
+    flat = page.query_selector('[data-ideas] div.list-row[data-idea-id]')
     assert "Dark mode only, skip the light theme" in flat.text_content()
     # Title-only means no chevron to expand: no <details> disclosure exists yet.
     assert page.query_selector('[data-ideas] details.disclosure--idea') is None
@@ -82,4 +82,4 @@ def test_ideas_capture_flat_and_disclosure(server, context_factory, open_page):
     page.wait_for_selector('[data-ideas] details.disclosure--idea[open]', timeout=WAIT_MS)
 
     # The title-only idea is still flat below it.
-    assert page.query_selector('[data-ideas] .flat[data-idea-id]') is not None
+    assert page.query_selector('[data-ideas] div.list-row[data-idea-id]') is not None

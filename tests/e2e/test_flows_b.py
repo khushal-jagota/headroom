@@ -127,7 +127,7 @@ def _snap_ticket(p: Page):
 def _snap_board(p: Page, mid):
     card = f'[data-card][data-ticket-state="in_progress"][data-ticket-id="{mid}"]'
     return {
-        "title": p.inner_text(f"{card} .entity-row-title"),
+        "title": p.inner_text(f"{card} .list-row-title"),
         "pend": p.eval_on_selector_all(f'{card} [data-marker="pending-proposal"]', "e=>e.length"),
     }
 
@@ -166,7 +166,8 @@ def test_e28_day_overview_empty_until_rollover_agent(server, context_factory, op
     assert page.query_selector(".plan-tree") is None
     assert page.query_selector("[data-review-entry]") is None
     assert page.query_selector("[data-chat-panel]") is None
-    assert page.query_selector(".day-ticket-row") is None
+    # The Day overview is not a today-ticket list: no per-ticket rows render on it.
+    assert page.query_selector("[data-day-overview] [data-ticket-id]") is None
 
 
 def test_e29_day_overview_structured_and_edit(server, context_factory, open_page, cli, api):

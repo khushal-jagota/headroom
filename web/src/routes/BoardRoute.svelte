@@ -8,6 +8,8 @@
   import ChatPanel from "../components/ChatPanel.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
+  import ListRow from "../components/ListRow.svelte";
+  import SectionHeading from "../components/SectionHeading.svelte";
   import StageMark from "../components/StageMark.svelte";
   import TicketRoute from "./TicketRoute.svelte";
 
@@ -185,13 +187,13 @@
               class="board-workspace-index-section"
               chevron="none"
               defaultOpen={true}
-              data-project-section
+              data-project-section=""
               data-project-key={section.key}
             >
               {#snippet summary()}
                 <span class="board-workspace-index-heading-main">
                   <span class="board-workspace-index-chevron">▸</span>
-                  <span>{section.label}</span>
+                  <SectionHeading label={section.label} />
                 </span>
                 <span class="board-workspace-index-count">{section.cards.length}</span>
               {/snippet}
@@ -201,28 +203,29 @@
                   {@const stageField = currentStageField(card)}
                   {@const stageState = currentStageState(card)}
                   {@const marker = stageMarker(card, stageState)}
-                  <button
-                    class:active={rightPaneMode === "ticket" && selectedCard?.id === card.id}
-                    class="board-workspace-item-row"
-                    data-card
+                  <ListRow
+                    variant="board"
+                    title={card.title}
+                    active={rightPaneMode === "ticket" && selectedCard?.id === card.id}
+                    onclick={() => selectCard(card.id)}
+                    data-card=""
                     data-ticket-id={card.id}
                     data-ticket-state={card.state}
                     data-ticket-status={card.ticket_status}
-                    type="button"
-                    onclick={() => selectCard(card.id)}
                   >
-                    <span class="board-workspace-item-label entity-row-title">{card.title}</span>
-                    <span class="board-workspace-stage-rail" aria-label="Ticket current stage">
-                      <StageMark
-                        state={stageState}
-                        class="board-workspace-stage-mark"
-                        data-stage-field={stageField}
-                        data-stage-state={stageState}
-                        data-marker={marker || undefined}
-                        aria-label={`${stageField} ${stageState.replace(/-/g, " ")}`}
-                      />
-                    </span>
-                  </button>
+                    {#snippet trailing()}
+                      <span class="board-workspace-stage-rail" aria-label="Ticket current stage">
+                        <StageMark
+                          state={stageState}
+                          class="board-workspace-stage-mark"
+                          data-stage-field={stageField}
+                          data-stage-state={stageState}
+                          data-marker={marker || undefined}
+                          aria-label={`${stageField} ${stageState.replace(/-/g, " ")}`}
+                        />
+                      </span>
+                    {/snippet}
+                  </ListRow>
                 {/each}
               </div>
             </Disclosure>

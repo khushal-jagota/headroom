@@ -482,34 +482,65 @@ textarea {
 
 /* --- Entity row ---------------------------------------------------------- */
 
-.entity-row {
+/* THE LIST ROW — one row primitive (title left, metadata right, hover) for every
+ * hand-rolled row: sprint tickets, backlog items, flat ideas, board cards. Base is a
+ * flex baseline row with a flex-1 title and one title-color-on-hover rule; per-screen
+ * variants (--ticket, --backlog, --idea, --board) set their own spacing/seams/tokens. */
+.list-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: baseline;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
   text-decoration: none;
-  color: var(--text-default);
-  transition: background var(--motion-fast) var(--motion-ease);
+  color: inherit;
 }
 
-.entity-row:hover {
+.list-row-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--type-md);
+  color: var(--text-default);
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+/* One hover affordance for every interactive row (static div rows get none). The
+ * element qualifier keeps these winning over per-screen resting colors. */
+a.list-row:hover,
+button.list-row:hover {
   background: var(--surface-overlay);
 }
 
-.entity-row-title {
-  font-size: var(--type-md);
-}
-
-.entity-row:hover .entity-row-title {
+a.list-row:hover .list-row-title,
+button.list-row:hover .list-row-title {
   color: var(--text-strong);
 }
 
-.entity-row-chips {
+/* THE SECTION HEADING — one "Label · count" group whisper. Layout only here; each
+ * screen scopes its own typography. */
+.section-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.section-heading-count {
+  color: var(--text-faintest);
+}
+
+/* THE SCREEN HEADER — a doc-screen title row + optional meta pill. */
+.screen-header-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.screen-header-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.screen-header-meta {
   display: flex;
   gap: var(--space-1);
-  flex-shrink: 0;
 }
 
 /* --- Error line ---------------------------------------------------------- */
@@ -692,16 +723,6 @@ textarea {
   grid-template-columns: 2fr 1fr;
   gap: var(--space-5);
   align-items: start;
-}
-
-.day-ticket-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.day-ticket-row .entity-row {
-  flex: 1;
 }
 
 .review-entry {
@@ -1465,7 +1486,7 @@ select {
   min-width: 0;
 }
 
-.board-workspace-item-row {
+.list-row--board {
   width: 100%;
   display: grid;
   grid-template-columns: minmax(0, 1fr) var(--board-workspace-stage-rail-width);
@@ -1484,14 +1505,16 @@ select {
     background var(--motion-fast) var(--motion-ease);
 }
 
-.board-workspace-item-row:hover,
-.board-workspace-item-row.active {
-  background: var(--surface-overlay);
+.list-row--board:hover,
+.list-row--board.active {
   color: var(--text-strong);
 }
 
-.board-workspace-item-label {
-  min-width: 0;
+.list-row--board.active {
+  background: var(--surface-overlay);
+}
+
+.list-row--board .list-row-title {
   overflow-wrap: anywhere;
   color: inherit;
   font-size: inherit;
@@ -2201,14 +2224,7 @@ select {
   border-bottom: var(--border-hairline) solid var(--border-color);
 }
 
-[data-screen="sprint"] .sprint-header-row {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-4);
-}
-
 [data-screen="sprint"] .screen-title {
-  flex: 1;
   margin: 0;
   font-size: var(--type-lg);
   font-weight: 600;
@@ -2216,9 +2232,7 @@ select {
   color: var(--text-strong);
 }
 
-[data-screen="sprint"] .sprint-meta {
-  display: flex;
-  gap: var(--space-1);
+[data-screen="sprint"] .sprint-header .screen-header-meta {
   flex-wrap: wrap;
   justify-content: flex-end;
   padding-top: var(--space-1);
@@ -2352,10 +2366,7 @@ select {
   margin-top: var(--space-5);
 }
 
-[data-screen="sprint"] .glabel {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+[data-screen="sprint"] .grp > .section-heading {
   padding: var(--space-1) 0;
   font-size: var(--type-xs);
   font-weight: 600;
@@ -2364,7 +2375,7 @@ select {
   color: var(--text-faintest);
 }
 
-[data-screen="sprint"] .glabel .n {
+[data-screen="sprint"] .grp > .section-heading .section-heading-count {
   color: var(--text-faintest);
   font-weight: 600;
 }
@@ -2433,23 +2444,15 @@ select {
   padding: var(--space-1) 0 var(--space-4);
 }
 
-[data-screen="sprint"] .tk {
-  display: flex;
-  align-items: baseline;
+[data-screen="sprint"] .list-row--ticket {
   gap: var(--space-2);
   padding: var(--space-2);
   margin: 0 calc(-1 * var(--space-2));
   border-radius: var(--radius-md);
-  text-decoration: none;
-  color: inherit;
   transition: background var(--motion-fast) var(--motion-ease);
 }
 
-[data-screen="sprint"] .tk:hover {
-  background: var(--surface-overlay);
-}
-
-[data-screen="sprint"] .tk .st {
+[data-screen="sprint"] .list-row--ticket .st {
   min-width: 104px;
   white-space: nowrap;
   font-size: var(--type-xs);
@@ -2458,26 +2461,20 @@ select {
   color: var(--text-faint);
 }
 
-[data-screen="sprint"] .tk .st--needs_review {
+[data-screen="sprint"] .list-row--ticket .st--needs_review {
   color: var(--text-default);
 }
 
-[data-screen="sprint"] .tk .st--done {
+[data-screen="sprint"] .list-row--ticket .st--done {
   color: var(--accent-done);
 }
 
-[data-screen="sprint"] .tk .tt {
-  flex: 1;
+[data-screen="sprint"] .list-row--ticket .list-row-title {
   font-size: var(--type-sm);
   color: var(--text-muted);
-  transition: color var(--motion-fast) var(--motion-ease);
 }
 
-[data-screen="sprint"] .tk:hover .tt {
-  color: var(--text-strong);
-}
-
-[data-screen="sprint"] .tk .pr {
+[data-screen="sprint"] .list-row--ticket .pr {
   font-size: var(--type-xs);
   color: var(--text-faintest);
 }
@@ -2506,7 +2503,7 @@ select {
   color: var(--text-muted);
 }
 
-[data-screen="sprint"] .glabel2 {
+[data-screen="sprint"] .disclosure--settled .section-heading {
   flex: 1;
   font-size: var(--type-xs);
   font-weight: 600;
@@ -2514,8 +2511,12 @@ select {
   text-transform: uppercase;
 }
 
-[data-screen="sprint"] .glabel2--done {
+[data-screen="sprint"] .disclosure--settled .section-heading--done {
   color: var(--accent-done);
+}
+
+[data-screen="sprint"] .disclosure--settled .section-heading .section-heading-count {
+  color: inherit;
 }
 
 [data-screen="sprint"] .disclosure--settled > .disclosure-summary .disclosure-chev::before {
@@ -2540,21 +2541,15 @@ select {
   width: 100%;
 }
 
-[data-screen="backlog"] .head,
+[data-screen="backlog"] .screen-header,
 [data-screen="backlog"] .col {
   max-width: 760px;                 /* the index reading measure */
   margin: 0 auto;
 }
 
-[data-screen="backlog"] .head {
+[data-screen="backlog"] .screen-header {
   padding: var(--space-5) var(--space-4) var(--space-4);
   border-bottom: var(--border-hairline) solid var(--border-color);
-}
-
-[data-screen="backlog"] .head .row {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-4);
 }
 
 [data-screen="backlog"] .col {
@@ -2562,29 +2557,26 @@ select {
 }
 
 /* header title + a static count pill (reusing the shared .pill, neutralized) */
-[data-screen="backlog"] .title,
-[data-screen="ideas"] .title {
-  flex: 1;
+[data-screen="backlog"] .screen-header-title,
+[data-screen="ideas"] .screen-header-title {
   font-size: var(--type-lg);
   font-weight: 600;
   line-height: 1.3;
   color: var(--text-strong);
 }
 
-[data-screen="backlog"] .meta,
-[data-screen="ideas"] .meta {
-  display: flex;
-  gap: var(--space-1);
+[data-screen="backlog"] .screen-header-meta,
+[data-screen="ideas"] .screen-header-meta {
   padding-top: 2px;
 }
 
-[data-screen="backlog"] .head .pill,
-[data-screen="ideas"] .head .pill {
+[data-screen="backlog"] .screen-header .pill,
+[data-screen="ideas"] .screen-header .pill {
   cursor: default;
 }
 
-[data-screen="backlog"] .head .pill:hover,
-[data-screen="ideas"] .head .pill:hover {
+[data-screen="backlog"] .screen-header .pill:hover,
+[data-screen="ideas"] .screen-header .pill:hover {
   color: var(--text-muted);
 }
 
@@ -2664,10 +2656,7 @@ select {
   margin-top: var(--space-6);
 }
 
-[data-screen="backlog"] .glabel {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+[data-screen="backlog"] .grp > .section-heading {
   padding: var(--space-1) 0;
   font-size: var(--type-xs);
   font-weight: 600;
@@ -2676,44 +2665,33 @@ select {
   color: var(--text-faintest);
 }
 
-[data-screen="backlog"] .glabel .n {
+[data-screen="backlog"] .grp > .section-heading .section-heading-count {
   color: var(--text-faintest);
 }
 
 /* item row — flat + navigable, divided by seams; hover lifts the title only */
-[data-screen="backlog"] .brow {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
+[data-screen="backlog"] .list-row--backlog {
   padding: var(--space-3) 0;
   border-top: var(--border-hairline) solid var(--border-color);
-  text-decoration: none;
-  color: inherit;
 }
 
-[data-screen="backlog"] .grp .brow:first-of-type {
+[data-screen="backlog"] .grp .list-row--backlog:first-of-type {
   border-top: 0;
 }
 
-[data-screen="backlog"] .brow .bt {
-  flex: 1;
+[data-screen="backlog"] .list-row--backlog .list-row-title {
   font-weight: 500;
   color: var(--text-default);
-  transition: color var(--motion-fast) var(--motion-ease);
 }
 
-[data-screen="backlog"] .brow:hover .bt {
-  color: var(--text-strong);
-}
-
-[data-screen="backlog"] .brow .chips {
+[data-screen="backlog"] .list-row--backlog .chips {
   display: flex;
   gap: var(--space-1);
   flex-wrap: wrap;
   align-items: baseline;
 }
 
-[data-screen="backlog"] .brow .chips .chip {
+[data-screen="backlog"] .list-row--backlog .chips .chip {
   align-self: center;
 }
 
@@ -2727,21 +2705,15 @@ select {
   width: 100%;
 }
 
-[data-screen="ideas"] .head,
+[data-screen="ideas"] .screen-header,
 [data-screen="ideas"] .col {
   max-width: 680px;                 /* a tight read+capture measure (matches Day) */
   margin: 0 auto;
 }
 
-[data-screen="ideas"] .head {
+[data-screen="ideas"] .screen-header {
   padding: var(--space-5) var(--space-4) var(--space-4);
   border-bottom: var(--border-hairline) solid var(--border-color);
-}
-
-[data-screen="ideas"] .head .row {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-4);
 }
 
 [data-screen="ideas"] .col {
@@ -2799,7 +2771,7 @@ select {
   margin-top: var(--space-6);
 }
 
-[data-screen="ideas"] .list .glabel {
+[data-screen="ideas"] .list > .section-heading {
   padding: var(--space-1) 0 var(--space-2);
   font-size: var(--type-xs);
   font-weight: 600;
@@ -2812,24 +2784,24 @@ select {
    ideas are FLAT rows with an empty chevron. Rows are divided by seams only; the row
    right after the section label carries none. */
 [data-screen="ideas"] .disclosure--idea,
-[data-screen="ideas"] .flat {
+[data-screen="ideas"] .list-row--idea {
   border-top: var(--border-hairline) solid var(--border-color);
 }
 
-[data-screen="ideas"] .list .glabel + .disclosure--idea,
-[data-screen="ideas"] .list .glabel + .flat {
+[data-screen="ideas"] .list > .section-heading + .disclosure--idea,
+[data-screen="ideas"] .list > .section-heading + .list-row--idea {
   border-top: 0;
 }
 
 [data-screen="ideas"] .disclosure--idea > .disclosure-summary,
-[data-screen="ideas"] .flat {
+[data-screen="ideas"] .list-row--idea {
   display: flex;
   align-items: baseline;
   gap: var(--space-3);
   padding: var(--space-3) 0;
 }
 
-[data-screen="ideas"] .flat .chev,
+[data-screen="ideas"] .list-row--idea .chev,
 [data-screen="ideas"] .disclosure--idea .disclosure-chev {
   flex: none;
   align-self: center;
@@ -2841,7 +2813,8 @@ select {
   font-size: var(--type-xs);
 }
 
-[data-screen="ideas"] .it {
+[data-screen="ideas"] .it,
+[data-screen="ideas"] .list-row--idea .list-row-title {
   flex: 1;
   font-size: var(--type-md);
   font-weight: 500;

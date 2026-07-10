@@ -7,6 +7,9 @@
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
+  import ListRow from "../components/ListRow.svelte";
+  import ScreenHeader from "../components/ScreenHeader.svelte";
+  import SectionHeading from "../components/SectionHeading.svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
 
   const backlog = resource<BacklogResponse>("items:backlog", (signal) =>
@@ -81,12 +84,11 @@
 
 <section class="backlog-screen" data-screen="backlog">
   <div class="doc">
-    <header class="head">
-      <div class="row">
-        <div class="title">Backlog</div>
-        <div class="meta"><span class="pill"><span class="pill-key">unscheduled</span>{backlog.data?.items?.length || 0}</span></div>
-      </div>
-    </header>
+    <ScreenHeader title="Backlog">
+      {#snippet meta()}
+        <span class="pill"><span class="pill-key">unscheduled</span>{backlog.data?.items?.length || 0}</span>
+      {/snippet}
+    </ScreenHeader>
     <div class="col">
       <Disclosure variant="make" chevron="none" data-create="item">
         {#snippet summary()}<span class="plus">+</span> New backlog item{/snippet}
@@ -129,15 +131,16 @@
           {#each PRIORITY_ORDER as p}
             {#if groups[p]?.length}
               <div class="grp" data-priority-group={p}>
-                <div class="glabel">{p} <span class="n">· {groups[p].length}</span></div>
+                <SectionHeading label={p} count={groups[p].length} />
                 {#each groups[p] as item}
-                  <a class="brow" href="#/backlog" data-item-id={item.id}>
-                    <span class="bt entity-row-title">{item.title}</span>
-                    <span class="chips">
-                      <Chip variant="project" value={item.project} />
-                      {#if item.deadline}<Chip variant="deadline" value={item.deadline} />{/if}
-                    </span>
-                  </a>
+                  <ListRow variant="backlog" title={item.title} href="#/backlog" data-item-id={item.id}>
+                    {#snippet trailing()}
+                      <span class="chips">
+                        <Chip variant="project" value={item.project} />
+                        {#if item.deadline}<Chip variant="deadline" value={item.deadline} />{/if}
+                      </span>
+                    {/snippet}
+                  </ListRow>
                 {/each}
               </div>
             {/if}

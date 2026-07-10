@@ -165,13 +165,13 @@ def test_workspace_groups_by_project_orders_by_activity_and_filters_status(
     page.wait_for_selector('[data-project-key="project_vylo"]', timeout=WAIT_MS)
     page.wait_for_selector('[data-project-key="__no_project__"]', timeout=WAIT_MS)
     headers = page.eval_on_selector_all(
-        "[data-project-section] .board-workspace-index-heading-main span:last-child",
+        "[data-project-section] .board-workspace-index-heading-main .section-heading-label",
         "els => els.map(el => el.textContent.trim())",
     )
     assert headers == ["Learning", "Vylo", "No project"]
 
     vylo_titles = page.eval_on_selector_all(
-        '[data-project-key="project_vylo"] [data-card] .board-workspace-item-label',
+        '[data-project-key="project_vylo"] [data-card] .list-row-title',
         "els => els.map(el => el.textContent.trim())",
     )
     assert vylo_titles == [
@@ -188,7 +188,7 @@ def test_workspace_groups_by_project_orders_by_activity_and_filters_status(
     page.select_option('[data-filter-group="ticket-status"] select', "errored")
     page.wait_for_selector(f'[data-card][data-ticket-id="{learning}"]', timeout=WAIT_MS)
     visible_titles = page.eval_on_selector_all(
-        "[data-card] .board-workspace-item-label",
+        "[data-card] .list-row-title",
         "els => els.map(el => el.textContent.trim())",
     )
     assert visible_titles == ["Learning errored ticket"]
@@ -203,7 +203,7 @@ def test_workspace_groups_by_project_orders_by_activity_and_filters_status(
         timeout=WAIT_MS,
     )
     visible_titles = page.eval_on_selector_all(
-        "[data-card] .board-workspace-item-label",
+        "[data-card] .list-row-title",
         "els => els.map(el => el.textContent.trim())",
     )
     assert "Vylo done activity" not in visible_titles
