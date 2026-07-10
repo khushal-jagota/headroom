@@ -21,6 +21,7 @@ from planner.tickets.contracts import (
     TITLE_MAX_CHARS,
     AtCap,
     FieldName,
+    TicketEdit,
     TicketState,
     TicketStatus,
 )
@@ -69,10 +70,11 @@ def test_ticket_and_field_user_notes_round_trip_with_legacy_field_notes(
     t = _create(tmp_db, cfg, fake_clock, user_note="intake direction")
     assert t.user_note == "intake direction"
 
-    t = data.set_user_note(
+    t = data.edit_ticket(
         tmp_db,
         t.id,
-        user_note="updated intake direction",
+        edit=TicketEdit(user_note="updated intake direction"),
+        title_max_chars=TITLE_MAX_CHARS,
         actor="human",
         now=fake_clock.now_unix(),
     )
@@ -631,7 +633,14 @@ def test_a13_sprint_assignment_rules(
     )
 
     standalone = _create(tmp_db, cfg, fake_clock)
-    standalone = data.set_sprint(tmp_db, standalone.id, sprint_id="sp_test", actor="agent", now=now)
+    standalone = data.edit_ticket(
+        tmp_db,
+        standalone.id,
+        edit=TicketEdit(sprint_id="sp_test"),
+        title_max_chars=TITLE_MAX_CHARS,
+        actor="agent",
+        now=now,
+    )
     assert data.read_ticket(tmp_db, standalone.id).sprint_id == "sp_test"
     upd = _events(tmp_db, cfg, standalone.id, EventKind.ticket_updated)
     assert upd[-1].payload == {"field": "sprint_id", "from": None, "to": "sp_test"}
@@ -644,7 +653,14 @@ def test_a13_sprint_assignment_rules(
     parented = _create(tmp_db, cfg, fake_clock, sprint_item_id="si_test")
 
     with pytest.raises(PlannerError) as exc:
-        data.set_sprint(tmp_db, parented.id, sprint_id="sp_test", actor="human", now=now)
+        data.edit_ticket(
+            tmp_db,
+            parented.id,
+            edit=TicketEdit(sprint_id="sp_test"),
+            title_max_chars=TITLE_MAX_CHARS,
+            actor="human",
+            now=now,
+        )
     assert exc.value.code is ErrorCode.sprint_derived
     assert data.read_ticket(tmp_db, parented.id).sprint_id is None
     assert _events(tmp_db, cfg, parented.id, EventKind.ticket_updated) == []
@@ -653,21 +669,28 @@ def test_a13_sprint_assignment_rules(
     assert data.get_effective_sprint_id(tmp_db, standalone.id) == "sp_test"
 
 
-def test_x06_title_and_project_writers_log_events(
+def test_x06_title_and_project_edits_log_events(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
     ticket = _create(tmp_db, cfg, fake_clock, project_id="project_vylo")
 
-    renamed = data.set_title(
+    renamed = data.edit_ticket(
         tmp_db,
         ticket.id,
-        title="Renamed ticket",
+        edit=TicketEdit(title="Renamed ticket"),
         title_max_chars=TITLE_MAX_CHARS,
         actor="human",
         now=now,
     )
-    updated = data.set_project(tmp_db, ticket.id, project_id=None, actor="human", now=now)
+    updated = data.edit_ticket(
+        tmp_db,
+        ticket.id,
+        edit=TicketEdit(project_id=None),
+        title_max_chars=TITLE_MAX_CHARS,
+        actor="human",
+        now=now,
+    )
 
     assert renamed.title == "Renamed ticket"
     assert updated.project_id is None
@@ -679,7 +702,7 @@ def test_x06_title_and_project_writers_log_events(
     ]
 
 
-def test_x06_project_writer_preserves_parented_error_shape(
+def test_x06_project_edit_preserves_parented_error_shape(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
@@ -691,8 +714,13 @@ def test_x06_project_writer_preserves_parented_error_shape(
     ticket = _create(tmp_db, cfg, fake_clock, sprint_item_id="si_project_parent")
 
     with pytest.raises(PlannerError) as exc:
-        data.set_project(
-            tmp_db, ticket.id, project_id="project_vylo", actor="human", now=now
+        data.edit_ticket(
+            tmp_db,
+            ticket.id,
+            edit=TicketEdit(project_id="project_vylo"),
+            title_max_chars=TITLE_MAX_CHARS,
+            actor="human",
+            now=now,
         )
 
     assert exc.value.code is ErrorCode.validation

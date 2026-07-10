@@ -13,8 +13,8 @@ Current scope:
 - `t_arch02` has moved readiness wakes out of routes and behind best-effort domain action
   doorbells. The complete audited wake set includes takeover, blocker-link creation, and day
   removal; the timer/database remain canonical.
-- `t_arch03` makes an ordinary multi-attribute Ticket PATCH one transaction, preserves existing
-  per-field events for actual changes, writes worker context once, and makes no-op edits inert.
+- `t_arch03` has made an ordinary multi-attribute Ticket PATCH one transaction, preserving existing
+  per-field events for actual changes, writing worker context once, and making no-op edits inert.
 - Candidates 4 and 6 remain deferred. Candidate 5 remains rejected. The diagnosed same-session
   Hermes completion-correlation defect is explicitly outside this work.
 
@@ -44,14 +44,16 @@ Verification status:
   cases and one time-flaky Chief replay oracle; production did not change during review follow-up.
   The complete failure/no-op matrix now includes deterministic timestamp semantics and both final
   follow-up reviews returned `NO VIOLATIONS`.
-- `t_arch03` has a reviewed plan, but implementation has not begun.
+- `t_arch03` implementation is complete. Its focused gate passes 71 edit/authority/context/Chief
+  tests, 38 readiness regressions, and the real-server CLI edit flow. Full Ruff passes, Mypy passes
+  across 102 source files, and both independent implementation reviews returned `NO VIOLATIONS`.
 - No full `./verify` has run in this architecture cycle. The concurrent Chief/worker-context/
   chat-image work remains the last full-`./verify` baseline.
 
 Immediate next step:
 
-- Commit the clean `t_arch02` integration slice, then implement and review `t_arch03`. Run the
-  authoritative full `./verify` only after all three architecture tickets integrate.
+- Commit the clean `t_arch03` integration slice, then run the authoritative full `./verify` across
+  all three architecture tickets and perform the final combined scope/review audit.
 
 ## Completed work cycle (2026-07-10): Chief external-work intake
 

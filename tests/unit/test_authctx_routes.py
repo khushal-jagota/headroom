@@ -106,6 +106,34 @@ def _priority(db_path: Path, ticket_id: str) -> str:
     return str(_col(db_path, "tickets", ticket_id, "priority"))
 
 
+def _ticket_edit_effects(db_path: Path, ticket_id: str) -> tuple[Any, ...]:
+    conn = connect(str(db_path))
+    try:
+        ticket = conn.execute(
+            "SELECT title, user_note, priority, deadline, project_id, sprint_id, updated_at "
+            "FROM tickets WHERE id = ?",
+            (ticket_id,),
+        ).fetchone()
+        assert ticket is not None
+        events = conn.execute(
+            "SELECT kind, payload, created_at FROM events "
+            "WHERE entity_id = ? ORDER BY id",
+            (ticket_id,),
+        ).fetchall()
+        context = conn.execute(
+            "SELECT context_key, text, revision FROM pending_worker_context "
+            "WHERE worker_entity_id = ? ORDER BY context_key",
+            (ticket_id,),
+        ).fetchall()
+        return (
+            tuple(ticket),
+            tuple(tuple(row) for row in events),
+            tuple(tuple(row) for row in context),
+        )
+    finally:
+        conn.close()
+
+
 # --- PATCH /tickets/{id}: direct-only fields + agent-permitted fields (§8/§14) -----
 
 
@@ -171,6 +199,86 @@ def test_patch_ticket_agent_permitted_fields_succeed(tmp_path: Path) -> None:
     assert response.json()["priority"] == "P1"
     assert _priority(db_path, tid) == "P1"
     assert _col(db_path, "tickets", tid, "deadline") == "2026-08-01"
+
+
+def test_patch_ticket_worker_mixing_permitted_then_forbidden_field_is_atomic(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    before = _ticket_edit_effects(db_path, tid)
+
+    with TestClient(app) as client:
+        response = client.patch(
+            f"/api/tickets/{tid}",
+            json={
+                "priority": "P1",
+                "deadline": "2026-08-01",
+                "title": "Forbidden worker title",
+            },
+            headers=_AGENT,
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == {
+        "code": "agent_forbidden",
+        "message": "direct-only field",
+        "detail": {"field": "title", "actor": "agent"},
+    }
+    assert _ticket_edit_effects(db_path, tid) == before
+
+
+def test_patch_ticket_worker_can_compound_priority_deadline_and_sprint_without_context(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    sid = _sprint(db_path)
+
+    with TestClient(app) as client:
+        response = client.patch(
+            f"/api/tickets/{tid}",
+            json={"priority": "P1", "deadline": "2026-08-01", "sprint_id": sid},
+            headers=_AGENT,
+        )
+
+    assert response.status_code == 200, response.json()
+    assert response.json()["priority"] == "P1"
+    assert response.json()["deadline"] == "2026-08-01"
+    assert response.json()["sprint_id"] == sid
+    assert _ticket_edit_effects(db_path, tid)[2] == ()
+
+
+def test_patch_ticket_unattributed_and_chief_keep_ordinary_edit_semantics(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    unattributed_id = _ticket(db_path)
+    chief_id = _ticket(db_path)
+
+    with TestClient(app) as client:
+        unattributed = client.patch(
+            f"/api/tickets/{unattributed_id}",
+            json={"priority": "P1", "title": "Unattributed edit"},
+        )
+        chief = client.patch(
+            f"/api/tickets/{chief_id}",
+            json={"priority": "P2", "title": "Chief ordinary edit"},
+            headers={"X-Plan-Actor": "chief"},
+        )
+
+    assert unattributed.status_code == 200, unattributed.json()
+    assert chief.status_code == 200, chief.json()
+    assert unattributed.json()["title"] == "Unattributed edit"
+    assert chief.json()["title"] == "Chief ordinary edit"
+    for ticket_id in (unattributed_id, chief_id):
+        _values, events, context = _ticket_edit_effects(db_path, ticket_id)
+        assert [kind for kind, _payload, _created_at in events[-2:]] == [
+            "ticket_updated",
+            "ticket_updated",
+        ]
+        assert context[-1][0] == "ticket_changed"
+        assert context[-1][2] == 1
 
 
 def test_patch_ticket_rejects_bad_field_types(tmp_path: Path) -> None:

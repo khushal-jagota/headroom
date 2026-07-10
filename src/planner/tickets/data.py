@@ -1,9 +1,9 @@
 """The only module that writes ticket rows. State, ceiling/at_cap, and fields
 value mutations happen in exactly one function (_apply_decision); every public
-writer is one BEGIN IMMEDIATE transaction. Plain field writers (title, project,
-user notes, recap, priority, deadline, sprint) do their own single-column UPDATE and never touch
-state/ceiling/at_cap/fields.value. sqlite3, events and ids live here only; the
-clock arrives as now (unix seconds) and the title limit as an argument."""
+writer is one BEGIN IMMEDIATE transaction. An ordinary Ticket edit validates and
+writes its requested plain attributes together. Other semantic writers remain
+separate. sqlite3, events and ids live here only; the clock arrives as now (unix
+seconds) and the title limit as an argument."""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ from planner.tickets.contracts import (
     NextCeiling,
     Ticket,
     TicketDeletion,
+    TicketEdit,
     TicketFields,
     TicketState,
     TicketStatus,
@@ -863,28 +864,73 @@ def set_note(
     )
 
 
-def set_user_note(
+def edit_ticket(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    user_note: str,
+    edit: TicketEdit,
+    title_max_chars: int,
     actor: str,
     now: int,
 ) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
-        prev = ticket.user_note
+
+        title = edit["title"] if "title" in edit else ticket.title
+        user_note = edit["user_note"] if "user_note" in edit else ticket.user_note
+        priority = edit["priority"] if "priority" in edit else ticket.priority
+        deadline = edit["deadline"] if "deadline" in edit else ticket.deadline
+        project_id = edit["project_id"] if "project_id" in edit else ticket.project_id
+        sprint_id = edit["sprint_id"] if "sprint_id" in edit else ticket.sprint_id
+
+        # Validate the intended final Ticket before its first durable effect. Parent
+        # restrictions use request-key presence: explicitly assigning the same/null
+        # derived value is still an attempted edit and retains the existing error.
+        admission.validate_title(title, title_max_chars)
+        admission.validate_deadline(deadline)
+        if "project_id" in edit and ticket.sprint_item_id is not None:
+            raise PlannerError(ErrorCode.validation, "project is derived when parented")
+        if project_id is not None and conn.execute(
+            "SELECT 1 FROM projects WHERE id = ?", (project_id,)
+        ).fetchone() is None:
+            raise PlannerError(
+                ErrorCode.validation, "invalid project_id", {"project_id": project_id}
+            )
+        if "sprint_id" in edit:
+            admission.check_sprint_assignable(ticket_id, ticket.sprint_item_id)
+        if sprint_id is not None and conn.execute(
+            "SELECT 1 FROM sprints WHERE id = ?", (sprint_id,)
+        ).fetchone() is None:
+            raise PlannerError(
+                ErrorCode.not_found, "sprint not found", {"sprint_id": sprint_id}
+            )
+
+        candidates: tuple[tuple[str, str, str | None, str | None], ...] = (
+            ("title", "title", ticket.title, title),
+            ("user_note", "user_note", ticket.user_note, user_note),
+            ("priority", "priority", ticket.priority.value, priority.value),
+            ("deadline", "deadline", ticket.deadline, deadline),
+            ("project_id", "project_id", ticket.project_id, project_id),
+            ("sprint_id", "sprint_id", ticket.sprint_id, sprint_id),
+        )
+        changes = [change for change in candidates if change[2] != change[3]]
+        if not changes:
+            return ticket
+
+        assignments = ", ".join(f"{column} = ?" for _field, column, _old, _new in changes)
+        params = [new for _field, _column, _old, new in changes]
         conn.execute(
-            "UPDATE tickets SET user_note = ?, updated_at = ? WHERE id = ?",
-            (user_note, now, ticket_id),
+            f"UPDATE tickets SET {assignments}, updated_at = ? WHERE id = ?",
+            (*params, now, ticket_id),
         )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.ticket_updated,
-            {"field": "user_note", "from": prev, "to": user_note},
-            now,
-        )
+        for field, _column, previous, updated in changes:
+            append_event(
+                conn,
+                ticket_id,
+                EventKind.ticket_updated,
+                {"field": field, "from": previous, "to": updated},
+                now,
+            )
         ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket(conn, ticket_id)
 
@@ -899,136 +945,6 @@ def write_recap(
             "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?", (body, now, ticket_id)
         )
         append_event(conn, ticket_id, EventKind.recap_updated, {}, now)
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
-        return _load_ticket(conn, ticket_id)
-
-
-def set_title(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    title: str,
-    title_max_chars: int,
-    actor: str,
-    now: int,
-) -> Ticket:
-    admission.validate_title(title, title_max_chars)
-    with _txn(conn):
-        ticket = _load_ticket(conn, ticket_id)
-        prev = ticket.title
-        conn.execute(
-            "UPDATE tickets SET title = ?, updated_at = ? WHERE id = ?", (title, now, ticket_id)
-        )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.ticket_updated,
-            {"field": "title", "from": prev, "to": title},
-            now,
-        )
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
-        return _load_ticket(conn, ticket_id)
-
-
-def set_project(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    project_id: str | None,
-    actor: str,
-    now: int,
-) -> Ticket:
-    with _txn(conn):
-        ticket = _load_ticket(conn, ticket_id)
-        if ticket.sprint_item_id is not None:
-            raise PlannerError(ErrorCode.validation, "project is derived when parented")
-        if project_id is not None and conn.execute(
-            "SELECT 1 FROM projects WHERE id = ?", (project_id,)
-        ).fetchone() is None:
-            raise PlannerError(
-                ErrorCode.validation, "invalid project_id", {"project_id": project_id}
-            )
-        prev = ticket.project_id
-        conn.execute(
-            "UPDATE tickets SET project_id = ?, updated_at = ? WHERE id = ?",
-            (project_id, now, ticket_id),
-        )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.ticket_updated,
-            {"field": "project_id", "from": prev, "to": project_id},
-            now,
-        )
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
-        return _load_ticket(conn, ticket_id)
-
-
-def set_priority(
-    conn: sqlite3.Connection, ticket_id: str, *, priority: Priority, actor: str, now: int
-) -> Ticket:
-    with _txn(conn):
-        ticket = _load_ticket(conn, ticket_id)
-        prev = ticket.priority.value
-        conn.execute(
-            "UPDATE tickets SET priority = ?, updated_at = ? WHERE id = ?",
-            (priority.value, now, ticket_id),
-        )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.ticket_updated,
-            {"field": "priority", "from": prev, "to": priority.value},
-            now,
-        )
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
-        return _load_ticket(conn, ticket_id)
-
-
-def set_deadline(
-    conn: sqlite3.Connection, ticket_id: str, *, deadline: str | None, actor: str, now: int
-) -> Ticket:
-    admission.validate_deadline(deadline)
-    with _txn(conn):
-        ticket = _load_ticket(conn, ticket_id)
-        prev = ticket.deadline
-        conn.execute(
-            "UPDATE tickets SET deadline = ?, updated_at = ? WHERE id = ?",
-            (deadline, now, ticket_id),
-        )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.ticket_updated,
-            {"field": "deadline", "from": prev, "to": deadline},
-            now,
-        )
-        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
-        return _load_ticket(conn, ticket_id)
-
-
-def set_sprint(
-    conn: sqlite3.Connection, ticket_id: str, *, sprint_id: str | None, actor: str, now: int
-) -> Ticket:
-    with _txn(conn):
-        ticket = _load_ticket(conn, ticket_id)
-        admission.check_sprint_assignable(ticket_id, ticket.sprint_item_id)
-        if sprint_id is not None and conn.execute(
-            "SELECT 1 FROM sprints WHERE id = ?", (sprint_id,)
-        ).fetchone() is None:
-            raise PlannerError(ErrorCode.not_found, "sprint not found", {"sprint_id": sprint_id})
-        prev = ticket.sprint_id
-        conn.execute(
-            "UPDATE tickets SET sprint_id = ?, updated_at = ? WHERE id = ?",
-            (sprint_id, now, ticket_id),
-        )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.ticket_updated,
-            {"field": "sprint_id", "from": prev, "to": sprint_id},
-            now,
-        )
         ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket(conn, ticket_id)
 

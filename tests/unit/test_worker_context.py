@@ -9,7 +9,14 @@ from planner.chat.contracts import ChatSendResult, ChatStreamChunk, CommandRunRe
 from planner.core.contracts import Priority
 from planner.core.db import connect
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, AtCap, FieldName, TicketState
+from planner.tickets.contracts import (
+    NO_FURTHER,
+    TITLE_MAX_CHARS,
+    AtCap,
+    FieldName,
+    TicketEdit,
+    TicketState,
+)
 from planner.tickets.worker_context import TICKET_CHANGED_CONTEXT_KEY, TICKET_CHANGED_TEXT
 from planner.worker_context import data
 from planner.worker_context.contracts import WorkerContextReceipt
@@ -93,8 +100,13 @@ def _clear(tmp_db, ticket_id: str) -> None:
 def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(tmp_db) -> None:
     ticket = _ticket(tmp_db)
 
-    tickets_data.set_priority(
-        tmp_db, ticket.id, priority=Priority.P1, actor="agent", now=2
+    tickets_data.edit_ticket(
+        tmp_db,
+        ticket.id,
+        edit=TicketEdit(priority=Priority.P1),
+        title_max_chars=TITLE_MAX_CHARS,
+        actor="agent",
+        now=2,
     )
     tickets_data.set_field_user_note(
         tmp_db,
@@ -106,16 +118,21 @@ def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(tmp
     )
     assert _pending(tmp_db, ticket.id) == ()
 
-    tickets_data.set_title(
+    tickets_data.edit_ticket(
         tmp_db,
         ticket.id,
-        title="Human title",
-        title_max_chars=200,
+        edit=TicketEdit(title="Human title"),
+        title_max_chars=TITLE_MAX_CHARS,
         actor="human",
         now=4,
     )
-    tickets_data.set_user_note(
-        tmp_db, ticket.id, user_note="ticket guidance", actor="human", now=5
+    tickets_data.edit_ticket(
+        tmp_db,
+        ticket.id,
+        edit=TicketEdit(user_note="ticket guidance"),
+        title_max_chars=TITLE_MAX_CHARS,
+        actor="human",
+        now=5,
     )
     tickets_data.set_field_user_note(
         tmp_db,
@@ -248,11 +265,11 @@ def test_human_recap_marks_context_but_agent_recap_does_not(tmp_db) -> None:
 
 def test_deleting_ticket_removes_its_pending_context(tmp_db) -> None:
     ticket = _ticket(tmp_db)
-    tickets_data.set_title(
+    tickets_data.edit_ticket(
         tmp_db,
         ticket.id,
-        title="Changed before delete",
-        title_max_chars=200,
+        edit=TicketEdit(title="Changed before delete"),
+        title_max_chars=TITLE_MAX_CHARS,
         actor="human",
         now=40,
     )

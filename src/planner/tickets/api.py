@@ -62,6 +62,7 @@ from planner.tickets.contracts import (
     RevisionMessageBody,
     ScopeBody,
     StateBody,
+    TicketEdit,
     TicketState,
     ValueEditBody,
 )
@@ -458,51 +459,36 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
     if not body:
         raise PlannerError(ErrorCode.validation, "no ticket fields to update", {})
     reject_agent_fields(ctx, body, _TICKET_DIRECT_ONLY_FIELDS)
-    now = clk.now_unix()
+
+    edit = TicketEdit()
     if "title" in body:
-        tickets_data.set_title(
-            conn,
-            ticket_id,
-            title=body_str(body, "title"),
-            title_max_chars=TITLE_MAX_CHARS,
-            actor=ctx.actor,
-            now=now,
-        )
+        edit["title"] = body_str(body, "title")
     if "user_note" in body:
-        tickets_data.set_user_note(
-            conn,
-            ticket_id,
-            user_note=body_str(body, "user_note"),
-            actor=ctx.actor,
-            now=now,
-        )
+        edit["user_note"] = body_str(body, "user_note")
     if "priority" in body:
-        priority = parse_enum(Priority, body_str(body, "priority"), "priority")
-        tickets_data.set_priority(conn, ticket_id, priority=priority, actor=ctx.actor, now=now)
+        edit["priority"] = parse_enum(Priority, body_str(body, "priority"), "priority")
     if "deadline" in body:
-        deadline = body_opt_str(body, "deadline")
-        tickets_data.set_deadline(
-            conn, ticket_id, deadline=deadline, actor=ctx.actor, now=now
-        )
+        edit["deadline"] = body_opt_str(body, "deadline")
     if "project" in body or "project_id" in body:
         project_raw = body_opt_str(body, "project")
         project_id_raw = body_opt_str(body, "project_id")
         project = projects_data.resolve_project(
             conn, project_id=project_id_raw, project_name=project_raw
         )
-        tickets_data.set_project(
-            conn,
-            ticket_id,
-            project_id=project.id if project is not None else None,
-            actor=ctx.actor,
-            now=now,
-        )
+        edit["project_id"] = project.id if project is not None else None
     if "sprint_id" in body:
-        sprint_id = body_opt_str(body, "sprint_id")
-        tickets_data.set_sprint(
-            conn, ticket_id, sprint_id=sprint_id, actor=ctx.actor, now=now
-        )
-    return tickets_views.ticket_json(tickets_data.read_ticket(conn, ticket_id), now)
+        edit["sprint_id"] = body_opt_str(body, "sprint_id")
+
+    now = clk.now_unix()
+    ticket = tickets_data.edit_ticket(
+        conn,
+        ticket_id,
+        edit=edit,
+        title_max_chars=TITLE_MAX_CHARS,
+        actor=ctx.actor,
+        now=now,
+    )
+    return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/propose")

@@ -55,6 +55,13 @@ Standalone tickets may point at a project by `project_id`. API responses also in
 `project`, the display name, for compatibility. A ticket under a sprint item does not
 store its own project because the parent item owns that classification.
 
+### Ordinary Ticket edits
+
+One ordinary edit may change a Ticket's title, user note, priority, deadline, project,
+and sprint together. Panels checks the whole request before saving any of it. All
+requested changes succeed together or none do, and the history records only fields
+that really changed. Sending values the Ticket already has leaves it unchanged.
+
 ## The one rule: proposals and the single door
 
 Workers never change the record directly. A worker that wants to move work forward

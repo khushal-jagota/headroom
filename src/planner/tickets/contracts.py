@@ -122,6 +122,15 @@ class CreateTicketBody(TypedDict, total=False):   # POST /tickets
     sprint_item_id: str | None
 
 
+class TicketEdit(TypedDict, total=False):         # PATCH /tickets/{id}, parsed values
+    title: str
+    user_note: str
+    priority: Priority
+    deadline: str | None
+    project_id: str | None
+    sprint_id: str | None
+
+
 class ReconcileTicketFromExternalWorkBody(TypedDict):
     state: str
     user_note: str
