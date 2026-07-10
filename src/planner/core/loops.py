@@ -10,6 +10,11 @@ from planner.core.config import Config
 from planner.minds.shared_gateway import SharedGateway
 from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.runtime.lock import ensure_machine_lock, release_machine_lock
+from planner.runtime.readiness_doorbell import (
+    LoopReadinessDoorbell,
+    NoOpReadinessDoorbell,
+    ReadinessDoorbell,
+)
 from planner.runtime.ticket_readiness_loop import TicketReadinessLoop
 
 _LOGGER = logging.getLogger(__name__)
@@ -22,10 +27,12 @@ class BackgroundLoops:
         employee_step_runner: EmployeeStepRunner,
         ticket_readiness_loop: TicketReadinessLoop | None = None,
         lock_path: str | None = None,
+        readiness_doorbell: ReadinessDoorbell | None = None,
     ) -> None:
         self._tasks = tasks
         self.employee_step_runner = employee_step_runner
         self.ticket_readiness_loop = ticket_readiness_loop
+        self.readiness_doorbell = readiness_doorbell or NoOpReadinessDoorbell()
         self._lock_path = lock_path
         self._stopped = False
 
@@ -61,46 +68,80 @@ def start_background_loops(
     if _active is not None:
         raise RuntimeError("background loops already running")
 
-    employee_step_runner = EmployeeStepRunner(
-        config.db_path,
-        clock,
-        gateway=shared_gateway,
-        boundary_hour=config.boundary_hour,
-        busy_timeout_ms=config.db_busy_timeout_ms,
-    )
+    def build_runner(doorbell: ReadinessDoorbell) -> EmployeeStepRunner:
+        return EmployeeStepRunner(
+            config.db_path,
+            clock,
+            gateway=shared_gateway,
+            readiness_doorbell=doorbell,
+            boundary_hour=config.boundary_hour,
+            busy_timeout_ms=config.db_busy_timeout_ms,
+        )
+
+    readiness_doorbell: ReadinessDoorbell = NoOpReadinessDoorbell()
+    employee_step_runner: EmployeeStepRunner
     ticket_readiness_loop: TicketReadinessLoop | None = None
     lock_path: str | None = None
 
     if not config.dispatch_enabled:
         _LOGGER.info("Ticket readiness loop disabled (dispatch_enabled=false)")
+        employee_step_runner = build_runner(readiness_doorbell)
     elif not ensure_machine_lock(config.dispatcher_lock_path):
         _LOGGER.info(
             "Ticket readiness loop not started: another process holds the polling lock"
         )
+        employee_step_runner = build_runner(readiness_doorbell)
     else:
+        candidate_runner: EmployeeStepRunner | None = None
+        candidate_loop: TicketReadinessLoop | None = None
+        loop_slot: list[TicketReadinessLoop] = []
+
+        def wake_loop() -> None:
+            loop_slot[0].wake()
+
+        candidate_doorbell = LoopReadinessDoorbell(wake_loop)
         try:
-            ticket_readiness_loop = TicketReadinessLoop(
+            candidate_runner = build_runner(candidate_doorbell)
+            candidate_loop = TicketReadinessLoop(
                 config.db_path,
                 clock,
-                employee_step_runner,
+                candidate_runner,
                 boundary_hour=config.boundary_hour,
                 busy_timeout_ms=config.db_busy_timeout_ms,
             )
-            employee_step_runner.set_idle_callback(ticket_readiness_loop.poke)
-            ticket_readiness_loop.start(config.tick_seconds)
-            lock_path = config.dispatcher_lock_path
+            loop_slot.append(candidate_loop)
+            candidate_loop.start(config.tick_seconds)
         except Exception:
             _LOGGER.exception(
                 "Ticket readiness loop failed to start; direct employee revisions remain available"
             )
+            if candidate_loop is not None:
+                try:
+                    candidate_loop.stop()
+                except Exception:
+                    _LOGGER.exception("partially started Ticket readiness loop failed to stop")
+            if candidate_runner is not None:
+                try:
+                    candidate_runner.stop()
+                except Exception:
+                    _LOGGER.exception("discarded employee runner failed to stop")
             release_machine_lock(config.dispatcher_lock_path)
-            ticket_readiness_loop = None
+            readiness_doorbell = NoOpReadinessDoorbell()
+            employee_step_runner = build_runner(readiness_doorbell)
+        else:
+            assert candidate_runner is not None
+            assert candidate_loop is not None
+            readiness_doorbell = candidate_doorbell
+            employee_step_runner = candidate_runner
+            ticket_readiness_loop = candidate_loop
+            lock_path = config.dispatcher_lock_path
 
     loops = BackgroundLoops(
         [],
         employee_step_runner,
         ticket_readiness_loop,
         lock_path,
+        readiness_doorbell,
     )
     _active = loops
     return loops

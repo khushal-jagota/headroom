@@ -47,25 +47,31 @@ def _ticket(db_path: Path) -> str:
         conn.close()
 
 
-def test_add_day_ticket_pokes_readiness_loop_after_successful_add(tmp_path: Path) -> None:
+def test_day_add_and_previously_missed_removal_ring_after_actual_change(
+    tmp_path: Path,
+) -> None:
     app, db_path = _make_app(tmp_path)
     ticket_id = _ticket(db_path)
 
-    class ReadinessLoopSpy:
+    class RecordingDoorbell:
         def __init__(self) -> None:
-            self.pokes = 0
+            self.rings = 0
 
-        def poke(self) -> None:
-            self.pokes += 1
+        def ring(self) -> None:
+            self.rings += 1
 
-    readiness_loop = ReadinessLoopSpy()
-    app.state.ticket_readiness_loop = readiness_loop
+    doorbell = RecordingDoorbell()
+    app.state.readiness_doorbell = doorbell
 
     with TestClient(app) as client:
         response = client.post("/api/day/today/tickets", json={"ticket_id": ticket_id})
         duplicate = client.post("/api/day/today/tickets", json={"ticket_id": ticket_id})
+        removed = client.delete(f"/api/day/today/tickets/{ticket_id}")
+        absent = client.delete(f"/api/day/today/tickets/{ticket_id}")
 
     assert response.status_code == 200, response.json()
     assert duplicate.status_code == 200, duplicate.json()
+    assert removed.status_code == 200, removed.json()
+    assert absent.status_code == 200, absent.json()
     assert response.json()["tickets"][0]["id"] == ticket_id
-    assert readiness_loop.pokes == 1
+    assert doorbell.rings == 2

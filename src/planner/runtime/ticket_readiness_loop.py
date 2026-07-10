@@ -44,7 +44,7 @@ class TicketReadinessLoop:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
-    def poke(self, _key: str | None = None) -> None:
+    def wake(self) -> None:
         """Wake readiness discovery now; the timer remains a backstop."""
         self._wake.set()
 

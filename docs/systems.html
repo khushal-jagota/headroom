@@ -734,10 +734,21 @@
                 turn ends. A parked proposal becomes <code>awaiting_approval</code>;
                 auto-accepted work can return to <code>empty</code>.
               </p>
+              <p>
+                Ticket, Day membership, and blocking-link actions commit first, then ring a
+                best-effort ReadinessDoorbell. Runner settlement rings it too. The doorbell
+                carries no Ticket id and owns no state. A failed delivery is logged and ignored;
+                SQLite and the periodic timer remain canonical. Processes without the polling
+                lock use a no-op doorbell rather than IPC.
+              </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/runtime/readiness.py</code>,
+                <code>src/planner/runtime/readiness_doorbell.py</code>,
                 <code>src/planner/runtime/ticket_readiness_loop.py</code>,
                 <code>src/planner/runtime/employee_step_runner.py</code>,
+                <code>src/planner/tickets/actions.py</code>,
+                <code>src/planner/days/actions.py</code>,
+                <code>src/planner/core/link_actions.py</code>,
                 <code>src/planner/core/loops.py</code>
               </p>
             </div>

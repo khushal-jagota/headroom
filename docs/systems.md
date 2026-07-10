@@ -126,12 +126,19 @@ status when the turn ends. If the worker parks a proposal, the ticket becomes
 `awaiting_approval`; if the proposal auto-accepted and more work is allowed, it
 returns to `empty` so TicketReadinessLoop can discover the next step.
 
-TicketReadinessLoop can be poked by readiness-changing writes, so the timer is a backstop rather
-than the normal user experience.
+Ticket, Day membership, and blocking-link actions commit first, then ring a
+best-effort `ReadinessDoorbell`. Runner settlement rings the same doorbell to continue
+automatic work. The doorbell carries no Ticket id and owns no state. Delivery failure
+is logged and ignored; SQLite and the periodic timer remain canonical. Processes that
+do not own the polling lock receive a no-op doorbell instead of trying to wake another
+process.
 
 Code paths: `src/planner/runtime/readiness.py`,
+`src/planner/runtime/readiness_doorbell.py`,
 `src/planner/runtime/ticket_readiness_loop.py`,
 `src/planner/runtime/employee_step_runner.py`,
+`src/planner/tickets/actions.py`, `src/planner/days/actions.py`,
+`src/planner/core/link_actions.py`,
 `src/planner/core/loops.py`.
 
 ### 5. The Hermes Gateway System

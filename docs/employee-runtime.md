@@ -20,8 +20,8 @@ step at a time, and feeds an approval straight back in.
         │                                  write the ticket's status (the one door)
         ▼                                          │
    an approval / unblock, or a finished           │  a proposal, parked or applied
-   step, POKES the poll at once  ◄────────────────┘
-   (a timer is only the backstop)
+   step, RINGS a best-effort doorbell ◄───────────┘
+   (SQLite + the timer remain the backstop)
 ```
 
 ## Discovery and execution
@@ -44,15 +44,20 @@ strictly. If that session is stale, Panels records an errored employee turn inst
 silently creating a different conversation.
 
 One employee is one ticket session, so Hermes' per-session busy guard keeps one turn
-in flight for that ticket while the shared child can hold many sessions. An approval
-or an unblock from the web page pokes the poll immediately so the ticket advances
-the moment you act; adding a ticket to today's day list does the same. The timer is
-only a backstop. A ticket that is not on today is outside the automatic run set even
+in flight for that ticket while the shared child can hold many sessions. After a
+readiness-changing action commits, it rings a small doorbell that asks the local loop
+to check again. A failed ring is logged and never changes the successful action. The
+database and periodic timer are still the source of truth. A process that does not own
+the polling lock uses a no-op doorbell; it does not send an IPC wake. A ticket that is
+not on today is outside the automatic run set even
 when its status is `empty`; it does not appear on the Board, and the ticket page
 shows this as `auto not on today`.
 
 _Code paths:_ `src/planner/runtime/ticket_readiness_loop.py`,
 `src/planner/runtime/employee_step_runner.py`,
+`src/planner/runtime/readiness_doorbell.py`,
+`src/planner/tickets/actions.py`, `src/planner/days/actions.py`,
+`src/planner/core/link_actions.py`,
 `src/planner/minds/` (the employee primitive: the shared gateway child and its
 per-session busy guard).
 
@@ -107,13 +112,13 @@ session history showed the employee-step prompt and worker reply in ticket chat.
 
 A second smoke used a long poll interval to prove that a settled success-condition
 edit is a wake event, not just something the timer eventually notices: editing the
-success value poked TicketReadinessLoop and the employee filed the next approach proposal.
+success value rang the readiness doorbell and the employee filed the next approach proposal.
 EmployeeStepRunner persists a created or resumed `chat_session_key` before submitting the
 prompt, so a worker calling `panels worker my-ticket` during its own turn can resolve
 the current ticket immediately.
 
 A live smoke on the default DB also proved that adding a new harmless ticket to
-today now wakes TicketReadinessLoop without a follow-up scope edit. The ticket moved to
+today now rings the readiness doorbell without a follow-up scope edit. The ticket moved to
 `agent_running_step` on the immediate read after the day add, then parked at
 `awaiting_approval` with a success proposal.
 
@@ -121,7 +126,7 @@ today now wakes TicketReadinessLoop without a follow-up scope edit. The ticket m
 
 - **Tickets & the gates** (`tickets-and-gates.md`) — the proposals the employee
   files, the scope that decides whether a step auto-accepts, and the approval that
-  pokes the poll.
+  rings the readiness doorbell.
 - **Chat** (`chat.md`) — the live conversation with the employee and the slash menu
   of commands and skills, over the same gateway.
 - **The command-line tool** (`cli.md`) — the surface the employee acts through.

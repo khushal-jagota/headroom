@@ -10,9 +10,9 @@ Current scope:
 - `t_arch01` has replaced System A/B with `TicketReadinessLoop` and `EmployeeStepRunner`,
   made the runner independent of automatic dispatch, and now requires an accepted runner
   reservation before a Review return-for-revision mutates its Ticket.
-- `t_arch02` moves readiness wakes out of routes and behind best-effort domain action doorbells.
-  The audited wake set closes missing takeover, blocker-link creation, and day-removal paths;
-  the timer/database remain canonical.
+- `t_arch02` has moved readiness wakes out of routes and behind best-effort domain action
+  doorbells. The complete audited wake set includes takeover, blocker-link creation, and day
+  removal; the timer/database remain canonical.
 - `t_arch03` makes an ordinary multi-attribute Ticket PATCH one transaction, preserves existing
   per-field events for actual changes, writes worker context once, and makes no-op edits inert.
 - Candidates 4 and 6 remain deferred. Candidate 5 remains rejected. The diagnosed same-session
@@ -39,15 +39,19 @@ Verification status:
   and missing proofs for a released-run shutdown drain, full readiness recheck, and retained-runner
   usability after readiness-loop construction failure. All five are resolved. Both the independent
   follow-up and the required Codex xhigh follow-up returned `NO VIOLATIONS`.
-- `t_arch02` and `t_arch03` have reviewed plans, but implementation has not begun for either.
+- `t_arch02` implementation is complete. Its final focused gate passes 101 tests, full Ruff passes,
+  Mypy passes across 102 source files, and staged diff checks pass. Reviewers found missing negative
+  cases and one time-flaky Chief replay oracle; production did not change during review follow-up.
+  The complete failure/no-op matrix now includes deterministic timestamp semantics and both final
+  follow-up reviews returned `NO VIOLATIONS`.
+- `t_arch03` has a reviewed plan, but implementation has not begun.
 - No full `./verify` has run in this architecture cycle. The concurrent Chief/worker-context/
   chat-image work remains the last full-`./verify` baseline.
 
 Immediate next step:
 
-- Commit the clean `t_arch01` integration slice, then implement and review `t_arch02`. Keep
-  `t_arch03` queued behind it and run the authoritative full `./verify` only after all three
-  architecture tickets integrate.
+- Commit the clean `t_arch02` integration slice, then implement and review `t_arch03`. Run the
+  authoritative full `./verify` only after all three architecture tickets integrate.
 
 ## Completed work cycle (2026-07-10): Chief external-work intake
 

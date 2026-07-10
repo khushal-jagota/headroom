@@ -23,6 +23,7 @@ from planner.core.server import create_app
 from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.shared_gateway import SharedGateway
 from planner.runtime.employee_step_runner import EmployeeStepRunner
+from planner.runtime.readiness_doorbell import NoOpReadinessDoorbell
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, FieldName, TicketState
 from planner.tickets.data import (
@@ -35,6 +36,14 @@ from planner.worker_context import data as worker_context_data
 from planner.worker_context.service import SqliteWorkerContextService
 
 _AGENT = {"X-Plan-Actor": "agent"}
+
+
+class _RecordingDoorbell:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def ring(self) -> None:
+        self.calls += 1
 
 
 def _wait_until(predicate, timeout: float = 2.0) -> bool:
@@ -53,6 +62,7 @@ def _install_real_runner(
     *,
     hermes_python: str = sys.executable,
     worker_context: SqliteWorkerContextService | None = None,
+    doorbell: _RecordingDoorbell | None = None,
 ) -> tuple[EmployeeStepRunner, SharedGateway]:
     gateway = SharedGateway(
         hermes_python=hermes_python,
@@ -66,10 +76,10 @@ def _install_real_runner(
         str(db_path),
         app.state.clock,
         gateway=gateway,
+        readiness_doorbell=doorbell or NoOpReadinessDoorbell(),
         boundary_hour=app.state.config.boundary_hour,
     )
     app.state.employee_step_runner = runner
-    app.state.ticket_readiness_loop = None
     return runner, gateway
 
 
@@ -230,7 +240,8 @@ def test_http_revision_uses_real_runner_without_readiness_loop_and_returns_befor
             ],
         }
     )
-    runner, gateway = _install_real_runner(app, db_path, fake)
+    doorbell = _RecordingDoorbell()
+    runner, gateway = _install_real_runner(app, db_path, fake, doorbell=doorbell)
     try:
         with TestClient(app) as client:
             response = client.post(
@@ -247,6 +258,7 @@ def test_http_revision_uses_real_runner_without_readiness_loop_and_returns_befor
             assert before_completion["ticket_status"] == "agent_running_step"
             assert before_completion["fields"]["plan"]["proposal"] is None
             assert approvals == []
+            assert doorbell.calls == 0
             claimed = [
                 event
                 for event in events
@@ -270,6 +282,7 @@ def test_http_revision_uses_real_runner_without_readiness_loop_and_returns_befor
         assert settled["state"] == "needs_plan"
         assert settled["ticket_status"] == "awaiting_approval"
         assert settled["fields"]["plan"]["proposal"]["body"] == "revised plan"
+        assert doorbell.calls == 1
         assert fake.sent_methods() == ["session.resume", "prompt.submit"]
         resume = next(frame for frame in fake.sent if frame["method"] == "session.resume")
         submit = next(frame for frame in fake.sent if frame["method"] == "prompt.submit")
@@ -406,7 +419,8 @@ def test_db_validation_after_real_reservation_cancels_without_prompt(
     finally:
         conn.close()
     fake = FakeGateway({})
-    runner, gateway = _install_real_runner(app, db_path, fake)
+    doorbell = _RecordingDoorbell()
+    runner, gateway = _install_real_runner(app, db_path, fake, doorbell=doorbell)
     before = _durable_snapshot(db_path, tid)
     try:
         with TestClient(app) as client:
@@ -419,6 +433,7 @@ def test_db_validation_after_real_reservation_cancels_without_prompt(
         assert runner.wait_idle(10.0)
         assert fake.sent_methods() == []
         assert _durable_snapshot(db_path, tid) == before
+        assert doorbell.calls == 0
     finally:
         gateway.shutdown()
 
@@ -445,7 +460,8 @@ def test_running_human_chat_turn_rejects_revision_before_ticket_mutation(
     finally:
         conn.close()
     fake = FakeGateway({})
-    runner, gateway = _install_real_runner(app, db_path, fake)
+    doorbell = _RecordingDoorbell()
+    runner, gateway = _install_real_runner(app, db_path, fake, doorbell=doorbell)
     before = _durable_snapshot(db_path, tid)
     try:
         with TestClient(app) as client:
@@ -458,6 +474,7 @@ def test_running_human_chat_turn_rejects_revision_before_ticket_mutation(
         assert runner.wait_idle(10.0)
         assert fake.sent_methods() == []
         assert _durable_snapshot(db_path, tid) == before
+        assert doorbell.calls == 0
     finally:
         gateway.shutdown()
 
@@ -469,7 +486,8 @@ def test_post_commit_worker_turn_collision_errors_claim_without_submitting(
     app, db_path = _make_app(tmp_path)
     tid = _ticket_with_pending_plan(db_path)
     fake = FakeGateway({})
-    runner, gateway = _install_real_runner(app, db_path, fake)
+    doorbell = _RecordingDoorbell()
+    runner, gateway = _install_real_runner(app, db_path, fake, doorbell=doorbell)
     original_start = chat_service.start_worker_turn
 
     def collide_with_human_turn(
@@ -514,6 +532,7 @@ def test_post_commit_worker_turn_collision_errors_claim_without_submitting(
         assert [(row["role"], row["text"]) for row in messages] == [
             ("human", "Human turn won the race.")
         ]
+        assert doorbell.calls == 1
     finally:
         gateway.shutdown()
 
@@ -563,11 +582,13 @@ def test_stale_revision_session_never_remints_and_settles_ticket_errored(
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
+    doorbell = _RecordingDoorbell()
     runner, gateway = _install_real_runner(
         app,
         db_path,
         fake,
         worker_context=SqliteWorkerContextService(conn_factory),
+        doorbell=doorbell,
     )
     try:
         with TestClient(app) as client:
@@ -603,6 +624,7 @@ def test_stale_revision_session_never_remints_and_settles_ticket_errored(
         assert turn is not None and turn["status"] == "errored"
         assert [(row["context_key"], row["revision"]) for row in pending] == pending_before
         assert session_events_after == session_events_before
+        assert doorbell.calls == 1
     finally:
         gateway.shutdown()
 

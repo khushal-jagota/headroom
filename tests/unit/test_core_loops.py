@@ -18,6 +18,7 @@ from planner.core.server import create_app
 from planner.minds import config as minds_config
 from planner.minds.fake import FakeGateway
 from planner.minds.shared_gateway import SharedGateway
+from planner.runtime.readiness_doorbell import LoopReadinessDoorbell, NoOpReadinessDoorbell
 
 
 def test_dispatch_disabled_keeps_employee_runner_without_acquiring_polling_lock(
@@ -47,6 +48,8 @@ def test_dispatch_disabled_keeps_employee_runner_without_acquiring_polling_lock(
     try:
         assert handle.employee_step_runner is not None
         assert handle.ticket_readiness_loop is None
+        assert isinstance(handle.readiness_doorbell, NoOpReadinessDoorbell)
+        assert handle.employee_step_runner._readiness_doorbell is handle.readiness_doorbell
         assert not lock_path.exists()
     finally:
         asyncio.run(handle.stop())
@@ -66,6 +69,11 @@ def test_polling_lock_owned_elsewhere_keeps_employee_runner(
     )
     monkeypatch.setattr(loops, "ensure_machine_lock", lambda _path: False)
 
+    def fail_release(path: str) -> None:
+        raise AssertionError(f"lock loser must not release another process's lock: {path}")
+
+    monkeypatch.setattr(loops, "release_machine_lock", fail_release)
+
     handle = loops.start_background_loops(
         config,
         fake_clock,
@@ -74,6 +82,8 @@ def test_polling_lock_owned_elsewhere_keeps_employee_runner(
     try:
         assert handle.employee_step_runner is not None
         assert handle.ticket_readiness_loop is None
+        assert isinstance(handle.readiness_doorbell, NoOpReadinessDoorbell)
+        assert handle.employee_step_runner._readiness_doorbell is handle.readiness_doorbell
     finally:
         asyncio.run(handle.stop())
 
@@ -97,10 +107,11 @@ def test_lock_winner_composes_readiness_loop_with_employee_runner(
         def __init__(self, _db_path, _clock, runner, **_kwargs) -> None:
             self.runner = runner
             self.started: list[int] = []
+            self.wakes = 0
             constructed.append(self)
 
-        def poke(self, _key=None) -> None:
-            return None
+        def wake(self) -> None:
+            self.wakes += 1
 
         def start(self, interval: int) -> None:
             self.started.append(interval)
@@ -121,6 +132,9 @@ def test_lock_winner_composes_readiness_loop_with_employee_runner(
         assert handle.ticket_readiness_loop is constructed[0]
         assert constructed[0].runner is handle.employee_step_runner
         assert constructed[0].started == [config.tick_seconds]
+        assert handle.employee_step_runner._readiness_doorbell is handle.readiness_doorbell
+        handle.readiness_doorbell.ring()
+        assert constructed[0].wakes == 1
     finally:
         asyncio.run(handle.stop())
     assert released == [config.dispatcher_lock_path]
@@ -165,6 +179,7 @@ def test_readiness_loop_start_failure_releases_lock_but_keeps_runner(
     try:
         assert handle.employee_step_runner is not None
         assert handle.ticket_readiness_loop is None
+        assert isinstance(handle.readiness_doorbell, NoOpReadinessDoorbell)
         assert released == [config.dispatcher_lock_path]
         handoff = handle.employee_step_runner.reserve_revision(
             "direct-revision-ticket", "Revise this result."
@@ -176,6 +191,66 @@ def test_readiness_loop_start_failure_releases_lock_but_keeps_runner(
         asyncio.run(handle.stop())
         gateway.shutdown()
     assert released == [config.dispatcher_lock_path]
+
+
+def test_partial_loop_start_failure_stops_loop_and_rebuilds_runner_with_noop(
+    tmp_path: Path,
+    fake_clock: TestClock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_config(
+        path=None,
+        env={
+            "PLAN_DB_PATH": str(tmp_path / "planning.db"),
+            "PLAN_DISPATCHER_LOCK_PATH": str(tmp_path / "dispatcher.lock"),
+        },
+    )
+    runners: list[Any] = []
+    stopped: list[str] = []
+    released: list[str] = []
+
+    class RecordingRunner:
+        def __init__(self, *_args, readiness_doorbell, **_kwargs) -> None:
+            self.readiness_doorbell = readiness_doorbell
+            runners.append(self)
+
+        def stop(self) -> None:
+            stopped.append(f"runner-{runners.index(self)}")
+
+    class PartiallyStartedLoop:
+        def __init__(self, *_args, **_kwargs) -> None:
+            return None
+
+        def wake(self) -> None:
+            return None
+
+        def start(self, _interval: int) -> None:
+            raise RuntimeError("start failed after construction")
+
+        def stop(self) -> None:
+            stopped.append("loop")
+
+    monkeypatch.setattr(loops, "ensure_machine_lock", lambda _path: True)
+    monkeypatch.setattr(loops, "release_machine_lock", released.append)
+    monkeypatch.setattr(loops, "EmployeeStepRunner", RecordingRunner)
+    monkeypatch.setattr(loops, "TicketReadinessLoop", PartiallyStartedLoop)
+
+    handle = loops.start_background_loops(
+        config,
+        fake_clock,
+        shared_gateway=cast(SharedGateway, object()),
+    )
+    try:
+        assert len(runners) == 2
+        assert isinstance(runners[0].readiness_doorbell, LoopReadinessDoorbell)
+        assert handle.employee_step_runner is runners[1]
+        assert handle.ticket_readiness_loop is None
+        assert isinstance(handle.readiness_doorbell, NoOpReadinessDoorbell)
+        assert runners[1].readiness_doorbell is handle.readiness_doorbell
+        assert stopped == ["loop", "runner-0"]
+        assert released == [config.dispatcher_lock_path]
+    finally:
+        asyncio.run(handle.stop())
 
 
 def test_background_stop_orders_loop_runner_then_lock(
@@ -230,6 +305,7 @@ def test_server_lifespan_drains_runtime_before_shutting_down_gateways(
     class RecordingRuntime:
         employee_step_runner = object()
         ticket_readiness_loop = None
+        readiness_doorbell = NoOpReadinessDoorbell()
 
         async def stop(self) -> None:
             order.append("runtime.stop")
@@ -266,5 +342,6 @@ def test_server_lifespan_drains_runtime_before_shutting_down_gateways(
 
     with TestClient(app):
         assert app.state.employee_step_runner is runtime.employee_step_runner
+        assert app.state.readiness_doorbell is runtime.readiness_doorbell
 
     assert order == ["runtime.stop", "worker.shutdown", "chief.shutdown"]

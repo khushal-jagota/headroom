@@ -47,7 +47,9 @@ not continue automatically.
 
 The create or reconciliation writer commits all fields, note, recap, state, scope,
 status normalization, and existing event signals together. A validation or concurrency
-failure leaves both the ticket and its event history unchanged.
+failure leaves both the ticket and its event history unchanged. The surrounding action
+rings readiness after a new imported Ticket or a real reconciliation change. An exact
+replay does not ring; normalizing `errored` back to `empty` is a real change and does.
 
 Standalone tickets may point at a project by `project_id`. API responses also include
 `project`, the display name, for compatibility. A ticket under a sprint item does not
@@ -127,6 +129,9 @@ exception to normal append-only event history. The separate stored Hermes sessio
 outside Panels' record and is not erased; once the ticket row is gone, Panels no
 longer has a route that resolves or resumes it.
 
+After the whole deletion transaction commits, the Ticket action rings readiness once.
+It does not ring once per removed day or link.
+
 _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 `src/planner/cli/main.py`.
 
@@ -144,8 +149,8 @@ _Code paths:_ `src/planner/core/events.py`.
 ## Handoffs
 
 - **The employee runtime** (`employee-runtime.md`) — the worker that files the
-  proposals and does the drafting; the runtime pokes itself when an approval lands so
-  the ticket advances at once.
+  proposals and does the drafting; committed readiness-changing actions ring its
+  best-effort doorbell so the ticket can advance at once.
 - **The command-line tool** (`cli.md`) — how a worker files proposals, recaps, and
   notes; it deliberately holds no accept/approve/grant verb.
 - **The front end** (`frontend.md`) — the Ticket, Review, and Board screens that

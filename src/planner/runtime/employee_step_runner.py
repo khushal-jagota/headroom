@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
-from collections.abc import Callable
 
 from planner.chat import service as chat_service
 from planner.core.clock import Clock
@@ -19,6 +18,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic import dates
 from planner.minds.shared_gateway import SharedGateway, SharedGatewayBusy
 from planner.runtime import readiness
+from planner.runtime.readiness_doorbell import ReadinessDoorbell
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import Ticket, TicketStatus
 from planner.tickets.logic import machine
@@ -85,15 +85,16 @@ class EmployeeStepRunner:
         clock: Clock,
         *,
         gateway: SharedGateway,
+        readiness_doorbell: ReadinessDoorbell,
         boundary_hour: int,
         busy_timeout_ms: int = 5000,
     ) -> None:
         self._db_path = db_path
         self._clock = clock
         self._gateway = gateway
+        self._readiness_doorbell = readiness_doorbell
         self._boundary_hour = boundary_hour
         self._busy_timeout_ms = busy_timeout_ms
-        self._idle_cb: Callable[[str], None] | None = None
         self._accepting = True
         self._active = 0
         self._active_cond = threading.Condition()
@@ -145,10 +146,6 @@ class EmployeeStepRunner:
         handoff._wait_until_parked()
         return handoff
 
-    def set_idle_callback(self, callback: Callable[[str], None]) -> None:
-        """Temporarily wake readiness discovery after a step settles."""
-        self._idle_cb = callback
-
     def wait_idle(self, timeout: float | None = None) -> bool:
         """Wait for every accepted automatic run or revision reservation."""
         with self._active_cond:
@@ -167,10 +164,11 @@ class EmployeeStepRunner:
             return False
 
     def _run_ready_thread(self, ticket_id: str) -> None:
+        settled = False
         try:
-            self._run(ticket_id, revision_guidance=None)
+            settled = self._run(ticket_id, revision_guidance=None)
         finally:
-            self._finish_active(ticket_id)
+            self._finish_active(settled)
 
     def _run_reserved_revision(
         self,
@@ -179,21 +177,21 @@ class EmployeeStepRunner:
         handoff: _EmployeeRevisionHandoff,
     ) -> None:
         handoff._mark_parked()
+        settled = False
         try:
             if handoff._wait_for_decision():
-                self._run(ticket_id, revision_guidance=guidance)
+                settled = self._run(ticket_id, revision_guidance=guidance)
         finally:
-            self._finish_active(ticket_id)
+            self._finish_active(settled)
 
-    def _finish_active(self, ticket_id: str) -> None:
+    def _finish_active(self, settled: bool) -> None:
         with self._active_cond:
             self._active -= 1
+            if settled:
+                self._readiness_doorbell.ring()
             self._active_cond.notify_all()
-        callback = self._idle_cb
-        if callback is not None:
-            callback(ticket_id)
 
-    def _run(self, ticket_id: str, *, revision_guidance: str | None) -> None:
+    def _run(self, ticket_id: str, *, revision_guidance: str | None) -> bool:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
             now = self._clock.now_unix()
@@ -222,14 +220,14 @@ class EmployeeStepRunner:
                         "employee runner skipped a no-longer-ready Ticket (ticket=%s)",
                         ticket_id,
                     )
-                    return
+                    return False
                 prompt = _next_step_prompt(claimed)
                 show_prompt_in_chat = True
                 require_existing_session = False
             else:
                 claimed = tickets_data.read_ticket(conn, ticket_id)
                 if claimed.ticket_status is not TicketStatus.agent_running_step:
-                    return
+                    return False
                 if claimed.chat_session_key is None:
                     tickets_data.mark_run_errored_if_still_running_step(
                         conn,
@@ -237,7 +235,7 @@ class EmployeeStepRunner:
                         error="claimed employee revision has no existing session",
                         now=now,
                     )
-                    return
+                    return True
                 prompt = f"{_REVISION_GUIDANCE_PREFIX}\n\n{revision_guidance}"
                 show_prompt_in_chat = False
                 require_existing_session = True
@@ -258,7 +256,7 @@ class EmployeeStepRunner:
                         error="employee worker turn collided with an active chat turn",
                         now=self._clock.now_unix(),
                     )
-                    return
+                    return True
                 raise
 
             def persist_session_key(session_key: str) -> None:
@@ -350,7 +348,7 @@ class EmployeeStepRunner:
                     self._clock.now_unix(),
                 )
                 finish_running_step(exc.session_key or current_session_key)
-                return
+                return True
             except _WorkerSessionClaimLost:
                 _log.info(
                     "employee runner skipped an unowned worker session (ticket=%s)",
@@ -364,7 +362,7 @@ class EmployeeStepRunner:
                     self._clock.now_unix(),
                 )
                 finish_running_step(current_session_key)
-                return
+                return True
             except Exception as exc:  # never leave the Ticket at agent_running_step
                 _log.exception("employee step crashed (ticket=%s)", ticket_id)
                 error = f"employee step crashed: {exc}"
@@ -376,7 +374,7 @@ class EmployeeStepRunner:
                     self._clock.now_unix(),
                 )
                 mark_errored(error, current_session_key)
-                return
+                return True
 
             current_session_key = result.session_key or current_session_key
             if result.status == "complete":
@@ -409,5 +407,6 @@ class EmployeeStepRunner:
                     self._clock.now_unix(),
                 )
                 mark_errored(error, current_session_key)
+            return True
         finally:
             conn.close()

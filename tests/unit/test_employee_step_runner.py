@@ -25,6 +25,7 @@ from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.shared_gateway import SharedGateway
 from planner.runtime import readiness
 from planner.runtime.employee_step_runner import EmployeeStepRunner
+from planner.runtime.readiness_doorbell import NoOpReadinessDoorbell
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
@@ -36,6 +37,14 @@ LIVE_SID = "live-sid"
 STORED_KEY = "stored-key-1"
 ROLE = "planning-worker"
 BOUNDARY_HOUR = 5
+
+
+class _RecordingDoorbell:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def ring(self) -> None:
+        self.calls += 1
 
 
 def _create_reply(sid: str = LIVE_SID, key: str = STORED_KEY) -> Reply:
@@ -164,7 +173,11 @@ def _status_events(db_path: str, ticket_id: str) -> list[dict[str, Any]]:
     ]
 
 
-def _runner(db_path: str, fake: FakeGateway) -> EmployeeStepRunner:
+def _runner(
+    db_path: str,
+    fake: FakeGateway,
+    doorbell: _RecordingDoorbell | None = None,
+) -> EmployeeStepRunner:
     gateway = SharedGateway(
         hermes_python=HERMES_PY,
         home=HOME,
@@ -176,6 +189,7 @@ def _runner(db_path: str, fake: FakeGateway) -> EmployeeStepRunner:
         db_path,
         RealClock(),
         gateway=gateway,
+        readiness_doorbell=doorbell or NoOpReadinessDoorbell(),
         boundary_hour=BOUNDARY_HOUR,
     )
 
@@ -237,7 +251,8 @@ def test_complete_with_no_proposal_is_empty_not_errored(tmp_path: Path) -> None:
     tid = _new_ticket(db)
 
     fake = FakeGateway(_create_script(_complete_ev()))
-    runner = _runner(db, fake)
+    doorbell = _RecordingDoorbell()
+    runner = _runner(db, fake, doorbell)
     runner.run_ready_step(tid)
     assert runner.wait_idle(10.0)
 
@@ -248,6 +263,7 @@ def test_complete_with_no_proposal_is_empty_not_errored(tmp_path: Path) -> None:
         "agent_running_step",
         "empty",
     ]
+    assert doorbell.calls == 1
 
 
 def test_worker_step_prompt_and_reply_are_visible_in_chat_history(tmp_path: Path) -> None:
@@ -288,6 +304,7 @@ def test_worker_step_prompt_and_reply_are_visible_in_chat_history(tmp_path: Path
         db,
         RealClock(),
         gateway=gateway,
+        readiness_doorbell=NoOpReadinessDoorbell(),
         boundary_hour=BOUNDARY_HOUR,
     )
     try:
@@ -331,6 +348,7 @@ def test_claimed_rejection_turn_revises_result_in_same_session_without_chat_copy
         db,
         RealClock(),
         gateway=gateway,
+        readiness_doorbell=NoOpReadinessDoorbell(),
         boundary_hour=BOUNDARY_HOUR,
     )
     try:
@@ -435,8 +453,13 @@ def test_worker_does_not_prompt_if_session_key_claim_is_lost(tmp_path: Path) -> 
             return RunResult("complete", "ok", None, STORED_KEY, None)
 
     gateway = ClaimLostGateway()
+    doorbell = _RecordingDoorbell()
     runner = EmployeeStepRunner(
-        db, RealClock(), gateway=gateway, boundary_hour=BOUNDARY_HOUR  # type: ignore[arg-type]
+        db,
+        RealClock(),
+        gateway=gateway,  # type: ignore[arg-type]
+        readiness_doorbell=doorbell,
+        boundary_hour=BOUNDARY_HOUR,
     )
     runner.run_ready_step(tid)
     assert runner.wait_idle(10.0)
@@ -445,6 +468,7 @@ def test_worker_does_not_prompt_if_session_key_claim_is_lost(tmp_path: Path) -> 
     assert gateway.prompted is False
     assert ticket.ticket_status == TicketStatus.user_takeover
     assert ticket.chat_session_key is None
+    assert doorbell.calls == 1
 
 
 def test_worker_rechecks_existing_session_key_ownership_before_prompt(tmp_path: Path) -> None:
@@ -475,8 +499,13 @@ def test_worker_rechecks_existing_session_key_ownership_before_prompt(tmp_path: 
             return RunResult("complete", "ok", None, STORED_KEY, None)
 
     gateway = ClaimLostGateway()
+    doorbell = _RecordingDoorbell()
     runner = EmployeeStepRunner(
-        db, RealClock(), gateway=gateway, boundary_hour=BOUNDARY_HOUR  # type: ignore[arg-type]
+        db,
+        RealClock(),
+        gateway=gateway,  # type: ignore[arg-type]
+        readiness_doorbell=doorbell,
+        boundary_hour=BOUNDARY_HOUR,
     )
     runner.run_ready_step(tid)
     assert runner.wait_idle(10.0)
@@ -485,6 +514,7 @@ def test_worker_rechecks_existing_session_key_ownership_before_prompt(tmp_path: 
     assert gateway.prompted is False
     assert ticket.ticket_status == TicketStatus.user_takeover
     assert ticket.chat_session_key == STORED_KEY
+    assert doorbell.calls == 1
 
 
 def test_worker_error_does_not_overwrite_lost_ownership(tmp_path: Path) -> None:
@@ -510,8 +540,13 @@ def test_worker_error_does_not_overwrite_lost_ownership(tmp_path: Path) -> None:
             return RunResult("errored", "", None, STORED_KEY, "boom")
 
     gateway = ErrorAfterTakeoverGateway()
+    doorbell = _RecordingDoorbell()
     runner = EmployeeStepRunner(
-        db, RealClock(), gateway=gateway, boundary_hour=BOUNDARY_HOUR  # type: ignore[arg-type]
+        db,
+        RealClock(),
+        gateway=gateway,  # type: ignore[arg-type]
+        readiness_doorbell=doorbell,
+        boundary_hour=BOUNDARY_HOUR,
     )
     runner.run_ready_step(tid)
     assert runner.wait_idle(10.0)
@@ -523,6 +558,7 @@ def test_worker_error_does_not_overwrite_lost_ownership(tmp_path: Path) -> None:
         "agent_running_step",
         "user_takeover",
     ]
+    assert doorbell.calls == 1
 
 
 def test_gateway_error_event_errors(tmp_path: Path) -> None:
@@ -530,7 +566,8 @@ def test_gateway_error_event_errors(tmp_path: Path) -> None:
     tid = _new_ticket(db)
 
     fake = FakeGateway(_create_script(ev("error", LIVE_SID, {"message": "boom"})))
-    runner = _runner(db, fake)
+    doorbell = _RecordingDoorbell()
+    runner = _runner(db, fake, doorbell)
     runner.run_ready_step(tid)
     assert runner.wait_idle(10.0)
 
@@ -539,6 +576,20 @@ def test_gateway_error_event_errors(tmp_path: Path) -> None:
     evs = _status_events(db, tid)
     assert evs[-1]["ticket_status"] == "errored"
     assert evs[-1]["error"] == "boom"
+    assert doorbell.calls == 1
+
+
+def test_interrupted_gateway_result_rings_after_errored_settlement(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+    doorbell = _RecordingDoorbell()
+    runner = _runner(db, FakeGateway(_create_script(_complete_ev(status="interrupted"))), doorbell)
+
+    runner.run_ready_step(tid)
+    assert runner.wait_idle(10.0)
+
+    assert _read(db, tid).ticket_status is TicketStatus.errored
+    assert doorbell.calls == 1
 
 
 def test_gateway_busy_4009_is_skip_not_error(tmp_path: Path) -> None:
@@ -548,7 +599,8 @@ def test_gateway_busy_4009_is_skip_not_error(tmp_path: Path) -> None:
     fake = FakeGateway(
         {"session.create": [_create_reply()], "prompt.submit": [Reply(error=(4009, "busy"))]}
     )
-    runner = _runner(db, fake)
+    doorbell = _RecordingDoorbell()
+    runner = _runner(db, fake, doorbell)
     runner.run_ready_step(tid)
     assert runner.wait_idle(10.0)
 
@@ -559,6 +611,7 @@ def test_gateway_busy_4009_is_skip_not_error(tmp_path: Path) -> None:
         "agent_running_step",
         "empty",
     ]
+    assert doorbell.calls == 1
 
 
 def test_concurrent_same_ticket_runs_only_one_prompt(tmp_path: Path) -> None:
@@ -575,16 +628,20 @@ def test_concurrent_same_ticket_runs_only_one_prompt(tmp_path: Path) -> None:
             super().send(line)
 
     fake = _BlockingFake(_create_script(_complete_ev()))
-    runner = _runner(db, fake)
+    doorbell = _RecordingDoorbell()
+    runner = _runner(db, fake, doorbell)
     runner.run_ready_step(tid)
     assert reached.wait(10.0)
+    assert doorbell.calls == 0  # claiming is not a settlement
     runner.run_ready_step(tid)
     time.sleep(0.2)
+    assert doorbell.calls == 0  # the losing duplicate claim does not ring
     release.set()
     assert runner.wait_idle(10.0)
 
     assert fake.sent_methods().count("prompt.submit") == 1
     assert _read(db, tid).ticket_status == TicketStatus.empty
+    assert doorbell.calls == 1
 
 
 def test_existing_key_is_resumed_and_rotated_tip_persisted(tmp_path: Path) -> None:
@@ -619,10 +676,12 @@ def test_spawn_crash_errors_never_stuck_running(tmp_path: Path) -> None:
         spawn=_boom,
         base_env={},
     )
+    doorbell = _RecordingDoorbell()
     runner = EmployeeStepRunner(
         db,
         RealClock(),
         gateway=gateway,
+        readiness_doorbell=doorbell,
         boundary_hour=BOUNDARY_HOUR,
     )
     runner.run_ready_step(tid)
@@ -633,6 +692,7 @@ def test_spawn_crash_errors_never_stuck_running(tmp_path: Path) -> None:
         "agent_running_step",
         "errored",
     ]
+    assert doorbell.calls == 1
 
 
 def test_runner_rechecks_today_membership_before_claim(tmp_path: Path) -> None:
@@ -646,7 +706,8 @@ def test_runner_rechecks_today_membership_before_claim(tmp_path: Path) -> None:
         conn.close()
 
     fake = FakeGateway({})
-    runner = _runner(db, fake)
+    doorbell = _RecordingDoorbell()
+    runner = _runner(db, fake, doorbell)
     runner.run_ready_step(tid)
     assert runner.wait_idle(10.0)
 
@@ -655,6 +716,7 @@ def test_runner_rechecks_today_membership_before_claim(tmp_path: Path) -> None:
     assert ticket.ticket_status == TicketStatus.empty
     assert fake.sent_methods() == []
     assert _status_events(db, tid) == []
+    assert doorbell.calls == 0
 
 
 def test_runner_rechecks_readiness_predicate_before_claim(tmp_path: Path) -> None:
@@ -681,7 +743,8 @@ def test_runner_rechecks_readiness_predicate_before_claim(tmp_path: Path) -> Non
         conn.close()
 
     fake = FakeGateway({})
-    runner = _runner(db, fake)
+    doorbell = _RecordingDoorbell()
+    runner = _runner(db, fake, doorbell)
     runner.run_ready_step(tid)
     assert runner.wait_idle(10.0)
 
@@ -690,13 +753,15 @@ def test_runner_rechecks_readiness_predicate_before_claim(tmp_path: Path) -> Non
     assert ticket.ticket_status == TicketStatus.empty
     assert fake.sent_methods() == []
     assert _status_events(db, tid) == []
+    assert doorbell.calls == 0
 
 
 def test_cancelled_revision_reservation_drains_without_submitting(tmp_path: Path) -> None:
     db = _db(tmp_path)
     tid = _new_ticket(db)
     fake = FakeGateway({})
-    runner = _runner(db, fake)
+    doorbell = _RecordingDoorbell()
+    runner = _runner(db, fake, doorbell)
 
     handoff = runner.reserve_revision(tid, "revise it")
     handoff.cancel()
@@ -704,6 +769,7 @@ def test_cancelled_revision_reservation_drains_without_submitting(tmp_path: Path
     assert runner.wait_idle(10.0)
     assert fake.sent_methods() == []
     assert _read(db, tid).ticket_status is TicketStatus.empty
+    assert doorbell.calls == 0
 
 
 def test_stop_rejects_new_reservations_and_drains_accepted_parked_work(
@@ -751,6 +817,7 @@ def test_stop_waits_for_released_revision_run_and_rejects_new_work(
         db,
         RealClock(),
         gateway=gateway,
+        readiness_doorbell=NoOpReadinessDoorbell(),
         boundary_hour=BOUNDARY_HOUR,
     )
     stop_thread: threading.Thread | None = None
