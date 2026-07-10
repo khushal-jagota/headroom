@@ -461,13 +461,6 @@ textarea {
   color: var(--text-muted);
 }
 
-
-.chip--ticket-status[data-value="awaiting_approval"] {
-  background: var(--surface-overlay);
-  color: var(--text-strong);
-  border-color: var(--text-muted);
-}
-
 .chip--project {
   background: transparent;
   color: var(--text-muted);
@@ -617,57 +610,11 @@ button.list-row:hover .list-row-title {
 
 /* --- Quiet line (empty states, placeholders, unknown route) -------------- */
 
+/* a quiet line is the system speaking (empty/loading states) — serif voice */
 .quiet-line {
   color: var(--text-muted);
-  font-size: var(--type-sm);
-}
-
-/* --- Sprint + Backlog screens (T17) -------------------------------------- */
-
-.screen-title {
-  font-size: var(--type-xl);
-  color: var(--text-strong);
-  margin: 0 0 var(--space-2);
-}
-
-.list-stack {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.create-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.create-form-field {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.create-form-label {
-  font-size: var(--type-xs);
-  color: var(--text-muted);
-}
-
-.form-control {
-  width: 100%;
-  background: var(--surface-sunken);
-  color: var(--text-default);
-  border: var(--border-hairline) solid var(--text-faint);
-  border-radius: var(--radius-sm);
-  padding: var(--space-2) var(--space-3);
-  font-family: var(--font-ui);
-  font-size: var(--type-sm);
-  line-height: 1.5;
-}
-
-.form-control:focus {
-  border-color: var(--accent-bright);
-  outline: none;
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-sm);
 }
 
 /* --- Day = Overview (redesign) ------------------------------------------- */
@@ -701,9 +648,11 @@ button.list-row:hover .list-row-title {
 
 [data-screen="day"] .focus {
   margin-top: var(--space-4);
-  font-size: var(--type-xl);
-  font-weight: 600;
-  line-height: 1.4;
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-hero);
+  font-weight: 500;
+  letter-spacing: -0.008em;
+  line-height: 1.32;
   color: var(--text-strong);
 }
 
@@ -721,8 +670,9 @@ button.list-row:hover .list-row-title {
 }
 
 [data-screen="day"] .take .body {
-  font-size: var(--type-md);
-  line-height: 1.66;
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-lg);
+  line-height: 1.7;
   color: var(--text-default);
 }
 
@@ -735,8 +685,9 @@ button.list-row:hover .list-row-title {
 }
 
 [data-screen="day"] .watch .body {
-  font-size: var(--type-md);
-  line-height: 1.62;
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-md);
+  line-height: 1.66;
   color: var(--text-muted);
 }
 
@@ -745,8 +696,9 @@ button.list-row:hover .list-row-title {
 }
 
 [data-screen="day"] .lands .body {
-  font-size: var(--type-md);
-  line-height: 1.62;
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-md);
+  line-height: 1.66;
   color: var(--text-default);
 }
 
@@ -1666,12 +1618,6 @@ select {
 
 /* --- Ticket screen (T16) ------------------------------------------------- */
 
-.ticket-header-chips {
-  display: flex;
-  gap: var(--space-1);
-  flex-wrap: wrap;
-}
-
 .ticket-field,
 .ticket-recap,
 .ticket-user-note {
@@ -2025,13 +1971,6 @@ select {
 .approval-control-group {
   justify-content: flex-end;
   margin-left: auto;
-}
-
-.review-status-change {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
 }
 
 /* --- The ask: the one rationed depth surface (t_ui02 + t_ui03) ------------- */
@@ -2847,19 +2786,20 @@ select {
 
 [data-screen="backlog"] .screen-header {
   padding: var(--space-5) var(--space-4) var(--space-4);
-  border-bottom: var(--border-hairline) solid var(--border-color);
 }
 
 [data-screen="backlog"] .col {
   padding: 0 var(--space-4) 128px;  /* the read's generous tail (matches Day) */
 }
 
-/* header title + a static count pill (reusing the shared .pill, neutralized) */
+/* header title (serif — the screen speaking) + a static count pill */
 [data-screen="backlog"] .screen-header-title,
 [data-screen="ideas"] .screen-header-title {
-  font-size: var(--type-lg);
-  font-weight: 600;
-  line-height: 1.3;
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-display);
+  font-weight: 500;
+  letter-spacing: -0.008em;
+  line-height: 1.26;
   color: var(--text-strong);
 }
 
@@ -2911,42 +2851,24 @@ select {
   transform: rotate(45deg);       /* + becomes × when open */
 }
 
+/* the make form is the ideas capture idiom: unboxed serif inputs, then one foot row
+ * of controls (project · priority · due · commit). */
 [data-screen="backlog"] .form {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-1) 0 var(--space-5);
+  padding: var(--space-3) 0 var(--space-6);
 }
 
-.form-label {
-  margin-bottom: var(--space-2);
-  font-size: var(--type-xs);
-  font-weight: 600;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-  color: var(--text-faintest);
-}
-
-.form-label-opt {
-  font-weight: 400;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--text-faintest);
-}
-
-[data-screen="backlog"] .two {
+[data-screen="backlog"] .form .foot {
   display: flex;
-  gap: var(--space-6);
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
   flex-wrap: wrap;
 }
 
-[data-screen="backlog"] .two > div {
+[data-screen="backlog"] .form .foot .spacer {
   flex: 1;
-  min-width: 150px;               /* wrap threshold (a layout value) */
-}
-
-[data-screen="backlog"] [data-commit] {
-  align-self: flex-start;
 }
 
 /* priority group — a whisper label + rhythm (the Sprint status-group treatment) */
@@ -3011,7 +2933,6 @@ select {
 
 [data-screen="ideas"] .screen-header {
   padding: var(--space-5) var(--space-4) var(--space-4);
-  border-bottom: var(--border-hairline) solid var(--border-color);
 }
 
 [data-screen="ideas"] .col {
@@ -3025,15 +2946,17 @@ select {
 }
 
 [data-screen="ideas"] .capture .title-in {
-  font-size: var(--type-lg);
-  font-weight: 600;
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-xl);
+  font-weight: 500;
   line-height: 1.4;
   color: var(--text-strong);
 }
 
 [data-screen="ideas"] .capture .detail-in {
-  margin-top: var(--space-4);
-  font-size: var(--type-md);
+  margin-top: var(--space-3);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-sm);
   line-height: 1.66;
   color: var(--text-muted);
 }
@@ -3125,22 +3048,14 @@ select {
   color: var(--text-strong);
 }
 
-[data-screen="ideas"] .when {
-  align-self: center;
-  min-width: 44px;                /* keeps the date column aligned */
-  text-align: right;
-  white-space: nowrap;
-  font-size: var(--type-xs);
-  color: var(--text-faintest);
-}
-
 [data-screen="ideas"] .chip {
   align-self: center;
 }
 
 [data-screen="ideas"] .disclosure--idea > .disclosure-body {
   padding: 0 0 var(--space-4) var(--space-6);
-  font-size: var(--type-md);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-sm);
   line-height: 1.66;
   color: var(--text-muted);
 }
@@ -3171,12 +3086,23 @@ select {
 }
 
 [data-screen="backlog"] .in.title-in {
-  font-size: var(--type-md);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-xl);
+  font-weight: 500;
   color: var(--text-strong);
 }
 
 [data-screen="backlog"] .in.detail-in {
-  font-size: var(--type-sm);
+  margin-top: var(--space-3);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-sm);
+  color: var(--text-muted);
+}
+
+/* the deadline is a fact, not prose — a small sans field in the foot row */
+[data-screen="backlog"] .in.due-in {
+  width: 170px;
+  font-size: var(--type-xs);
   color: var(--text-muted);
 }
 
@@ -3212,48 +3138,21 @@ select {
   background: var(--surface-overlay);
 }
 
-
-/* --- Review screen redesign ---------------------------------------------- */
-
-.proposed-recessed-block {
-  background: var(--surface-sunken);
-  border: 0;
+/* Commit — the one solid-amber action on the capture, the mockup's .commit. */
+[data-screen="backlog"] [data-commit].button,
+[data-screen="ideas"] [data-commit].button {
+  background: var(--accent-bright);
+  color: var(--accent-ink);
+  border-color: var(--accent-bright);
+  font-weight: 600;
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-md);
-  padding: var(--space-4) var(--space-5);
+  transition: background var(--motion-base) var(--motion-ease);
 }
 
-.proposed-recessed-block hr {
-  display: none;
+[data-screen="backlog"] [data-commit].button:hover:not(:disabled),
+[data-screen="ideas"] [data-commit].button:hover:not(:disabled) {
+  filter: brightness(1.08);
 }
 
-.proposed-recessed-block .approval-draft {
-  background: transparent;
-  padding: 0;
-  border: 0;
-  min-height: auto;
-}
 
-.proposed-recessed-block .approval-draft:focus {
-  outline: none;
-}
-
-.proposed-recessed-block .approval-actions {
-  margin-top: 0;
-  justify-content: space-between;
-}
-
-.review-status-proposal {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.review-status-arrow {
-  color: var(--text-faint);
-}
-
-.review-status-target {
-  color: var(--text-strong);
-  background: var(--accent-surface);
-}

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { markerLabel, ticketStatusLabel } from "../lib/ui";
+  import { markerLabel } from "../lib/ui";
 
   let {
     variant = "",
@@ -23,8 +23,6 @@
       out.push("chip--priority", `chip--${String(value).toLowerCase()}`);
     } else if (variant === "state") {
       out.push("chip--state");
-    } else if (variant === "ticket-status") {
-      out.push("chip--ticket-status");
     } else if (variant === "project") {
       out.push("chip--project");
     } else if (variant === "deadline") {
@@ -40,7 +38,6 @@
 
   let label = $derived.by(() => {
     if (variant && markerVariants.has(variant)) return markerLabel(variant);
-    if (variant === "ticket-status") return ticketStatusLabel(String(value || "empty"));
     if (value === null || value === undefined) return "";
     if (variant === "blocked-by") return String(value);
     return String(value).replace(/_/g, " ");
@@ -49,5 +46,5 @@
 
 <span
   class={classes}
-  data-value={variant === "state" || variant === "ticket-status" ? String(value) : undefined}
+  data-value={variant === "state" ? String(value) : undefined}
 >{#if keyLabel}<span class="k">{keyLabel}</span>{/if}{label}</span>

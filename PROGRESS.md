@@ -68,10 +68,14 @@ notes-source design finding (field notes are the pinned function, D92). Wave 4 (
 workspace) LANDED at e17d72e — Codex caught focus-visibility loss on the overlay-control
 pattern (fixed with :focus-within on the wrappers) and errored rows matching the needs-you
 emphasis (excluded); design review FAITHFUL 7/7; implementer's own catch recorded: controls
-restyled as text must keep a full-size actionable native input for Playwright. Wave 5 (t_ui05
-sprint restructure incl. the small sprints/views.py projection extension) dispatched. The
-screenshot seed now populates today's board AND a current sprint (items via
-sprint item create/add-ticket) so both surfaces render real content for design reviews. Design pass additions: embeds mockup previews.html rev 2 (D90/D91 — one
+restyled as text must keep a full-size actionable native input for Playwright. Wave 5 (t_ui05 sprint restructure) LANDED at b33df16 — Codex xhigh CLEAN (backend projection
+parity, routing, grouping, translations); design review's four treatment fixes applied (short
+dates via new shortMonthDayLabel — owner-ruled short month everywhere, docs whisper meta, phase
+weight, explicit serif on fval); implementer self-caught dropped-tickets-in-fraction +
+duplicate-catching assertions via its own plan review. Open caveat flagged for docs: sprint
+day-of-sprint label derives from the browser clock, not the server 05:00 planning boundary.
+The screenshot seed populates today's board AND a current sprint; SURFACES includes
+#/sprint/documents. Wave 6 (t_ui06 final: day/backlog/ideas + closeout sweep + docs) dispatched. Design pass additions: embeds mockup previews.html rev 2 (D90/D91 — one
 container + bar for every kind incl. images; downloads = bar only). FOLLOW-UPS QUEUED by the
 owner, not yet scoped: (1) embeds implementation (after mockup approval; overlaps preview CSS —
 slot between UI waves); (2) a PERF pass ("perf, that's a follow up now as well" — scope TBD with

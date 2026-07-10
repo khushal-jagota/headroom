@@ -11,9 +11,13 @@ look and written-text rendering stay centralized.
 One screen per part of the system:
 
 - **Day** — the day overview: focus, brief take, watchout, and what makes the day
-  land.
-- **Review** — the one-at-a-time approval walk. The approve button physically refuses
-  to work until "how far may the worker go next" has been answered, both halves.
+  land. Read top to bottom in the serif voice, flat, with no boxes.
+- **Review** — the one-at-a-time approval chamber: one centred decision with Skip and
+  Open-ticket top-right, a labelled recap, the ask surface, and a send-back row.
+  Keyboard shortcuts drive it (skip, open, approve) when the cursor is not in a text
+  field, and each decision fades in as it arrives. The approve button physically
+  refuses to work until "how far may the worker go next" has been answered, both
+  halves.
 - **Workspace** — today's tickets in a left rail backed by the board resource. The
   rail groups tickets by project, orders rows by recent ticket activity inside each
   project, shows one current-stage/status dot per ticket, filters visible rows by
@@ -25,12 +29,20 @@ One screen per part of the system:
   Workspace rail in place, and records the selection at `#/workspace/<ticket-id>`.
   That address can be loaded, refreshed, shared, or revisited with browser history;
   a missing ticket safely leaves the Chief of Staff view open.
-- **Ticket** — the whole story of one piece of work: the four blanks, the scope row,
-  live status markers, the `auto` run eligibility chip, chat, and a copy button that
-  produces a plain-text block for pasting anywhere. Its project picker is backed by
-  the shared `projects` resource.
-- **Sprint** — the Overview and Tracking tabs (see `sprints.md`).
-- **Backlog** and **Ideas** — the two catch surfaces (see `backlog-and-ideas.md`).
+- **Ticket** — the whole story of one piece of work: a serif title, a single facts
+  line (status, priority, due, project, sprint, take-over/copy), the leash written as
+  one sentence, the recap, then the spine of stages — the kickoff user note sits first
+  in that spine, collapsed. The one raised ask surface, live status markers, the
+  employee chat in serif alongside, and a copy button that produces a plain-text block
+  for pasting anywhere. Its project picker is backed by the shared `projects` resource.
+- **Sprint** — one tracking page that scrolls (name, a meta line, the bet, then the
+  work grouped by project with loose tickets as the same group), plus a separate
+  documents page for the kickoff/mid/review record (see `sprints.md`).
+- **Backlog** and **Ideas** — the two catch surfaces; both capture through the same
+  unboxed serif idiom (see `backlog-and-ideas.md`).
+
+The shell itself carries a presence readout — a small spinner and "N working" — from
+the running-agent count, alongside the amber Review badge.
 
 Each screen is a projection of a backend; the behaviour behind it is documented with
 that backend, not here. This doc owns the shell and the rendering rules the screens
@@ -100,7 +112,6 @@ hand-rolling the same shapes per screen. Each does one job:
   picker, and the approve/accept action, plus a read-only mode for dropped tickets.
 - **ResourceState** — the shared error / loading scaffold; shows an error line, a
   loading line, or the content. Data-empty states ("No ideas yet.") stay in the screens.
-- **FormField** — a labelled wrapper around a form control, with an optional "— optional".
 - **InlineEdit** — the one editable-markdown surface (notes, recaps, drafts).
 - **MarkdownBlock** — read-only rendering through the hardened markdown renderer.
 - **FilePreview** — the one file preview card/inline renderer (see the file-preview rule).
@@ -112,8 +123,15 @@ hand-rolling the same shapes per screen. Each does one job:
 
 Two small libraries back these: `labelize` in `web/src/lib/ui.ts` turns field/state
 names into readable labels, and `web/src/lib/dates.ts` holds the date formatting the
-Day and Ideas screens share. (The two visible native selects were left un-unified on
-purpose — they share almost nothing real; see `decisions.md`, D77.)
+Day and Sprint screens share — the short-month day label the redesign speaks in, plus
+the weekday name. (The two visible native selects were left un-unified on purpose —
+they share almost nothing real; see `decisions.md`, D77.)
+
+**The voice.** Every screen now speaks in the serif/sans split, amber-only accent, line
+diet, and single depth-bearing ask surface that `DESIGN.md` defines — see it there, not
+restated here. One caveat lives in the Sprint tracking page: its "day N of M" readout is
+derived from the browser's own clock against the sprint dates, so it follows the reader's
+local day, not the server's planning-day boundary.
 
 _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 (one route per screen), `web/src/components/` (shared pieces), `web/src/lib/`
@@ -137,4 +155,4 @@ hardened renderer), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-10._
+_Last verified: 2026-07-10 (serif redesign shipped across all screens)._

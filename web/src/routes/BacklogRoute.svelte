@@ -8,7 +8,6 @@
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
-  import FormField from "../components/FormField.svelte";
   import ListRow from "../components/ListRow.svelte";
   import Pill from "../components/Pill.svelte";
   import ResourceState from "../components/ResourceState.svelte";
@@ -98,24 +97,15 @@
         {#snippet summary()}<span class="plus">+</span> New backlog item{/snippet}
         <div class="form">
           {#if createError}<ErrorLine error={createError} />{/if}
-          <FormField label="Title">
-            <input class="in title-in" type="text" placeholder="What needs doing?" data-input="title" bind:value={title} />
-          </FormField>
-          <div class="two">
-            <FormField label="Project">
-              <SegmentedControl name="project" options={projectOptions} bind:value={project} />
-            </FormField>
-            <FormField label="Priority">
-              <SegmentedControl name="priority" options={priorityOptions} bind:value={priority} />
-            </FormField>
+          <input class="in title-in" type="text" placeholder="What needs doing?" data-input="title" bind:value={title} />
+          <textarea class="in detail-in" rows="2" placeholder="Why it matters, any context — optional" data-input="body" bind:value={body}></textarea>
+          <div class="foot">
+            <SegmentedControl name="project" options={projectOptions} bind:value={project} />
+            <SegmentedControl name="priority" options={priorityOptions} bind:value={priority} />
+            <input class="in due-in" type="text" placeholder="due YYYY-MM-DD — optional" data-input="deadline" bind:value={deadline} />
+            <div class="spacer"></div>
+            <Button variant="primary" data-commit="" disabled={creating || !title.trim() || !project} onclick={() => void createItem()}>Add to backlog</Button>
           </div>
-          <FormField label="Deadline" optional>
-            <input class="in detail-in" type="text" placeholder="YYYY-MM-DD" data-input="deadline" bind:value={deadline} />
-          </FormField>
-          <FormField label="Description" optional>
-            <textarea class="in detail-in" rows="2" placeholder="Why it matters, any context. Lives on the item page." data-input="body" bind:value={body}></textarea>
-          </FormField>
-          <Button variant="primary" data-commit="" disabled={creating || !title.trim() || !project} onclick={() => void createItem()}>Add to backlog</Button>
         </div>
       </Disclosure>
 

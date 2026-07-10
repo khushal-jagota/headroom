@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { fetchJson } from "../lib/api";
-  import { monthDayLabel, weekdayLabel } from "../lib/dates";
+  import { shortMonthDayLabel, weekdayLabel } from "../lib/dates";
   import { mutateJson, resource } from "../lib/resources";
   import type { DayResponse } from "../lib/types";
   import InlineEdit from "../components/InlineEdit.svelte";
@@ -36,7 +36,7 @@
     if (Number.isNaN(date.getTime())) return { weekday: "", monthday: iso };
     return {
       weekday: weekdayLabel(date),
-      monthday: monthDayLabel(date)
+      monthday: shortMonthDayLabel(date)
     };
   }
 

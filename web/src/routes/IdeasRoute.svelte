@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { fetchJson } from "../lib/api";
-  import { relativeDayLabel } from "../lib/dates";
   import { mutateJson, resource } from "../lib/resources";
   import type { IdeasResponse, ProjectsResponse } from "../lib/types";
   import Button from "../components/Button.svelte";
@@ -117,7 +116,6 @@
                 {#snippet summary()}
                   <span class="it list-row-title">{idea.title}</span>
                   {#if idea.project}<Chip variant="project" value={idea.project} />{/if}
-                  <span class="when">{relativeDayLabel(idea.created_at)}</span>
                 {/snippet}
                 <MarkdownBlock text={idea.body} />
               </Disclosure>
@@ -126,7 +124,6 @@
                 {#snippet leading()}<span class="chev"></span>{/snippet}
                 {#snippet trailing()}
                   {#if idea.project}<Chip variant="project" value={idea.project} />{/if}
-                  <span class="when">{relativeDayLabel(idea.created_at)}</span>
                 {/snippet}
               </ListRow>
             {/if}

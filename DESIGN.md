@@ -38,9 +38,24 @@ bubble-less assistant, recessed composer).
    hand off to smooth streaming, a working marker on a running ticket. Never leave a surface
    frozen and silent.
 
-8. **The scales are closed.** Five type sizes, the 4/8/12 radius steps, the fixed spacing scale.
-   Snap to them; don't invent a size for a one-off. A new category needs evidence of need
-   (`PRINCIPLES.md`), not taste.
+8. **The scales are closed.** The sans type sizes, the 4/8/12 radius steps, the fixed spacing
+   scale. Snap to them; don't invent a size for a one-off. A new category needs evidence of need
+   (`PRINCIPLES.md`), not taste. The one added category is the **serif ladder** (`--font-serif`
+   plus its six `--type-serif-*` sizes) — the voice below earns it.
+
+9. **The system speaks in serif; the machine stays sans.** Everything the product or its agents
+   *say* is set in serif (Newsreader) — ticket titles and prose, recaps, proposals, notes, field
+   values, day and sprint bodies, chat messages, the capture inputs, the empty-state lines.
+   Everything that is a *control or a fact* stays in the sans UI face — the nav, labels, pills,
+   buttons, filters, counts, key hints, status words, dates. The split *is* the hierarchy: on any
+   surface the words are the content and the small sans elements are the machinery. No italics
+   except input placeholders.
+
+10. **Depth is rationed to the ask.** The one raised approval surface earns a top-light gradient,
+    a top highlight, and a long soft shadow, with the solid-amber Approve glowing beneath.
+    Nothing else on any page is elevated. Hairlines survive only where a real list needs a seam
+    (the ticket stage spine, the sprint/ideas/backlog rows) and at the chat rail edge; blocks are
+    otherwise separated by space, not lines.
 
 ## Applied so far
 
@@ -48,6 +63,10 @@ bubble-less assistant, recessed composer).
   `web/src/components/ChatComposer.svelte`, chat styles in `assets/app.css`) — one
   right-aligned user pill (the only bubble), bubble-less **employee** prose, no dividers, a recessed
   composer with a `/` trigger for the gateway command catalog, thinking dots.
+- **The serif redesign, across every screen** (`assets/tokens.css` serif ladder;
+  `web/src/routes/*` + the `[data-screen="…"]` blocks in `assets/app.css`) — the serif/sans voice
+  split, the amber-only accent, the line diet, and the single depth-bearing ask surface, applied
+  to Day, Review, Workspace, Ticket, Sprint, Backlog, and Ideas, plus the shell presence readout.
 
 ## Framing
 

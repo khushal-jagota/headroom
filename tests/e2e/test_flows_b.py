@@ -159,8 +159,9 @@ def test_e28_day_overview_empty_until_rollover_agent(server, context_factory, op
     assert d["focus"] == d["brief_take"] == d["watchout"] == d["if_today_lands"] == ""
     # The date orients the read (planning date 2026-07-05). text_content, not
     # inner_text: the date label is text-transform:uppercase, and inner_text would
-    # return the rendered "JULY 5" while text_content keeps the raw DOM text.
-    assert "July 5" in page.text_content("[data-day-date]")
+    # return the rendered "JUL 5" while text_content keeps the raw DOM text. The
+    # redesign speaks the short month form (Jul, not July).
+    assert "Jul 5" in page.text_content("[data-day-date]")
 
     # The dropped surfaces have NO Day home anymore (backend endpoints untouched).
     assert page.query_selector(".plan-tree") is None
@@ -192,7 +193,7 @@ def test_e29_day_overview_structured_and_edit(server, context_factory, open_page
     assert page.inner_text("[data-day-take-body]") == E29_TAKE
     assert page.inner_text("[data-day-watch-body]") == E29_WATCH
     assert page.inner_text("[data-day-lands-body]") == E29_LANDS
-    assert "July 4" in page.text_content("[data-day-date]")  # raw DOM (label uppercases)
+    assert "Jul 4" in page.text_content("[data-day-date]")  # raw DOM (label uppercases)
 
     # InlineEdit remains one contenteditable surface and commits real edits on blur.
     def edit_field(selector, text):
@@ -392,7 +393,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     ready_d = "[data-day-take-body]"
     page_d = open_page(context_factory(), server, "#/day", ready_d, settled=True)
     page_d.wait_for_selector(ready_d, timeout=WAIT_MS)
-    assert "July 5" in page_d.text_content("[data-day-date]")  # raw DOM (label uppercases)
+    assert "Jul 5" in page_d.text_content("[data-day-date]")  # raw DOM (label uppercases)
     before_d = _snap_day(page_d)
     _reload_settle(page_d, ready_d)
     page_d.wait_for_selector(ready_d, timeout=WAIT_MS)
