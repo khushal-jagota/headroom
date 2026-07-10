@@ -14,6 +14,7 @@ from planner.sprints.contracts import ItemStatus, Sprint, SprintItem
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TicketState
+from planner.tickets.logic import fields_codec, machine
 from planner.tickets.views import ticket_json
 
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
@@ -99,23 +100,33 @@ def item_rollup(conn: sqlite3.Connection, item_id: str) -> dict[str, int]:
 
 
 def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
-    """Per-item ticket rows for the tracking-page disclosure: id/title/state/priority,
-    ordered created_at, id (matching the loose-ticket ordering). A light projection —
-    not full ticket_json — since the disclosure only lists rows that link to the ticket."""
+    """Per-item ticket rows for the tracking-page disclosure: id/title/state/priority
+    plus the two board-card signals the sprint ticket row colours off —
+    has_pending_proposal and ticket_status — ordered created_at, id (matching the
+    loose-ticket ordering). A light projection — not full ticket_json — since the
+    disclosure only lists rows that link to the ticket."""
     rows = conn.execute(
-        "SELECT id, title, state, priority FROM tickets WHERE sprint_item_id = ? "
-        "ORDER BY created_at, id",
+        "SELECT id, title, state, priority, ticket_status, fields FROM tickets "
+        "WHERE sprint_item_id = ? ORDER BY created_at, id",
         (item_id,),
     ).fetchall()
-    return [
-        {
-            "id": str(r["id"]),
-            "title": str(r["title"]),
-            "state": str(r["state"]),
-            "priority": str(r["priority"]),
-        }
-        for r in rows
-    ]
+    result: list[JsonDict] = []
+    for r in rows:
+        state = str(r["state"])
+        fields = fields_codec.fields_from_json(str(r["fields"]))
+        result.append(
+            {
+                "id": str(r["id"]),
+                "title": str(r["title"]),
+                "state": state,
+                "priority": str(r["priority"]),
+                "has_pending_proposal": machine.has_pending_gating_proposal(
+                    TicketState(state), fields
+                ),
+                "ticket_status": str(r["ticket_status"]),
+            }
+        )
+    return result
 
 
 def blocked_by_titles(conn: sqlite3.Connection, blocked_by: list[str]) -> list[str]:

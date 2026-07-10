@@ -423,12 +423,17 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
     )["id"]
     ltid = cli(server, "ticket", "create", "--title", E32_LOOSE_TITLE, "--sprint", sid)["id"]
 
-    ready = '[data-status-group="todo"]'
+    # Status groups were replaced by project groups; the item's status now lives on
+    # the row itself as data-item-status. Assert the item is present exactly once and
+    # carries the todo status, and that the loose ticket sits under the loose group.
+    ready = f'[data-item-id="{iid}"][data-item-status="todo"]'
     pa = open_page(context_factory(), server, "#/sprint", ready, settled=True)
     pb = open_page(context_factory(), server, "#/sprint", ready, settled=True)
 
     for p in (pa, pb):
-        p.wait_for_selector(f'[data-status-group="todo"] [data-item-id="{iid}"]', timeout=WAIT_MS)
+        p.wait_for_selector(ready, timeout=WAIT_MS)
+        assert p.locator(f'[data-item-id="{iid}"]').count() == 1
+        assert p.get_attribute(f'[data-item-id="{iid}"]', "data-item-status") == "todo"
         assert p.query_selector(f'[data-loose] [data-ticket-id="{ltid}"]') is not None
 
     fa = pa.evaluate("window.__plannerDebug.flushes")
@@ -457,10 +462,13 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
     )
 
     for p, f0 in ((pa, fa), (pb, fb)):
+        # The same item now reads in_progress via its status attribute; it is still a
+        # single element (moved status, not duplicated across groups).
         p.wait_for_selector(
-            f'[data-status-group="in_progress"] [data-item-id="{iid}"]', timeout=WAIT_MS
+            f'[data-item-id="{iid}"][data-item-status="in_progress"]', timeout=WAIT_MS
         )
-        assert p.query_selector(f'[data-status-group="todo"] [data-item-id="{iid}"]') is None
+        assert p.locator(f'[data-item-id="{iid}"]').count() == 1
+        assert p.get_attribute(f'[data-item-id="{iid}"]', "data-item-status") == "in_progress"
         assert p.query_selector(f'[data-ticket-id="{child}"]') is not None
         assert p.evaluate("window.__plannerDebug.flushes") > f0
 
@@ -468,6 +476,14 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
     assert iid in [i["id"] for i in cur["groups"]["in_progress"]], cur
     assert iid not in [i["id"] for i in cur["groups"]["todo"]], cur
     assert ltid in [t["id"] for t in cur["loose_tickets"]], cur
+
+    # The item ticket projection carries the two board-card signals the sprint ticket
+    # rows colour off (added this wave): has_pending_proposal + ticket_status. The
+    # advanced child sits in_progress with no pending gating proposal.
+    item = next(i for i in cur["groups"]["in_progress"] if i["id"] == iid)
+    child_row = next(t for t in item["tickets"] if t["id"] == child)
+    assert child_row["has_pending_proposal"] is False, child_row
+    assert child_row["ticket_status"] == "empty", child_row
 
 
 def test_sprint_overview_fields_and_edit(server, context_factory, open_page, api):
@@ -487,11 +503,13 @@ def test_sprint_overview_fields_and_edit(server, context_factory, open_page, api
     )
 
     ready = '[data-phase="kickoff"]'
+    # Legacy #/sprint/overview replace-redirects to the new documents page.
     page = open_page(context_factory(), server, "#/sprint/overview", ready, settled=True)
 
-    # The tab pair marks Sprint Overview current; the bet frame echoes primary_bet.
-    assert page.inner_text(".tabs .tab.cur") == "Sprint Overview"
-    assert SO_BET in page.inner_text(".frame .lead")
+    # The redirect landed on the documents page (tabs are gone): the hash is
+    # #/sprint/documents and the page shows its unique "Sprint documents" heading.
+    assert page.url.endswith("#/sprint/documents")
+    assert page.inner_text(".sprint-docs-title") == "Sprint documents"
 
     # All three sections render, in the fixed order Kickoff · Mid-sprint · Sprint Review.
     phases = page.eval_on_selector_all(

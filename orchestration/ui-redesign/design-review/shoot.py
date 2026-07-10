@@ -156,6 +156,29 @@ def seed(base: str) -> dict[str, str]:
         except RuntimeError as err:
             print(f"[seed] day add-ticket {ticket_id}: {err}", file=sys.stderr)
 
+    # A current sprint with project-grouped items so the sprint page renders.
+    try:
+        cli(base, "sprint", "create", "--name", "Doorbell & capture",
+            "--date-start", "2026-07-07", "--date-end", "2026-07-18",
+            "--limiting-factor", "Review latency: agents finish faster than approvals land.",
+            "--primary-bet",
+            "Kill the polling loops: every runtime wake becomes event-driven.",
+            "--supports", "The runtime refactor landed last sprint.",
+            "--premortem", "The doorbell wanders into the runtime loop's territory.")
+        item = cli(base, "sprint", "item", "create", "--title", "Event-driven runtime wakes",
+                   "--project", "Panels", "--priority", "P1", "--sprint", "current")
+        cli(base, "sprint", "item", "add-ticket", item["id"], tid)
+        cli(base, "sprint", "item", "add-ticket", item["id"],
+            ids["Deepen employee runtime ownership"])
+        item2 = cli(base, "sprint", "item", "create", "--title", "Waitlist capture flow",
+                    "--project", "Vylo", "--priority", "P1", "--deadline", "2026-07-16",
+                    "--sprint", "current")
+        cli(base, "sprint", "item", "add-ticket", item2["id"],
+            ids["Ship the waitlist capture flow"])
+        cli(base, "sprint", "add-ticket", ids["Chat auto-scroll and Latest button"])
+    except (RuntimeError, KeyError) as err:
+        print(f"[seed] sprint: {err}", file=sys.stderr)
+
     # Day brief.
     try:
         patch(base, "/api/day/2026-07-10", {
@@ -185,6 +208,7 @@ SURFACES = [
     ("workspace", "#/workspace", "workspace.html"),
     ("ticket", "#/ticket/{ticket}", "ticket.html"),
     ("sprint", "#/sprint", "sprint.html"),
+    ("sprint-docs", "#/sprint/documents", "sprint-docs.html"),
     ("backlog", "#/backlog", "backlog.html"),
     ("ideas", "#/ideas", "ideas.html"),
 ]

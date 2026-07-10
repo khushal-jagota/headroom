@@ -65,7 +65,13 @@ implementer self-ran a Codex plan review; my review round routed 3 fixes (static
 header with byline, shared with the ticket's gating ask; event.repeat guard on shortcuts;
 deterministic negative assertion in the new shortcut e2e — suite now 57) and refuted the
 notes-source design finding (field notes are the pinned function, D92). Wave 4 (t_ui04
-workspace) dispatched. Design pass additions: embeds mockup previews.html rev 2 (D90/D91 — one
+workspace) LANDED at e17d72e — Codex caught focus-visibility loss on the overlay-control
+pattern (fixed with :focus-within on the wrappers) and errored rows matching the needs-you
+emphasis (excluded); design review FAITHFUL 7/7; implementer's own catch recorded: controls
+restyled as text must keep a full-size actionable native input for Playwright. Wave 5 (t_ui05
+sprint restructure incl. the small sprints/views.py projection extension) dispatched. The
+screenshot seed now populates today's board AND a current sprint (items via
+sprint item create/add-ticket) so both surfaces render real content for design reviews. Design pass additions: embeds mockup previews.html rev 2 (D90/D91 — one
 container + bar for every kind incl. images; downloads = bar only). FOLLOW-UPS QUEUED by the
 owner, not yet scoped: (1) embeds implementation (after mockup approval; overlaps preview CSS —
 slot between UI waves); (2) a PERF pass ("perf, that's a follow up now as well" — scope TBD with

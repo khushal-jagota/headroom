@@ -1,31 +1,27 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { fetchJson } from "../lib/api";
+  import { shortMonthDayLabel } from "../lib/dates";
   import { mutateJson, resource } from "../lib/resources";
   import { labelize } from "../lib/ui";
   import type { AnyRecord, CurrentSprintResponse } from "../lib/types";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
-  import ListRow from "../components/ListRow.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
-  import Pill from "../components/Pill.svelte";
   import ResourceState from "../components/ResourceState.svelte";
-  import ScreenHeader from "../components/ScreenHeader.svelte";
-  import SectionHeading from "../components/SectionHeading.svelte";
 
   let { sub = "tracking" }: { sub?: string } = $props();
   const current = resource<CurrentSprintResponse>("sprint:current", (signal) =>
     fetchJson("/api/sprint/current", { signal })
   );
 
-  const liveOrder = ["in_progress", "todo", "blocked"];
-  const settledOrder = ["done"];
-  const groupLabel: Record<string, string> = {
-    in_progress: "In progress",
-    todo: "Todo",
-    blocked: "Blocked",
-    done: "Done"
+  const noProjectKey = "__no_project__";
+  const itemStatusWord: Record<string, string> = {
+    in_progress: "in progress",
+    todo: "todo",
+    blocked: "blocked",
+    done: "done"
   };
   const kickoff = [
     ["limiting_factor", "Limiting factor"],
@@ -46,7 +42,7 @@
     ["carry_forward", "Carry forward"]
   ];
 
-  let overview = $derived(sub === "overview");
+  let documents = $derived(sub === "documents");
 
   function saveSprint(sprintId: string, field: string, raw: string): Promise<unknown> {
     return mutateJson(
@@ -56,14 +52,85 @@
     );
   }
 
-  function countText(tickets: AnyRecord[] | undefined): string {
-    const count = tickets?.length || 0;
-    if (count === 0) return "no tickets yet";
-    return count === 1 ? "1 ticket" : `${count} tickets`;
+  function allItems(groups: Record<string, AnyRecord[]>): AnyRecord[] {
+    return Object.values(groups || {}).flat();
   }
 
   function totalItems(groups: Record<string, AnyRecord[]>): number {
-    return Object.values(groups || {}).reduce((sum, group) => sum + group.length, 0);
+    return allItems(groups).length;
+  }
+
+  // Items regrouped by their project, alphabetically, No project last; itemless
+  // projects fall away naturally (only projects that own an item appear).
+  function projectGroups(
+    groups: Record<string, AnyRecord[]>
+  ): Array<{ key: string; label: string; items: AnyRecord[] }> {
+    const byProject = new Map<string, { key: string; label: string; items: AnyRecord[] }>();
+    for (const item of allItems(groups)) {
+      const key = (item.project_id as string) || noProjectKey;
+      const label = (item.project as string) || "No project";
+      if (!byProject.has(key)) byProject.set(key, { key, label, items: [] });
+      byProject.get(key)?.items.push(item);
+    }
+    return Array.from(byProject.values()).sort((left, right) => {
+      if (left.key === noProjectKey) return 1;
+      if (right.key === noProjectKey) return -1;
+      return left.label.localeCompare(right.label, undefined, { sensitivity: "base" });
+    });
+  }
+
+  // Done-fraction from the item's ticket-state rollup: done count over total tickets;
+  // an em dash when the item has no tickets yet. Dropped tickets are excluded from the
+  // denominator — item status ignores them, so a fully-done item reads "2/2 done", not
+  // "2/3", when one of its tickets was dropped.
+  function doneFraction(item: AnyRecord): string {
+    const rollup = (item.rollup as Record<string, number>) || {};
+    const total = Object.entries(rollup).reduce(
+      (sum, [state, count]) => (state === "dropped" ? sum : sum + count),
+      0
+    );
+    if (total === 0) return "—";
+    return `${rollup.done || 0}/${total} done`;
+  }
+
+  // A sprint date (stored ISO "YYYY-MM-DD") rendered as a month-day label.
+  function sprintDate(iso: string): string {
+    const parsed = Date.parse(`${iso}T00:00:00`);
+    return Number.isNaN(parsed) ? iso : shortMonthDayLabel(new Date(parsed));
+  }
+
+  // Day-of-sprint from the sprint dates, clamped: before the start is day 0, after the
+  // end is the final day. Derived client-side from today against the sprint range.
+  function dayOfSprint(sprint: AnyRecord): string {
+    const start = Date.parse(`${sprint.date_start}T00:00:00`);
+    const end = Date.parse(`${sprint.date_end}T00:00:00`);
+    if (Number.isNaN(start) || Number.isNaN(end)) return "";
+    const dayMs = 86_400_000;
+    const total = Math.round((end - start) / dayMs) + 1;
+    const today = new Date();
+    const todayMs = Date.parse(
+      `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}T00:00:00`
+    );
+    let day = Math.round((todayMs - start) / dayMs) + 1;
+    day = Math.max(0, Math.min(day, total));
+    return `day ${day} of ${total}`;
+  }
+
+  // A ticket row reads amber when it needs a human (a pending gating proposal, or it
+  // is a result awaiting review), green when done. Works for both the item-ticket
+  // projection (has_pending_proposal) and loose tickets (ticket_status).
+  function ticketNeedsYou(ticket: AnyRecord): boolean {
+    return (
+      ticket.state === "needs_review" ||
+      ticket.has_pending_proposal === true ||
+      ticket.ticket_status === "awaiting_approval"
+    );
+  }
+
+  function ticketStateClass(ticket: AnyRecord): string {
+    if (ticket.state === "done") return "tst tst--done";
+    if (ticketNeedsYou(ticket)) return "tst tst--now";
+    return "tst";
   }
 
   function sectionHasContent(sprint: AnyRecord, fields: string[][]): boolean {
@@ -80,32 +147,15 @@
     {:else}
       {@const sprint = current.data.sprint}
       {@const groups = current.data.groups || {}}
+      {@const looseTickets = current.data.loose_tickets || []}
       <div class="doc">
-      <ScreenHeader class="sprint-header">
-        {#snippet titleContent()}
-          <h1 class="screen-title">
-            <InlineEdit
-              value={sprint.name}
-              placeholder="(unnamed sprint)"
-              onSave={(raw) => saveSprint(sprint.id, "name", raw)}
-            />
-          </h1>
-        {/snippet}
-        {#snippet meta()}
-          <Pill keyLabel="dates" class="sprint-dates-pill">
-            <span class="sprint-dates">{sprint.date_start} – {sprint.date_end}</span>
-          </Pill>
-        {/snippet}
-      </ScreenHeader>
       <div class="col">
-        <nav class="tabs">
-          <a class={`tab${overview ? " cur" : ""}`} href="#/sprint/overview">Sprint Overview</a>
-          <a class={`tab${!overview ? " cur" : ""}`} href="#/sprint/tracking">Sprint Tracking</a>
-        </nav>
-        {#if overview}
-          <section class="frame">
-            <div class="lead"><MarkdownBlock text={sprint.primary_bet} /></div>
-          </section>
+        {#if documents}
+          <a class="sprint-back" href="#/sprint">‹ {sprint.name}</a>
+          <header class="sprint-docs-head">
+            <h1 class="sprint-docs-title">Sprint documents</h1>
+            <div class="sprint-docs-sub">Kickoff, mid-sprint review, and sprint review — the sprint's written record.</div>
+          </header>
           {@const reviewHas = sectionHasContent(sprint, review)}
           {@const midHas = sectionHasContent(sprint, mid)}
           {#each [
@@ -136,76 +186,88 @@
             </Disclosure>
           {/each}
         {:else}
-          <section class="frame">
-            <div class="lead"><MarkdownBlock text={sprint.primary_bet} /></div>
-            <div class="health">{(groups.done || []).length} of {totalItems(groups)} done</div>
-          </section>
-          {#each liveOrder as status}
-            <div class="grp" data-status-group={status}>
-              <SectionHeading label={groupLabel[status]} count={(groups[status] || []).length} />
-              {#each groups[status] || [] as item}
-                <Disclosure variant="item" chevron="leading" data-item-id={item.id}>
-                  {#snippet summary()}
-                    <span class="it list-row-title">{item.title}</span>
-                    <span class="chips">
-                      <Chip variant="priority" value={item.priority} />
-                      <Chip variant="project" value={item.project} />
-                      {#if item.deadline}<Chip variant="deadline" value={item.deadline} />{/if}
-                      {#if item.blockers_cleared}<Chip variant="blockers-cleared" />{/if}
-                      {#each item.blocked_by_titles || [] as blockerTitle}
-                        <Chip variant="blocked-by" keyLabel="blocked by" value={blockerTitle} />
-                      {/each}
-                    </span>
-                    <span class="count">{countText(item.tickets)}</span>
-                  {/snippet}
-                  <div class="tkts">
-                    {#if (item.tickets || []).length}
-                      {#each item.tickets || [] as ticket}
-                        <ListRow variant="ticket" title={ticket.title} href={`#/ticket/${ticket.id}`} data-ticket-id={ticket.id}>
-                          {#snippet leading()}<span class={`st st--${ticket.state}`}>{labelize(ticket.state, { capitalize: false })}</span>{/snippet}
-                          {#snippet trailing()}<span class="pr">{ticket.priority}</span>{/snippet}
-                        </ListRow>
-                      {/each}
-                    {:else}
-                      <div class="none">No tickets on this item yet.</div>
-                    {/if}
-                  </div>
-                </Disclosure>
-              {/each}
+          <header class="sprint-head">
+            <h1 class="sprint-title">
+              <InlineEdit
+                value={sprint.name}
+                placeholder="(unnamed sprint)"
+                onSave={(raw) => saveSprint(sprint.id, "name", raw)}
+              />
+            </h1>
+            <div class="sprint-meta-line">
+              {sprintDate(sprint.date_start)} – {sprintDate(sprint.date_end)}
+              <span class="sep">·</span> {dayOfSprint(sprint)}
+              <span class="sep">·</span> {(groups.done || []).length} of {totalItems(groups)} done
+              <a class="sprint-docs-link" href="#/sprint/documents">Sprint documents ›</a>
             </div>
-          {/each}
-          {#each settledOrder as status}
-            {#if (groups[status] || []).length}
-              <Disclosure variant="settled">
-                {#snippet summary()}
-                  <SectionHeading label={groupLabel[status]} count={(groups[status] || []).length} variant={status === "done" ? "done" : "settled"} />
-                {/snippet}
-                <div class="grp settled" data-status-group={status}>
-                  {#each groups[status] || [] as item}
-                    <Disclosure variant="item" chevron="leading" data-item-id={item.id}>
-                      {#snippet summary()}
-                        <span class="it list-row-title">{item.title}</span>
-                        <span class="chips"><Chip variant="priority" value={item.priority} /><Chip variant="project" value={item.project} /></span>
-                        <span class="count">{countText(item.tickets)}</span>
-                      {/snippet}
-                    </Disclosure>
-                  {/each}
-                </div>
-              </Disclosure>
-            {/if}
-          {/each}
-          {#if current.data.loose_tickets.length}
-            {@const looseTickets = current.data.loose_tickets}
-            <Disclosure variant="settled">
+          </header>
+
+          <section class="sprint-bet">
+            <div class="body"><MarkdownBlock text={sprint.primary_bet} /></div>
+          </section>
+
+          {#each projectGroups(groups) as group}
+            <Disclosure variant="pgroup" chevron="none" defaultOpen={true} data-project-group={group.key}>
               {#snippet summary()}
-                <SectionHeading label="Loose tickets" count={looseTickets.length} variant="settled" />
+                <span class="pchev">›</span>
+                <span class="plabel">{group.label}</span>
+                <span class="pn">{group.items.length}</span>
               {/snippet}
-              <div class="tkts" data-loose>
+              <div class="pbody">
+                {#each group.items as item}
+                  <Disclosure
+                    variant="item"
+                    chevron="leading"
+                    class={item.status === "done" ? "item--dim" : ""}
+                    data-item-id={item.id}
+                    data-item-status={item.status}
+                  >
+                    {#snippet summary()}
+                      <span class="it list-row-title">{item.title}</span>
+                      <span class={`st${item.status === "in_progress" ? " st--now" : ""}`}>{itemStatusWord[item.status]}</span>
+                      <span class="frac">{doneFraction(item)}</span>
+                    {/snippet}
+                    <div class="ibody">
+                      <div class="chips">
+                        <Chip variant="priority" value={item.priority} />
+                        {#if item.deadline}<Chip variant="deadline" value={item.deadline} />{/if}
+                        {#each item.blocked_by_titles || [] as blockerTitle}
+                          <Chip variant="blocked-by" keyLabel="blocked by" value={blockerTitle} />
+                        {/each}
+                        {#if item.blockers_cleared}<Chip variant="blockers-cleared" />{/if}
+                      </div>
+                      {#if (item.tickets || []).length}
+                        {#each item.tickets || [] as ticket}
+                          <a class="trow" href={`#/ticket/${ticket.id}`} data-ticket-id={ticket.id}>
+                            <span class="pr">{ticket.priority}</span>
+                            <span class="t">{ticket.title}</span>
+                            <span class={ticketStateClass(ticket)}>{labelize(ticket.state, { capitalize: false })}</span>
+                          </a>
+                        {/each}
+                      {:else}
+                        <div class="none">No tickets on this item yet.</div>
+                      {/if}
+                    </div>
+                  </Disclosure>
+                {/each}
+              </div>
+            </Disclosure>
+          {/each}
+
+          {#if looseTickets.length}
+            <Disclosure variant="pgroup" chevron="none" defaultOpen={true} data-project-group="__loose__">
+              {#snippet summary()}
+                <span class="pchev">›</span>
+                <span class="plabel">Loose tickets</span>
+                <span class="pn">{looseTickets.length}</span>
+              {/snippet}
+              <div class="pbody" data-loose>
                 {#each looseTickets as ticket}
-                  <ListRow variant="ticket" title={ticket.title} href={`#/ticket/${ticket.id}`} data-ticket-id={ticket.id}>
-                    {#snippet leading()}<span class={`st st--${ticket.state}`}>{labelize(ticket.state, { capitalize: false })}</span>{/snippet}
-                    {#snippet trailing()}<span class="pr">{ticket.priority}</span>{/snippet}
-                  </ListRow>
+                  <a class="trow" href={`#/ticket/${ticket.id}`} data-ticket-id={ticket.id}>
+                    <span class="pr">{ticket.priority}</span>
+                    <span class="t">{ticket.title}</span>
+                    <span class={ticketStateClass(ticket)}>{labelize(ticket.state, { capitalize: false })}</span>
+                  </a>
                 {/each}
               </div>
             </Disclosure>

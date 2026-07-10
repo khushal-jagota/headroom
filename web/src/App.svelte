@@ -55,6 +55,16 @@
       params.id = decodeRouteSegment(segments[1]);
     }
     if (name === "sprint" && segments[1]) {
+      // Legacy sub-routes redirect to the new split: the old two-tab page became a
+      // tracking page (#/sprint) and a documents page (#/sprint/documents).
+      if (segments[1] === "overview") {
+        window.location.replace("#/sprint/documents");
+        return { name: "sprint", params: { sub: "documents" }, key: "sprint/documents" };
+      }
+      if (segments[1] === "tracking") {
+        window.location.replace("#/sprint");
+        return { name: "sprint", params: {}, key: "sprint" };
+      }
       params.sub = segments[1];
     }
     const screenKey = name === "workspace" || name === "board" ? "workspace" : segments.join("/") || "day";
@@ -69,7 +79,7 @@
   function isKnownRoute(): boolean {
     if (route.name === "ticket") return Boolean(route.params.id);
     if (route.name === "sprint") {
-      return !route.params.sub || route.params.sub === "tracking" || route.params.sub === "overview";
+      return !route.params.sub || route.params.sub === "documents";
     }
     return ["day", "review", "chief", "workspace", "board", "backlog", "ideas", "preview"].includes(route.name);
   }
