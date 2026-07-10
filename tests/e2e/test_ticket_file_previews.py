@@ -295,11 +295,13 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
         '[data-field="success"] [data-content-section="note"] [data-file-preview-kind="image"]'
     ).first.wait_for(state="visible", timeout=WAIT_MS)
     _open_ticket_field(page, "result")
-    result_proposal = page.locator('[data-field="result"] .proposal-card').first
+    result_proposal = page.locator(
+        '[data-field="result"] [data-approval-block][data-mode="proposal"]'
+    ).first
     result_proposal.locator('[data-file-preview-kind="image"]').first.wait_for(
         state="visible", timeout=WAIT_MS
     )
-    assert result_proposal.locator("textarea.proposal-edit").count() == 0
+    assert result_proposal.locator("textarea").count() == 0
     assert result_proposal.locator("[data-markdown-edit]").count() == 0
     assert (
         result_proposal.locator("[data-markdown-inline-edit]").get_attribute("contenteditable")

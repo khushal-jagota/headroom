@@ -18,12 +18,13 @@
     note = "",
     newState = null,
     layout = "default",
+    requireScope = false,
     onApprove,
     onNoteSave,
     onValueSave,
     actions
   }: {
-    mode: "gating-pending" | "needs_review";
+    mode: "gating-pending" | "needs_review" | "proposal" | "readonly";
     field?: string;
     whatLabel?: string;
     proposalBody?: string | null;
@@ -31,7 +32,8 @@
     note?: string | null;
     newState?: string | null;
     layout?: "default" | "review";
-    onApprove: (payload: Record<string, unknown>) => Promise<unknown>;
+    requireScope?: boolean;
+    onApprove?: (payload: Record<string, unknown>) => Promise<unknown>;
     onNoteSave?: (raw: string) => Promise<unknown>;
     onValueSave?: (raw: string) => Promise<unknown>;
     actions?: Snippet;
@@ -46,6 +48,13 @@
   let reviewLayout = $derived(layout === "review");
   let hasNote = $derived(Boolean(onNoteSave) || Boolean((note || "").trim()));
   let contentTitle = $derived(displayLabel(whatLabel || field.replace(/_/g, " ")));
+
+  // gating-pending always requires a scope; proposal requires one only when asked to.
+  let scopeRequired = $derived(mode === "gating-pending" || (mode === "proposal" && requireScope));
+  let showScope = $derived(mode === "gating-pending" || (mode === "proposal" && requireScope));
+  let acceptAttr = $derived(mode === "needs_review" ? "approve" : "accept");
+  let actionLabel = $derived(mode === "proposal" ? "Accept" : "Approve");
+  let actionDisabled = $derived(inFlight || resolved || (scopeRequired && scope === null));
 
   function displayLabel(value: string): string {
     const trimmed = value.trim();
@@ -64,16 +73,18 @@
 
   async function approve(): Promise<void> {
     const payload: Record<string, unknown> = {};
-    if (mode === "gating-pending") {
+    if (mode === "gating-pending" || mode === "proposal") {
+      if (draft !== (proposalBody || "")) payload.edited_body = draft;
+    }
+    if (scopeRequired) {
       if (!scope) return;
       payload.next_ceiling = scope.next_ceiling;
       payload.at_cap = scope.at_cap;
-      if (draft !== (proposalBody || "")) payload.edited_body = draft;
     }
     inFlight = true;
     error = null;
     try {
-      await onApprove(payload);
+      await onApprove?.(payload);
       resolved = true;
     } catch (err) {
       error = err;
@@ -93,129 +104,82 @@
   });
 </script>
 
-<div class="approval {reviewLayout ? 'approval--review' : ''}" data-approval-block data-mode={mode} data-field={field || undefined}>
-  {#if !reviewLayout}
-    <div class="approval-what">{whatLabel || field.replace(/_/g, " ")}</div>
-  {/if}
-
-  {#if mode === "needs_review"}
-    <div class="approval-proposal-shell">
-      <Disclosure title={contentTitle} variant="content" defaultOpen={true} data-content-section="proposal">
-        <div class="approval-result">
-          {#if onValueSave}
-            <InlineEdit value={proposalBody} markdown multiline placeholder="Result..." onSave={onValueSave} />
-          {:else}
-            <MarkdownBlock text={proposalBody} />
-          {/if}
-        </div>
-      </Disclosure>
-      {#if reviewLayout}
-        <div class="approval-actions">
-          {#if error}<ErrorLine {error} />{/if}
-          <div class="approval-control-group">
-            <Button
-              variant="primary"
-              data-approve=""
-              disabled={inFlight || resolved}
-              onclick={() => void approve()}
-            >
-              Approve
-            </Button>
-          </div>
-        </div>
-      {/if}
+{#snippet actionGroup(defaultLayout: boolean)}
+  <div class="approval-actions" class:approval-actions--split={defaultLayout && Boolean(actions)}>
+    {#if error}<ErrorLine {error} />{/if}
+    {#if defaultLayout && actions}
+      <div class="approval-actions-left">{@render actions()}</div>
+    {/if}
+    <div class="approval-control-group">
+      <Button
+        variant="primary"
+        {...{ [`data-${acceptAttr}`]: "" }}
+        disabled={actionDisabled}
+        onclick={() => void approve()}
+      >
+        {actionLabel}
+      </Button>
+      {#if showScope}<ScopePairPicker {newState} bind:scope />{/if}
     </div>
-    {#if hasNote}
-      {#if !reviewLayout && onNoteSave}
-        <Disclosure title="Notes" variant="support" defaultOpen={Boolean((note || "").trim())} data-content-section="note">
-          <InlineEdit
-            value={note}
-            markdown
-            multiline
-            placeholder="Things to check before you approve the result..."
-            onSave={onNoteSave}
-          />
-        </Disclosure>
-      {/if}
-    {/if}
-    {#if !reviewLayout}
-      <div class="approval-actions" class:approval-actions--split={Boolean(actions)}>
-        {#if error}<ErrorLine {error} />{/if}
-        {#if actions}
-          <div class="approval-actions-left">{@render actions()}</div>
-        {/if}
-        <div class="approval-control-group">
-          <Button
-            variant="primary"
-            data-approve=""
-            disabled={inFlight || resolved}
-            onclick={() => void approve()}
-          >
-            Approve
-          </Button>
-        </div>
-      </div>
-    {/if}
+  </div>
+{/snippet}
+
+<div class="approval {reviewLayout ? 'approval--review' : ''}" data-approval-block data-mode={mode} data-field={field || undefined}>
+  {#if mode === "readonly"}
+    {#if proposedBy}<div class="proposal-meta">proposed by {proposedBy}</div>{/if}
+    <MarkdownBlock text={proposalBody} />
   {:else}
-    {#if proposedBy && !reviewLayout}
+    {#if !reviewLayout}
+      <div class="approval-what">{whatLabel || field.replace(/_/g, " ")}</div>
+    {/if}
+
+    {#if mode !== "needs_review" && proposedBy && !reviewLayout}
       <div class="proposal-meta">proposed by {proposedBy}</div>
     {/if}
+
     <div class="approval-proposal-shell">
       <Disclosure title={contentTitle} variant="content" defaultOpen={true} data-content-section="proposal">
-        <div class="approval-draft">
-          <InlineEdit
-            value={draft}
-            markdown
-            multiline
-            placeholder={`${contentTitle || "Proposal"}...`}
-            dataEdit
-            onCancel={resetDraft}
-            onSave={saveDraft}
-          />
-        </div>
+        {#if mode === "needs_review"}
+          <div class="approval-result">
+            {#if onValueSave}
+              <InlineEdit value={proposalBody} markdown multiline placeholder="Result..." onSave={onValueSave} />
+            {:else}
+              <MarkdownBlock text={proposalBody} />
+            {/if}
+          </div>
+        {:else}
+          <div class="approval-draft">
+            <InlineEdit
+              value={draft}
+              markdown
+              multiline
+              placeholder={`${contentTitle || "Proposal"}...`}
+              dataEdit
+              onCancel={mode === "gating-pending" ? resetDraft : undefined}
+              onSave={saveDraft}
+            />
+          </div>
+        {/if}
       </Disclosure>
       {#if reviewLayout}
-        <div class="approval-actions">
-          {#if error}<ErrorLine {error} />{/if}
-          <div class="approval-control-group">
-            <Button
-              variant="primary"
-              data-accept=""
-              disabled={inFlight || resolved || scope === null}
-              onclick={() => void approve()}
-            >
-              Approve
-            </Button>
-            <ScopePairPicker {newState} bind:scope />
-          </div>
-        </div>
+        {@render actionGroup(false)}
       {/if}
     </div>
-    {#if hasNote}
-      {#if !reviewLayout && onNoteSave}
-        <Disclosure title="Notes" variant="support" defaultOpen={Boolean((note || "").trim())} data-content-section="note">
-          <InlineEdit value={note} markdown multiline placeholder="Note..." onSave={onNoteSave} />
-        </Disclosure>
-      {/if}
+
+    {#if hasNote && !reviewLayout && onNoteSave}
+      <Disclosure title="Notes" variant="support" defaultOpen={Boolean((note || "").trim())} data-content-section="note">
+        <InlineEdit
+          value={note}
+          markdown
+          multiline
+          placeholder={mode === "needs_review" ? "Things to check before you approve the result..." : "Note..."}
+          onSave={onNoteSave}
+        />
+      </Disclosure>
     {/if}
+
     {#if !reviewLayout}
-      <div class="approval-actions" class:approval-actions--split={Boolean(actions)}>
-        {#if error}<ErrorLine {error} />{/if}
-        {#if actions}
-          <div class="approval-actions-left">{@render actions()}</div>
-        {/if}
-        <div class="approval-control-group">
-          <Button
-            variant="primary"
-            data-accept=""
-            disabled={inFlight || resolved || scope === null}
-            onclick={() => void approve()}
-          >
-            Approve
-          </Button>
-          <ScopePairPicker {newState} bind:scope />
-        </div>
-      </div>
+      {@render actionGroup(true)}
     {/if}
   {/if}
 </div>

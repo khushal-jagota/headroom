@@ -17,8 +17,11 @@ hover rules collapsed into one element-qualified base pair, provenance comment t
 t_fe03 (Button/Pill/Chip blocked-by) landed green — Codex findings resolved by the
 orchestrator: token .select class and leftover .commit class hook removed (select unification
 descoped as unsound, D77); chief-button override accepted as a real per-context difference.
-t_fe04–t_fe05 pending, same pipeline: implementer sub-agent, Codex diff review, full serial
-`./verify`, branch commit per green wave. The architecture-deepening section below is
+t_fe04 (one approval surface: ApprovalBlock absorbed ProposalCard and the dropped-state
+display; one action-group snippet, one state machine) landed green — Codex xhigh review caught
+two real behavior deltas the orchestrator fixed (proposal-mode Escape must not reset a locally
+saved draft: onCancel is gating-only; proposal button text stays "Accept") plus a stale
+PROGRESS.md line. t_fe05 pending, same pipeline. The architecture-deepening section below is
 the main tree's cycle and is not part of this branch's work.
 
 ## Current work cycle (2026-07-10): Approved architecture deepening 1–3
@@ -898,8 +901,9 @@ Result:
   top-level `ApprovalBlock`, `CollapsibleField`, notes, values, and proposals.
 - `ReviewRoute` now renders the same `TicketStageSection` for ticket-stage approvals; only status
   approvals keep their separate non-ticket branch.
-- `TicketStageSection` composes `CollapsibleField`, `ApprovalBlock`, `ContentDisclosure`,
-  `InlineEdit`, and `ProposalCard` internally.
+- `TicketStageSection` composes `Disclosure`, `ApprovalBlock`, and `InlineEdit` internally
+  (this branch's consolidation: Disclosure replaced CollapsibleField/ContentDisclosure, and
+  ApprovalBlock absorbed ProposalCard).
 - `ApprovalBlock` now renders the approval payload with the shared collapsible header. In approval
   layout, the Approve controls sit at the bottom of the recessed approval surface.
 - Active approval/final-review stage rows open by default on Ticket detail, so the in-place approval

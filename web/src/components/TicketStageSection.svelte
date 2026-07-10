@@ -4,7 +4,6 @@
   import StageMark from "./StageMark.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
-  import ProposalCard from "./ProposalCard.svelte";
   import {
     advanceTarget,
     fieldIsPassed,
@@ -84,10 +83,13 @@
   {#if isDropped}
     <MarkdownBlock text={slot.value} quiet={emptyText} />
     {#if slot.proposal}
-      <div class="ticket-field-proposal">
-        <div class="proposal-meta">proposed by {slot.proposal.proposed_by}</div>
-        <MarkdownBlock text={slot.proposal.body} />
-      </div>
+      <ApprovalBlock
+        mode="readonly"
+        field={name}
+        whatLabel={fieldLabel}
+        proposalBody={slot.proposal?.body || ""}
+        proposedBy={slot.proposal?.proposed_by || ""}
+      />
     {/if}
   {:else if isGating && hasProposal}
     <ApprovalBlock
@@ -112,10 +114,14 @@
     />
   {:else}
     {#if hasProposal && slot.proposal}
-      <ProposalCard
-        proposal={slot.proposal}
+      <ApprovalBlock
+        mode="proposal"
+        field={name}
+        whatLabel={fieldLabel}
+        proposalBody={slot.proposal?.body || ""}
+        proposedBy={slot.proposal?.proposed_by || ""}
         newState={nextState}
-        onAccept={onAccept}
+        onApprove={onAccept}
       />
       {#if hasValue}<MarkdownBlock text={slot.value} />{/if}
     {:else if passed && hasValue && editableValue && onSaveValue}
