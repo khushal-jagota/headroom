@@ -1620,6 +1620,26 @@ to source Review's Notes disclosure from the ticket-level user_note instead of t
 field notes are the surface's existing function and the spec pinned them — the mockup's
 matching text was demo content, not a data mapping. The screenshot seed now writes a field note
 so the disclosure renders in future design reviews.
+
+## D94 — Post-merge fidelity pass: owner review caught deltas the wave design reviews passed
+
+After the redesign landed on main the owner reviewed the live app against the mockups and named
+five fidelity gaps that had survived the per-wave design reviews (the merge itself changed no
+styling — a 12-line CSS diff, all intentional): the workspace rail was clamp-width ~512px instead
+of the mockup's fixed 304px with cramped project-group separation; the filter row read "All"
+instead of "All statuses" with off-rhythm padding; the ask's action row was pushed right with the
+scope pair rendered as underlined text links instead of the mockup's boxed pills; the ask shell
+carried extra top padding and the Approve button extra line-height, and inside the ticket's serif
+stage body the whole action row inherited serif (machine controls stay sans); the review chamber's
+recap→notes→ask gaps were off, Notes rendered as a serif heading instead of the quiet uppercase
+label, and the key hints floated mid-page instead of anchoring to the viewport bottom. All fixed
+to the mockups (assets/app.css + one label derivation in BoardRoute); scope-pair pills now share
+the ticket-header leash's vocabulary. Fixed inline as design-fidelity repair, not cut as tickets —
+CSS-only plus one display label, verified by the screenshot harness against the mockups and a full
+green ./verify. Lesson recorded: rerun the design lane on the owner's complaint surfaces, not only
+at wave boundaries; "FAITHFUL" wave verdicts are not a substitute for the owner's eye on the live
+app.
+
 ## D76 — Follow Hermes through one ordered session ingress before extending its protocol
 
 D76 supersedes D75 as the starting correction after a full read-only boundary investigation. The

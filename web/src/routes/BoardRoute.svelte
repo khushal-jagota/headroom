@@ -32,8 +32,12 @@
   );
   let columns = $derived(board.data?.columns || []);
   let statusFilter = $state<string>("all");
+  // The unfiltered rail reads "All statuses" (the mockup's wording); the select's
+  // own option list keeps the short "All".
   let statusFilterLabel = $derived(
-    ticketStatusFilters.find((filter) => filter.value === statusFilter)?.label ?? "All"
+    statusFilter === "all"
+      ? "All statuses"
+      : (ticketStatusFilters.find((filter) => filter.value === statusFilter)?.label ?? "All statuses")
   );
   let allCards = $derived(columns.flatMap((column) => column.cards));
   let selectedCard = $derived(allCards.find((card) => card.id === ticketId) || null);
