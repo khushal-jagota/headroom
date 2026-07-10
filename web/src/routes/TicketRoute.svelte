@@ -25,6 +25,7 @@
   import InlineEdit from "../components/InlineEdit.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import Pill from "../components/Pill.svelte";
+  import ResourceState from "../components/ResourceState.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
 
   let { id }: { id: string } = $props();
@@ -161,13 +162,10 @@
   data-ticket-id={id}
   data-state={ticket.data?.state}
 >
-  {#if ticket.error}
-    <ErrorLine error={ticket.error} />
-  {:else if ticket.loading && !ticket.data}
-    <div class="quiet-line">Loading ticket...</div>
-  {:else if ticket.data}
-    {@const detail = ticket.data}
-    <div class="ticket-page">
+  <ResourceState error={ticket.error} loading={ticket.loading} hasData={Boolean(ticket.data)} loadingText="Loading ticket...">
+    {#if ticket.data}
+      {@const detail = ticket.data}
+      <div class="ticket-page">
       <main class="ticket-doc">
         <header class="ticket-head">
           <div class="ticket-title">
@@ -309,5 +307,6 @@
         />
       </aside>
     </div>
-  {/if}
+    {/if}
+  </ResourceState>
 </section>

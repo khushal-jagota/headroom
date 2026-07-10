@@ -6,6 +6,7 @@
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import ScopePairPicker from "./ScopePairPicker.svelte";
+  import { labelize } from "../lib/ui";
 
   type ScopePair = { next_ceiling: string; at_cap: string };
 
@@ -47,7 +48,7 @@
   let error = $state<unknown>(null);
   let reviewLayout = $derived(layout === "review");
   let hasNote = $derived(Boolean(onNoteSave) || Boolean((note || "").trim()));
-  let contentTitle = $derived(displayLabel(whatLabel || field.replace(/_/g, " ")));
+  let contentTitle = $derived(labelize(whatLabel || field.replace(/_/g, " ")));
 
   // gating-pending always requires a scope; proposal requires one only when asked to.
   let scopeRequired = $derived(mode === "gating-pending" || (mode === "proposal" && requireScope));
@@ -55,12 +56,6 @@
   let acceptAttr = $derived(mode === "needs_review" ? "approve" : "accept");
   let actionLabel = $derived(mode === "proposal" ? "Accept" : "Approve");
   let actionDisabled = $derived(inFlight || resolved || (scopeRequired && scope === null));
-
-  function displayLabel(value: string): string {
-    const trimmed = value.trim();
-    if (!trimmed) return "";
-    return trimmed[0].toUpperCase() + trimmed.slice(1);
-  }
 
   async function saveDraft(raw: string): Promise<void> {
     draft = raw;

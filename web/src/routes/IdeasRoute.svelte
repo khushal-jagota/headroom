@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { fetchJson } from "../lib/api";
+  import { relativeDayLabel } from "../lib/dates";
   import { mutateJson, resource } from "../lib/resources";
   import type { IdeasResponse, ProjectsResponse } from "../lib/types";
   import Button from "../components/Button.svelte";
@@ -10,6 +11,7 @@
   import ListRow from "../components/ListRow.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import Pill from "../components/Pill.svelte";
+  import ResourceState from "../components/ResourceState.svelte";
   import ScreenHeader from "../components/ScreenHeader.svelte";
   import SectionHeading from "../components/SectionHeading.svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
@@ -25,23 +27,11 @@
     { value: null, label: "None" },
     ...(projects.data?.projects || []).map((entry) => ({ value: entry.id, label: entry.name }))
   ]);
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
   let title = $state("");
   let detail = $state("");
   let project = $state<string | null>(null);
   let createError = $state<unknown>(null);
   let creating = $state(false);
-
-  function relDate(seconds: unknown): string {
-    const secs = Number(seconds);
-    if (!Number.isFinite(secs)) return "";
-    const days = Math.floor((Date.now() / 1000 - secs) / 86400);
-    if (days <= 0) return "today";
-    if (days < 7) return `${days}d`;
-    const date = new Date(secs * 1000);
-    return `${months[date.getMonth()]} ${date.getDate()}`;
-  }
 
   async function capture(): Promise<void> {
     if (!title.trim()) return;
@@ -115,11 +105,8 @@
         </div>
       </section>
       <div class="list" data-ideas>
-        {#if ideas.error}
-          <ErrorLine error={ideas.error} />
-        {:else if ideas.loading && !ideas.data}
-          <div class="quiet-line">Loading ideas...</div>
-        {:else if !(ideas.data?.ideas || []).length}
+        <ResourceState error={ideas.error} loading={ideas.loading} hasData={Boolean(ideas.data)} loadingText="Loading ideas...">
+        {#if !(ideas.data?.ideas || []).length}
           <div class="quiet-line">No ideas yet.</div>
         {:else}
           <SectionHeading label="Captured" />
@@ -130,7 +117,7 @@
                 {#snippet summary()}
                   <span class="it list-row-title">{idea.title}</span>
                   {#if idea.project}<Chip variant="project" value={idea.project} />{/if}
-                  <span class="when">{relDate(idea.created_at)}</span>
+                  <span class="when">{relativeDayLabel(idea.created_at)}</span>
                 {/snippet}
                 <MarkdownBlock text={idea.body} />
               </Disclosure>
@@ -139,12 +126,13 @@
                 {#snippet leading()}<span class="chev"></span>{/snippet}
                 {#snippet trailing()}
                   {#if idea.project}<Chip variant="project" value={idea.project} />{/if}
-                  <span class="when">{relDate(idea.created_at)}</span>
+                  <span class="when">{relativeDayLabel(idea.created_at)}</span>
                 {/snippet}
               </ListRow>
             {/if}
           {/each}
         {/if}
+        </ResourceState>
       </div>
     </div>
   </div>

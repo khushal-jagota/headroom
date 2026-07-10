@@ -1,30 +1,16 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { fetchJson } from "../lib/api";
+  import { monthDayLabel, weekdayLabel } from "../lib/dates";
   import { mutateJson, resource } from "../lib/resources";
   import type { DayResponse } from "../lib/types";
-  import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
+  import ResourceState from "../components/ResourceState.svelte";
 
   const day = resource<DayResponse>("day:today", (signal) =>
     fetchJson("/api/day/today", { signal })
   );
 
-  const months = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December"
-  ];
-  const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   type DayBodyField = "brief_take" | "watchout" | "if_today_lands";
   type DayBodyAttr = "day-take-body" | "day-watch-body" | "day-lands-body";
 
@@ -49,8 +35,8 @@
     const date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
     if (Number.isNaN(date.getTime())) return { weekday: "", monthday: iso };
     return {
-      weekday: weekdays[date.getDay()],
-      monthday: `${months[date.getMonth()]} ${date.getDate()}`
+      weekday: weekdayLabel(date),
+      monthday: monthDayLabel(date)
     };
   }
 
@@ -67,13 +53,10 @@
 </script>
 
 <section class="day-screen" data-screen="day">
-  {#if day.error}
-    <ErrorLine error={day.error} />
-  {:else if day.loading && !day.data}
-    <div class="quiet-line">Loading day...</div>
-  {:else if day.data}
-    {@const info = dateLabel(dateSegment())}
-    <div class="doc" data-day-overview>
+  <ResourceState error={day.error} loading={day.loading} hasData={Boolean(day.data)} loadingText="Loading day...">
+    {#if day.data}
+      {@const info = dateLabel(dateSegment())}
+      <div class="doc" data-day-overview>
       <div class="col">
         <div class="date" data-day-date>
           {#if info.weekday}
@@ -104,5 +87,6 @@
         {/each}
       </div>
     </div>
-  {/if}
+    {/if}
+  </ResourceState>
 </section>

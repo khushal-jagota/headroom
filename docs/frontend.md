@@ -79,11 +79,47 @@ share.
   atomic block within the editable DOM; that move keeps its mounted component alive,
   while actual deletion still unmounts it and cancels pending work.
 
+## The shared component set
+
+The screens are assembled from a small kit of shared pieces rather than
+hand-rolling the same shapes per screen. Each does one job:
+
+- **Disclosure** — the one expand/collapse surface (a native details/summary with a
+  chevron): ticket notes and recaps, sprint phases and items, ideas with bodies, the
+  backlog compose form, board project sections.
+- **ListRow** — the one row shape (title on the left, metadata on the right, hover):
+  sprint tickets, backlog items, flat ideas, board cards. Renders as a link, a button,
+  or a plain non-interactive row.
+- **SectionHeading** — a quiet "Label · count" group heading.
+- **ScreenHeader** — a screen's title row plus an optional meta pill.
+- **Button** — the one button (or link), in a primary, quiet, or pill look.
+- **Pill** — a small static tag with an optional key label (dates, counts, due, sprint).
+- **Chip** — the coloured status/priority/project tags, including "blocked by".
+- **StageMark** — the single stage dot showing a field's progress.
+- **ApprovalBlock** — the one approval surface: an editable proposal draft, the scope
+  picker, and the approve/accept action, plus a read-only mode for dropped tickets.
+- **ResourceState** — the shared error / loading scaffold; shows an error line, a
+  loading line, or the content. Data-empty states ("No ideas yet.") stay in the screens.
+- **FormField** — a labelled wrapper around a form control, with an optional "— optional".
+- **InlineEdit** — the one editable-markdown surface (notes, recaps, drafts).
+- **MarkdownBlock** — read-only rendering through the hardened markdown renderer.
+- **FilePreview** — the one file preview card/inline renderer (see the file-preview rule).
+- **ChatPanel / ChatComposer** — the ticket and Chief-of-Staff chat rail and its input.
+- **EnumPill** — a pill whose value is chosen from a menu (project, sprint, scope).
+- **SegmentedControl** — a small set of toggle options (backlog project/priority).
+- **ScopePairPicker** — the "approve until … then …" scope control.
+- **ErrorLine** — a single error message line.
+
+Two small libraries back these: `labelize` in `web/src/lib/ui.ts` turns field/state
+names into readable labels, and `web/src/lib/dates.ts` holds the date formatting the
+Day and Ideas screens share. (The two visible native selects were left un-unified on
+purpose — they share almost nothing real; see `decisions.md`, D77.)
+
 _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 (one route per screen), `web/src/components/` (shared pieces), `web/src/lib/`
-(API, resources, event mapping, WebSocket), `assets/tokens.css` (design tokens),
-`assets/app.css` (shared styling), `assets/markdown.js` (the hardened renderer),
-`web/dist/` (built app served by FastAPI).
+(API, resources, event mapping, WebSocket, `labelize`, dates), `assets/tokens.css`
+(design tokens), `assets/app.css` (shared styling), `assets/markdown.js` (the
+hardened renderer), `web/dist/` (built app served by FastAPI).
 
 ## Handoffs
 

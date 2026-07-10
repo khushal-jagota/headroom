@@ -8,8 +8,10 @@
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
+  import FormField from "../components/FormField.svelte";
   import ListRow from "../components/ListRow.svelte";
   import Pill from "../components/Pill.svelte";
+  import ResourceState from "../components/ResourceState.svelte";
   import ScreenHeader from "../components/ScreenHeader.svelte";
   import SectionHeading from "../components/SectionHeading.svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
@@ -96,38 +98,30 @@
         {#snippet summary()}<span class="plus">+</span> New backlog item{/snippet}
         <div class="form">
           {#if createError}<ErrorLine error={createError} />{/if}
-          <div>
-            <div class="fl">Title</div>
+          <FormField label="Title">
             <input class="in title-in" type="text" placeholder="What needs doing?" data-input="title" bind:value={title} />
-          </div>
+          </FormField>
           <div class="two">
-            <div>
-              <div class="fl">Project</div>
+            <FormField label="Project">
               <SegmentedControl name="project" options={projectOptions} bind:value={project} />
-            </div>
-            <div>
-              <div class="fl">Priority</div>
+            </FormField>
+            <FormField label="Priority">
               <SegmentedControl name="priority" options={priorityOptions} bind:value={priority} />
-            </div>
+            </FormField>
           </div>
-          <div>
-            <div class="fl">Deadline <span class="fl-opt">— optional</span></div>
+          <FormField label="Deadline" optional>
             <input class="in detail-in" type="text" placeholder="YYYY-MM-DD" data-input="deadline" bind:value={deadline} />
-          </div>
-          <div>
-            <div class="fl">Description <span class="fl-opt">— optional</span></div>
+          </FormField>
+          <FormField label="Description" optional>
             <textarea class="in detail-in" rows="2" placeholder="Why it matters, any context. Lives on the item page." data-input="body" bind:value={body}></textarea>
-          </div>
+          </FormField>
           <Button variant="primary" data-commit="" disabled={creating || !title.trim() || !project} onclick={() => void createItem()}>Add to backlog</Button>
         </div>
       </Disclosure>
 
       <div class="groups" data-backlog-items>
-        {#if backlog.error}
-          <ErrorLine error={backlog.error} />
-        {:else if backlog.loading && !backlog.data}
-          <div class="quiet-line">Loading backlog...</div>
-        {:else if !(backlog.data?.items || []).length}
+        <ResourceState error={backlog.error} loading={backlog.loading} hasData={Boolean(backlog.data)} loadingText="Loading backlog...">
+        {#if !(backlog.data?.items || []).length}
           <div class="quiet-line">No unscheduled items.</div>
         {:else}
           {#each PRIORITY_ORDER as p}
@@ -148,6 +142,7 @@
             {/if}
           {/each}
         {/if}
+        </ResourceState>
       </div>
     </div>
   </div>

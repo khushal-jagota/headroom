@@ -8,8 +8,8 @@
   import Button from "../components/Button.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
   import Disclosure from "../components/Disclosure.svelte";
-  import ErrorLine from "../components/ErrorLine.svelte";
   import ListRow from "../components/ListRow.svelte";
+  import ResourceState from "../components/ResourceState.svelte";
   import SectionHeading from "../components/SectionHeading.svelte";
   import StageMark from "../components/StageMark.svelte";
   import TicketRoute from "./TicketRoute.svelte";
@@ -130,11 +130,7 @@
 </script>
 
 <section class="board-screen" data-screen="workspace">
-  {#if board.error}
-    <ErrorLine error={board.error} />
-  {:else if board.loading && !board.data}
-    <div class="quiet-line">Loading workspace...</div>
-  {:else}
+  <ResourceState error={board.error} loading={board.loading} hasData={Boolean(board.data)} loadingText="Loading workspace...">
     <div class="board-workspace-wrap">
       <div class="board-workspace-shell">
         <section class="board-workspace-left" aria-label="Workspace ticket tree">
@@ -252,5 +248,5 @@
         </section>
       </div>
     </div>
-  {/if}
+  </ResourceState>
 </section>

@@ -8,6 +8,7 @@
     advanceTarget,
     fieldIsPassed,
     gatingField,
+    labelize,
     type FieldStageVisualState
   } from "../lib/ui";
   import type { TicketField } from "../lib/types";
@@ -45,7 +46,7 @@
   } = $props();
 
   let reviewVariant = $derived(variant === "review");
-  let fieldLabel = $derived(labelFor(name));
+  let fieldLabel = $derived(labelize(name));
   let isDropped = $derived(ticketState === "dropped");
   let isGating = $derived(gatingField(ticketState) === name);
   let passed = $derived(fieldIsPassed(name, ticketState));
@@ -58,12 +59,6 @@
 
   function hasText(value: unknown): boolean {
     return value !== null && value !== undefined && String(value).trim() !== "";
-  }
-
-  function labelFor(value: string): string {
-    const text = value.replace(/_/g, " ").trim();
-    if (!text) return "";
-    return text[0].toUpperCase() + text.slice(1);
   }
 </script>
 

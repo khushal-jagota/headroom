@@ -2574,7 +2574,7 @@ select {
   padding: var(--space-1) 0 var(--space-5);
 }
 
-[data-screen="backlog"] .fl {
+.form-label {
   margin-bottom: var(--space-2);
   font-size: var(--type-xs);
   font-weight: 600;
@@ -2583,7 +2583,7 @@ select {
   color: var(--text-faintest);
 }
 
-[data-screen="backlog"] .fl-opt {
+.form-label-opt {
   font-weight: 400;
   letter-spacing: 0;
   text-transform: none;
@@ -2805,8 +2805,10 @@ select {
 /* The transparent inline-edit inputs (amber caret) and the chip-toggle selectors and
    grayscale commit — one look across both compose forms. */
 
-[data-screen="backlog"] .in,
-[data-screen="ideas"] .in {
+/* THE CAPTURE INPUT — one transparent inline field (amber caret) shared by the
+ * backlog and ideas compose forms. Per-screen .title-in/.detail-in sizes below are
+ * genuine differences (backlog is compact; the ideas capture is the hero). */
+.in {
   width: 100%;
   padding: 0;
   background: transparent;
@@ -2819,8 +2821,7 @@ select {
   resize: none;
 }
 
-[data-screen="backlog"] .in::placeholder,
-[data-screen="ideas"] .in::placeholder {
+.in::placeholder {
   color: var(--text-faintest);
   font-style: italic;
 }

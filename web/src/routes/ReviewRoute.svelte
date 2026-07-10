@@ -6,6 +6,7 @@
   import type { AnyRecord, QueueEntry, QueuesResponse, TicketDetail } from "../lib/types";
   import Button from "../components/Button.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
+  import ResourceState from "../components/ResourceState.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
 
   const queues = resource<QueuesResponse>("queues", (signal) =>
@@ -135,11 +136,8 @@
 </script>
 
 <section class="review-screen" data-screen="review">
-  {#if queues.error}
-    <ErrorLine error={queues.error} />
-  {:else if queues.loading && !queues.data}
-    <div class="quiet-line">Loading review...</div>
-  {:else if !entries.length}
+  <ResourceState error={queues.error} loading={queues.loading} hasData={Boolean(queues.data)} loadingText="Loading review...">
+    {#if !entries.length}
     <div class="review-empty-state" data-review-empty>
       <div class="review-empty-mark" aria-hidden="true"><span></span></div>
       <div class="review-empty-text">There is nothing to review right now.</div>
@@ -252,5 +250,6 @@
       <div class="review-empty-text">There is nothing to review right now.</div>
       <div class="review-empty-meta">{runningAgentsText(runningAgentCount)}</div>
     </div>
-  {/if}
+    {/if}
+  </ResourceState>
 </section>

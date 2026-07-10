@@ -46,6 +46,16 @@ export function stateLabel(value: string): string {
   return String(value).replace(/_/g, " ");
 }
 
+// Underscores to spaces; capitalizes the first letter by default. Pass
+// { capitalize: false } to leave the case untouched (e.g. sprint state tags that
+// are lowercased via CSS).
+export function labelize(value: string, options?: { capitalize?: boolean }): string {
+  if (options?.capitalize === false) return String(value).replace(/_/g, " ");
+  const text = String(value).replace(/_/g, " ").trim();
+  if (!text) return "";
+  return text[0].toUpperCase() + text.slice(1);
+}
+
 export function gatingField(state: string): string | null {
   return GATING_FIELD[state] || null;
 }

@@ -21,7 +21,10 @@ t_fe04 (one approval surface: ApprovalBlock absorbed ProposalCard and the droppe
 display; one action-group snippet, one state machine) landed green — Codex xhigh review caught
 two real behavior deltas the orchestrator fixed (proposal-mode Escape must not reset a locally
 saved draft: onCancel is gating-only; proposal button text stays "Accept") plus a stale
-PROGRESS.md line. t_fe05 pending, same pipeline. The architecture-deepening section below is
+PROGRESS.md line. t_fe05 (ResourceState scaffold, FormField, labelize + dates.ts helpers,
+docs/frontend.md shared-component-set section) landed green with a clean Codex review. The
+frontend-consolidation program is COMPLETE on this branch: five green waves, each Codex-reviewed
+and full-verify-passed; merging to main is the owner's call. The architecture-deepening section below is
 the main tree's cycle and is not part of this branch's work.
 
 ## Current work cycle (2026-07-10): Approved architecture deepening 1–3

@@ -2,14 +2,15 @@
   import { onDestroy } from "svelte";
   import { fetchJson } from "../lib/api";
   import { mutateJson, resource } from "../lib/resources";
+  import { labelize } from "../lib/ui";
   import type { AnyRecord, CurrentSprintResponse } from "../lib/types";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
-  import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
   import ListRow from "../components/ListRow.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import Pill from "../components/Pill.svelte";
+  import ResourceState from "../components/ResourceState.svelte";
   import ScreenHeader from "../components/ScreenHeader.svelte";
   import SectionHeading from "../components/SectionHeading.svelte";
 
@@ -61,10 +62,6 @@
     return count === 1 ? "1 ticket" : `${count} tickets`;
   }
 
-  function prettyState(state: string): string {
-    return String(state).replace(/_/g, " ");
-  }
-
   function totalItems(groups: Record<string, AnyRecord[]>): number {
     return Object.values(groups || {}).reduce((sum, group) => sum + group.length, 0);
   }
@@ -77,16 +74,13 @@
 </script>
 
 <section class="sprint-screen" data-screen="sprint">
-  {#if current.error}
-    <ErrorLine error={current.error} />
-  {:else if current.loading && !current.data}
-    <div class="quiet-line">Loading sprint...</div>
-  {:else if !current.data?.sprint}
-    <div class="quiet-line">No current sprint.</div>
-  {:else}
-    {@const sprint = current.data.sprint}
-    {@const groups = current.data.groups || {}}
-    <div class="doc">
+  <ResourceState error={current.error} loading={current.loading} hasData={Boolean(current.data)} loadingText="Loading sprint...">
+    {#if !current.data?.sprint}
+      <div class="quiet-line">No current sprint.</div>
+    {:else}
+      {@const sprint = current.data.sprint}
+      {@const groups = current.data.groups || {}}
+      <div class="doc">
       <ScreenHeader class="sprint-header">
         {#snippet titleContent()}
           <h1 class="screen-title">
@@ -168,7 +162,7 @@
                     {#if (item.tickets || []).length}
                       {#each item.tickets || [] as ticket}
                         <ListRow variant="ticket" title={ticket.title} href={`#/ticket/${ticket.id}`} data-ticket-id={ticket.id}>
-                          {#snippet leading()}<span class={`st st--${ticket.state}`}>{prettyState(ticket.state)}</span>{/snippet}
+                          {#snippet leading()}<span class={`st st--${ticket.state}`}>{labelize(ticket.state, { capitalize: false })}</span>{/snippet}
                           {#snippet trailing()}<span class="pr">{ticket.priority}</span>{/snippet}
                         </ListRow>
                       {/each}
@@ -209,7 +203,7 @@
               <div class="tkts" data-loose>
                 {#each looseTickets as ticket}
                   <ListRow variant="ticket" title={ticket.title} href={`#/ticket/${ticket.id}`} data-ticket-id={ticket.id}>
-                    {#snippet leading()}<span class={`st st--${ticket.state}`}>{prettyState(ticket.state)}</span>{/snippet}
+                    {#snippet leading()}<span class={`st st--${ticket.state}`}>{labelize(ticket.state, { capitalize: false })}</span>{/snippet}
                     {#snippet trailing()}<span class="pr">{ticket.priority}</span>{/snippet}
                   </ListRow>
                 {/each}
@@ -219,5 +213,6 @@
         {/if}
       </div>
     </div>
-  {/if}
+    {/if}
+  </ResourceState>
 </section>
