@@ -15,11 +15,15 @@ green settled, red errored. Depth is rationed to the one ask surface per page.
    placement, colour semantics, the line diet (which hairlines exist), component
    anatomy, and copy. Pixel values normalize onto the token scale (table below);
    px-perfection is not the bar, faithful translation is.
-2. **The e2e selector contract.** All `data-*` attributes are preserved exactly
-   (name and value) unless the ticket explicitly lists a change, in which case it
-   lists every affected e2e assertion and its equivalent translation. Every class
-   an implementer touches gets grepped in `tests/e2e/` and `tests/unit/`;
-   selector translations keep assertions equivalent, never weaker.
+2. **The UI is the spec; tests follow it (owner ruling).** Never change the UI
+   to satisfy a test. Build exactly what the mockup shows, then update whatever
+   tests assumed the old UI. `./verify` must end green, so: keep `data-*`
+   attributes where it costs the UI nothing (it usually does), translate test
+   steps to the new interaction (e.g. open a now-collapsed disclosure before
+   typing), and where a UI test asserts something brittle or low-value,
+   simplify the test rather than contort it — note each such simplification in
+   the report. Grep `tests/e2e` and `tests/unit` for every selector you touch
+   so nothing fails by surprise.
 3. **No behavior change** beyond the enumerated approved deltas:
    shell presence count, review keyboard shortcuts, review layout (skip/open
    top-right, no queue position), leash-as-sentence, user-note into the ticket

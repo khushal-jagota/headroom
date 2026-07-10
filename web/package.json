@@ -9,6 +9,7 @@
     "test": "node tests/event-mapping.test.mjs"
   },
   "dependencies": {
+    "@fontsource/newsreader": "^5.2.10",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "svelte": "^5.19.7",
     "vite": "^6.1.0"

@@ -60,4 +60,14 @@
   --type-md: 15px;
   --type-lg: 20px;
   --type-xl: 24px;
+
+  /* Serif voice — the system speaks in Newsreader where content speaks; the
+   * machine's sans controls stay --font-ui. Its own ladder (mockup px). */
+  --font-serif: "Newsreader", Georgia, serif;
+  --type-serif-sm: 15px;
+  --type-serif-md: 16.5px;
+  --type-serif-lg: 18px;
+  --type-serif-xl: 21px;
+  --type-serif-display: 28px;
+  --type-serif-hero: 30px;
 }

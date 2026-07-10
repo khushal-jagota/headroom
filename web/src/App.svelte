@@ -19,7 +19,10 @@
     key: string;
   };
 
-  const queues = resource<{ approvals: unknown[] }>("queues", () => fetchJson("/api/queues"));
+  const queues = resource<{ approvals: unknown[]; running_agents: number }>(
+    "queues",
+    () => fetchJson("/api/queues")
+  );
 
   let route = $state<Route>(parseRoute());
   let workspaceHideDone = $state(false);
@@ -89,10 +92,9 @@
 
 <div class="shell">
   <header class="shell-nav">
-    <span class="shell-brand">Panels</span>
     <nav class="shell-links">
       <a class:active={currentNav("day")} class="nav-link" data-screen="day" href="#/day">Day</a>
-      <a class:active={currentNav("review")} class="nav-link" data-screen="review" href="#/review">
+      <a class:active={currentNav("review")} class="nav-link nav-link--review" data-screen="review" href="#/review">
         Review
         {#if (queues.data?.approvals || []).length > 0}
           <span class="nav-badge">{(queues.data?.approvals || []).length}</span>
@@ -105,6 +107,12 @@
       <a class:active={currentNav("backlog")} class="nav-link" data-screen="backlog" href="#/backlog">Backlog</a>
       <a class:active={currentNav("ideas")} class="nav-link" data-screen="ideas" href="#/ideas">Ideas</a>
     </nav>
+    {#if (queues.data?.running_agents || 0) > 0}
+      <span class="shell-presence" data-shell-presence>
+        <span class="shell-presence-spin"></span>
+        {queues.data?.running_agents} working
+      </span>
+    {/if}
   </header>
 
   <main class="shell-content">

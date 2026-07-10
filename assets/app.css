@@ -36,54 +36,81 @@ textarea {
   display: flex;
   align-items: center;
   gap: var(--space-5);
-  padding: var(--space-3) var(--space-5);
-  background: var(--surface-raised);
-  border-bottom: var(--border-hairline) solid var(--surface-overlay);
-}
-
-.shell-brand {
-  font-size: var(--type-sm);
-  font-weight: 600;
-  color: var(--text-strong);
+  height: 50px;
+  padding: 0 var(--space-5);
+  border-bottom: var(--border-hairline) solid var(--border-color);
+  flex: none;
 }
 
 .shell-links {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
+  align-items: center;
+  gap: var(--space-5);
 }
 
 .nav-link {
-  color: var(--text-muted);
+  color: var(--text-faint);
   font-size: var(--type-sm);
   text-decoration: none;
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
-  transition: color var(--motion-fast) var(--motion-ease),
-    background var(--motion-fast) var(--motion-ease);
+  transition: color var(--motion-base) var(--motion-ease);
 }
 
 .nav-link:hover {
-  color: var(--text-strong);
+  color: var(--text-default);
 }
 
 .nav-link.active {
   color: var(--text-strong);
-  background: var(--surface-overlay);
+  font-weight: 500;
+}
+
+.nav-link--review {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .nav-badge {
   font-size: var(--type-xs);
-  background: var(--accent-surface);
-  color: var(--accent-text);
-  border: var(--border-hairline) solid var(--accent-bright);
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  background: var(--accent-bright);
+  color: var(--accent-ink);
   border-radius: var(--radius-pill);
-  padding: 0 var(--space-2);
-  margin-left: var(--space-1);
+  padding: 3px 7px;
 }
 
 .nav-badge.hidden {
   display: none;
+}
+
+.shell-presence {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.shell-presence-spin {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border: var(--border-strong) solid var(--accent-surface);
+  border-top-color: var(--accent-bright);
+  border-right-color: var(--accent-bright);
+  border-radius: var(--radius-pill);
+  box-sizing: border-box;
+  animation: stage-mark-spin 900ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell-presence-spin {
+    animation: none;
+  }
 }
 
 .shell-content {

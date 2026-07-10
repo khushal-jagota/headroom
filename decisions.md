@@ -1533,3 +1533,12 @@ the tickets: Newsreader self-hosted via @fontsource (no CDN; no italics shipped)
 tokens per a normalization table, sprint legacy routes replace-redirect (#/sprint/overview →
 #/sprint/documents), sprint items gain data-item-status for the e2e translation away from
 status-group containers, presence element gains data-shell-presence.
+
+## D89 — Owner ruling: the UI is the spec, tests follow it
+
+During wave 1 the owner ruled on test-vs-UI priority: the shipped mockup set is exactly what he
+wants; UI tests must never constrain the interface. PLAN.md ground rule 2 rewritten: build the
+mockup exactly, then update tests to the new UI (e.g. a test now opens the collapsed user-note
+disclosure before typing); where a UI test is brittle or low-value, simplify the test rather
+than contort anything; ./verify still ends green because it is the project's definition of
+done, not because tests get a vote on the design.

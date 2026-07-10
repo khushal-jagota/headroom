@@ -114,23 +114,28 @@ def seed(base: str) -> dict[str, str]:
 
     def propose(body: str) -> None:
         cli(base, "worker", "propose", tid, "--body-file", "-",
-            "--recap", "Success and approach agreed; the loop wakes on a doorbell instead of polling.",
+            "--recap",
+            "Success and approach agreed; the loop wakes on a doorbell.",
             stdin=body)
 
     def accept(field: str, next_ceiling: str) -> None:
         post(base, f"/api/tickets/{tid}/accept/{field}",
              {"next_ceiling": next_ceiling, "at_cap": "propose"})
 
-    propose("A runnable ticket is picked up within a second of becoming runnable, with zero polling queries at idle.")
+    propose("A runnable ticket is picked up within a second of becoming runnable, "
+            "with zero polling queries at idle.")
     accept("success", "needs_approach")
-    propose("One awaitable doorbell owned by the runtime; writers ring it after commit. A slow heartbeat stays as the backstop.")
+    propose("One awaitable doorbell owned by the runtime; writers ring it after "
+            "commit. A slow heartbeat stays as the backstop.")
     accept("approach", "needs_plan")
     propose("Replace the poll with a doorbell, in four steps:\n\n"
             "1. Add `readiness_doorbell.py` — a single awaitable the loop parks on.\n"
             "2. Ring it from the three writer actions that can make a ticket runnable.\n"
-            "3. Keep one slow heartbeat as a backstop so a missed ring can never strand a ticket.\n"
+            "3. Keep one slow heartbeat as a backstop so a missed ring can never "
+            "strand a ticket.\n"
             "4. Port the loop tests to the doorbell and delete the poll-interval knobs.\n")
-    patch(base, f"/api/tickets/{tid}", {"user_note": "Keep this to the doorbell itself. The runtime loop has its own ticket."})
+    patch(base, f"/api/tickets/{tid}",
+          {"user_note": "Keep this to the doorbell itself. The runtime loop has its own ticket."})
 
     # Supporting cast for the roster.
     for title in ("Deepen employee runtime ownership", "Chat auto-scroll and Latest button",
@@ -143,7 +148,8 @@ def seed(base: str) -> dict[str, str]:
         patch(base, "/api/day/2026-07-10", {
             "focus": "Clear the two plans and the doorbell ships today.",
             "brief_take": "Quiet night. Three tickets moved and nothing broke that stays broken.",
-            "watchout": "Consent copy errored on a missing legal source and will stay stuck until you point it somewhere.",
+            "watchout": "Consent copy errored on a missing legal source and will "
+                        "stay stuck until you point it somewhere.",
             "if_today_lands": "The doorbell is building and the consent question has an owner.",
         })
     except Exception as err:  # noqa: BLE001

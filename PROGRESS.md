@@ -47,7 +47,15 @@ as proposals in notes.md (shell presence count, queue position, review shortcuts
 sentence). Owner approved the daily set (skip/open-ticket moved to the top of Review, queue
 position rejected) and asked for the remaining pages: Day, Sprint (both tabs), Backlog, and
 Ideas are now mocked in the same voice, faithful to their routes, with all seven navs wired
-(D84). Mockups only, no product code; awaiting the owner's go to plan and implement.
+(D84). Owner gave the go: the ui-redesign implementation program is live (D88).
+orchestration/ui-redesign/ holds PLAN.md + t_ui01..t_ui06 (Codex spec review done, 9 findings
+folded in, committed at 097d4ec). Design-review screenshot harness works end to end
+(orchestration/ui-redesign/design-review/shoot.py: temp server + CLI/API seeding incl. a pending
+plan proposal + Playwright captures of app and mockups — gotcha: never pre-set scope before
+proposing, proposals inside the ceiling auto-resolve). Wave 1 (t_ui01 foundations/shell) is
+dispatched to the persistent Opus implementer (agent: ui-implementer). Pipeline per wave: Codex
+code review (xhigh for t_ui02/03) + design review vs mockups + orchestrator-only serial
+./verify + one commit per green wave.
 
 ## Current work cycle (2026-07-10): Approved architecture deepening 1–3
 
