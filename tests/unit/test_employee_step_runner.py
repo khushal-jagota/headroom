@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ import pytest
 
 from planner.chat import service as chat_service
 from planner.core.clock import RealClock
+from planner.core.clock import TestClock as MutableClock
 from planner.core.contracts import EventKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
@@ -754,6 +756,76 @@ def test_runner_rechecks_readiness_predicate_before_claim(tmp_path: Path) -> Non
     assert fake.sent_methods() == []
     assert _status_events(db, tid) == []
     assert doorbell.calls == 0
+
+
+def test_runner_resolves_today_inside_claim_transaction_across_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before_boundary = datetime(2026, 7, 10, 4, 59, 59).astimezone()
+    after_boundary = datetime(2026, 7, 10, 5, 0, 0).astimezone()
+    clock = MutableClock(before_boundary)
+    old_today_id = dates.resolve_day_id("today", before_boundary, BOUNDARY_HOUR)
+    new_today_id = dates.resolve_day_id("today", after_boundary, BOUNDARY_HOUR)
+    assert old_today_id != new_today_id
+
+    db = _db(tmp_path)
+    conn = connect(db)
+    try:
+        ticket = tickets_data.create_ticket(
+            conn, title="Boundary ticket", actor="human", now=0, title_max_chars=200
+        )
+        days_data.add_day_ticket(conn, old_today_id, ticket.id, 0)
+    finally:
+        conn.close()
+
+    before_start_run = threading.Event()
+    release_start_run = threading.Event()
+    real_start_run = tickets_data.start_run_if_runnable
+
+    def start_run_after_boundary(*args: Any, **kwargs: Any) -> Any:
+        before_start_run.set()
+        assert release_start_run.wait(10.0)
+        return real_start_run(*args, **kwargs)
+
+    monkeypatch.setattr(tickets_data, "start_run_if_runnable", start_run_after_boundary)
+    fake = FakeGateway(_create_script(_complete_ev()))
+    gateway = _gateway(fake)
+    runner = EmployeeStepRunner(
+        db,
+        clock,
+        gateway=gateway,
+        readiness_doorbell=NoOpReadinessDoorbell(),
+        boundary_hour=BOUNDARY_HOUR,
+    )
+    try:
+        runner.run_ready_step(ticket.id)
+        assert before_start_run.wait(10.0)
+        clock.set(after_boundary)
+        release_start_run.set()
+        assert runner.wait_idle(10.0)
+
+        conn = connect(db)
+        try:
+            stored = tickets_data.read_ticket(conn, ticket.id)
+            chat_turn_count = conn.execute(
+                "SELECT COUNT(*) FROM chat_turns WHERE entity_id = ?", (ticket.id,)
+            ).fetchone()[0]
+            chat_message_count = conn.execute(
+                "SELECT COUNT(*) FROM chat_messages WHERE entity_id = ?", (ticket.id,)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        assert stored.ticket_status is TicketStatus.empty
+        assert _status_events(db, ticket.id) == []
+        assert chat_turn_count == 0
+        assert chat_message_count == 0
+        assert fake.sent_methods() == []
+    finally:
+        release_start_run.set()
+        runner.stop()
+        gateway.shutdown()
 
 
 def test_cancelled_revision_reservation_drains_without_submitting(tmp_path: Path) -> None:

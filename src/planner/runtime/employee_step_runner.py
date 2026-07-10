@@ -196,13 +196,12 @@ class EmployeeStepRunner:
         try:
             now = self._clock.now_unix()
             if revision_guidance is None:
-                today_id = dates.resolve_day_id(
-                    "today", self._clock.now(), self._boundary_hour
-                )
-
                 def ready_on_today(
                     _conn: sqlite3.Connection, ticket: Ticket
                 ) -> bool:
+                    today_id = dates.resolve_day_id(
+                        "today", self._clock.now(), self._boundary_hour
+                    )
                     on_today = _conn.execute(
                         "SELECT 1 FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
                         (today_id, ticket.id),

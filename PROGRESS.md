@@ -3,7 +3,7 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
-## Current work cycle (2026-07-10): Approved architecture deepening 1–3
+## Completed work cycle (2026-07-10): Approved architecture deepening 1–3
 
 Current scope:
 
@@ -32,7 +32,7 @@ Verification status:
   session resume and running-Chat collision safety) and readiness ringing's five coverage/doc
   findings were accepted, added to the contracts/plans, and both follow-up reviews returned
   `NO VIOLATIONS`.
-- `t_arch01` implementation is complete. Its focused gate passes 147 unit tests, its Review
+- `t_arch01` implementation is complete. Its focused gate passes 151 unit tests, its Review
   return-for-revision browser test passes, Ruff passes, Mypy passes across 99 source files, and
   `git diff --check` passes.
 - Independent implementation review found five valid gaps: stale live naming, stale build memory,
@@ -47,13 +47,18 @@ Verification status:
 - `t_arch03` implementation is complete. Its focused gate passes 71 edit/authority/context/Chief
   tests, 38 readiness regressions, and the real-server CLI edit flow. Full Ruff passes, Mypy passes
   across 102 source files, and both independent implementation reviews returned `NO VIOLATIONS`.
-- No full `./verify` has run in this architecture cycle. The concurrent Chief/worker-context/
-  chat-image work remains the last full-`./verify` baseline.
+- The final combined review found one real issue after the first clean integration run: the employee
+  runner resolved `today` before entering its claim transaction, so a wait across the 05:00 planning
+  boundary could check yesterday's board. The runner now resolves the planning day inside the
+  transaction. Its deterministic boundary regression failed before the fix and passes afterward;
+  both independent follow-ups and the required Codex xhigh follow-up returned `NO VIOLATIONS`.
+- Corrected final `./verify` passed: Ruff, Mypy across 102 source files, 335 unit tests,
+  compile/static and frontend gates, 56 browser tests, and `VERIFY: PASS`.
 
 Immediate next step:
 
-- Commit the clean `t_arch03` integration slice, then run the authoritative full `./verify` across
-  all three architecture tickets and perform the final combined scope/review audit.
+- Deliver the verified architecture result. Candidates 4 and 6 stay explicitly deferred for a
+  later planning cycle.
 
 ## Completed work cycle (2026-07-10): Chief external-work intake
 
