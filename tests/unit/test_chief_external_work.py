@@ -71,15 +71,16 @@ def _external_body(
         "success": "Success settled",
         "approach": "Approach settled",
         "plan": "Plan settled",
-        "result": "Result settled",
+        "implementation": "Implementation settled",
+        "closeout": "Closeout settled",
     }
     prefix_count = {
         TicketState.needs_success: 0,
         TicketState.needs_approach: 1,
         TicketState.needs_plan: 2,
-        TicketState.in_progress: 3,
-        TicketState.needs_review: 4,
-        TicketState.done: 4,
+        TicketState.needs_implementation: 3,
+        TicketState.needs_closeout: 4,
+        TicketState.done: 5,
     }[state]
     body.update(dict(list(values.items())[:prefix_count]))
     return body
@@ -135,7 +136,9 @@ def test_create_external_work_enforces_exact_settled_prefix_and_coherent_control
     assert ticket["ceiling"] == state.value
     assert ticket["at_cap"] == "stop"
     assert ticket["ticket_status"] == "empty"
-    expected = {key: body.get(key) for key in ("success", "approach", "plan", "result")}
+    expected = {
+        key: body.get(key) for key in ("success", "approach", "plan", "implementation", "closeout")
+    }
     assert {key: ticket["fields"][key]["value"] for key in expected} == expected
 
 
@@ -161,7 +164,7 @@ def test_external_work_rejects_unknown_keys_and_prefix_mismatches_without_writes
         )
         future = client.post(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
-            json={**_external_body(TicketState.needs_success), "result": "too early"},
+            json={**_external_body(TicketState.needs_success), "implementation": "too early"},
             headers=_CHIEF,
         )
         dropped = client.post(
@@ -178,7 +181,7 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
     with TestClient(app) as client:
         made = client.post(
             "/api/chief/tickets/from-external-work",
-            json={"title": "Forward", **_external_body(TicketState.in_progress)},
+            json={"title": "Forward", **_external_body(TicketState.needs_implementation)},
             headers=_CHIEF,
         ).json()
         backward = client.post(
@@ -261,12 +264,12 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
         conn.close()
 
     before = _events(db_path, ticket_id)
-    class Pokes:
+    class Rings:
         count = 0
-        def poke(self) -> None:
+        def ring(self) -> None:
             self.count += 1
-    pokes = Pokes()
-    app.state.ticket_readiness_loop = pokes
+    rings = Rings()
+    app.state.readiness_doorbell = rings
     with TestClient(app) as client:
         invalid = client.post(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
@@ -293,7 +296,7 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
     assert ticket["ticket_status"] == "empty"
     assert ticket["ceiling"] == "needs_plan"
     assert ticket["at_cap"] == "stop"
-    assert pokes.count == 1
+    assert rings.count == 1
     new_events = _events(db_path, ticket_id)[len(before):]
     assert [kind for kind, _ in new_events] == [
         "ticket_updated",
@@ -320,14 +323,14 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
     }
 
 
-def test_create_external_work_emits_exact_existing_events_and_pokes(tmp_path: Path) -> None:
+def test_create_external_work_emits_exact_existing_events_and_rings(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
-    class Pokes:
+    class Rings:
         count = 0
-        def poke(self) -> None:
+        def ring(self) -> None:
             self.count += 1
-    pokes = Pokes()
-    app.state.ticket_readiness_loop = pokes
+    rings = Rings()
+    app.state.readiness_doorbell = rings
     with TestClient(app) as client:
         response = client.post(
             "/api/chief/tickets/from-external-work",
@@ -339,10 +342,11 @@ def test_create_external_work_emits_exact_existing_events_and_pokes(tmp_path: Pa
             headers=_CHIEF,
         )
     assert response.status_code == 200, response.json()
-    assert pokes.count == 1
+    assert rings.count == 1
     events = _events(db_path, response.json()["id"])
     assert [kind for kind, _ in events] == [
         "ticket_created",
+        "field_value_edited",
         "field_value_edited",
         "field_value_edited",
         "field_value_edited",
@@ -355,14 +359,15 @@ def test_create_external_work_emits_exact_existing_events_and_pokes(tmp_path: Pa
         "success",
         "approach",
         "plan",
-        "result",
+        "implementation",
+        "closeout",
     ]
-    assert events[6][1] == {
+    assert events[7][1] == {
         "from": "needs_success",
         "to": "done",
         "cause": "external_work",
     }
-    assert events[7][1] == {
+    assert events[8][1] == {
         "ceiling": "done",
         "at_cap": "stop",
         "cause": "external_work",

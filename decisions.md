@@ -2,6 +2,37 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D55 — Implementation and Closeout are ordinary Ticket gates
+
+Replace the exceptional `in_progress` / `needs_review` tail with two ordinary gated states:
+`needs_implementation` gates the `implementation` field, `needs_closeout` gates the `closeout`
+field, and accepted Closeout advances to `done`. Readiness, running, pending approval,
+return-for-revision, ceilings, and `stop` / `propose` remain the existing control mechanics;
+there is no separate ready or review state. Done remains terminal and therefore has no field.
+
+The independent plan review's three findings are accepted. The implementation must update the
+live Ticket/frontend docs, revise the strict Chief external-work field-prefix contract, and test
+the old project-column ticket rebuild as part of lifecycle migration. Migration normally maps
+`in_progress` to Implementation and `needs_review` to Closeout, moves legacy `result` content to
+Implementation, and initializes Closeout. A legacy `needs_review` row with non-empty runtime
+control represents an in-flight or returned implementation revision, so it stays at
+Implementation; an `awaiting_approval` revision is reconstructed as a pending Implementation
+proposal, and its ceiling is capped at Implementation so migration cannot auto-accept the
+revision that the old workflow was still waiting for a human to review. This is the smallest
+status-sensitive exception that preserves active work instead of silently treating it as approved.
+
+## D54 — Ticket-owned artifact guidance belongs in role skills, not runtime prompts
+
+Keep the managed-file model in the general `panels` orientation, put practical artifact judgment in
+`panels-worker`, and give the Chief only enough awareness to preserve the expectation while shaping
+frontend work. Frontend HTML is a strong planning default, not a ticket gate; when HTML is the design
+exploration itself, it is the work product and needs no duplicate precursor. This keeps canonical gated
+fields concise, uses ordinary served Markdown links, and changes no worker stage or runtime prompt.
+
+The implementation is a small, contract-free role-skill edit, so the plan/implementation review stages
+were collapsed rather than delegated or sent through Codex. The active symlinked prompts were read
+back, the focused provisioning test passed, and the full repository verification remained green.
+
 ## D53 — Acceptance tests must make runtime ownership removable only by failing
 
 The first runtime implementation review found no production defect, but its independent standards
@@ -1573,3 +1604,99 @@ to source Review's Notes disclosure from the ticket-level user_note instead of t
 field notes are the surface's existing function and the spec pinned them — the mockup's
 matching text was demo content, not a data mapping. The screenshot seed now writes a field note
 so the disclosure renders in future design reviews.
+## D76 — Follow Hermes through one ordered session ingress before extending its protocol
+
+D76 supersedes D75 as the starting correction after a full read-only boundary investigation. The
+current request/response illusion originated when each employee operation spawned its own Hermes
+child, submitted one prompt, and drained to the single completion. The later persistent shared child
+kept that abstraction, added multiple per-call drains for one session, broadcast every session event
+to all of them, ignored Hermes's submit disposition, and promoted interrupt acknowledgement into a
+Panels terminal state. That is the introduced complication.
+
+Panels will instead have one deep session module per live Hermes session: one ordered event ingress,
+exact preservation of submit disposition and lifecycle observations, stored/live session rebinding,
+and resume snapshot reconciliation. Visible chat and employee workflow settlement remain separate
+Panels-owned projections because product text, roles, managed images, hidden worker context, and
+Ticket consequences do not equal the Hermes conversation record. Those projections never decide
+Hermes running, idle, queue, or interruption state.
+
+No general queue is assumed. Hermes's native busy behavior and one pending slot remain authoritative.
+New causal turn identity is deferred unless contract tests prove the atomic disposition plus ordered
+session lifecycle insufficient, or the product later requires independently addressable multiple
+queued messages or exact recovery across an event-stream gap.
+
+The session ingress must be gapless: buffer by live session before releasing create/resume responses,
+and register submission intent before writing `prompt.submit`. Per-session writes are linearized only
+to preserve the order Hermes receives; Panels never waits for locally inferred idle, retries an
+uncertain submission, or grows its own FIFO.
+
+## D77 — Preserve the product surface and keep the correction Panels-only
+
+The owner approved the ordered-session-ingress direction with two hard scope constraints: the current
+chat UI, visible messages, and separately presented system activity remain materially unchanged, and
+Hermes itself is not modified. D77 therefore supersedes D76's earlier consideration of upstream
+lifecycle repairs. Panels will represent an honest unknown/offline outcome when Hermes's existing
+observations cannot prove a stronger result; it will not infer one or retry an uncertain prompt.
+
+Production's existing role topology also remains: one employee-configured Hermes gateway child and one
+Chief-configured child. They are not combined. Each role gateway owns lightweight live-session
+ingresses for its own sessions. An ingress may detach only after Hermes is observed idle and Panels has
+no pending consequence; the stored Hermes session ID survives and can be resumed into a new ingress.
+
+The work is isolated on `codex/hermes-session-ingress` and will land as one squashed feature commit so
+the complete transport correction can be reverted atomically.
+
+## D78 — Make the physical ingress child-wide and the ownership session-scoped
+
+`GatewayChild` will capture all session events into one ordered feed from construction, before a
+create/resume response can reveal the live session ID. Each role gateway has one consumer that
+demultiplexes that feed into lightweight live-session records. This is the smallest way to make event
+capture gapless while preserving one logical ordered lane per session; opening a listener only after
+the response would retain the diagnosed loss window.
+
+The `t_hs01` planning delegation was stopped after three attempts stalled without producing a file.
+The primary recovered by writing the plan from the completed boundary investigation and will route it
+through an independent read-only review before implementation. This changes the failed approach rather
+than repeating the same delegation again.
+
+## D79 — Employee settlement follows native delivery disposition
+
+Employee work uses the same session consequence seam as human chat, but keeps its existing Ticket and
+worker Chat result projection. A streaming receipt owns its execution, queued input owns only the next
+execution after the preceding terminal, and steered input is delivered without acquiring an
+independent employee completion. Steered therefore uses the existing errored result instead of
+claiming a later terminal or inviting an automatic retry.
+
+Hidden worker context follows that same delivery proof. Streaming and steered receipts acknowledge
+it; queued acceptance does not, and waits for the owned lifecycle to start. Transport-unknown and
+pre-start child death retain it. The existing shared ordered-operation lane makes the pending-count
+check and employee prompt registration one admission step, so a second consequential employee call
+uses the existing busy result without adding an employee registry, FIFO, status, or protocol ID.
+
+Independent implementation review exposed one missing distinction inside the shared consequence
+router. When submission admission observes Hermes already running, late delta and tool activity still
+belongs to that predecessor and cannot open queued ownership. Each queued consequence therefore keeps
+one delivery boundary: it starts open when no predecessor was observed, otherwise the predecessor's
+terminal opens it. This remains native lifecycle bookkeeping, not a Panels idle guess. It also
+survives a later resume snapshot reporting `running=true`, which may now describe the queued execution
+after its predecessor has already terminated.
+
+## D80 — Contract the expansion boundary after both product migrations
+
+Once human chat and employee execution consumed consequence-owned observations, the temporary
+per-session drain and receipt-only session APIs had no production purpose. They are deleted rather
+than deprecated. One syntax-aware source contract now keeps raw child ingress claims limited to the
+session manager and standalone transport tools.
+
+The standalone concurrency smoke uses the one claimed feed directly and demultiplexes in its owning
+thread; it does not introduce another listener or queue. Public recovery tests stay at the
+`SharedGateway` boundary: durable session identity survives listener detachment and gateway restart,
+unknown delivery is never retried, role children fail independently, and employee sessions remain
+isolated inside the shared employee-role child.
+
+Final review made two failure boundaries explicit. A session manager now treats a router still alive
+after its bounded join as a shutdown error, records that result for concurrent shutdown callers, and
+the role gateway reaps the child even when surfacing it. Streaming receipt reconciliation also keeps
+pre-receipt lifecycle observations when no registered Panels consequence preceded them, while
+discarding buffered predecessor activity before later streaming work. This preserves the original
+Stop and command boundaries without reopening the gap behind a stale running snapshot.

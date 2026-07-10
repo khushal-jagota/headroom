@@ -98,17 +98,17 @@ def add_day_ticket(
 
 def remove_day_ticket(
     conn: sqlite3.Connection, day_id: str, ticket_id: str, now_unix: int
-) -> None:
+) -> bool:
     """§3.4: delete the association only (ticket state untouched). If nothing was
     deleted (rowcount 0) → no-op, no event, no re-pack. Else re-pack remaining
     positions to 0..n-1 in existing position order, append day_ticket_removed
-    {ticket_id}, bump updated_at."""
+    {ticket_id}, bump updated_at, and return True. The absent-row no-op returns False."""
     cursor = conn.execute(
         "DELETE FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
         (day_id, ticket_id),
     )
     if cursor.rowcount == 0:
-        return
+        return False
     survivors = conn.execute(
         "SELECT ticket_id FROM day_tickets WHERE day_id = ? ORDER BY position",
         (day_id,),
@@ -120,6 +120,7 @@ def remove_day_ticket(
         )
     append_event(conn, day_id, EventKind.day_ticket_removed, {"ticket_id": ticket_id}, now_unix)
     conn.execute("UPDATE days SET updated_at = ? WHERE id = ?", (now_unix, day_id))
+    return True
 
 
 # The direct-editable day text fields (the four overview fields + notes). The api

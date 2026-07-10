@@ -80,12 +80,12 @@ Code paths: `src/planner/sprints/`, `src/planner/tickets/`,
 Tickets are the correctness center. A ticket has two different kinds of state:
 
 - `state` is the work stage: `needs_success`, `needs_approach`, `needs_plan`,
-  `in_progress`, `needs_review`, `done`, or `dropped`.
+  `needs_implementation`, `needs_closeout`, `done`, or `dropped`.
 - `ticket_status` is runtime control: `empty`, `agent_running_step`,
   `awaiting_approval`, `user_takeover`, or `errored`.
 
-A ticket has a `user_note` for intake context plus four fields: `success`,
-`approach`, `plan`, and `result`. Each field has a settled value, a pending proposal,
+A ticket has a `user_note` for intake context plus five fields: `success`,
+`approach`, `plan`, `implementation`, and `closeout`. Each field has a settled value, a pending proposal,
 and a field `user_note` for step-specific user guidance. Workers write proposals. The
 resolution engine is the only code that can settle a proposed value or advance the
 ticket's `state`.
@@ -126,25 +126,40 @@ status when the turn ends. If the worker parks a proposal, the ticket becomes
 `awaiting_approval`; if the proposal auto-accepted and more work is allowed, it
 returns to `empty` so TicketReadinessLoop can discover the next step.
 
-TicketReadinessLoop can be poked by readiness-changing writes, so the timer is a backstop rather
-than the normal user experience.
+Ticket, Day membership, and blocking-link actions commit first, then ring a
+best-effort `ReadinessDoorbell`. Runner settlement rings the same doorbell to continue
+automatic work. The doorbell carries no Ticket id and owns no state. Delivery failure
+is logged and ignored; SQLite and the periodic timer remain canonical. Processes that
+do not own the polling lock receive a no-op doorbell instead of trying to wake another
+process.
 
 Code paths: `src/planner/runtime/readiness.py`,
+`src/planner/runtime/readiness_doorbell.py`,
 `src/planner/runtime/ticket_readiness_loop.py`,
 `src/planner/runtime/employee_step_runner.py`,
+`src/planner/tickets/actions.py`, `src/planner/days/actions.py`,
+`src/planner/core/link_actions.py`,
 `src/planner/core/loops.py`.
 
 ### 5. The Hermes Gateway System
 
 Hermes is outside the planner. The planner talks to it through a gateway adapter.
-Production startup creates one shared gateway owner and installs it on app state.
-That owner spawns the child lazily on first use. Tests use fake adapters and never
-call the real gateway.
+Production owns two independently configured role gateways: one for employees and
+one for the Chief of Staff. Each gateway spawns its Hermes child lazily on first use.
+Each child has one listener for all of its live sessions. The listener separates
+observations by live Hermes session and gives each accepted Panels operation its own
+consequence, so a delayed completion cannot settle a different operation. Tests use
+fake adapters and never call the real gateway.
 
 Tickets, days, and top-level agent chats store a `chat_session_key` for Hermes
 transport. Panels owns the product chat state in `chat_messages` and `chat_turns`.
 Hermes history is still readable for old sessions, but the UI reads Panels'
 `ChatState` resource.
+
+The stored Hermes session key is durable conversation identity. The lightweight
+in-process listener for that conversation may detach after Hermes reports idle and
+no Panels consequence remains. A later operation resumes the stored session instead
+of replaying prior input.
 
 Panels chat state is not model context. Appending to `chat_messages` or `chat_turns`
 does not make a worker see that text. Anything the worker must read has to go

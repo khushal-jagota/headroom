@@ -21,6 +21,7 @@ from planner.tickets.contracts import (
     TITLE_MAX_CHARS,
     AtCap,
     FieldName,
+    TicketEdit,
     TicketState,
     TicketStatus,
 )
@@ -69,10 +70,11 @@ def test_ticket_and_field_user_notes_round_trip_with_legacy_field_notes(
     t = _create(tmp_db, cfg, fake_clock, user_note="intake direction")
     assert t.user_note == "intake direction"
 
-    t = data.set_user_note(
+    t = data.edit_ticket(
         tmp_db,
         t.id,
-        user_note="updated intake direction",
+        edit=TicketEdit(user_note="updated intake direction"),
+        title_max_chars=TITLE_MAX_CHARS,
         actor="human",
         now=fake_clock.now_unix(),
     )
@@ -93,7 +95,8 @@ def test_ticket_and_field_user_notes_round_trip_with_legacy_field_notes(
             "success": {"value": None, "proposal": None, "notes": "legacy guidance"},
             "approach": {"value": None, "proposal": None, "user_note": "new guidance"},
             "plan": {"value": None, "proposal": None, "notes": None},
-            "result": {"value": None, "proposal": None, "notes": None},
+            "implementation": {"value": None, "proposal": None, "notes": None},
+            "closeout": {"value": None, "proposal": None, "notes": None},
         }
     )
     parsed = fields_codec.fields_from_json(legacy)
@@ -309,7 +312,7 @@ def test_a02_gating_chain_one_state_per_accept(
 ) -> None:
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
-    _scope(tmp_db, t, TicketState.needs_review, AtCap.propose, fake_clock)
+    _scope(tmp_db, t, TicketState.needs_closeout, AtCap.propose, fake_clock)
 
     t = data.file_proposal(
         tmp_db, t.id, field=FieldName.success, body="success body", actor="agent", now=now
@@ -328,21 +331,22 @@ def test_a02_gating_chain_one_state_per_accept(
     t = data.file_proposal(
         tmp_db, t.id, field=FieldName.plan, body="plan body", actor="agent", now=now
     )
-    assert t.state is TicketState.in_progress
+    assert t.state is TicketState.needs_implementation
     assert len(_events(tmp_db, cfg, t.id, EventKind.state_changed)) == 3
 
     t = data.file_proposal(
-        tmp_db, t.id, field=FieldName.result, body="result body", actor="agent", now=now
+        tmp_db, t.id, field=FieldName.implementation, body="implementation body", actor="agent",
+        now=now
     )
-    assert t.state is TicketState.needs_review
+    assert t.state is TicketState.needs_closeout
     assert len(_events(tmp_db, cfg, t.id, EventKind.state_changed)) == 4
 
     changes = _events(tmp_db, cfg, t.id, EventKind.state_changed)
     assert [(e.payload["from"], e.payload["to"]) for e in changes] == [
         ("needs_success", "needs_approach"),
         ("needs_approach", "needs_plan"),
-        ("needs_plan", "in_progress"),
-        ("in_progress", "needs_review"),
+        ("needs_plan", "needs_implementation"),
+        ("needs_implementation", "needs_closeout"),
     ]
     for e in changes:
         assert e.payload["cause"] == "auto_accept"
@@ -518,38 +522,53 @@ def test_a06_edit_accept_stores_edited_text(
     }
 
 
-def test_a07_result_routing(
+def test_a07_closeout_routing(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
 
+    # Ceiling stops exactly at needs_closeout: implementation auto-accepts up to
+    # needs_closeout, and closeout then routes to done through the ordinary
+    # accept machinery (no special-cased manual review step).
     t1 = _create(tmp_db, cfg, fake_clock)
-    _scope(tmp_db, t1, TicketState.needs_review, AtCap.propose, fake_clock)
-    for f, body in [(FieldName.success, "s"), (FieldName.approach, "a"), (FieldName.plan, "p")]:
+    _scope(tmp_db, t1, TicketState.needs_closeout, AtCap.propose, fake_clock)
+    for f, body in [
+        (FieldName.success, "s"), (FieldName.approach, "a"), (FieldName.plan, "p"),
+        (FieldName.implementation, "i"),
+    ]:
         t1 = data.file_proposal(tmp_db, t1.id, field=f, body=body, actor="agent", now=now)
-    assert t1.state is TicketState.in_progress
-    t1 = data.file_proposal(tmp_db, t1.id, field=FieldName.result, body="r", actor="agent", now=now)
-    assert t1.state is TicketState.needs_review
-    assert t1.fields.result.value == "r"
+    assert t1.state is TicketState.needs_closeout
+    t1 = data.file_proposal(tmp_db, t1.id, field=FieldName.closeout, body="c", actor="agent",
+                             now=now)
+    assert t1.state is TicketState.needs_closeout
+    assert t1.fields.closeout.proposal is not None
+    assert t1.fields.closeout.value is None
 
-    t1 = data.approve_review(tmp_db, t1.id, actor="human", now=now)
+    t1 = data.accept_proposal(
+        tmp_db, t1.id, field=FieldName.closeout, actor="human", now=now,
+        next_ceiling=NO_FURTHER, at_cap=AtCap.propose,
+    )
     assert t1.state is TicketState.done
+    assert t1.fields.closeout.value == "c"
     changed = _events(tmp_db, cfg, t1.id, EventKind.state_changed)
     assert changed[-1].payload == {
-        "from": "needs_review",
+        "from": "needs_closeout",
         "to": "done",
-        "cause": "review_approve",
+        "cause": "direct_accept",
     }
-    assert t1.ceiling is TicketState.needs_review
+    assert t1.ceiling is TicketState.done
     assert t1.at_cap is AtCap.propose
 
+    # Ceiling at done from the start: every field, including closeout, auto-accepts
+    # straight through to done.
     t2 = _create(tmp_db, cfg, fake_clock)
     _scope(tmp_db, t2, TicketState.done, AtCap.propose, fake_clock)
     for f, body in [
         (FieldName.success, "s"),
         (FieldName.approach, "a"),
         (FieldName.plan, "p"),
-        (FieldName.result, "r"),
+        (FieldName.implementation, "i"),
+        (FieldName.closeout, "c"),
     ]:
         t2 = data.file_proposal(tmp_db, t2.id, field=f, body=body, actor="agent", now=now)
     assert t2.state is TicketState.done
@@ -560,30 +579,34 @@ def test_a07_result_routing(
     assert seq == [
         ("needs_success", "needs_approach"),
         ("needs_approach", "needs_plan"),
-        ("needs_plan", "in_progress"),
-        ("in_progress", "done"),
+        ("needs_plan", "needs_implementation"),
+        ("needs_implementation", "needs_closeout"),
+        ("needs_closeout", "done"),
     ]
 
+    # Ceiling below needs_closeout: the closeout proposal stays pending until the
+    # ceiling is raised and it is explicitly accepted.
     t3 = _create(tmp_db, cfg, fake_clock)
-    _scope(tmp_db, t3, TicketState.in_progress, AtCap.propose, fake_clock)
+    _scope(tmp_db, t3, TicketState.needs_implementation, AtCap.propose, fake_clock)
     for f, body in [(FieldName.success, "s"), (FieldName.approach, "a"), (FieldName.plan, "p")]:
         t3 = data.file_proposal(tmp_db, t3.id, field=f, body=body, actor="agent", now=now)
-    assert t3.state is TicketState.in_progress
-    t3 = data.file_proposal(tmp_db, t3.id, field=FieldName.result, body="r", actor="agent", now=now)
-    assert t3.state is TicketState.in_progress
-    assert t3.fields.result.proposal is not None
+    assert t3.state is TicketState.needs_implementation
+    t3 = data.file_proposal(tmp_db, t3.id, field=FieldName.implementation, body="i", actor="agent",
+                             now=now)
+    assert t3.state is TicketState.needs_implementation
+    assert t3.fields.implementation.proposal is not None
 
     _scope(tmp_db, t3, TicketState.done, AtCap.propose, fake_clock)
     t3 = data.accept_proposal(
         tmp_db,
         t3.id,
-        field=FieldName.result,
+        field=FieldName.implementation,
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.stop,
     )
-    assert t3.state is TicketState.done
+    assert t3.state is TicketState.needs_closeout
 
 
 def test_a08_recap_rules(
@@ -631,7 +654,14 @@ def test_a13_sprint_assignment_rules(
     )
 
     standalone = _create(tmp_db, cfg, fake_clock)
-    standalone = data.set_sprint(tmp_db, standalone.id, sprint_id="sp_test", actor="agent", now=now)
+    standalone = data.edit_ticket(
+        tmp_db,
+        standalone.id,
+        edit=TicketEdit(sprint_id="sp_test"),
+        title_max_chars=TITLE_MAX_CHARS,
+        actor="agent",
+        now=now,
+    )
     assert data.read_ticket(tmp_db, standalone.id).sprint_id == "sp_test"
     upd = _events(tmp_db, cfg, standalone.id, EventKind.ticket_updated)
     assert upd[-1].payload == {"field": "sprint_id", "from": None, "to": "sp_test"}
@@ -644,7 +674,14 @@ def test_a13_sprint_assignment_rules(
     parented = _create(tmp_db, cfg, fake_clock, sprint_item_id="si_test")
 
     with pytest.raises(PlannerError) as exc:
-        data.set_sprint(tmp_db, parented.id, sprint_id="sp_test", actor="human", now=now)
+        data.edit_ticket(
+            tmp_db,
+            parented.id,
+            edit=TicketEdit(sprint_id="sp_test"),
+            title_max_chars=TITLE_MAX_CHARS,
+            actor="human",
+            now=now,
+        )
     assert exc.value.code is ErrorCode.sprint_derived
     assert data.read_ticket(tmp_db, parented.id).sprint_id is None
     assert _events(tmp_db, cfg, parented.id, EventKind.ticket_updated) == []
@@ -653,21 +690,28 @@ def test_a13_sprint_assignment_rules(
     assert data.get_effective_sprint_id(tmp_db, standalone.id) == "sp_test"
 
 
-def test_x06_title_and_project_writers_log_events(
+def test_x06_title_and_project_edits_log_events(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
     ticket = _create(tmp_db, cfg, fake_clock, project_id="project_vylo")
 
-    renamed = data.set_title(
+    renamed = data.edit_ticket(
         tmp_db,
         ticket.id,
-        title="Renamed ticket",
+        edit=TicketEdit(title="Renamed ticket"),
         title_max_chars=TITLE_MAX_CHARS,
         actor="human",
         now=now,
     )
-    updated = data.set_project(tmp_db, ticket.id, project_id=None, actor="human", now=now)
+    updated = data.edit_ticket(
+        tmp_db,
+        ticket.id,
+        edit=TicketEdit(project_id=None),
+        title_max_chars=TITLE_MAX_CHARS,
+        actor="human",
+        now=now,
+    )
 
     assert renamed.title == "Renamed ticket"
     assert updated.project_id is None
@@ -679,7 +723,7 @@ def test_x06_title_and_project_writers_log_events(
     ]
 
 
-def test_x06_project_writer_preserves_parented_error_shape(
+def test_x06_project_edit_preserves_parented_error_shape(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
@@ -691,8 +735,13 @@ def test_x06_project_writer_preserves_parented_error_shape(
     ticket = _create(tmp_db, cfg, fake_clock, sprint_item_id="si_project_parent")
 
     with pytest.raises(PlannerError) as exc:
-        data.set_project(
-            tmp_db, ticket.id, project_id="project_vylo", actor="human", now=now
+        data.edit_ticket(
+            tmp_db,
+            ticket.id,
+            edit=TicketEdit(project_id="project_vylo"),
+            title_max_chars=TITLE_MAX_CHARS,
+            actor="human",
+            now=now,
         )
 
     assert exc.value.code is ErrorCode.validation
@@ -803,19 +852,18 @@ def test_a36_onward_scope(
     assert len(_events(tmp_db, cfg, t3.id, EventKind.scope_changed)) == scope_count_before
 
     t4 = _create(tmp_db, cfg, fake_clock)
-    _scope(tmp_db, t4, TicketState.needs_review, AtCap.propose, fake_clock)
+    t4 = _scope(tmp_db, t4, TicketState.done, AtCap.propose, fake_clock)
+    ceiling_before = t4.ceiling
+    at_cap_before = t4.at_cap
+    scopes_before = len(_events(tmp_db, cfg, t4.id, EventKind.scope_changed))
     for f, body in [
         (FieldName.success, "s"),
         (FieldName.approach, "a"),
         (FieldName.plan, "p"),
-        (FieldName.result, "r"),
+        (FieldName.implementation, "i"),
+        (FieldName.closeout, "c"),
     ]:
         t4 = data.file_proposal(tmp_db, t4.id, field=f, body=body, actor="agent", now=now)
-    assert t4.state is TicketState.needs_review
-    ceiling_before = t4.ceiling
-    at_cap_before = t4.at_cap
-    scopes_before = len(_events(tmp_db, cfg, t4.id, EventKind.scope_changed))
-    t4 = data.approve_review(tmp_db, t4.id, actor="human", now=now)
     assert t4.state is TicketState.done
     assert t4.ceiling is ceiling_before
     assert t4.at_cap is at_cap_before

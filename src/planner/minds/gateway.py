@@ -1,7 +1,8 @@
 """GatewayChild: one Hermes tui_gateway child over newline-delimited JSON-RPC.
 
 Frame router: a single reader thread routes JSON-RPC responses (keyed by id)
-to per-request waiters and stream events to registered per-session drains.
+to per-request waiters, sends process events to their process queue, and writes
+session events once to the child-wide ordered ingress.
 Request ids are integers allocated from 1, incrementing — a documented
 contract the tests rely on. Responses may arrive out of order (the gateway
 runs long handlers on an internal thread pool); correlation is strictly by id.
@@ -116,14 +117,79 @@ class _Pending:
     def __init__(self) -> None:
         self.done = threading.Event()
         self.frame: JsonDict | None = None
+        self.failure: str | None = None
 
 
-class SessionEventStream:
-    """A registered event drain for exactly one live gateway session."""
+class GatewayRequestHandle:
+    """A written JSON-RPC request whose response remains correlated by request id."""
 
-    def __init__(self, child: GatewayChild, session_id: str, events: queue.Queue[JsonDict | None]):
+    def __init__(
+        self,
+        child: GatewayChild,
+        request_id: int,
+        method: str,
+        pending: _Pending,
+    ) -> None:
         self._child = child
-        self._session_id = session_id
+        self._request_id = request_id
+        self._method = method
+        self._pending = pending
+
+    def wait(self, timeout: float = REQUEST_TIMEOUT_DEFAULT) -> JsonDict:
+        if not self._pending.done.wait(timeout):
+            self._child._forget_request(self._request_id, self._pending)
+            raise GatewayError(f"no response to {self._method} within {timeout}s")
+        resp = self._pending.frame
+        if self._pending.failure is not None:
+            raise GatewayError(self._pending.failure)
+        if resp is None:
+            raise GatewayError(
+                f"gateway child died before responding to {self._method}; "
+                f"stderr: {self._child.stderr_tail()!r}"
+            )
+        err = resp.get("error")
+        if isinstance(err, dict):
+            raise GatewayRpcError(int(err.get("code", -1)), str(err.get("message", "")))
+        result = resp.get("result")
+        return result if isinstance(result, dict) else {}
+
+    def response_result_if_ready(self) -> JsonDict | None:
+        """Inspect a successful response without consuming or waiting for it."""
+        if not self._pending.done.is_set() or self._pending.failure is not None:
+            return None
+        resp = self._pending.frame
+        if resp is None or isinstance(resp.get("error"), dict):
+            return None
+        result = resp.get("result")
+        return result if isinstance(result, dict) else {}
+
+    def response_rpc_error_if_ready(self) -> GatewayRpcError | None:
+        """Inspect an already-received RPC rejection without consuming it."""
+        if not self._pending.done.is_set() or self._pending.failure is not None:
+            return None
+        resp = self._pending.frame
+        if resp is None:
+            return None
+        error = resp.get("error")
+        if not isinstance(error, dict):
+            return None
+        return GatewayRpcError(
+            int(error.get("code", -1)),
+            str(error.get("message", "")),
+        )
+
+    def cancel(self, detail: str) -> None:
+        """Wake this waiter when its owner can no longer use the response."""
+        if not self._child._forget_request(self._request_id, self._pending):
+            return
+        self._pending.failure = detail
+        self._pending.done.set()
+
+
+class ChildSessionEventIngress:
+    """The single ordered feed of all session-scoped events from one child."""
+
+    def __init__(self, events: queue.Queue[JsonDict | None]) -> None:
         self._events = events
         self._closed = False
 
@@ -135,9 +201,7 @@ class SessionEventStream:
                 else self._events.get()
             )
         except queue.Empty:
-            raise GatewayError(
-                f"no gateway event for session {self._session_id} within {timeout}s"
-            ) from None
+            raise GatewayError(f"no child session event within {timeout}s") from None
         if item is None:
             self._events.put(None)
             return None
@@ -147,13 +211,7 @@ class SessionEventStream:
         if self._closed:
             return
         self._closed = True
-        self._child._close_session_events(self._session_id, self._events)
-
-    def __enter__(self) -> SessionEventStream:
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        self.close()
+        self._events.put(None)
 
 
 class GatewayChild:
@@ -176,7 +234,8 @@ class GatewayChild:
         self._lock = threading.Lock()
         self._send_lock = threading.Lock()
         self._next_id = 1
-        self._session_events: dict[str, list[queue.Queue[JsonDict | None]]] = {}
+        self._child_session_events: queue.Queue[JsonDict | None] = queue.Queue()
+        self._child_session_events_claimed = False
         self._process_events: queue.Queue[JsonDict | None] = queue.Queue()
         self._ready_gate = threading.Event()
         self._ready_seen = False
@@ -234,12 +293,7 @@ class GatewayChild:
         for entry in pending:
             entry.done.set()  # frame stays None -> waiter raises child-died
         self._ready_gate.set()  # wakes wait_ready, which checks _ready_seen first
-        with self._lock:
-            session_queues = [
-                events for queues in self._session_events.values() for events in queues
-            ]
-        for events in session_queues:
-            events.put(None)
+        self._child_session_events.put(None)
         self._process_events.put(None)
 
     def _stderr_loop(self) -> None:
@@ -254,11 +308,7 @@ class GatewayChild:
         if raw_session_id is None:
             self._process_events.put(params)
             return
-        session_id = str(raw_session_id)
-        with self._lock:
-            queues = tuple(self._session_events.get(session_id, ()))
-        for events in queues:
-            events.put(params)
+        self._child_session_events.put(params)
 
     # --- public API --------------------------------------------------------
 
@@ -279,6 +329,14 @@ class GatewayChild:
         *,
         timeout: float = REQUEST_TIMEOUT_DEFAULT,
     ) -> JsonDict:
+        return self.begin_request(method, params).wait(timeout)
+
+    def begin_request(
+        self,
+        method: str,
+        params: JsonDict | None = None,
+    ) -> GatewayRequestHandle:
+        """Register and write a request without waiting for its response."""
         if self._dead.is_set():
             raise GatewayError(f"gateway child is dead; cannot send {method}")
         with self._lock:
@@ -296,46 +354,22 @@ class GatewayChild:
             with self._lock:
                 self._pending.pop(rid, None)
             raise GatewayError(f"gateway stdin write failed for {method}: {exc}") from exc
-        if not pending.done.wait(timeout):
-            with self._lock:
-                self._pending.pop(rid, None)
-            raise GatewayError(f"no response to {method} within {timeout}s")
-        resp = pending.frame
-        if resp is None:
-            raise GatewayError(
-                f"gateway child died before responding to {method}; "
-                f"stderr: {self.stderr_tail()!r}"
-            )
-        err = resp.get("error")
-        if isinstance(err, dict):
-            raise GatewayRpcError(int(err.get("code", -1)), str(err.get("message", "")))
-        result = resp.get("result")
-        return result if isinstance(result, dict) else {}
+        return GatewayRequestHandle(self, rid, method, pending)
 
-    def open_session_events(self, session_id: str) -> SessionEventStream:
-        if not session_id:
-            raise ValueError("session_id is required")
-        events: queue.Queue[JsonDict | None] = queue.Queue()
+    def _forget_request(self, request_id: int, pending: _Pending) -> bool:
         with self._lock:
-            self._session_events.setdefault(session_id, []).append(events)
-            dead = self._dead.is_set()
-        if dead:
-            events.put(None)
-        return SessionEventStream(self, session_id, events)
+            if self._pending.get(request_id) is pending:
+                self._pending.pop(request_id, None)
+                return True
+            return False
 
-    def _close_session_events(
-        self, session_id: str, events: queue.Queue[JsonDict | None]
-    ) -> None:
+    def claim_session_event_ingress(self) -> ChildSessionEventIngress:
+        """Claim the one physical ordered session-event ingress for this child."""
         with self._lock:
-            queues = self._session_events.get(session_id)
-            if queues is None:
-                return
-            try:
-                queues.remove(events)
-            except ValueError:
-                return
-            if not queues:
-                self._session_events.pop(session_id, None)
+            if self._child_session_events_claimed:
+                raise RuntimeError("child session event ingress already claimed")
+            self._child_session_events_claimed = True
+        return ChildSessionEventIngress(self._child_session_events)
 
     def next_process_event(self, timeout: float | None = None) -> JsonDict | None:
         try:

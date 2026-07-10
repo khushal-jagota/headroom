@@ -25,7 +25,6 @@ from planner.tickets.logic.decisions import Decision, EventSpec
 
 CAUSE_AUTO_ACCEPT: Final[str] = "auto_accept"
 CAUSE_DIRECT_ACCEPT: Final[str] = "direct_accept"
-CAUSE_REVIEW_APPROVE: Final[str] = "review_approve"
 CAUSE_DIRECT_STATE_JUMP: Final[str] = "direct_state_jump"
 CAUSE_DROP: Final[str] = "drop"
 CAUSE_ONWARD_SCOPE: Final[str] = "onward_scope"
@@ -51,7 +50,7 @@ def _accept_gating_proposal(
     slot = fields_codec.get_slot(ticket.fields, field)
     new_slot = FieldSlot(value=stored_body, proposal=None, user_note=slot.user_note)
     new_fields = fields_codec.with_slot(ticket.fields, field, new_slot)
-    new_state = machine.advance_target(ticket.state, ticket.ceiling)
+    new_state = machine.advance_target(ticket.state)
     events: list[EventSpec] = []
     if superseded_body is not None:
         events.append(
@@ -102,37 +101,6 @@ def decide_file_proposal(
     ticket: Ticket, field: FieldName, body: str, actor: str, now: int
 ) -> Decision:
     admission.validate_body(body, "proposal body")
-    if ticket.state is TicketState.needs_review:
-        if ticket.ticket_status is not TicketStatus.agent_running_step:
-            raise PlannerError(
-                ErrorCode.validation,
-                "a reviewed result can be revised only while the agent is running",
-                {"ticket_status": ticket.ticket_status.value},
-            )
-        if field is not FieldName.result:
-            raise PlannerError(
-                ErrorCode.validation,
-                "needs_review accepts only a revised result",
-                {"field": field.value},
-            )
-        slot = fields_codec.get_slot(ticket.fields, FieldName.result)
-        if slot.value is None:
-            raise PlannerError(ErrorCode.validation, "ticket has no settled result to revise")
-        new_slot = FieldSlot(value=body, proposal=None, user_note=slot.user_note)
-        return Decision(
-            events=(
-                EventSpec(
-                    EventKind.proposal_accepted,
-                    {
-                        "field": FieldName.result.value,
-                        "body": body,
-                        "resolved_by": RESOLVED_BY_AUTO,
-                        "edited": False,
-                    },
-                ),
-            ),
-            new_fields=fields_codec.with_slot(ticket.fields, FieldName.result, new_slot),
-        )
     admission.check_agent_proposal(ticket.state, ticket.ceiling, ticket.at_cap, field)
     slot = fields_codec.get_slot(ticket.fields, field)
     superseded_body = slot.proposal.body if slot.proposal is not None else None
@@ -195,7 +163,7 @@ def decide_accept(
         )
     stored_body = edited_body if edited_body is not None else slot.proposal.body
     if field is machine.gating_field(ticket.state):
-        new_state = machine.advance_target(ticket.state, ticket.ceiling)
+        new_state = machine.advance_target(ticket.state)
         scope = machine.resolve_scope(new_state, next_ceiling, at_cap)
         return _accept_gating_proposal(
             ticket,
@@ -260,30 +228,12 @@ def decide_edit_value(
     )
 
 
-def decide_approve(ticket: Ticket, actor: str) -> Decision:
-    admission.require_direct_actor(actor, "approve_review")
-    if ticket.ticket_status is TicketStatus.agent_running_step:
-        raise PlannerError(
-            ErrorCode.already_running,
-            "the ticket worker is revising this review",
-            {"ticket_id": ticket.id},
-        )
-    if ticket.state is not TicketState.needs_review:
-        raise PlannerError(
-            ErrorCode.validation,
-            "approve requires state needs_review",
-            {"state": ticket.state.value},
-        )
-    events = (_state_change(ticket.state, TicketState.done, CAUSE_REVIEW_APPROVE),)
-    return Decision(events=events, new_state=TicketState.done)
-
-
 def decide_return_for_revision(ticket: Ticket, actor: str) -> Decision:
     admission.require_direct_actor(actor, "return_for_revision")
     if ticket.ticket_status is TicketStatus.agent_running_step:
         raise PlannerError(
             ErrorCode.already_running,
-            "the ticket worker is already revising this review",
+            "the ticket worker is already revising this proposal",
             {"ticket_id": ticket.id},
         )
     if ticket.state in (TicketState.done, TicketState.dropped):
@@ -298,8 +248,6 @@ def decide_return_for_revision(ticket: Ticket, actor: str) -> Decision:
             "ticket has no existing worker session",
             {"ticket_id": ticket.id},
         )
-    if ticket.state is TicketState.needs_review:
-        return Decision(events=())
     field = machine.gating_field(ticket.state)
     if field is None:
         raise PlannerError(

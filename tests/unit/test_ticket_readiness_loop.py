@@ -5,27 +5,34 @@ through the spawn seam and a fresh FakeGateway is handed out per spawn. The "age
 proposal during its run" is simulated by driving the REAL tickets_data.file_proposal writer on
 prompt.submit, so auto-accept/park below/at ceiling flows through the production resolution
 engine. Split into: (1) direct is_runnable predicate tests (no threads); (2) poll_once +
-loop/poke/on-idle integration tests through a fake employee gateway."""
+loop/wake/settlement-doorbell integration tests through a fake employee gateway."""
 
 from __future__ import annotations
 
 import json
 import sys
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from fastapi.testclient import TestClient
+
 from planner.core import links as core_links
+from planner.core.adapters.registry import build_adapters
 from planner.core.clock import TestClock
+from planner.core.config import load_config
 from planner.core.contracts import LinkKind
 from planner.core.db import connect, create_schema
+from planner.core.server import create_app
 from planner.days import data as days_data
 from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.shared_gateway import SharedGateway
 from planner.runtime import readiness
 from planner.runtime.employee_step_runner import EmployeeStepRunner
+from planner.runtime.readiness_doorbell import LoopReadinessDoorbell, NoOpReadinessDoorbell
 from planner.runtime.ticket_readiness_loop import TicketReadinessLoop
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, FieldName, Ticket, TicketState, TicketStatus
@@ -219,6 +226,7 @@ def _runner(db: str, fake: FakeGateway) -> EmployeeStepRunner:
         db,
         TestClock(FIXED_NOW),
         gateway=gateway,
+        readiness_doorbell=NoOpReadinessDoorbell(),
         boundary_hour=BOUNDARY_HOUR,
     )
 
@@ -286,13 +294,15 @@ def test_is_runnable_parked_proposal_is_false(tmp_path: Path) -> None:
         conn.close()
 
 
-def test_is_runnable_needs_review_is_false(tmp_path: Path) -> None:
+def test_is_runnable_needs_closeout_follows_ordinary_gating(tmp_path: Path) -> None:
+    # closeout is a field-gated state like every other: no special-cased "no gating
+    # field, human must approve" behavior remains in the five-field model.
     db = _db(tmp_path)
-    tid = _new_ticket(db)
-    _jump_state(db, tid, TicketState.needs_review)  # no gating field -> human approves
+    tid = _new_ticket(db, ceiling=TicketState.needs_closeout, at_cap=AtCap.propose)
+    _jump_state(db, tid, TicketState.needs_closeout)
     conn = connect(db)
     try:
-        assert readiness.is_runnable(conn, tickets_data.read_ticket(conn, tid)) is False
+        assert readiness.is_runnable(conn, tickets_data.read_ticket(conn, tid)) is True
     finally:
         conn.close()
 
@@ -391,14 +401,12 @@ def test_poll_excludes_every_non_runnable_ticket(tmp_path: Path) -> None:
     _set_status(db, t_takeover, TicketStatus.user_takeover)
     t_errored = _new_ticket(db)
     _set_status(db, t_errored, TicketStatus.errored)
-    # predicate-excluded: dropped, at-ceiling+stop, parked proposal, needs_review, blocked
+    # predicate-excluded: dropped, at-ceiling+stop, parked proposal, blocked
     t_dropped = _new_ticket(db)
     _drop(db, t_dropped)
     t_stop = _new_ticket(db, ceiling=TicketState.needs_success, at_cap=AtCap.stop)
     t_parked = _new_ticket(db)
     _file_proposal(db, t_parked, "success", "b")
-    t_review = _new_ticket(db)
-    _jump_state(db, t_review, TicketState.needs_review)
     blocker = _new_ticket(db, at_cap=AtCap.stop)  # open (blocks) but itself not runnable
     t_blocked = _new_ticket(db)
     _add_block(db, blocker, t_blocked)
@@ -410,7 +418,6 @@ def test_poll_excludes_every_non_runnable_ticket(tmp_path: Path) -> None:
         t_dropped,
         t_stop,
         t_parked,
-        t_review,
         blocker,
         t_blocked,
     ):
@@ -421,23 +428,36 @@ def test_poll_excludes_every_non_runnable_ticket(tmp_path: Path) -> None:
     assert loop.poll_once() == []       # nothing ready -> nothing started
 
 
-def test_fast_path_poke_sets_off_before_the_timer(tmp_path: Path) -> None:
+def test_fast_path_wake_sets_off_before_the_timer(tmp_path: Path) -> None:
     db = _db(tmp_path)
     tid_box: list[str] = []
+    first_empty_scan = threading.Event()
     fake = _ProposingFake(
         _create_script(_complete_ev()),
         on_submit=lambda: _file_proposal(db, tid_box[0], "success", "b"),
     )
     runner = _runner(db, fake)
-    loop = _loop(db, runner)
-    loop.start(60)  # only a poke, not the timer, can drive it inside the budget
+
+    class ObservableLoop(TicketReadinessLoop):
+        def poll_once(self) -> list[str]:
+            result = super().poll_once()
+            first_empty_scan.set()
+            return result
+
+    loop = ObservableLoop(
+        db,
+        TestClock(FIXED_NOW),
+        runner,
+        boundary_hour=BOUNDARY_HOUR,
+    )
+    loop.start(60)  # only a wake, not the timer, can drive it inside the budget
     try:
-        time.sleep(0.3)               # let the first (empty) poll run and enter the wait
+        assert first_empty_scan.wait(3.0)
         tid = _new_ticket(db)
         _add_to_day(db, tid)          # on today -> in scope
         tid_box.append(tid)
-        loop.poke()
-        # the poke drove the employee step well under 60s (wait on the effect, not wait_idle, which
+        loop.wake()
+        # the wake drove the employee step well under 60s (wait on the effect, not wait_idle, which
         # would race ahead of the loop thread's async poll+submit).
         assert _wait_until(
             lambda: _read(db, tid).ticket_status == TicketStatus.awaiting_approval,
@@ -447,8 +467,8 @@ def test_fast_path_poke_sets_off_before_the_timer(tmp_path: Path) -> None:
         loop.stop()
 
 
-def test_on_idle_drives_the_auto_advance_chain(tmp_path: Path) -> None:
-    # ceiling=needs_approach: step 0 (success) auto-accepts and the finished-step on_idle poke
+def test_settlement_doorbell_drives_the_auto_advance_chain(tmp_path: Path) -> None:
+    # ceiling=needs_approach: step 0 (success) auto-accepts and its settlement doorbell
     # drives step 1 (approach) automatically, which parks at the ceiling and stops the chain.
     db = _db(tmp_path)
     tid = _new_ticket(db, ceiling=TicketState.needs_approach)
@@ -464,10 +484,24 @@ def test_on_idle_drives_the_auto_advance_chain(tmp_path: Path) -> None:
             lambda: _file_proposal(db, tid, "approach", "a"),
         ],
     )
-    runner = _runner(db, fake)
+    loop_box: list[TicketReadinessLoop] = []
+    gateway = SharedGateway(
+        hermes_python=HERMES_PY,
+        home=HOME,
+        worker_role=ROLE,
+        spawn=fake.spawn,
+        base_env={},
+    )
+    runner = EmployeeStepRunner(
+        db,
+        TestClock(FIXED_NOW),
+        gateway=gateway,
+        readiness_doorbell=LoopReadinessDoorbell(lambda: loop_box[0].wake()),
+        boundary_hour=BOUNDARY_HOUR,
+    )
     loop = _loop(db, runner)
-    runner.set_idle_callback(loop.poke)  # loops.py wires this in production
-    loop.start(30)  # the on-idle poke, not the timer, advances the chain
+    loop_box.append(loop)
+    loop.start(30)  # the settlement ring, not the timer, advances the chain
     try:
         assert _wait_until(lambda: _read(db, tid).fields.approach.proposal is not None, 10.0)
     finally:
@@ -480,6 +514,60 @@ def test_on_idle_drives_the_auto_advance_chain(tmp_path: Path) -> None:
     assert ticket.ticket_status == TicketStatus.awaiting_approval
     assert fake.sent_methods().count("session.create") == 1
     assert fake.sent_methods().count("session.resume") == 1
+
+
+def test_fastapi_day_action_rings_real_loop_without_waiting_for_long_timer(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    first_scan = threading.Event()
+    dispatched = threading.Event()
+    dispatched_ids: list[str] = []
+
+    class RecordingRunner:
+        def run_ready_step(self, ticket_id: str) -> None:
+            dispatched_ids.append(ticket_id)
+            dispatched.set()
+
+    class ObservableLoop(TicketReadinessLoop):
+        def poll_once(self) -> list[str]:
+            result = super().poll_once()
+            first_scan.set()
+            return result
+
+    runner = RecordingRunner()
+    loop = ObservableLoop(
+        db,
+        TestClock(FIXED_NOW),
+        runner,  # type: ignore[arg-type]
+        boundary_hour=BOUNDARY_HOUR,
+    )
+    config = load_config(
+        path=None,
+        env={
+            "PLAN_TEST_MODE": "1",
+            "PLAN_GATEWAY_ADAPTER": "fake",
+            "PLAN_DB_PATH": db,
+            "PLAN_BOUNDARY_HOUR": str(BOUNDARY_HOUR),
+        },
+    )
+
+    def conn_factory():
+        return connect(db)
+
+    app = create_app(config, TestClock(FIXED_NOW), build_adapters(config), conn_factory)
+    app.state.readiness_doorbell = LoopReadinessDoorbell(loop.wake)
+    loop.start(3600)
+    try:
+        assert first_scan.wait(3.0)
+        tid = _new_ticket(db)
+        with TestClient(app) as client:
+            placed = client.post("/api/day/today/tickets", json={"ticket_id": tid})
+        assert placed.status_code == 200, placed.text
+        assert dispatched.wait(3.0)
+        assert dispatched_ids == [tid]
+    finally:
+        loop.stop()
 
 
 # --- today-scoping (owner ruling: only today's tickets are auto-started) ------
@@ -515,7 +603,7 @@ def test_poll_excludes_ticket_on_another_day(tmp_path: Path) -> None:
 def test_poll_sets_off_today_ticket_after_approval_advance(tmp_path: Path) -> None:
     # The owner's primary flow: a ticket on today whose prior step advanced (state moved on,
     # gating field empty, still below ceiling) is set off for its NEXT step on the next poll —
-    # exactly what the approve fast-path poke triggers (re-derive readiness -> run a step).
+    # exactly what the approval doorbell triggers (re-derive readiness -> run a step).
     db = _db(tmp_path)
     tid = _new_ticket(db, ceiling=TicketState.needs_approach)
     _add_to_day(db, tid)

@@ -696,13 +696,13 @@
             <div class="detail-body">
               <p>
                 Tickets have two states. <code>state</code> is the work stage:
-                success, approach, plan, progress, review, done, or dropped.
+                success, approach, plan, implementation, closeout, done, or dropped.
                 <code>ticket_status</code> is runtime control: empty, running,
                 awaiting approval, user takeover, or errored.
               </p>
               <p>
-                Workers write proposals to the four fields: success, approach,
-                plan, and result. The resolution engine is the only code that can
+                Workers write proposals to the five fields: success, approach,
+                plan, implementation, and closeout. The resolution engine is the only code that can
                 settle a proposal or advance <code>state</code>. Scope is
                 <code>ceiling</code> plus <code>at_cap</code>; it decides how far a
                 worker may go before the human must approve again.
@@ -734,10 +734,21 @@
                 turn ends. A parked proposal becomes <code>awaiting_approval</code>;
                 auto-accepted work can return to <code>empty</code>.
               </p>
+              <p>
+                Ticket, Day membership, and blocking-link actions commit first, then ring a
+                best-effort ReadinessDoorbell. Runner settlement rings it too. The doorbell
+                carries no Ticket id and owns no state. A failed delivery is logged and ignored;
+                SQLite and the periodic timer remain canonical. Processes without the polling
+                lock use a no-op doorbell rather than IPC.
+              </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/runtime/readiness.py</code>,
+                <code>src/planner/runtime/readiness_doorbell.py</code>,
                 <code>src/planner/runtime/ticket_readiness_loop.py</code>,
                 <code>src/planner/runtime/employee_step_runner.py</code>,
+                <code>src/planner/tickets/actions.py</code>,
+                <code>src/planner/days/actions.py</code>,
+                <code>src/planner/core/link_actions.py</code>,
                 <code>src/planner/core/loops.py</code>
               </p>
             </div>

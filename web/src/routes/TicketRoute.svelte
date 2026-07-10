@@ -5,6 +5,7 @@
   import {
     FIELD_NAMES,
     PRIORITIES,
+    STATE_ORDER,
     ceilingOptions,
     fieldStageVisualState,
     fieldSlot,
@@ -92,9 +93,6 @@
     );
   }
 
-  function approve(): Promise<unknown> {
-    return mutateJson(`/api/tickets/${id}/approve`, { method: "POST" }, ticketInvalidations);
-  }
 
   function writeClipboard(text: string): Promise<void> {
     if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
@@ -265,7 +263,7 @@
         <div class="ticket-col">
           <div class="ticket-recap" data-recap>
             <Disclosure title="Recap" variant="support" defaultOpen={true} data-content-section="recap">
-              {#if ["needs_approach", "needs_plan", "in_progress", "needs_review", "done"].includes(detail.state)}
+              {#if STATE_ORDER.indexOf(detail.state) > 0}
                 <InlineEdit
                   value={detail.recap}
                   markdown
@@ -315,7 +313,6 @@
                 ceiling={detail.ceiling}
                 emptyText={emptyTicketFieldText}
                 onAccept={(payload) => acceptField(name, payload)}
-                onApproveResult={() => approve()}
                 onSaveNote={(raw) => saveNote(name, raw)}
                 onSaveValue={(raw) => saveValue(name, raw)}
               />

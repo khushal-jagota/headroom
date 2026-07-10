@@ -209,11 +209,11 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     return create_app(config, clock, adapters, conn_factory), db_path
 
 
-class _PokeSpy:
+class _DoorbellSpy:
     def __init__(self) -> None:
         self.calls = 0
 
-    def poke(self) -> None:
+    def ring(self) -> None:
         self.calls += 1
 
 
@@ -231,8 +231,8 @@ def test_delete_ticket_api_is_human_only_and_returns_affected_resources(tmp_path
     conn.close()
 
     with TestClient(app) as client:
-        poke_spy = _PokeSpy()
-        app.state.ticket_readiness_loop = poke_spy
+        doorbell_spy = _DoorbellSpy()
+        app.state.readiness_doorbell = doorbell_spy
         forbidden = client.delete(
             f"/api/tickets/{target.id}", headers={"X-Plan-Actor": "agent"}
         )
@@ -251,4 +251,4 @@ def test_delete_ticket_api_is_human_only_and_returns_affected_resources(tmp_path
             "linked_entity_ids": [],
         }
         assert client.get(f"/api/tickets/{target.id}").status_code == 404
-        assert poke_spy.calls == 1
+        assert doorbell_spy.calls == 1

@@ -1,5 +1,5 @@
 """The tickets.fields (de)serializer and slot accessors. Pure: json + contracts.
-The JSON shape mirrors the DDL default — four field keys, each a slot of
+The JSON shape mirrors the DDL default — five field keys, each a slot of
 {value, proposal, user_note}, proposal being {body, proposed_by, created_at} or null.
 Legacy rows using {notes} are accepted on read. with_slot is copy-on-write so decision
 functions never mutate their input."""
@@ -29,7 +29,8 @@ def fields_to_json(fields: TicketFields) -> str:
         "success": _slot_to_dict(fields.success),
         "approach": _slot_to_dict(fields.approach),
         "plan": _slot_to_dict(fields.plan),
-        "result": _slot_to_dict(fields.result),
+        "implementation": _slot_to_dict(fields.implementation),
+        "closeout": _slot_to_dict(fields.closeout),
     }
     return json.dumps(payload)
 
@@ -68,13 +69,14 @@ def _slot_from_obj(obj: Any) -> FieldSlot:
 def fields_from_json(raw: str) -> TicketFields:
     data: Any = json.loads(raw)
     _require(isinstance(data, dict))
-    for key in ("success", "approach", "plan", "result"):
+    for key in ("success", "approach", "plan", "implementation", "closeout"):
         _require(key in data)
     return TicketFields(
         success=_slot_from_obj(data["success"]),
         approach=_slot_from_obj(data["approach"]),
         plan=_slot_from_obj(data["plan"]),
-        result=_slot_from_obj(data["result"]),
+        implementation=_slot_from_obj(data["implementation"]),
+        closeout=_slot_from_obj(data["closeout"]),
     )
 
 
@@ -85,7 +87,9 @@ def get_slot(fields: TicketFields, field: FieldName) -> FieldSlot:
         return fields.approach
     if field is FieldName.plan:
         return fields.plan
-    return fields.result
+    if field is FieldName.implementation:
+        return fields.implementation
+    return fields.closeout
 
 
 def with_slot(fields: TicketFields, field: FieldName, slot: FieldSlot) -> TicketFields:
@@ -93,5 +97,6 @@ def with_slot(fields: TicketFields, field: FieldName, slot: FieldSlot) -> Ticket
         success=slot if field is FieldName.success else fields.success,
         approach=slot if field is FieldName.approach else fields.approach,
         plan=slot if field is FieldName.plan else fields.plan,
-        result=slot if field is FieldName.result else fields.result,
+        implementation=slot if field is FieldName.implementation else fields.implementation,
+        closeout=slot if field is FieldName.closeout else fields.closeout,
     )

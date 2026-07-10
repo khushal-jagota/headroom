@@ -21,13 +21,14 @@ from planner.tickets.contracts import (
 )
 from planner.tickets.logic import fields_codec
 
-# §4.2 inverse of GATING_FIELD: the state each field gates. A field is "passed"
+# Inverse of GATING_FIELD: the state each field gates. A field is "passed"
 # once the ticket has advanced strictly beyond the state that field gates.
 FIELD_GATES: Final[dict[FieldName, TicketState]] = {
     FieldName.success: TicketState.needs_success,
     FieldName.approach: TicketState.needs_approach,
     FieldName.plan: TicketState.needs_plan,
-    FieldName.result: TicketState.in_progress,
+    FieldName.implementation: TicketState.needs_implementation,
+    FieldName.closeout: TicketState.needs_closeout,
 }
 
 
@@ -56,9 +57,9 @@ def field_is_passed(field: FieldName, state: TicketState) -> bool:
     return state_index(state) > state_index(FIELD_GATES[field])
 
 
-def advance_target(state: TicketState, ceiling: TicketState) -> TicketState:
-    if state is TicketState.in_progress and ceiling is TicketState.done:
-        return TicketState.done
+def advance_target(state: TicketState) -> TicketState:
+    """The single linear step from a non-terminal state. Advancing never depends on
+    the ceiling; the ceiling only decides whether a proposal auto-accepts."""
     target = ADVANCE_TARGET.get(state)
     if target is None:
         raise PlannerError(
@@ -74,7 +75,7 @@ def auto_accept_target(
         return None
     if field is not gating_field(state):
         return None
-    target = advance_target(state, ceiling)
+    target = advance_target(state)
     if state_index(target) > state_index(ceiling):
         return None
     return target

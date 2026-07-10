@@ -148,7 +148,8 @@ def test_read_only_ticket_and_chat_surfaces_share_file_preview(
             "user_note": None,
         },
         "plan": {"value": None, "proposal": None, "user_note": None},
-        "result": {"value": body, "proposal": None, "user_note": None},
+        "implementation": {"value": body, "proposal": None, "user_note": None},
+        "closeout": {"value": body, "proposal": None, "user_note": None},
     }
     _set_fields(server, ticket_id, fields)
     with sqlite3.connect(server.db_path) as conn:
@@ -228,9 +229,13 @@ def test_read_only_ticket_and_chat_surfaces_share_file_preview(
     page.wait_for_selector(
         '[data-field="approach"] [data-file-preview-kind="markdown"]', timeout=WAIT_MS
     )
-    _open_ticket_field(page, "result")
+    _open_ticket_field(page, "implementation")
     page.wait_for_selector(
-        '[data-field="result"] [data-file-preview-kind="video"]', timeout=WAIT_MS
+        '[data-field="implementation"] [data-file-preview-kind="video"]', timeout=WAIT_MS
+    )
+    _open_ticket_field(page, "closeout")
+    page.wait_for_selector(
+        '[data-field="closeout"] [data-file-preview-kind="html"]', timeout=WAIT_MS
     )
     for who in ("you", "planner", "system", "worker"):
         page.wait_for_selector(
@@ -252,11 +257,12 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
             "user_note": None,
         },
         "plan": {"value": None, "proposal": None, "user_note": None},
-        "result": {
+        "implementation": {
             "value": None,
             "proposal": {"body": body, "proposed_by": "agent", "created_at": 2},
             "user_note": None,
         },
+        "closeout": {"value": None, "proposal": None, "user_note": None},
     }
     _set_fields(server, ticket_id, fields, state="needs_approach")
     with sqlite3.connect(server.db_path) as conn:
@@ -297,9 +303,9 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
     page.locator(
         '[data-field="success"] [data-content-section="note"] [data-file-preview-kind="image"]'
     ).first.wait_for(state="visible", timeout=WAIT_MS)
-    _open_ticket_field(page, "result")
+    _open_ticket_field(page, "implementation")
     result_proposal = page.locator(
-        '[data-field="result"] [data-approval-block][data-mode="proposal"]'
+        '[data-field="implementation"] [data-approval-block][data-mode="proposal"]'
     ).first
     result_proposal.locator('[data-file-preview-kind="image"]').first.wait_for(
         state="visible", timeout=WAIT_MS
@@ -322,7 +328,8 @@ def test_editable_markdown_file_links_round_trip_as_raw_markdown(
         "success": {"value": body, "proposal": None, "user_note": None},
         "approach": {"value": None, "proposal": None, "user_note": None},
         "plan": {"value": None, "proposal": None, "user_note": None},
-        "result": {"value": None, "proposal": None, "user_note": None},
+        "implementation": {"value": None, "proposal": None, "user_note": None},
+        "closeout": {"value": None, "proposal": None, "user_note": None},
     }
     _set_fields(server, ticket_id, fields, state="needs_approach")
     page = open_page(
@@ -395,7 +402,8 @@ def test_editable_markdown_preview_focus_noop_and_actions_do_not_persist_generat
         "success": {"value": body, "proposal": None, "user_note": None},
         "approach": {"value": None, "proposal": None, "user_note": None},
         "plan": {"value": None, "proposal": None, "user_note": None},
-        "result": {"value": None, "proposal": None, "user_note": None},
+        "implementation": {"value": None, "proposal": None, "user_note": None},
+        "closeout": {"value": None, "proposal": None, "user_note": None},
     }
     _set_fields(server, ticket_id, fields, state="needs_approach")
     page = open_page(
@@ -474,7 +482,8 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
         "success": {"value": body, "proposal": None, "user_note": None},
         "approach": {"value": None, "proposal": None, "user_note": None},
         "plan": {"value": None, "proposal": None, "user_note": None},
-        "result": {"value": None, "proposal": None, "user_note": None},
+        "implementation": {"value": None, "proposal": None, "user_note": None},
+        "closeout": {"value": None, "proposal": None, "user_note": None},
     }
     _set_fields(server, ticket_id, fields, state="needs_approach")
     page = open_page(
@@ -655,7 +664,8 @@ def test_editable_preview_deletion_unmounts_pending_fetch_and_clears_iframe(
         "success": {"value": body, "proposal": None, "user_note": None},
         "approach": {"value": None, "proposal": None, "user_note": None},
         "plan": {"value": None, "proposal": None, "user_note": None},
-        "result": {"value": None, "proposal": None, "user_note": None},
+        "implementation": {"value": None, "proposal": None, "user_note": None},
+        "closeout": {"value": None, "proposal": None, "user_note": None},
     }
     _set_fields(server, ticket_id, fields, state="needs_approach")
     context = context_factory()
@@ -745,7 +755,8 @@ def test_editing_that_moves_atomic_slot_keeps_preview_mounted(
         "success": {"value": body, "proposal": None, "user_note": None},
         "approach": {"value": None, "proposal": None, "user_note": None},
         "plan": {"value": None, "proposal": None, "user_note": None},
-        "result": {"value": None, "proposal": None, "user_note": None},
+        "implementation": {"value": None, "proposal": None, "user_note": None},
+        "closeout": {"value": None, "proposal": None, "user_note": None},
     }
     _set_fields(server, ticket_id, fields, state="needs_approach")
     page = open_page(

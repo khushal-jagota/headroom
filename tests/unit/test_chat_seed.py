@@ -29,6 +29,8 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
+from planner.minds.fake import FakeGateway, Reply, ev
+from planner.minds.shared_gateway import SharedGateway
 from planner.tickets.contracts import TicketStatus
 from planner.tickets.data import create_ticket
 
@@ -381,6 +383,104 @@ def test_pause_active_turn_interrupts_chat_without_touching_ticket_status(tmp_pa
     ]
     assert _events(db_path, tid, "chat_turn_finished") == [
         {"turn_id": "run_pause_test", "status": "interrupted"}
+    ]
+
+
+@pytest.mark.parametrize("entity_kind", ["ticket", "day", "chief"])
+def test_pause_then_immediate_human_turn_keeps_late_old_completion_out_of_new_turn(
+    tmp_path: Path,
+    entity_kind: str,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    if entity_kind == "ticket":
+        entity_id = _ticket(db_path)
+    elif entity_kind == "day":
+        entity_id = "day_2026-07-04"
+    else:
+        entity_id = CHIEF_OF_STAFF_ENTITY_ID
+    live_session_id = "live-human-session"
+    stored_key = "20260710_120000_human"
+    fake = FakeGateway(
+        {
+            "session.create": [
+                Reply(
+                    result={
+                        "session_id": live_session_id,
+                        "stored_session_id": stored_key,
+                    }
+                )
+            ],
+            "prompt.submit": [
+                Reply(
+                    result={"status": "streaming"},
+                    events_after=(ev("message.start", live_session_id),),
+                ),
+                Reply(
+                    result={"status": "queued"},
+                    events_after=(
+                        ev(
+                            "message.complete",
+                            live_session_id,
+                            {"status": "interrupted", "text": "old completion"},
+                        ),
+                        ev("message.start", live_session_id),
+                        ev("message.delta", live_session_id, {"text": "new"}),
+                        ev(
+                            "message.complete",
+                            live_session_id,
+                            {"status": "complete", "text": "new reply"},
+                        ),
+                    ),
+                ),
+            ],
+            "session.interrupt": [Reply(result={"interrupted": True})],
+        }
+    )
+    gateway = SharedGateway(
+        hermes_python="/x/hermes-agent/venv/bin/python",
+        home="/tmp/planner-home",
+        worker_role="planner-worker",
+        spawn=fake.spawn,
+        base_env={},
+    )
+    _replace_gateway(app, gateway)
+
+    with TestClient(app) as client:
+        first = client.post(
+            f"/api/chat/{entity_id}/turns",
+            json={"text": "first", "mode": "message"},
+        )
+        assert first.status_code == 200
+        assert fake.wait_sent(2, 5.0)
+        paused = client.post(f"/api/chat/{entity_id}/pause")
+        assert paused.status_code == 200
+        assert paused.json()["status"] == "interrupted"
+        second = client.post(
+            f"/api/chat/{entity_id}/turns",
+            json={"text": "second", "mode": "message"},
+        )
+        assert second.status_code == 200
+        for _ in range(40):
+            body = client.get(f"/api/chat/{entity_id}/state").json()
+            if body["active_turn"] is None and any(
+                message["text"] == "new reply" for message in body["messages"]
+            ):
+                break
+            threading.Event().wait(0.05)
+        else:
+            raise AssertionError(body)
+
+    assert [(message["role"], message["text"]) for message in body["messages"]] == [
+        ("human", "first"),
+        ("human", "second"),
+        ("assistant", "new reply"),
+    ]
+    assert "old completion" not in str(body)
+    assert fake.sent_methods() == [
+        "session.create",
+        "prompt.submit",
+        "session.interrupt",
+        "prompt.submit",
     ]
 
 

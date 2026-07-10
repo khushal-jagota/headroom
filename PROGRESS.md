@@ -90,18 +90,97 @@ owner, not yet scoped: (1) embeds implementation (after mockup approval; overlap
 slot between UI waves); (2) a PERF pass ("perf, that's a follow up now as well" — scope TBD with
 the owner when picked up).
 
-## Current work cycle (2026-07-10): Approved architecture deepening 1–3
+MERGE (owner-directed, 2026-07-10): main merged into this branch. Main brought the ticket
+lifecycle rename (`in_progress`/`needs_review` → `needs_implementation`/`needs_closeout`,
+`result` → `implementation`+`closeout` fields, the separate result-approve path deleted) plus
+the Hermes ordered-ingress work. Resolution: main's lifecycle semantics ported into the
+redesigned components — ApprovalBlock lost its `needs_review` mode (modes now
+gating-pending/proposal/readonly), ReviewRoute lost the `review` queue-kind branch and the
+`/approve` selector, TicketRoute's recap gate uses STATE_ORDER, SprintRoute's ticketNeedsYou
+dropped the state clause (awaiting_approval/has_pending_proposal cover it), app.css needs-you
+rule keys off status only, sprint-screen conflicts kept the redesign markup. Sprint ITEM
+status enum (todo/in_progress/blocked/done) is unchanged and untouched. Post-merge
+`./verify`: PASS (58 e2e).
+
+## Current work cycle (2026-07-10): Ticket Implementation and Closeout lifecycle
+
+Current build stage:
+
+- Ticket `t_p6de8rje` has approved Success, Approach, and Plan and is in implementation.
+- The accepted contract replaces `in_progress` / `needs_review` with ordinary
+  `needs_implementation` / `needs_closeout` gates and replaces `result` with distinct
+  `implementation` / `closeout` fields. Existing ticket-status and scope controls remain canonical.
+- The initial worktree contains one unrelated modified submodule pointer at
+  `.claude/worktrees/frontend-shared-components`; this ticket will not touch or absorb it.
+
+What just passed:
+
+- Codex reviewed the accepted plan read-only with `gpt-5.5` and high reasoning. Its three concrete
+  findings are accepted: update live docs, cover the strict Chief external-work contract, and test
+  lifecycle migration through the old project-column ticket rebuild path. The follow-up review of
+  the revised contract, D55, and slice boundary returned `NO VIOLATIONS`.
+- The backend lifecycle and migration are implemented. The full unit suite passes, Mypy passes across
+  104 source files, and lifecycle remnant sweeps are clean outside intentional legacy-migration and
+  sprint-item status literals.
+- Skills and live docs now use Implementation and Closeout. The three stale standalone role files are
+  retired.
+- The frontend now renders and approves five generic fields across Ticket, Review, and Workspace.
+  Svelte check reports zero errors and the production build passes.
+- Codex's implementation review found three initial and two follow-up code/test gaps; every one was
+  corrected. The final full-diff follow-up returned `NO VIOLATIONS`.
+- The first integrated verification reached every gate and found only two Ruff line-length errors;
+  405 unit and 57 browser tests already passed. After those formatting fixes, the corrected canonical
+  `./verify` passed Ruff, Mypy, 405 unit tests, compile/static checks, frontend gates, 57 browser
+  tests, and ended with `VERIFY: PASS`.
+
+Current hypothesis:
+
+- The implementation matches the accepted contract and is ready for owner review.
+
+Next step:
+
+- Propose the evidence-backed Result on `t_p6de8rje`.
+
+Blockers:
+
+- None.
+
+## Completed work cycle (2026-07-10): Ticket-owned planning-artifact guidance
+
+Current implementation:
+
+- The general `panels` skill now explains ticket-owned managed artifacts, the default storage tree,
+  served Markdown links, and the boundary between rich work products and canonical ticket text.
+- The `panels-worker` skill now gives workers judgment-based guidance for planning artifacts. Frontend
+  work normally gets a small intended-UI HTML artifact; HTML design exploration is explicitly the work
+  product rather than a reason to create a second artifact.
+- The Chief skill retains only role-appropriate awareness: preserve the frontend artifact expectation
+  while leaving gated fields, artifact content, and design judgment to the ticket worker.
+
+Verification status:
+
+- The three updated sections were read successfully through the provisioned
+  `data/hermes-home/skills/...` symlinks, which resolve to the repository role skills.
+- The focused skill-provisioning test passed and `git diff --check` passed.
+- Final `./verify` passed: Ruff, Mypy across 102 source files, 335 unit tests, compile/static and
+  frontend gates, 56 browser tests, and `VERIFY: PASS`.
+
+Immediate next step:
+
+- Propose the evidence-backed result on `t_w0dvhuxv` for owner review.
+
+## Completed work cycle (2026-07-10): Approved architecture deepening 1–3
 
 Current scope:
 
 - `t_arch01` has replaced System A/B with `TicketReadinessLoop` and `EmployeeStepRunner`,
   made the runner independent of automatic dispatch, and now requires an accepted runner
   reservation before a Review return-for-revision mutates its Ticket.
-- `t_arch02` moves readiness wakes out of routes and behind best-effort domain action doorbells.
-  The audited wake set closes missing takeover, blocker-link creation, and day-removal paths;
-  the timer/database remain canonical.
-- `t_arch03` makes an ordinary multi-attribute Ticket PATCH one transaction, preserves existing
-  per-field events for actual changes, writes worker context once, and makes no-op edits inert.
+- `t_arch02` has moved readiness wakes out of routes and behind best-effort domain action
+  doorbells. The complete audited wake set includes takeover, blocker-link creation, and day
+  removal; the timer/database remain canonical.
+- `t_arch03` has made an ordinary multi-attribute Ticket PATCH one transaction, preserving existing
+  per-field events for actual changes, writing worker context once, and making no-op edits inert.
 - Candidates 4 and 6 remain deferred. Candidate 5 remains rejected. The diagnosed same-session
   Hermes completion-correlation defect is explicitly outside this work.
 
@@ -119,22 +198,33 @@ Verification status:
   session resume and running-Chat collision safety) and readiness ringing's five coverage/doc
   findings were accepted, added to the contracts/plans, and both follow-up reviews returned
   `NO VIOLATIONS`.
-- `t_arch01` implementation is complete. Its focused gate passes 147 unit tests, its Review
+- `t_arch01` implementation is complete. Its focused gate passes 151 unit tests, its Review
   return-for-revision browser test passes, Ruff passes, Mypy passes across 99 source files, and
   `git diff --check` passes.
 - Independent implementation review found five valid gaps: stale live naming, stale build memory,
   and missing proofs for a released-run shutdown drain, full readiness recheck, and retained-runner
   usability after readiness-loop construction failure. All five are resolved. Both the independent
   follow-up and the required Codex xhigh follow-up returned `NO VIOLATIONS`.
-- `t_arch02` and `t_arch03` have reviewed plans, but implementation has not begun for either.
-- No full `./verify` has run in this architecture cycle. The concurrent Chief/worker-context/
-  chat-image work remains the last full-`./verify` baseline.
+- `t_arch02` implementation is complete. Its final focused gate passes 101 tests, full Ruff passes,
+  Mypy passes across 102 source files, and staged diff checks pass. Reviewers found missing negative
+  cases and one time-flaky Chief replay oracle; production did not change during review follow-up.
+  The complete failure/no-op matrix now includes deterministic timestamp semantics and both final
+  follow-up reviews returned `NO VIOLATIONS`.
+- `t_arch03` implementation is complete. Its focused gate passes 71 edit/authority/context/Chief
+  tests, 38 readiness regressions, and the real-server CLI edit flow. Full Ruff passes, Mypy passes
+  across 102 source files, and both independent implementation reviews returned `NO VIOLATIONS`.
+- The final combined review found one real issue after the first clean integration run: the employee
+  runner resolved `today` before entering its claim transaction, so a wait across the 05:00 planning
+  boundary could check yesterday's board. The runner now resolves the planning day inside the
+  transaction. Its deterministic boundary regression failed before the fix and passes afterward;
+  both independent follow-ups and the required Codex xhigh follow-up returned `NO VIOLATIONS`.
+- Corrected final `./verify` passed: Ruff, Mypy across 102 source files, 335 unit tests,
+  compile/static and frontend gates, 56 browser tests, and `VERIFY: PASS`.
 
 Immediate next step:
 
-- Commit the clean `t_arch01` integration slice, then implement and review `t_arch02`. Keep
-  `t_arch03` queued behind it and run the authoritative full `./verify` only after all three
-  architecture tickets integrate.
+- Deliver the verified architecture result. Candidates 4 and 6 stay explicitly deferred for a
+  later planning cycle.
 
 ## Completed work cycle (2026-07-10): Chief external-work intake
 
@@ -202,27 +292,50 @@ Verification status:
 
 Fix design:
 
-- Reusing the existing Panels `ChatTurn.id` / worker-turn ID as a causal Hermes turn ID is the
-  smallest complete fix. Hermes must retain it while queued, put it on every turn-scoped event, give
-  its own background turns different IDs, and make interrupt target the exact ID.
-- Panels must register and route drains by `(live_session_id, turn_id)` before submitting. It must no
-  longer accept the first session-level `message.complete` as the caller's result.
-- Hermes must never merge two differently identified queued turns. A bounded one-turn queue is enough
-  for the current product; a general FIFO is not required. Same-ID retries must be idempotent so a lost
-  JSON-RPC acknowledgement cannot run the model twice.
-- Session serialization is only a containment option for the visible stop race. It cannot prove
-  ownership when Hermes starts memory, goal, delegation, or notification turns itself, so it is not
-  the final correction.
-- The new protocol must fail closed when unsupported. Image and prompt-producing command paths must
-  migrate atomically or stay behind a temporary session lane until they do; neither may keep the old
-  session-level first-completion drain.
+- D76/D77 supersede the earlier ID-first design. Panels will keep its existing employee-configured and
+  Chief-configured gateway children, but each gains one faithful ordered ingress per live Hermes
+  session. Product callers will no longer open competing per-operation drains.
+- The ingress preserves Hermes's exact `streaming` / `queued` / `steered` submit disposition,
+  interrupt acknowledgement, ordered events, idle observations, and resume snapshot. It may
+  linearize command writes but cannot wait for locally inferred idle, retry an uncertain prompt, or
+  create a Panels FIFO.
+- Visible chat and employee workflow consequences remain separate Panels projections above that
+  transport seam. The current UI, visible transcript, and system/activity presentation stay
+  materially unchanged.
+- The owner fixed the scope at Panels only. Hermes is not modified. Where its existing observations
+  cannot prove an outcome after a transport gap, Panels reports unknown/offline rather than inferring
+  or retrying.
+- Live session objects may detach after Hermes is observed idle and Panels has no pending consequence.
+  The stored Hermes session ID survives and can reopen the same conversation.
 
 Immediate next step:
 
-- If implementation is authorized, first land deterministic failures for stop A + queued B, internal
-  turn I between them, a completion before the submit acknowledgement, delayed stop A after B starts,
-  and duplicate-submit retry. Then add the owned-turn protocol in Hermes, migrate Panels routing and
-  all prompt-producing callers, and run the full Chief and employee-step regressions through `./verify`.
+- Work remains isolated on `codex/hermes-session-ingress`. `t_hs01` and `t_hs02` are implemented and
+  independently reviewed; the integrated human-chat boundary passed the full gate with 393 unit and
+  57 browser tests.
+- `t_hs03` now moves employee execution onto the same consequence seam. Independent review found and
+  corrected one early-assignment race: old delta/tool activity can no longer activate queued work
+  before the observed predecessor lifecycle terminates. Worker context waits for proved delivery,
+  steered and unknown outcomes settle honestly without claiming later terminals, and a second
+  consequential employee attempt is busy before a second prompt write. Its focused 143-test gate,
+  Ruff, Mypy across 104 source files, and `git diff --check` pass.
+- `t_hs04` has removed the temporary per-session drains, receipt-only submit, session-wide
+  observation queue, and obsolete SharedGateway compatibility helpers. The source boundary is now an
+  executable AST contract. Standalone transport tools claim the one raw feed and reject cross-session
+  events. Public tests cover detach/resume, shutdown outcomes, child and role isolation, restart
+  without replay, and concurrent employee-session isolation. Final review also made router join
+  failure explicit, added the smoke/source guards, corrected queued-context docs, and fixed a real
+  gap where a streaming lifecycle arriving before its receipt could be discarded behind a running
+  resume snapshot. Registered predecessor, queued, steered, Stop-then-send, and image-cleanup
+  boundaries remain green. Its final 157-test focused gate, Ruff, Mypy across 104 source files, and
+  `git diff --check` pass.
+- The pre-review integrated `./verify` passed with 391 unit and 57 browser tests; its complete captured
+  output is in the hs04 implementation report. After the review fixes, both independent follow-ups
+  returned `NO VIOLATIONS` and the final post-review `./verify` passed with Ruff, Mypy across 104
+  source files, 394 unit tests, compile/static and frontend gates, 57 browser tests, and
+  `VERIFY: PASS`.
+- Next, land the complete hs01–hs04 feature as one rollback commit, merge it into `main`, restart the
+  server, and live-test Chief and Ticket Stop-then-send behavior.
 
 ## Completed work cycle (2026-07-10): Worker awareness of user ticket edits
 

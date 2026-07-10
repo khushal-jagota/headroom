@@ -160,7 +160,7 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert tickets["ticket-20260611-onboarding-survey"]["state"] == "needs_success"
     assert tickets["ticket-20260611-export-format"]["state"] == "needs_approach"
     assert tickets["ticket-20260611-release-branch"]["state"] == "needs_plan"
-    assert tickets["ticket-20260611-import-pipeline"]["state"] == "in_progress"
+    assert tickets["ticket-20260611-import-pipeline"]["state"] == "needs_implementation"
     for row in tickets.values():
         assert row["ceiling"] == row["state"]
         assert row["at_cap"] == "propose"
@@ -204,7 +204,8 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     )
     for parsed in (onboarding, export, release, pipeline):
         assert parsed["plan"] == {"value": None, "proposal": None, "user_note": None}
-        assert parsed["result"] == {"value": None, "proposal": None, "user_note": None}
+        assert parsed["implementation"] == {"value": None, "proposal": None, "user_note": None}
+        assert parsed["closeout"] == {"value": None, "proposal": None, "user_note": None}
         for slot in parsed.values():
             assert slot["proposal"] is None
 

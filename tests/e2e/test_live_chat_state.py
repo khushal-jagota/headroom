@@ -349,3 +349,50 @@ def test_ticket_chat_pause_settles_visible_active_turn(
     state = api.get(server, f"/api/chat/{tid}/state")
     assert state["active_turn"] is None
     assert [msg["text"] for msg in state["messages"]] == [WORKER_PROMPT_TEXT]
+
+
+def test_ticket_chat_pause_then_immediate_send_keeps_one_new_reply_after_remount(
+    server_factory, context_factory, open_page, cli, api
+) -> None:
+    slow_server = server_factory(gateway="slow_fake")
+    tid = cli(slow_server, "ticket", "create", "--title", "Pause then send ticket")["id"]
+    page = open_page(
+        context_factory(),
+        slow_server,
+        f"#/ticket/{tid}",
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]',
+        settled=True,
+    )
+
+    page.fill("[data-chat] [data-chat-input]", "first slow turn")
+    page.click("[data-chat] [data-chat-send]")
+    page.wait_for_selector(
+        '[data-chat] [data-chat-send][title="Pause"]', timeout=WAIT_MS
+    )
+    page.click('[data-chat] [data-chat-send][title="Pause"]')
+    page.wait_for_function(
+        "() => !document.querySelector('[data-chat] [data-chat-pending]')",
+        timeout=WAIT_MS,
+    )
+
+    page.fill("[data-chat] [data-chat-input]", "second immediate turn")
+    page.click("[data-chat] [data-chat-send]")
+    _wait_chat_text(page, "planner", "echo: second immediate turn")
+    page.wait_for_function(
+        "() => !document.querySelector('[data-chat] [data-chat-pending]')",
+        timeout=WAIT_MS,
+    )
+
+    page.goto(slow_server.base + "/#/workspace")
+    page.wait_for_selector('section[data-screen="workspace"]', timeout=WAIT_MS)
+    page.goto(slow_server.base + f"/#/ticket/{tid}")
+    page.wait_for_selector(
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]', timeout=WAIT_MS
+    )
+    _wait_chat_text(page, "planner", "echo: second immediate turn")
+    state = api.get(slow_server, f"/api/chat/{tid}/state")
+    assert [
+        message["text"]
+        for message in state["messages"]
+        if message["role"] == "assistant" and "second immediate turn" in message["text"]
+    ] == ["echo: second immediate turn"]

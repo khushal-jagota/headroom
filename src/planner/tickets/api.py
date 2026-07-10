@@ -24,7 +24,7 @@ from typing import Annotated, Any, cast
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import PlainTextResponse
 
-from planner.core import links as core_links
+from planner.core import link_actions
 from planner.core.authctx import (
     RequestContext,
     reject_agent_fields,
@@ -39,7 +39,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import planning_date, resolve_day_id
 from planner.projects import data as projects_data
 from planner.runtime.contracts import EmployeeRevisionRunner
-from planner.runtime.ticket_readiness_loop import TicketReadinessLoop
+from planner.runtime.readiness_doorbell import ReadinessDoorbell
 from planner.sprints import views as sprints_views
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
@@ -62,6 +62,7 @@ from planner.tickets.contracts import (
     RevisionMessageBody,
     ScopeBody,
     StateBody,
+    TicketEdit,
     TicketState,
     ValueEditBody,
 )
@@ -92,12 +93,8 @@ async def db_conn(request: Request) -> AsyncIterator[sqlite3.Connection]:
         conn.close()
 
 
-def get_ticket_readiness_loop(request: Request) -> TicketReadinessLoop | None:
-    """Return the optional readiness poller owned by this process."""
-    loop: TicketReadinessLoop | None = getattr(
-        request.app.state, "ticket_readiness_loop", None
-    )
-    return loop
+def get_readiness_doorbell(request: Request) -> ReadinessDoorbell:
+    return cast(ReadinessDoorbell, request.app.state.readiness_doorbell)
 
 
 def get_employee_revision_runner(request: Request) -> EmployeeRevisionRunner | None:
@@ -111,18 +108,10 @@ DbConn = Annotated[sqlite3.Connection, Depends(db_conn)]
 Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
 Clk = Annotated[Clock, Depends(get_clock)]
-TicketLoop = Annotated[
-    TicketReadinessLoop | None, Depends(get_ticket_readiness_loop)
-]
+Doorbell = Annotated[ReadinessDoorbell, Depends(get_readiness_doorbell)]
 EmployeeRunner = Annotated[
     EmployeeRevisionRunner | None, Depends(get_employee_revision_runner)
 ]
-
-
-def _poke(ticket_readiness_loop: TicketReadinessLoop | None) -> None:
-    """Null-guarded temporary fast-path wake for local readiness discovery."""
-    if ticket_readiness_loop is not None:
-        ticket_readiness_loop.poke()
 
 
 @contextmanager
@@ -183,7 +172,16 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
 
 
 _EXTERNAL_RECONCILE_KEYS = frozenset(
-    {"state", "user_note", "recap", "success", "approach", "plan", "result"}
+    {
+        "state",
+        "user_note",
+        "recap",
+        "success",
+        "approach",
+        "plan",
+        "implementation",
+        "closeout",
+    }
 )
 _EXTERNAL_CREATE_KEYS = _EXTERNAL_RECONCILE_KEYS | frozenset(
     {
@@ -221,7 +219,7 @@ def _marshal_external_reconcile(raw: JsonDict) -> ReconcileTicketFromExternalWor
         state=body_str(raw, "state"),
         user_note=body_str(raw, "user_note"),
     )
-    for key in ("recap", "success", "approach", "plan", "result"):
+    for key in ("recap", "success", "approach", "plan", "implementation", "closeout"):
         if key in raw:
             body[key] = body_str(raw, key)
     return body
@@ -242,7 +240,7 @@ def _marshal_external_create(raw: JsonDict) -> CreateTicketFromExternalWorkBody:
         user_note=common["user_note"],
         title=body_str(raw, "title"),
     )
-    for key in ("recap", "success", "approach", "plan", "result"):
+    for key in ("recap", "success", "approach", "plan", "implementation", "closeout"):
         if key in common:
             body[key] = common[key]
     if "priority" in raw:
@@ -308,7 +306,7 @@ def _parse_scope_at_cap(raw: str | None) -> AtCap | None:
 
 @router.post("/tickets")
 async def create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
-                        clk: Clk, readiness_loop: TicketLoop) -> JsonDict:
+                        clk: Clk, readiness_doorbell: Doorbell) -> JsonDict:
     body = _marshal_create_ticket(raw)
     now = clk.now_unix()
     priority = parse_enum(Priority, body["priority"], "priority") \
@@ -318,7 +316,7 @@ async def create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
         project_id=body["project_id"],
         project_name=body["project"],
     )
-    ticket = tickets_data.create_ticket(
+    ticket = tickets_actions.create_ticket(
         conn,
         title=body["title"],
         actor=ctx.actor,
@@ -330,15 +328,15 @@ async def create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
         deadline=body["deadline"],
         sprint_id=body["sprint_id"],
         sprint_item_id=body["sprint_item_id"],
+        readiness_doorbell=readiness_doorbell,
     )
-    _poke(readiness_loop)  # a fresh empty Ticket may be ready at once
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/chief/tickets/from-external-work")
 async def create_ticket_from_external_work(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk,
-    readiness_loop: TicketLoop
+    readiness_doorbell: Doorbell,
 ) -> JsonDict:
     require_chief(ctx)
     body = _marshal_external_create(raw)
@@ -355,7 +353,7 @@ async def create_ticket_from_external_work(
         project_name=body.get("project"),
     )
     now = clk.now_unix()
-    ticket = tickets_data.create_ticket_from_external_work(
+    ticket = tickets_actions.create_ticket_from_external_work(
         conn,
         title=body["title"],
         user_note=body["user_note"],
@@ -370,21 +368,21 @@ async def create_ticket_from_external_work(
         deadline=body.get("deadline"),
         sprint_id=body.get("sprint_id"),
         sprint_item_id=body.get("sprint_item_id"),
+        readiness_doorbell=readiness_doorbell,
     )
-    _poke(readiness_loop)
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/chief/tickets/{ticket_id}/reconcile-from-external-work")
 async def reconcile_ticket_from_external_work(
     ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk,
-    readiness_loop: TicketLoop
+    readiness_doorbell: Doorbell,
 ) -> JsonDict:
     require_chief(ctx)
     body = _marshal_external_reconcile(raw)
     target_state = parse_enum(TicketState, body["state"], "state")
     now = clk.now_unix()
-    ticket = tickets_data.reconcile_ticket_from_external_work(
+    ticket = tickets_actions.reconcile_ticket_from_external_work(
         conn,
         ticket_id,
         user_note=body["user_note"],
@@ -393,8 +391,8 @@ async def reconcile_ticket_from_external_work(
         recap=body.get("recap"),
         actor=ctx.actor,
         now=now,
+        readiness_doorbell=readiness_doorbell,
     )
-    _poke(readiness_loop)
     return tickets_views.ticket_json(ticket, now)
 
 
@@ -436,13 +434,17 @@ async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk) -> JsonDict:
 
 @router.delete("/tickets/{ticket_id}")
 async def delete_ticket(
-    ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, readiness_loop: TicketLoop
+    ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk,
+    readiness_doorbell: Doorbell,
 ) -> JsonDict:
     require_direct_write(ctx)
-    deleted = tickets_data.delete_ticket(
-        conn, ticket_id, actor=ctx.actor, now=clk.now_unix()
+    deleted = tickets_actions.delete_ticket(
+        conn,
+        ticket_id,
+        actor=ctx.actor,
+        now=clk.now_unix(),
+        readiness_doorbell=readiness_doorbell,
     )
-    _poke(readiness_loop)  # deleting a blocker can make a surviving Ticket ready
     return {
         "ok": True,
         "ticket_id": deleted.ticket_id,
@@ -466,51 +468,36 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
     if not body:
         raise PlannerError(ErrorCode.validation, "no ticket fields to update", {})
     reject_agent_fields(ctx, body, _TICKET_DIRECT_ONLY_FIELDS)
-    now = clk.now_unix()
+
+    edit = TicketEdit()
     if "title" in body:
-        tickets_data.set_title(
-            conn,
-            ticket_id,
-            title=body_str(body, "title"),
-            title_max_chars=TITLE_MAX_CHARS,
-            actor=ctx.actor,
-            now=now,
-        )
+        edit["title"] = body_str(body, "title")
     if "user_note" in body:
-        tickets_data.set_user_note(
-            conn,
-            ticket_id,
-            user_note=body_str(body, "user_note"),
-            actor=ctx.actor,
-            now=now,
-        )
+        edit["user_note"] = body_str(body, "user_note")
     if "priority" in body:
-        priority = parse_enum(Priority, body_str(body, "priority"), "priority")
-        tickets_data.set_priority(conn, ticket_id, priority=priority, actor=ctx.actor, now=now)
+        edit["priority"] = parse_enum(Priority, body_str(body, "priority"), "priority")
     if "deadline" in body:
-        deadline = body_opt_str(body, "deadline")
-        tickets_data.set_deadline(
-            conn, ticket_id, deadline=deadline, actor=ctx.actor, now=now
-        )
+        edit["deadline"] = body_opt_str(body, "deadline")
     if "project" in body or "project_id" in body:
         project_raw = body_opt_str(body, "project")
         project_id_raw = body_opt_str(body, "project_id")
         project = projects_data.resolve_project(
             conn, project_id=project_id_raw, project_name=project_raw
         )
-        tickets_data.set_project(
-            conn,
-            ticket_id,
-            project_id=project.id if project is not None else None,
-            actor=ctx.actor,
-            now=now,
-        )
+        edit["project_id"] = project.id if project is not None else None
     if "sprint_id" in body:
-        sprint_id = body_opt_str(body, "sprint_id")
-        tickets_data.set_sprint(
-            conn, ticket_id, sprint_id=sprint_id, actor=ctx.actor, now=now
-        )
-    return tickets_views.ticket_json(tickets_data.read_ticket(conn, ticket_id), now)
+        edit["sprint_id"] = body_opt_str(body, "sprint_id")
+
+    now = clk.now_unix()
+    ticket = tickets_data.edit_ticket(
+        conn,
+        ticket_id,
+        edit=edit,
+        title_max_chars=TITLE_MAX_CHARS,
+        actor=ctx.actor,
+        now=now,
+    )
+    return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/propose")
@@ -546,14 +533,14 @@ async def propose_field(ticket_id: str, field: str, raw: dict[str, Any], conn: D
 
 @router.post("/tickets/{ticket_id}/accept/{field}")
 async def accept_field(ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                       clk: Clk, readiness_loop: TicketLoop) -> JsonDict:
+                       clk: Clk, readiness_doorbell: Doorbell) -> JsonDict:
     body = _marshal_accept(raw)
     require_direct_write(ctx)
     field_enum = parse_enum(FieldName, field, "field")
     now = clk.now_unix()
     next_ceiling = _parse_next_ceiling(body["next_ceiling"])
     at_cap = _parse_scope_at_cap(body["at_cap"])
-    ticket = tickets_data.accept_proposal(
+    ticket = tickets_actions.accept_proposal(
         conn,
         ticket_id,
         field=field_enum,
@@ -562,19 +549,8 @@ async def accept_field(ticket_id: str, field: str, raw: dict[str, Any], conn: Db
         edited_body=body["edited_body"],
         next_ceiling=next_ceiling,
         at_cap=at_cap,
+        readiness_doorbell=readiness_doorbell,
     )
-    _poke(readiness_loop)  # the approval gate can expose the next step
-    return tickets_views.ticket_json(ticket, now)
-
-
-@router.post("/tickets/{ticket_id}/approve")
-async def approve_ticket(
-    ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, readiness_loop: TicketLoop
-) -> JsonDict:
-    require_direct_write(ctx)
-    now = clk.now_unix()
-    ticket = tickets_data.approve_review(conn, ticket_id, actor=ctx.actor, now=now)
-    _poke(readiness_loop)
     return tickets_views.ticket_json(ticket, now)
 
 
@@ -631,21 +607,26 @@ async def put_recap(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
 
 @router.put("/tickets/{ticket_id}/value/{field}")
 async def put_value(ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                    clk: Clk, readiness_loop: TicketLoop) -> JsonDict:
+                    clk: Clk, readiness_doorbell: Doorbell) -> JsonDict:
     body = ValueEditBody(body=body_str(raw, "body"))
     require_direct_write(ctx)
     field_enum = parse_enum(FieldName, field, "field")
     now = clk.now_unix()
-    ticket = tickets_data.edit_field_value(
-        conn, ticket_id, field=field_enum, new_body=body["body"], actor=ctx.actor, now=now
+    ticket = tickets_actions.edit_field_value(
+        conn,
+        ticket_id,
+        field=field_enum,
+        new_body=body["body"],
+        actor=ctx.actor,
+        now=now,
+        readiness_doorbell=readiness_doorbell,
     )
-    _poke(readiness_loop)
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/scope")
 async def scope_ticket(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                       clk: Clk, readiness_loop: TicketLoop) -> JsonDict:
+                       clk: Clk, readiness_doorbell: Doorbell) -> JsonDict:
     body = ScopeBody(ceiling=body_opt_str(raw, "ceiling"), at_cap=body_opt_str(raw, "at_cap"))
     require_direct_write(ctx)
     now = clk.now_unix()
@@ -669,52 +650,82 @@ async def scope_ticket(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: C
         raise PlannerError(
             ErrorCode.scope_invalid, "unknown at_cap", {"at_cap": at_cap_raw}
         ) from None
-    ticket = tickets_data.change_scope(
-        conn, ticket_id, ceiling=ceiling, at_cap=at_cap, actor=ctx.actor, now=now
+    ticket = tickets_actions.change_scope(
+        conn,
+        ticket_id,
+        ceiling=ceiling,
+        at_cap=at_cap,
+        actor=ctx.actor,
+        now=now,
+        readiness_doorbell=readiness_doorbell,
     )
-    _poke(readiness_loop)  # a raised ceiling may expose the next step
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/state")
 async def set_state(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                    clk: Clk, readiness_loop: TicketLoop) -> JsonDict:
+                    clk: Clk, readiness_doorbell: Doorbell) -> JsonDict:
     body = StateBody(to=body_str(raw, "to"))
     require_direct_write(ctx)
     now = clk.now_unix()
     to_state = parse_enum(TicketState, body["to"], "state")
-    ticket = tickets_data.set_state(conn, ticket_id, new_state=to_state, actor=ctx.actor, now=now)
-    _poke(readiness_loop)
+    ticket = tickets_actions.set_state(
+        conn,
+        ticket_id,
+        new_state=to_state,
+        actor=ctx.actor,
+        now=now,
+        readiness_doorbell=readiness_doorbell,
+    )
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/drop")
 async def drop_ticket(
-    ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, readiness_loop: TicketLoop
+    ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk,
+    readiness_doorbell: Doorbell,
 ) -> JsonDict:
     require_direct_write(ctx)
     now = clk.now_unix()
-    ticket = tickets_data.drop_ticket(conn, ticket_id, actor=ctx.actor, now=now)
-    _poke(readiness_loop)  # the runner rejects any stale discovery
+    ticket = tickets_actions.drop_ticket(
+        conn,
+        ticket_id,
+        actor=ctx.actor,
+        now=now,
+        readiness_doorbell=readiness_doorbell,
+    )
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/takeover")
-async def take_over_ticket(ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+async def take_over_ticket(
+    ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk,
+    readiness_doorbell: Doorbell,
+) -> JsonDict:
     require_direct_write(ctx)
     now = clk.now_unix()
-    ticket = tickets_data.take_over_ticket(conn, ticket_id, now=now)
+    ticket = tickets_actions.take_over_ticket(
+        conn,
+        ticket_id,
+        now=now,
+        readiness_doorbell=readiness_doorbell,
+    )
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/release")
 async def release_ticket(
-    ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk, readiness_loop: TicketLoop
+    ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk,
+    readiness_doorbell: Doorbell,
 ) -> JsonDict:
     require_direct_write(ctx)
     now = clk.now_unix()
-    ticket = tickets_data.release_ticket(conn, ticket_id, now=now)
-    _poke(readiness_loop)
+    ticket = tickets_actions.release_ticket(
+        conn,
+        ticket_id,
+        now=now,
+        readiness_doorbell=readiness_doorbell,
+    )
     return tickets_views.ticket_json(ticket, now)
 
 
@@ -730,7 +741,10 @@ async def ticket_copy_text(ticket_id: str, conn: DbConn) -> str:
 
 
 @router.post("/links")
-async def add_link(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+async def add_link(
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk,
+    readiness_doorbell: Doorbell,
+) -> JsonDict:
     body = LinkBody(
         from_id=body_str(raw, "from_id"),
         to_id=body_str(raw, "to_id"),
@@ -738,20 +752,31 @@ async def add_link(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> Jso
     )
     kind = parse_enum(LinkKind, body["kind"], "kind")
     now = clk.now_unix()
-    with txn(conn):
-        core_links.add_link(conn, body["from_id"], body["to_id"], kind, now)
+    link_actions.add_link(
+        conn,
+        body["from_id"],
+        body["to_id"],
+        kind,
+        now=now,
+        readiness_doorbell=readiness_doorbell,
+    )
     return {"from_id": body["from_id"], "to_id": body["to_id"], "kind": kind.value}
 
 
 @router.delete("/links")
 async def remove_link(conn: DbConn, ctx: Ctx, clk: Clk,
-                      readiness_loop: TicketLoop, from_id: str, to_id: str,
+                      readiness_doorbell: Doorbell, from_id: str, to_id: str,
                       kind: str) -> JsonDict:
     kind_enum = parse_enum(LinkKind, kind, "kind")
     now = clk.now_unix()
-    with txn(conn):
-        core_links.remove_link(conn, from_id, to_id, kind_enum, now)
-    _poke(readiness_loop)  # removing a block can make the target ready
+    link_actions.remove_link(
+        conn,
+        from_id,
+        to_id,
+        kind_enum,
+        now=now,
+        readiness_doorbell=readiness_doorbell,
+    )
     return {"ok": True}
 
 

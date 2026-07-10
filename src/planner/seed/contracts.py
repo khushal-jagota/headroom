@@ -18,7 +18,7 @@ READINESS_MAP: Final[dict[str, TicketState]] = {
     "Concepts": TicketState.needs_success,
     "Needs Shaping": TicketState.needs_approach,
     "Ready": TicketState.needs_plan,
-    "In Progress": TicketState.in_progress,
+    "In Progress": TicketState.needs_implementation,
 }
 
 # `Priority:` labels are literal P0..P3 in the source (verified in the snapshot) — identity map.

@@ -116,12 +116,11 @@
     return `day ${day} of ${total}`;
   }
 
-  // A ticket row reads amber when it needs a human (a pending gating proposal, or it
-  // is a result awaiting review), green when done. Works for both the item-ticket
-  // projection (has_pending_proposal) and loose tickets (ticket_status).
+  // A ticket row reads amber when it needs a human (a pending gating proposal),
+  // green when done. Works for both the item-ticket projection
+  // (has_pending_proposal) and loose tickets (ticket_status).
   function ticketNeedsYou(ticket: AnyRecord): boolean {
     return (
-      ticket.state === "needs_review" ||
       ticket.has_pending_proposal === true ||
       ticket.ticket_status === "awaiting_approval"
     );

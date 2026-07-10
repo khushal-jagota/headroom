@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import json
 import threading
 import time
 from pathlib import Path
@@ -25,12 +27,14 @@ from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.gateway import ChildProcess, GatewayChild, GatewayError
 from planner.minds.runner import run_step
 from planner.minds.shared_gateway import (
+    BUSY_CODE,
     CHAT_SOURCE,
     SESSION_COLS,
     EntityRoutingGateway,
     SharedGateway,
     SharedGatewayBusy,
 )
+from planner.minds.smoke import _check_distinct_sessions_demux
 from planner.worker_context.contracts import (
     PendingWorkerContext,
     PreparedWorkerPrompt,
@@ -259,95 +263,149 @@ def test_gateway_responses_still_demux_by_request_id() -> None:
     child.shutdown()
 
 
-def test_gateway_events_demux_by_session_id() -> None:
+def test_production_has_one_consequence_owned_session_event_boundary() -> None:
+    root = Path(__file__).resolve().parents[2]
+    planner_root = root / "src/planner"
+    allowed_ingress_claimers = {
+        Path("minds/sessions/service.py"),
+        Path("minds/runner.py"),
+        Path("minds/smoke.py"),
+    }
+    removed_calls = {
+        "open_session_events",
+        "_submit_and_drain",
+        "_stream_prompt",
+    }
+    violations: list[str] = []
+
+    for path in planner_root.rglob("*.py"):
+        relative = path.relative_to(planner_root)
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(relative))
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef) or node.name != "LiveSession":
+                continue
+            for member in node.body:
+                if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
+                    member.name in {"submit", "next_observation"}
+                ):
+                    violations.append(f"{relative}:{member.lineno}: LiveSession.{member.name}")
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
+                node.name in removed_calls
+            ):
+                violations.append(f"{relative}:{node.lineno}: def {node.name}")
+            if not isinstance(node, ast.Call):
+                continue
+            called_name: str | None = None
+            if isinstance(node.func, ast.Attribute):
+                called_name = node.func.attr
+            elif isinstance(node.func, ast.Name):
+                called_name = node.func.id
+            if called_name in removed_calls:
+                violations.append(f"{relative}:{node.lineno}: {called_name}")
+            if (
+                called_name == "claim_session_event_ingress"
+                and relative not in allowed_ingress_claimers
+            ):
+                violations.append(
+                    f"{relative}:{node.lineno}: claim_session_event_ingress"
+                )
+
+    assert violations == []
+
+
+def test_gateway_child_wide_session_ingress_receives_events_once_in_stdout_order() -> None:
     fake = FakeGateway(
         {
             "go": [
                 Reply(
                     result={},
-                    events_after=(
-                        complete_ev(OTHER_SID, text="other"),
-                        complete_ev(LIVE_SID, text="live"),
+                    events_before=(
+                        complete_ev(LIVE_SID, text="first"),
+                        ev("notice", None, {"process": True}),
                     ),
+                    events_after=(complete_ev(OTHER_SID, text="second"),),
                 )
             ]
         }
     )
     child = gw(fake)
     child.wait_ready(5.0)
-    live = child.open_session_events(LIVE_SID)
-    other = child.open_session_events(OTHER_SID)
+    ingress = child.claim_session_event_ingress()
+
     assert child.request("go", timeout=5.0) == {}
-    assert live.next_event(timeout=5.0)["payload"]["text"] == "live"
-    assert other.next_event(timeout=5.0)["payload"]["text"] == "other"
-    live.close()
-    other.close()
+    assert ingress.next_event(timeout=5.0)["payload"]["text"] == "first"
+    assert ingress.next_event(timeout=5.0)["payload"]["text"] == "second"
+    assert child.next_process_event(timeout=5.0)["payload"] == {"process": True}
+    with pytest.raises(RuntimeError, match="already claimed"):
+        child.claim_session_event_ingress()
+
+    ingress.close()
     child.shutdown()
 
 
-def test_gateway_concurrent_session_drains_do_not_steal_events() -> None:
+def test_gateway_begin_request_writes_before_response_wait() -> None:
     fake = FakeGateway(
         {
-            "go": [
-                Reply(
-                    result={},
-                    events_after=(
-                        complete_ev(OTHER_SID, text="other"),
-                        complete_ev(LIVE_SID, text="live"),
-                    ),
-                )
-            ]
+            "first": [Reply()],
+            "second": [Reply(result={"accepted": True})],
         }
     )
     child = gw(fake)
     child.wait_ready(5.0)
-    live = child.open_session_events(LIVE_SID)
-    other = child.open_session_events(OTHER_SID)
-    seen: dict[str, str] = {}
 
-    def drain(name: str, sid_events: Any) -> None:
-        event = sid_events.next_event(timeout=5.0)
-        seen[name] = str(event["payload"]["text"])
+    first = child.begin_request("first")
+    second = child.begin_request("second")
 
-    t1 = threading.Thread(target=drain, args=("live", live))
-    t2 = threading.Thread(target=drain, args=("other", other))
-    t1.start()
-    t2.start()
-    child.request("go", timeout=5.0)
-    t1.join(5.0)
-    t2.join(5.0)
-    assert seen == {"live": "live", "other": "other"}
-    live.close()
-    other.close()
+    assert fake.sent_methods() == ["first", "second"]
+    assert second.wait(timeout=5.0) == {"accepted": True}
+    with pytest.raises(GatewayError, match="no response to first"):
+        first.wait(timeout=0.01)
     child.shutdown()
 
 
-def test_gateway_process_events_do_not_enter_session_drains() -> None:
-    fake = FakeGateway({"go": [Reply(result={}, events_after=(ev("notice", None, {"x": 1}),))]})
-    child = gw(fake)
-    child.wait_ready(5.0)
-    live = child.open_session_events(LIVE_SID)
-    child.request("go", timeout=5.0)
-    assert child.next_process_event(timeout=5.0)["type"] == "notice"
-    with pytest.raises(GatewayError, match="no gateway event"):
-        live.next_event(timeout=0.1)
-    live.close()
-    child.shutdown()
-
-
-def test_gateway_child_death_wakes_all_session_drainers() -> None:
+def test_gateway_child_death_wakes_single_session_ingress_claimant() -> None:
     fake = FakeGateway({"boom": [Reply(die=True)]}, stderr_lines=("traceback: kaboom",))
     child = gw(fake)
     child.wait_ready(5.0)
-    live = child.open_session_events(LIVE_SID)
-    other = child.open_session_events(OTHER_SID)
+    ingress = child.claim_session_event_ingress()
     with pytest.raises(GatewayError, match="died"):
         child.request("boom", timeout=5.0)
-    assert live.next_event(timeout=5.0) is None
-    assert other.next_event(timeout=5.0) is None
+    assert ingress.next_event(timeout=5.0) is None
     child.shutdown()
     assert child.stderr_tail() == ["traceback: kaboom"]
     assert child.alive is False
+
+
+def test_concurrency_smoke_rejects_cross_session_delivery_from_single_feed() -> None:
+    unexpected_sid = "unexpected-session"
+    fake = FakeGateway(
+        {
+            "prompt.submit": [
+                Reply(
+                    result={"status": "streaming"},
+                    events_after=(complete_ev(unexpected_sid, text="wrong"),),
+                ),
+                Reply(result={"status": "streaming"}),
+            ]
+        }
+    )
+    child = gw(fake)
+    child.wait_ready(5.0)
+    ingress = child.claim_session_event_ingress()
+
+    try:
+        assert _check_distinct_sessions_demux(
+            child,
+            ingress,
+            LIVE_SID,
+            OTHER_SID,
+        ) is False
+    finally:
+        ingress.close()
+        child.shutdown()
+
+    assert fake.sent_methods() == ["prompt.submit", "prompt.submit"]
 
 
 def test_gateway_wait_ready_timeout() -> None:
@@ -479,6 +537,21 @@ def test_run_step_busy_4009() -> None:
     assert res.session_key == STORED_KEY
 
 
+def test_run_step_rejects_cross_session_delivery() -> None:
+    fake = FakeGateway(
+        {
+            "session.create": [create_reply()],
+            "prompt.submit": [submit_reply(complete_ev(OTHER_SID, text="wrong"))],
+        }
+    )
+
+    result = run(fake)
+
+    assert result.status == "errored"
+    assert "received an event for session" in (result.error or "")
+    assert OTHER_SID in (result.error or "")
+
+
 def test_shared_gateway_start_reuses_one_child_and_sets_worker_env() -> None:
     fake = FakeGateway({})
     gateway = shared(fake)
@@ -560,6 +633,109 @@ def test_shared_gateway_delivers_and_acknowledges_context_for_sync_and_stream_hu
         ("t_sync", (("alpha", 2), ("beta", 4))),
         ("t_stream", (("ticket_changed", 7),)),
     ]
+
+
+@pytest.mark.parametrize("disposition", ["streaming", "queued", "steered"])
+@pytest.mark.parametrize("input_path", ["message", "command", "image"])
+def test_human_input_paths_ack_exact_context_after_native_acceptance(
+    disposition: str,
+    input_path: str,
+) -> None:
+    context = RecordingWorkerContext()
+    context.set("t_demo", PendingWorkerContext("ticket_changed", "Ticket changed.", 12))
+    script: dict[str, list[Reply]] = {
+        "session.create": [create_reply()],
+        "prompt.submit": [
+            Reply(
+                result={"status": disposition},
+                events_after=(complete_ev(text="reply"),),
+            )
+        ],
+    }
+    if input_path == "command":
+        script["slash.exec"] = [
+            Reply(result={"type": "skill", "message": "command model text"})
+        ]
+    if input_path == "image":
+        script["image.attach"] = [Reply(result={"attached": True})]
+    fake = FakeGateway(script)
+    gateway = shared(fake, context)
+
+    try:
+        if input_path == "command":
+            chunks = list(gateway.stream(None, "t_demo", "/skill", "command"))
+            expected_visible_model_text = "command model text"
+        elif input_path == "image":
+            chunks = list(
+                gateway.stream(
+                    None,
+                    "t_demo",
+                    "describe it",
+                    "message",
+                    image_path=Path("/tmp/chat-image.png"),
+                )
+            )
+            expected_visible_model_text = "describe it"
+        else:
+            chunks = list(gateway.stream(None, "t_demo", "human text", "message"))
+            expected_visible_model_text = "human text"
+    finally:
+        gateway.shutdown()
+
+    assert chunks[-1].reply_text == "reply"
+    submit = next(frame for frame in fake.sent if frame["method"] == "prompt.submit")
+    assert submit["params"]["text"] == (
+        f"{expected_visible_model_text}\n\n[Pending worker context]\n"
+        "- Ticket changed.\n[/Pending worker context]"
+    )
+    assert context.prepare_calls == [("t_demo", expected_visible_model_text)]
+    assert context.acknowledgements == [
+        ("t_demo", (("ticket_changed", 12),))
+    ]
+
+
+@pytest.mark.parametrize("with_image", [False, True])
+def test_unknown_human_submit_retains_context_without_retry_or_image_detach(
+    with_image: bool,
+) -> None:
+    context = RecordingWorkerContext()
+    context.set("t_demo", PendingWorkerContext("ticket_changed", "Ticket changed.", 13))
+    script: dict[str, list[Reply]] = {
+        "session.create": [create_reply()],
+        "prompt.submit": [Reply()],
+    }
+    if with_image:
+        script["image.attach"] = [Reply(result={"attached": True})]
+    fake = FakeGateway(script)
+    gateway = SharedGateway(
+        hermes_python=HERMES_PY,
+        home="/tmp/planner-home",
+        worker_role="planner-worker",
+        spawn=fake.spawn,
+        base_env={},
+        worker_context=context,
+        request_timeout=0.01,
+    )
+
+    try:
+        with pytest.raises(PlannerError) as caught:
+            list(
+                gateway.stream(
+                    None,
+                    "t_demo",
+                    "human text",
+                    "message",
+                    image_path=Path("/tmp/chat-image.png") if with_image else None,
+                )
+            )
+    finally:
+        gateway.shutdown()
+
+    assert caught.value.code == ErrorCode.gateway_offline
+    assert fake.sent_methods().count("prompt.submit") == 1
+    assert "image.detach" not in fake.sent_methods()
+    assert context.acknowledgements == []
+    assert context.pending["t_demo"]
 
 
 def test_shared_gateway_delivers_context_for_sync_and_stream_model_backed_commands_only() -> None:
@@ -685,6 +861,382 @@ def test_shared_gateway_default_resume_not_found_still_creates_and_submits() -> 
     assert fake.sent_methods() == ["session.resume", "session.create", "prompt.submit"]
 
 
+def test_employee_queued_submission_owns_only_its_next_execution() -> None:
+    class ManualEventFake(FakeGateway):
+        def emit(self, event: dict[str, Any]) -> None:
+            self._out.put(json.dumps(event))
+
+    context = RecordingWorkerContext()
+    context.set("t_demo", PendingWorkerContext("ticket_changed", "Ticket changed.", 18))
+    fake = ManualEventFake(
+        {
+            "session.resume": [
+                Reply(
+                    result={
+                        "session_id": LIVE_SID,
+                        "resumed": STORED_KEY,
+                        "running": True,
+                    }
+                )
+            ],
+            "prompt.submit": [
+                Reply(
+                    result={"status": "queued"},
+                    events_after=(
+                        ev("message.delta", LIVE_SID, {"text": "old delta"}),
+                        ev("tool.start", LIVE_SID, {"name": "old tool"}),
+                        complete_ev(
+                            LIVE_SID,
+                            text="prior partial",
+                            status="interrupted",
+                        ),
+                    ),
+                )
+            ],
+        }
+    )
+    gateway = shared(fake, context)
+    results: list[RunResult] = []
+    observed: list[dict[str, Any]] = []
+    run_thread = threading.Thread(
+        target=lambda: results.append(
+            gateway.run_ticket_step(
+                STORED_KEY,
+                "t_demo",
+                "employee prompt",
+                observed.append,
+            )
+        )
+    )
+
+    try:
+        run_thread.start()
+        assert fake.wait_sent(2, 5.0)
+        time.sleep(0.05)
+        assert run_thread.is_alive()
+        assert observed == []
+        assert context.acknowledgements == []
+
+        fake.emit(ev("message.start", LIVE_SID))
+        fake.emit(ev("message.delta", LIVE_SID, {"text": "employee"}))
+        fake.emit(complete_ev(LIVE_SID, text="employee reply"))
+        run_thread.join(5.0)
+    finally:
+        gateway.shutdown()
+
+    assert not run_thread.is_alive()
+    assert [(result.status, result.text) for result in results] == [
+        ("complete", "employee reply")
+    ]
+    assert [event["type"] for event in observed] == [
+        "message.start",
+        "message.delta",
+        "message.complete",
+    ]
+    assert context.acknowledgements == [
+        ("t_demo", (("ticket_changed", 18),))
+    ]
+
+
+def test_employee_streaming_submission_keeps_events_before_receipt() -> None:
+    context = RecordingWorkerContext()
+    context.set("t_demo", PendingWorkerContext("ticket_changed", "Ticket changed.", 19))
+    fake = FakeGateway(
+        {
+            "session.create": [create_reply()],
+            "prompt.submit": [
+                Reply(
+                    result={"status": "streaming"},
+                    events_before=(
+                        ev("message.start", LIVE_SID),
+                        ev("message.delta", LIVE_SID, {"text": "fast"}),
+                        complete_ev(LIVE_SID, text="fast reply"),
+                    ),
+                )
+            ],
+        }
+    )
+    gateway = shared(fake, context)
+    observed: list[dict[str, Any]] = []
+
+    try:
+        result = gateway.run_ticket_step(
+            None,
+            "t_demo",
+            "employee prompt",
+            observed.append,
+        )
+    finally:
+        gateway.shutdown()
+
+    assert (result.status, result.text) == ("complete", "fast reply")
+    assert [event["type"] for event in observed] == [
+        "message.start",
+        "message.delta",
+        "message.complete",
+    ]
+    assert context.acknowledgements == [
+        ("t_demo", (("ticket_changed", 19),))
+    ]
+
+
+def test_employee_steered_submission_is_delivered_without_owning_a_terminal() -> None:
+    class ManualEventFake(FakeGateway):
+        def emit(self, event: dict[str, Any]) -> None:
+            self._out.put(json.dumps(event))
+
+    context = RecordingWorkerContext()
+    context.set("t_demo", PendingWorkerContext("ticket_changed", "Ticket changed.", 20))
+    fake = ManualEventFake(
+        {
+            "session.resume": [
+                Reply(
+                    result={
+                        "session_id": LIVE_SID,
+                        "resumed": STORED_KEY,
+                        "running": True,
+                    }
+                )
+            ],
+            "prompt.submit": [Reply(result={"status": "steered"})],
+        }
+    )
+    gateway = shared(fake, context)
+    results: list[RunResult] = []
+    observed: list[dict[str, Any]] = []
+    run_thread = threading.Thread(
+        target=lambda: results.append(
+            gateway.run_ticket_step(
+                STORED_KEY,
+                "t_demo",
+                "employee prompt",
+                observed.append,
+            )
+        )
+    )
+
+    try:
+        run_thread.start()
+        assert fake.wait_sent(2, 5.0)
+        run_thread.join(0.2)
+        assert not run_thread.is_alive()
+
+        fake.emit(complete_ev(LIVE_SID, text="unrelated active reply"))
+        time.sleep(0.05)
+    finally:
+        gateway.shutdown()
+
+    assert results == [
+        RunResult(
+            "errored",
+            "",
+            None,
+            STORED_KEY,
+            "Hermes delivered the employee prompt by steering the active execution; "
+            "no independent employee execution was created",
+        )
+    ]
+    assert observed == []
+    assert context.acknowledgements == [
+        ("t_demo", (("ticket_changed", 20),))
+    ]
+
+
+def test_employee_queued_context_is_acknowledged_only_at_owned_start() -> None:
+    class ManualEventFake(FakeGateway):
+        def emit(self, event: dict[str, Any]) -> None:
+            self._out.put(json.dumps(event))
+
+    context = RecordingWorkerContext()
+    context.set("t_demo", PendingWorkerContext("ticket_changed", "Ticket changed.", 21))
+    fake = ManualEventFake(
+        {
+            "session.resume": [
+                Reply(
+                    result={
+                        "session_id": LIVE_SID,
+                        "resumed": STORED_KEY,
+                        "running": True,
+                    }
+                )
+            ],
+            "prompt.submit": [
+                Reply(
+                    result={"status": "queued"},
+                    events_after=(complete_ev(LIVE_SID, text="prior reply"),),
+                )
+            ],
+        }
+    )
+    gateway = shared(fake, context)
+    results: list[RunResult] = []
+    run_thread = threading.Thread(
+        target=lambda: results.append(
+            gateway.run_ticket_step(STORED_KEY, "t_demo", "employee prompt")
+        )
+    )
+
+    try:
+        run_thread.start()
+        assert fake.wait_sent(2, 5.0)
+        time.sleep(0.05)
+        assert context.acknowledgements == []
+
+        fake.emit(ev("message.start", LIVE_SID))
+        deadline = time.monotonic() + 5.0
+        while not context.acknowledgements and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert context.acknowledgements == [
+            ("t_demo", (("ticket_changed", 21),))
+        ]
+        fake.emit(complete_ev(LIVE_SID, text="employee reply"))
+        run_thread.join(5.0)
+    finally:
+        gateway.shutdown()
+
+    assert not run_thread.is_alive()
+    assert [(result.status, result.text) for result in results] == [
+        ("complete", "employee reply")
+    ]
+
+
+def test_employee_queued_child_death_before_owned_start_retains_context() -> None:
+    context = RecordingWorkerContext()
+    context.set("t_demo", PendingWorkerContext("ticket_changed", "Ticket changed.", 22))
+    fake = FakeGateway(
+        {
+            "session.resume": [
+                Reply(
+                    result={
+                        "session_id": LIVE_SID,
+                        "resumed": STORED_KEY,
+                        "running": True,
+                    }
+                )
+            ],
+            "prompt.submit": [Reply(result={"status": "queued"}, die=True)],
+        }
+    )
+    gateway = shared(fake, context)
+
+    try:
+        result = gateway.run_ticket_step(
+            STORED_KEY,
+            "t_demo",
+            "employee prompt",
+        )
+    finally:
+        gateway.shutdown()
+
+    assert result.status == "errored"
+    assert context.acknowledgements == []
+    assert context.pending["t_demo"]
+    assert fake.sent_methods().count("prompt.submit") == 1
+
+
+def test_employee_unknown_submit_settles_once_without_claiming_later_terminal() -> None:
+    class ManualEventFake(FakeGateway):
+        def emit(self, event: dict[str, Any]) -> None:
+            self._out.put(json.dumps(event))
+
+    context = RecordingWorkerContext()
+    context.set("t_demo", PendingWorkerContext("ticket_changed", "Ticket changed.", 23))
+    fake = ManualEventFake(
+        {
+            "session.create": [create_reply()],
+            "prompt.submit": [Reply()],
+        }
+    )
+    gateway = SharedGateway(
+        hermes_python=HERMES_PY,
+        home="/tmp/planner-home",
+        worker_role="planner-worker",
+        spawn=fake.spawn,
+        base_env={},
+        worker_context=context,
+        request_timeout=0.01,
+    )
+    observed: list[dict[str, Any]] = []
+
+    try:
+        result = gateway.run_ticket_step(
+            None,
+            "t_demo",
+            "employee prompt",
+            observed.append,
+        )
+        fake.emit(complete_ev(LIVE_SID, text="later unrelated reply"))
+        time.sleep(0.05)
+    finally:
+        gateway.shutdown()
+
+    assert result.status == "errored"
+    assert "outcome is unknown" in (result.error or "")
+    assert "not retried" in (result.error or "")
+    assert fake.sent_methods().count("prompt.submit") == 1
+    assert context.acknowledgements == []
+    assert context.pending["t_demo"]
+    assert observed == []
+
+
+def test_second_employee_attempt_is_busy_without_a_second_prompt_write() -> None:
+    class ManualEventFake(FakeGateway):
+        def emit(self, event: dict[str, Any]) -> None:
+            self._out.put(json.dumps(event))
+
+    running_snapshot = {
+        "session_id": LIVE_SID,
+        "resumed": STORED_KEY,
+        "running": True,
+    }
+    fake = ManualEventFake(
+        {
+            "session.resume": [
+                Reply(result=running_snapshot),
+                Reply(result=running_snapshot),
+            ],
+            "prompt.submit": [
+                Reply(
+                    result={"status": "queued"},
+                    events_after=(complete_ev(LIVE_SID, text="prior reply"),),
+                ),
+                Reply(error=(BUSY_CODE, "busy")),
+            ],
+        }
+    )
+    gateway = shared(fake)
+    first_results: list[RunResult] = []
+    first = threading.Thread(
+        target=lambda: first_results.append(
+            gateway.run_ticket_step(STORED_KEY, "t_demo", "first employee prompt")
+        )
+    )
+
+    try:
+        first.start()
+        assert fake.wait_sent(2, 5.0)
+        time.sleep(0.05)
+
+        with pytest.raises(SharedGatewayBusy):
+            gateway.run_ticket_step(
+                STORED_KEY,
+                "t_demo",
+                "second employee prompt",
+            )
+        assert fake.sent_methods().count("prompt.submit") == 1
+
+        fake.emit(ev("message.start", LIVE_SID))
+        fake.emit(complete_ev(LIVE_SID, text="first employee reply"))
+        first.join(5.0)
+    finally:
+        gateway.shutdown()
+
+    assert not first.is_alive()
+    assert [(result.status, result.text) for result in first_results] == [
+        ("complete", "first employee reply")
+    ]
+
+
 def test_shared_gateway_run_reuses_child_for_multiple_sessions() -> None:
     fake = FakeGateway(
         {
@@ -740,6 +1292,510 @@ def test_shared_gateway_interrupt_resolves_stored_key_to_live_session() -> None:
     assert not turn.is_alive()
     assert [result.status for result in results] == ["interrupted"]
     assert results[0].session_key == STORED_KEY
+
+
+@pytest.mark.parametrize("second_disposition", ["streaming", "queued"])
+def test_human_stop_then_immediate_send_ignores_old_interrupted_completion(
+    second_disposition: str,
+) -> None:
+    fake = FakeGateway(
+        {
+            "session.create": [create_reply(LIVE_SID, STORED_KEY)],
+            "prompt.submit": [
+                Reply(
+                    result={"status": "streaming"},
+                    events_after=(ev("message.start", LIVE_SID),),
+                ),
+                Reply(
+                    result={"status": second_disposition},
+                    events_after=(
+                        complete_ev(LIVE_SID, text="old partial", status="interrupted"),
+                        ev("message.start", LIVE_SID),
+                        ev("message.delta", LIVE_SID, {"text": "new"}),
+                        complete_ev(LIVE_SID, text="new reply"),
+                    ),
+                ),
+            ],
+            "session.interrupt": [Reply(result={"interrupted": True})],
+        }
+    )
+    gateway = shared(fake)
+    first_chunks: list[Any] = []
+    first = threading.Thread(
+        target=lambda: first_chunks.extend(
+            gateway.stream(None, "t_demo", "first", "message")
+        )
+    )
+
+    try:
+        first.start()
+        assert fake.wait_sent(2, 5.0)
+        gateway.interrupt(STORED_KEY, "t_demo")
+        second_chunks = list(
+            gateway.stream(STORED_KEY, "t_demo", "second", "message")
+        )
+        first.join(5.0)
+    finally:
+        gateway.shutdown()
+
+    assert not first.is_alive()
+    assert first_chunks[-1].type == "done"
+    assert first_chunks[-1].reply_text == "old partial"
+    assert second_chunks[-1].type == "done"
+    assert second_chunks[-1].reply_text == "new reply"
+    assert [chunk.text for chunk in second_chunks if chunk.type == "token"] == ["new"]
+    assert fake.sent_methods() == [
+        "session.create",
+        "prompt.submit",
+        "session.interrupt",
+        "prompt.submit",
+    ]
+
+
+def test_completed_released_human_session_reopens_through_resume() -> None:
+    fake = FakeGateway(
+        {
+            "session.create": [create_reply(LIVE_SID, STORED_KEY)],
+            "session.resume": [resume_reply(OTHER_SID, STORED_KEY)],
+            "prompt.submit": [
+                submit_reply(complete_ev(LIVE_SID, text="first reply")),
+                submit_reply(complete_ev(OTHER_SID, text="second reply")),
+            ],
+        }
+    )
+    gateway = shared(fake)
+
+    try:
+        first = gateway.send(None, "t_demo", "first")
+        second = gateway.send(STORED_KEY, "t_demo", "second")
+    finally:
+        gateway.shutdown()
+
+    assert first.reply_text == "first reply"
+    assert second.reply_text == "second reply"
+    assert second.session_key == STORED_KEY
+    assert fake.sent_methods() == [
+        "session.create",
+        "prompt.submit",
+        "session.resume",
+        "prompt.submit",
+    ]
+    assert fake.sent[-1]["params"]["session_id"] == OTHER_SID
+
+
+@pytest.mark.parametrize("disposition", ["streaming", "queued", "unknown"])
+def test_shared_gateway_shutdown_settles_pending_employee_once_without_retry(
+    disposition: str,
+) -> None:
+    submit = Reply() if disposition == "unknown" else Reply(result={"status": disposition})
+    fake = FakeGateway(
+        {
+            "session.create": [create_reply()],
+            "prompt.submit": [submit],
+        }
+    )
+    gateway = SharedGateway(
+        hermes_python=HERMES_PY,
+        home="/tmp/planner-home",
+        worker_role="planner-worker",
+        spawn=fake.spawn,
+        base_env={},
+        request_timeout=30.0,
+    )
+    results: list[RunResult] = []
+    caller = threading.Thread(
+        target=lambda: results.append(
+            gateway.run_ticket_step(None, "t_shutdown", "employee prompt")
+        )
+    )
+
+    caller.start()
+    assert fake.wait_sent(2, 5.0)
+    gateway.shutdown()
+    caller.join(5.0)
+
+    assert caller.is_alive() is False
+    assert len(results) == 1
+    assert results[0].status == "errored"
+    assert fake.sent_methods().count("prompt.submit") == 1
+
+
+def test_role_gateway_child_death_does_not_stop_sibling_role() -> None:
+    worker_fake = FakeGateway(
+        {
+            "session.create": [create_reply()],
+            "prompt.submit": [Reply(result={"status": "streaming"})],
+        }
+    )
+    chief_fake = FakeGateway(
+        {
+            "session.create": [create_reply(OTHER_SID, OTHER_KEY)],
+            "prompt.submit": [submit_reply(complete_ev(OTHER_SID, text="chief reply"))],
+        }
+    )
+    worker = shared(worker_fake)
+    chief = SharedGateway(
+        hermes_python=HERMES_PY,
+        home="/tmp/planner-home",
+        worker_role="planner-chief-of-staff",
+        spawn=chief_fake.spawn,
+        base_env={},
+    )
+    worker_results: list[RunResult] = []
+    worker_call = threading.Thread(
+        target=lambda: worker_results.append(
+            worker.run_ticket_step(None, "t_worker", "employee prompt")
+        )
+    )
+
+    try:
+        worker_call.start()
+        assert worker_fake.wait_sent(2, 5.0)
+        worker_fake.kill()
+        worker_call.join(5.0)
+        chief_result = chief.send(None, "chief-of-staff", "still there?")
+    finally:
+        worker.shutdown()
+        chief.shutdown()
+
+    assert worker_call.is_alive() is False
+    assert len(worker_results) == 1
+    assert worker_results[0].status == "errored"
+    assert worker_fake.sent_methods().count("prompt.submit") == 1
+    assert chief_result.reply_text == "chief reply"
+    assert chief_fake.sent_methods() == ["session.create", "prompt.submit"]
+
+
+def test_new_gateway_resumes_stored_session_without_replaying_prior_input() -> None:
+    first_fake = FakeGateway(
+        {
+            "session.create": [create_reply()],
+            "prompt.submit": [submit_reply(complete_ev(text="first reply"))],
+        }
+    )
+    first_gateway = shared(first_fake)
+    first_result = first_gateway.send(None, "t_demo", "first input")
+    first_gateway.shutdown()
+
+    second_fake = FakeGateway(
+        {
+            "session.resume": [resume_reply(OTHER_SID, STORED_KEY)],
+            "prompt.submit": [submit_reply(complete_ev(OTHER_SID, text="second reply"))],
+        }
+    )
+    second_gateway = shared(second_fake)
+    try:
+        second_result = second_gateway.send(
+            first_result.session_key,
+            "t_demo",
+            "second input",
+        )
+    finally:
+        second_gateway.shutdown()
+
+    assert second_result.reply_text == "second reply"
+    assert second_fake.sent_methods() == ["session.resume", "prompt.submit"]
+    assert [
+        frame["params"]["text"]
+        for frame in second_fake.sent
+        if frame["method"] == "prompt.submit"
+    ] == ["second input"]
+
+
+def test_two_employee_sessions_share_one_child_without_cross_settlement() -> None:
+    class ManualEventFake(FakeGateway):
+        def emit(self, event: dict[str, Any]) -> None:
+            self._out.put(json.dumps(event))
+
+    fake = ManualEventFake(
+        {
+            "session.create": [
+                create_reply(LIVE_SID, STORED_KEY),
+                create_reply(OTHER_SID, OTHER_KEY),
+            ],
+            "prompt.submit": [
+                Reply(result={"status": "streaming"}),
+                Reply(result={"status": "streaming"}),
+            ],
+        }
+    )
+    gateway = shared(fake)
+    results: dict[str, RunResult] = {}
+    observed: dict[str, list[dict[str, Any]]] = {"one": [], "two": []}
+    one = threading.Thread(
+        target=lambda: results.setdefault(
+            "one",
+            gateway.run_ticket_step(None, "t_one", "one", observed["one"].append),
+        )
+    )
+    two = threading.Thread(
+        target=lambda: results.setdefault(
+            "two",
+            gateway.run_ticket_step(None, "t_two", "two", observed["two"].append),
+        )
+    )
+
+    try:
+        one.start()
+        assert fake.wait_sent(2, 5.0)
+        two.start()
+        assert fake.wait_sent(4, 5.0)
+        fake.emit(ev("message.start", OTHER_SID))
+        fake.emit(ev("message.start", LIVE_SID))
+        fake.emit(complete_ev(OTHER_SID, text="two reply"))
+        fake.emit(complete_ev(LIVE_SID, text="one reply"))
+        one.join(5.0)
+        two.join(5.0)
+    finally:
+        gateway.shutdown()
+
+    assert one.is_alive() is False
+    assert two.is_alive() is False
+    assert results["one"].text == "one reply"
+    assert results["two"].text == "two reply"
+    assert {event["session_id"] for event in observed["one"]} == {LIVE_SID}
+    assert {event["session_id"] for event in observed["two"]} == {OTHER_SID}
+    assert fake.sent_methods().count("prompt.submit") == 2
+
+
+@pytest.mark.parametrize("mode", ["message", "command"])
+def test_stream_retry_persists_rotated_key_after_reused_session_detaches(
+    mode: str,
+) -> None:
+    script: dict[str, list[Reply]] = {
+        "session.create": [create_reply(LIVE_SID, STORED_KEY)],
+        "session.resume": [resume_reply(OTHER_SID, OTHER_KEY)],
+        "prompt.submit": [
+            Reply(
+                result={"status": "streaming"},
+                events_after=(ev("message.start", LIVE_SID),),
+            ),
+            submit_reply(complete_ev(OTHER_SID, text="second reply")),
+        ],
+        "session.interrupt": [
+            Reply(
+                result={"interrupted": True},
+                events_after=(
+                    complete_ev(LIVE_SID, text="first partial", status="interrupted"),
+                ),
+            )
+        ],
+    }
+    if mode == "command":
+        script["slash.exec"] = [
+            Reply(result={"type": "skill", "message": "second command"})
+        ]
+    fake = FakeGateway(script)
+    gateway = shared(fake)
+    first_chunks: list[Any] = []
+    second_session_keys: list[str] = []
+    first = threading.Thread(
+        target=lambda: first_chunks.extend(
+            gateway.stream(None, "t_demo", "first", "message")
+        )
+    )
+
+    try:
+        first.start()
+        assert fake.wait_sent(2, 5.0)
+        second = gateway.stream(
+            STORED_KEY,
+            "t_demo",
+            "/skill" if mode == "command" else "second",
+            mode,
+            on_session_key=second_session_keys.append,
+        )
+        session_chunk = next(second)
+        assert session_chunk.type == "session"
+
+        gateway.interrupt(STORED_KEY, "t_demo")
+        first.join(5.0)
+        assert not first.is_alive()
+        assert gateway.live_session(STORED_KEY) is None
+        second_chunks = list(second)
+    finally:
+        gateway.shutdown()
+
+    assert first_chunks[-1].reply_text == "first partial"
+    assert second_chunks[-1].reply_text == "second reply"
+    assert second_chunks[-1].session_key == OTHER_KEY
+    assert second_session_keys == [STORED_KEY, OTHER_KEY]
+    expected_methods = [
+        "session.create",
+        "prompt.submit",
+        "session.interrupt",
+        "session.resume",
+    ]
+    if mode == "command":
+        expected_methods.append("slash.exec")
+    expected_methods.append("prompt.submit")
+    assert fake.sent_methods() == expected_methods
+    assert fake.sent[-1]["params"]["session_id"] == OTHER_SID
+
+
+def test_send_retry_persists_rotated_key_after_prepare_time_detach() -> None:
+    second_prepare_entered = threading.Event()
+    allow_second_prepare = threading.Event()
+
+    class BlockingSecondPrepareContext(RecordingWorkerContext):
+        def prepare(self, worker_entity_id: str, prompt_text: str) -> PreparedWorkerPrompt:
+            if prompt_text == "second":
+                second_prepare_entered.set()
+                assert allow_second_prepare.wait(5.0)
+            return super().prepare(worker_entity_id, prompt_text)
+
+    fake = FakeGateway(
+        {
+            "session.create": [create_reply(LIVE_SID, STORED_KEY)],
+            "session.resume": [resume_reply(OTHER_SID, OTHER_KEY)],
+            "prompt.submit": [
+                Reply(
+                    result={"status": "streaming"},
+                    events_after=(ev("message.start", LIVE_SID),),
+                ),
+                submit_reply(complete_ev(OTHER_SID, text="second reply")),
+            ],
+            "session.interrupt": [
+                Reply(
+                    result={"interrupted": True},
+                    events_after=(
+                        complete_ev(LIVE_SID, text="first partial", status="interrupted"),
+                    ),
+                )
+            ],
+        }
+    )
+    gateway = shared(fake, BlockingSecondPrepareContext())
+    first_chunks: list[Any] = []
+    second_results: list[ChatSendResult] = []
+    second_session_keys: list[str] = []
+    first = threading.Thread(
+        target=lambda: first_chunks.extend(
+            gateway.stream(None, "t_demo", "first", "message")
+        )
+    )
+    second = threading.Thread(
+        target=lambda: second_results.append(
+            gateway.send(
+                STORED_KEY,
+                "t_demo",
+                "second",
+                on_session_key=second_session_keys.append,
+            )
+        )
+    )
+
+    try:
+        first.start()
+        assert fake.wait_sent(2, 5.0)
+        second.start()
+        assert second_prepare_entered.wait(5.0)
+        gateway.interrupt(STORED_KEY, "t_demo")
+        first.join(5.0)
+        assert not first.is_alive()
+        assert gateway.live_session(STORED_KEY) is None
+        allow_second_prepare.set()
+        second.join(5.0)
+    finally:
+        allow_second_prepare.set()
+        gateway.shutdown()
+
+    assert not second.is_alive()
+    assert second_results == [
+        ChatSendResult(reply_text="second reply", session_key=OTHER_KEY)
+    ]
+    assert second_session_keys == [STORED_KEY, OTHER_KEY]
+    assert fake.sent_methods() == [
+        "session.create",
+        "prompt.submit",
+        "session.interrupt",
+        "session.resume",
+        "prompt.submit",
+    ]
+
+
+@pytest.mark.parametrize("sync", [False, True])
+@pytest.mark.parametrize("alias", [False, True])
+def test_model_command_to_derived_prompt_write_is_one_ordered_operation(
+    sync: bool,
+    alias: bool,
+) -> None:
+    prepare_entered = threading.Event()
+    allow_prepare = threading.Event()
+
+    class BlockingCommandContext(RecordingWorkerContext):
+        def prepare(self, worker_entity_id: str, prompt_text: str) -> PreparedWorkerPrompt:
+            if prompt_text == "command model text":
+                prepare_entered.set()
+                assert allow_prepare.wait(5.0)
+            return super().prepare(worker_entity_id, prompt_text)
+
+    context = BlockingCommandContext()
+    slash_result = (
+        {"type": "alias", "target": "/skill base"}
+        if alias
+        else {"type": "skill", "message": "command model text"}
+    )
+    script: dict[str, list[Reply]] = {
+        "session.create": [create_reply(LIVE_SID, STORED_KEY)],
+        "slash.exec": [Reply(result=slash_result)],
+        "prompt.submit": [
+            submit_reply(complete_ev(LIVE_SID, text="command reply")),
+            submit_reply(complete_ev(LIVE_SID, text="message reply")),
+        ],
+    }
+    if alias:
+        script["command.dispatch"] = [
+            Reply(result={"type": "skill", "message": "command model text"})
+        ]
+    fake = FakeGateway(script)
+    gateway = shared(fake, context)
+    command_results: list[Any] = []
+    message_results: list[Any] = []
+
+    def run_command_call() -> None:
+        if sync:
+            command_results.append(gateway.run_command(None, "t_demo", "/alias arg"))
+        else:
+            command_results.extend(
+                gateway.stream(None, "t_demo", "/alias arg", "command")
+            )
+
+    command_thread = threading.Thread(target=run_command_call)
+    message_thread = threading.Thread(
+        target=lambda: message_results.extend(
+            gateway.stream(STORED_KEY, "t_demo", "human B", "message")
+        )
+    )
+    try:
+        command_thread.start()
+        assert prepare_entered.wait(5.0)
+        message_thread.start()
+        interleaved_before_command_prompt = False
+        deadline = time.monotonic() + 0.2
+        while time.monotonic() < deadline:
+            if any(frame["method"] == "prompt.submit" for frame in fake.sent):
+                interleaved_before_command_prompt = True
+                break
+            threading.Event().wait(0.01)
+        allow_prepare.set()
+        command_thread.join(5.0)
+        message_thread.join(5.0)
+    finally:
+        allow_prepare.set()
+        gateway.shutdown()
+
+    assert interleaved_before_command_prompt is False
+    assert not command_thread.is_alive()
+    assert not message_thread.is_alive()
+    prompt_texts = [
+        frame["params"]["text"]
+        for frame in fake.sent
+        if frame["method"] == "prompt.submit"
+    ]
+    assert prompt_texts == ["command model text", "human B"]
+    assert command_results
+    assert message_results[-1].reply_text == "message reply"
 
 
 def test_shared_gateway_interrupt_maps_live_session_not_found_to_not_found() -> None:
@@ -857,7 +1913,6 @@ def test_shared_gateway_detaches_image_when_prompt_submit_fails_before_next_turn
         "image.attach",
         "prompt.submit",
         "image.detach",
-        "session.resume",
         "prompt.submit",
     ]
     assert fake.sent[3]["params"] == {"session_id": LIVE_SID, "path": str(image_path)}
@@ -908,6 +1963,48 @@ def test_provision_planner_home_skills_symlinks_repo_skills(tmp_path: Path) -> N
     assert (panels / "SKILL.md").exists()
     assert (worker / "SKILL.md").exists()
     assert (chief / "SKILL.md").exists()
+
+
+def test_provisioned_skills_encode_implementation_and_closeout_lifecycle(
+    tmp_path: Path,
+) -> None:
+    provision_planner_home_skills(tmp_path)
+    skills = tmp_path / "skills"
+    panels = (skills / "panels" / "SKILL.md").read_text(encoding="utf-8")
+    worker = (skills / "panels-worker" / "SKILL.md").read_text(encoding="utf-8")
+    chief = (skills / "panels-chief-of-staff" / "SKILL.md").read_text(encoding="utf-8")
+
+    # No provisioned role prompt may still name the retired lifecycle states.
+    for text in (panels, worker, chief):
+        assert "in_progress" not in text
+        assert "needs_review" not in text
+
+    # The visible six-stage sequence and its five gated fields are the new model.
+    sequence = "Success → Approach → Plan → Implementation → Closeout → Done"
+    assert sequence in worker
+    for field in ("success", "approach", "plan", "implementation", "closeout"):
+        assert field in worker
+
+    # panels lists the five canonical outputs, not the retired `result` field.
+    assert "plan, result" not in panels
+    assert "implementation" in panels
+    assert "closeout" in panels
+    assert sequence in panels
+
+    # The worker skill pins Implementation and Closeout as distinct responsibilities.
+    assert "needs_implementation" in worker
+    assert "needs_closeout" in worker
+    assert "reviewable" in worker
+    for closeout_duty in ("merge", "deploy", "follow-up", "bookkeeping"):
+        assert closeout_duty in worker
+    assert "the **result**" not in worker
+    assert "result proposal" not in worker
+    assert "never approve" in worker
+
+    # Chief keeps its planning-draft boundary on the new field names only.
+    assert "`result`" not in chief
+    assert "implementation" in chief
+    assert "closeout" in chief
 
 
 def test_boot_smoke_check_with_fake() -> None:

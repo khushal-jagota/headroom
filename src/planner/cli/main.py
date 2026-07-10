@@ -25,7 +25,7 @@ from planner.cli import http
 from planner.tickets.contracts import GATING_FIELD, STATE_ORDER, AtCap, TicketState
 
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
-_FIELDS = ["success", "approach", "plan", "result"]
+_FIELDS = ["success", "approach", "plan", "implementation", "closeout"]
 _TICKET_ID_ENV = "PLAN_TICKET_ID"
 
 _DAY_FIELDS = {
@@ -598,13 +598,6 @@ def ticket_approve(
     tid = resolve_ticket_id(ticket_id, as_json)
     detail = http.send("GET", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary")
     state = TicketState(detail["state"])
-    if state is TicketState.needs_review:
-        if ceiling is not None or at_cap is not None or edit_file is not None:
-            http.fail_validation("review approval does not accept scope or edited body", as_json)
-        data = http.send(
-            "POST", f"/api/tickets/{tid}/approve", as_json=as_json, request_actor="ordinary"
-        )
-        http.emit(data, as_json, f"{data['id']} approved")
     field = GATING_FIELD.get(state)
     if field is None:
         http.fail_validation(f"ticket in {state.value} has nothing to approve", as_json)
@@ -984,7 +977,8 @@ def _external_work_body(
     success_file: str | None,
     approach_file: str | None,
     plan_file: str | None,
-    result_file: str | None,
+    implementation_file: str | None,
+    closeout_file: str | None,
     as_json: bool,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
@@ -996,7 +990,8 @@ def _external_work_body(
         ("success", success_file),
         ("approach", approach_file),
         ("plan", plan_file),
-        ("result", result_file),
+        ("implementation", implementation_file),
+        ("closeout", closeout_file),
     ):
         if source is not None:
             body[key] = _read_source(source, as_json)
@@ -1016,7 +1011,10 @@ def chief() -> None:
 @click.option("--success-file", default=None, help="Read settled success from this file, or -.")
 @click.option("--approach-file", default=None, help="Read settled approach from this file, or -.")
 @click.option("--plan-file", default=None, help="Read settled plan from this file, or -.")
-@click.option("--result-file", default=None, help="Read settled result from this file, or -.")
+@click.option(
+    "--implementation-file", default=None, help="Read settled implementation from this file, or -."
+)
+@click.option("--closeout-file", default=None, help="Read settled closeout from this file, or -.")
 @json_option
 def chief_reconcile_ticket_from_external_work(
     ticket_id: str,
@@ -1026,7 +1024,8 @@ def chief_reconcile_ticket_from_external_work(
     success_file: str | None,
     approach_file: str | None,
     plan_file: str | None,
-    result_file: str | None,
+    implementation_file: str | None,
+    closeout_file: str | None,
     as_json: bool,
 ) -> None:
     body = _external_work_body(
@@ -1036,7 +1035,8 @@ def chief_reconcile_ticket_from_external_work(
         success_file=success_file,
         approach_file=approach_file,
         plan_file=plan_file,
-        result_file=result_file,
+        implementation_file=implementation_file,
+        closeout_file=closeout_file,
         as_json=as_json,
     )
     data = http.send(
@@ -1061,7 +1061,10 @@ def chief_reconcile_ticket_from_external_work(
 @click.option("--success-file", default=None, help="Read settled success from this file, or -.")
 @click.option("--approach-file", default=None, help="Read settled approach from this file, or -.")
 @click.option("--plan-file", default=None, help="Read settled plan from this file, or -.")
-@click.option("--result-file", default=None, help="Read settled result from this file, or -.")
+@click.option(
+    "--implementation-file", default=None, help="Read settled implementation from this file, or -."
+)
+@click.option("--closeout-file", default=None, help="Read settled closeout from this file, or -.")
 @click.option("--priority", type=click.Choice(_PRIORITIES), default=None, help="Priority label.")
 @click.option("--deadline", default=None, help="Due date in YYYY-MM-DD form.")
 @click.option("--project", default=None, help="Project name.")
@@ -1077,7 +1080,8 @@ def chief_create_ticket_from_external_work(
     success_file: str | None,
     approach_file: str | None,
     plan_file: str | None,
-    result_file: str | None,
+    implementation_file: str | None,
+    closeout_file: str | None,
     priority: str | None,
     deadline: str | None,
     project: str | None,
@@ -1093,7 +1097,8 @@ def chief_create_ticket_from_external_work(
         success_file=success_file,
         approach_file=approach_file,
         plan_file=plan_file,
-        result_file=result_file,
+        implementation_file=implementation_file,
+        closeout_file=closeout_file,
         as_json=as_json,
     )
     body["title"] = title
@@ -1190,7 +1195,9 @@ def worker_note(args: tuple[str, ...], body_file: str | None, as_json: bool) -> 
     else:
         http.fail_validation("usage: worker note [ticket-id] <field>", as_json)
     if field not in _FIELDS:
-        http.fail_validation("field must be success, approach, plan, or result", as_json)
+        http.fail_validation(
+            "field must be success, approach, plan, implementation, or closeout", as_json
+        )
     body = read_body(ticket_id, body_file, as_json)
     tid = resolve_ticket_id(ticket_id, as_json)
     data = http.send(

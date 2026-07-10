@@ -1590,10 +1590,8 @@ select {
 }
 
 /* Needs-you rows — an ask is waiting — read one text-step stronger at rest, keyed
- * off the existing status/state attributes (no new props). An errored ticket
- * sitting in needs_review is red's business, not the ask emphasis. */
-.list-row--board[data-ticket-status="awaiting_approval"],
-.list-row--board[data-ticket-state="needs_review"]:not([data-ticket-status="errored"]) {
+ * off the existing status attribute (no new props). */
+.list-row--board[data-ticket-status="awaiting_approval"] {
   color: var(--text-default);
 }
 
@@ -1928,8 +1926,7 @@ select {
   color: var(--text-faintest);
 }
 
-.approval-draft,
-.approval-result {
+.approval-draft {
   position: relative;
   font-size: var(--type-md);
   line-height: 1.6;
@@ -1988,8 +1985,7 @@ select {
     0 18px 44px -22px rgba(0, 0, 0, 0.55);
 }
 
-.approval-proposal-shell .approval-draft,
-.approval-proposal-shell .approval-result {
+.approval-proposal-shell .approval-draft {
   font-family: var(--font-serif);
   font-size: var(--type-serif-md);
   line-height: 1.68;

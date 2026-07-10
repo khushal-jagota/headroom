@@ -1,6 +1,330 @@
+import json
 import sqlite3
 
+import pytest
+
 from planner.core.db import SCHEMA_VERSION, create_schema
+
+_OLD_TICKETS_DDL = """
+CREATE TABLE tickets (
+  id                   TEXT PRIMARY KEY,
+  title                TEXT NOT NULL CHECK (length(title) <= 200),
+  state                TEXT NOT NULL DEFAULT 'needs_success'
+                       CHECK (state IN ('needs_success','needs_approach','needs_plan',
+                                        'in_progress','needs_review','done','dropped')),
+  priority             TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
+  deadline             TEXT,
+  project_id           TEXT REFERENCES projects(id),
+  sprint_item_id       TEXT,
+  sprint_id            TEXT,
+  recap                TEXT NOT NULL DEFAULT '',
+  user_note            TEXT NOT NULL DEFAULT '',
+  ceiling              TEXT NOT NULL DEFAULT 'needs_success'
+                       CHECK (ceiling IN ('needs_success','needs_approach','needs_plan',
+                                          'in_progress','needs_review','done')),
+  at_cap               TEXT NOT NULL DEFAULT 'propose' CHECK (at_cap IN ('stop','propose')),
+  ticket_status        TEXT NOT NULL DEFAULT 'empty'
+                       CHECK (ticket_status IN ('empty','agent_running_step',
+                                                'awaiting_approval','user_takeover','errored')),
+  chat_session_key     TEXT,
+  alias                TEXT,
+  fields               TEXT NOT NULL DEFAULT '{}',
+  created_at           INTEGER NOT NULL,
+  updated_at           INTEGER NOT NULL
+);
+"""
+
+
+def _fields_json(**slots):
+    return json.dumps(slots)
+
+
+def _insert_ticket(conn, **cols):
+    keys = list(cols)
+    placeholders = ", ".join("?" for _ in keys)
+    conn.execute(
+        f"INSERT INTO tickets ({', '.join(keys)}) VALUES ({placeholders})",
+        [cols[k] for k in keys],
+    )
+
+
+def test_fresh_schema_rejects_old_lifecycle_state_values(tmp_path):
+    db_path = tmp_path / "fresh.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    create_schema(conn)
+    conn.execute(
+        "INSERT INTO tickets (id, title, created_at, updated_at) VALUES (?, ?, 1, 1)",
+        ("t_fresh", "Fresh"),
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE tickets SET state = 'in_progress' WHERE id = 't_fresh'")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE tickets SET ceiling = 'needs_review' WHERE id = 't_fresh'")
+    conn.close()
+
+
+def test_create_schema_migrates_current_schema_old_lifecycle_rows(tmp_path):
+    db_path = tmp_path / "old-lifecycle.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(_OLD_TICKETS_DDL)
+    _insert_ticket(
+        conn, id="t_success", title="Success stage", state="needs_success",
+        ceiling="needs_plan", ticket_status="empty", fields=_fields_json(),
+        created_at=1, updated_at=1,
+    )
+    _insert_ticket(
+        conn, id="t_in_progress", title="Mid work", state="in_progress",
+        ceiling="in_progress", ticket_status="agent_running_step",
+        fields=_fields_json(result={
+            "value": None,
+            "proposal": {"body": "draft", "proposed_by": "agent", "created_at": 100},
+            "user_note": "keep this",
+        }),
+        created_at=1, updated_at=1,
+    )
+    _insert_ticket(
+        conn, id="t_review_idle", title="Settled review", state="needs_review",
+        ceiling="needs_review", ticket_status="empty",
+        fields=_fields_json(result={
+            "value": "final answer", "proposal": None, "user_note": "reviewed note",
+        }),
+        created_at=1, updated_at=1,
+    )
+    _insert_ticket(
+        conn, id="t_review_active", title="Active revision", state="needs_review",
+        ceiling="needs_review", ticket_status="user_takeover",
+        fields=_fields_json(
+            result={"value": "draft answer", "proposal": None, "user_note": None}
+        ),
+        created_at=1, updated_at=1,
+    )
+    _insert_ticket(
+        conn, id="t_review_awaiting", title="Awaiting approval", state="needs_review",
+        ceiling="done", ticket_status="awaiting_approval",
+        fields=_fields_json(result={
+            "value": "candidate final", "proposal": None, "user_note": "please check tone",
+        }),
+        created_at=1, updated_at=555,
+    )
+    _insert_ticket(
+        conn,
+        id="t_review_awaiting_proposal",
+        title="Awaiting revised approval",
+        state="needs_review",
+        ceiling="done",
+        ticket_status="awaiting_approval",
+        fields=_fields_json(result={
+            "value": "revised candidate",
+            "proposal": {
+                "body": "revised candidate",
+                "proposed_by": "worker-1",
+                "created_at": 333,
+            },
+            "user_note": "keep both",
+        }),
+        created_at=1,
+        updated_at=777,
+    )
+    _insert_ticket(
+        conn, id="t_done", title="Shipped", state="done", ceiling="done",
+        ticket_status="empty",
+        fields=_fields_json(
+            result={"value": "shipped", "proposal": None, "user_note": None}
+        ),
+        created_at=1, updated_at=1,
+    )
+    _insert_ticket(
+        conn, id="t_dropped", title="Dropped", state="dropped", ceiling="needs_plan",
+        ticket_status="empty", fields=_fields_json(),
+        created_at=1, updated_at=1,
+    )
+
+    create_schema(conn)
+
+    rows = {
+        row["id"]: (row["state"], row["ceiling"], json.loads(row["fields"]))
+        for row in conn.execute("SELECT id, state, ceiling, fields FROM tickets")
+    }
+
+    assert rows["t_success"][:2] == ("needs_success", "needs_plan")
+    assert rows["t_success"][2]["implementation"] == {
+        "value": None, "proposal": None, "user_note": None,
+    }
+    assert rows["t_success"][2]["closeout"] == {
+        "value": None, "proposal": None, "user_note": None,
+    }
+    assert "result" not in rows["t_success"][2]
+
+    assert rows["t_in_progress"][:2] == ("needs_implementation", "needs_implementation")
+    assert rows["t_in_progress"][2]["implementation"] == {
+        "value": None,
+        "proposal": {"body": "draft", "proposed_by": "agent", "created_at": 100},
+        "user_note": "keep this",
+    }
+    assert rows["t_in_progress"][2]["closeout"] == {
+        "value": None, "proposal": None, "user_note": None,
+    }
+
+    assert rows["t_review_idle"][:2] == ("needs_closeout", "needs_closeout")
+    assert rows["t_review_idle"][2]["implementation"] == {
+        "value": "final answer", "proposal": None, "user_note": "reviewed note",
+    }
+
+    assert rows["t_review_active"][:2] == (
+        "needs_implementation",
+        "needs_implementation",
+    )
+    assert rows["t_review_active"][2]["implementation"] == {
+        "value": "draft answer", "proposal": None, "user_note": None,
+    }
+
+    assert rows["t_review_awaiting"][:2] == ("needs_implementation", "needs_implementation")
+    assert rows["t_review_awaiting"][2]["implementation"] == {
+        "value": None,
+        "proposal": {
+            "body": "candidate final",
+            "proposed_by": "migration",
+            "created_at": 555,
+        },
+        "user_note": "please check tone",
+    }
+    assert rows["t_review_awaiting_proposal"][:2] == (
+        "needs_implementation",
+        "needs_implementation",
+    )
+    assert rows["t_review_awaiting_proposal"][2]["implementation"] == {
+        "value": None,
+        "proposal": {
+            "body": "revised candidate",
+            "proposed_by": "worker-1",
+            "created_at": 333,
+        },
+        "user_note": "keep both",
+    }
+
+    assert rows["t_done"][:2] == ("done", "done")
+    assert rows["t_done"][2]["implementation"] == {
+        "value": "shipped", "proposal": None, "user_note": None,
+    }
+
+    assert rows["t_dropped"][:2] == ("dropped", "needs_plan")
+
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    conn.close()
+
+
+def test_create_schema_ticket_lifecycle_migration_is_idempotent(tmp_path):
+    db_path = tmp_path / "idempotent.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(_OLD_TICKETS_DDL)
+    _insert_ticket(
+        conn, id="t_review_awaiting", title="Awaiting approval", state="needs_review",
+        ceiling="done", ticket_status="awaiting_approval",
+        fields=_fields_json(result={
+            "value": "candidate final", "proposal": None, "user_note": "please check tone",
+        }),
+        created_at=1, updated_at=1,
+    )
+    create_schema(conn)
+    before = list(conn.execute("SELECT id, state, ceiling, fields FROM tickets ORDER BY id"))
+
+    create_schema(conn)
+    after = list(conn.execute("SELECT id, state, ceiling, fields FROM tickets ORDER BY id"))
+
+    assert [tuple(r) for r in before] == [tuple(r) for r in after]
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    conn.close()
+
+
+def test_lifecycle_migration_rejects_awaiting_approval_without_candidate(tmp_path):
+    db_path = tmp_path / "missing-candidate.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(_OLD_TICKETS_DDL)
+    _insert_ticket(
+        conn,
+        id="t_missing_candidate",
+        title="Missing candidate",
+        state="needs_review",
+        ceiling="done",
+        ticket_status="awaiting_approval",
+        fields=_fields_json(
+            result={"value": None, "proposal": None, "user_note": "do not lose me"}
+        ),
+        created_at=1,
+        updated_at=1,
+    )
+
+    with pytest.raises(RuntimeError, match="no Result value or proposal"):
+        create_schema(conn)
+    conn.close()
+
+
+def test_create_schema_migrates_ticket_lifecycle_with_old_project_column_rebuild(tmp_path):
+    db_path = tmp_path / "old-project-lifecycle.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE tickets (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          state TEXT NOT NULL DEFAULT 'needs_success',
+          priority TEXT NOT NULL DEFAULT 'P3',
+          deadline TEXT,
+          project TEXT,
+          sprint_item_id TEXT,
+          sprint_id TEXT,
+          recap TEXT NOT NULL DEFAULT '',
+          ceiling TEXT NOT NULL DEFAULT 'needs_success',
+          at_cap TEXT NOT NULL DEFAULT 'propose',
+          status TEXT NOT NULL DEFAULT 'empty',
+          worker TEXT,
+          chat_session_key TEXT,
+          alias TEXT,
+          fields TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        INSERT INTO tickets (id, title, state, ceiling, project, status, created_at, updated_at)
+        VALUES ('t_working', 'Working', 'in_progress', 'in_progress', 'Alpha One',
+                'agent_working', 1, 1);
+        """
+    )
+    _insert_ticket(
+        conn, id="t_awaiting", title="Awaiting", state="needs_review", ceiling="done",
+        project="Alpha One", status="awaiting_approval",
+        fields=_fields_json(result={
+            "value": "old draft", "proposal": None, "user_note": "watch tone",
+        }),
+        created_at=1, updated_at=1,
+    )
+
+    create_schema(conn)
+
+    rows = {
+        row["id"]: (row["state"], row["ceiling"], row["project_id"], json.loads(row["fields"]))
+        for row in conn.execute("SELECT id, state, ceiling, project_id, fields FROM tickets")
+    }
+    expected_lifecycle = ("needs_implementation", "needs_implementation", "project_alpha_one")
+    assert rows["t_working"][:3] == expected_lifecycle
+    assert rows["t_awaiting"][:3] == expected_lifecycle
+    assert rows["t_awaiting"][3]["implementation"] == {
+        "value": None,
+        "proposal": {
+            "body": "old draft",
+            "proposed_by": "migration",
+            "created_at": 1,
+        },
+        "user_note": "watch tone",
+    }
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    conn.close()
 
 
 def test_create_schema_has_projects_project_ids_and_default_rows(tmp_path):

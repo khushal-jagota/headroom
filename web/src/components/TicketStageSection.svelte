@@ -25,7 +25,6 @@
     emptyText = "Not written yet.",
     editableValue = true,
     onAccept,
-    onApproveResult,
     onSaveNote,
     onSaveValue
   }: {
@@ -40,7 +39,6 @@
     emptyText?: string;
     editableValue?: boolean;
     onAccept: (payload: Record<string, unknown>) => Promise<unknown>;
-    onApproveResult?: () => Promise<unknown>;
     onSaveNote?: (raw: string) => Promise<unknown>;
     onSaveValue?: (raw: string) => Promise<unknown>;
   } = $props();
@@ -53,9 +51,8 @@
   let hasValue = $derived(hasText(slot.value));
   let hasNotes = $derived(hasText(slot.user_note));
   let hasProposal = $derived(Boolean(slot.proposal));
-  let isResultApproval = $derived(ticketState === "needs_review" && name === "result");
   let nextState = $derived(advanceTarget(ticketState, ceiling));
-  let defaultOpen = $derived(isGating || isResultApproval);
+  let defaultOpen = $derived(isGating);
 
   function hasText(value: unknown): boolean {
     return value !== null && value !== undefined && String(value).trim() !== "";
@@ -97,16 +94,6 @@
       proposedBy={slot.proposal?.proposed_by || ""}
       newState={nextState}
       onApprove={onAccept}
-    />
-  {:else if isResultApproval}
-    <ApprovalBlock
-      mode="needs_review"
-      layout="review"
-      field={name}
-      whatLabel={fieldLabel}
-      proposalBody={slot.value || ""}
-      onApprove={() => onApproveResult ? onApproveResult() : onAccept({})}
-      onValueSave={reviewVariant ? undefined : onSaveValue}
     />
   {:else}
     {#if hasProposal && slot.proposal}

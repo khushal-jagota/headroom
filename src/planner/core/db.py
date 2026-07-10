@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   title                TEXT NOT NULL CHECK (length(title) <= 200),
   state                TEXT NOT NULL DEFAULT 'needs_success'
                        CHECK (state IN ('needs_success','needs_approach','needs_plan',
-                                        'in_progress','needs_review','done','dropped')),
+                                        'needs_implementation','needs_closeout','done','dropped')),
   priority             TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
   deadline             TEXT,
   project_id           TEXT REFERENCES projects(id),  -- NULL when parented
@@ -71,14 +71,14 @@ CREATE TABLE IF NOT EXISTS tickets (
   user_note            TEXT NOT NULL DEFAULT '',      -- preserved intake context / user guidance
   ceiling              TEXT NOT NULL DEFAULT 'needs_success'
                        CHECK (ceiling IN ('needs_success','needs_approach','needs_plan',
-                                          'in_progress','needs_review','done')),
+                                          'needs_implementation','needs_closeout','done')),
   at_cap               TEXT NOT NULL DEFAULT 'propose' CHECK (at_cap IN ('stop','propose')),
   ticket_status        TEXT NOT NULL DEFAULT 'empty'  -- durable ticket state-of-control
                        CHECK (ticket_status IN ('empty','agent_running_step',
                                                 'awaiting_approval','user_takeover','errored')),
   chat_session_key     TEXT,                         -- the ticket-mind's durable Hermes session_key
   alias                TEXT,                         -- migration "Ticket ID:" (seed importer dedup)
-  fields               TEXT NOT NULL DEFAULT '{"success":{"value":null,"proposal":null,"user_note":null},"approach":{"value":null,"proposal":null,"user_note":null},"plan":{"value":null,"proposal":null,"user_note":null},"result":{"value":null,"proposal":null,"user_note":null}}',
+  fields               TEXT NOT NULL DEFAULT '{"success":{"value":null,"proposal":null,"user_note":null},"approach":{"value":null,"proposal":null,"user_note":null},"plan":{"value":null,"proposal":null,"user_note":null},"implementation":{"value":null,"proposal":null,"user_note":null},"closeout":{"value":null,"proposal":null,"user_note":null}}',
   created_at           INTEGER NOT NULL,
   updated_at           INTEGER NOT NULL
 );
@@ -195,6 +195,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _migrate_ticket_user_note_column(conn)
     projects_data.seed_default_projects(conn)
     _migrate_project_columns(conn)
+    _migrate_ticket_lifecycle(conn)
     _migrate_project_summary_column(conn)
     _migrate_derived_sprint_item_status(conn)
     _migrate_tickets_status_column(conn)
@@ -233,6 +234,144 @@ def _migrate_ticket_user_note_column(conn: sqlite3.Connection) -> None:
     if "user_note" in _table_columns(conn, "tickets"):
         return
     conn.execute("ALTER TABLE tickets ADD COLUMN user_note TEXT NOT NULL DEFAULT ''")
+
+
+_EMPTY_FIELD_SLOT: Final = {"value": None, "proposal": None, "user_note": None}
+
+
+def _migrate_lifecycle_state(state: str, ticket_status: str) -> str:
+    if state == "in_progress":
+        return "needs_implementation"
+    if state == "needs_review":
+        return "needs_closeout" if ticket_status == "empty" else "needs_implementation"
+    return state
+
+
+def _migrate_lifecycle_ceiling(state: str, ceiling: str, ticket_status: str) -> str:
+    if state == "needs_review" and ticket_status != "empty":
+        return "needs_implementation"
+    if ceiling == "in_progress":
+        return "needs_implementation"
+    if ceiling == "needs_review":
+        return "needs_closeout"
+    return ceiling
+
+
+def _migrate_lifecycle_fields_json(fields_json: str, ticket_status: str, updated_at: int) -> str:
+    try:
+        payload = json.loads(fields_json)
+    except ValueError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    result_slot = payload.get("result")
+    if not isinstance(result_slot, dict):
+        result_slot = dict(_EMPTY_FIELD_SLOT)
+    if ticket_status == "awaiting_approval":
+        pending_proposal = result_slot.get("proposal")
+        if pending_proposal is None:
+            candidate = result_slot.get("value")
+            if not isinstance(candidate, str) or not candidate.strip():
+                raise RuntimeError(
+                    "legacy awaiting-approval ticket has no Result value or proposal"
+                )
+            pending_proposal = {
+                "body": candidate,
+                "proposed_by": "migration",
+                "created_at": updated_at,
+            }
+        elif not isinstance(pending_proposal, dict):
+            raise RuntimeError("legacy awaiting-approval Result proposal is corrupt")
+        implementation_slot = {
+            "value": None,
+            "proposal": pending_proposal,
+            "user_note": result_slot.get("user_note"),
+        }
+    else:
+        implementation_slot = {
+            "value": result_slot.get("value"),
+            "proposal": result_slot.get("proposal"),
+            "user_note": result_slot.get("user_note"),
+        }
+    new_payload = {
+        "success": payload.get("success", dict(_EMPTY_FIELD_SLOT)),
+        "approach": payload.get("approach", dict(_EMPTY_FIELD_SLOT)),
+        "plan": payload.get("plan", dict(_EMPTY_FIELD_SLOT)),
+        "implementation": implementation_slot,
+        "closeout": dict(_EMPTY_FIELD_SLOT),
+    }
+    return json.dumps(new_payload)
+
+
+def _migrate_ticket_lifecycle(conn: sqlite3.Connection) -> None:
+    schema_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()
+    if schema_row is None or schema_row[0] is None or "needs_implementation" in schema_row[0]:
+        return
+    rows = conn.execute("SELECT * FROM tickets").fetchall()
+    conn.execute("DROP TABLE IF EXISTS tickets_new")
+    conn.execute(
+        """
+        CREATE TABLE tickets_new (
+          id                   TEXT PRIMARY KEY,
+          title                TEXT NOT NULL CHECK (length(title) <= 200),
+          state                TEXT NOT NULL DEFAULT 'needs_success'
+                               CHECK (state IN ('needs_success','needs_approach','needs_plan',
+                                                'needs_implementation','needs_closeout',
+                                                'done','dropped')),
+          priority             TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
+          deadline             TEXT,
+          project_id           TEXT REFERENCES projects(id),
+          sprint_item_id       TEXT REFERENCES sprint_items(id),
+          sprint_id            TEXT REFERENCES sprints(id),
+          recap                TEXT NOT NULL DEFAULT '',
+          user_note            TEXT NOT NULL DEFAULT '',
+          ceiling              TEXT NOT NULL DEFAULT 'needs_success'
+                               CHECK (ceiling IN ('needs_success','needs_approach','needs_plan',
+                                                  'needs_implementation','needs_closeout','done')),
+          at_cap               TEXT NOT NULL DEFAULT 'propose' CHECK (at_cap IN ('stop','propose')),
+          ticket_status        TEXT NOT NULL DEFAULT 'empty'
+                               CHECK (ticket_status IN ('empty','agent_running_step',
+                                                        'awaiting_approval','user_takeover','errored')),
+          chat_session_key     TEXT,
+          alias                TEXT,
+          fields               TEXT NOT NULL DEFAULT '{"success":{"value":null,"proposal":null,"user_note":null},"approach":{"value":null,"proposal":null,"user_note":null},"plan":{"value":null,"proposal":null,"user_note":null},"implementation":{"value":null,"proposal":null,"user_note":null},"closeout":{"value":null,"proposal":null,"user_note":null}}',
+          created_at           INTEGER NOT NULL,
+          updated_at           INTEGER NOT NULL
+        )
+        """
+    )
+    for row in rows:
+        ticket_status = str(row["ticket_status"])
+        new_state = _migrate_lifecycle_state(str(row["state"]), ticket_status)
+        new_ceiling = _migrate_lifecycle_ceiling(
+            str(row["state"]), str(row["ceiling"]), ticket_status
+        )
+        new_fields = _migrate_lifecycle_fields_json(
+            str(row["fields"]), ticket_status, int(row["updated_at"])
+        )
+        conn.execute(
+            """
+            INSERT INTO tickets_new (
+              id, title, state, priority, deadline, project_id, sprint_item_id, sprint_id,
+              recap, user_note, ceiling, at_cap, ticket_status, chat_session_key, alias,
+              fields, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["id"], row["title"], new_state, row["priority"], row["deadline"],
+                row["project_id"], row["sprint_item_id"], row["sprint_id"], row["recap"],
+                row["user_note"], new_ceiling, row["at_cap"], ticket_status,
+                row["chat_session_key"], row["alias"], new_fields,
+                row["created_at"], row["updated_at"],
+            ),
+        )
+    conn.execute("DROP TABLE tickets")
+    conn.execute("ALTER TABLE tickets_new RENAME TO tickets")
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise RuntimeError(f"foreign key check failed after ticket lifecycle migration: {violations!r}")
 
 
 def _migrate_project_summary_column(conn: sqlite3.Connection) -> None:

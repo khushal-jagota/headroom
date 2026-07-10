@@ -22,10 +22,9 @@
     requireScope = false,
     onApprove,
     onNoteSave,
-    onValueSave,
     actions
   }: {
-    mode: "gating-pending" | "needs_review" | "proposal" | "readonly";
+    mode: "gating-pending" | "proposal" | "readonly";
     field?: string;
     whatLabel?: string;
     proposalBody?: string | null;
@@ -36,7 +35,6 @@
     requireScope?: boolean;
     onApprove?: (payload: Record<string, unknown>) => Promise<unknown>;
     onNoteSave?: (raw: string) => Promise<unknown>;
-    onValueSave?: (raw: string) => Promise<unknown>;
     actions?: Snippet;
   } = $props();
 
@@ -53,7 +51,6 @@
   // gating-pending always requires a scope; proposal requires one only when asked to.
   let scopeRequired = $derived(mode === "gating-pending" || (mode === "proposal" && requireScope));
   let showScope = $derived(mode === "gating-pending" || (mode === "proposal" && requireScope));
-  let acceptAttr = $derived(mode === "needs_review" ? "approve" : "accept");
   let actionLabel = $derived(mode === "proposal" ? "Accept" : "Approve");
   let actionDisabled = $derived(inFlight || resolved || (scopeRequired && scope === null));
 
@@ -108,7 +105,7 @@
     <div class="approval-control-group">
       <Button
         variant="primary"
-        {...{ [`data-${acceptAttr}`]: "" }}
+        data-accept=""
         disabled={actionDisabled}
         onclick={() => void approve()}
       >
@@ -128,7 +125,7 @@
       <div class="approval-what">{whatLabel || field.replace(/_/g, " ")}</div>
     {/if}
 
-    {#if mode !== "needs_review" && proposedBy && !reviewLayout}
+    {#if proposedBy && !reviewLayout}
       <div class="proposal-meta">proposed by {proposedBy}</div>
     {/if}
 
@@ -141,15 +138,20 @@
           <span class="approval-what-label">{contentTitle}</span>
           {#if proposedBy}<span class="approval-what-by">proposed by {proposedBy}</span>{/if}
         </div>
-        {#if mode === "needs_review"}
-          <div class="approval-result">
-            {#if onValueSave}
-              <InlineEdit value={proposalBody} markdown multiline placeholder="Result..." onSave={onValueSave} />
-            {:else}
-              <MarkdownBlock text={proposalBody} />
-            {/if}
-          </div>
-        {:else}
+        <div class="approval-draft">
+          <InlineEdit
+            value={draft}
+            markdown
+            multiline
+            placeholder={`${contentTitle || "Proposal"}...`}
+            dataEdit
+            onCancel={mode === "gating-pending" ? resetDraft : undefined}
+            onSave={saveDraft}
+          />
+        </div>
+        {@render actionGroup(false)}
+      {:else}
+        <Disclosure title={contentTitle} variant="content" defaultOpen={true} data-content-section="proposal">
           <div class="approval-draft">
             <InlineEdit
               value={draft}
@@ -161,31 +163,6 @@
               onSave={saveDraft}
             />
           </div>
-        {/if}
-        {@render actionGroup(false)}
-      {:else}
-        <Disclosure title={contentTitle} variant="content" defaultOpen={true} data-content-section="proposal">
-          {#if mode === "needs_review"}
-            <div class="approval-result">
-              {#if onValueSave}
-                <InlineEdit value={proposalBody} markdown multiline placeholder="Result..." onSave={onValueSave} />
-              {:else}
-                <MarkdownBlock text={proposalBody} />
-              {/if}
-            </div>
-          {:else}
-            <div class="approval-draft">
-              <InlineEdit
-                value={draft}
-                markdown
-                multiline
-                placeholder={`${contentTitle || "Proposal"}...`}
-                dataEdit
-                onCancel={mode === "gating-pending" ? resetDraft : undefined}
-                onSave={saveDraft}
-              />
-            </div>
-          {/if}
         </Disclosure>
       {/if}
     </div>
@@ -196,7 +173,7 @@
           value={note}
           markdown
           multiline
-          placeholder={mode === "needs_review" ? "Things to check before you approve the result..." : "Note..."}
+          placeholder="Note..."
           onSave={onNoteSave}
         />
       </Disclosure>
