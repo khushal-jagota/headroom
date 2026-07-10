@@ -9,29 +9,33 @@ one door — the resolution engine.
 ```
    THE STAGES (one blank fills each step)
 
-   success  ──►  approach  ──►  plan  ──►  in progress  ──►  needs review  ──►  done
-   condition     (how,          (step-      (the work         (result waits       │
-   (what is       roughly)       by-step)    happens)          for checking)       │
-    "done"?)                                                                        │
-        └────────────────  direct resolution may jump a ticket anywhere  ───────────────┘
-                             dropped: any point, direct operation only
+   success   ──►  approach  ──►  plan     ──►  implementation ──►  closeout    ──►  done
+   condition      (how,          (step-        (do the work,       (merge, deploy,      │
+   (what is        roughly)       by-step)      propose a           follow-up,           │
+    "done"?)                                    reviewable          bookkeeping;         │
+                                                 package)            propose a            │
+                                                                     verified report)     │
+        └─────────────────────  direct resolution may jump a ticket anywhere  ──────────────────┘
+                                   dropped: any point, direct operation only
 ```
 
 ## The stages
 
 A ticket fills its blanks in order: a **success condition** (what does done mean?),
-an **approach** (how, roughly?), a **plan** (concretely, step by step), then the work
-happens (**in progress**), then the result waits for checking (**needs review**), and
-finally it is **done**. Each stage has exactly one blank to fill; filling it — and
-having that accepted — is what moves the ticket one stage forward. A ticket can also
-be **dropped** at any point through a direct product operation. Direct operations can
-also jump a ticket; workers never can.
+an **approach** (how, roughly?), a **plan** (concretely, step by step), then
+**implementation** (the plan is carried out and a reviewable work package is
+proposed), then **closeout** (only the applicable merge, deploy, follow-up, and
+bookkeeping happen, and a verified report is proposed), and finally it is **done**.
+Each stage has exactly one blank to fill; filling it — and having that accepted — is
+what moves the ticket one stage forward. A ticket can also be **dropped** at any
+point through a direct product operation. Direct operations can also jump a ticket;
+workers never can.
 
-A ticket also has a **user note**. This is not one of the four blanks and it does not
-advance the ticket. It preserves intake context: the user's original wording, source
-context, boundaries, and advice. It stays readable beside the work so agents can honor
-the user's direction without mixing that direction into success, approach, plan, or
-result.
+A ticket also has a **user note**. This is not one of the five blanks and it does
+not advance the ticket. It preserves intake context: the user's original wording,
+source context, boundaries, and advice. It stays readable beside the work so agents
+can honor the user's direction without mixing that direction into success, approach,
+plan, implementation, or closeout.
 
 _Code paths:_ `src/planner/tickets/` (the ticket state and its fields).
 
@@ -92,8 +96,9 @@ Every ticket carries a permission with two parts — together, its **scope**:
 Below the ceiling, a worker's proposal is accepted automatically and the ticket
 advances. At the ceiling, the at-cap rule decides. New tickets start with the
 tightest sensible scope: the worker may draft a success condition, and nothing moves
-without approval. One special ending: an accepted result goes to **needs review**
-unless the ceiling was already **done**, in which case it lands straight in done.
+without approval. Every stage behaves the same way, including the last two: an
+accepted implementation advances to **needs closeout**, and an accepted closeout
+advances straight to **done**.
 
 ## The approval gate, and the scope row
 
@@ -108,14 +113,15 @@ ones after it, never an earlier one, so you can't hand back ground the ticket ha
 already covered. One shared source of the allowed stages feeds both the header row
 and the approval screen, so the two can never disagree.
 
-The Review screen can also send a ticket back instead of accepting it. The human
-writes short guidance in the review card. Panels sends that guidance directly to the
-ticket's existing Hermes session as the user message that starts a worker turn. It is
-not copied into ticket chat and no later generic worker prompt is sent. The ticket's
-stage never changes: a pending gated proposal is cleared, settled values remain, and
-the ticket leaves Review while its control status is **agent running step**. A result
-can therefore be revised while the ticket remains at **needs review**; it returns to
-Review when the worker submits the revision.
+The Review screen can also send a ticket back instead of accepting it, whatever field
+is currently gated. The human writes short guidance in the review card. Panels sends
+that guidance directly to the ticket's existing Hermes session as the user message
+that starts a worker turn. It is not copied into ticket chat and no later generic
+worker prompt is sent. The ticket's stage never changes: a pending gated proposal is
+cleared, settled values remain, and the ticket leaves Review while its control status
+is **agent running step**. The gated field can therefore be revised while the ticket
+remains at its current stage; it returns to Review when the worker submits the
+revision.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the scope row),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`

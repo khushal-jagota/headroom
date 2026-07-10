@@ -34,19 +34,22 @@ E29_FOCUS_EDIT = "E29 signal today, not polish."
 E29_WATCH_EDIT = "E29 watch the funnel drop-off after signup."
 DAY_NOOP_MARKDOWN = "# Day raw forms\n\n* star bullet\n\n1) ordered paren\n\n_line italic_"
 
-# item 30 (ceiling needs_review so accepted result parks AT needs_review, §4.4.5)
+# item 30 (ceiling needs_implementation so each of implementation/closeout PARKS
+# pending in turn, requiring its own Review approval)
 E30_TITLE = "E30 dispatch ticket"
 E30_SUCCESS = "E30 success body."
 E30_APPROACH = "E30 approach body."
 E30_PLAN = "E30 plan body."
-E30_RESULT = "E30 result body."
+E30_IMPLEMENTATION = "E30 implementation body."
+E30_CLOSEOUT = "E30 closeout body."
 
-# item 31 (ceiling in_progress so the result proposal PARKS pending → mid-flow)
+# item 31 (ceiling needs_implementation so the implementation proposal PARKS
+# pending → mid-flow)
 E31_TITLE = "E31 midflow ticket"
 E31_SUCCESS = "E31 success body."
 E31_APPROACH = "E31 approach body."
 E31_PLAN = "E31 plan body."
-E31_RESULT = "E31 result proposal body."
+E31_IMPLEMENTATION = "E31 implementation proposal body."
 E31_DAY_FOCUS = "E31 reload day focus."
 E31_DAY_TAKE = "E31 reload day take."
 E31_DAY_WATCH = "E31 reload day watch."
@@ -95,7 +98,7 @@ def _scope_and_advance(server, api, cli, tid, ceiling, bodies):
             stdin=bodies[field],
         )
     d = api.get(server, f"/api/tickets/{tid}")
-    assert d["state"] == "in_progress", d
+    assert d["state"] == "needs_implementation", d
     return d
 
 
@@ -125,7 +128,7 @@ def _snap_ticket(p: Page):
 
 
 def _snap_board(p: Page, mid):
-    card = f'[data-card][data-ticket-state="in_progress"][data-ticket-id="{mid}"]'
+    card = f'[data-card][data-ticket-state="needs_implementation"][data-ticket-id="{mid}"]'
     return {
         "title": p.inner_text(f"{card} .entity-row-title"),
         "pend": p.eval_on_selector_all(f'{card} [data-marker="pending-proposal"]', "e=>e.length"),
@@ -259,26 +262,31 @@ def test_day_markdown_focus_noop_keeps_raw_source(server, context_factory, open_
 
 
 def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api):
-    # A ticket advanced to needs_review through claimless CLI proposals (the agent's
-    # normal path now — no dispatcher, no claim): the result auto-accepts at ceiling
-    # needs_review and PARKS at needs_review, then a human approves via the Review card.
+    # A ticket advanced to needs_implementation through claimless CLI proposals (the
+    # agent's normal path now — no dispatcher, no claim). Ceiling needs_implementation
+    # means the implementation proposal PARKS pending; approving it via Review defaults
+    # the onward scope to the next stage (needs_closeout), where closeout PARKS pending
+    # in turn until its own Review approval reaches done.
     mid = cli(server, "ticket", "create", "--title", E30_TITLE)["id"]
     _scope_and_advance(
         server,
         api,
         cli,
         mid,
-        "needs_review",
+        "needs_implementation",
         {"success": E30_SUCCESS, "approach": E30_APPROACH, "plan": E30_PLAN},
     )
 
     ready = f'section[data-screen="ticket"][data-ticket-id="{mid}"]'
     page = open_page(context_factory(), server, f"#/ticket/{mid}", ready, settled=True)
-    assert page.get_attribute('section[data-screen="ticket"]', "data-state") == "in_progress"
+    assert (
+        page.get_attribute('section[data-screen="ticket"]', "data-state")
+        == "needs_implementation"
+    )
     assert page.query_selector('[data-marker="agent-running-step"]') is None
 
-    # Worker files the result claimless; ceiling needs_review ⇒ it auto-accepts to
-    # needs_review (the accepted value is stored, no pending proposal remains).
+    # Worker files implementation claimless; ceiling needs_implementation ⇒ it PARKS
+    # pending (nothing auto-accepts past the ceiling).
     r = cli(
         server,
         "worker",
@@ -286,34 +294,76 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
         "--body-file",
         "-",
         "--recap",
-        "Result ready.",
+        "Implementation ready.",
         ticket_id=mid,
-        stdin=E30_RESULT,
+        stdin=E30_IMPLEMENTATION,
     )
-    assert r["state"] == "needs_review", r
-    assert r["fields"]["result"]["value"] == E30_RESULT, r
-    assert r["fields"]["result"]["proposal"] is None, r
+    assert r["state"] == "needs_implementation", r
+    assert r["fields"]["implementation"]["proposal"]["body"] == E30_IMPLEMENTATION, r
+
+    # Ticket page shows the pending gate without reload.
+    page.wait_for_selector(
+        '[data-field="implementation"] [data-approval-block][data-mode="gating-pending"]',
+        timeout=WAIT_MS,
+    )
+
+    # Approval queue + approve via the Review card, ordinary field path.
+    card = f'[data-review-card][data-entity-id="{mid}"]'
+    rpage = open_page(context_factory(), server, "#/review", card, settled=True)
+    assert rpage.get_attribute(card, "data-kind") == "implementation"
+    approvals = api.get(server, "/api/queues")["approvals"]
+    assert len(approvals) == 1, approvals
+    assert approvals[0]["entity_id"] == mid, approvals
+    assert approvals[0]["kind"] == "implementation", approvals
+
+    assert rpage.locator(f"{card} [data-scope-ceiling]").input_value() == "needs_closeout"
+    rpage.click(f"{card} [data-accept]")
+    rpage.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
+    assert api.get(server, f"/api/tickets/{mid}")["state"] == "needs_closeout"
 
     # Ticket page flips without reload.
     page.wait_for_function(
         "() => { const s = document.querySelector('section[data-screen=\"ticket\"]');"
-        " return !!s && s.getAttribute('data-state') === 'needs_review'; }",
+        " return !!s && s.getAttribute('data-state') === 'needs_closeout'; }",
         timeout=WAIT_MS,
     )
 
-    # Approval queue + approve via the Review "review" card.
-    card = f'[data-review-card][data-entity-id="{mid}"]'
-    rpage = open_page(context_factory(), server, "#/review", card, settled=True)
-    assert rpage.get_attribute(card, "data-kind") == "review"
-    assert rpage.inner_text(f"{card} .approval-result .markdown-block") == E30_RESULT
-    approvals = api.get(server, "/api/queues")["approvals"]
-    assert len(approvals) == 1, approvals
-    assert approvals[0]["entity_id"] == mid, approvals
-    assert approvals[0]["kind"] == "review", approvals
+    # Worker files closeout claimless; ceiling carried forward from the implementation
+    # approval (needs_closeout) ⇒ it PARKS pending too.
+    r2 = cli(
+        server,
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Closeout ready.",
+        ticket_id=mid,
+        stdin=E30_CLOSEOUT,
+    )
+    assert r2["state"] == "needs_closeout", r2
+    assert r2["fields"]["closeout"]["proposal"]["body"] == E30_CLOSEOUT, r2
 
-    rpage.click(f"{card} [data-approve]")
-    rpage.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
+    card2 = f'[data-review-card][data-entity-id="{mid}"]'
+    rpage2 = open_page(context_factory(), server, "#/review", card2, settled=True)
+    assert rpage2.get_attribute(card2, "data-kind") == "closeout"
+    assert rpage2.locator(f"{card2} [data-scope-ceiling]").input_value() == "done"
+    rpage2.click(f"{card2} [data-accept]")
+    rpage2.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
     assert api.get(server, f"/api/tickets/{mid}")["state"] == "done"
+
+    # Ticket page flips to done, rendering exactly the five ordered sections.
+    page.wait_for_function(
+        "() => { const s = document.querySelector('section[data-screen=\"ticket\"]');"
+        " return !!s && s.getAttribute('data-state') === 'done'; }",
+        timeout=WAIT_MS,
+    )
+    fields_order = page.eval_on_selector_all(
+        ".fields [data-field]", "els => els.map(e => e.getAttribute('data-field'))"
+    )
+    assert fields_order == ["success", "approach", "plan", "implementation", "closeout"], (
+        fields_order
+    )
 
 
 def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api):
@@ -323,7 +373,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
         api,
         cli,
         mid,
-        "in_progress",
+        "needs_implementation",
         {"success": E31_SUCCESS, "approach": E31_APPROACH, "plan": E31_PLAN},
     )
 
@@ -342,8 +392,9 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
         },
     )
 
-    # Worker files the result claimless; ceiling in_progress ⇒ it PARKS pending (nothing
-    # auto-accepts past the ceiling), leaving a gating-pending proposal to reload-restore.
+    # Worker files implementation claimless; ceiling needs_implementation ⇒ it PARKS
+    # pending (nothing auto-accepts past the ceiling), leaving a gating-pending
+    # proposal to reload-restore.
     r = cli(
         server,
         "worker",
@@ -351,12 +402,12 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
         "--body-file",
         "-",
         "--recap",
-        "Result proposed.",
+        "Implementation proposed.",
         ticket_id=mid,
-        stdin=E31_RESULT,
+        stdin=E31_IMPLEMENTATION,
     )
-    assert r["state"] == "in_progress", r
-    assert r["fields"]["result"]["proposal"]["body"] == E31_RESULT, r
+    assert r["state"] == "needs_implementation", r
+    assert r["fields"]["implementation"]["proposal"]["body"] == E31_IMPLEMENTATION, r
 
     # Ticket surface.
     ready_t = f'section[data-screen="ticket"][data-ticket-id="{mid}"]'
@@ -368,16 +419,16 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     page_t.wait_for_selector(mid_t, timeout=WAIT_MS)
     after_t = _snap_ticket(page_t)
     expected_t = {
-        "state": "in_progress",
+        "state": "needs_implementation",
         "mode": "gating-pending",
-        "field": "result",
-        "body": E31_RESULT,
+        "field": "implementation",
+        "body": E31_IMPLEMENTATION,
     }
     assert before_t == after_t == expected_t, (before_t, after_t)
 
     # Board surface.
     ready_b = 'section[data-screen="workspace"]'
-    mid_b = f'[data-card][data-ticket-state="in_progress"][data-ticket-id="{mid}"]'
+    mid_b = f'[data-card][data-ticket-state="needs_implementation"][data-ticket-id="{mid}"]'
     page_b = open_page(context_factory(), server, "#/workspace", ready_b, settled=True)
     page_b.wait_for_selector(mid_b, timeout=WAIT_MS)
     before_b = _snap_board(page_b, mid)
@@ -447,7 +498,7 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
         api,
         cli,
         child,
-        "in_progress",
+        "needs_implementation",
         {
             "success": "E32 success",
             "approach": "E32 approach",

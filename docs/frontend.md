@@ -25,7 +25,7 @@ One screen per part of the system:
   Workspace rail in place, and records the selection at `#/workspace/<ticket-id>`.
   That address can be loaded, refreshed, shared, or revisited with browser history;
   a missing ticket safely leaves the Chief of Staff view open.
-- **Ticket** — the whole story of one piece of work: the four blanks, the scope row,
+- **Ticket** — the whole story of one piece of work: the five blanks, the scope row,
   live status markers, the `auto` run eligibility chip, chat, and a copy button that
   produces a plain-text block for pasting anywhere. Its project picker is backed by
   the shared `projects` resource.

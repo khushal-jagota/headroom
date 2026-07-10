@@ -3,7 +3,7 @@
   import ContentDisclosure from "./ContentDisclosure.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import InlineEdit from "./InlineEdit.svelte";
-  import MarkdownBlock from "./MarkdownBlock.svelte";
+
   import ScopePairPicker from "./ScopePairPicker.svelte";
 
   type ScopePair = { next_ceiling: string; at_cap: string };
@@ -19,10 +19,9 @@
     layout = "default",
     onApprove,
     onNoteSave,
-    onValueSave,
     actions
   }: {
-    mode: "gating-pending" | "needs_review";
+    mode: "gating-pending";
     field?: string;
     whatLabel?: string;
     proposalBody?: string | null;
@@ -32,7 +31,6 @@
     layout?: "default" | "review";
     onApprove: (payload: Record<string, unknown>) => Promise<unknown>;
     onNoteSave?: (raw: string) => Promise<unknown>;
-    onValueSave?: (raw: string) => Promise<unknown>;
     actions?: Snippet;
   } = $props();
 
@@ -63,12 +61,10 @@
 
   async function approve(): Promise<void> {
     const payload: Record<string, unknown> = {};
-    if (mode === "gating-pending") {
-      if (!scope) return;
-      payload.next_ceiling = scope.next_ceiling;
-      payload.at_cap = scope.at_cap;
-      if (draft !== (proposalBody || "")) payload.edited_body = draft;
-    }
+    if (!scope) return;
+    payload.next_ceiling = scope.next_ceiling;
+    payload.at_cap = scope.at_cap;
+    if (draft !== (proposalBody || "")) payload.edited_body = draft;
     inFlight = true;
     error = null;
     try {
@@ -97,71 +93,10 @@
     <div class="approval-what">{whatLabel || field.replace(/_/g, " ")}</div>
   {/if}
 
-  {#if mode === "needs_review"}
-    <div class="approval-proposal-shell">
-      <ContentDisclosure title={contentTitle} section="proposal">
-        <div class="approval-result">
-          {#if onValueSave}
-            <InlineEdit value={proposalBody} markdown multiline placeholder="Result..." onSave={onValueSave} />
-          {:else}
-            <MarkdownBlock text={proposalBody} />
-          {/if}
-        </div>
-      </ContentDisclosure>
-      {#if reviewLayout}
-        <div class="approval-actions">
-          {#if error}<ErrorLine {error} />{/if}
-          <div class="approval-control-group">
-            <button
-              type="button"
-              class="approval-approve"
-              data-approve
-              disabled={inFlight || resolved}
-              onclick={() => void approve()}
-            >
-              Approve
-            </button>
-          </div>
-        </div>
-      {/if}
-    </div>
-    {#if hasNote}
-      {#if !reviewLayout && onNoteSave}
-        <ContentDisclosure title="Notes" defaultOpen={Boolean((note || "").trim())} tone="support" section="note">
-          <InlineEdit
-            value={note}
-            markdown
-            multiline
-            placeholder="Things to check before you approve the result..."
-            onSave={onNoteSave}
-          />
-        </ContentDisclosure>
-      {/if}
-    {/if}
-    {#if !reviewLayout}
-      <div class="approval-actions" class:approval-actions--split={Boolean(actions)}>
-        {#if error}<ErrorLine {error} />{/if}
-        {#if actions}
-          <div class="approval-actions-left">{@render actions()}</div>
-        {/if}
-        <div class="approval-control-group">
-          <button
-            type="button"
-            class="approval-approve"
-            data-approve
-            disabled={inFlight || resolved}
-            onclick={() => void approve()}
-          >
-            Approve
-          </button>
-        </div>
-      </div>
-    {/if}
-  {:else}
-    {#if proposedBy && !reviewLayout}
+  {#if proposedBy && !reviewLayout}
       <div class="proposal-meta">proposed by {proposedBy}</div>
-    {/if}
-    <div class="approval-proposal-shell">
+  {/if}
+  <div class="approval-proposal-shell">
       <ContentDisclosure title={contentTitle} section="proposal">
         <div class="approval-draft">
           <InlineEdit
@@ -192,33 +127,32 @@
           </div>
         </div>
       {/if}
-    </div>
-    {#if hasNote}
-      {#if !reviewLayout && onNoteSave}
+  </div>
+  {#if hasNote}
+    {#if !reviewLayout && onNoteSave}
         <ContentDisclosure title="Notes" defaultOpen={Boolean((note || "").trim())} tone="support" section="note">
           <InlineEdit value={note} markdown multiline placeholder="Note..." onSave={onNoteSave} />
         </ContentDisclosure>
+    {/if}
+  {/if}
+  {#if !reviewLayout}
+    <div class="approval-actions" class:approval-actions--split={Boolean(actions)}>
+      {#if error}<ErrorLine {error} />{/if}
+      {#if actions}
+        <div class="approval-actions-left">{@render actions()}</div>
       {/if}
-    {/if}
-    {#if !reviewLayout}
-      <div class="approval-actions" class:approval-actions--split={Boolean(actions)}>
-        {#if error}<ErrorLine {error} />{/if}
-        {#if actions}
-          <div class="approval-actions-left">{@render actions()}</div>
-        {/if}
-        <div class="approval-control-group">
-          <button
-            type="button"
-            class="approval-approve"
-            data-accept
-            disabled={inFlight || resolved || scope === null}
-            onclick={() => void approve()}
-          >
-            Approve
-          </button>
-          <ScopePairPicker {newState} bind:scope />
-        </div>
+      <div class="approval-control-group">
+        <button
+          type="button"
+          class="approval-approve"
+          data-accept
+          disabled={inFlight || resolved || scope === null}
+          onclick={() => void approve()}
+        >
+          Approve
+        </button>
+        <ScopePairPicker {newState} bind:scope />
       </div>
-    {/if}
+    </div>
   {/if}
 </div>

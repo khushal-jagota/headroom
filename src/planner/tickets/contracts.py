@@ -1,4 +1,4 @@
-"""Ticket domain shapes: the state machine order, the four fields, the scope pair,
+"""Ticket domain shapes: the state machine order, the five fields, the scope pair,
 and the ticket row."""
 
 from __future__ import annotations
@@ -15,12 +15,12 @@ from planner.core.contracts import Priority
 TITLE_MAX_CHARS: Final = 200
 
 
-class TicketState(StrEnum):        # §4.1, exact order
+class TicketState(StrEnum):        # linear lifecycle, exact order
     needs_success = "needs_success"
     needs_approach = "needs_approach"
     needs_plan = "needs_plan"
-    in_progress = "in_progress"
-    needs_review = "needs_review"
+    needs_implementation = "needs_implementation"
+    needs_closeout = "needs_closeout"
     done = "done"
     dropped = "dropped"            # terminal, direct-only, outside the linear order
 
@@ -29,15 +29,16 @@ class TicketState(StrEnum):        # §4.1, exact order
 # ceiling and next_ceiling values are restricted to members of this tuple (never dropped).
 STATE_ORDER: Final[tuple[TicketState, ...]] = (
     TicketState.needs_success, TicketState.needs_approach, TicketState.needs_plan,
-    TicketState.in_progress, TicketState.needs_review, TicketState.done,
+    TicketState.needs_implementation, TicketState.needs_closeout, TicketState.done,
 )
 
 
-class FieldName(StrEnum):          # §4.2 — the exactly-four field keys
+class FieldName(StrEnum):          # the exactly-five field keys
     success = "success"
     approach = "approach"
     plan = "plan"
-    result = "result"
+    implementation = "implementation"
+    closeout = "closeout"
 
 
 class AtCap(StrEnum):              # §4.3
@@ -53,22 +54,23 @@ class TicketStatus(StrEnum):       # durable state-of-control, written by data-l
     errored = "errored"
 
 
-# §4.2 table — gating field per pre-terminal state. needs_review has no proposal gate.
+# Gating field per non-terminal linear state: each state gates its same-named field.
 GATING_FIELD: Final[dict[TicketState, FieldName]] = {
     TicketState.needs_success: FieldName.success,
     TicketState.needs_approach: FieldName.approach,
     TicketState.needs_plan: FieldName.plan,
-    TicketState.in_progress: FieldName.result,
+    TicketState.needs_implementation: FieldName.implementation,
+    TicketState.needs_closeout: FieldName.closeout,
 }
 
-# §4.2 table — accepted proposal advances to. in_progress -> needs_review is the
-# default route; the ceiling=done special case (§4.4.5) is resolution-engine logic,
-# not a second table entry.
+# Accepted proposal advances one linear step. needs_closeout advances to done through
+# the same ordinary machinery; there is no state that skips a gate.
 ADVANCE_TARGET: Final[dict[TicketState, TicketState]] = {
     TicketState.needs_success: TicketState.needs_approach,
     TicketState.needs_approach: TicketState.needs_plan,
-    TicketState.needs_plan: TicketState.in_progress,
-    TicketState.in_progress: TicketState.needs_review,
+    TicketState.needs_plan: TicketState.needs_implementation,
+    TicketState.needs_implementation: TicketState.needs_closeout,
+    TicketState.needs_closeout: TicketState.done,
 }
 
 
@@ -80,18 +82,19 @@ class Proposal:                    # §4.2 proposal slot
 
 
 @dataclass
-class FieldSlot:                   # §4.2 — one of the four field objects
+class FieldSlot:                   # one of the five field objects
     value: str | None = None       # canonical; resolution engine is the only writer
     proposal: Proposal | None = None
     user_note: str | None = None   # preserved user guidance for this field / step
 
 
 @dataclass
-class TicketFields:                # tickets.fields JSON column, exactly four keys
+class TicketFields:                # tickets.fields JSON column, exactly five keys
     success: FieldSlot = field(default_factory=FieldSlot)
     approach: FieldSlot = field(default_factory=FieldSlot)
     plan: FieldSlot = field(default_factory=FieldSlot)
-    result: FieldSlot = field(default_factory=FieldSlot)
+    implementation: FieldSlot = field(default_factory=FieldSlot)
+    closeout: FieldSlot = field(default_factory=FieldSlot)
 
 
 # --- the scope pair (§4.4.7) ---
@@ -138,7 +141,8 @@ class ReconcileTicketFromExternalWorkBody(TypedDict):
     success: NotRequired[str]
     approach: NotRequired[str]
     plan: NotRequired[str]
-    result: NotRequired[str]
+    implementation: NotRequired[str]
+    closeout: NotRequired[str]
 
 
 class CreateTicketFromExternalWorkBody(ReconcileTicketFromExternalWorkBody):

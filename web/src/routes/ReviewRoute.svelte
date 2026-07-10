@@ -2,7 +2,7 @@
   import { onDestroy } from "svelte";
   import { fetchJson } from "../lib/api";
   import { mutateJson, resource, ResourceHandle } from "../lib/resources";
-  import { fieldStageVisualState, gatingField } from "../lib/ui";
+  import { FIELD_NAMES, fieldStageVisualState, gatingField } from "../lib/ui";
   import type { AnyRecord, QueueEntry, QueuesResponse, TicketDetail } from "../lib/types";
   import ErrorLine from "../components/ErrorLine.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
@@ -54,9 +54,12 @@
   });
 
   function isStale(entry: QueueEntry, detail: AnyRecord): boolean {
-    if (entry.kind === "review") return detail.state !== "needs_review";
     if (!detail.fields?.[entry.kind]?.proposal) return true;
     return gatingField(String(detail.state)) !== entry.kind;
+  }
+
+  function isTicketFieldKind(kind: string): boolean {
+    return FIELD_NAMES.includes(kind as (typeof FIELD_NAMES)[number]);
   }
 
   $effect(() => {
@@ -100,13 +103,6 @@
     ));
   }
 
-  function approve(entry: QueueEntry): Promise<unknown> {
-    return refreshQueuesAfter(mutateJson(
-      `/api/tickets/${entry.entity_id}/approve`,
-      { method: "POST", body: {} },
-      ["queues", `ticket:${entry.entity_id}`, "board", "sprint:current"]
-    ));
-  }
 
   async function returnForRevision(entry: QueueEntry): Promise<void> {
     const message = revisionDraft.trim();
@@ -169,7 +165,7 @@
           data-review-card
           data-entity-id={entry.entity_id}
           data-kind={entry.kind}
-          data-field={["success", "approach", "plan", "result"].includes(entry.kind) ? entry.kind : undefined}
+          data-field={isTicketFieldKind(entry.kind) ? entry.kind : undefined}
         >
           {#if entry.entity_type === "ticket"}
             <a href={`#/ticket/${entry.entity_id}`} class="review-ticket-title">
@@ -179,7 +175,7 @@
             <h2 class="review-ticket-title" style="pointer-events: none;">{entry.title}</h2>
           {/if}
 
-          {#if ["success", "approach", "plan", "result"].includes(entry.kind)}
+          {#if isTicketFieldKind(entry.kind)}
             <TicketStageSection
               variant="review"
               name={entry.kind}
@@ -190,19 +186,6 @@
               recap={detail.recap}
               showRecap
               onAccept={(payload) => accept(entry, payload)}
-            />
-          {:else if entry.kind === "review"}
-            <TicketStageSection
-              variant="review"
-              name="result"
-              slot={detail.fields.result}
-              ticketState={detail.state}
-              ceiling={detail.ceiling}
-              stageState={fieldStageVisualState(detail, "result")}
-              recap={detail.recap}
-              showRecap
-              onAccept={() => approve(entry)}
-              onApproveResult={() => approve(entry)}
             />
           {/if}
 

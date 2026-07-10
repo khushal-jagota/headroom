@@ -94,7 +94,7 @@ def test_a10_sprint_item_permissions(tmp_db, fake_clock) -> None:
     assert read_item(tmp_db, shaped.id).status is ItemStatus.in_progress
 
     blocked = create_item(tmp_db, title="blocked", project_id="project_vylo", clock=fake_clock)
-    _insert_ticket(tmp_db, "t_a", "in_progress")
+    _insert_ticket(tmp_db, "t_a", "needs_implementation")
     _insert_ticket(tmp_db, "t_b", "done")
     core_links.add_link(tmp_db, "t_a", blocked.id, LinkKind.blocks, fake_clock.now_unix())
     core_links.add_link(tmp_db, "t_b", blocked.id, LinkKind.blocks, fake_clock.now_unix())

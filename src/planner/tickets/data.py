@@ -529,10 +529,7 @@ def file_proposal(
         ticket = _load_ticket(conn, ticket_id)
         decision = resolution.decide_file_proposal(ticket, field, body, actor, now)
         updated = _apply_decision(conn, ticket, decision, now)
-        if (
-            ticket.state is TicketState.needs_review
-            and ticket.ticket_status is TicketStatus.agent_running_step
-        ) or any(spec.kind is EventKind.proposal_filed for spec in decision.events):
+        if any(spec.kind is EventKind.proposal_filed for spec in decision.events):
             _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
             updated = _load_ticket(conn, ticket_id)
         return updated
@@ -556,12 +553,7 @@ def file_current_proposal_with_recap(
     admission.validate_body(recap, "recap")
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
-        field = (
-            FieldName.result
-            if ticket.state is TicketState.needs_review
-            and ticket.ticket_status is TicketStatus.agent_running_step
-            else machine.gating_field(ticket.state)
-        )
+        field = machine.gating_field(ticket.state)
         if field is None:
             raise PlannerError(
                 ErrorCode.validation,
@@ -575,10 +567,7 @@ def file_current_proposal_with_recap(
             (recap, now, ticket_id),
         )
         append_event(conn, ticket_id, EventKind.recap_updated, {}, now)
-        if (
-            ticket.state is TicketState.needs_review
-            and ticket.ticket_status is TicketStatus.agent_running_step
-        ) or any(spec.kind is EventKind.proposal_filed for spec in decision.events):
+        if any(spec.kind is EventKind.proposal_filed for spec in decision.events):
             _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
         return _load_ticket(conn, ticket_id)
 
@@ -632,17 +621,6 @@ def edit_field_value(
         decision = resolution.decide_edit_value(ticket, field, new_body, actor)
         updated = _apply_decision(conn, ticket, decision, now)
         ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
-        return updated
-
-
-def approve_review(conn: sqlite3.Connection, ticket_id: str, *, actor: str, now: int) -> Ticket:
-    with _txn(conn):
-        ticket = _load_ticket(conn, ticket_id)
-        decision = resolution.decide_approve(ticket, actor)
-        updated = _apply_decision(conn, ticket, decision, now)
-        if ticket.ticket_status is not TicketStatus.empty:
-            _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
-            updated = _load_ticket(conn, ticket_id)
         return updated
 
 

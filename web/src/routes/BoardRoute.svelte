@@ -79,8 +79,8 @@
   }
 
   function currentStageField(card: Record<string, any>): string {
-    if (card.state === "needs_review" || card.state === "done") return "result";
-    return gatingField(card.state) || "result";
+    if (card.state === "done") return "closeout";
+    return gatingField(card.state) || "closeout";
   }
 
   function currentStageState(card: Record<string, any>): FieldStageVisualState {

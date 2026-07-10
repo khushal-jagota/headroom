@@ -172,7 +172,16 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
 
 
 _EXTERNAL_RECONCILE_KEYS = frozenset(
-    {"state", "user_note", "recap", "success", "approach", "plan", "result"}
+    {
+        "state",
+        "user_note",
+        "recap",
+        "success",
+        "approach",
+        "plan",
+        "implementation",
+        "closeout",
+    }
 )
 _EXTERNAL_CREATE_KEYS = _EXTERNAL_RECONCILE_KEYS | frozenset(
     {
@@ -210,7 +219,7 @@ def _marshal_external_reconcile(raw: JsonDict) -> ReconcileTicketFromExternalWor
         state=body_str(raw, "state"),
         user_note=body_str(raw, "user_note"),
     )
-    for key in ("recap", "success", "approach", "plan", "result"):
+    for key in ("recap", "success", "approach", "plan", "implementation", "closeout"):
         if key in raw:
             body[key] = body_str(raw, key)
     return body
@@ -231,7 +240,7 @@ def _marshal_external_create(raw: JsonDict) -> CreateTicketFromExternalWorkBody:
         user_note=common["user_note"],
         title=body_str(raw, "title"),
     )
-    for key in ("recap", "success", "approach", "plan", "result"):
+    for key in ("recap", "success", "approach", "plan", "implementation", "closeout"):
         if key in common:
             body[key] = common[key]
     if "priority" in raw:
@@ -540,23 +549,6 @@ async def accept_field(ticket_id: str, field: str, raw: dict[str, Any], conn: Db
         edited_body=body["edited_body"],
         next_ceiling=next_ceiling,
         at_cap=at_cap,
-        readiness_doorbell=readiness_doorbell,
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
-@router.post("/tickets/{ticket_id}/approve")
-async def approve_ticket(
-    ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk,
-    readiness_doorbell: Doorbell,
-) -> JsonDict:
-    require_direct_write(ctx)
-    now = clk.now_unix()
-    ticket = tickets_actions.approve_review(
-        conn,
-        ticket_id,
-        actor=ctx.actor,
-        now=now,
         readiness_doorbell=readiness_doorbell,
     )
     return tickets_views.ticket_json(ticket, now)

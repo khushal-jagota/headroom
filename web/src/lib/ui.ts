@@ -1,6 +1,6 @@
 import type { TicketDetail, TicketField } from "./types";
 
-export const FIELD_NAMES = ["success", "approach", "plan", "result"] as const;
+export const FIELD_NAMES = ["success", "approach", "plan", "implementation", "closeout"] as const;
 export const PRIORITIES = ["P0", "P1", "P2", "P3"];
 export const PRIORITY_ORDER = ["P0", "P1", "P2", "P3"];
 
@@ -16,8 +16,8 @@ export const STATE_ORDER = [
   "needs_success",
   "needs_approach",
   "needs_plan",
-  "in_progress",
-  "needs_review",
+  "needs_implementation",
+  "needs_closeout",
   "done"
 ];
 
@@ -25,21 +25,24 @@ const GATING_FIELD: Record<string, string> = {
   needs_success: "success",
   needs_approach: "approach",
   needs_plan: "plan",
-  in_progress: "result"
+  needs_implementation: "implementation",
+  needs_closeout: "closeout"
 };
 
 const GATED_STATE: Record<string, string> = {
   success: "needs_success",
   approach: "needs_approach",
   plan: "needs_plan",
-  result: "in_progress"
+  implementation: "needs_implementation",
+  closeout: "needs_closeout"
 };
 
 const ADVANCE: Record<string, string> = {
   needs_success: "needs_approach",
   needs_approach: "needs_plan",
-  needs_plan: "in_progress",
-  in_progress: "needs_review"
+  needs_plan: "needs_implementation",
+  needs_implementation: "needs_closeout",
+  needs_closeout: "done"
 };
 
 export function stateLabel(value: string): string {
@@ -51,7 +54,6 @@ export function gatingField(state: string): string | null {
 }
 
 export function advanceTarget(state: string, ceiling: string): string | null {
-  if (state === "in_progress" && ceiling === "done") return "done";
   return ADVANCE[state] || null;
 }
 
@@ -84,9 +86,6 @@ export function ticketStageVisualState({
 }: TicketStageVisualInput): FieldStageVisualState {
   if (ticketState === "done") return "completed";
 
-  if (ticketState === "needs_review" && fieldName === "result") {
-    return "current-awaiting-approval";
-  }
 
   if (fieldIsPassed(fieldName, ticketState)) return "completed";
 

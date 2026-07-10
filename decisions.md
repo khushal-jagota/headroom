@@ -2,6 +2,25 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D55 — Implementation and Closeout are ordinary Ticket gates
+
+Replace the exceptional `in_progress` / `needs_review` tail with two ordinary gated states:
+`needs_implementation` gates the `implementation` field, `needs_closeout` gates the `closeout`
+field, and accepted Closeout advances to `done`. Readiness, running, pending approval,
+return-for-revision, ceilings, and `stop` / `propose` remain the existing control mechanics;
+there is no separate ready or review state. Done remains terminal and therefore has no field.
+
+The independent plan review's three findings are accepted. The implementation must update the
+live Ticket/frontend docs, revise the strict Chief external-work field-prefix contract, and test
+the old project-column ticket rebuild as part of lifecycle migration. Migration normally maps
+`in_progress` to Implementation and `needs_review` to Closeout, moves legacy `result` content to
+Implementation, and initializes Closeout. A legacy `needs_review` row with non-empty runtime
+control represents an in-flight or returned implementation revision, so it stays at
+Implementation; an `awaiting_approval` revision is reconstructed as a pending Implementation
+proposal, and its ceiling is capped at Implementation so migration cannot auto-accept the
+revision that the old workflow was still waiting for a human to review. This is the smallest
+status-sensitive exception that preserves active work instead of silently treating it as approved.
+
 ## D54 — Ticket-owned artifact guidance belongs in role skills, not runtime prompts
 
 Keep the managed-file model in the general `panels` orientation, put practical artifact judgment in

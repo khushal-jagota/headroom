@@ -31,7 +31,7 @@ from planner.runtime.readiness_doorbell import NoOpReadinessDoorbell
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
-from planner.tickets.contracts import AtCap, FieldName, TicketState, TicketStatus
+from planner.tickets.contracts import NO_FURTHER, AtCap, FieldName, TicketState, TicketStatus
 
 HOME = "/tmp/planner-home"
 HERMES_PY = sys.executable
@@ -137,7 +137,7 @@ def _file_current_proposal(db_path: str, ticket_id: str, body: str) -> None:
             conn,
             ticket_id,
             body=body,
-            recap="Revised result ready for review.",
+            recap="Revised closeout ready for review.",
             actor="agent",
             now=3,
         )
@@ -145,12 +145,14 @@ def _file_current_proposal(db_path: str, ticket_id: str, body: str) -> None:
         conn.close()
 
 
-def _needs_review_ticket(db_path: str) -> str:
-    tid = _new_ticket(db_path, ceiling=TicketState.needs_review)
+def _needs_closeout_ticket(db_path: str) -> str:
+    tid = _new_ticket(db_path, ceiling=TicketState.needs_closeout)
     _file_proposal(db_path, tid, "success", "success")
     _file_proposal(db_path, tid, "approach", "approach")
     _file_proposal(db_path, tid, "plan", "plan")
-    _file_proposal(db_path, tid, "result", "old result")
+    _file_proposal(db_path, tid, "implementation", "implementation")
+    _file_proposal(db_path, tid, "closeout", "old closeout")
+    _set_key(db_path, tid, STORED_KEY)
     return tid
 
 
@@ -434,15 +436,14 @@ def test_queued_employee_waits_past_prior_interruption_before_settling(
     assert doorbell.calls == 1
 
 
-def test_claimed_rejection_turn_revises_result_in_same_session_without_chat_copy(
+def test_claimed_rejection_turn_revises_closeout_in_same_session_without_chat_copy(
     tmp_path: Path,
 ) -> None:
     db = _db(tmp_path)
-    tid = _needs_review_ticket(db)
-    _set_key(db, tid, STORED_KEY)
+    tid = _needs_closeout_ticket(db)
     fake = _ProposingFake(
         _resume_script(STORED_KEY, _complete_ev()),
-        on_submit=lambda: _file_current_proposal(db, tid, "revised result with evidence"),
+        on_submit=lambda: _file_current_proposal(db, tid, "revised closeout with evidence"),
     )
     gateway = _gateway(fake)
     runner = EmployeeStepRunner(
@@ -465,7 +466,7 @@ def test_claimed_rejection_turn_revises_result_in_same_session_without_chat_copy
             )
         finally:
             conn.close()
-        assert ticket.state is TicketState.needs_review
+        assert ticket.state is TicketState.needs_closeout
         assert ticket.ticket_status is TicketStatus.agent_running_step
         assert runner.wait_idle(10.0)
         conn = connect(db)
@@ -488,16 +489,25 @@ def test_claimed_rejection_turn_revises_result_in_same_session_without_chat_copy
         "The user rejected your proposal and provided the following guidance:\n\nAdd evidence."
     )
     revised = _read(db, tid)
-    assert revised.state is TicketState.needs_review
+    assert revised.state is TicketState.needs_closeout
     assert revised.ticket_status is TicketStatus.awaiting_approval
-    assert revised.fields.result.value == "revised result with evidence"
-    assert revised.fields.result.proposal is None
+    assert revised.fields.closeout.value is None
+    assert revised.fields.closeout.proposal is not None
+    assert revised.fields.closeout.proposal.body == "revised closeout with evidence"
     assert [(message.role, message.text) for message in state.messages] == [("assistant", "ok")]
     assert queues["approvals"][0]["waiting_since"] == 3
 
     conn = connect(db)
     try:
-        approved = tickets_data.approve_review(conn, tid, actor="human", now=2)
+        approved = tickets_data.accept_proposal(
+            conn,
+            tid,
+            field=FieldName.closeout,
+            actor="human",
+            now=2,
+            next_ceiling=NO_FURTHER,
+            at_cap=AtCap.propose,
+        )
     finally:
         conn.close()
     assert approved.state is TicketState.done
@@ -1091,7 +1101,7 @@ def test_stop_waits_for_released_revision_run_and_rejects_new_work(
     tmp_path: Path,
 ) -> None:
     db = _db(tmp_path)
-    tid = _needs_review_ticket(db)
+    tid = _needs_closeout_ticket(db)
     _set_key(db, tid, STORED_KEY)
     prompt_reached = threading.Event()
     finish_prompt = threading.Event()

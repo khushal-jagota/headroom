@@ -48,7 +48,7 @@ def test_a01_planning_date(cfg: Config) -> None:
 def test_a12_day_ticket_removal(tmp_db: Connection) -> None:
     conn = tmp_db
     _mk_ticket(conn, "t0", state="needs_success", title="T0")
-    _mk_ticket(conn, "t1", state="in_progress", title="T1")
+    _mk_ticket(conn, "t1", state="needs_implementation", title="T1")
     _mk_ticket(conn, "t2", state="needs_success", title="T2")
     _mk_ticket(conn, "t3", state="needs_success", title="T3")
     now = 1000
@@ -72,7 +72,7 @@ def test_a12_day_ticket_removal(tmp_db: Connection) -> None:
     ]
     # Ticket state is untouched (this is "deferring").
     state = conn.execute("SELECT state FROM tickets WHERE id = 't1'").fetchone()["state"]
-    assert state == "in_progress"
+    assert state == "needs_implementation"
     # Exactly one day_ticket_removed event, payload {ticket_id: t1}.
     removed = [
         e

@@ -21,7 +21,7 @@ class SprintItemChildStatus(NamedTuple):
 _DROPPED_STATE = "dropped"
 _DONE_STATE = "done"
 _IN_PROGRESS_STATES = frozenset(
-    {"needs_approach", "needs_plan", "in_progress", "needs_review"}
+    {"needs_approach", "needs_plan", "needs_implementation", "needs_closeout"}
 )
 _IN_PROGRESS_TICKET_STATUSES = frozenset(
     {"agent_running_step", "awaiting_approval", "user_takeover"}

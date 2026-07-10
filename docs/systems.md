@@ -80,12 +80,12 @@ Code paths: `src/planner/sprints/`, `src/planner/tickets/`,
 Tickets are the correctness center. A ticket has two different kinds of state:
 
 - `state` is the work stage: `needs_success`, `needs_approach`, `needs_plan`,
-  `in_progress`, `needs_review`, `done`, or `dropped`.
+  `needs_implementation`, `needs_closeout`, `done`, or `dropped`.
 - `ticket_status` is runtime control: `empty`, `agent_running_step`,
   `awaiting_approval`, `user_takeover`, or `errored`.
 
-A ticket has a `user_note` for intake context plus four fields: `success`,
-`approach`, `plan`, and `result`. Each field has a settled value, a pending proposal,
+A ticket has a `user_note` for intake context plus five fields: `success`,
+`approach`, `plan`, `implementation`, and `closeout`. Each field has a settled value, a pending proposal,
 and a field `user_note` for step-specific user guidance. Workers write proposals. The
 resolution engine is the only code that can settle a proposed value or advance the
 ticket's `state`.

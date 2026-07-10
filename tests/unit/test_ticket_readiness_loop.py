@@ -294,13 +294,15 @@ def test_is_runnable_parked_proposal_is_false(tmp_path: Path) -> None:
         conn.close()
 
 
-def test_is_runnable_needs_review_is_false(tmp_path: Path) -> None:
+def test_is_runnable_needs_closeout_follows_ordinary_gating(tmp_path: Path) -> None:
+    # closeout is a field-gated state like every other: no special-cased "no gating
+    # field, human must approve" behavior remains in the five-field model.
     db = _db(tmp_path)
-    tid = _new_ticket(db)
-    _jump_state(db, tid, TicketState.needs_review)  # no gating field -> human approves
+    tid = _new_ticket(db, ceiling=TicketState.needs_closeout, at_cap=AtCap.propose)
+    _jump_state(db, tid, TicketState.needs_closeout)
     conn = connect(db)
     try:
-        assert readiness.is_runnable(conn, tickets_data.read_ticket(conn, tid)) is False
+        assert readiness.is_runnable(conn, tickets_data.read_ticket(conn, tid)) is True
     finally:
         conn.close()
 
@@ -399,14 +401,12 @@ def test_poll_excludes_every_non_runnable_ticket(tmp_path: Path) -> None:
     _set_status(db, t_takeover, TicketStatus.user_takeover)
     t_errored = _new_ticket(db)
     _set_status(db, t_errored, TicketStatus.errored)
-    # predicate-excluded: dropped, at-ceiling+stop, parked proposal, needs_review, blocked
+    # predicate-excluded: dropped, at-ceiling+stop, parked proposal, blocked
     t_dropped = _new_ticket(db)
     _drop(db, t_dropped)
     t_stop = _new_ticket(db, ceiling=TicketState.needs_success, at_cap=AtCap.stop)
     t_parked = _new_ticket(db)
     _file_proposal(db, t_parked, "success", "b")
-    t_review = _new_ticket(db)
-    _jump_state(db, t_review, TicketState.needs_review)
     blocker = _new_ticket(db, at_cap=AtCap.stop)  # open (blocks) but itself not runnable
     t_blocked = _new_ticket(db)
     _add_block(db, blocker, t_blocked)
@@ -418,7 +418,6 @@ def test_poll_excludes_every_non_runnable_ticket(tmp_path: Path) -> None:
         t_dropped,
         t_stop,
         t_parked,
-        t_review,
         blocker,
         t_blocked,
     ):

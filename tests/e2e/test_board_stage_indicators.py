@@ -45,7 +45,12 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
     waiting = cli(server, "ticket", "create", "--title", "Board waiting indicator")["id"]
     pending = cli(server, "ticket", "create", "--title", "Board pending indicator")["id"]
     errored = cli(server, "ticket", "create", "--title", "Board errored indicator")["id"]
-    for ticket_id in (waiting, pending, errored):
+    implementation = cli(
+        server, "ticket", "create", "--title", "Board implementation indicator"
+    )["id"]
+    closeout = cli(server, "ticket", "create", "--title", "Board closeout indicator")["id"]
+    done = cli(server, "ticket", "create", "--title", "Board done indicator")["id"]
+    for ticket_id in (waiting, pending, errored, implementation, closeout, done):
         _add_today(api, server, ticket_id)
 
     cli(
@@ -60,6 +65,9 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
         stdin="Pending success body.",
     )
     _set_ticket_status(server, errored, "errored")
+    _set_ticket_state(server, implementation, "needs_implementation")
+    _set_ticket_state(server, closeout, "needs_closeout")
+    _set_ticket_state(server, done, "done")
 
     page = open_page(
         context_factory(),
@@ -72,7 +80,17 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
     waiting_card = f'[data-card][data-ticket-id="{waiting}"]'
     pending_card = f'[data-card][data-ticket-id="{pending}"]'
     errored_card = f'[data-card][data-ticket-id="{errored}"]'
-    for card in (waiting_card, pending_card, errored_card):
+    implementation_card = f'[data-card][data-ticket-id="{implementation}"]'
+    closeout_card = f'[data-card][data-ticket-id="{closeout}"]'
+    done_card = f'[data-card][data-ticket-id="{done}"]'
+    for card in (
+        waiting_card,
+        pending_card,
+        errored_card,
+        implementation_card,
+        closeout_card,
+        done_card,
+    ):
         page.wait_for_selector(card, timeout=WAIT_MS)
         assert page.eval_on_selector_all(
             f"{card} .board-workspace-stage-mark", "els => els.length"
@@ -101,6 +119,16 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
     assert page.eval_on_selector_all(
         f'{errored_card} [data-marker="errored"]', "els => els.length"
     ) == 1
+
+    assert page.get_attribute(
+        _stage(page, implementation_card, "implementation"), "data-stage-state"
+    ) == "current-waiting"
+    assert page.get_attribute(
+        _stage(page, closeout_card, "closeout"), "data-stage-state"
+    ) == "current-waiting"
+    assert page.get_attribute(_stage(page, done_card, "closeout"), "data-stage-state") == (
+        "completed"
+    )
 
 
 def test_workspace_groups_by_project_orders_by_activity_and_filters_status(

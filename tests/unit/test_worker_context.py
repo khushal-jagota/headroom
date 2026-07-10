@@ -207,17 +207,17 @@ def test_only_edited_approval_produces_context_at_each_approval_gate(
     ]
 
 
-def test_direct_value_and_scope_edits_produce_context_but_review_approval_does_not(tmp_db) -> None:
+def test_direct_value_and_scope_edits_produce_context_but_plain_accept_does_not(tmp_db) -> None:
     ticket = _ticket(tmp_db)
     tickets_data.change_scope(
         tmp_db,
         ticket.id,
-        ceiling=TicketState.needs_review,
+        ceiling=TicketState.needs_closeout,
         at_cap=AtCap.propose,
         actor="human",
         now=20,
     )
-    for field in (FieldName.success, FieldName.approach, FieldName.plan, FieldName.result):
+    for field in (FieldName.success, FieldName.approach, FieldName.plan, FieldName.implementation):
         tickets_data.file_proposal(
             tmp_db, ticket.id, field=field, body=field.value, actor="agent", now=21
         )
@@ -234,7 +234,19 @@ def test_direct_value_and_scope_edits_produce_context_but_review_approval_does_n
     assert len(_pending(tmp_db, ticket.id)) == 1
     _clear(tmp_db, ticket.id)
 
-    tickets_data.approve_review(tmp_db, ticket.id, actor="human", now=23)
+    tickets_data.file_proposal(
+        tmp_db, ticket.id, field=FieldName.closeout, body="closeout draft", actor="agent", now=23
+    )
+    _clear(tmp_db, ticket.id)
+    tickets_data.accept_proposal(
+        tmp_db,
+        ticket.id,
+        field=FieldName.closeout,
+        actor="human",
+        now=24,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
+    )
     assert _pending(tmp_db, ticket.id) == ()
 
 

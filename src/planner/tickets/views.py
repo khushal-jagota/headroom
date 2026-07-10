@@ -173,8 +173,11 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"plan:\n{show(fields.plan.value)}\n"
         f"plan_user_note:\n{show(fields.plan.user_note)}\n"
         f"\n"
-        f"result:\n{show(fields.result.value)}\n"
-        f"result_user_note:\n{show(fields.result.user_note)}\n"
+        f"implementation:\n{show(fields.implementation.value)}\n"
+        f"implementation_user_note:\n{show(fields.implementation.user_note)}\n"
+        f"\n"
+        f"closeout:\n{show(fields.closeout.value)}\n"
+        f"closeout_user_note:\n{show(fields.closeout.user_note)}\n"
         f"\n"
         f"recap:\n{show(ticket.recap)}\n"
         f"\n"
@@ -258,11 +261,6 @@ def _approval_digest(tickets: list[JsonDict], items: list[JsonDict]) -> list[Jso
         state = str(row["state"])
         if row.get("ticket_status") == TicketStatus.agent_running_step.value:
             continue
-        if state == TicketState.needs_review.value:
-            digest.append(
-                {"entity_id": row["id"], "kind": "review", "waiting_since": row["updated_at"]}
-            )
-            continue
         gating = GATING_FIELD.get(TicketState(state))
         if gating is None:
             continue
@@ -324,7 +322,6 @@ def _approvals(conn: sqlite3.Connection, item_approval_rows: list[JsonDict]) -> 
     ).fetchall()
     ticket_digest: list[dict[str, object]] = []
     ticket_title: dict[str, str] = {}
-    ticket_updated: dict[str, int] = {}
     for r in ticket_rows:
         tid = str(r["id"])
         ticket_digest.append(
@@ -337,7 +334,6 @@ def _approvals(conn: sqlite3.Connection, item_approval_rows: list[JsonDict]) -> 
             }
         )
         ticket_title[tid] = str(r["title"])
-        ticket_updated[tid] = int(r["updated_at"])
     item_digest: list[dict[str, object]] = []
     item_title: dict[str, str] = {}
     for r in item_approval_rows:
@@ -345,38 +341,6 @@ def _approvals(conn: sqlite3.Connection, item_approval_rows: list[JsonDict]) -> 
         item_digest.append({"id": iid})
         item_title[iid] = str(r["title"])
     digest = _approval_digest(ticket_digest, item_digest)
-    # A5: initial review entries use the state change time. A result revised in place
-    # keeps needs_review, so its new approval wait starts when control returns to the human.
-    for entry in digest:
-        if entry["kind"] == "review":
-            tid = str(entry["entity_id"])
-            status = next(
-                (
-                    str(ticket["ticket_status"])
-                    for ticket in ticket_digest
-                    if str(ticket["id"]) == tid
-                ),
-                "",
-            )
-            if status == TicketStatus.awaiting_approval.value:
-                row = conn.execute(
-                    "SELECT created_at FROM events WHERE entity_id = ? "
-                    "AND kind = 'ticket_status_changed' "
-                    "AND json_extract(payload, '$.ticket_status') = 'awaiting_approval' "
-                    "ORDER BY id DESC LIMIT 1",
-                    (tid,),
-                ).fetchone()
-            else:
-                row = conn.execute(
-                    "SELECT created_at FROM events WHERE entity_id = ? AND kind = 'state_changed' "
-                    "AND json_extract(payload, '$.to') = 'needs_review' "
-                    "ORDER BY id DESC LIMIT 1",
-                    (tid,),
-                ).fetchone()
-            entry["waiting_since"] = (
-                int(row["created_at"]) if row is not None
-                else ticket_updated.get(tid, entry["waiting_since"])
-            )
     digest.sort(key=lambda e: e["waiting_since"])
     result: list[JsonDict] = []
     for entry in digest:

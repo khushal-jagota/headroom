@@ -15,15 +15,14 @@ from planner.tickets.logic import fields_codec, machine
 
 
 def is_runnable(conn: sqlite3.Connection, ticket: Ticket) -> bool:
-    """True iff the ticket's next agent step should run: not terminal; has a gating field
-    (``needs_review`` is human-approve-only, no agent step); no proposal already parked on
-    the gating field awaiting a human; the scope permits a proposal (not at/beyond the
-    ceiling with ``at_cap=stop`` — mirrors ``admission.check_agent_proposal``); and not
-    blocked by an open ``blocks`` link."""
+    """True iff the ticket's next agent step should run: not terminal; has a gating field;
+    no proposal already parked on that field awaiting a human; the scope permits a proposal
+    (not at/beyond the ceiling with ``at_cap=stop`` — mirrors
+    ``admission.check_agent_proposal``); and it is not blocked by an open ``blocks`` link."""
     if machine.is_terminal(ticket.state):
         return False
     gating = machine.gating_field(ticket.state)
-    if gating is None:  # needs_review — the human approves it to done
+    if gating is None:
         return False
     if fields_codec.get_slot(ticket.fields, gating).proposal is not None:
         return False  # parked awaiting a human decision

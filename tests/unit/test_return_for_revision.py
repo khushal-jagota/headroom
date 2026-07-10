@@ -156,16 +156,16 @@ def _ticket_with_pending_plan(db_path: Path) -> str:
     return ticket.id
 
 
-def _ticket_needs_review(db_path: Path) -> str:
+def _ticket_with_pending_closeout(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
         ticket = create_ticket(
-            conn, title="Revise result", actor="human", now=0, title_max_chars=200
+            conn, title="Revise closeout", actor="human", now=0, title_max_chars=200
         )
         change_scope(
             conn,
             ticket.id,
-            ceiling=TicketState.needs_review,
+            ceiling=TicketState.needs_closeout,
             at_cap=AtCap.propose,
             actor="human",
             now=0,
@@ -178,7 +178,20 @@ def _ticket_needs_review(db_path: Path) -> str:
         )
         file_proposal(conn, ticket.id, field=FieldName.plan, body="plan", actor="agent", now=0)
         file_proposal(
-            conn, ticket.id, field=FieldName.result, body="bad result", actor="agent", now=0
+            conn,
+            ticket.id,
+            field=FieldName.implementation,
+            body="implementation",
+            actor="agent",
+            now=0,
+        )
+        file_proposal(
+            conn,
+            ticket.id,
+            field=FieldName.closeout,
+            body="bad closeout",
+            actor="agent",
+            now=0,
         )
         finish_run_if_still_running_step(
             conn, ticket.id, session_key=f"session-{ticket.id}", now=0
@@ -351,27 +364,26 @@ def test_return_for_revision_clears_proposal_after_accepting_employee_handoff(
     assert duplicate.json()["error"]["code"] == "already_running"
 
 
-def test_return_for_revision_keeps_final_review_stage_after_accepted_handoff(
+def test_return_for_revision_keeps_closeout_gate_after_accepted_handoff(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
-    tid = _ticket_needs_review(db_path)
+    tid = _ticket_with_pending_closeout(db_path)
     employee_runner = app.state.employee_step_runner
 
     with TestClient(app) as client:
         response = client.post(
             f"/api/tickets/{tid}/return-for-revision",
-            json={"message": "The result needs evidence."},
+            json={"message": "The closeout needs evidence."},
         )
         assert response.status_code == 200, response.json()
         ticket = response.json()
         events = client.get(f"/api/tickets/{tid}/events").json()["events"]
-        stale_approve = client.post(f"/api/tickets/{tid}/approve")
 
-    assert ticket["state"] == "needs_review"
+    assert ticket["state"] == "needs_closeout"
     assert ticket["ticket_status"] == "agent_running_step"
-    assert ticket["fields"]["result"]["value"] == "bad result"
-    assert ticket["fields"]["result"]["proposal"] is None
+    assert ticket["fields"]["closeout"]["value"] is None
+    assert ticket["fields"]["closeout"]["proposal"] is None
     assert all(event["kind"] != "approval_returned" for event in events)
     assert all(
         event["payload"].get("cause") != "return_for_revision"
@@ -380,10 +392,8 @@ def test_return_for_revision_keeps_final_review_stage_after_accepted_handoff(
     )
     assert _wait_until(lambda: len(employee_runner.decisions) == 1)
     assert employee_runner.decisions == [
-        (tid, "The result needs evidence.", "released")
+        (tid, "The closeout needs evidence.", "released")
     ]
-    assert stale_approve.status_code == 409
-    assert stale_approve.json()["error"]["code"] == "already_running"
     with TestClient(app) as client:
         assert client.get("/api/queues").json()["approvals"] == []
 

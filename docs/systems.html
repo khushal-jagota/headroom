@@ -696,13 +696,13 @@
             <div class="detail-body">
               <p>
                 Tickets have two states. <code>state</code> is the work stage:
-                success, approach, plan, progress, review, done, or dropped.
+                success, approach, plan, implementation, closeout, done, or dropped.
                 <code>ticket_status</code> is runtime control: empty, running,
                 awaiting approval, user takeover, or errored.
               </p>
               <p>
-                Workers write proposals to the four fields: success, approach,
-                plan, and result. The resolution engine is the only code that can
+                Workers write proposals to the five fields: success, approach,
+                plan, implementation, and closeout. The resolution engine is the only code that can
                 settle a proposal or advance <code>state</code>. Scope is
                 <code>ceiling</code> plus <code>at_cap</code>; it decides how far a
                 worker may go before the human must approve again.

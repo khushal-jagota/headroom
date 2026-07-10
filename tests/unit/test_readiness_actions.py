@@ -23,6 +23,7 @@ from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     TITLE_MAX_CHARS,
+    AtCap,
     FieldName,
     TicketState,
 )
@@ -136,15 +137,16 @@ def _external_body(state: str) -> dict[str, str]:
         "success": "success",
         "approach": "approach",
         "plan": "plan",
-        "result": "result",
+        "implementation": "implementation",
+        "closeout": "closeout",
     }
     count = {
         "needs_success": 0,
         "needs_approach": 1,
         "needs_plan": 2,
-        "in_progress": 3,
-        "needs_review": 4,
-        "done": 4,
+        "needs_implementation": 3,
+        "needs_closeout": 4,
+        "done": 5,
     }[state]
     return {
         "state": state,
@@ -345,35 +347,49 @@ def test_every_approved_ticket_control_action_rings_once_and_failures_ring_zero(
         assert missing.status_code == 404
         assert doorbell.calls == 1
 
-        # approve Review
+        # pending closeout proposal approval (the final gate before done)
         conn = connect(str(db_path))
         review = tickets_data.create_ticket_from_external_work(
             conn,
             title="Approve",
             user_note="external note",
-            target_state=TicketState.needs_review,
+            target_state=TicketState.needs_closeout,
             provided_values={
                 FieldName.success: "success",
                 FieldName.approach: "approach",
                 FieldName.plan: "plan",
-                FieldName.result: "result",
+                FieldName.implementation: "implementation",
             },
             actor="chief",
             now=3,
             title_max_chars=TITLE_MAX_CHARS,
         )
+        tickets_data.change_scope(
+            conn, review.id, ceiling=TicketState.needs_closeout, at_cap=AtCap.propose,
+            actor="human", now=3,
+        )
+        tickets_data.file_proposal(
+            conn, review.id, field=FieldName.closeout, body="closeout", actor="agent", now=3,
+        )
         conn.close()
         denied_approve = client.post(
-            f"/api/tickets/{review.id}/approve", headers=_AGENT
+            f"/api/tickets/{review.id}/accept/closeout",
+            json={"next_ceiling": "none", "at_cap": "propose"},
+            headers=_AGENT,
         )
         assert denied_approve.status_code == 400
         assert doorbell.calls == 1
-        response = client.post(f"/api/tickets/{review.id}/approve")
+        response = client.post(
+            f"/api/tickets/{review.id}/accept/closeout",
+            json={"next_ceiling": "none", "at_cap": "propose"},
+        )
         assert response.status_code == 200, response.text
         assert response.json()["state"] == "done"
         assert doorbell.calls == 2
-        wrong_review = client.post(f"/api/tickets/{_create_direct(db_path)}/approve")
-        assert wrong_review.status_code == 400
+        wrong_review = client.post(
+            f"/api/tickets/{_create_direct(db_path)}/accept/closeout", json={}
+        )
+        assert wrong_review.status_code == 404
         assert doorbell.calls == 2
 
         # settled field edit

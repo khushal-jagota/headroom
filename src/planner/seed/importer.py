@@ -232,7 +232,8 @@ def _import_tickets(
             "success": {"value": ticket.success, "proposal": None, "user_note": None},
             "approach": {"value": ticket.approach, "proposal": None, "user_note": None},
             "plan": {"value": None, "proposal": None, "user_note": None},
-            "result": {"value": None, "proposal": None, "user_note": None},
+            "implementation": {"value": None, "proposal": None, "user_note": None},
+            "closeout": {"value": None, "proposal": None, "user_note": None},
         }
         conn.execute(
             "INSERT INTO tickets ("

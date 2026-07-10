@@ -36,7 +36,8 @@ def test_real_server_chief_external_work_json_create_and_reconcile(server, tmp_p
     success = _file(tmp_path, "success.md", "Success")
     approach = _file(tmp_path, "approach.md", "Approach")
     plan = _file(tmp_path, "plan.md", "Plan")
-    result = _file(tmp_path, "result.md", "Result")
+    implementation = _file(tmp_path, "implementation.md", "Implementation")
+    closeout = _file(tmp_path, "closeout.md", "Closeout")
 
     created = _run(
         server,
@@ -75,8 +76,10 @@ def test_real_server_chief_external_work_json_create_and_reconcile(server, tmp_p
         approach,
         "--plan-file",
         plan,
-        "--result-file",
-        result,
+        "--implementation-file",
+        implementation,
+        "--closeout-file",
+        closeout,
         "--json",
     )
     assert reconciled.returncode == 0, reconciled.stderr

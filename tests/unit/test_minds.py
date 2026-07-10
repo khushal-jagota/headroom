@@ -1965,6 +1965,48 @@ def test_provision_planner_home_skills_symlinks_repo_skills(tmp_path: Path) -> N
     assert (chief / "SKILL.md").exists()
 
 
+def test_provisioned_skills_encode_implementation_and_closeout_lifecycle(
+    tmp_path: Path,
+) -> None:
+    provision_planner_home_skills(tmp_path)
+    skills = tmp_path / "skills"
+    panels = (skills / "panels" / "SKILL.md").read_text(encoding="utf-8")
+    worker = (skills / "panels-worker" / "SKILL.md").read_text(encoding="utf-8")
+    chief = (skills / "panels-chief-of-staff" / "SKILL.md").read_text(encoding="utf-8")
+
+    # No provisioned role prompt may still name the retired lifecycle states.
+    for text in (panels, worker, chief):
+        assert "in_progress" not in text
+        assert "needs_review" not in text
+
+    # The visible six-stage sequence and its five gated fields are the new model.
+    sequence = "Success → Approach → Plan → Implementation → Closeout → Done"
+    assert sequence in worker
+    for field in ("success", "approach", "plan", "implementation", "closeout"):
+        assert field in worker
+
+    # panels lists the five canonical outputs, not the retired `result` field.
+    assert "plan, result" not in panels
+    assert "implementation" in panels
+    assert "closeout" in panels
+    assert sequence in panels
+
+    # The worker skill pins Implementation and Closeout as distinct responsibilities.
+    assert "needs_implementation" in worker
+    assert "needs_closeout" in worker
+    assert "reviewable" in worker
+    for closeout_duty in ("merge", "deploy", "follow-up", "bookkeeping"):
+        assert closeout_duty in worker
+    assert "the **result**" not in worker
+    assert "result proposal" not in worker
+    assert "never approve" in worker
+
+    # Chief keeps its planning-draft boundary on the new field names only.
+    assert "`result`" not in chief
+    assert "implementation" in chief
+    assert "closeout" in chief
+
+
 def test_boot_smoke_check_with_fake() -> None:
     fake = FakeGateway({})
     boot_smoke_check(Path(HERMES_PY), spawn=fake.spawn, env={})

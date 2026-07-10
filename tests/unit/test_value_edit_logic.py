@@ -41,7 +41,8 @@ def _fields(**slots: FieldSlot) -> TicketFields:
         success=slots.get("success", FieldSlot()),
         approach=slots.get("approach", FieldSlot()),
         plan=slots.get("plan", FieldSlot()),
-        result=slots.get("result", FieldSlot()),
+        implementation=slots.get("implementation", FieldSlot()),
+        closeout=slots.get("closeout", FieldSlot()),
     )
 
 

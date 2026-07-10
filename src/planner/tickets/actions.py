@@ -159,19 +159,6 @@ def accept_proposal(
     return ticket
 
 
-def approve_review(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    actor: str,
-    now: int,
-    readiness_doorbell: ReadinessDoorbell,
-) -> Ticket:
-    ticket = tickets_data.approve_review(conn, ticket_id, actor=actor, now=now)
-    readiness_doorbell.ring()
-    return ticket
-
-
 def edit_field_value(
     conn: sqlite3.Connection,
     ticket_id: str,

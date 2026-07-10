@@ -17,14 +17,20 @@ from planner.tickets.logic import admission, fields_codec, machine
 from planner.tickets.logic.decisions import Decision, EventSpec
 
 CAUSE_EXTERNAL_WORK: str = "external_work"
-_FIELD_ORDER = (FieldName.success, FieldName.approach, FieldName.plan, FieldName.result)
+_FIELD_ORDER = (
+    FieldName.success,
+    FieldName.approach,
+    FieldName.plan,
+    FieldName.implementation,
+    FieldName.closeout,
+)
 _PREFIX_COUNT = {
     TicketState.needs_success: 0,
     TicketState.needs_approach: 1,
     TicketState.needs_plan: 2,
-    TicketState.in_progress: 3,
-    TicketState.needs_review: 4,
-    TicketState.done: 4,
+    TicketState.needs_implementation: 3,
+    TicketState.needs_closeout: 4,
+    TicketState.done: 5,
 }
 
 

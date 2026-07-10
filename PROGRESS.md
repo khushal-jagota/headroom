@@ -3,6 +3,49 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-10): Ticket Implementation and Closeout lifecycle
+
+Current build stage:
+
+- Ticket `t_p6de8rje` has approved Success, Approach, and Plan and is in implementation.
+- The accepted contract replaces `in_progress` / `needs_review` with ordinary
+  `needs_implementation` / `needs_closeout` gates and replaces `result` with distinct
+  `implementation` / `closeout` fields. Existing ticket-status and scope controls remain canonical.
+- The initial worktree contains one unrelated modified submodule pointer at
+  `.claude/worktrees/frontend-shared-components`; this ticket will not touch or absorb it.
+
+What just passed:
+
+- Codex reviewed the accepted plan read-only with `gpt-5.5` and high reasoning. Its three concrete
+  findings are accepted: update live docs, cover the strict Chief external-work contract, and test
+  lifecycle migration through the old project-column ticket rebuild path. The follow-up review of
+  the revised contract, D55, and slice boundary returned `NO VIOLATIONS`.
+- The backend lifecycle and migration are implemented. The full unit suite passes, Mypy passes across
+  104 source files, and lifecycle remnant sweeps are clean outside intentional legacy-migration and
+  sprint-item status literals.
+- Skills and live docs now use Implementation and Closeout. The three stale standalone role files are
+  retired.
+- The frontend now renders and approves five generic fields across Ticket, Review, and Workspace.
+  Svelte check reports zero errors and the production build passes.
+- Codex's implementation review found three initial and two follow-up code/test gaps; every one was
+  corrected. The final full-diff follow-up returned `NO VIOLATIONS`.
+- The first integrated verification reached every gate and found only two Ruff line-length errors;
+  405 unit and 57 browser tests already passed. After those formatting fixes, the corrected canonical
+  `./verify` passed Ruff, Mypy, 405 unit tests, compile/static checks, frontend gates, 57 browser
+  tests, and ended with `VERIFY: PASS`.
+
+Current hypothesis:
+
+- The implementation matches the accepted contract and is ready for owner review.
+
+Next step:
+
+- Propose the evidence-backed Result on `t_p6de8rje`.
+
+Blockers:
+
+- None.
+
 ## Completed work cycle (2026-07-10): Ticket-owned planning-artifact guidance
 
 Current implementation:

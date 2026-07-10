@@ -1785,8 +1785,7 @@ select {
   margin-bottom: var(--space-3);
 }
 
-.approval-draft,
-.approval-result {
+.approval-draft {
   position: relative;
   font-size: var(--type-md);
   line-height: 1.6;
@@ -1859,8 +1858,7 @@ select {
   cursor: default;
 }
 
-.approval--review .approval-draft,
-.approval--review .approval-result {
+.approval--review .approval-draft {
   font-size: var(--type-md);
   line-height: 1.58;
 }
@@ -2479,7 +2477,7 @@ details.fsec[open] > summary .fsec-chev::before {
   color: var(--text-faint);
 }
 
-[data-screen="sprint"] .tk .st--needs_review {
+[data-screen="sprint"] .tk .st--needs_closeout {
   color: var(--text-default);
 }
 

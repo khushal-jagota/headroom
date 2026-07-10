@@ -71,15 +71,16 @@ def _external_body(
         "success": "Success settled",
         "approach": "Approach settled",
         "plan": "Plan settled",
-        "result": "Result settled",
+        "implementation": "Implementation settled",
+        "closeout": "Closeout settled",
     }
     prefix_count = {
         TicketState.needs_success: 0,
         TicketState.needs_approach: 1,
         TicketState.needs_plan: 2,
-        TicketState.in_progress: 3,
-        TicketState.needs_review: 4,
-        TicketState.done: 4,
+        TicketState.needs_implementation: 3,
+        TicketState.needs_closeout: 4,
+        TicketState.done: 5,
     }[state]
     body.update(dict(list(values.items())[:prefix_count]))
     return body
@@ -135,7 +136,9 @@ def test_create_external_work_enforces_exact_settled_prefix_and_coherent_control
     assert ticket["ceiling"] == state.value
     assert ticket["at_cap"] == "stop"
     assert ticket["ticket_status"] == "empty"
-    expected = {key: body.get(key) for key in ("success", "approach", "plan", "result")}
+    expected = {
+        key: body.get(key) for key in ("success", "approach", "plan", "implementation", "closeout")
+    }
     assert {key: ticket["fields"][key]["value"] for key in expected} == expected
 
 
@@ -161,7 +164,7 @@ def test_external_work_rejects_unknown_keys_and_prefix_mismatches_without_writes
         )
         future = client.post(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
-            json={**_external_body(TicketState.needs_success), "result": "too early"},
+            json={**_external_body(TicketState.needs_success), "implementation": "too early"},
             headers=_CHIEF,
         )
         dropped = client.post(
@@ -178,7 +181,7 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
     with TestClient(app) as client:
         made = client.post(
             "/api/chief/tickets/from-external-work",
-            json={"title": "Forward", **_external_body(TicketState.in_progress)},
+            json={"title": "Forward", **_external_body(TicketState.needs_implementation)},
             headers=_CHIEF,
         ).json()
         backward = client.post(
@@ -347,6 +350,7 @@ def test_create_external_work_emits_exact_existing_events_and_rings(tmp_path: Pa
         "field_value_edited",
         "field_value_edited",
         "field_value_edited",
+        "field_value_edited",
         "recap_updated",
         "state_changed",
         "scope_changed",
@@ -355,14 +359,15 @@ def test_create_external_work_emits_exact_existing_events_and_rings(tmp_path: Pa
         "success",
         "approach",
         "plan",
-        "result",
+        "implementation",
+        "closeout",
     ]
-    assert events[6][1] == {
+    assert events[7][1] == {
         "from": "needs_success",
         "to": "done",
         "cause": "external_work",
     }
-    assert events[7][1] == {
+    assert events[8][1] == {
         "ceiling": "done",
         "at_cap": "stop",
         "cause": "external_work",
