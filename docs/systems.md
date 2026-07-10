@@ -72,6 +72,12 @@ today's day. TicketReadinessLoop starts from that same today membership, then na
 to empty, non-terminal tickets that pass readiness. A ticket can exist and be ready
 in every other way, but if it is not on today's day, it will not auto-run.
 
+Daily rollover is an agent workflow rather than a domain engine. The repo-owned
+`panels-rollover` skill reads the day and sprint boundary through the CLI, drafts the
+likely four-field kickoff, and records obvious carryover candidates pending review.
+Automatic runs never add tickets to today before user agreement and never carry
+`done` or `dropped` tickets. Broad reprioritization stays in sprint planning.
+
 Code paths: `src/planner/sprints/`, `src/planner/tickets/`,
 `src/planner/days/`, `src/planner/core/links.py`.
 
@@ -266,8 +272,8 @@ less clean than the rest.
 
 - **No failed-run recovery.** An errored ticket has no retry or clear path. Trigger:
   a recovery policy is designed.
-- **No automatic rollover writer.** Days materialize, but no worker drafts the next
-  day's overview. Trigger: rollover work lands.
+- **No in-server rollover scheduler.** The repo provisions the agent-owned rollover
+  skill; thin morning and afternoon prompts remain external to the server runtime.
 - **No chat queue during worker steps.** Human sends are rejected while a ticket worker
   is active. Trigger: the product needs conversation to queue behind active work.
 - **No idea conversion or archive.** Ideas stay ideas. Trigger: a decision that ideas

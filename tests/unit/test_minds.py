@@ -2255,6 +2255,43 @@ def test_provisioned_sprint_planning_skill_is_review_first_and_panels_native(
     assert "Do not run sprint planning autonomously from a cron" in skill
 
 
+def test_panels_rollover_is_provisioned_as_readable_repo_skill(tmp_path: Path) -> None:
+    provision_planner_home_skills(tmp_path)
+
+    rollover = tmp_path / "skills" / "panels-rollover"
+    assert rollover.is_symlink()
+    skill_text = (rollover / "SKILL.md").read_text(encoding="utf-8")
+    assert skill_text.startswith("---\nname: panels-rollover")
+
+
+def test_panels_rollover_contract_keeps_automatic_ticket_changes_pending_agreement(
+    tmp_path: Path,
+) -> None:
+    provision_planner_home_skills(tmp_path)
+    rollover = (tmp_path / "skills" / "panels-rollover" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Write a likely direction into today's overview" in rollover
+    assert "do not add tickets to today yet" in rollover
+    assert "After the user agrees" in rollover
+    assert "**Morning:** prepare the kickoff draft if it is missing" in rollover
+    assert "**Afternoon:** act only as a failsafe" in rollover
+    assert "otherwise no-op" in rollover
+    assert "Scheduled runs never add tickets to today without the user's agreement" in rollover
+    assert "Never carry `done` or `dropped` tickets forward" in rollover
+
+
+def test_panels_rollover_replaces_stale_planning_boundary_skill() -> None:
+    skills = Path(__file__).resolve().parents[2] / "skills"
+
+    assert not (skills / "planning-boundary.md").exists()
+    for role in ("panels", "panels-chief-of-staff"):
+        text = (skills / role / "SKILL.md").read_text(encoding="utf-8")
+        assert "panels-rollover" in text
+        assert "planning-boundary" not in text
+
+
 def test_provisioned_skills_encode_implementation_and_closeout_lifecycle(
     tmp_path: Path,
 ) -> None:

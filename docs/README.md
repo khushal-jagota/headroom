@@ -60,7 +60,8 @@ its old event lines are replaced by one minimal deletion audit.
 
 **The surfaces you plan on**
 
-- **Days** (`days.md`) — the daily page, the 5am boundary, and quick capture.
+- **Days** (`days.md`) — the daily page, the 5am boundary, and the review-first
+  rollover skill.
 - **Sprints** (`sprints.md`) — the Overview (Kickoff / Mid-sprint / Review) and the
   Tracking list.
 - **Backlog & Ideas** (`backlog-and-ideas.md`) — the two catch surfaces.
@@ -76,9 +77,10 @@ its old event lines are replaced by one minimal deletion audit.
 ## Not built yet
 
 - **Recovery from a failed run** — an errored ticket is stuck (see `employee-runtime.md`).
-- **Automatic daily rollover** — the day isn't auto-generated yet (see `days.md`).
+- **An in-server rollover scheduler** — the agent-owned rollover skill is provisioned,
+  while thin morning and afternoon prompts remain external (see `days.md`).
 
 ---
 
-_Last verified: 2026-07-08 · Covers the system landscape; each doc carries its own
+_Last verified: 2026-07-10 · Covers the system landscape; each doc carries its own
 code paths._

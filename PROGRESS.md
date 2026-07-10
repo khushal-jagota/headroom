@@ -2632,3 +2632,38 @@ Verification so far:
 Immediate next step: propose the verified result on ticket `t_k0nvxtny`.
 
 Blockers: none.
+
+## Current work cycle (2026-07-10): Panels rollover workflow
+
+Current build stage: Implementation in the isolated
+`ticket/t_wev4k9qy-rollover-implementation` worktree; live cutover is reserved for Closeout.
+
+What changed:
+
+- Added the lightweight repo-owned `panels-rollover` skill. Automatic runs draft today's four-field
+  kickoff and record obvious carryover candidates pending review; they do not add tickets before the
+  user agrees. Morning drafts if missing; afternoon is only a failsafe for that missing draft.
+- Added `panels-rollover` to planner-home skill provisioning and updated Panels/Chief role guidance.
+- Removed the retired deterministic `skills/planning-boundary.md` prompt.
+- Updated live system docs to describe agent-owned rollover and the external scheduler boundary.
+- Added focused provisioning and operating-contract tests.
+
+Verification:
+
+- Strict RED: the three focused rollover tests failed because the skill was absent, provisioning did
+  not expose it, and `skills/planning-boundary.md` still existed.
+- GREEN: the same three tests pass; all `tests/unit/test_minds.py` tests pass (73 total), Ruff and mypy
+  pass, and a temporary-Hermes-home smoke lists the provisioned `panels-rollover` skill.
+- Initial Codex review found four issues: two live-deployment wording claims, Chief guidance that still
+  inspected backlog, no assertion for the `done`/`dropped` guard, and an incidental `uv.lock`. All were
+  fixed; the guard assertion was proved red-capable by temporarily removing only that skill line, then
+  restored to green. Follow-up Codex review returned `NO VIOLATIONS`.
+- Full `./verify` passed: Ruff, mypy (104 source files), 411 unit tests, compile/static checks,
+  frontend check/build/test, 58 e2e tests, and `VERIFY: PASS`. The only diagnostics were the existing
+  three Python warnings and three Svelte initial-value warnings.
+
+Immediate next step: commit the verified ticket branch and propose Implementation. Closeout will merge
+and then update the two live default-Hermes jobs, create the global `panels-rollover` link, and retire
+the old global rollover skill.
+
+Blockers: none.

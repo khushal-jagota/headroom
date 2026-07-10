@@ -1843,3 +1843,15 @@ production deployment. Closeout therefore records the approved implementation, c
 verification, and independent review without committing or deploying the mixed tree. No follow-up
 Ticket is needed because the accepted scope is complete and no deferred defect or migration task
 remains.
+
+## D100 — Automatic rollover drafts the kickoff; ticket placement waits for agreement
+
+`panels-rollover` is one agent-owned operating skill, not a deterministic server engine. A manual or
+scheduled run may write today's likely four-field overview and keep a small list of obvious carryover
+candidates in day notes, but it does not add those tickets to today until the user reviews the kickoff
+and agrees. The morning job prepares a missing draft; the afternoon job is only a failsafe for the same
+missing draft. Broad reprioritization remains sprint-planning work.
+
+The repository owns and provisions the skill. The default-Hermes jobs that schedule it and the global
+skill link are deployment state, so the ticket branch proves them in isolation and Closeout changes the
+live jobs only after Implementation approval.
