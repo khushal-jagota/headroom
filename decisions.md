@@ -2,6 +2,22 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D57 — Sprint planning is one review-first Panels skill, not a cron or rollover path
+
+Replace the legacy file-based `sprint-planning` skill with a provisioned
+`panels-sprint-planning` operating skill. At a sprint boundary it finishes the sprint review first
+(outcomes, the user's reflection before agent interpretation, joint discussion, learning, and
+carry-forward candidates), then decides the next limiting factor, primary bet, supports, pre-mortem,
+and sprint items. Carry-forward is not automatic. Midpoint reconciliation is a narrower path and
+daily composition remains owned by rollover.
+
+The skill uses only current Panels sprint, sprint-item, ticket, and project commands; resolves an
+explicit sprint id so an already-ended sprint can still be reviewed; treats item status as derived;
+and verifies accepted writes by readback. The active and legacy scheduler inventories contain no
+sprint-planning job, so no cron is added or removed and rollover automation stays untouched. The old
+global Markdown skill is retired only after the provisioned replacement is independently reviewed
+and verified.
+
 ## D56 — Lifecycle migration identifies approval by the legacy gated state
 
 An `awaiting_approval` Ticket is not necessarily awaiting approval of the old Result field. The
@@ -1780,3 +1796,28 @@ explicit `PLAN_HERMES_HOME` is set, startup will derive the dedicated home from 
 directory. This preserves worktree isolation when the database is worktree-local and preserves live
 session/config identity when the database is canonical. Credentials remain operator-owned; startup
 does not copy or link them.
+
+## D98 — Implementer assignment is one typed Ticket value, not a catalog
+
+The owner narrowed `t_mkkvq9qz` after shaping: store only a nullable `implementer` with four initial
+wire values (`khushal`, `panels_worker`, `hermes_codex`, `hermes_claude`). The ordinary Ticket edit
+transaction owns validation, events, and worker-context invalidation; the existing metadata-row
+`EnumPill` owns editing. There is no implementer table, registry, account/capability system, or
+automatic model router. The worker skill, not backend data, carries route-selection guidance.
+
+Assignment edits are inert. The only control consequence is at the accepted Plan transition into
+`needs_implementation`: `khushal` selects the existing `user_takeover` status, while agent values and
+NULL retain the existing employee path. This applies to direct and auto-accepted Plans so a running
+planning worker cannot race ahead into human-owned implementation or clear takeover while settling.
+The field is direct-only on ordinary PATCH; a worker may recommend an override but does not silently
+rewrite the human's chosen route. No separate frontend planning artifact is needed because the UI
+change is exactly one established metadata pill with no new layout, state, or interaction.
+
+## D99 — Implementer closeout has no merge, deploy, or follow-up action
+
+`t_mkkvq9qz` was implemented directly in the shared `main` worktree, which also contains unrelated
+concurrent work, and the ticket did not authorize a commit, history rewrite, service restart, or
+production deployment. Closeout therefore records the approved implementation, clean canonical
+verification, and independent review without committing or deploying the mixed tree. No follow-up
+Ticket is needed because the accepted scope is complete and no deferred defect or migration task
+remains.

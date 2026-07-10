@@ -94,6 +94,12 @@ underlying worker. The commands it does show run on the ticket's own worker:
 - **Display commands render as system lines.** Picking or typing a command such as
   `/status` executes it and shows the gateway's command output in the chat trace.
 
+Typing exactly `/new` starts a fresh underlying Hermes conversation for that chat.
+Panels stores the new durable session key, shows `New session started.` as a system
+line, and sends the next ordinary message through the new session's live handle. The
+visible Panels transcript stays in place. Commands with arguments, such as
+`/new title`, continue through the ordinary command path.
+
 ## Handoffs
 
 - **The employee runtime** (`employee-runtime.md`) — the live worker the chat talks

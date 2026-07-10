@@ -22,6 +22,7 @@ from planner.tickets.contracts import (
     AtCap,
     FieldName,
     FieldSlot,
+    Implementer,
     NextCeiling,
     Ticket,
     TicketDeletion,
@@ -69,6 +70,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         ceiling=TicketState(row["ceiling"]),
         at_cap=AtCap(row["at_cap"]),
         ticket_status=TicketStatus(row["ticket_status"]),
+        implementer=Implementer(row["implementer"]) if row["implementer"] is not None else None,
         chat_session_key=row["chat_session_key"],
         alias=row["alias"],
         fields=fields_codec.fields_from_json(row["fields"]),
@@ -215,6 +217,7 @@ def create_ticket(
     deadline: str | None = None,
     sprint_id: str | None = None,
     sprint_item_id: str | None = None,
+    implementer: Implementer | None = None,
 ) -> Ticket:
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
@@ -245,9 +248,9 @@ def create_ticket(
         conn.execute(
             "INSERT INTO tickets ("
             "id, title, state, priority, deadline, project_id, sprint_item_id, "
-            "sprint_id, recap, user_note, ceiling, at_cap, ticket_status, "
+            "sprint_id, recap, user_note, ceiling, at_cap, ticket_status, implementer, "
             "chat_session_key, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -261,6 +264,7 @@ def create_ticket(
                 TicketState.needs_success.value,
                 AtCap.propose.value,
                 TicketStatus.empty.value,
+                implementer.value if implementer is not None else None,
                 empty_fields,
                 now,
                 now,
@@ -532,6 +536,13 @@ def file_proposal(
         if any(spec.kind is EventKind.proposal_filed for spec in decision.events):
             _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
             updated = _load_ticket(conn, ticket_id)
+        else:
+            handoff_status = machine.plan_handoff_status(
+                ticket.implementer, ticket.state, decision.new_state
+            )
+            if handoff_status is not None:
+                _write_ticket_status(conn, ticket_id, handoff_status, now)
+                updated = _load_ticket(conn, ticket_id)
         return updated
 
 
@@ -569,6 +580,12 @@ def file_current_proposal_with_recap(
         append_event(conn, ticket_id, EventKind.recap_updated, {}, now)
         if any(spec.kind is EventKind.proposal_filed for spec in decision.events):
             _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
+        else:
+            handoff_status = machine.plan_handoff_status(
+                ticket.implementer, ticket.state, decision.new_state
+            )
+            if handoff_status is not None:
+                _write_ticket_status(conn, ticket_id, handoff_status, now)
         return _load_ticket(conn, ticket_id)
 
 
@@ -589,7 +606,10 @@ def accept_proposal(
         _apply_decision(conn, ticket, decision, now)
         if edited_body is not None:
             ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
-        _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
+        handoff_status = machine.plan_handoff_status(
+            ticket.implementer, ticket.state, decision.new_state
+        )
+        _write_ticket_status(conn, ticket_id, handoff_status or TicketStatus.empty, now)
         return _load_ticket(conn, ticket_id)
 
 
@@ -858,6 +878,7 @@ def edit_ticket(
         user_note = edit["user_note"] if "user_note" in edit else ticket.user_note
         priority = edit["priority"] if "priority" in edit else ticket.priority
         deadline = edit["deadline"] if "deadline" in edit else ticket.deadline
+        implementer = edit["implementer"] if "implementer" in edit else ticket.implementer
         project_id = edit["project_id"] if "project_id" in edit else ticket.project_id
         sprint_id = edit["sprint_id"] if "sprint_id" in edit else ticket.sprint_id
 
@@ -888,6 +909,12 @@ def edit_ticket(
             ("user_note", "user_note", ticket.user_note, user_note),
             ("priority", "priority", ticket.priority.value, priority.value),
             ("deadline", "deadline", ticket.deadline, deadline),
+            (
+                "implementer",
+                "implementer",
+                ticket.implementer.value if ticket.implementer is not None else None,
+                implementer.value if implementer is not None else None,
+            ),
             ("project_id", "project_id", ticket.project_id, project_id),
             ("sprint_id", "sprint_id", ticket.sprint_id, sprint_id),
         )

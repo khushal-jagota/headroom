@@ -47,6 +47,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "ceiling": ticket.ceiling.value,
         "at_cap": ticket.at_cap.value,
         "ticket_status": ticket.ticket_status.value,
+        "implementer": ticket.implementer.value if ticket.implementer is not None else None,
         "chat_session_key": ticket.chat_session_key,
         "alias": ticket.alias,
         "fields": json.loads(fields_codec.fields_to_json(ticket.fields)),
@@ -161,6 +162,7 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"{ticket.title}\n"
         f"state: {ticket.state.value}\n"
         f"priority: {ticket.priority.value}\n"
+        f"implementer: {ticket.implementer.value if ticket.implementer is not None else '(none)'}\n"
         f"\n"
         f"user_note:\n{show(ticket.user_note)}\n"
         f"\n"

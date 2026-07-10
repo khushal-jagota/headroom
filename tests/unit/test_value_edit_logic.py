@@ -66,6 +66,7 @@ def _ticket(
         ticket_status=TicketStatus.empty,
         chat_session_key=None,
         alias=None,
+        implementer=None,
         fields=fields,
         created_at=0,
         updated_at=0,

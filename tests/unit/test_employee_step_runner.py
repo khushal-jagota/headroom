@@ -26,12 +26,19 @@ from planner.minds.contracts import OnEvent, RunResult
 from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.shared_gateway import SharedGateway
 from planner.runtime import readiness
-from planner.runtime.employee_step_runner import EmployeeStepRunner
+from planner.runtime.employee_step_runner import EmployeeStepRunner, _next_step_prompt
 from planner.runtime.readiness_doorbell import NoOpReadinessDoorbell
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
-from planner.tickets.contracts import NO_FURTHER, AtCap, FieldName, TicketState, TicketStatus
+from planner.tickets.contracts import (
+    NO_FURTHER,
+    AtCap,
+    FieldName,
+    Implementer,
+    TicketState,
+    TicketStatus,
+)
 
 HOME = "/tmp/planner-home"
 HERMES_PY = sys.executable
@@ -95,11 +102,21 @@ def _db(tmp_path: Path) -> str:
     return str(db_path)
 
 
-def _new_ticket(db_path: str, *, ceiling: TicketState | None = None) -> str:
+def _new_ticket(
+    db_path: str,
+    *,
+    ceiling: TicketState | None = None,
+    implementer: Implementer | None = None,
+) -> str:
     conn = connect(db_path)
     try:
         ticket = tickets_data.create_ticket(
-            conn, title="T", actor="human", now=0, title_max_chars=200
+            conn,
+            title="T",
+            actor="human",
+            now=0,
+            title_max_chars=200,
+            implementer=implementer,
         )
         if ceiling is not None:
             tickets_data.change_scope(
@@ -270,12 +287,43 @@ def test_complete_with_no_proposal_is_empty_not_errored(tmp_path: Path) -> None:
     assert doorbell.calls == 1
 
 
+def test_next_step_prompt_includes_implementer_wire_value_or_unassigned(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    conn = connect(db)
+    try:
+        assigned = tickets_data.create_ticket(
+            conn,
+            title="T",
+            actor="human",
+            now=0,
+            title_max_chars=200,
+            implementer=Implementer.hermes_claude,
+        )
+        unassigned = tickets_data.create_ticket(
+            conn, title="T", actor="human", now=0, title_max_chars=200
+        )
+    finally:
+        conn.close()
+
+    assert _next_step_prompt(assigned) == (
+        f"Work ticket {assigned.id} — T. It is in state 'needs_success'; "
+        "take the next step and propose the 'success' field for approval. "
+        "Implementer: hermes_claude."
+    )
+    assert _next_step_prompt(unassigned) == (
+        f"Work ticket {unassigned.id} — T. It is in state 'needs_success'; "
+        "take the next step and propose the 'success' field for approval. "
+        "Implementer: unassigned."
+    )
+
+
 def test_worker_step_prompt_and_reply_are_visible_in_chat_history(tmp_path: Path) -> None:
     db = _db(tmp_path)
-    tid = _new_ticket(db)
+    tid = _new_ticket(db, implementer=Implementer.hermes_codex)
     prompt = (
         f"Work ticket {tid} — T. It is in state 'needs_success'; "
-        "take the next step and propose the 'success' field for approval."
+        "take the next step and propose the 'success' field for approval. "
+        "Implementer: hermes_codex."
     )
     fake = FakeGateway(
         {
@@ -349,7 +397,8 @@ def test_queued_employee_waits_past_prior_interruption_before_settling(
     _set_key(db, tid, STORED_KEY)
     prompt = (
         f"Work ticket {tid} — T. It is in state 'needs_success'; "
-        "take the next step and propose the 'success' field for approval."
+        "take the next step and propose the 'success' field for approval. "
+        "Implementer: unassigned."
     )
     fake = ManualEventFake(
         {

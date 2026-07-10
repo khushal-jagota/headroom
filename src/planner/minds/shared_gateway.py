@@ -342,6 +342,15 @@ class SharedGateway:
     ) -> Iterator[ChatStreamChunk]:
         try:
             child = self._child_or_spawn()
+            if mode == "command" and text == "/new":
+                result = self._start_new_chat_session(child, on_session_key)
+                yield ChatStreamChunk(type="session", session_key=result.session_key)
+                yield from self._stream_done(
+                    result.reply_text,
+                    result.session_key,
+                    result.kind,
+                )
+                return
             _, stored = self._resume_or_create(
                 child,
                 session_key,
@@ -428,6 +437,8 @@ class SharedGateway:
     ) -> CommandRunResult:
         try:
             child = self._child_or_spawn()
+            if command == "/new":
+                return self._start_new_chat_session(child, on_session_key)
             _, stored = self._resume_or_create(
                 child,
                 session_key,
@@ -468,6 +479,20 @@ class SharedGateway:
             raise PlannerError(
                 ErrorCode.gateway_offline, "chat gateway command failed", {"detail": str(exc)}
             ) from exc
+
+    def _start_new_chat_session(
+        self,
+        child: GatewayChild,
+        on_session_key: Callable[[str], None] | None,
+    ) -> CommandRunResult:
+        _, stored_session_key = self._resume_or_create(child, None, CHAT_SOURCE)
+        if on_session_key is not None:
+            on_session_key(stored_session_key)
+        return CommandRunResult(
+            reply_text="New session started.",
+            session_key=stored_session_key,
+            kind="system",
+        )
 
     def _stream_done(self, reply: str, stored: str, kind: str) -> Iterator[ChatStreamChunk]:
         if reply:

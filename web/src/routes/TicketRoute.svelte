@@ -49,6 +49,13 @@
   const ticketInvalidations = [`ticket:${id}`, "board", "queues", "sprint:current"];
   const emptyTicketFieldText = "Not written yet.";
   const emptyTicketRecapText = "No recap yet.";
+  const implementerOptions = [
+    { value: "", label: "(unassigned)" },
+    { value: "khushal", label: "Khushal" },
+    { value: "panels_worker", label: "Panels worker" },
+    { value: "hermes_codex", label: "Hermes with Codex" },
+    { value: "hermes_claude", label: "Hermes with Claude" }
+  ];
 
   let headerError = $state<unknown>(null);
   let copied = $state(false);
@@ -199,6 +206,18 @@
                 if (priority !== detail.priority) void patch({ priority });
               }}
             />
+            <span data-implementer>
+              <EnumPill
+                keyLabel="implementer"
+                value={detail.implementer || ""}
+                options={implementerOptions}
+                onChange={(implementer) => {
+                  if (implementer !== (detail.implementer || "")) {
+                    void patch({ implementer: implementer || null });
+                  }
+                }}
+              />
+            </span>
             <Pill keyLabel="due">
               {detail.deadline || ""}
               <input

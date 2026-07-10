@@ -46,6 +46,13 @@ class AtCap(StrEnum):              # §4.3
     propose = "propose"
 
 
+class Implementer(StrEnum):
+    khushal = "khushal"
+    panels_worker = "panels_worker"
+    hermes_codex = "hermes_codex"
+    hermes_claude = "hermes_claude"
+
+
 class TicketStatus(StrEnum):       # durable state-of-control, written by data-layer transitions
     empty = "empty"
     agent_running_step = "agent_running_step"
@@ -130,6 +137,7 @@ class TicketEdit(TypedDict, total=False):         # PATCH /tickets/{id}, parsed 
     user_note: str
     priority: Priority
     deadline: str | None
+    implementer: Implementer | None
     project_id: str | None
     sprint_id: str | None
 
@@ -218,6 +226,7 @@ class Ticket:                      # §3.3 — column names match exactly
     ceiling: TicketState           # default needs_success (R2); restricted to STATE_ORDER
     at_cap: AtCap                  # default propose (R2)
     ticket_status: TicketStatus    # durable state-of-control; transition functions write it
+    implementer: Implementer | None  # human-overridable execution route
     chat_session_key: str | None   # the ticket-mind's durable Hermes session_key
     alias: str | None              # migration "Ticket ID:" (§12), unique when present
     fields: TicketFields

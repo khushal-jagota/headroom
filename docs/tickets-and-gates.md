@@ -62,9 +62,18 @@ store its own project because the parent item owns that classification.
 ### Ordinary Ticket edits
 
 One ordinary edit may change a Ticket's title, user note, priority, deadline, project,
-and sprint together. Panels checks the whole request before saving any of it. All
-requested changes succeed together or none do, and the history records only fields
-that really changed. Sending values the Ticket already has leaves it unchanged.
+sprint, and implementer together. The implementer is nullable and limited to four fixed
+assignments: Khushal, Panels worker, Hermes with Codex, and Hermes with Claude. Panels
+checks the whole request before saving any of it. All requested changes succeed together
+or none do, and the history records only fields that really changed. Sending values the
+Ticket already has leaves it unchanged. Editing the implementer does not change the
+Ticket's stage or control status and does not start implementation.
+
+The current assignment is included in the actual Hermes worker prompt, not merely shown
+in the Ticket UI or Panels chat. When an accepted Plan advances a Khushal-assigned Ticket
+to implementation, control moves to user takeover for the human handoff. Agent-assigned
+Tickets continue through the existing worker path, while an unassigned Ticket keeps the
+existing behavior.
 
 ## The one rule: proposals and the single door
 

@@ -35,12 +35,16 @@ class _WorkerSessionClaimLost(Exception):
 
 
 def _next_step_prompt(ticket: Ticket) -> str:
-    """Describe what to advance; the worker role skill owns how to do the work."""
+    """Describe what to advance; the worker role skill owns how to do the work.
+
+    Route selection/suitability guidance lives in the panels-worker skill, not here."""
     gating = machine.gating_field(ticket.state)
     field = gating.value if gating is not None else "the next step"
+    implementer_wire = ticket.implementer.value if ticket.implementer is not None else "unassigned"
     return (
         f"Work ticket {ticket.id} — {ticket.title}. It is in state '{ticket.state.value}'; "
-        f"take the next step and propose the '{field}' field for approval."
+        f"take the next step and propose the '{field}' field for approval. "
+        f"Implementer: {implementer_wire}."
     )
 
 

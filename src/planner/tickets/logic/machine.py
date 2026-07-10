@@ -14,10 +14,12 @@ from planner.tickets.contracts import (
     STATE_ORDER,
     AtCap,
     FieldName,
+    Implementer,
     NextCeiling,
     ScopePair,
     TicketFields,
     TicketState,
+    TicketStatus,
 )
 from planner.tickets.logic import fields_codec
 
@@ -125,3 +127,15 @@ def has_pending_gating_proposal(state: TicketState, fields: TicketFields) -> boo
     if field is None:
         return False
     return fields_codec.get_slot(fields, field).proposal is not None
+
+
+def plan_handoff_status(
+    implementer: Implementer | None, old_state: TicketState, new_state: TicketState | None
+) -> TicketStatus | None:
+    """An accepted Plan (direct or auto-accepted) that hands off to needs_implementation
+    routes to Khushal as a durable user_takeover; every other implementer and NULL keep
+    the existing status path. None means this transition carries no status override."""
+    if old_state is TicketState.needs_plan and new_state is TicketState.needs_implementation:
+        if implementer is Implementer.khushal:
+            return TicketStatus.user_takeover
+    return None

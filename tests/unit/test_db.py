@@ -64,6 +64,65 @@ def test_fresh_schema_rejects_old_lifecycle_state_values(tmp_path):
     conn.close()
 
 
+def test_fresh_schema_has_nullable_checked_ticket_implementer(tmp_path):
+    db_path = tmp_path / "fresh-implementer.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    create_schema(conn)
+
+    implementer_column = next(
+        row for row in conn.execute("PRAGMA table_info(tickets)") if row["name"] == "implementer"
+    )
+    assert implementer_column["notnull"] == 0
+    assert implementer_column["dflt_value"] is None
+    conn.execute(
+        "INSERT INTO tickets (id, title, created_at, updated_at) VALUES ('t_assignment', 'A', 1, 1)"
+    )
+    assert conn.execute(
+        "SELECT implementer FROM tickets WHERE id = 't_assignment'"
+    ).fetchone()[0] is None
+    for value in ("khushal", "panels_worker", "hermes_codex", "hermes_claude"):
+        conn.execute("UPDATE tickets SET implementer = ? WHERE id = 't_assignment'", (value,))
+    conn.execute("UPDATE tickets SET implementer = NULL WHERE id = 't_assignment'")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE tickets SET implementer = 'other' WHERE id = 't_assignment'")
+    conn.close()
+
+
+def test_create_schema_adds_ticket_implementer_after_lifecycle_migration_idempotently(tmp_path):
+    db_path = tmp_path / "old-lifecycle-implementer.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(_OLD_TICKETS_DDL)
+    _insert_ticket(
+        conn,
+        id="t_existing",
+        title="Existing",
+        state="needs_success",
+        ceiling="needs_plan",
+        ticket_status="empty",
+        fields=_fields_json(),
+        created_at=1,
+        updated_at=1,
+    )
+
+    create_schema(conn)
+    create_schema(conn)
+
+    assert tuple(
+        conn.execute(
+            "SELECT state, implementer FROM tickets WHERE id = 't_existing'"
+        ).fetchone()
+    ) == ("needs_success", None)
+    columns = [str(row["name"]) for row in conn.execute("PRAGMA table_info(tickets)")]
+    assert columns.count("implementer") == 1
+    conn.execute("UPDATE tickets SET implementer = 'hermes_codex' WHERE id = 't_existing'")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE tickets SET implementer = 'worker' WHERE id = 't_existing'")
+    conn.close()
+
+
 def test_create_schema_migrates_current_schema_old_lifecycle_rows(tmp_path):
     db_path = tmp_path / "old-lifecycle.db"
     conn = connect(str(db_path))

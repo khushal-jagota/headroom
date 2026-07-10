@@ -3,16 +3,135 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-10): Ticket types — design recommendation (research only)
+
+Owner asked to turn the hardwired single-lifecycle ticket into a first-class **ticket type**
+system: different types → different workers (skill/model/tools), different stages, different
+gates, as an extension not a rewrite. Deliverable is a thin recommendation; process must be deep.
+
+Research done (no code changed): four read-only maps (lifecycle coupling, worker/Hermes config,
+DB/CLI, gate/scope/resolution) + direct reads of the Hermes source + `machine.py`. Findings:
+- Two orthogonal axes already exist — `ticket_status` (control, type-agnostic; runs the runtime/
+  gateway/readiness/chat/events spine) vs `state` (workflow stage, the only type-specific axis).
+- The state machine is already generic: functions take state/field and only index module-level
+  tables (`STATE_ORDER`/`GATING_FIELD`/`ADVANCE_TARGET`/`FieldName`). Threading a per-type
+  workflow in place of those constants leaves every logic body — and the single-door invariant —
+  unchanged. `fields` is a JSON blob, so heterogeneous field-sets cost nothing to store.
+- Worker seam already exists: `EntityRoutingGateway` routes per entity (Chief has its own gateway
+  today); `SharedGateway` carries a per-child skill via `HERMES_TUI_SKILLS`. Hermes supports
+  per-session model override; toolsets are home-global (the one rough edge). `implementer` field
+  already exists but only drives plan→implementation takeover.
+
+Recommendation: a **type registry in code** (each type declares stages+gates+fields + skill/model/
+tools; core stays free of per-type conditionals — matches PRINCIPLES core/module contract). Ticket
+gets a `type` column; `state`/`ceiling` become registry-validated strings (relax DB CHECK); machine
+reads the type's tables; workers route by type; CLI/UI read stages from the type. Existing tickets
+migrate to `coding`. Precedent: type-discriminator + registry (Jira issue-type→workflow-scheme is
+the analog; deliberately NOT normalizing types into DB tables). Full write-up + stress tests +
+open forks: `orchestration/ticket-types-redesign/RECOMMENDATION.md`.
+
+Status: recommendation delivered to owner; nothing approved, no code changed. Next: owner
+questions / exploration. If approved, first proof = mock one non-coding type end-to-end.
+
+## Current work cycle (2026-07-10): Panels sprint-planning workflow
+
+Current build stage:
+
+- Ticket `t_w5mb4y2x` is in Closeout after implementation approval. The review-first
+  `panels-sprint-planning` source skill, planner-home provisioning, focused regression, served
+  artifacts, and legacy retirement are complete.
+- No merge or deploy action applies: the work is in the shared main worktree, the live Panels Hermes
+  home already resolves the source skill by symlink, and no release target was requested.
+- Daily rollover and historical planning data remain untouched; no sprint-planning cron existed in
+  either scheduler inventory.
+- Unrelated editable-implementer and Chief `/new` changes in the dirty worktree remain preserved.
+
+What just passed:
+
+- The live read-only preflight resolved the current sprint, 18 sprint items, 17 tickets, and six
+  projects without changing canonical state; all five review fields are present.
+- The live planner home exposes the new source skill as an enabled symlink. The obsolete global skill
+  is archived outside the skill search tree at
+  `~/.hermes/archived-skills/sprint-planning-legacy-2026-07-10/`.
+- Independent Codex review found and drove fixes for child-ticket discovery, readback pinning, and
+  open blocking-link status semantics; the final review returned `NO VIOLATIONS`.
+- One shared-tree integration repair added the new nullable `implementer` argument to an old
+  value-edit test fixture after the concurrent implementer-assignment change exposed it.
+- Canonical `./verify` is clean: Ruff, Mypy, 430 unit tests, build/static checks, frontend checks/build,
+  and 59 browser tests all passed; final line `VERIFY: PASS`.
+- Closeout recheck confirms the new skill is still enabled, its symlink and source resolve, the old
+  skill path remains absent, both archived legacy files remain recoverable, and the active scheduler
+  still has no sprint-planning job.
+
+Current hypothesis:
+
+- Confirmed: the durable legacy judgment model fits the current Panels contract once Markdown
+  mechanics, unsupported Mode storage, automatic carry-forward, and daily-file behavior are removed.
+  Boundary preflight lists sprints, resolves an explicit id, and reads both loose sprint tickets and
+  each item's child tickets.
+
+Next step:
+
+- Propose the closeout package on `t_w5mb4y2x` and wait for human approval.
+
+Blockers:
+
+- None.
+
+## Current work cycle (2026-07-10): editable Ticket implementer assignment
+
+Current build stage:
+
+- Ticket `t_mkkvq9qz` is in Closeout. Its approved nullable typed field, migration, atomic direct
+  edit path, metadata selector, real worker-prompt delivery, Khushal Plan handoff, worker-skill
+  guidance, system docs, and regression coverage are complete.
+- Contract-scoped dispatches and evidence are under
+  `orchestration/tickets/t_mkkvq9qz-implementer-assignment/`. Codex returned `PLAN OK` before build
+  and `NO VIOLATIONS` on the final ticket-owned diff.
+- The first backend leaf stopped after partial RED/GREEN slices. A tracked recovery leaf completed the
+  transition and prompt work; parent spot-check found and repaired the missing real
+  `file_current_proposal_with_recap` handoff path with a focused RED then GREEN test.
+- Unrelated concurrent Ticket-types research, sprint-planning, Chief `/new`, shared-gateway, and
+  frontend-worktree changes remain preserved.
+- Closeout bookkeeping is recorded in D99. There is no ticket-owned branch to merge, no authorized
+  commit or deployment, and no deferred defect requiring a follow-up Ticket.
+
+What just passed:
+
+- Focused backend modules, Ruff, Mypy (`104 source files`), frontend check/build/static test, and the
+  focused Playwright assignment test are clean. Reconstructed prompt RED proved the tests fail against
+  the old gateway prompt; restored GREEN proves an assigned value reaches `prompt.submit`.
+- Browser coverage proves unassigned → Khushal → Hermes with Codex → clear → reload while Ticket
+  workflow state and control status remain unchanged.
+- Independent Codex implementation review returned `NO VIOLATIONS` after inspecting migration,
+  direct-only edits, all Plan-acceptance surfaces, settlement, worker context, UI, skill, and docs.
+- Canonical `./verify` passed: Ruff, Mypy, 430 unit tests, build/static checks, frontend check/build,
+  59 browser tests, and final `VERIFY: PASS`.
+
+Current hypothesis:
+
+- Confirmed: the smallest safe design is one checked nullable value. Assignment edits stay inert;
+  only an accepted Plan entering Implementation with `khushal` selects `user_takeover`. Guidance is
+  operational and remains in `panels-worker`, not a domain registry.
+
+Next step:
+
+- Propose the concise Closeout report on `t_mkkvq9qz` and wait for human approval.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-10): repair Chief `/new` and fresh-session startup
 
 Current build stage:
 
-- The exact live failure is reproduced and minimized. Two contract-scoped repairs are planned under
-  `orchestration/chief-new-repair/`: native `/new` session creation and database-adjacent default
-  Hermes-home resolution.
+- The Chief `/new` and cross-worktree Hermes-home repair is complete, verified, and running on the
+  live listener. The two contract-scoped repair records remain under
+  `orchestration/chief-new-repair/`.
 - Both delegated implementation plans passed independent read-only review after three concrete
-  t_new01 test gaps were folded in. t_new02 is implemented and independently reviewed clean;
-  t_new01 implementation is now delegated regression-first.
+  t_new01 test gaps were folded in. Both contract-scoped repairs are implemented and independently
+  reviewed clean.
 - The existing unrelated modified frontend-worktree pointer is preserved.
 
 What just passed:
@@ -37,6 +156,22 @@ What just passed:
   failed RED by selecting cwd-local `data/hermes-home`. Both passed GREEN after the minimal resolver
   and startup wiring changes; the final focused three-test run and `git diff --check` passed.
 - Independent read-only t_new02 implementation review returned `NO VIOLATIONS`.
+- t_new01's focused regressions failed RED on the old behavior (`session.resume` for an old key and
+  `slash.exec` without one), then passed GREEN after the exact-command interception. The full gateway
+  unit module passed. The implementation review's one naming violation was fixed by naming the
+  durable value `stored_session_key`; its follow-up and the required Codex read-only review returned
+  no contract violations.
+- The combined gateway, server-lifespan, chat-command, and chat-seed check passed all 134 tests.
+- Canonical `./verify` passed: Ruff, Mypy across 104 source files, 413 unit tests, compile/static and
+  frontend gates, and all 58 browser tests, ending with `VERIFY: PASS`.
+- The reviewed task files were applied byte-for-byte to the frontend worktree that owns the live
+  listener. Its Ruff, full Mypy, and eight targeted session/startup regressions passed before the
+  authorized restart.
+- The restarted server deliberately omitted `PLAN_HERMES_HOME` while using the canonical absolute
+  database path, proving the new database-adjacent default. Exact `/new` returned immediately with
+  `New session started.` and durable key `20260710_164831_4253f5`; the next ordinary message replied
+  `OK` on that same key. Panels persisted the key, and the canonical Hermes state records that
+  `planner-chat` session with two messages on the configured model.
 
 Current hypothesis:
 
@@ -46,8 +181,7 @@ Current hypothesis:
 
 Next step:
 
-- Finish and review t_new01, then run the combined focused checks and canonical `./verify`. Integrate
-  into the live frontend worktree only after the main tree is green.
+- None for this repair.
 
 Blockers:
 
@@ -193,12 +327,14 @@ machine — serialized runs on a quiet machine stayed green.
 
 Current build stage:
 
-- Ticket `t_p6de8rje` has approved Success, Approach, and Plan and is in implementation.
+- Ticket `t_p6de8rje` has approved Implementation and is in Closeout.
 - The accepted contract replaces `in_progress` / `needs_review` with ordinary
   `needs_implementation` / `needs_closeout` gates and replaces `result` with distinct
   `implementation` / `closeout` fields. Existing ticket-status and scope controls remain canonical.
-- The initial worktree contains one unrelated modified submodule pointer at
-  `.claude/worktrees/frontend-shared-components`; this ticket will not touch or absorb it.
+- The lifecycle commit `7317ec7` and live-data migration hardening `d8643c5` are ancestors of current
+  `main`; no branch merge remains. The running Panels server serves the migrated five-field Ticket.
+- Unrelated current worktree changes, including the modified frontend-worktree pointer, remain
+  untouched and outside this ticket.
 
 What just passed:
 
@@ -219,14 +355,18 @@ What just passed:
   405 unit and 57 browser tests already passed. After those formatting fixes, the corrected canonical
   `./verify` passed Ruff, Mypy, 405 unit tests, compile/static checks, frontend gates, 57 browser
   tests, and ended with `VERIFY: PASS`.
+- Closeout verification confirmed both implementation commits are on `main` and the live endpoint
+  returns `success`, `approach`, `plan`, `implementation`, and `closeout` for this Ticket. No separate
+  deployment or follow-up ticket is required.
 
 Current hypothesis:
 
-- The implementation matches the accepted contract and is ready for owner review.
+- Implementation, live migration, and applicable bookkeeping are complete; the Ticket is ready for
+  final owner approval.
 
 Next step:
 
-- Propose the evidence-backed Result on `t_p6de8rje`.
+- Propose the verified Closeout on `t_p6de8rje`.
 
 Blockers:
 

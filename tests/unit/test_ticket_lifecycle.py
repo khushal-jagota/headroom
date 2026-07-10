@@ -18,6 +18,7 @@ from planner.tickets.contracts import (
     TITLE_MAX_CHARS,
     AtCap,
     FieldName,
+    Implementer,
     TicketState,
 )
 from planner.tickets.logic import machine
@@ -39,6 +40,21 @@ def _create(conn: Connection, clock: TestClock, **kw: Any) -> Ticket:
         title_max_chars=TITLE_MAX_CHARS,
         **kw,
     )
+
+
+def test_ticket_implementer_contract_and_nullable_create_storage(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    assert [implementer.value for implementer in Implementer] == [
+        "khushal",
+        "panels_worker",
+        "hermes_codex",
+        "hermes_claude",
+    ]
+    for implementer in (*Implementer, None):
+        ticket = _create(tmp_db, fake_clock, implementer=implementer)
+        assert ticket.implementer is implementer
+        assert data.read_ticket(tmp_db, ticket.id).implementer is implementer
 
 
 def test_canonical_states_and_fields_are_the_five_plus_six_model() -> None:

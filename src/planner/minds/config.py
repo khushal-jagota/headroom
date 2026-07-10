@@ -15,7 +15,12 @@ from planner.minds.gateway import READY_TIMEOUT_DEFAULT, GatewayChild, SpawnFn, 
 
 DEFAULT_HERMES_PYTHON: Final = "~/.hermes/hermes-agent/venv/bin/python"
 DEFAULT_PLANNER_HOME: Final = "data/hermes-home"
-PLANNER_SKILL_NAMES: Final = ("panels", "panels-worker", "panels-chief-of-staff")
+PLANNER_SKILL_NAMES: Final = (
+    "panels",
+    "panels-worker",
+    "panels-chief-of-staff",
+    "panels-sprint-planning",
+)
 
 ENV_HERMES_PYTHON: Final = "PLAN_HERMES_PYTHON"
 ENV_PLANNER_HOME: Final = "PLAN_HERMES_HOME"

@@ -21,6 +21,7 @@ from planner.tickets.contracts import (
     TITLE_MAX_CHARS,
     AtCap,
     FieldName,
+    Implementer,
     TicketEdit,
     TicketState,
     TicketStatus,
@@ -230,6 +231,127 @@ def test_mark_run_errored_if_still_running_step_preserves_lost_ownership(
     assert t.chat_session_key == "sess-error"
     status_events = _events(tmp_db, cfg, t.id, EventKind.ticket_status_changed)
     assert status_events[-1].payload == {"ticket_status": "user_takeover"}
+
+
+@pytest.mark.parametrize("implementer", [*Implementer, None])
+def test_direct_plan_accept_routes_only_khushal_to_user_takeover(
+    tmp_db: Connection,
+    cfg: Config,
+    fake_clock: TestClock,
+    implementer: Implementer | None,
+) -> None:
+    now = fake_clock.now_unix()
+    ticket = _create(tmp_db, cfg, fake_clock, implementer=implementer)
+    _scope(tmp_db, ticket, TicketState.needs_plan, AtCap.propose, fake_clock)
+    for field in (FieldName.success, FieldName.approach, FieldName.plan):
+        ticket = data.file_proposal(
+            tmp_db,
+            ticket.id,
+            field=field,
+            body=f"{field.value} body",
+            actor="agent",
+            now=now,
+        )
+    assert ticket.state is TicketState.needs_plan
+    assert ticket.ticket_status is TicketStatus.awaiting_approval
+
+    ticket = data.accept_proposal(
+        tmp_db,
+        ticket.id,
+        field=FieldName.plan,
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
+    )
+
+    assert ticket.state is TicketState.needs_implementation
+    expected = (
+        TicketStatus.user_takeover
+        if implementer is Implementer.khushal
+        else TicketStatus.empty
+    )
+    assert ticket.ticket_status is expected
+
+
+@pytest.mark.parametrize("implementer", [*Implementer, None])
+def test_auto_accepted_plan_routes_only_khushal_to_takeover_that_survives_settlement(
+    tmp_db: Connection,
+    cfg: Config,
+    fake_clock: TestClock,
+    implementer: Implementer | None,
+) -> None:
+    now = fake_clock.now_unix()
+    ticket = _create(tmp_db, cfg, fake_clock, implementer=implementer)
+    _scope(tmp_db, ticket, TicketState.needs_implementation, AtCap.propose, fake_clock)
+    for field in (FieldName.success, FieldName.approach):
+        ticket = data.file_proposal(
+            tmp_db,
+            ticket.id,
+            field=field,
+            body=f"{field.value} body",
+            actor="agent",
+            now=now,
+        )
+    started = data.start_run_if_runnable(tmp_db, ticket.id, guard=None, now=now)
+    assert started is not None
+
+    ticket = data.file_proposal(
+        tmp_db,
+        ticket.id,
+        field=FieldName.plan,
+        body="plan body",
+        actor="agent",
+        now=now,
+    )
+    assert ticket.state is TicketState.needs_implementation
+    before_settlement = (
+        TicketStatus.user_takeover
+        if implementer is Implementer.khushal
+        else TicketStatus.agent_running_step
+    )
+    assert ticket.ticket_status is before_settlement
+
+    settled = data.finish_run_if_still_running_step(tmp_db, ticket.id, now=now)
+    expected = (
+        TicketStatus.user_takeover
+        if implementer is Implementer.khushal
+        else TicketStatus.empty
+    )
+    assert settled.ticket_status is expected
+
+
+def test_current_worker_plan_proposal_routes_khushal_to_takeover_that_survives_settlement(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    ticket = _create(tmp_db, cfg, fake_clock, implementer=Implementer.khushal)
+    _scope(tmp_db, ticket, TicketState.needs_implementation, AtCap.propose, fake_clock)
+    for field in (FieldName.success, FieldName.approach):
+        ticket = data.file_proposal(
+            tmp_db,
+            ticket.id,
+            field=field,
+            body=f"{field.value} body",
+            actor="agent",
+            now=now,
+        )
+    started = data.start_run_if_runnable(tmp_db, ticket.id, guard=None, now=now)
+    assert started is not None
+
+    ticket = data.file_current_proposal_with_recap(
+        tmp_db,
+        ticket.id,
+        body="plan body",
+        recap="Plan ready for implementation.",
+        actor="agent",
+        now=now,
+    )
+
+    assert ticket.state is TicketState.needs_implementation
+    assert ticket.ticket_status is TicketStatus.user_takeover
+    settled = data.finish_run_if_still_running_step(tmp_db, ticket.id, now=now)
+    assert settled.ticket_status is TicketStatus.user_takeover
 
 
 def test_auto_accepted_proposal_does_not_park_status(

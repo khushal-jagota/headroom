@@ -87,6 +87,9 @@ def _snapshot(db_path: Path, ticket_id: str) -> dict[str, Any]:
                 ticket.deadline,
                 ticket.project_id,
                 ticket.sprint_id,
+                ticket.implementer.value if ticket.implementer is not None else None,
+                ticket.state.value,
+                ticket.ticket_status.value,
             ),
             "updated_at": ticket.updated_at,
             "events": tuple(
@@ -113,6 +116,88 @@ def _new_ticket_events(db_path: Path, ticket_id: str, prior_count: int) -> list[
         ][prior_count:]
     finally:
         conn.close()
+
+
+def test_patch_implementer_set_change_clear_noop_and_invalid_are_atomic(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _create_ticket(db_path)
+    original = _snapshot(db_path, ticket_id)
+
+    with TestClient(app) as client:
+        set_response = client.patch(
+            f"/api/tickets/{ticket_id}", json={"implementer": "khushal"}
+        )
+        assert set_response.status_code == 200, set_response.json()
+        assert set_response.json()["implementer"] == "khushal"
+        assert set_response.json()["state"] == "needs_success"
+        assert set_response.json()["ticket_status"] == "empty"
+
+        changed_response = client.patch(
+            f"/api/tickets/{ticket_id}", json={"implementer": "hermes_codex"}
+        )
+        assert changed_response.status_code == 200, changed_response.json()
+        assert changed_response.json()["implementer"] == "hermes_codex"
+        detail = client.get(f"/api/tickets/{ticket_id}")
+        assert detail.status_code == 200
+        assert detail.json()["implementer"] == "hermes_codex"
+        copy_text = client.get(f"/api/tickets/{ticket_id}/copy-text")
+        assert copy_text.status_code == 200
+        assert "implementer: hermes_codex\n" in copy_text.text
+
+        cleared_response = client.patch(
+            f"/api/tickets/{ticket_id}", json={"implementer": None}
+        )
+        assert cleared_response.status_code == 200, cleared_response.json()
+        assert cleared_response.json()["implementer"] is None
+        cleared = _snapshot(db_path, ticket_id)
+
+        noop_response = client.patch(
+            f"/api/tickets/{ticket_id}", json={"implementer": None}
+        )
+        assert noop_response.status_code == 200, noop_response.json()
+        assert _snapshot(db_path, ticket_id) == cleared
+
+        invalid_response = client.patch(
+            f"/api/tickets/{ticket_id}",
+            json={"title": "Must not land", "implementer": "other"},
+        )
+        assert invalid_response.status_code == 400
+        assert invalid_response.json()["error"] == {
+            "code": "validation",
+            "message": "invalid implementer",
+            "detail": {"implementer": "other"},
+        }
+        assert _snapshot(db_path, ticket_id) == cleared
+
+        forbidden_response = client.patch(
+            f"/api/tickets/{ticket_id}",
+            json={"priority": "P1", "implementer": "panels_worker"},
+            headers={"X-Plan-Actor": "agent"},
+        )
+        assert forbidden_response.status_code == 400
+        assert forbidden_response.json()["error"] == {
+            "code": "agent_forbidden",
+            "message": "direct-only field",
+            "detail": {"field": "implementer", "actor": "agent"},
+        }
+
+    final = _snapshot(db_path, ticket_id)
+    assert final == cleared
+    assert final["values"][-2:] == original["values"][-2:]
+    assert [event[1] for event in final["events"][len(original["events"]):]] == [
+        {"field": "implementer", "from": None, "to": "khushal"},
+        {"field": "implementer", "from": "khushal", "to": "hermes_codex"},
+        {"field": "implementer", "from": "hermes_codex", "to": None},
+    ]
+    assert final["context"] == (
+        (
+            "ticket_changed",
+            "This ticket changed outside your worker turn. Reread the ticket before continuing.",
+            3,
+        ),
+    )
 
 
 def test_compound_patch_rolls_back_when_late_sprint_validation_fails(

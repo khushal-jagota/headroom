@@ -994,3 +994,95 @@ def test_ticket_user_note_renders_as_own_intake_block(server, context_factory, o
         == "true"
     )
     assert empty_page.locator("[data-user-note] [data-markdown-edit]").count() == 0
+
+
+def test_ticket_implementer_assignment_edits_in_facts_without_changing_workflow(
+    server, context_factory, open_page, cli, api
+):
+    tid = cli(server, "ticket", "create", "--title", "Implementer assignment UI ticket")["id"]
+    ready = f'section[data-screen="ticket"][data-ticket-id="{tid}"]'
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{tid}",
+        ready,
+        settled=True,
+    )
+    implementer = ".ticket-facts [data-implementer]"
+
+    # The assignment is one inline selector in the existing facts row, not a new
+    # edit/save/cancel flow.
+    assert page.locator(implementer).count() == 1
+    initial = api.get(server, f"/api/tickets/{tid}")
+    initial_state = initial["state"]
+    initial_ticket_status = initial["ticket_status"]
+    assert initial["implementer"] is None
+
+    def wait_for_assignment(value: str, label: str) -> None:
+        page.wait_for_function(
+            """({ selector, value, label }) => {
+                const root = document.querySelector(selector);
+                const select = root?.querySelector('select');
+                const pill = root?.querySelector('.pill');
+                const visibleLabel = pill
+                    ? Array.from(pill.childNodes)
+                        .filter(node => node.nodeType === Node.TEXT_NODE)
+                        .map(node => node.textContent || '')
+                        .join('')
+                        .trim()
+                    : '';
+                return select?.value === value && visibleLabel === label;
+            }""",
+            arg={"selector": implementer, "value": value, "label": label},
+            timeout=WAIT_MS,
+        )
+
+    def assert_assignment_without_workflow_change(expected: str | None) -> None:
+        detail = api.get(server, f"/api/tickets/{tid}")
+        assert detail["implementer"] == expected
+        assert detail["state"] == initial_state
+        assert detail["ticket_status"] == initial_ticket_status
+        assert page.get_attribute(ready, "data-state") == initial_state
+        assert (
+            page.get_attribute("[data-ticket-status]", "data-ticket-status")
+            == initial_ticket_status
+        )
+        assert page.locator(f"{implementer} button").count() == 0
+        assert page.locator(
+            f"{implementer} [data-edit], {implementer} [data-save], "
+            f"{implementer} [data-cancel]"
+        ).count() == 0
+        for action in ("Edit", "Save", "Cancel"):
+            assert page.get_by_role("button", name=action, exact=True).count() == 0
+
+    wait_for_assignment("", "(unassigned)")
+    assert_assignment_without_workflow_change(None)
+
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith(f"/api/tickets/{tid}")
+    ):
+        page.select_option(f"{implementer} select", "khushal")
+    wait_for_assignment("khushal", "Khushal")
+    assert_assignment_without_workflow_change("khushal")
+
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith(f"/api/tickets/{tid}")
+    ):
+        page.select_option(f"{implementer} select", "hermes_codex")
+    wait_for_assignment("hermes_codex", "Hermes with Codex")
+    assert_assignment_without_workflow_change("hermes_codex")
+
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith(f"/api/tickets/{tid}")
+    ):
+        page.select_option(f"{implementer} select", "")
+    wait_for_assignment("", "(unassigned)")
+    assert_assignment_without_workflow_change(None)
+
+    page.reload()
+    page.wait_for_selector(f"{ready} {implementer}", timeout=WAIT_MS)
+    wait_for_assignment("", "(unassigned)")
+    assert_assignment_without_workflow_change(None)

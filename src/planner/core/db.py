@@ -11,7 +11,7 @@ from typing import Final
 
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 12
+SCHEMA_VERSION: Final = 13
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -76,6 +76,8 @@ CREATE TABLE IF NOT EXISTS tickets (
   ticket_status        TEXT NOT NULL DEFAULT 'empty'  -- durable ticket state-of-control
                        CHECK (ticket_status IN ('empty','agent_running_step',
                                                 'awaiting_approval','user_takeover','errored')),
+  implementer          TEXT CHECK (implementer IN ('khushal','panels_worker',
+                                                   'hermes_codex','hermes_claude')),
   chat_session_key     TEXT,                         -- the ticket-mind's durable Hermes session_key
   alias                TEXT,                         -- migration "Ticket ID:" (seed importer dedup)
   fields               TEXT NOT NULL DEFAULT '{"success":{"value":null,"proposal":null,"user_note":null},"approach":{"value":null,"proposal":null,"user_note":null},"plan":{"value":null,"proposal":null,"user_note":null},"implementation":{"value":null,"proposal":null,"user_note":null},"closeout":{"value":null,"proposal":null,"user_note":null}}',
@@ -196,6 +198,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     projects_data.seed_default_projects(conn)
     _migrate_project_columns(conn)
     _migrate_ticket_lifecycle(conn)
+    _migrate_ticket_implementer_column(conn)
     _migrate_project_summary_column(conn)
     _migrate_derived_sprint_item_status(conn)
     _migrate_tickets_status_column(conn)
@@ -234,6 +237,15 @@ def _migrate_ticket_user_note_column(conn: sqlite3.Connection) -> None:
     if "user_note" in _table_columns(conn, "tickets"):
         return
     conn.execute("ALTER TABLE tickets ADD COLUMN user_note TEXT NOT NULL DEFAULT ''")
+
+
+def _migrate_ticket_implementer_column(conn: sqlite3.Connection) -> None:
+    if "implementer" in _table_columns(conn, "tickets"):
+        return
+    conn.execute(
+        "ALTER TABLE tickets ADD COLUMN implementer TEXT "
+        "CHECK (implementer IN ('khushal','panels_worker','hermes_codex','hermes_claude'))"
+    )
 
 
 _EMPTY_FIELD_SLOT: Final = {"value": None, "proposal": None, "user_note": None}

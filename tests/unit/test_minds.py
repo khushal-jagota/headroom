@@ -12,7 +12,14 @@ from typing import Any
 import pytest
 
 import planner.minds as minds
-from planner.chat.contracts import ChatHistory, ChatSendResult, CommandCatalog, GatewayStatus
+from planner.chat.contracts import (
+    ChatHistory,
+    ChatSendResult,
+    ChatStreamChunk,
+    CommandCatalog,
+    CommandRunResult,
+    GatewayStatus,
+)
 from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
 from planner.core.errors import ErrorCode, PlannerError
 from planner.minds.config import (
@@ -787,6 +794,125 @@ def test_shared_gateway_delivers_context_for_sync_and_stream_model_backed_comman
         ("t_stream_command", "stream command prompt"),
     ]
     assert context.pending["t_pure_command"]
+
+
+def test_literal_new_sync_starts_fresh_session_and_next_message_uses_live_handle() -> None:
+    fake = FakeGateway(
+        {
+            "session.create": [create_reply(OTHER_SID, OTHER_KEY)],
+            "prompt.submit": [submit_reply(complete_ev(OTHER_SID, text="reply from new session"))],
+        }
+    )
+    gateway = shared(fake)
+    callback_keys: list[str] = []
+
+    def record_bound_key(session_key: str) -> None:
+        live_session = gateway.live_session(session_key)
+        assert live_session is not None
+        assert live_session.live_session_id == OTHER_SID
+        callback_keys.append(session_key)
+
+    try:
+        command_result = gateway.run_command(
+            STORED_KEY,
+            "t_demo",
+            "/new",
+            on_session_key=record_bound_key,
+        )
+        send_result = gateway.send(OTHER_KEY, "t_demo", "hello new session")
+    finally:
+        gateway.shutdown()
+
+    assert command_result == CommandRunResult(
+        reply_text="New session started.",
+        session_key=OTHER_KEY,
+        kind="system",
+    )
+    assert send_result == ChatSendResult(
+        reply_text="reply from new session",
+        session_key=OTHER_KEY,
+    )
+    assert callback_keys == [OTHER_KEY]
+    assert fake.sent_methods() == ["session.create", "prompt.submit"]
+    assert fake.sent[0]["params"] == {"source": CHAT_SOURCE, "cols": SESSION_COLS}
+    assert fake.sent[1]["params"] == {
+        "session_id": OTHER_SID,
+        "text": "hello new session",
+    }
+
+
+@pytest.mark.parametrize("prior_session_key", [STORED_KEY, None])
+def test_literal_new_stream_starts_one_bound_fresh_session(
+    prior_session_key: str | None,
+) -> None:
+    fake = FakeGateway({"session.create": [create_reply(OTHER_SID, OTHER_KEY)]})
+    gateway = shared(fake)
+    callback_keys: list[str] = []
+
+    def record_bound_key(session_key: str) -> None:
+        live_session = gateway.live_session(session_key)
+        assert live_session is not None
+        assert live_session.live_session_id == OTHER_SID
+        callback_keys.append(session_key)
+
+    try:
+        chunks = list(
+            gateway.stream(
+                prior_session_key,
+                "t_demo",
+                "/new",
+                "command",
+                on_session_key=record_bound_key,
+            )
+        )
+    finally:
+        gateway.shutdown()
+
+    assert chunks == [
+        ChatStreamChunk(type="session", session_key=OTHER_KEY),
+        ChatStreamChunk(type="token", text="New session started."),
+        ChatStreamChunk(
+            type="done",
+            reply_text="New session started.",
+            session_key=OTHER_KEY,
+            kind="system",
+        ),
+    ]
+    assert callback_keys == [OTHER_KEY]
+    assert fake.sent_methods() == ["session.create"]
+    assert fake.sent[0]["params"] == {"source": CHAT_SOURCE, "cols": SESSION_COLS}
+
+
+@pytest.mark.parametrize("entrypoint", ["sync", "stream"])
+def test_new_with_arguments_keeps_generic_command_path(entrypoint: str) -> None:
+    fake = FakeGateway(
+        {
+            "session.create": [create_reply()],
+            "slash.exec": [Reply(result={"type": "exec", "output": "generic output"})],
+        }
+    )
+    gateway = shared(fake)
+
+    try:
+        if entrypoint == "sync":
+            result = gateway.run_command(None, "t_demo", "/new title")
+            assert result == CommandRunResult(
+                reply_text="generic output",
+                session_key=STORED_KEY,
+                kind="system",
+            )
+        else:
+            chunks = list(gateway.stream(None, "t_demo", "/new title", "command"))
+            assert chunks[-1] == ChatStreamChunk(
+                type="done",
+                reply_text="generic output",
+                session_key=STORED_KEY,
+                kind="system",
+            )
+    finally:
+        gateway.shutdown()
+
+    assert fake.sent_methods() == ["session.create", "slash.exec"]
 
 
 def test_shared_gateway_retains_context_when_prompt_submit_is_busy_or_errors() -> None:
@@ -1968,12 +2094,54 @@ def test_provision_planner_home_skills_symlinks_repo_skills(tmp_path: Path) -> N
     panels = tmp_path / "skills" / "panels"
     worker = tmp_path / "skills" / "panels-worker"
     chief = tmp_path / "skills" / "panels-chief-of-staff"
+    sprint_planning = tmp_path / "skills" / "panels-sprint-planning"
     assert panels.is_symlink()
     assert worker.is_symlink()
     assert chief.is_symlink()
+    assert sprint_planning.is_symlink()
     assert (panels / "SKILL.md").exists()
     assert (worker / "SKILL.md").exists()
     assert (chief / "SKILL.md").exists()
+    assert (sprint_planning / "SKILL.md").exists()
+
+
+def test_provisioned_sprint_planning_skill_is_review_first_and_panels_native(
+    tmp_path: Path,
+) -> None:
+    provision_planner_home_skills(tmp_path)
+    skill = (
+        tmp_path / "skills" / "panels-sprint-planning" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    review_heading = "## Phase 1 — review the current sprint"
+    planning_heading = "## Phase 2 — decide and build the next sprint"
+    assert skill.index(review_heading) < skill.index(planning_heading)
+    for review_field in (
+        "outcomes",
+        "solo-reflection",
+        "joint-discussion",
+        "updates-to-thinking",
+        "carry-forward",
+    ):
+        assert f"panels sprint set <sprint-id> {review_field}" in skill
+    for command in (
+        "panels sprint list --json",
+        "panels ticket list --sprint-item <item-id> --json",
+        "panels sprint create",
+        "panels sprint item create",
+        "panels sprint item set",
+    ):
+        assert command in skill
+
+    readback_rule = (
+        "After every accepted write, read the affected sprint or sprint item back"
+    )
+    assert readback_rule in skill
+
+    assert "sprint-tracking.md" not in skill
+    assert "panels day add-ticket" not in skill
+    assert "non-dropped child tickets and open blocking links" in skill
+    assert "Do not run sprint planning autonomously from a cron" in skill
 
 
 def test_provisioned_skills_encode_implementation_and_closeout_lifecycle(

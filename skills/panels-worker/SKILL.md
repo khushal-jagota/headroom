@@ -44,6 +44,17 @@ Everything runs through the `panels` command — `panels --help` for full usage.
 
 Never invoke `panels chief`.
 
+### Implementer assignment
+
+A Ticket's implementer is a human-overridable execution route, not an account or capability system and not an automatic model router.
+
+- **Khushal** — use for work needing human judgment, access, external action, or deliberate manual ownership. Prepare a clear handoff instead of implementing it.
+- **Panels worker** — use for bounded work you can complete directly with your normal tools.
+- **Hermes with Codex** — use for repository implementation with explicit tests and review.
+- **Hermes with Claude** — use for broader or exploratory multi-file work that needs sustained codebase reasoning.
+
+Follow the assignment; never silently substitute another route. If the route is unsuitable, explain why and recommend a concise human override. For Codex or Claude routes, you still own the brief, integration, review, verification, and final result; delegation does not transfer Ticket accountability.
+
 ## How to complete this effectively
 
 ### Cross-cutting disciplines

@@ -52,6 +52,7 @@ from planner.tickets.contracts import (
     CreateTicketBody,
     CreateTicketFromExternalWorkBody,
     FieldName,
+    Implementer,
     LinkBody,
     NextCeiling,
     NoteBody,
@@ -71,7 +72,7 @@ router = APIRouter()
 
 # §8: workers drive priority/deadline/day/sprint via `ticket set`; title, project, and
 # user note are direct-only, so an attributed non-Chief PATCH is agent_forbidden.
-_TICKET_DIRECT_ONLY_FIELDS = ("title", "project", "project_id", "user_note")
+_TICKET_DIRECT_ONLY_FIELDS = ("title", "project", "project_id", "user_note", "implementer")
 
 
 # --- shared plumbing (imported by the other api modules) -----------------------
@@ -460,7 +461,8 @@ async def delete_ticket(
 async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
                        cfg: Cfg, clk: Clk) -> JsonDict:
     recognized = (
-        "title", "user_note", "priority", "deadline", "project", "project_id", "sprint_id",
+        "title", "user_note", "priority", "deadline", "implementer", "project", "project_id",
+        "sprint_id",
     )
     for key in body:
         if key not in recognized:
@@ -478,6 +480,13 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
         edit["priority"] = parse_enum(Priority, body_str(body, "priority"), "priority")
     if "deadline" in body:
         edit["deadline"] = body_opt_str(body, "deadline")
+    if "implementer" in body:
+        implementer_raw = body_opt_str(body, "implementer")
+        edit["implementer"] = (
+            parse_enum(Implementer, implementer_raw, "implementer")
+            if implementer_raw is not None
+            else None
+        )
     if "project" in body or "project_id" in body:
         project_raw = body_opt_str(body, "project")
         project_id_raw = body_opt_str(body, "project_id")

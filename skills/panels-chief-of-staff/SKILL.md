@@ -57,6 +57,8 @@ When a request is really a rollover or sprint-planning workflow, load or invoke 
 
 Use `panels chief` only when the user reports that real work was already completed outside Panels and the record now needs to match that reality.
 
+Before running a `panels chief` command, export `PLAN_ACTOR=chief` so the CLI sends the required Chief identity. Without it, the server rejects the request as an unattributed actor.
+
 1. Search the current tickets first. Reconcile an existing aligned ticket rather than creating a duplicate.
 2. Use `panels chief reconcile-ticket-from-external-work <ticket-id>` for an existing ticket, or `panels chief create-ticket-from-external-work` when no aligned ticket exists.
 3. Preserve the user's report and your reconciliation reasoning in the complete ticket note passed with `--user-note-file`. When reconciling, include any existing note that must remain.
