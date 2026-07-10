@@ -1624,6 +1624,18 @@ green ./verify. Lesson recorded: rerun the design lane on the owner's complaint 
 at wave boundaries; "FAITHFUL" wave verdicts are not a substitute for the owner's eye on the live
 app.
 
+## D95 — Rail restructure: one shared inset, mock rhythm at the old width
+
+Owner kept the fidelity pass but rejected the rail's mock-width transplant: the old clamp width
+was right, and the spacing still felt unstructured — too much air between the Chief of Staff row
+and the filters, filters not matching the mock. Root causes were structural, not tuned values: the
+chief button sat inside a wrapper still carrying the retired "Workspace" heading class and its
+16px margin (dead rule, deleted), and that wrapper added its own horizontal padding on top of the
+button's, so the chief text sat at a 36px inset while rows sat at 24px. Now every row-like rail
+element (chief button, filters, group headings, ticket rows) carries the same
+--board-workspace-rail-pad-x inset — one left edge — with the mockup's vertical rhythm (tight
+top, groups separated by the section gap) at the restored clamp(23rem, 38vw, 32rem) width.
+
 ## D76 — Follow Hermes through one ordered session ingress before extending its protocol
 
 D76 supersedes D75 as the starting correction after a full read-only boundary investigation. The

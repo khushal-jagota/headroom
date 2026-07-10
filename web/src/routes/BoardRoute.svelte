@@ -141,7 +141,7 @@
     <div class="board-workspace-wrap">
       <div class="board-workspace-shell">
         <section class="board-workspace-left" aria-label="Workspace ticket tree">
-          <div class="board-workspace-heading board-workspace-heading-row">
+          <div class="board-workspace-heading-row">
             <Button
               variant="quiet"
               class="board-workspace-chief-button"
