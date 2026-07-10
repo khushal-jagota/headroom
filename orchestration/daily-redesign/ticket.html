@@ -1,0 +1,261 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Ticket — the document</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#1b1917; --raised:#24211b; --overlay:#26221c; --sunk:#141210;
+  --fg1:#f4f1ea; --fg2:#dcd8cf; --fg3:#b4b0a6; --fg4:#8a867c; --fg5:#66625a;
+  --line:rgba(230,210,175,.11);
+  --amber:#e7a742; --amber-soft:#33291a; --amber-ink:#1c1406;
+  --green:#7fa564; --red:#d85d5d;
+  --f:"Inter",-apple-system,system-ui,sans-serif;
+  --serif:"Newsreader",Georgia,serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --dur:150ms;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg2);font:400 15px/1.6 var(--f);-webkit-font-smoothing:antialiased;overflow:hidden}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes bounce{0%,70%,100%{opacity:.35;transform:none}35%{opacity:1;transform:translateY(-3px)}}
+.spin{width:10px;height:10px;border-radius:999px;border:2px solid var(--amber-soft);border-top-color:var(--amber);border-right-color:var(--amber);animation:spin .9s linear infinite;flex:none}
+
+.frame{display:flex;flex-direction:column;height:100dvh}
+.shell{display:flex;align-items:center;gap:20px;height:50px;padding:0 20px;border-bottom:1px solid var(--line);flex:none;font-size:13px}
+.shell a{color:var(--fg4);text-decoration:none;transition:color var(--dur)}
+.shell a:hover{color:var(--fg2)}
+.shell a.on{color:var(--fg1);font-weight:500}
+.shell .review-link{display:inline-flex;align-items:center;gap:7px}
+.count{font:600 11px/1 var(--f);font-variant-numeric:tabular-nums;color:var(--amber-ink);background:var(--amber);border-radius:999px;padding:3px 7px}
+.presence{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--fg5);font-size:12px;font-variant-numeric:tabular-nums}
+.presence .spin{width:8px;height:8px}
+
+.page{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 340px;min-height:0}
+@media(max-width:1020px){.page{grid-template-columns:1fr}.chat{display:none}}
+.doc{overflow-y:auto}
+.col{max-width:720px;margin:0 auto;padding:0 44px 140px}
+
+/* ---------- header: title, one line of facts, the leash ---------- */
+.head{padding:34px 0 0}
+.title{font:500 28px/1.26 var(--serif);letter-spacing:-0.008em;color:var(--fg1);outline:none;caret-color:var(--amber)}
+.facts{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:14px 0 0;font-size:12px}
+.pill{position:relative;color:var(--fg3);background:var(--overlay);border-radius:6px;padding:5px 10px;cursor:pointer;white-space:nowrap;transition:color var(--dur)}
+.pill:hover{color:var(--fg1)}
+.pill .k{color:var(--fg5);margin-right:5px}
+.pill select{position:absolute;inset:0;opacity:0;width:100%;cursor:pointer}
+.pill.status{color:var(--amber);background:transparent;padding-left:0;cursor:default;display:inline-flex;align-items:center;gap:7px}
+.pill.status .dot{width:7px;height:7px;border-radius:999px;background:var(--amber)}
+.facts .gap{flex:1}
+.facts .act{color:var(--fg5);background:none;border:0;font:400 12px var(--f);cursor:pointer;padding:5px 4px;transition:color var(--dur)}
+.facts .act:hover{color:var(--fg2)}
+.leash{display:flex;align-items:center;gap:8px;padding:10px 0 0;font-size:12.5px;color:var(--fg5)}
+.leash .sel{position:relative;color:var(--fg3);background:var(--overlay);border-radius:6px;padding:4px 9px;cursor:pointer;white-space:nowrap}
+.leash .sel select{position:absolute;inset:0;opacity:0;width:100%;cursor:pointer}
+
+/* ---------- blocks: sans labels, serif prose — separated by space, not lines ---------- */
+.label{font-size:11px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--fg5)}
+.block{padding:30px 0 6px}
+.block .label{margin-bottom:12px}
+.block .body{font:400 16.5px/1.68 var(--serif);color:var(--fg2);outline:none;caret-color:var(--amber)}
+
+/* ---------- the stage spine — the one place hairlines remain (it is a list) ---------- */
+.stages{margin-top:14px}
+details.stage{border-top:1px solid var(--line)}
+details.stage .mk.blank{visibility:hidden}
+details.stage>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:12px;padding:15px 0;transition:color var(--dur)}
+details.stage>summary::-webkit-details-marker{display:none}
+details.stage .mk{width:16px;text-align:center;font-size:13px;flex:none}
+details.stage .mk.done{color:var(--green)} details.stage .mk.now{color:var(--amber)} details.stage .mk.todo{color:var(--fg5)}
+details.stage .nm{font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--fg4);flex:1;transition:color var(--dur)}
+details.stage>summary:hover .nm{color:var(--fg1)}
+details.stage[open]>summary .nm{color:var(--fg2)}
+details.stage .chev{color:var(--fg5);font-size:12px;transition:transform var(--dur)}
+details.stage[open]>summary .chev{transform:rotate(90deg)}
+details.stage .sbody{padding:2px 0 24px}
+details.stage .sbody .ed{font:400 16px/1.66 var(--serif);color:var(--fg2);outline:none;caret-color:var(--amber);border-radius:4px}
+details.stage .sbody .ed.quiet{color:var(--fg5)}
+
+/* every stage carries its Notes, collapsed unless written */
+details.notes{margin-top:14px}
+details.notes>summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--fg5);transition:color var(--dur)}
+details.notes>summary::-webkit-details-marker{display:none}
+details.notes>summary:hover{color:var(--fg3)}
+details.notes>summary .chev2{font-size:11px;transition:transform var(--dur)}
+details.notes[open]>summary .chev2{transform:rotate(90deg)}
+details.notes .nbody{font:400 15px/1.6 var(--serif);color:var(--fg3);padding:10px 0 2px;outline:none;caret-color:var(--amber)}
+
+/* ---------- the ask — identical primitive to Review ---------- */
+.ask{background:linear-gradient(180deg,#262319,var(--raised));border-radius:12px;padding:26px 28px 24px;
+  box-shadow:inset 0 1px 0 rgba(244,241,234,.05), 0 18px 44px -22px rgba(0,0,0,.55)}
+.ask .what{display:flex;align-items:baseline;gap:10px;margin-bottom:16px}
+.ask .what .k{font-size:11px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--fg4)}
+.ask .what .by{font-size:12px;color:var(--fg5)}
+.ask .content{font:400 16.5px/1.68 var(--serif);color:var(--fg1);outline:none;caret-color:var(--amber)}
+.ask .content ol{margin:10px 0 0;padding-left:24px}
+.ask .content li{margin:8px 0}
+.ask .content li::marker{color:var(--fg5);font:400 14px var(--f);font-variant-numeric:tabular-nums}
+.ask .content code{font:500 13px/1 var(--mono);color:var(--fg2);background:var(--sunk);padding:2px 6px;border-radius:4px}
+.ask .act2{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:24px}
+.approve{font:600 14px/1 var(--f);background:var(--amber);color:var(--amber-ink);border:0;border-radius:8px;padding:12px 22px;cursor:pointer;
+  box-shadow:0 6px 18px -8px rgba(231,167,66,.45);transition:background var(--dur),transform var(--dur)}
+.approve:hover{background:#f2b757}
+.approve:active{transform:translateY(1px)}
+.scope{display:flex;align-items:center;gap:8px;color:var(--fg4);font-size:13px}
+.scope .sel{position:relative;color:var(--fg1);background:var(--sunk);border-radius:6px;padding:6px 10px;cursor:pointer;white-space:nowrap}
+.scope .sel select{position:absolute;inset:0;opacity:0;width:100%;cursor:pointer}
+
+/* ---------- chat rail: no dividers — the thread fades into a whisper header
+   and a recessed composer, as in the live app ---------- */
+.chat{border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0;padding:0 14px}
+/* whisper header: the availability dot + label, as in the live app */
+.chat-head{display:flex;align-items:center;gap:8px;padding:14px 4px 4px}
+.chat-head .avail{width:7px;height:7px;border-radius:999px;background:var(--green);flex:none}
+.chat-head h2{font:400 11px/1 var(--mono);letter-spacing:.03em;color:var(--fg4)}
+.chat .stream{flex:1;overflow-y:auto;padding:18px 4px 16px;display:flex;flex-direction:column;gap:20px;
+  -webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 20px,#000 calc(100% - 16px),transparent 100%);
+          mask-image:linear-gradient(to bottom,transparent 0,#000 20px,#000 calc(100% - 16px),transparent 100%)}
+.m .b{font:400 14.5px/1.6 var(--serif);color:var(--fg2)}
+.m.me{align-self:flex-end;max-width:86%}
+.m.me .b{background:var(--overlay);color:var(--fg1);padding:9px 12px;border-radius:10px;font-size:14px}
+/* thinking = the live app's three dots + activity label, in the employee's spot */
+.pending{display:inline-flex;align-items:center;gap:8px;color:var(--fg4);font-size:11px}
+.pending .dots{display:inline-flex;gap:5px}
+.pending .dots i{width:6px;height:6px;border-radius:999px;background:var(--fg4);animation:bounce 1.3s ease infinite}
+.pending .dots i:nth-child(2){animation-delay:.16s}
+.pending .dots i:nth-child(3){animation-delay:.32s}
+.chat-box{flex:none;margin:0 0 14px;background:var(--sunk);border:1px solid var(--line);border-radius:10px;padding:9px 10px 7px;transition:border-color var(--dur)}
+.chat-box:focus-within{border-color:rgba(231,167,66,.4)}
+.chat-box textarea{width:100%;background:none;border:0;resize:none;color:var(--fg1);font:400 13.5px/1.5 var(--f);outline:none;caret-color:var(--amber);min-height:38px;display:block}
+.chat-box textarea::placeholder{color:var(--fg5)}
+.chat-foot{display:flex;align-items:center;gap:2px;margin-top:4px}
+.chat-slash{background:none;border:0;color:var(--fg5);font:400 13px/1.2 var(--mono);cursor:pointer;padding:2px 8px;border-radius:4px;transition:color var(--dur)}
+.chat-slash:hover{color:var(--fg3);background:var(--overlay)}
+.chat-img{width:24px;height:24px;display:grid;place-items:center;background:none;border:0;color:var(--fg5);cursor:pointer;padding:4px;border-radius:4px;transition:color var(--dur)}
+.chat-img:hover{color:var(--fg3);background:var(--overlay)}
+.chat-img svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.2}
+.chat-send{margin-left:auto;width:26px;height:26px;border:0;border-radius:8px;background:var(--amber);color:var(--amber-ink);cursor:pointer;font-size:15px;line-height:1;display:grid;place-items:center;transition:background var(--dur)}
+.chat-send:hover{background:#f2b757}
+</style>
+
+<div class="frame">
+  <nav class="shell">
+    <a href="day.html">Day</a>
+    <a class="review-link" href="review.html">Review <span class="count">2</span></a>
+    <a class="on" href="workspace.html">Workspace</a>
+    <a href="sprint.html">Sprint</a>
+    <a href="backlog.html">Backlog</a>
+    <a href="ideas.html">Ideas</a>
+    <span class="presence"><span class="spin"></span>3 working</span>
+  </nav>
+
+  <div class="page">
+    <main class="doc">
+      <div class="col">
+        <header class="head">
+          <h1 class="title" contenteditable="true">Readiness doorbell for the ticket loop</h1>
+          <div class="facts">
+            <span class="pill status"><span class="dot"></span>awaiting approval</span>
+            <span class="pill">P1<select><option>P0</option><option selected>P1</option><option>P2</option><option>P3</option></select></span>
+            <span class="pill"><span class="k">due</span>Jul 14<select><option selected>Jul 14</option><option>Jul 18</option><option>none</option></select></span>
+            <span class="pill">Panels<select><option selected>Panels</option><option>Vylo</option><option>(no project)</option></select></span>
+            <span class="pill"><span class="k">sprint</span>current<select><option selected>current</option><option>(no sprint)</option></select></span>
+            <span class="gap"></span>
+            <button class="act">Take over</button>
+            <button class="act">Copy</button>
+          </div>
+          <div class="leash">approved until
+            <span class="sel">in&nbsp;progress<select><option>needs plan</option><option selected>in progress</option><option>needs review</option><option>done</option></select></span>
+            then <span class="sel">propose<select><option>stop</option><option selected>propose</option></select></span>
+          </div>
+        </header>
+
+        <section class="block">
+          <div class="label">Recap</div>
+          <div class="body" contenteditable="true">Success and approach are agreed: the readiness loop should wake on a doorbell instead of polling. The employee has drafted the plan and is holding for approval — the one open question is whether the runtime loop is in scope.</div>
+        </section>
+
+        <section class="block">
+          <div class="stages">
+            <details class="stage">
+              <summary><span class="mk blank">○</span><span class="nm">User note</span><span class="chev">›</span></summary>
+              <div class="sbody"><div class="ed" contenteditable="true">Keep this to the doorbell itself. The runtime loop has its own ticket — don't let the plan wander into it.</div></div>
+            </details>
+            <details class="stage">
+              <summary><span class="mk done">✓</span><span class="nm">Success</span><span class="chev">›</span></summary>
+              <div class="sbody">
+                <div class="ed" contenteditable="true">A runnable ticket is picked up within a second of becoming runnable, with zero polling queries at idle. Proven by the loop tests running against the doorbell.</div>
+                <details class="notes"><summary><span class="chev2">›</span> Notes</summary><div class="nbody" contenteditable="true"></div></details>
+              </div>
+            </details>
+            <details class="stage">
+              <summary><span class="mk done">✓</span><span class="nm">Approach</span><span class="chev">›</span></summary>
+              <div class="sbody">
+                <div class="ed" contenteditable="true">One awaitable doorbell owned by the runtime; writers ring it after commit. A slow heartbeat stays as the backstop. No new queues, no new tables.</div>
+                <details class="notes"><summary><span class="chev2">›</span> Notes</summary><div class="nbody" contenteditable="true"></div></details>
+              </div>
+            </details>
+            <details class="stage" open>
+              <summary><span class="mk now">●</span><span class="nm">Plan</span><span class="chev">›</span></summary>
+              <div class="sbody">
+                <div class="ask">
+                  <div class="what"><span class="k">Plan</span><span class="by">proposed by the employee</span></div>
+                  <div class="content" contenteditable="true">Replace the poll with a doorbell, in four steps:
+                    <ol>
+                      <li>Add <code>readiness_doorbell.py</code> — a single awaitable the loop parks on.</li>
+                      <li>Ring it from the three writer actions that can make a ticket runnable.</li>
+                      <li>Keep one slow heartbeat as a backstop so a missed ring can never strand a ticket.</li>
+                      <li>Port the loop tests to the doorbell and delete the poll-interval knobs.</li>
+                    </ol>
+                  </div>
+                  <div class="act2">
+                    <button class="approve">Approve</button>
+                    <span class="scope">until
+                      <span class="sel">in&nbsp;progress<select><option>No further</option><option selected>in progress</option><option>needs review</option><option>done</option></select></span>
+                      then <span class="sel">propose<select><option>stop</option><option selected>propose</option></select></span>
+                    </span>
+                  </div>
+                </div>
+                <details class="notes" open><summary><span class="chev2">›</span> Notes</summary><div class="nbody" contenteditable="true">Step 2 must ring after commit, not inside the transaction — otherwise the loop can wake and see nothing.</div></details>
+              </div>
+            </details>
+            <details class="stage">
+              <summary><span class="mk todo">○</span><span class="nm">Result</span><span class="chev">›</span></summary>
+              <div class="sbody">
+                <div class="ed quiet" contenteditable="true">Not written yet.</div>
+                <details class="notes" open><summary><span class="chev2">›</span> Notes</summary><div class="nbody" contenteditable="true">Check idle CPU before approving — the whole point is zero queries at rest.</div></details>
+              </div>
+            </details>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <aside class="chat">
+      <div class="chat-head">
+        <span class="avail"></span>
+        <h2>employee</h2>
+      </div>
+      <div class="stream">
+        <div class="m"><div class="b">Plan drafted and holding for your approval. The one judgment call: I kept the heartbeat at 30s rather than removing it entirely.</div></div>
+        <div class="m me"><div class="b">Why keep the heartbeat at all?</div></div>
+        <div class="m"><div class="b">A ring can be lost if the process restarts between commit and wake. The heartbeat bounds that window at 30s instead of forever — cheap insurance.</div></div>
+        <div class="m me"><div class="b">Fine — but make the interval a single constant.</div></div>
+        <div class="pending"><span class="dots"><i></i><i></i><i></i></span>Working</div>
+      </div>
+      <div class="chat-box">
+        <textarea rows="1" placeholder="Message the employee..."></textarea>
+        <div class="chat-foot">
+          <button class="chat-slash">/</button>
+          <button class="chat-img" title="Attach image"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v9h-11zM4 10l2.5-2.5 2 2 1.5-1.5 2 2M10.5 6h.01"/></svg></button>
+          <button class="chat-send" title="Pause">Ⅱ</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>

@@ -1,0 +1,179 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Workspace — the floor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#1b1917; --raised:#24211b; --overlay:#26221c; --sunk:#141210;
+  --fg1:#f4f1ea; --fg2:#dcd8cf; --fg3:#b4b0a6; --fg4:#8a867c; --fg5:#66625a;
+  --line:rgba(230,210,175,.11);
+  --amber:#e7a742; --amber-soft:#33291a; --amber-ink:#1c1406;
+  --green:#7fa564; --red:#d85d5d;
+  --f:"Inter",-apple-system,system-ui,sans-serif;
+  --serif:"Newsreader",Georgia,serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --dur:150ms;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg2);font:400 15px/1.6 var(--f);-webkit-font-smoothing:antialiased;overflow:hidden}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes bounce{0%,70%,100%{opacity:.35;transform:none}35%{opacity:1;transform:translateY(-3px)}}
+.spin{width:10px;height:10px;border-radius:999px;border:2px solid var(--amber-soft);border-top-color:var(--amber);border-right-color:var(--amber);animation:spin .9s linear infinite;flex:none}
+
+/* the existing stage-mark vocabulary — amber means you, nothing new */
+.mark{width:9px;height:9px;border-radius:999px;flex:none}
+.mark.needs{background:var(--amber)}
+.mark.wait{background:transparent;border:2px solid var(--amber)}
+.mark.err{background:var(--red)}
+.mark.done{background:var(--green)}
+.mark.idle{background:transparent;border:2px solid var(--fg5);opacity:.55}
+
+.frame{display:flex;flex-direction:column;height:100dvh}
+.shell{display:flex;align-items:center;gap:20px;height:50px;padding:0 20px;border-bottom:1px solid var(--line);flex:none;font-size:13px}
+.shell a{color:var(--fg4);text-decoration:none;transition:color var(--dur)}
+.shell a:hover{color:var(--fg2)}
+.shell a.on{color:var(--fg1);font-weight:500}
+.shell .review-link{display:inline-flex;align-items:center;gap:7px}
+.count{font:600 11px/1 var(--f);font-variant-numeric:tabular-nums;color:var(--amber-ink);background:var(--amber);border-radius:999px;padding:3px 7px}
+.presence{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--fg5);font-size:12px;font-variant-numeric:tabular-nums}
+.presence .spin{width:8px;height:8px}
+
+.floor{flex:1;display:grid;grid-template-columns:304px minmax(0,1fr);min-height:0}
+
+/* ---------- the roster (left) ---------- */
+.roster{border-right:1px solid var(--line);overflow-y:auto;padding:14px 12px 40px}
+.chief{display:flex;align-items:center;gap:10px;width:100%;padding:10px 12px;border:0;border-radius:8px;
+  background:transparent;color:var(--fg2);font:500 13.5px/1 var(--f);cursor:pointer;text-align:left;transition:background var(--dur),color var(--dur)}
+.chief:hover{background:var(--overlay);color:var(--fg1)}
+.chief.on{background:var(--overlay);color:var(--fg1)}
+.roster-filter{display:flex;align-items:center;gap:12px;padding:14px 12px 6px;font-size:12px;color:var(--fg5)}
+.roster-filter .sel{position:relative;cursor:pointer;color:var(--fg4);transition:color var(--dur)}
+.roster-filter .sel:hover{color:var(--fg2)}
+.roster-filter .sel select{position:absolute;inset:0;opacity:0;width:100%;cursor:pointer}
+.roster-filter .toggle{margin-left:auto;cursor:pointer;transition:color var(--dur)}
+.roster-filter .toggle:hover{color:var(--fg2)}
+.roster-filter .toggle.on{color:var(--fg3)}
+
+.project{margin-top:16px}
+.project>h2{display:flex;align-items:baseline;gap:8px;padding:6px 12px;font-size:11px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--fg5)}
+.project>h2 .n{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:500;letter-spacing:0}
+.trow{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;cursor:pointer;
+  color:var(--fg3);font-size:13.5px;transition:background var(--dur),color var(--dur)}
+.trow:hover{background:var(--overlay);color:var(--fg1)}
+.trow.on{background:var(--overlay);color:var(--fg1)}
+.trow .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trow.hot .t{color:var(--fg2)}
+.trow.hot:hover .t,.trow.hot.on .t{color:var(--fg1)}
+.trow.settled{color:var(--fg5)}
+.trow .mark,.trow .spin{margin-left:auto}
+
+/* ---------- the desk (right): chief of staff at rest — no dividers, the
+   thread fades into a whisper header and a recessed composer ---------- */
+.desk{display:flex;flex-direction:column;min-height:0;padding:0 28px}
+.desk-inner{display:flex;flex-direction:column;min-height:0;flex:1;max-width:780px;width:100%;margin:0 auto}
+/* whisper header: the availability dot + label, as in the live app */
+.desk-head{display:flex;align-items:center;gap:8px;padding:18px 4px 4px;flex:none}
+.desk-head .avail{width:7px;height:7px;border-radius:999px;background:var(--green);flex:none}
+.desk-head h1{font:400 11px/1 var(--mono);letter-spacing:.03em;color:var(--fg4)}
+.stream{flex:1;overflow-y:auto;padding:22px 4px 18px;display:flex;flex-direction:column;gap:24px;
+  -webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 20px,#000 calc(100% - 16px),transparent 100%);
+          mask-image:linear-gradient(to bottom,transparent 0,#000 20px,#000 calc(100% - 16px),transparent 100%)}
+.m .b{font:400 16px/1.66 var(--serif);color:var(--fg2)}
+.m.me{align-self:flex-end;max-width:80%}
+.m.me .b{background:var(--overlay);color:var(--fg1);padding:10px 14px;border-radius:10px;font-size:15px}
+.m .b strong{color:var(--fg1);font-weight:600}
+/* thinking = the live app's three dots + activity label */
+.pending{display:inline-flex;align-items:center;gap:8px;color:var(--fg4);font-size:11px}
+.pending .dots{display:inline-flex;gap:5px}
+.pending .dots i{width:6px;height:6px;border-radius:999px;background:var(--fg4);animation:bounce 1.3s ease infinite}
+.pending .dots i:nth-child(2){animation-delay:.16s}
+.pending .dots i:nth-child(3){animation-delay:.32s}
+.chat-box{flex:none;margin:0 0 18px;background:var(--sunk);border:1px solid var(--line);border-radius:10px;padding:10px 11px 8px;transition:border-color var(--dur)}
+.chat-box:focus-within{border-color:rgba(231,167,66,.4)}
+.chat-box textarea{width:100%;background:none;border:0;resize:none;color:var(--fg1);font:400 14px/1.5 var(--f);outline:none;caret-color:var(--amber);min-height:40px;display:block}
+.chat-box textarea::placeholder{color:var(--fg5)}
+.chat-foot{display:flex;align-items:center;gap:2px;margin-top:4px}
+.chat-slash{background:none;border:0;color:var(--fg5);font:400 13px/1.2 var(--mono);cursor:pointer;padding:2px 8px;border-radius:4px;transition:color var(--dur)}
+.chat-slash:hover{color:var(--fg3);background:var(--overlay)}
+.chat-img{width:24px;height:24px;display:grid;place-items:center;background:none;border:0;color:var(--fg5);cursor:pointer;padding:4px;border-radius:4px;transition:color var(--dur)}
+.chat-img:hover{color:var(--fg3);background:var(--overlay)}
+.chat-img svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.2}
+.chat-send{margin-left:auto;width:26px;height:26px;border:0;border-radius:8px;background:var(--amber);color:var(--amber-ink);cursor:pointer;font-size:15px;line-height:1;display:grid;place-items:center;transition:background var(--dur)}
+.chat-send:hover{background:#f2b757}
+</style>
+
+<div class="frame">
+  <nav class="shell">
+    <a href="day.html">Day</a>
+    <a class="review-link" href="review.html">Review <span class="count">2</span></a>
+    <a class="on" href="workspace.html">Workspace</a>
+    <a href="sprint.html">Sprint</a>
+    <a href="backlog.html">Backlog</a>
+    <a href="ideas.html">Ideas</a>
+    <span class="presence"><span class="spin"></span>3 working</span>
+  </nav>
+
+  <div class="floor">
+    <aside class="roster">
+      <button class="chief on">Chief of Staff</button>
+
+      <div class="roster-filter">
+        <span class="sel">All statuses<select><option selected>All</option><option>Empty</option><option>Running</option><option>Awaiting approval</option><option>User takeover</option><option>Errored</option></select></span>
+        <span class="toggle on">Hide done</span>
+      </div>
+
+      <section class="project">
+        <h2>Panels <span class="n">6</span></h2>
+        <div class="trow hot"><span class="t">Readiness doorbell for the ticket loop</span><span class="mark needs"></span></div>
+        <div class="trow"><span class="t">Deepen employee runtime ownership</span><span class="spin"></span></div>
+        <div class="trow"><span class="t">Chat auto-scroll and Latest button</span><span class="spin"></span></div>
+        <div class="trow hot"><span class="t">Return-for-revision on review surface</span><span class="mark wait"></span></div>
+        <div class="trow"><span class="t">Sprint kickoff freeze flow</span><span class="mark idle"></span></div>
+        <div class="trow settled"><span class="t">Markdown link previews</span><span class="mark done"></span></div>
+      </section>
+
+      <section class="project">
+        <h2>Vylo <span class="n">4</span></h2>
+        <div class="trow hot"><span class="t">Ship the waitlist capture flow</span><span class="mark needs"></span></div>
+        <div class="trow"><span class="t">Funnel events for the hero page</span><span class="spin"></span></div>
+        <div class="trow"><span class="t">Consent copy for double opt-in</span><span class="mark err"></span></div>
+        <div class="trow settled"><span class="t">Resend adapter cleanup</span><span class="mark done"></span></div>
+      </section>
+
+      <section class="project">
+        <h2>No project <span class="n">2</span></h2>
+        <div class="trow"><span class="t">Quarterly planning notes</span><span class="mark idle"></span></div>
+        <div class="trow"><span class="t">Read: attention pricing paper</span><span class="mark idle"></span></div>
+      </section>
+    </aside>
+
+    <main class="desk">
+      <div class="desk-inner">
+        <div class="desk-head">
+          <span class="avail"></span>
+          <h1>Chief of Staff</h1>
+        </div>
+        <div class="stream">
+          <div class="m me"><div class="b">Morning. Where do we stand?</div></div>
+          <div class="m"><div class="b"><strong>Three moved overnight.</strong> The doorbell ticket drafted its plan and is holding for you — that and the waitlist plan are your two approvals. Consent copy errored on a missing legal source; I've queued a note on the ticket. Everything else is running clean.</div></div>
+          <div class="m me"><div class="b">What's the risk on the doorbell plan?</div></div>
+          <div class="pending"><span class="dots"><i></i><i></i><i></i></span>Thinking</div>
+        </div>
+        <div class="chat-box">
+          <textarea rows="1" placeholder="Message Chief of Staff..."></textarea>
+          <div class="chat-foot">
+            <button class="chat-slash">/</button>
+            <button class="chat-img" title="Attach image"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v9h-11zM4 10l2.5-2.5 2 2 1.5-1.5 2 2M10.5 6h.01"/></svg></button>
+            <button class="chat-send" title="Pause">Ⅱ</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>

@@ -27,6 +27,28 @@ frontend-consolidation program is COMPLETE on this branch: five green waves, eac
 and full-verify-passed; merging to main is the owner's call. The architecture-deepening section below is
 the main tree's cycle and is not part of this branch's work.
 
+Second piece on this branch (2026-07-10): the daily-workflow **design exploration** in
+`orchestration/daily-redesign/` (D78, D79). Pass 1 (review/workspace/ticket polish + four-colour
+dots) was reviewed by the owner: dots rejected as traffic-lighty (spinners stay), pass judged a
+step improvement, not a redesign. Pass 2 (IA experiments: Desk merge, Brief docket, Review Room)
+was ruled out: Review stays one-thing-at-a-time on its own screen, Workspace is the only
+three-panel surface — functions and shapes of all screens are right; the UI is the redesign
+target (D80, D81). Pass 3 is live: `review.html` / `workspace.html` / `ticket.html` re-skinned
+under one identity — the system speaks in serif (Newsreader), controls stay Inter — plus the
+approved pass-1 pieces (ask-block depth, entrance rhythm, key hints, leash sentence, empty-state
+reward, ambient spinner presence). Owner verdict on pass 3 (D82, folded in): Review approved as
+is; serif stays, italics cut; block hairlines cut (space separates; lines only on spine rows and
+rail seams); chat panes use the live app's fade treatment and real composer (/, image, ↑ send);
+user note moved into the ticket's collapsible spine (collapsed, recap stays open above). A
+fidelity pass followed (D83): owner caught invented elements; mockups re-grounded against the
+real components (per-stage Notes everywhere, availability-dot chat headers, the real three-dot
+pending row + Ⅱ pause, real scope copy and empty-state), with the four genuine additions declared
+as proposals in notes.md (shell presence count, queue position, review shortcuts, leash
+sentence). Owner approved the daily set (skip/open-ticket moved to the top of Review, queue
+position rejected) and asked for the remaining pages: Day, Sprint (both tabs), Backlog, and
+Ideas are now mocked in the same voice, faithful to their routes, with all seven navs wired
+(D84). Mockups only, no product code; awaiting the owner's go to plan and implement.
+
 ## Current work cycle (2026-07-10): Approved architecture deepening 1–3
 
 Current scope:

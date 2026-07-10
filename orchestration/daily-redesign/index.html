@@ -1,0 +1,39 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Daily redesign — same screens, a new voice</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#1b1917; --overlay:#26221c;
+  --fg1:#f4f1ea; --fg2:#dcd8cf; --fg3:#b4b0a6; --fg4:#8a867c; --fg5:#66625a;
+  --line:rgba(230,210,175,.11); --amber:#e7a742;
+  --f:"Inter",-apple-system,system-ui,sans-serif;
+  --serif:"Newsreader",Georgia,serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg2);font:400 15px/1.6 var(--f);-webkit-font-smoothing:antialiased;min-height:100dvh;display:grid;place-items:center}
+.sheet{max-width:560px;padding:40px 28px}
+h1{font:500 24px/1.3 var(--serif);letter-spacing:-0.008em;color:var(--fg1)}
+.sub{font-size:13.5px;color:var(--fg4);margin:10px 0 30px;line-height:1.6}
+a.card{display:block;text-decoration:none;color:inherit;padding:16px 18px;border-radius:10px;margin:0 -18px;transition:background .15s}
+a.card:hover{background:var(--overlay)}
+a.card .t{font-size:15px;font-weight:500;color:var(--fg1)}
+a.card .d{font-size:13px;color:var(--fg4);margin-top:3px;line-height:1.55}
+.rule{margin-top:32px;padding-top:20px;border-top:1px solid var(--line);font-size:12.5px;color:var(--fg5);line-height:1.65}
+</style>
+<div class="sheet">
+  <h1>Same screens, a new voice.</h1>
+  <p class="sub">The functions and shapes of the screens are locked. What changes is the UI: everything the system <em>says</em> is set in serif; everything that is a <em>control</em> stays sans. Amber is the one accent, spinners mean working, depth belongs only to the ask. All navs are wired — click through the whole app from any page.</p>
+  <a class="card" href="review.html"><div class="t">Review</div><div class="d">One centered decision: skip/open top-right, recap, the ask, the send-back path. Toggle the empty state bottom-right.</div></a>
+  <a class="card" href="workspace.html"><div class="t">Workspace</div><div class="d">Roster left, chief of staff at rest on the right — the chief speaks in serif, the rows stay instruments.</div></a>
+  <a class="card" href="ticket.html"><div class="t">Ticket</div><div class="d">The document: serif title and prose, one facts line, the leash sentence, recap then the spine of dropdowns (user note, stages with their notes), the ask, the employee alongside.</div></a>
+  <a class="card" href="day.html"><div class="t">Day</div><div class="d">The morning read: date, serif focus line, brief take, amber watchout, green if-today-lands. Flat, no boxes.</div></a>
+  <a class="card" href="sprint.html"><div class="t">Sprint</div><div class="d">Name, meta line (dates · day · done count), the bet, then the items grouped by project — status word and done-fraction on each row, tickets inside. Documents live on their own page, linked top-right.</div></a>
+  <a class="card" href="sprint-docs.html"><div class="t">Sprint documents</div><div class="d">Kickoff, mid-sprint review, and sprint review — the sprint's written record, off the tracking page.</div></a>
+  <a class="card" href="backlog.html"><div class="t">Backlog</div><div class="d">The shelf: new-item form (title, project/priority segments, deadline, description), then priority groups of rows.</div></a>
+  <a class="card" href="ideas.html"><div class="t">Ideas</div><div class="d">The pile: always-open capture with ↩ hint, then the captured list — detail rows expand, serif bodies, relative dates.</div></a>
+  <p class="rule">Direction history, fidelity audit, and the three open proposals live in <code>notes.md</code>.</p>
+</div>

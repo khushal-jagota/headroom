@@ -1,0 +1,126 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Backlog — the shelf</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#1b1917; --raised:#24211b; --overlay:#26221c; --sunk:#141210;
+  --fg1:#f4f1ea; --fg2:#dcd8cf; --fg3:#b4b0a6; --fg4:#8a867c; --fg5:#66625a;
+  --line:rgba(230,210,175,.11);
+  --amber:#e7a742; --amber-soft:#33291a; --amber-ink:#1c1406;
+  --green:#7fa564; --red:#d85d5d;
+  --f:"Inter",-apple-system,system-ui,sans-serif;
+  --serif:"Newsreader",Georgia,serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --dur:150ms;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{min-height:100%}
+body{background:var(--bg);color:var(--fg2);font:400 15px/1.6 var(--f);-webkit-font-smoothing:antialiased}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+@keyframes spin{to{transform:rotate(360deg)}}
+.spin{width:8px;height:8px;border-radius:999px;border:2px solid var(--amber-soft);border-top-color:var(--amber);border-right-color:var(--amber);animation:spin .9s linear infinite;flex:none}
+
+.shell{display:flex;align-items:center;gap:20px;height:50px;padding:0 20px;border-bottom:1px solid var(--line);font-size:13px}
+.shell a{color:var(--fg4);text-decoration:none;transition:color var(--dur)}
+.shell a:hover{color:var(--fg2)}
+.shell a.on{color:var(--fg1);font-weight:500}
+.shell .review-link{display:inline-flex;align-items:center;gap:7px}
+.count{font:600 11px/1 var(--f);font-variant-numeric:tabular-nums;color:var(--amber-ink);background:var(--amber);border-radius:999px;padding:3px 7px}
+.presence{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--fg5);font-size:12px;font-variant-numeric:tabular-nums}
+
+.col{max-width:720px;margin:0 auto;padding:0 24px 120px}
+.head{display:flex;align-items:baseline;gap:14px;padding:34px 0 0}
+.head h1{font:500 28px/1.26 var(--serif);letter-spacing:-0.008em;color:var(--fg1)}
+.pill{font-size:12px;color:var(--fg3);background:var(--overlay);border-radius:6px;padding:5px 10px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.pill .k{color:var(--fg5);margin-right:5px}
+
+/* the make disclosure — inside, the ideas-capture idiom: no boxes, no field
+   labels; you write straight onto the page and one foot row carries the controls */
+details.make{margin-top:20px;border-bottom:1px solid var(--line)}
+details.make>summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:var(--fg4);padding:6px 0;transition:color var(--dur)}
+details.make>summary::-webkit-details-marker{display:none}
+details.make>summary:hover{color:var(--fg1)}
+details.make .plus{color:var(--fg5);font-size:15px}
+.form{padding:16px 0 28px;display:flex;flex-direction:column}
+.in{width:100%;background:transparent;border:0;padding:0;outline:none;caret-color:var(--amber);resize:none}
+.in::placeholder{color:var(--fg5);font-style:italic}
+.title-in{font:500 21px/1.4 var(--serif);color:var(--fg1)}
+.detail-in{margin-top:12px;font:400 15.5px/1.66 var(--serif);color:var(--fg3)}
+.due-in{width:170px;font:400 12.5px/1.4 var(--f);color:var(--fg3)}
+.foot{display:flex;align-items:center;gap:14px;margin-top:20px;flex-wrap:wrap}
+.foot .spacer{flex:1}
+.seg{display:flex;gap:4px;flex-wrap:wrap}
+.opt2{padding:5px 12px;font:400 11.5px var(--f);color:var(--fg4);background:var(--raised);border:0;border-radius:5px;cursor:pointer;transition:color var(--dur),background var(--dur)}
+.opt2:hover{color:var(--fg2)}
+.opt2.on{color:var(--fg1);background:var(--overlay)}
+.commit{font:600 13.5px/1 var(--f);background:var(--amber);color:var(--amber-ink);border:0;border-radius:8px;padding:11px 18px;cursor:pointer;transition:background var(--dur)}
+.commit:hover{background:#f2b757}
+
+/* priority groups */
+.grp{margin-top:34px}
+.gh{display:flex;align-items:baseline;gap:8px;font-size:11px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--fg5);margin-bottom:4px}
+.gh .n{font-variant-numeric:tabular-nums;letter-spacing:0}
+.row{display:flex;align-items:center;gap:12px;padding:11px 0;border-top:1px solid var(--line);text-decoration:none;color:inherit}
+.row:first-of-type{border-top:0}
+.row .t{flex:1;font-size:14.5px;color:var(--fg2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:color var(--dur)}
+.row:hover .t{color:var(--fg1)}
+.chips{display:flex;gap:5px}
+.chip{font-size:11px;color:var(--fg4);background:var(--overlay);border-radius:5px;padding:3px 8px;white-space:nowrap}
+.chip .k{color:var(--fg5);margin-right:4px}
+</style>
+
+<nav class="shell">
+  <a href="day.html">Day</a>
+  <a class="review-link" href="review.html">Review <span class="count">2</span></a>
+  <a href="workspace.html">Workspace</a>
+  <a href="sprint.html">Sprint</a>
+  <a class="on" href="#">Backlog</a>
+  <a href="ideas.html">Ideas</a>
+  <span class="presence"><span class="spin"></span>3 working</span>
+</nav>
+
+<main class="col">
+  <header class="head">
+    <h1>Backlog</h1>
+    <span class="pill"><span class="k">unscheduled</span>7</span>
+  </header>
+
+  <details class="make" open>
+    <summary><span class="plus">+</span> New backlog item</summary>
+    <div class="form">
+      <input class="in title-in" type="text" placeholder="What needs doing?">
+      <textarea class="in detail-in" rows="2" placeholder="Why it matters, any context — optional"></textarea>
+      <div class="foot">
+        <div class="seg"><button class="opt2 on">Panels</button><button class="opt2">Vylo</button><button class="opt2">Learning</button></div>
+        <div class="seg"><button class="opt2">P0</button><button class="opt2">P1</button><button class="opt2">P2</button><button class="opt2 on">P3</button></div>
+        <input class="in due-in" type="text" placeholder="due YYYY-MM-DD — optional">
+        <div class="spacer"></div>
+        <button class="commit">Add to backlog</button>
+      </div>
+    </div>
+  </details>
+
+  <div class="grp">
+    <div class="gh">P1 <span class="n">2</span></div>
+    <a class="row" href="#"><span class="t">Gateway session recovery on restart</span><span class="chips"><span class="chip">Panels</span><span class="chip"><span class="k">due</span>Jul 22</span></span></a>
+    <a class="row" href="#"><span class="t">Pricing page copy pass</span><span class="chips"><span class="chip">Vylo</span></span></a>
+  </div>
+
+  <div class="grp">
+    <div class="gh">P2 <span class="n">3</span></div>
+    <a class="row" href="#"><span class="t">Sprint item drag-reorder</span><span class="chips"><span class="chip">Panels</span></span></a>
+    <a class="row" href="#"><span class="t">Founding-member email sequence</span><span class="chips"><span class="chip">Vylo</span><span class="chip"><span class="k">due</span>Aug 1</span></span></a>
+    <a class="row" href="#"><span class="t">Verify-run artifact browser</span><span class="chips"><span class="chip">Panels</span></span></a>
+  </div>
+
+  <div class="grp">
+    <div class="gh">P3 <span class="n">2</span></div>
+    <a class="row" href="#"><span class="t">Dark-mode print styles</span><span class="chips"><span class="chip">Panels</span></span></a>
+    <a class="row" href="#"><span class="t">Conference talk outline</span><span class="chips"><span class="chip">Learning</span></span></a>
+  </div>
+</main>

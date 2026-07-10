@@ -1,0 +1,79 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Day — the read</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#1b1917; --raised:#24211b; --overlay:#26221c; --sunk:#141210;
+  --fg1:#f4f1ea; --fg2:#dcd8cf; --fg3:#b4b0a6; --fg4:#8a867c; --fg5:#66625a;
+  --line:rgba(230,210,175,.11);
+  --amber:#e7a742; --amber-soft:#33291a; --amber-ink:#1c1406;
+  --green:#7fa564; --red:#d85d5d;
+  --f:"Inter",-apple-system,system-ui,sans-serif;
+  --serif:"Newsreader",Georgia,serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+  --dur:150ms;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{min-height:100%}
+body{background:var(--bg);color:var(--fg2);font:400 15px/1.6 var(--f);-webkit-font-smoothing:antialiased}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+@keyframes spin{to{transform:rotate(360deg)}}
+.spin{width:8px;height:8px;border-radius:999px;border:2px solid var(--amber-soft);border-top-color:var(--amber);border-right-color:var(--amber);animation:spin .9s linear infinite;flex:none}
+
+.shell{display:flex;align-items:center;gap:20px;height:50px;padding:0 20px;border-bottom:1px solid var(--line);font-size:13px}
+.shell a{color:var(--fg4);text-decoration:none;transition:color var(--dur)}
+.shell a:hover{color:var(--fg2)}
+.shell a.on{color:var(--fg1);font-weight:500}
+.shell .review-link{display:inline-flex;align-items:center;gap:7px}
+.count{font:600 11px/1 var(--f);font-variant-numeric:tabular-nums;color:var(--amber-ink);background:var(--amber);border-radius:999px;padding:3px 7px}
+.presence{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--fg5);font-size:12px;font-variant-numeric:tabular-nums}
+
+/* ---------- the read: date → focus → three sections. no boxes, no seams. ---------- */
+.col{max-width:680px;margin:0 auto;padding:56px 24px 128px}
+.date{font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--fg4)}
+.date .dim{color:var(--fg5)}
+.focus{margin-top:18px;font:500 30px/1.32 var(--serif);letter-spacing:-0.008em;color:var(--fg1);outline:none;caret-color:var(--amber)}
+.label{font-size:11px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--fg5);margin-bottom:12px}
+.take{margin-top:34px}
+.take .body{font:400 17.5px/1.7 var(--serif);color:var(--fg2);outline:none;caret-color:var(--amber)}
+.block{margin-top:52px}
+.watch .label{color:var(--amber)}
+.watch .body{font:400 16.5px/1.66 var(--serif);color:var(--fg3);outline:none;caret-color:var(--amber)}
+.lands .label{color:var(--green)}
+.lands .body{font:400 16.5px/1.66 var(--serif);color:var(--fg2);outline:none;caret-color:var(--amber)}
+</style>
+
+<nav class="shell">
+  <a class="on" href="#">Day</a>
+  <a class="review-link" href="review.html">Review <span class="count">2</span></a>
+  <a href="workspace.html">Workspace</a>
+  <a href="sprint.html">Sprint</a>
+  <a href="backlog.html">Backlog</a>
+  <a href="ideas.html">Ideas</a>
+  <span class="presence"><span class="spin"></span>3 working</span>
+</nav>
+
+<main class="col">
+  <div class="date">Thursday <span class="dim">·</span> Jul 10</div>
+  <h1 class="focus" contenteditable="true">Clear the two plans and the doorbell ships today.</h1>
+
+  <section class="take">
+    <div class="label">Brief take</div>
+    <div class="body" contenteditable="true">Quiet night. Three tickets moved and nothing broke that stays broken. The doorbell plan is the one that matters — approving it unblocks the loop work, and the waitlist plan is straightforward behind it. The sprint is on pace: three of seven done with four working days left.</div>
+  </section>
+
+  <section class="block watch">
+    <div class="label">Watchout</div>
+    <div class="body" contenteditable="true">Consent copy errored on a missing legal source and will stay stuck until you point it somewhere — it is the only thing on the board that cannot move without you today.</div>
+  </section>
+
+  <section class="block lands">
+    <div class="label">If today lands</div>
+    <div class="body" contenteditable="true">The doorbell is building, the waitlist flow is in review, and the consent question has an owner — which clears the runway for the runtime-ownership work to finish the sprint.</div>
+  </section>
+</main>

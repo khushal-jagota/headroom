@@ -1400,3 +1400,136 @@ backlog submit button's leftover `class="commit"` hook was replaced by keying it
 off the existing `data-commit` attribute, and the chief-of-staff button's per-context override on
 the quiet Button base was accepted as a genuine per-screen difference, not an unconsolidated
 family.
+
+## D78 — Daily-workflow design pass authored inline as mockups; signal vocabulary proposed as four colours
+
+The owner asked for a redesign exploration of the daily surfaces (Review, Workspace, Ticket) in
+HTML, with direction-picking delegated. Mockups are design intent, not implementation, so I
+authored them inline (one hand keeps three surfaces coherent) in `orchestration/daily-redesign/`
+rather than routing to an implementer. The load-bearing proposal: amber stops being spent on
+running/waiting/awaiting-approval alike and means only "needs you"; a new steel tone means "agent
+working" and breathes instead of spinning; green stays settled, red stays failed. Aliveness is
+ambient (presence line in the shell, breathing marks, streaming caret, faint warm vignette), and
+depth is rationed to the single ask surface per page. All contested calls are surfaced as dials
+in the notes for the owner — nothing here is committed design until he picks.
+
+## D79 — Pass 2 of the daily redesign: two IA-level directions, colour vocabulary withdrawn
+
+Owner reviewed pass 1: the four-colour dot vocabulary is rejected (traffic-lighty; spinners are
+the right working signal), and the pass overall judged a good implementable step improvement but
+not a redesign. Pass 2 therefore redesigns the shape of the daily loop, not the skin: Direction A
+("The Desk") merges Review + Workspace + Ticket into one three-zone operating surface fed by a
+single attention stack (approvals, reviews, errors in one ordered feed); Direction B ("The
+Brief") makes the day a chief-of-staff-authored document — serif voice for the staff, sans for
+controls, asks summarised and approvable in place on a docket, agents' own status lines on the
+floor. Both keep warm-dark + amber-only + spinners. Pass-1 files kept as reference for the pieces
+that carry over (ask depth, leash sentence, keyboard hints, empty-state reward). Owner picks the
+direction.
+
+## D80 — Review remains its own screen; pass-2 directions recast around it
+
+Owner clarified after seeing pass 2 that he likes Review as its own screen to go through. The
+Desk (which merged Review/Workspace/Ticket into one surface) is withdrawn; the constraint is now
+recorded as locked in the redesign notes. Direction A is recast as "The Review Room"
+(review-room.html): Review keeps its screen and its go-through flow, but gains the queue visible
+on the left (including errored tickets as queue entries), the full ticket document beneath the
+decision, and the employee conversation alongside — deciding without losing the document or the
+person. The Brief's docket no longer approves in place: it reads (chief's summaries) and routes
+into Review. Workspace and Ticket keep their current shapes in both directions.
+
+## D81 — Redesign scope settled: UI only, functions and screen shapes locked; serif voice is the direction
+
+Owner ruled after the Review Room: the functions of each page are already right — Review is one
+thing at a time (review, act, next; nothing else on the surface), Workspace is the only
+three-panel screen — and the redesign target is the UI, not the IA. The Review Room and the
+Brief are deleted. Pass 3 applies the one identity-level move that survived all feedback rounds:
+the product speaks in serif (Newsreader — titles, recaps, proposals, notes, chat), the machine
+stays sans (Inter — nav, pills, buttons, labels, counts). Carried in from pass 1: depth rationed
+to the ask block, entrance rhythm + keyboard hints on Review, the leash sentence, the
+empty-state reward, ambient presence via spinners. Signal meanings unchanged from the current
+app. Dials listed in the notes (serif choice, serif reach, motion/glow/hints, leash phrasing).
+
+## D82 — Pass-3 iteration folded in: serif approved, italics cut, lines cut, real chat anatomy, user note into the spine
+
+Owner verdict on pass 3: the Review screen is approved as is; the Newsreader voice stays but the
+italic accents were overuse and are removed; the hairline between every block was
+over-segmentation — blocks now separate by space, hairlines remain only on the stage-spine rows
+and the rail seams; the chat panes adopt the live app's no-divider treatment (thread fades via
+mask gradient into a whisper header and a recessed composer) and the real composer anatomy that
+the mockups had dropped (bordered box, amber focus border, textarea, and the /, image-attach,
+and ↑ send buttons beneath); the ticket's user note moves into the collapsible spine as the
+kickoff notes — collapsed by default, no stage mark — with recap staying open above.
+
+## D83 — Mockups corrected against the real surfaces; invented elements removed or declared
+
+Owner caught the pass-3 mockups misrepresenting product surfaces (stage Notes missing, an
+invented "working" indicator on the chief of staff, an invented note inside the approval block,
+wrong scope-picker copy). I re-read ChatPanel/ChatComposer/TicketStageSection/ApprovalBlock/
+ScopePairPicker/ReviewRoute/BoardRoute and corrected: per-stage Notes disclosures restored
+everywhere; chat headers are the real availability dot + label; the real liveness is the
+in-thread three-dot pending row with activity label plus the Ⅱ pause send button, now shown as
+such; scope copy is the real "until … then [stop|propose]"; review empty state uses the real
+copy and rising-disc mark; skip returned to the bottom action row. Everything not in the product
+is now declared in notes.md as a proposal with its data/flow cost: shell presence count (data
+already in /api/queues), review queue position (client-side), review keyboard shortcuts (new
+frontend keybindings), leash-as-sentence (copy only).
+
+## D84 — Full-app mockup set completed in the approved voice
+
+Owner approved the daily set (with the skip/open-ticket placement fix) and asked to see the
+remaining pages before planning implementation. Day, Sprint, Backlog, and Ideas were mocked in
+the same serif-voice/sans-controls language, each grounded in its actual route (DayRoute,
+SprintRoute with both real tabs working, BacklogRoute's create form and priority groups,
+IdeasRoute's capture hero and pile). No function changed anywhere; the Day keeps its locked
+read shape and its amber/green label semantics. All seven mockup navs are wired so the app can
+be clicked through end to end.
+
+## D85 — Sprint reorganised: one scroll, no tabs, flat item list
+
+Owner rejected the first sprint organisation (two tabs, status-heading groups). Rev 2 folds
+Overview and Tracking into one scroll — name, meta line (dates · day N of M · done count), the
+bet, then "The work" as one flat list of item disclosures with the status word and a
+done-fraction on each row (chips moved inside the expansion), loose tickets collapsed at the
+end, and the three sprint documents (kickoff/mid/review) as collapsed disclosures below. All
+content from both tabs is present; the day-of-sprint and per-item done-fractions are derived
+client-side from data already on the page. If the tab routing must survive, the two sections
+split back apart cleanly.
+
+## D86 — Sprint rev 3: project grouping, documents on their own page
+
+Owner directed two changes to the sprint reorganisation: items group by project (matching the
+workspace roster's organisation) and the sprint documents leave the tracking page. The sprint
+page is now name → meta line (dates · day N of M · done count · "Sprint documents ›" link) →
+bet → project groups of item rows (status word + done-fraction; ticket rows priority · title ·
+state per the earlier swap; project chip dropped inside expansions as the group implies it) →
+loose tickets. sprint-docs.html holds Kickoff/Mid/Review with a back link; at implementation the
+old overview tab route becomes the documents page.
+
+## D87 — Collapsible project groups + loose-tickets-as-group; capture idiom unified on the live ideas treatment
+
+Two owner directions folded into the mockups. Sprint: project groups are collapsible
+disclosures, and Loose tickets is the same primitive — a project-style collapsible heading with
+ticket rows directly inside, replacing the bordered odd-one-out. Backlog/Ideas: the owner
+prefers the live ideas capture (transparent unboxed inputs, italic placeholders, no field
+labels, one foot row of controls) over labelled forms, so both add views now use that idiom —
+ideas restyled to match the live treatment (serif title/detail in the new voice), and the
+backlog form re-projected as title + description straight on the page with project segments,
+priority segments, a small optional due input, and the commit in one foot row. Same fields,
+no function change.
+
+## D88 — UI-redesign implementation program structure
+
+Owner approved the mockup set and directed implementation with code reviewers plus design
+reviewers checking against the reference. Program: orchestration/ui-redesign/ holds PLAN.md and
+six serial contract-scoped tickets (t_ui01 foundations/shell → t_ui02 ticket → t_ui03 review →
+t_ui04 workspace → t_ui05 sprint restructure → t_ui06 day/backlog/ideas/closeout), reference =
+orchestration/daily-redesign/ mockups + notes.md. Pipeline per wave: one persistent Opus
+implementer (serial-refactor-pipeline pattern), Codex diff review (xhigh on the approval
+surfaces t_ui02/t_ui03), a separate design review against the mockups (screenshot harness where
+feasible: temp server + API-seeded demo data + Playwright captures of app and mockup,
+orchestrator-run, serialized), orchestrator-only full ./verify, one commit per green wave.
+Codex spec review of the plan+tickets runs before any implementation. Delegated calls made in
+the tickets: Newsreader self-hosted via @fontsource (no CDN; no italics shipped), serif type
+tokens per a normalization table, sprint legacy routes replace-redirect (#/sprint/overview →
+#/sprint/documents), sprint items gain data-item-status for the e2e translation away from
+status-group containers, presence element gains data-shell-presence.
