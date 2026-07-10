@@ -37,6 +37,11 @@
   --motion-base: 150ms;
   --motion-slow: 240ms;
   --motion-ease: cubic-bezier(0.2, 0.7, 0.3, 1);
+  /* Looping animations (spinner, chat thinking dots) + the Review entrance stagger */
+  --motion-loop-spin: 900ms;
+  --motion-loop-bounce: 1.3s;
+  --motion-enter: 320ms;
+  --motion-enter-step: 40ms;
 
   /* Spacing scale */
   --space-1: 4px;
@@ -46,20 +51,23 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 48px;
+  /* Reading measures + the read's generous bottom tail (layout, not the space grid) */
+  --measure-read: 680px;
+  --measure-index: 760px;
+  --space-page-tail: 128px;
 
   /* Borders — widths plus the hairline seam colour */
   --border-hairline: 1px;
   --border-strong: 2px;
   --border-color: rgba(230, 210, 175, 0.11);
 
-  /* Type — two font stacks plus the closed five-size scale */
+  /* Type — two font stacks plus the closed sans size scale */
   --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
   --type-xs: 11px;
   --type-sm: 13px;
   --type-md: 15px;
   --type-lg: 20px;
-  --type-xl: 24px;
 
   /* Serif voice — the system speaks in Newsreader where content speaks; the
    * machine's sans controls stay --font-ui. Its own ladder (mockup px). */
@@ -70,4 +78,10 @@
   --type-serif-xl: 21px;
   --type-serif-display: 28px;
   --type-serif-hero: 30px;
+
+  /* Letter-spacing — the three the design uses: tight on serif titles, open on
+   * uppercase sans labels, a hair on mono. */
+  --tracking-title: -0.008em;
+  --tracking-label: 0.12em;
+  --tracking-mono: 0.03em;
 }

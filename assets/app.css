@@ -78,7 +78,7 @@ textarea {
   background: var(--accent-bright);
   color: var(--accent-ink);
   border-radius: var(--radius-pill);
-  padding: 3px 7px;
+  padding: var(--space-1) var(--space-2);
 }
 
 .nav-badge.hidden {
@@ -97,14 +97,14 @@ textarea {
 
 .shell-presence-spin {
   flex: none;
-  width: 8px;
-  height: 8px;
+  width: var(--space-2);
+  height: var(--space-2);
   border: var(--border-strong) solid var(--accent-surface);
   border-top-color: var(--accent-bright);
   border-right-color: var(--accent-bright);
   border-radius: var(--radius-pill);
   box-sizing: border-box;
-  animation: stage-mark-spin 900ms linear infinite;
+  animation: stage-mark-spin var(--motion-loop-spin) linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -629,15 +629,15 @@ button.list-row:hover .list-row-title {
 }
 
 [data-screen="day"] .col {
-  max-width: 680px;                 /* a tight reading measure — this is a read */
+  max-width: var(--measure-read);                 /* a tight reading measure — this is a read */
   margin: 0 auto;
-  padding: var(--space-7) var(--space-4) 128px;
+  padding: var(--space-7) var(--space-4) var(--space-page-tail);
 }
 
 [data-screen="day"] .date {
   font-size: var(--type-xs);
   font-weight: 600;
-  letter-spacing: 0.12em;
+  letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--text-faint);
 }
@@ -651,7 +651,7 @@ button.list-row:hover .list-row-title {
   font-family: var(--font-serif);
   font-size: var(--type-serif-hero);
   font-weight: 500;
-  letter-spacing: -0.008em;
+  letter-spacing: var(--tracking-title);
   line-height: 1.32;
   color: var(--text-strong);
 }
@@ -659,7 +659,7 @@ button.list-row:hover .list-row-title {
 [data-screen="day"] .label {
   font-size: var(--type-xs);
   font-weight: 600;
-  letter-spacing: 0.14em;
+  letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--text-faintest);
   margin-bottom: var(--space-3);
@@ -776,7 +776,7 @@ button.list-row:hover .list-row-title {
   font-size: var(--type-xs);
   color: var(--text-faint);
   font-family: var(--font-mono);
-  letter-spacing: 0.03em;
+  letter-spacing: var(--tracking-mono);
 }
 
 .chat-thread-shell {
@@ -872,7 +872,7 @@ button.list-row:hover .list-row-title {
 .chat-dots i {
   width: 6px; height: 6px; border-radius: var(--radius-pill);
   background: var(--text-faint);
-  animation: chat-bounce 1.3s var(--motion-ease) infinite;
+  animation: chat-bounce var(--motion-loop-bounce) var(--motion-ease) infinite;
 }
 .chat-pending-label {
   min-width: 0;
@@ -901,7 +901,7 @@ button.list-row:hover .list-row-title {
   font-family: var(--font-serif);
   font-size: var(--type-lg);
   font-weight: 500;
-  letter-spacing: -0.008em;
+  letter-spacing: var(--tracking-title);
   line-height: 1.3;
 }
 
@@ -950,7 +950,7 @@ button.list-row:hover .list-row-title {
   font-size: var(--type-xs);
   color: var(--text-faintest);
   font-family: var(--font-mono);
-  letter-spacing: 0.04em;
+  letter-spacing: var(--tracking-mono);
   padding: var(--space-2) var(--space-2) var(--space-1);
 }
 .chat-menu-item {
@@ -981,7 +981,7 @@ button.list-row:hover .list-row-title {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.chat-box:focus-within { border-color: rgba(231, 167, 66, 0.4); }
+.chat-box:focus-within { border-color: color-mix(in srgb, var(--accent-bright) 40%, transparent); }
 .chat-ta {
   width: 100%;
   background: none;
@@ -992,8 +992,8 @@ button.list-row:hover .list-row-title {
   font-size: var(--type-sm);
   line-height: 1.5;
   outline: none;
-  min-height: 42px;
-  max-height: 110px;
+  min-height: 40px;
+  max-height: 112px;
   display: block;
 }
 .chat-ta::placeholder { color: var(--text-faintest); }
@@ -1005,21 +1005,21 @@ button.list-row:hover .list-row-title {
   font-family: var(--font-mono);
   font-size: var(--type-sm);
   cursor: pointer;
-  padding: 2px var(--space-2);
+  padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
   line-height: 1.2;
 }
 .chat-slash:hover { color: var(--text-muted); background: var(--surface-overlay); }
 .chat-image {
-  width: 24px;
-  height: 24px;
+  width: var(--space-5);
+  height: var(--space-5);
   display: grid;
   place-items: center;
   background: none;
   border: none;
   color: var(--text-faintest);
   cursor: pointer;
-  padding: 4px;
+  padding: var(--space-1);
   border-radius: var(--radius-sm);
 }
 .chat-image:hover { color: var(--text-muted); background: var(--surface-overlay); }
@@ -1029,7 +1029,7 @@ button.list-row:hover .list-row-title {
 .chat-image-input { display: none; }
 .chat-send {
   margin-left: auto;
-  width: 26px; height: 26px;
+  width: var(--space-5); height: var(--space-5);
   border: none;
   border-radius: var(--radius-md);
   background: var(--surface-overlay);
@@ -1153,8 +1153,8 @@ select {
   color: var(--text-faint);
   background: var(--surface-overlay);
   border-radius: var(--radius-sm);
-  padding: 3px 6px;
-  margin-right: 2px;
+  padding: var(--space-1) var(--space-2);
+  margin-right: var(--space-1);
 }
 
 .review-empty-state {
@@ -1220,7 +1220,7 @@ select {
   font-family: var(--font-serif);
   font-size: var(--type-serif-display);
   font-weight: 500;
-  letter-spacing: -0.008em;
+  letter-spacing: var(--tracking-title);
   color: var(--text-strong);
   text-decoration: none;
   display: block;
@@ -1242,7 +1242,7 @@ select {
 .review-context-label {
   font-size: var(--type-xs);
   font-weight: 600;
-  letter-spacing: 0.13em;
+  letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--text-faintest);
   margin-bottom: var(--space-2);
@@ -1315,19 +1315,19 @@ select {
 }
 
 .review-arrive {
-  animation: review-arrive 320ms var(--motion-ease) both;
+  animation: review-arrive var(--motion-enter) var(--motion-ease) both;
 }
 
 .review-arrive--2 {
-  animation-duration: 360ms;
+  animation-duration: calc(var(--motion-enter) + 1 * var(--motion-enter-step));
 }
 
 .review-arrive--3 {
-  animation-duration: 400ms;
+  animation-duration: calc(var(--motion-enter) + 2 * var(--motion-enter-step));
 }
 
 .review-arrive--4 {
-  animation-duration: 440ms;
+  animation-duration: calc(var(--motion-enter) + 3 * var(--motion-enter-step));
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1527,7 +1527,7 @@ select {
   font-family: var(--font-mono);
   font-size: var(--type-xs);
   font-weight: 600;
-  letter-spacing: 0.07em;
+  letter-spacing: var(--tracking-label);
   line-height: 1.35;
   text-transform: uppercase;
   color: var(--text-faint);
@@ -1915,7 +1915,7 @@ select {
 .approval-what-label {
   font-size: var(--type-xs);
   font-weight: 600;
-  letter-spacing: 0.13em;
+  letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--text-faint);
 }
@@ -1984,7 +1984,7 @@ select {
   border-radius: var(--radius-lg);
   padding: var(--space-6) var(--space-6) var(--space-5);
   box-shadow:
-    inset 0 var(--border-hairline) 0 rgba(244, 241, 234, 0.05),
+    inset 0 var(--border-hairline) 0 color-mix(in srgb, var(--text-strong) 5%, transparent),
     0 18px 44px -22px rgba(0, 0, 0, 0.55);
 }
 
@@ -2016,7 +2016,7 @@ select {
   font-weight: 600;
   padding: var(--space-3) var(--space-5);
   border-radius: var(--radius-md);
-  box-shadow: 0 6px 18px -8px rgba(231, 167, 66, 0.45);
+  box-shadow: 0 6px 18px -8px color-mix(in srgb, var(--accent-bright) 45%, transparent);
   transition:
     background var(--motion-base) var(--motion-ease),
     transform var(--motion-base) var(--motion-ease);
@@ -2074,7 +2074,7 @@ select {
   border-color: var(--accent-surface);
   border-right-color: var(--accent-bright);
   border-top-color: var(--accent-bright);
-  animation: stage-mark-spin 900ms linear infinite;
+  animation: stage-mark-spin var(--motion-loop-spin) linear infinite;
 }
 
 .stage-mark--current-waiting {
@@ -2258,7 +2258,7 @@ select {
   font-family: var(--font-serif);
   font-size: var(--type-serif-display);
   font-weight: 500;
-  letter-spacing: -0.008em;
+  letter-spacing: var(--tracking-title);
   line-height: 1.26;
   color: var(--text-strong);
   margin-bottom: var(--space-3);
@@ -2416,9 +2416,9 @@ select {
 }
 
 [data-screen="sprint"] .col {
-  max-width: 760px;                 /* a single centered column — the sprint frame */
+  max-width: var(--measure-index);                 /* a single centered column — the sprint frame */
   margin: 0 auto;
-  padding: 0 var(--space-4) 128px;
+  padding: 0 var(--space-4) var(--space-page-tail);
 }
 
 /* Tracking header — the serif sprint name, then one quiet meta line (dates · day N
@@ -2432,7 +2432,7 @@ select {
   font-family: var(--font-serif);
   font-size: var(--type-serif-display);
   font-weight: 500;
-  letter-spacing: -0.008em;
+  letter-spacing: var(--tracking-title);
   line-height: 1.26;
   color: var(--text-strong);
 }
@@ -2499,7 +2499,7 @@ select {
   font-family: var(--font-serif);
   font-size: var(--type-serif-display);
   font-weight: 500;
-  letter-spacing: -0.008em;
+  letter-spacing: var(--tracking-title);
   line-height: 1.26;
   color: var(--text-strong);
 }
@@ -2525,7 +2525,6 @@ select {
 [data-screen="sprint"] .disclosure--phase .pnm {
   font-size: var(--type-md);
   font-weight: 500;
-  letter-spacing: 0.01em;
   color: var(--text-default);
   transition: color var(--motion-fast) var(--motion-ease);
 }
@@ -2565,7 +2564,7 @@ select {
 [data-screen="sprint"] .field .flabel {
   font-size: var(--type-xs);
   font-weight: 600;
-  letter-spacing: 0.11em;
+  letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--text-faintest);
   margin-bottom: var(--space-2);
@@ -2604,7 +2603,7 @@ select {
 [data-screen="sprint"] .disclosure--pgroup .plabel {
   font-size: var(--type-xs);
   font-weight: 600;
-  letter-spacing: 0.13em;
+  letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--text-faintest);
   transition: color var(--motion-fast) var(--motion-ease);
@@ -2625,7 +2624,7 @@ select {
 /* Loose tickets sit directly in the group body; item tickets are indented under
  * their item's chevron column to read as one aligned list. */
 [data-screen="sprint"] .disclosure--pgroup > .disclosure-body > .pbody > .trow {
-  padding-left: 19px;
+  padding-left: 20px;
 }
 
 /* item = the primary row, collapsed by default; expand reveals its tickets. Lines
@@ -2698,7 +2697,7 @@ select {
 }
 
 [data-screen="sprint"] .disclosure--item .ibody {
-  padding: 0 0 var(--space-4) 23px;
+  padding: 0 0 var(--space-4) var(--space-5);
 }
 
 [data-screen="sprint"] .disclosure--item .chips {
@@ -2780,7 +2779,7 @@ select {
 
 [data-screen="backlog"] .screen-header,
 [data-screen="backlog"] .col {
-  max-width: 760px;                 /* the index reading measure */
+  max-width: var(--measure-index);                 /* the index reading measure */
   margin: 0 auto;
 }
 
@@ -2789,7 +2788,7 @@ select {
 }
 
 [data-screen="backlog"] .col {
-  padding: 0 var(--space-4) 128px;  /* the read's generous tail (matches Day) */
+  padding: 0 var(--space-4) var(--space-page-tail);  /* the read's generous tail (matches Day) */
 }
 
 /* header title (serif — the screen speaking) + a static count pill */
@@ -2798,14 +2797,14 @@ select {
   font-family: var(--font-serif);
   font-size: var(--type-serif-display);
   font-weight: 500;
-  letter-spacing: -0.008em;
+  letter-spacing: var(--tracking-title);
   line-height: 1.26;
   color: var(--text-strong);
 }
 
 [data-screen="backlog"] .screen-header-meta,
 [data-screen="ideas"] .screen-header-meta {
-  padding-top: 2px;
+  padding-top: var(--space-1);
 }
 
 [data-screen="backlog"] .screen-header .pill,
@@ -2880,7 +2879,7 @@ select {
   padding: var(--space-1) 0;
   font-size: var(--type-xs);
   font-weight: 600;
-  letter-spacing: 0.11em;
+  letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--text-faintest);
 }
@@ -2927,7 +2926,7 @@ select {
 
 [data-screen="ideas"] .screen-header,
 [data-screen="ideas"] .col {
-  max-width: 680px;                 /* a tight read+capture measure (matches Day) */
+  max-width: var(--measure-read);                 /* a tight read+capture measure (matches Day) */
   margin: 0 auto;
 }
 
@@ -2936,7 +2935,7 @@ select {
 }
 
 [data-screen="ideas"] .col {
-  padding: 0 var(--space-4) 128px;
+  padding: 0 var(--space-4) var(--space-page-tail);
 }
 
 /* capture — the hero: always open, the Today focus-line treatment */
@@ -2996,7 +2995,7 @@ select {
   padding: var(--space-1) 0 var(--space-2);
   font-size: var(--type-xs);
   font-weight: 600;
-  letter-spacing: 0.11em;
+  letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--text-faintest);
 }
