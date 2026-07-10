@@ -18,7 +18,12 @@ project collapse. The stage dot becomes a `StageMark` component used everywhere 
 - Props:
   - `variant?: string` — styling hook only (`content`, `support`, `stage`, `phase`,
     `item`, `settled`, `idea`, `make`, `project`); appended as `disclosure--{variant}`.
-  - `defaultOpen?: boolean` (default false).
+  - `defaultOpen?: boolean` (default false). NOTE: today's `ContentDisclosure` defaults
+    OPEN — every migrated ContentDisclosure call site that does not pass `defaultOpen`
+    today must pass `defaultOpen={true}` (or keep whatever explicit value it passes), so
+    no section changes its initial open state. Audit each call site's effective value.
+  - `class?: string` — merged onto the `<details>` element after the base classes, for
+    contexts that keep an extra styling/test hook.
   - `title?: string` — shorthand summary: title span + trailing chevron (covers today's
     ContentDisclosure).
   - `summary?: Snippet` — full custom summary content for the rich cases (stage sections,
@@ -37,7 +42,10 @@ project collapse. The stage dot becomes a `StageMark` component used everywhere 
 
 - Renders the stage dot: `<span class="stage-mark stage-mark--{state}" role="img"
   aria-label=...>` where `state: FieldStageVisualState`. Optional rest props for the data
-  attributes BoardRoute puts on it (`data-stage-field`, `data-stage-state`, `data-marker`).
+  attributes BoardRoute puts on it (`data-stage-field`, `data-stage-state`, `data-marker`)
+  and a `class` merge — BoardRoute keeps its `board-workspace-stage-mark` class on the
+  mark (e2e counts exactly one `.board-workspace-stage-mark` per card:
+  `tests/e2e/test_board_stage_indicators.py`).
 - CSS: rename the `.fsec-mark*` family to `.stage-mark*` (same rules, including the
   reduced-motion block), since `fsec` stops existing.
 
@@ -71,8 +79,13 @@ project collapse. The stage dot becomes a `StageMark` component used everywhere 
    button, and conditional render with `Disclosure variant="project"` per section,
    `defaultOpen` (all projects start expanded today), summary = current heading content
    (label + count). Remove the now-unused collapse state and its chevron CSS. Native
-   details keeps the same collapse behavior; drop `aria-expanded`/`aria-pressed`
-   bookkeeping in favor of details semantics.
+   details keeps the same collapse behavior; drop `aria-expanded` bookkeeping in favor
+   of details semantics. e2e impact (`tests/e2e/test_chief_of_staff.py:133-148`): the
+   test clicks `.board-workspace-index-toggle` and asserts `aria-expanded == "false"`
+   persists across in-workspace navigation. Update it to click the section's summary and
+   assert the `<details>` has no `open` attribute, with the same persistence check —
+   equivalent condition, new mechanism. Collapse persistence works because in-workspace
+   navigation does not remount BoardRoute; verify that test passes after the change.
 
 ## CSS scope
 
@@ -86,10 +99,15 @@ project collapse. The stage dot becomes a `StageMark` component used everywhere 
 
 ## Tests / acceptance
 
-- `tests/e2e/*` currently passes 56/56; the only class selectors in tests are `.it`,
-  `.body`, `.plan-tree`, `.day-ticket-row`. If sprint markup changes rename `.it` or
-  `.body` containers, update those selectors in the test in the same change without
-  weakening any assertion (they assert visibility/text of sprint item rows and bodies).
+- `tests/e2e/*` currently passes 56/56. Known selector impacts of this ticket (grep for
+  more before renaming anything — this list may be incomplete):
+  - `details.make` (clicked/awaited in `test_backlog_ideas.py`) — update to the new
+    disclosure class (e.g. `details.disclosure--make`), same assertions.
+  - `details.idea` (presence/absence/open-state/click in `test_backlog_ideas.py`) —
+    update likewise.
+  - `.board-workspace-index-toggle` + `aria-expanded` — see migration 9.
+  - `.board-workspace-stage-mark` — preserved via StageMark class merge.
+  - `.it` / `.body` (sprint rows/bodies) — update only if renamed, same assertions.
 - All `data-*` attributes listed above render identically (verify by targeted e2e:
   `tests/e2e/test_flows_a.py`, `test_flows_b.py`, `test_board_stage_indicators.py`,
   `test_backlog_ideas.py`).

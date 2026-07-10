@@ -61,9 +61,11 @@ Select unification (CSS-level only, no new component):
 
 - e2e relies on `data-accept`, `data-approve`, `data-skip`, `data-commit`, `data-copy`,
   `data-ticket-takeover-toggle`, `data-scope-ceiling`, `data-scope-atcap`,
-  `data-status-filter` — all preserved. Note `data-status-filter={statusFilter}` is on the
-  select's ancestor label and the select itself carries `bind:value`; keep both wiring
-  and attributes.
+  `data-status-filter` — all preserved. `data-status-filter={statusFilter}` lives on the
+  `<select>` element itself (`BoardRoute.svelte:166`), alongside `bind:value` — keep it
+  there. e2e also selects `a.button` (FilePreview open-preview links in
+  `test_ticket_file_previews.py`) — the Button component's link mode must keep the
+  `button` class on the `<a>`, or the selectors get updated with equivalent assertions.
 - Targeted e2e: `test_flows_a.py`, `test_flows_b.py`, `test_backlog_ideas.py`,
   `test_ticket_file_previews.py`, `test_cli_verbs.py` if it touches the ticket header.
 - `cd web && npm run build && npm run check && npm test` clean.

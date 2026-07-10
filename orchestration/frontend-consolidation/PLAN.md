@@ -10,9 +10,16 @@ projections of the same thing merge, but layout, behavior, and information conte
 
 - **The e2e contract is `data-*` attributes.** Every `data-*` attribute in current markup is
   preserved exactly — name and value — unless the ticket explicitly says otherwise. The e2e
-  suite selects almost exclusively on them. Four class-based selectors exist in tests
-  (`.it`, `.body`, `.plan-tree`, `.day-ticket-row`); a ticket that changes those classes
-  updates the test selector in the same change, without weakening any assertion.
+  suite selects mostly on them, but NOT exclusively: tests also select on element+class
+  combinations (`details.make`, `details.idea`, `.flat`, `.entity-row-title`,
+  `.board-workspace-index-toggle`, `.board-workspace-index-heading-main`,
+  `.board-workspace-item-label`, `.board-workspace-stage-mark`, `.proposal-card`,
+  `.approval-draft`, `.fval`, `a.button`, `.it`, `.body`, `.day-ticket-row`, and possibly
+  more). Before renaming or removing ANY class or changing an element tag, grep
+  `tests/e2e/` for it; update every affected selector in the same change, keeping each
+  assertion equivalent (same condition being tested, never loosened or deleted). Each
+  ticket lists its known test-selector impacts; the grep is still mandatory because those
+  lists may be incomplete.
 - **No behavior changes.** Same links, same clicks, same open/closed defaults, same
   keyboard handling, same aria semantics (an equivalent element swap — button+state to
   native `<details>` — is allowed where a ticket says so).

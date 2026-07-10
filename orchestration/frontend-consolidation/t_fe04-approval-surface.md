@@ -48,6 +48,13 @@ One component, `web/src/components/ApprovalBlock.svelte` (keep the name and the
 
 - e2e: `test_flows_a.py`, `test_flows_b.py` (approval flows on ticket page and review
   screen), plus any test touching `data-approval-block` / `data-accept` / `data-approve`.
+- `test_ticket_file_previews.py:298-305` locates `[data-field="result"] .proposal-card`
+  and asserts its inline-edit behavior — when ProposalCard merges into ApprovalBlock,
+  update that selector to the new stable hook (`[data-approval-block][data-mode=
+  "proposal"]` — ensure `data-mode` is rendered for the new modes too), assertions
+  equivalent. `test_flows_b.py` also selects `.approval-draft` — keep that class on the
+  draft container or update the selector likewise. Grep `tests/e2e/` for every class
+  touched.
 - The unit-level behavior that matters and must be preserved exactly:
   - gating accept payload: `next_ceiling` + `at_cap` (+ `edited_body` iff changed);
     button disabled until scope chosen.
