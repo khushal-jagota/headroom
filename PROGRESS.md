@@ -3,6 +3,30 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Completed work cycle (2026-07-10): Ticket-owned planning-artifact guidance
+
+Current implementation:
+
+- The general `panels` skill now explains ticket-owned managed artifacts, the default storage tree,
+  served Markdown links, and the boundary between rich work products and canonical ticket text.
+- The `panels-worker` skill now gives workers judgment-based guidance for planning artifacts. Frontend
+  work normally gets a small intended-UI HTML artifact; HTML design exploration is explicitly the work
+  product rather than a reason to create a second artifact.
+- The Chief skill retains only role-appropriate awareness: preserve the frontend artifact expectation
+  while leaving gated fields, artifact content, and design judgment to the ticket worker.
+
+Verification status:
+
+- The three updated sections were read successfully through the provisioned
+  `data/hermes-home/skills/...` symlinks, which resolve to the repository role skills.
+- The focused skill-provisioning test passed and `git diff --check` passed.
+- Final `./verify` passed: Ruff, Mypy across 102 source files, 335 unit tests, compile/static and
+  frontend gates, 56 browser tests, and `VERIFY: PASS`.
+
+Immediate next step:
+
+- Propose the evidence-backed result on `t_w0dvhuxv` for owner review.
+
 ## Completed work cycle (2026-07-10): Approved architecture deepening 1–3
 
 Current scope:

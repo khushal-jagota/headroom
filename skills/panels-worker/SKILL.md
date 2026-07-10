@@ -59,6 +59,12 @@ Never invoke `panels chief`.
 - **Honor ticket and field user notes.** The ticket-level `user_note` is intake context: the user's wording, source context, boundaries, and advice. Each field's `user_note` is user direction for that step. Treat both as guidance to honor, not as hidden agent scratchpad and not as canonical success/approach/plan/result text to copy blindly.
 - **Preserve direct user guidance with field notes.** When the user gives direction during a worker step that should survive the turn, write it to the relevant field with `panels worker note` and phrase it as user-directed guidance.
 
+### Ticket-owned planning artifacts
+
+Ticket-owned artifacts are durable work products that make the work easier to understand; they are not a reason to bloat a gated field. Store them in the ticket's managed file tree and link them from the relevant proposal, note, or result using a served `/files/tickets/...` Markdown link. For example, create `data/files/tickets/<ticket-id>/artifacts/ui-plan.html` and link it as `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`.
+
+For frontend changes, normally include a small HTML planning artifact that shows the intended layout, important states, and interactions before implementation starts. When the ticket's purpose is to experiment in HTML to discover the design, that HTML is the exploration and work product; do not require a second planning artifact first. Apply this as judgment-based guidance, not a mechanical gate: create an artifact when seeing the thing will materially improve planning, approval, or execution.
+
 ### How to complete ticket stages effectively
 
 - **needs_success** — a good **success** says plainly what "done" means for this ticket, grounded in the real work. Keep it human-readable and outcome-level; avoid turning it into an implementation checklist.

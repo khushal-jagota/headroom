@@ -2,6 +2,18 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D54 — Ticket-owned artifact guidance belongs in role skills, not runtime prompts
+
+Keep the managed-file model in the general `panels` orientation, put practical artifact judgment in
+`panels-worker`, and give the Chief only enough awareness to preserve the expectation while shaping
+frontend work. Frontend HTML is a strong planning default, not a ticket gate; when HTML is the design
+exploration itself, it is the work product and needs no duplicate precursor. This keeps canonical gated
+fields concise, uses ordinary served Markdown links, and changes no worker stage or runtime prompt.
+
+The implementation is a small, contract-free role-skill edit, so the plan/implementation review stages
+were collapsed rather than delegated or sent through Codex. The active symlinked prompts were read
+back, the focused provisioning test passed, and the full repository verification remained green.
+
 ## D53 — Acceptance tests must make runtime ownership removable only by failing
 
 The first runtime implementation review found no production defect, but its independent standards

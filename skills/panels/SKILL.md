@@ -17,6 +17,12 @@ Sprint items and tickets can also stand alone, outside a sprint.
 
 A **day** is a day in the user's life — what they want to get done that day. Each day is planned.
 
+## Ticket-owned artifacts
+
+A ticket can own durable work products such as HTML, images, Markdown documents, and other files. These live in Panels-managed ticket storage — by default under `data/files/tickets/<ticket-id>/...` — and appear in ticket Markdown through ordinary links such as `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Use the served `/files/tickets/...` link rather than exposing a local filesystem path; Panels owns how the file is previewed or opened.
+
+Artifacts complement the ticket record. Success, approach, plan, result, recaps, and notes remain concise canonical Markdown, with links to richer work when it helps.
+
 ## Rollover
 
 When a day finishes, it rolls up into the sprint, and a new day is planned.

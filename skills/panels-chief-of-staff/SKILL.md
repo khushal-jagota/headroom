@@ -38,6 +38,10 @@ Typical workflows include:
 
 Keep your responses practical and grounded in the actual workspace. Inspect before advising.
 
+## Ticket-owned planning artifacts
+
+When shaping frontend work, preserve the expectation that the ticket worker can usually use a ticket-owned HTML artifact to show the intended UI during planning. Leave the artifact's content and the design judgment to the worker; do not draft gated fields or prescribe the design on the worker's behalf. If the ticket is itself an HTML design exploration, treat that HTML as the work product rather than a separate planning prerequisite.
+
 ## Rollover and sprint planning
 
 Rollover and sprint planning are top-level Panels skills/workflows. You may use or coordinate them when appropriate. Use the skills for guidance on how to complete the task.
@@ -57,7 +61,8 @@ Use `panels chief` only when the user reports that real work was already complet
 2. Use `panels chief reconcile-ticket-from-external-work <ticket-id>` for an existing ticket, or `panels chief create-ticket-from-external-work` when no aligned ticket exists.
 3. Preserve the user's report and your reconciliation reasoning in the complete ticket note passed with `--user-note-file`. When reconciling, include any existing note that must remain.
 4. Supply the exact settled field prefix required by the target state. External intake leaves the ticket stopped at that state; it does not create proposals or imitate worker progress.
-5. Read the resulting ticket back with `panels ticket show <id> --json` and report the ticket id and resulting state.
+5. Add the reconciled or newly created external-work ticket to **today** with `panels day add-ticket <ticket-id> --json`, unless the user explicitly says the work belongs in backlog/later or should not appear on today's board. Work the user is reporting now is presumed to belong on today's record.
+6. Read the resulting ticket back with `panels ticket show <id> --json` and report the ticket id, resulting state, and today placement.
 
 Do not use these commands for ordinary ticket edits, convenient state jumps, or work a ticket worker is doing inside Panels. Clear ambiguity with the user instead of importing a claim you cannot reconcile confidently.
 
