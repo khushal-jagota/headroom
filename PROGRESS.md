@@ -75,7 +75,16 @@ weight, explicit serif on fval); implementer self-caught dropped-tickets-in-frac
 duplicate-catching assertions via its own plan review. Open caveat flagged for docs: sprint
 day-of-sprint label derives from the browser clock, not the server 05:00 planning boundary.
 The screenshot seed populates today's board AND a current sprint; SURFACES includes
-#/sprint/documents. Wave 6 (t_ui06 final: day/backlog/ideas + closeout sweep + docs) dispatched. Design pass additions: embeds mockup previews.html rev 2 (D90/D91 — one
+#/sprint/documents. Wave 6 (t_ui06) LANDED at d47e114 — Codex deletion audit clean (one docs/code mismatch →
+.quiet-line made serif); design review: Day fully faithful, 3 CSS fixes on backlog/ideas
+(serif titles, header seams removed, serif idea bodies). A closing owner-requested
+token-discipline pass LANDED at 3dab068 (tracking→3 tokens, motion loops/entrance tokenized,
+alpha colours via color-mix, off-grid spacing snapped to 4pt, --measure-read/--measure-index/
+--space-page-tail named, --type-xl deleted; shadow/mask/icon geometry left literal by design).
+THE UI-REDESIGN PROGRAM IS COMPLETE: 8 commits (097d4ec..3dab068), 7 full-verify PASSes, every
+wave Codex- and design-reviewed. Flagged for later: pre-existing T16/T17 dead CSS (separate
+cleanup), sprint day-of-sprint browser-clock caveat (documented), 3 pre-existing TicketRoute
+svelte-check warnings. Merging to main is the owner's call. Queued: embeds implementation, perf. Design pass additions: embeds mockup previews.html rev 2 (D90/D91 — one
 container + bar for every kind incl. images; downloads = bar only). FOLLOW-UPS QUEUED by the
 owner, not yet scoped: (1) embeds implementation (after mockup approval; overlaps preview CSS —
 slot between UI waves); (2) a PERF pass ("perf, that's a follow up now as well" — scope TBD with
