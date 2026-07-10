@@ -1368,3 +1368,21 @@ A Panels-only session lock was rejected as the final fix because it cannot disti
 background turns. A general unbounded FIFO was also rejected as unnecessary; the current product needs
 only non-merging accepted-turn semantics and an explicit queue-capacity policy. Image and command
 inputs must be made part of the owned turn before their old session-global paths are removed.
+
+## D76 — Frontend consolidation: five serial tickets on the frontend-shared-components worktree branch
+
+Owner asked for the component-footprint reduction found in the frontend audit to be planned and
+orchestrated. The program is five contract-scoped tickets under `orchestration/frontend-consolidation/`
+(disclosure, rows/headers, buttons/pills/selects, approval surface, scaffold/forms/utils), run strictly
+serially because every ticket shares `assets/app.css` and the routes. Delegated calls made without
+asking, per conduct rules: SegmentedControl and EnumPill both stay (same job, deliberately different
+interaction contexts — merging would be a redesign, not a consolidation); the review screen's revision
+box stays separate from the chat composer for the same reason. The per-ticket pipeline is collapsed
+from six steps to four: the orchestrator writes the ticket contracts directly and Codex reviews the
+whole spec set once before execution (replacing per-ticket planning sub-agents and per-ticket plan
+reviews), because these are mechanical refactors against explicit contracts; implementation diffs
+still get individual Codex reviews, and full `./verify` runs serially after each integration. The
+worktree gets its own fresh `.venv` because the main venv's editable install points at the main
+tree's `src/`, which carries uncommitted backend changes that must not leak into this branch's
+verification. Each verified-green ticket is committed on the worktree branch as it lands (D-series
+green-wave practice); merging to main stays with the owner.
