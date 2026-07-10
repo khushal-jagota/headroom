@@ -332,27 +332,54 @@ textarea {
 
 /* --- Buttons (shared style class, not a component) ----------------------- */
 
+/* THE BUTTON — one base + three variants. Quiet = the neutral bordered chip (default);
+ * primary = the accent surface; pill = the borderless inline pill (copy/takeover). */
 .button {
+  cursor: pointer;
+  text-decoration: none;
+  transition: background var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease),
+    filter var(--motion-fast) var(--motion-ease);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.button--quiet {
   background: var(--surface-overlay);
   color: var(--text-strong);
   border: var(--border-hairline) solid var(--text-faint);
   border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-3);
   font-size: var(--type-sm);
-  cursor: pointer;
-  transition: background var(--motion-fast) var(--motion-ease),
-    border-color var(--motion-fast) var(--motion-ease);
 }
 
 .button--primary {
   background: var(--accent-surface);
   color: var(--accent-text);
-  border-color: var(--accent-bright);
+  border: var(--border-hairline) solid var(--accent-bright);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--type-sm);
 }
 
-.button:disabled {
-  opacity: 0.5;
-  cursor: default;
+.button--pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--type-xs);
+  color: var(--text-muted);
+  background: var(--surface-overlay);
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  white-space: nowrap;
+}
+
+.button--pill:hover {
+  color: var(--text-strong);
 }
 
 /* --- Chips --------------------------------------------------------------- */
@@ -480,7 +507,13 @@ textarea {
   border-color: var(--text-faint);
 }
 
-/* --- Entity row ---------------------------------------------------------- */
+/* blocked-by chip carries a quiet key */
+.chip--blocked-by .k {
+  margin-right: var(--space-1);
+  color: var(--text-faintest);
+}
+
+/* --- List row ------------------------------------------------------------ */
 
 /* THE LIST ROW — one row primitive (title left, metadata right, hover) for every
  * hand-rolled row: sprint tickets, backlog items, flat ideas, board cards. Base is a
@@ -1243,26 +1276,6 @@ select {
   justify-self: end;
 }
 
-.approval-skip {
-  font-size: var(--type-sm);
-  font-weight: 600;
-  background: transparent;
-  color: var(--text-muted);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-pill);
-  padding: var(--space-2) var(--space-6);
-  cursor: pointer;
-  transition: color var(--motion-fast) var(--motion-ease),
-    border-color var(--motion-fast) var(--motion-ease),
-    background var(--motion-fast) var(--motion-ease);
-}
-
-.approval-skip:hover {
-  color: var(--text-strong);
-  border-color: var(--text-faint);
-  background: var(--surface-raised);
-}
-
 .review-open-ticket {
   color: var(--text-muted);
   font-size: var(--type-sm);
@@ -1339,18 +1352,13 @@ select {
 .board-workspace-chief-button {
   width: 100%;
   border: 0;
-  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-default);
-  cursor: pointer;
   padding: var(--space-2) var(--board-workspace-rail-pad-x);
   text-align: left;
   font-family: var(--font-mono);
-  font-size: var(--type-sm);
   font-weight: 600;
   line-height: 1.35;
-  transition: color var(--motion-fast) var(--motion-ease),
-    background var(--motion-fast) var(--motion-ease);
 }
 
 .board-workspace-chief-button:hover,
@@ -1879,27 +1887,6 @@ select {
   flex-wrap: wrap;
 }
 
-/* The amber Approve button — dark ink on the one accent (background, no border). */
-.approval-approve {
-  font-weight: 600;
-  background: var(--accent-bright);
-  color: var(--accent-ink);
-  border: 0;
-  border-radius: var(--radius-pill);
-  padding: var(--space-2) var(--space-5);
-  cursor: pointer;
-  transition: filter var(--motion-fast) var(--motion-ease);
-}
-
-.approval-approve:hover {
-  filter: brightness(1.08);
-}
-
-.approval-approve:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
 .approval--review .approval-draft,
 .approval--review .approval-result {
   font-size: var(--type-md);
@@ -2184,20 +2171,6 @@ select {
   cursor: pointer;
 }
 
-/* Copy and destructive actions — pills rendered as buttons (no native chrome). */
-.pill-button {
-  border: 0;
-}
-
-.pill-button--danger {
-  color: var(--accent-error);
-}
-
-.pill-button--danger:hover {
-  color: var(--text-strong);
-  background: color-mix(in srgb, var(--accent-error) 18%, transparent);
-}
-
 /* --- Sprint = TRACKING page (redesign) ----------------------------------- */
 /* orchestration/sprint-redesign/mockup.html: sprint → items → tickets, progressive
    disclosure, calm at rest. One centered column; the sprint name is the only editable
@@ -2433,12 +2406,6 @@ select {
   color: var(--text-faintest);
 }
 
-/* blocked-by chip carries a quiet key (built in-screen from blocked_by_titles) */
-[data-screen="sprint"] .chip .k {
-  margin-right: var(--space-1);
-  color: var(--text-faintest);
-}
-
 /* tickets — revealed inside an open item: state · title · priority, navigate-only */
 [data-screen="sprint"] .disclosure--item .tkts {
   padding: var(--space-1) 0 var(--space-4);
@@ -2647,7 +2614,7 @@ select {
   min-width: 150px;               /* wrap threshold (a layout value) */
 }
 
-[data-screen="backlog"] .commit {
+[data-screen="backlog"] [data-commit] {
   align-self: flex-start;
 }
 
@@ -2913,33 +2880,6 @@ select {
   background: var(--surface-overlay);
 }
 
-[data-screen="backlog"] .commit,
-[data-screen="ideas"] .commit {
-  padding: var(--space-2) var(--space-4);
-  font-family: inherit;
-  font-size: var(--type-sm);
-  font-weight: 600;
-  color: var(--text-default);
-  background: var(--surface-raised);
-  border: 0;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition: color var(--motion-fast) var(--motion-ease),
-    background var(--motion-fast) var(--motion-ease);
-}
-
-[data-screen="backlog"] .commit:hover,
-[data-screen="ideas"] .commit:hover {
-  color: var(--text-strong);
-  background: var(--surface-overlay);
-}
-
-[data-screen="backlog"] .commit:disabled,
-[data-screen="ideas"] .commit:disabled {
-  color: var(--text-faintest);
-  background: var(--surface-sunken);
-  cursor: default;
-}
 
 /* --- Review screen redesign ---------------------------------------------- */
 

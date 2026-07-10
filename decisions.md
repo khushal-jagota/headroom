@@ -1386,3 +1386,17 @@ worktree gets its own fresh `.venv` because the main venv's editable install poi
 tree's `src/`, which carries uncommitted backend changes that must not leak into this branch's
 verification. Each verified-green ticket is committed on the worktree branch as it lands (D-series
 green-wave practice); merging to main stays with the owner.
+
+## D77 — The two visible native selects stay two controls; the shared .select class is dropped
+
+t_fe03 specced a shared `.select` base class for the board status filter and the scope picker's
+selects. Implementation showed they share nothing but `cursor: pointer` — the filter is a boxed
+raised-surface control, the scope selects are inline underlined words inside a sentence. A class
+carrying one shared property is a token that earns nothing, and truly normalizing them would
+visibly redesign one control, which is outside this program's consolidation-not-redesign rule.
+Codex's diff review flagged the token class as failing the contract; the resolution is to drop
+the class and the contract line rather than force the merge. Also from the same review: the
+backlog submit button's leftover `class="commit"` hook was replaced by keying its one layout rule
+off the existing `data-commit` attribute, and the chief-of-staff button's per-context override on
+the quiet Button base was accepted as a genuine per-screen difference, not an unconsolidated
+family.

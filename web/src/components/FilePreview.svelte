@@ -2,6 +2,7 @@
   import { onDestroy } from "svelte";
   import type { FilePreviewTarget } from "../lib/filePreview";
   import { markdownExpansionFor, resolvePreview } from "../lib/filePreview";
+  import Button from "./Button.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
 
   let {
@@ -104,12 +105,12 @@
           <div class="file-preview-title">{resolved.label}</div>
           <div class="file-preview-meta">Markdown file</div>
         </div>
-        <a
-          class="button"
+        <Button
+          variant="quiet"
           href={resolved.previewHref}
           target="_blank"
           rel="noopener noreferrer"
-        >Open preview</a>
+        >Open preview</Button>
       </article>
     {/if}
   {:else if resolved.kind === "html"}
@@ -119,12 +120,12 @@
           <div class="file-preview-title">{resolved.label}</div>
           <div class="file-preview-meta">HTML file</div>
         </div>
-        <a
-          class="button"
+        <Button
+          variant="quiet"
           href={resolved.previewHref}
           target="_blank"
           rel="noopener noreferrer"
-        >{resolved.actionLabel || "Open preview"}</a>
+        >{resolved.actionLabel || "Open preview"}</Button>
       </div>
       {#if error}
         <div class="quiet-line">{error}</div>
@@ -144,7 +145,7 @@
         <div class="file-preview-title">{resolved.label}</div>
         <div class="file-preview-meta">Managed file</div>
       </div>
-      <a class="button" href={resolved.href} download>{resolved.actionLabel || "Download"}</a>
+      <Button variant="quiet" href={resolved.href} download="">{resolved.actionLabel || "Download"}</Button>
     </article>
   {:else}
     <article class="file-preview-card">
@@ -152,9 +153,9 @@
         <div class="file-preview-title">{resolved.label}</div>
         <div class="file-preview-meta">{resolved.displayHref || resolved.href}</div>
       </div>
-      <a class="button" href={resolved.href} rel="noopener noreferrer" target="_blank">
+      <Button variant="quiet" href={resolved.href} rel="noopener noreferrer" target="_blank">
         {resolved.actionLabel || "Open external link"}
-      </a>
+      </Button>
     </article>
   {/if}
 </div>

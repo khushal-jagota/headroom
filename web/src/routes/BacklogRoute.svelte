@@ -4,10 +4,12 @@
   import { mutateJson, resource } from "../lib/resources";
   import { PRIORITY_ORDER } from "../lib/ui";
   import type { BacklogResponse, ProjectsResponse } from "../lib/types";
+  import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import ListRow from "../components/ListRow.svelte";
+  import Pill from "../components/Pill.svelte";
   import ScreenHeader from "../components/ScreenHeader.svelte";
   import SectionHeading from "../components/SectionHeading.svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
@@ -86,7 +88,7 @@
   <div class="doc">
     <ScreenHeader title="Backlog">
       {#snippet meta()}
-        <span class="pill"><span class="pill-key">unscheduled</span>{backlog.data?.items?.length || 0}</span>
+        <Pill keyLabel="unscheduled">{backlog.data?.items?.length || 0}</Pill>
       {/snippet}
     </ScreenHeader>
     <div class="col">
@@ -116,7 +118,7 @@
             <div class="fl">Description <span class="fl-opt">— optional</span></div>
             <textarea class="in detail-in" rows="2" placeholder="Why it matters, any context. Lives on the item page." data-input="body" bind:value={body}></textarea>
           </div>
-          <button class="commit" type="button" data-commit disabled={creating || !title.trim() || !project} onclick={() => void createItem()}>Add to backlog</button>
+          <Button variant="primary" data-commit="" disabled={creating || !title.trim() || !project} onclick={() => void createItem()}>Add to backlog</Button>
         </div>
       </Disclosure>
 

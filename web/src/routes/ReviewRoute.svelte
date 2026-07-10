@@ -4,6 +4,7 @@
   import { mutateJson, resource, ResourceHandle } from "../lib/resources";
   import { fieldStageVisualState, gatingField } from "../lib/ui";
   import type { AnyRecord, QueueEntry, QueuesResponse, TicketDetail } from "../lib/types";
+  import Button from "../components/Button.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
 
@@ -151,7 +152,7 @@
         <ErrorLine error={detailError} />
         <div class="quiet-line">{entry.title}</div>
         <div class="review-card-actions">
-          <button type="button" class="button" data-skip onclick={() => skip(entry)}>Skip</button>
+          <Button variant="quiet" data-skip="" onclick={() => skip(entry)}>Skip</Button>
           {#if entry.entity_type === "ticket"}
             <a data-open-ticket href={`#/ticket/${entry.entity_id}`}>open ticket</a>
           {/if}
@@ -225,20 +226,19 @@
               {#if revisionError}
                 <ErrorLine error={revisionError} />
               {/if}
-              <button
-                type="button"
-                class="button"
-                data-review-revision-send
+              <Button
+                variant="quiet"
+                data-review-revision-send=""
                 disabled={revisionBusy || !revisionDraft.trim()}
                 onclick={() => void returnForRevision(entry)}
               >
                 Send back
-              </button>
+              </Button>
             </div>
           {/if}
 
           <div class="review-outside-actions">
-            <button type="button" class="approval-skip" data-skip onclick={() => skip(entry)}>Skip</button>
+            <Button variant="quiet" data-skip="" onclick={() => skip(entry)}>Skip</Button>
             {#if entry.entity_type === "ticket"}
               <a class="review-open-ticket" data-open-ticket href={`#/ticket/${entry.entity_id}`}>Open ticket</a>
             {/if}

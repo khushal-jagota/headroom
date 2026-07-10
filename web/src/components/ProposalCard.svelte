@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import ScopePairPicker from "./ScopePairPicker.svelte";
@@ -74,14 +75,13 @@
   {/if}
   <div class="proposal-card-actions">
     {#if error}<ErrorLine {error} />{/if}
-    <button
-      type="button"
-      class="button button--primary"
-      data-accept
+    <Button
+      variant="primary"
+      data-accept=""
       disabled={inFlight || resolved || (requireScope && scope === null)}
       onclick={() => void accept()}
     >
       Accept
-    </button>
+    </Button>
   </div>
 </div>

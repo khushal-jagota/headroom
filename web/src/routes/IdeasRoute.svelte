@@ -3,11 +3,13 @@
   import { fetchJson } from "../lib/api";
   import { mutateJson, resource } from "../lib/resources";
   import type { IdeasResponse, ProjectsResponse } from "../lib/types";
+  import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import ListRow from "../components/ListRow.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
+  import Pill from "../components/Pill.svelte";
   import ScreenHeader from "../components/ScreenHeader.svelte";
   import SectionHeading from "../components/SectionHeading.svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
@@ -77,7 +79,7 @@
   <div class="doc">
     <ScreenHeader title="Ideas">
       {#snippet meta()}
-        <span class="pill">{ideas.data?.ideas?.length || 0}</span>
+        <Pill>{ideas.data?.ideas?.length || 0}</Pill>
       {/snippet}
     </ScreenHeader>
     <div class="col">
@@ -102,15 +104,14 @@
           <SegmentedControl name="project" options={projectOptions} bind:value={project} />
           <div class="spacer"></div>
           <span class="hint"><kbd>↩</kbd> to capture</span>
-          <button
-            class="commit"
-            type="button"
-            data-commit
+          <Button
+            variant="primary"
+            data-commit=""
             disabled={creating || !title.trim()}
             onclick={() => void capture()}
           >
             Capture
-          </button>
+          </Button>
         </div>
       </section>
       <div class="list" data-ideas>

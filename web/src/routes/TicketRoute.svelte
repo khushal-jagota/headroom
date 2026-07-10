@@ -16,6 +16,7 @@
     SprintsResponse,
     TicketDetail
   } from "../lib/types";
+  import Button from "../components/Button.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
@@ -23,6 +24,7 @@
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
+  import Pill from "../components/Pill.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
 
   let { id }: { id: string } = $props();
@@ -183,8 +185,8 @@
                 if (priority !== detail.priority) void patch({ priority });
               }}
             />
-            <span class="pill">
-              <span class="pill-key">due</span>{detail.deadline || ""}
+            <Pill keyLabel="due">
+              {detail.deadline || ""}
               <input
                 class="ticket-deadline-input"
                 type="date"
@@ -192,7 +194,7 @@
                 value={detail.deadline || ""}
                 onchange={(event) => void patch({ deadline: event.currentTarget.value || null })}
               />
-            </span>
+            </Pill>
             {#if detail.sprint_item_id === null || detail.sprint_item_id === undefined}
               <EnumPill
                 value={detail.project_id || ""}
@@ -201,7 +203,7 @@
               />
             {/if}
             {#if detail.sprint_item_id !== null && detail.sprint_item_id !== undefined}
-              <span class="pill"><span class="pill-key">sprint</span>{sprintLabel(detail.effective_sprint_id)}</span>
+              <Pill keyLabel="sprint">{sprintLabel(detail.effective_sprint_id)}</Pill>
             {:else}
               <EnumPill
                 keyLabel="sprint"
@@ -216,12 +218,12 @@
             <span data-ticket-status={detail.ticket_status || "empty"}>
               <Chip variant="ticket-status" value={detail.ticket_status || "empty"} />
             </span>
-            <button class="pill pill-button" type="button" data-ticket-takeover-toggle onclick={() => void takeover(detail)}>
+            <Button variant="pill" data-ticket-takeover-toggle="" onclick={() => void takeover(detail)}>
               {detail.ticket_status === "user_takeover" ? "Release" : "Take over"}
-            </button>
-            <button class="pill pill-button" type="button" data-copy onclick={() => void copyTicket()}>
+            </Button>
+            <Button variant="pill" data-copy="" onclick={() => void copyTicket()}>
               {copied ? "Copied" : "Copy"}
-            </button>
+            </Button>
           </div>
           {#if detail.state !== "done"}
             <div class="ticket-scope">

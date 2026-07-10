@@ -1,5 +1,6 @@
 <script lang="ts">
   import { type Snippet } from "svelte";
+  import Button from "./Button.svelte";
   import Disclosure from "./Disclosure.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import InlineEdit from "./InlineEdit.svelte";
@@ -112,15 +113,14 @@
         <div class="approval-actions">
           {#if error}<ErrorLine {error} />{/if}
           <div class="approval-control-group">
-            <button
-              type="button"
-              class="approval-approve"
-              data-approve
+            <Button
+              variant="primary"
+              data-approve=""
               disabled={inFlight || resolved}
               onclick={() => void approve()}
             >
               Approve
-            </button>
+            </Button>
           </div>
         </div>
       {/if}
@@ -145,15 +145,14 @@
           <div class="approval-actions-left">{@render actions()}</div>
         {/if}
         <div class="approval-control-group">
-          <button
-            type="button"
-            class="approval-approve"
-            data-approve
+          <Button
+            variant="primary"
+            data-approve=""
             disabled={inFlight || resolved}
             onclick={() => void approve()}
           >
             Approve
-          </button>
+          </Button>
         </div>
       </div>
     {/if}
@@ -179,15 +178,14 @@
         <div class="approval-actions">
           {#if error}<ErrorLine {error} />{/if}
           <div class="approval-control-group">
-            <button
-              type="button"
-              class="approval-approve"
-              data-accept
+            <Button
+              variant="primary"
+              data-accept=""
               disabled={inFlight || resolved || scope === null}
               onclick={() => void approve()}
             >
               Approve
-            </button>
+            </Button>
             <ScopePairPicker {newState} bind:scope />
           </div>
         </div>
@@ -207,15 +205,14 @@
           <div class="approval-actions-left">{@render actions()}</div>
         {/if}
         <div class="approval-control-group">
-          <button
-            type="button"
-            class="approval-approve"
-            data-accept
+          <Button
+            variant="primary"
+            data-accept=""
             disabled={inFlight || resolved || scope === null}
             onclick={() => void approve()}
           >
             Approve
-          </button>
+          </Button>
           <ScopePairPicker {newState} bind:scope />
         </div>
       </div>

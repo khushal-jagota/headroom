@@ -9,6 +9,7 @@
   import InlineEdit from "../components/InlineEdit.svelte";
   import ListRow from "../components/ListRow.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
+  import Pill from "../components/Pill.svelte";
   import ScreenHeader from "../components/ScreenHeader.svelte";
   import SectionHeading from "../components/SectionHeading.svelte";
 
@@ -97,10 +98,9 @@
           </h1>
         {/snippet}
         {#snippet meta()}
-          <span class="pill sprint-dates-pill">
-            <span class="pill-key">dates</span>
+          <Pill keyLabel="dates" class="sprint-dates-pill">
             <span class="sprint-dates">{sprint.date_start} – {sprint.date_end}</span>
-          </span>
+          </Pill>
         {/snippet}
       </ScreenHeader>
       <div class="col">
@@ -159,7 +159,7 @@
                       {#if item.deadline}<Chip variant="deadline" value={item.deadline} />{/if}
                       {#if item.blockers_cleared}<Chip variant="blockers-cleared" />{/if}
                       {#each item.blocked_by_titles || [] as blockerTitle}
-                        <span class="chip chip--blocked-by"><span class="k">blocked by</span>{blockerTitle}</span>
+                        <Chip variant="blocked-by" keyLabel="blocked by" value={blockerTitle} />
                       {/each}
                     </span>
                     <span class="count">{countText(item.tickets)}</span>

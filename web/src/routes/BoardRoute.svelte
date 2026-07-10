@@ -5,6 +5,7 @@
   import type { BoardResponse, GatewayStatus } from "../lib/types";
   import { gatingField, ticketStageVisualState, ticketStatusLabel } from "../lib/ui";
   import type { FieldStageVisualState } from "../lib/ui";
+  import Button from "../components/Button.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
@@ -138,15 +139,15 @@
       <div class="board-workspace-shell">
         <section class="board-workspace-left" aria-label="Workspace ticket tree">
           <div class="board-workspace-heading board-workspace-heading-row">
-            <button
-              aria-pressed={rightPaneMode === "chief"}
+            <Button
+              variant="quiet"
               class="board-workspace-chief-button"
-              data-chief-of-staff-button
-              type="button"
+              aria-pressed={rightPaneMode === "chief"}
+              data-chief-of-staff-button=""
               onclick={showChiefOfStaff}
             >
               Chief of Staff
-            </button>
+            </Button>
           </div>
 
           <div class="board-workspace-filters" data-workspace-filters>

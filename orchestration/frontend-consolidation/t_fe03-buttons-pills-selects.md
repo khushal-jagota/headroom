@@ -50,12 +50,11 @@ the footprint reduction; do not invent new variants to preserve tiny differences
   ("blocked by") + value. Fold the inline `chip--blocked-by` span in SprintRoute into
   Chip; move its `.k` key styling next to the chip family CSS.
 
-Select unification (CSS-level only, no new component):
-
-- Board's status filter `<select class="board-workspace-filter-select">` and
-  ScopePairPicker's two `.scope-select select`s share one `.select` base class for
-  font/color/padding/appearance; per-context rules keep only real differences. EnumPill's
-  invisible overlay select is a different mechanism and stays.
+Select unification — DROPPED at integration (decision D77): the boxed board filter and
+the inline sentence-embedded scope selects turned out to share nothing beyond
+`cursor: pointer`; a shared class carrying only that is a token, and actually
+normalizing font/padding/appearance would visibly redesign one of the two controls.
+They remain two controls. EnumPill's invisible overlay select was always out of scope.
 
 ## Tests / acceptance
 
