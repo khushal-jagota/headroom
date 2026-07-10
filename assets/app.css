@@ -858,6 +858,10 @@ button.list-row:hover .list-row-title {
 }
 
 /* thinking = inline activity and three bubble-less dots in the employee's spot */
+.chat-pending-block {
+  align-self: stretch;
+  min-width: 0;
+}
 .chat-pending-row {
   align-self: flex-start;
   display: inline-flex;
@@ -868,6 +872,73 @@ button.list-row:hover .list-row-title {
   font-size: var(--type-xs);
   line-height: 1.4;
 }
+.chat-activity-toggle {
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.chat-activity-toggle:hover { color: var(--text-muted); }
+.chat-activity-toggle:focus-visible {
+  outline: var(--border-hairline) solid var(--accent-bright);
+  outline-offset: var(--space-1);
+}
+.chat-activity-chevron {
+  margin-left: auto;
+  color: var(--text-faintest);
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+}
+.chat-activity-details {
+  list-style: none;
+  margin: var(--space-1) 0 var(--space-1) var(--space-3);
+  padding: var(--space-1) 0 var(--space-1) var(--space-4);
+  border-left: var(--border-hairline) solid var(--border-color);
+}
+.chat-activity-entry {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1) 0;
+  color: var(--text-faint);
+  font-size: var(--type-xs);
+  line-height: 1.4;
+}
+.chat-activity-marker {
+  position: absolute;
+  top: var(--space-2);
+  left: calc(-1 * var(--space-4) - var(--space-1));
+  width: var(--space-2);
+  height: var(--space-2);
+  border: var(--border-hairline) solid var(--text-faintest);
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunken);
+}
+.chat-activity-entry--running .chat-activity-marker {
+  border-color: var(--accent-bright);
+  background: var(--accent-bright);
+}
+.chat-activity-category {
+  color: var(--text-faintest);
+  font-family: var(--font-mono);
+}
+.chat-activity-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-activity-state {
+  color: var(--text-faintest);
+  font-family: var(--font-mono);
+}
+.chat-activity-entry--running .chat-activity-state { color: var(--accent-bright); }
 .chat-dots { display: inline-flex; gap: 5px; flex: 0 0 auto; }
 .chat-dots i {
   width: 6px; height: 6px; border-radius: var(--radius-pill);

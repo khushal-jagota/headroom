@@ -11,12 +11,21 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Final
 
-from planner.chat.contracts import ChatState, ChatStateMessage, ChatTurn
+from planner.chat.contracts import (
+    ChatActivityEntry,
+    ChatActivityObservation,
+    ChatState,
+    ChatStateMessage,
+    ChatTurn,
+)
 from planner.core.contracts import EventKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event
 from planner.core.ids import new_id
+
+MAX_ACTIVE_TURN_ACTIVITY_ENTRIES: Final = 100
 
 
 @contextmanager
@@ -41,7 +50,22 @@ def _row_to_message(row: sqlite3.Row) -> ChatStateMessage:
     )
 
 
-def _row_to_turn(row: sqlite3.Row) -> ChatTurn:
+def _row_to_activity_entry(row: sqlite3.Row) -> ChatActivityEntry:
+    return ChatActivityEntry(
+        id=int(row["id"]),
+        action_identity=row["action_identity"],
+        category=str(row["category"]),
+        label=str(row["label"]),
+        lifecycle_state=str(row["lifecycle_state"]),
+        started_at=int(row["started_at"]),
+        updated_at=int(row["updated_at"]),
+        completed_at=row["completed_at"],
+    )
+
+
+def _row_to_turn(
+    row: sqlite3.Row, activity_entries: tuple[ChatActivityEntry, ...] = ()
+) -> ChatTurn:
     return ChatTurn(
         id=str(row["id"]),
         entity_id=str(row["entity_id"]),
@@ -57,6 +81,7 @@ def _row_to_turn(row: sqlite3.Row) -> ChatTurn:
         started_at=int(row["started_at"]),
         updated_at=int(row["updated_at"]),
         completed_at=row["completed_at"],
+        activity_entries=activity_entries,
     )
 
 
@@ -124,7 +149,103 @@ def read_active_turn(conn: sqlite3.Connection, entity_id: str) -> ChatTurn | Non
         "ORDER BY started_at DESC, id DESC LIMIT 1",
         (entity_id,),
     ).fetchone()
-    return _row_to_turn(turn_row) if turn_row is not None else None
+    if turn_row is None:
+        return None
+    activity_rows = conn.execute(
+        "SELECT id, action_identity, category, label, lifecycle_state, "
+        "started_at, updated_at, completed_at FROM chat_turn_activity_entries "
+        "WHERE turn_id = ? ORDER BY id",
+        (turn_row["id"],),
+    ).fetchall()
+    return _row_to_turn(
+        turn_row, tuple(_row_to_activity_entry(row) for row in activity_rows)
+    )
+
+
+def record_turn_activity(
+    conn: sqlite3.Connection,
+    turn_id: str,
+    *,
+    entity_id: str,
+    observation: ChatActivityObservation,
+    now: int,
+) -> None:
+    """Persist one normalized display-safe observation for a running turn."""
+    with _txn(conn):
+        running = conn.execute(
+            "SELECT 1 FROM chat_turns WHERE id = ? AND status = 'running'", (turn_id,)
+        ).fetchone()
+        if running is None:
+            return
+        existing = None
+        if observation.action_identity is not None:
+            existing = conn.execute(
+                "SELECT id FROM chat_turn_activity_entries "
+                "WHERE turn_id = ? AND action_identity = ?",
+                (turn_id, observation.action_identity),
+            ).fetchone()
+        else:
+            latest = conn.execute(
+                "SELECT id, category, label, lifecycle_state "
+                "FROM chat_turn_activity_entries WHERE turn_id = ? ORDER BY id DESC LIMIT 1",
+                (turn_id,),
+            ).fetchone()
+            if (
+                latest is not None
+                and latest["category"] == observation.category
+                and latest["label"] == observation.label
+                and latest["lifecycle_state"] == observation.lifecycle_state
+            ):
+                return
+        completed_at = now if observation.lifecycle_state == "complete" else None
+        if existing is None:
+            conn.execute(
+                "INSERT INTO chat_turn_activity_entries ("
+                "turn_id, action_identity, category, label, lifecycle_state, "
+                "started_at, updated_at, completed_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    turn_id,
+                    observation.action_identity,
+                    observation.category,
+                    observation.label,
+                    observation.lifecycle_state,
+                    now,
+                    now,
+                    completed_at,
+                ),
+            )
+        else:
+            conn.execute(
+                "UPDATE chat_turn_activity_entries SET category = ?, label = ?, "
+                "lifecycle_state = ?, updated_at = ?, completed_at = ? WHERE id = ?",
+                (
+                    observation.category,
+                    observation.label,
+                    observation.lifecycle_state,
+                    now,
+                    completed_at,
+                    existing["id"],
+                ),
+            )
+        conn.execute(
+            "DELETE FROM chat_turn_activity_entries WHERE id IN ("
+            "SELECT id FROM chat_turn_activity_entries WHERE turn_id = ? "
+            "ORDER BY id DESC LIMIT -1 OFFSET ?)",
+            (turn_id, MAX_ACTIVE_TURN_ACTIVITY_ENTRIES),
+        )
+        conn.execute(
+            "UPDATE chat_turns SET phase = 'doing', activity_label = ?, updated_at = ? "
+            "WHERE id = ? AND status = 'running'",
+            (observation.label, now, turn_id),
+        )
+        append_event(
+            conn,
+            entity_id,
+            EventKind.chat_turn_updated,
+            {"turn_id": turn_id, "phase": "doing", "activity_label": observation.label},
+            now,
+        )
 
 
 def start_turn(
@@ -275,6 +396,7 @@ def finish_turn(
         if row["status"] != "running":
             return _row_to_turn(row)
         final_text = reply_text or str(row["output_text"])
+        conn.execute("DELETE FROM chat_turn_activity_entries WHERE turn_id = ?", (turn_id,))
         conn.execute(
             "UPDATE chat_turns SET status = ?, phase = 'settled', activity_label = NULL, "
             "output_role = ?, output_text = ?, updated_at = ?, completed_at = ? WHERE id = ?",
@@ -314,6 +436,7 @@ def fail_turn(
             raise PlannerError(ErrorCode.not_found, "chat turn not found", {"turn_id": turn_id})
         if row["status"] != "running":
             return _row_to_turn(row)
+        conn.execute("DELETE FROM chat_turn_activity_entries WHERE turn_id = ?", (turn_id,))
         conn.execute(
             "UPDATE chat_turns SET status = 'errored', phase = 'settled', "
             "activity_label = NULL, error = ?, updated_at = ?, completed_at = ? WHERE id = ?",

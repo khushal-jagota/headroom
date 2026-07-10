@@ -32,6 +32,14 @@ def _seed_running_worker_turn(server, entity_id: str) -> None:
             (turn_id, entity_id, "Checking the plan"),
         )
         conn.execute(
+            "INSERT INTO chat_turn_activity_entries ("
+            "turn_id, action_identity, category, label, lifecycle_state, "
+            "started_at, updated_at, completed_at"
+            ") VALUES (?, 'thinking', 'thinking', 'Thinking', 'complete', 1, 1, 1), "
+            "(?, 'tool:plan', 'tool', 'Checking the plan', 'running', 1, 1, NULL)",
+            (turn_id, turn_id),
+        )
+        conn.execute(
             "INSERT INTO chat_messages (entity_id, turn_id, role, text, created_at) "
             "VALUES (?, ?, 'worker', ?, 1)",
             (entity_id, turn_id, WORKER_PROMPT_TEXT),
@@ -84,6 +92,14 @@ def _seed_running_chief_turn(server, entity_id: str) -> None:
             (turn_id, entity_id, "Reading workspace status"),
         )
         conn.execute(
+            "INSERT INTO chat_turn_activity_entries ("
+            "turn_id, action_identity, category, label, lifecycle_state, "
+            "started_at, updated_at, completed_at"
+            ") VALUES (?, 'thinking', 'thinking', 'Thinking', 'complete', 1, 1, 1), "
+            "(?, 'tool:workspace', 'tool', 'Reading workspace status', 'running', 1, 1, NULL)",
+            (turn_id, turn_id),
+        )
+        conn.execute(
             "INSERT INTO chat_messages (entity_id, turn_id, role, text, created_at) "
             "VALUES (?, ?, 'human', ?, 1)",
             (entity_id, turn_id, "What needs attention?"),
@@ -119,6 +135,15 @@ def _seed_running_chief_turn(server, entity_id: str) -> None:
         )
 
 
+def _seed_chat_history(server, entity_id: str, count: int = 80) -> None:
+    with sqlite3.connect(server.db_path) as conn:
+        conn.executemany(
+            "INSERT INTO chat_messages (entity_id, turn_id, role, text, created_at) "
+            "VALUES (?, NULL, 'assistant', ?, 0)",
+            [(entity_id, f"history line {index}") for index in range(count)],
+        )
+
+
 def _update_running_worker_turn_label(server, entity_id: str, label: str) -> None:
     with sqlite3.connect(server.db_path) as conn:
         row = conn.execute(
@@ -131,6 +156,13 @@ def _update_running_worker_turn_label(server, entity_id: str, label: str) -> Non
             "UPDATE chat_turns SET activity_label = ?, updated_at = updated_at + 1 "
             "WHERE id = ?",
             (label, turn_id),
+        )
+        conn.execute(
+            "INSERT INTO chat_turn_activity_entries ("
+            "turn_id, action_identity, category, label, lifecycle_state, "
+            "started_at, updated_at, completed_at"
+            ") VALUES (?, ?, 'tool', ?, 'running', 2, 2, NULL)",
+            (turn_id, f"tool:live-{label}", label),
         )
         conn.execute(
             "INSERT INTO events (entity_id, kind, payload, created_at) VALUES (?, ?, ?, 2)",
@@ -242,6 +274,10 @@ def test_chief_chat_shows_running_activity_status_after_remount(
     assert state["active_turn"]["origin"] == "human"
     assert state["active_turn"]["phase"] == "doing"
     assert state["active_turn"]["activity_label"] == "Reading workspace status"
+    assert [entry["label"] for entry in state["active_turn"]["activity_entries"]] == [
+        "Thinking",
+        "Reading workspace status",
+    ]
 
     page = open_page(
         context_factory(),
@@ -254,6 +290,16 @@ def test_chief_chat_shows_running_activity_status_after_remount(
     _wait_chat_text(page, "planner", "I found the current board.")
     _wait_chat_text(page, "planner", "Reading workspace status")
     page.wait_for_selector('[data-chat-pending] [data-chat-activity]', timeout=WAIT_MS)
+    toggle = page.locator("[data-chat-activity-toggle]")
+    assert toggle.get_attribute("aria-expanded") == "false"
+    assert page.locator("[data-chat-activity-details]").count() == 0
+    toggle.press("Enter")
+    page.wait_for_selector("[data-chat-activity-details]", timeout=WAIT_MS)
+    assert toggle.get_attribute("aria-expanded") == "true"
+    details = page.locator("[data-chat-activity-details]")
+    assert "Thinking" in details.inner_text()
+    assert "Reading workspace status" in details.inner_text()
+    assert page.locator("[data-chat-activity-entry]").count() == 2
     assert page.locator("[data-chat-send]").get_attribute("title") == "Pause"
     assert page.locator("[data-chat-send]").is_enabled()
     assert page.locator("[data-chat-input]").is_enabled()
@@ -262,6 +308,15 @@ def test_chief_chat_shows_running_activity_status_after_remount(
 
     _update_running_worker_turn_label(server, entity_id, "Checking ticket activity")
     _wait_chat_text(page, "planner", "Checking ticket activity")
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-chat-activity-entry]').length === 3",
+        timeout=WAIT_MS,
+    )
+    assert "Checking ticket activity" in details.inner_text()
+    assert page.locator("[data-chat-input]").input_value() == "draft while chief works"
+    toggle.press("Enter")
+    assert toggle.get_attribute("aria-expanded") == "false"
+    assert page.locator("[data-chat-activity-details]").count() == 0
     assert page.locator("[data-chat-input]").input_value() == "draft while chief works"
 
     page.goto(server.base + "/#/workspace")
@@ -272,6 +327,51 @@ def test_chief_chat_shows_running_activity_status_after_remount(
     _wait_chat_text(page, "planner", "I found the current board.")
     _wait_chat_text(page, "planner", "Checking ticket activity")
     page.wait_for_selector('[data-chat-pending] [data-chat-activity]', timeout=WAIT_MS)
+    assert page.locator("[data-chat-activity-toggle]").get_attribute("aria-expanded") == "false"
+    assert page.locator("[data-chat-activity-details]").count() == 0
+
+
+def test_activity_growth_respects_existing_chat_follow_mode(
+    server, context_factory, open_page, cli
+) -> None:
+    entity_id = cli(server, "ticket", "create", "--title", "Activity scroll ticket")["id"]
+    _seed_running_worker_turn(server, entity_id)
+    _seed_chat_history(server, entity_id)
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{entity_id}",
+        'section[data-screen="ticket"] [data-chat-activity-toggle]',
+        settled=True,
+    )
+    thread_selector = "[data-chat] [data-chat-messages]"
+    page.wait_for_function(
+        "selector => { const el = document.querySelector(selector); "
+        "return el && el.scrollHeight > el.clientHeight; }",
+        arg=thread_selector,
+        timeout=WAIT_MS,
+    )
+    page.locator("[data-chat-activity-toggle]").click()
+    page.wait_for_selector("[data-chat-activity-details]", timeout=WAIT_MS)
+    page.wait_for_function(
+        "selector => { const el = document.querySelector(selector); "
+        "return el && Math.abs(el.scrollHeight - el.clientHeight - el.scrollTop) <= 1; }",
+        arg=thread_selector,
+        timeout=WAIT_MS,
+    )
+
+    page.eval_on_selector(
+        thread_selector,
+        "el => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); }",
+    )
+    page.wait_for_selector("[data-chat-jump]", timeout=WAIT_MS)
+    _update_running_worker_turn_label(server, entity_id, "Inspecting another activity")
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-chat-activity-entry]').length === 3",
+        timeout=WAIT_MS,
+    )
+    assert page.eval_on_selector(thread_selector, "el => el.scrollTop") == 0
+    assert page.locator("[data-chat-jump]").is_visible()
 
 
 def test_ticket_chat_shows_running_worker_turn_after_remount(
@@ -284,6 +384,10 @@ def test_ticket_chat_shows_running_worker_turn_after_remount(
     assert state["active_turn"]["origin"] == "worker"
     assert state["active_turn"]["phase"] == "doing"
     assert state["active_turn"]["activity_label"] == "Checking the plan"
+    assert [entry["label"] for entry in state["active_turn"]["activity_entries"]] == [
+        "Thinking",
+        "Checking the plan",
+    ]
 
     page = open_page(
         context_factory(),
@@ -295,6 +399,15 @@ def test_ticket_chat_shows_running_worker_turn_after_remount(
     _wait_chat_text(page, "worker", WORKER_PROMPT_TEXT)
     _wait_chat_text(page, "worker", "Checking the plan")
     page.wait_for_selector("[data-chat] [data-chat-pending]", timeout=WAIT_MS)
+    ticket_toggle = page.locator("[data-chat] [data-chat-activity-toggle]")
+    assert ticket_toggle.get_attribute("aria-expanded") == "false"
+    ticket_toggle.press("Space")
+    page.wait_for_selector("[data-chat] [data-chat-activity-details]", timeout=WAIT_MS)
+    assert "Checking the plan" in page.locator(
+        "[data-chat] [data-chat-activity-details]"
+    ).inner_text()
+    ticket_toggle.press("Space")
+    assert page.locator("[data-chat] [data-chat-activity-details]").count() == 0
     assert page.locator("[data-chat] [data-chat-send]").get_attribute("title") == "Pause"
 
     assert page.locator("[data-chat] [data-chat-input]").is_enabled()

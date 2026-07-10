@@ -3,6 +3,47 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-10): expandable live agent activity
+
+Current build stage:
+
+- Ticket `t_zafkz8jy` is in Implementation on isolated branch
+  `ticket/t_zafkz8jy-agent-activity` at `/private/tmp/panels-t_zafkz8jy`.
+- The accepted interaction keeps the existing live activity row and adds an inline disclosure for a
+  safe, ordered active-turn timeline. Merge and post-merge verification remain Closeout work.
+- Independent plan review found two contract gaps: the timeline bound and settlement/delete cleanup.
+  The reviewed contract now fixes the cap at 100 and removes activity on every turn settlement.
+
+What just passed:
+
+- Backend RED/GREEN: the new activity contract, migration-safe child table, stable ordering,
+  deduplication, 100-entry cap, settlement cleanup, safe normalizer, worker path, human stream path,
+  and structured shared-gateway chunks pass their focused tests.
+- Canonical `./verify` passes: Ruff; Mypy across 106 source files; 419 unit tests;
+  compile/static and frontend gates; and 59 browser tests, ending with `VERIFY: PASS`.
+- Frontend RED failed on the absent disclosure in both Ticket and Chief chat; GREEN passes for
+  collapsed/expanded keyboard interaction, live timeline refresh with draft preservation, remount
+  collapse, and chat follow ownership while activity grows.
+- Svelte check has zero errors (three pre-existing TicketRoute warnings), and the production frontend
+  build passes.
+- Independent implementation review found thinking/tool-complete routing, CSS-token, and malformed
+  payload safety gaps. Each received a focused RED/GREEN regression; the final review returned
+  `NO VIOLATIONS`.
+
+Current hypothesis:
+
+- A turn-owned child table plus one display-safe normalizer keeps raw Hermes payloads outside Panels
+  while the shared ChatPanel can progressively disclose useful activity without changing transcript,
+  composer, pause, or scroll behavior.
+
+Next step:
+
+- Commit the verified ticket branch and propose Implementation without merging.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-10): repair Chief `/new` and fresh-session startup
 
 Current build stage:

@@ -23,6 +23,30 @@ class ChatStateMessage:
 
 
 @dataclass(frozen=True)
+class ChatActivityObservation:
+    """Display-safe activity accepted from a normalized gateway event."""
+
+    category: str                  # "thinking" | "tool" | "command"
+    label: str
+    lifecycle_state: str           # "running" | "complete"
+    action_identity: str | None = None
+
+
+@dataclass(frozen=True)
+class ChatActivityEntry:
+    """One ordered, persisted activity item belonging to a running turn."""
+
+    id: int
+    action_identity: str | None
+    category: str
+    label: str
+    lifecycle_state: str
+    started_at: int
+    updated_at: int
+    completed_at: int | None
+
+
+@dataclass(frozen=True)
 class ChatTurn:
     id: str
     entity_id: str
@@ -38,6 +62,7 @@ class ChatTurn:
     started_at: int
     updated_at: int
     completed_at: int | None
+    activity_entries: tuple[ChatActivityEntry, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -80,6 +105,7 @@ class ChatStreamChunk:             # normalized gateway stream chunk for SSE cal
     reply_text: str = ""           # complete reply when type == "done"
     session_key: str = ""          # minted/resumed key when type == "done"
     kind: str = "assistant"        # "assistant" | "system" when type == "done"
+    activity: ChatActivityObservation | None = None   # structured activity when type == "activity"
 
 
 @dataclass(frozen=True)

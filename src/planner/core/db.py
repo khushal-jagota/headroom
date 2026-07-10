@@ -11,7 +11,7 @@ from typing import Final
 
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 12
+SCHEMA_VERSION: Final = 13
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -123,6 +123,23 @@ CREATE TABLE IF NOT EXISTS chat_turns (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_turns_one_running
   ON chat_turns(entity_id) WHERE status = 'running';
 CREATE INDEX IF NOT EXISTS idx_chat_turns_entity ON chat_turns(entity_id, started_at);
+
+CREATE TABLE IF NOT EXISTS chat_turn_activity_entries (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  turn_id           TEXT NOT NULL REFERENCES chat_turns(id) ON DELETE CASCADE,
+  action_identity   TEXT,
+  category          TEXT NOT NULL CHECK (category IN ('thinking','tool','command')),
+  label             TEXT NOT NULL,
+  lifecycle_state   TEXT NOT NULL CHECK (lifecycle_state IN ('running','complete')),
+  started_at        INTEGER NOT NULL,
+  updated_at        INTEGER NOT NULL,
+  completed_at      INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_turn_activity_identity
+  ON chat_turn_activity_entries(turn_id, action_identity)
+  WHERE action_identity IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_chat_turn_activity_order
+  ON chat_turn_activity_entries(turn_id, id);
 
 CREATE TABLE IF NOT EXISTS chat_messages (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,

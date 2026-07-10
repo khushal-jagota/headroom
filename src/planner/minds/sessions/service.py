@@ -937,11 +937,14 @@ class LiveSessionManager:
     ) -> bool:
         event_type = observation.event_type
         lifecycle_activity = event_type in (
+            "reasoning.delta",
+            "thinking.delta",
             "message.start",
             "message.delta",
             "tool.start",
             "tool.delta",
             "tool.end",
+            "tool.complete",
             "command.start",
         )
         terminal = event_type in ("message.complete", "error")

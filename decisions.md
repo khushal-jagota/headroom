@@ -2,6 +2,28 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D98 — Live agent activity is turn-owned, display-safe, and transient
+
+Keep the existing `activity_label` as the collapsed summary and add one ordered child collection for
+the running turn. A single framework-free normalizer admits only category, short label, lifecycle,
+stable identity, and timing from accepted Hermes phase/tool/command events; raw reasoning, arguments,
+results, and arbitrary payloads never enter Panels activity storage. Identity-bearing start/end events
+update one row, idless consecutive duplicates collapse, and the newest 100 entries are retained. Every
+settlement deletes the collection, while foreign-key cascade covers chat-turn and Ticket deletion, so
+this is live progressive disclosure rather than a permanent transcript or audit subsystem.
+
+The shared `ChatPanel` owns the one disclosure interaction for Ticket and Chief chat. It is collapsed by
+default, keeps the transcript and composer unchanged, and makes timeline renders explicit dependencies
+of the existing pre-growth follow decision. A reader near the bottom keeps following; a reader who
+scrolled upward keeps control and the distance-based Latest affordance.
+
+Implementation stayed in the owner-required worktree. Claude Code produced the green persistence
+slice but then stalled, overloaded, or exhausted turn budgets across recovery attempts; Codex CLI was
+usage-limited. After three blocked agent routes, the orchestrator changed approach rather than retrying
+the same broad task: it preserved the tested partial work, completed only the narrow producer/gateway
+integration and shared frontend slice inline under captured RED/GREEN tests, and retained independent
+review plus canonical verification as hard gates before commit.
+
 ## D56 — Lifecycle migration identifies approval by the legacy gated state
 
 An `awaiting_approval` Ticket is not necessarily awaiting approval of the old Result field. The

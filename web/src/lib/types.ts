@@ -23,6 +23,17 @@ export type ChatStateMessage = {
   turn_id?: string | null;
 };
 
+export type ChatActivityEntry = {
+  id: number;
+  action_identity?: string | null;
+  category: "thinking" | "tool" | "command" | string;
+  label: string;
+  lifecycle_state: "running" | "complete" | string;
+  started_at: number;
+  updated_at: number;
+  completed_at?: number | null;
+};
+
 export type ChatTurn = {
   id: string;
   entity_id: string;
@@ -31,6 +42,7 @@ export type ChatTurn = {
   status: "running" | "complete" | "errored" | "interrupted" | string;
   phase: "queued" | "thinking" | "doing" | "responding" | "settled" | string;
   activity_label?: string | null;
+  activity_entries: ChatActivityEntry[];
   output_role: "assistant" | "system" | string;
   output_text: string;
   session_key?: string | null;

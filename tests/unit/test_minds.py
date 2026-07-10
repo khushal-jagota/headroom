@@ -12,7 +12,13 @@ from typing import Any
 import pytest
 
 import planner.minds as minds
-from planner.chat.contracts import ChatHistory, ChatSendResult, CommandCatalog, GatewayStatus
+from planner.chat.contracts import (
+    ChatActivityObservation,
+    ChatHistory,
+    ChatSendResult,
+    CommandCatalog,
+    GatewayStatus,
+)
 from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
 from planner.core.errors import ErrorCode, PlannerError
 from planner.minds.config import (
@@ -226,6 +232,116 @@ def test_entity_routing_gateway_keeps_ordinary_stream_caller_compatible() -> Non
 
     assert list(gateway.stream(None, "t_demo", "hello", "message")) == []
     assert worker.calls == [("stream", "t_demo")]
+
+
+def test_shared_gateway_streams_structured_display_safe_activity() -> None:
+    fake = FakeGateway(
+        {
+            "session.create": [create_reply()],
+            "prompt.submit": [
+                submit_reply(
+                    ev("reasoning.delta", LIVE_SID, {"text": "private reasoning"}),
+                    ev(
+                        "tool.start",
+                        LIVE_SID,
+                        {
+                            "tool_id": "call-web-1",
+                            "name": "web_search",
+                            "args_text": "api_key=secret",
+                        },
+                    ),
+                    ev(
+                        "tool.delta",
+                        LIVE_SID,
+                        {"tool_id": "call-web-1", "result": "private delta"},
+                    ),
+                    ev(
+                        "tool.end",
+                        LIVE_SID,
+                        {
+                            "tool_id": "call-web-1",
+                            "name": "web_search",
+                            "result": "private output",
+                        },
+                    ),
+                    complete_ev(text="done"),
+                )
+            ],
+        }
+    )
+    gateway = shared(fake)
+    try:
+        chunks = list(gateway.stream(None, "t_demo", "hello", "message"))
+    finally:
+        gateway.shutdown()
+
+    activities = [chunk.activity for chunk in chunks if chunk.type == "activity"]
+    assert activities == [
+        ChatActivityObservation(
+            category="thinking",
+            label="Thinking",
+            lifecycle_state="running",
+            action_identity="thinking",
+        ),
+        ChatActivityObservation(
+            category="tool",
+            label="Using web_search",
+            lifecycle_state="running",
+            action_identity="tool:call-web-1",
+        ),
+        ChatActivityObservation(
+            category="tool",
+            label="Used web_search",
+            lifecycle_state="complete",
+            action_identity="tool:call-web-1",
+        ),
+    ]
+    serialized = repr(activities)
+    assert "private reasoning" not in serialized
+    assert "api_key" not in serialized
+    assert "private delta" not in serialized
+    assert "private output" not in serialized
+
+
+def test_shared_gateway_routes_tool_complete_alias_as_first_activity() -> None:
+    fake = FakeGateway(
+        {
+            "session.create": [create_reply()],
+            "prompt.submit": [
+                submit_reply(
+                    ev(
+                        "tool.complete",
+                        LIVE_SID,
+                        {
+                            "tool_id": "call-web-1",
+                            "name": "web_search",
+                            "result": "private output",
+                        },
+                    ),
+                    complete_ev(text="done"),
+                )
+            ],
+        }
+    )
+    gateway = shared(fake)
+    try:
+        activities = [
+            chunk.activity
+            for chunk in gateway.stream(None, "t_demo", "hello", "message")
+            if chunk.type == "activity"
+        ]
+    finally:
+        gateway.shutdown()
+
+    assert activities == [
+        ChatActivityObservation(
+            category="tool",
+            label="Used web_search",
+            lifecycle_state="complete",
+            action_identity="tool:call-web-1",
+        )
+    ]
+    assert "private output" not in repr(activities)
 
 
 def test_minds_package_exports_shared_contracts_not_run_step() -> None:
