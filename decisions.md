@@ -2,6 +2,22 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D56 — Lifecycle migration identifies approval by the legacy gated state
+
+An `awaiting_approval` Ticket is not necessarily awaiting approval of the old Result field. The
+runtime status describes control, while the Ticket state identifies the gated field. Restrict
+Result-to-Implementation proposal reconstruction to legacy `in_progress` and `needs_review` rows;
+earlier `needs_success`, `needs_approach`, and `needs_plan` rows keep their own pending proposal and
+copy an empty legacy Result slot normally. This preserves the four live Success approvals that
+exposed the startup failure while retaining the strict missing-candidate guard for genuine
+Result-stage approvals.
+
+The repair is two migration-condition lines plus one exact-shape regression, so the trivial-ticket
+exception applies: diagnosis, implementation, and focused verification stayed inline. An independent
+read-only Codex review against D55, its contract, and the legacy state machine returned
+`NO VIOLATIONS`; the actual database migrated successfully through a temporary SQLite backup before
+the live startup path was retried.
+
 ## D55 — Implementation and Closeout are ordinary Ticket gates
 
 Replace the exceptional `in_progress` / `needs_review` tail with two ordinary gated states:

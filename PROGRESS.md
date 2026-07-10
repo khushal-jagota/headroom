@@ -25,8 +25,9 @@ the redesign completion record plus its two follow-ups have been written success
 independent migration review found malformed-proposal validation, FK-restoration coverage, and
 rollback-atomicity gaps; each was fixed with a RED/GREEN regression, and the final follow-up returned
 `NO VIOLATIONS`. Final `./verify` passed Ruff, Mypy across 104 source files, 407 unit tests,
-compile/static and frontend gates, and 58 browser tests, ending with `VERIFY: PASS`. The recovery
-code remains uncommitted and is ready for owner integration.
+compile/static and frontend gates, and 58 browser tests, ending with `VERIFY: PASS`. The initial
+stage-classification fix landed on main directly (93f73f4, D56); the full hardening is committed
+on the branch as d8643c5 (D93) and supersedes it.
 
 ## This branch (worktree-frontend-shared-components, 2026-07-10): frontend component consolidation
 
