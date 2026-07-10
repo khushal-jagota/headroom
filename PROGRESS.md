@@ -8,10 +8,10 @@ things stand right now, not a history log.
 Current build stage:
 
 - Ticket `t_zafkz8jy` accepted Implementation. Verified branch
-  `ticket/t_zafkz8jy-agent-activity` at `e82f37f` is being merged into `main`.
+  `ticket/t_zafkz8jy-agent-activity` at `e82f37f` is merged into `main` as `4820cfa`.
 - The existing live activity row expands into a safe, bounded active-turn timeline in Ticket and
-  Chief chat. Merge conflict resolution must preserve the newer implementer-assignment work already
-  on `main`; the unrelated dirty worker-skill and nested-worktree state remain untouched.
+  Chief chat. The merge preserved the newer implementer-assignment work already on `main`; the
+  unrelated dirty worker-skill and nested-worktree state remained untouched.
 
 What just passed:
 
@@ -19,16 +19,18 @@ What just passed:
   compile/static and frontend gates, and 59 browser tests; final `VERIFY: PASS`.
 - Independent implementation review findings for thinking/tool-complete routing, CSS tokens, and
   malformed payload safety were fixed under focused RED/GREEN tests; final review: `NO VIOLATIONS`.
+- Canonical post-merge `./verify` passed: Ruff; Mypy across 106 source files; 441 unit tests;
+  compile/static and frontend gates; 60 browser tests; final `VERIFY: PASS`.
 
 Current hypothesis:
 
-- The feature and current `main` changes are compatible. Conflicts are integration-only: additive
-  progress/decision records, one combined test import, and the generated frontend bundle pointer.
+- Confirmed: the feature and current `main` changes are compatible. Integration preserved the newer
+  implementer-assignment work and resolved only additive records, one test import, and the generated
+  frontend bundle.
 
 Next step:
 
-- Finish the merge, rebuild the generated frontend bundle, run canonical post-merge `./verify`, and
-  propose Closeout with the merge commit and verification evidence.
+- Propose Closeout with the merge commit and post-merge verification evidence.
 
 Blockers:
 
