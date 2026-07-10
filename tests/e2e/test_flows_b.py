@@ -54,7 +54,7 @@ E31_DAY_LANDS = "E31 reload day lands."
 
 # item 32
 E32_SPRINT_NAME = "E32 sprint"
-E32_START = "2026-07-01"          # range contains baseline planning date 2026-07-04
+E32_START = "2026-07-01"  # range contains baseline planning date 2026-07-04
 E32_END = "2026-07-12"
 E32_ITEM_TITLE = "E32 item"
 E32_ITEM_PROJECT = "Vylo"
@@ -64,8 +64,8 @@ E32_LOOSE_TITLE = "E32 loose ticket"
 # renders its seeded fields; a Mid-sprint Review sub-field round-trips through the
 # shared inlineEdit → per-field PATCH → WS-flush re-render (the same path as Day/ticket).
 SO_SPRINT_NAME = "SO sprint"
-SO_START = "2026-07-01"           # range contains baseline planning date 2026-07-04
-SO_END = "2026-07-14"             # a 2-week span
+SO_START = "2026-07-01"  # range contains baseline planning date 2026-07-04
+SO_END = "2026-07-14"  # a 2-week span
 SO_LIMITING = "SO can build faster than we can validate."
 SO_BET = "SO 100 on the waitlist, first cohort activated."
 SO_MID_STAND = "SO halfway in, the bet is tracking."
@@ -85,7 +85,12 @@ def _scope_and_advance(server, api, cli, tid, ceiling, bodies):
     for field in ("success", "approach", "plan"):
         cli(
             server,
-            "worker", "propose", "--body-file", "-", "--recap", f"{field} ready.",
+            "worker",
+            "propose",
+            "--body-file",
+            "-",
+            "--recap",
+            f"{field} ready.",
             ticket_id=tid,
             stdin=bodies[field],
         )
@@ -130,7 +135,7 @@ def _snap_board(p: Page, mid):
 def _snap_day(p: Page):
     # The Day overview renders each structured field in its own slot; the Brief Take
     # body is the state that must survive a reload unchanged.
-    return {"take": p.inner_text('[data-day-take-body]')}
+    return {"take": p.inner_text("[data-day-take-body]")}
 
 
 def test_e28_day_overview_empty_until_rollover_agent(server, context_factory, open_page, cli, api):
@@ -141,23 +146,21 @@ def test_e28_day_overview_empty_until_rollover_agent(server, context_factory, op
     r = _set_now(api, server, NOW_0501)
     assert r["planning_date"] == DAY_CUR, r
 
-    page = open_page(
-        context_factory(), server, "#/day", "[data-day-overview]", settled=True
-    )
+    page = open_page(context_factory(), server, "#/day", "[data-day-overview]", settled=True)
     page.wait_for_selector("[data-day-take-body]", timeout=WAIT_MS)
 
     # The four fields render in their slots, but stay empty by default.
-    assert page.text_content('[data-day-focus]') == ""
-    assert page.text_content('[data-day-take-body]') == ""
-    assert page.text_content('[data-day-watch-body]') == ""
-    assert page.text_content('[data-day-lands-body]') == ""
+    assert page.text_content("[data-day-focus]") == ""
+    assert page.text_content("[data-day-take-body]").strip() == ""
+    assert page.text_content("[data-day-watch-body]").strip() == ""
+    assert page.text_content("[data-day-lands-body]").strip() == ""
     d = api.get(server, "/api/day/today")
     assert d["id"] == f"day_{DAY_CUR}", d
     assert d["focus"] == d["brief_take"] == d["watchout"] == d["if_today_lands"] == ""
     # The date orients the read (planning date 2026-07-05). text_content, not
     # inner_text: the date label is text-transform:uppercase, and inner_text would
     # return the rendered "JULY 5" while text_content keeps the raw DOM text.
-    assert "July 5" in page.text_content('[data-day-date]')
+    assert "July 5" in page.text_content("[data-day-date]")
 
     # The dropped surfaces have NO Day home anymore (backend endpoints untouched).
     assert page.query_selector(".plan-tree") is None
@@ -166,9 +169,7 @@ def test_e28_day_overview_empty_until_rollover_agent(server, context_factory, op
     assert page.query_selector(".day-ticket-row") is None
 
 
-def test_e29_day_overview_structured_and_edit(
-    server, context_factory, open_page, cli, api
-):
+def test_e29_day_overview_structured_and_edit(server, context_factory, open_page, cli, api):
     # Seed the four overview fields on the current planning day (baseline 2026-07-04)
     # in one PATCH, then amend two of them in place — a scalar (focus) and a markdown
     # body (watchout) — each editing on its own, no whole-blob re-serialize.
@@ -183,24 +184,24 @@ def test_e29_day_overview_structured_and_edit(
         },
     )
 
-    page = open_page(
-        context_factory(), server, "#/day", "[data-day-overview]", settled=True
-    )
+    page = open_page(context_factory(), server, "#/day", "[data-day-overview]", settled=True)
     page.wait_for_selector("[data-day-take-body]", timeout=WAIT_MS)
 
-    assert page.inner_text('[data-day-focus]') == E29_FOCUS
-    assert page.inner_text('[data-day-take-body]') == E29_TAKE
-    assert page.inner_text('[data-day-watch-body]') == E29_WATCH
-    assert page.inner_text('[data-day-lands-body]') == E29_LANDS
-    assert "July 4" in page.text_content('[data-day-date]')  # raw DOM (label uppercases)
+    assert page.inner_text("[data-day-focus]") == E29_FOCUS
+    assert page.inner_text("[data-day-take-body]") == E29_TAKE
+    assert page.inner_text("[data-day-watch-body]") == E29_WATCH
+    assert page.inner_text("[data-day-lands-body]") == E29_LANDS
+    assert "July 4" in page.text_content("[data-day-date]")  # raw DOM (label uppercases)
 
-    # inlineEdit seeds the raw value on focus and commits on blur → per-field PATCH →
-    # the WS flush re-renders. Driven deterministically (focus, overwrite, blur).
+    # InlineEdit remains one contenteditable surface and commits real edits on blur.
     def edit_field(selector, text):
         f0 = page.evaluate("window.__plannerDebug.flushes")
         page.evaluate(
             "(a) => { const el = document.querySelector(a.sel);"
-            " el.focus(); el.textContent = a.text; el.blur(); }",
+            " el.focus(); el.textContent = a.text;"
+            " el.dispatchEvent(new InputEvent('input', "
+            "{ bubbles: true, inputType: 'insertText', data: a.text }));"
+            " el.blur(); }",
             {"sel": selector, "text": text},
         )
         page.wait_for_function(
@@ -213,14 +214,14 @@ def test_e29_day_overview_structured_and_edit(
             timeout=WAIT_MS,
         )
 
-    edit_field('[data-day-focus]', E29_FOCUS_EDIT)       # scalar
-    edit_field('[data-day-watch-body]', E29_WATCH_EDIT)  # markdown body
+    edit_field("[data-day-focus]", E29_FOCUS_EDIT)  # scalar
+    edit_field("[data-day-watch-body]", E29_WATCH_EDIT)  # markdown body
 
     # Both edits landed; the fields nobody touched are unchanged (no re-serialize).
-    assert page.inner_text('[data-day-focus]') == E29_FOCUS_EDIT
-    assert page.inner_text('[data-day-watch-body]') == E29_WATCH_EDIT
-    assert page.inner_text('[data-day-take-body]') == E29_TAKE
-    assert page.inner_text('[data-day-lands-body]') == E29_LANDS
+    assert page.inner_text("[data-day-focus]") == E29_FOCUS_EDIT
+    assert page.inner_text("[data-day-watch-body]") == E29_WATCH_EDIT
+    assert page.inner_text("[data-day-take-body]") == E29_TAKE
+    assert page.inner_text("[data-day-lands-body]") == E29_LANDS
 
     d = api.get(server, "/api/day/today")
     assert d["focus"] == E29_FOCUS_EDIT, d
@@ -236,9 +237,7 @@ def test_day_markdown_focus_noop_keeps_raw_source(server, context_factory, open_
         {"watchout": DAY_NOOP_MARKDOWN},
     )
 
-    page = open_page(
-        context_factory(), server, "#/day", "[data-day-overview]", settled=True
-    )
+    page = open_page(context_factory(), server, "#/day", "[data-day-overview]", settled=True)
     page.wait_for_selector("[data-day-watch-body] h1", timeout=WAIT_MS)
 
     assert page.inner_text("[data-day-watch-body] h1") == "Day raw forms"
@@ -250,6 +249,9 @@ def test_day_markdown_focus_noop_keeps_raw_source(server, context_factory, open_
     ) == ["ordered paren"]
 
     page.focus("[data-day-watch-body]")
+    assert page.locator("[data-day-watch-body]").get_attribute("contenteditable") == "true"
+    assert page.locator("[data-day-watch-body] [data-markdown-edit]").count() == 0
+    assert page.locator("[data-day-watch-body] [data-markdown-source-editor]").count() == 0
     page.locator("[data-day-watch-body]").blur()
 
     d = api.get(server, "/api/day/today")
@@ -262,7 +264,11 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     # needs_review and PARKS at needs_review, then a human approves via the Review card.
     mid = cli(server, "ticket", "create", "--title", E30_TITLE)["id"]
     _scope_and_advance(
-        server, api, cli, mid, "needs_review",
+        server,
+        api,
+        cli,
+        mid,
+        "needs_review",
         {"success": E30_SUCCESS, "approach": E30_APPROACH, "plan": E30_PLAN},
     )
 
@@ -275,7 +281,12 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     # needs_review (the accepted value is stored, no pending proposal remains).
     r = cli(
         server,
-        "worker", "propose", "--body-file", "-", "--recap", "Result ready.",
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Result ready.",
         ticket_id=mid,
         stdin=E30_RESULT,
     )
@@ -308,7 +319,11 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
 def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api):
     mid = cli(server, "ticket", "create", "--title", E31_TITLE)["id"]
     _scope_and_advance(
-        server, api, cli, mid, "in_progress",
+        server,
+        api,
+        cli,
+        mid,
+        "in_progress",
         {"success": E31_SUCCESS, "approach": E31_APPROACH, "plan": E31_PLAN},
     )
 
@@ -331,7 +346,12 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     # auto-accepts past the ceiling), leaving a gating-pending proposal to reload-restore.
     r = cli(
         server,
-        "worker", "propose", "--body-file", "-", "--recap", "Result proposed.",
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Result proposed.",
         ticket_id=mid,
         stdin=E31_RESULT,
     )
@@ -368,10 +388,10 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     assert before_b == after_b == expected_b, (before_b, after_b)
 
     # Day surface — the overview renders structured fields; a reload restores.
-    ready_d = '[data-day-take-body]'
+    ready_d = "[data-day-take-body]"
     page_d = open_page(context_factory(), server, "#/day", ready_d, settled=True)
     page_d.wait_for_selector(ready_d, timeout=WAIT_MS)
-    assert "July 5" in page_d.text_content('[data-day-date]')  # raw DOM (label uppercases)
+    assert "July 5" in page_d.text_content("[data-day-date]")  # raw DOM (label uppercases)
     before_d = _snap_day(page_d)
     _reload_settle(page_d, ready_d)
     page_d.wait_for_selector(ready_d, timeout=WAIT_MS)
@@ -389,8 +409,16 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
     sid = s["id"]
 
     iid = cli(
-        server, "sprint", "item", "create", "--title", E32_ITEM_TITLE,
-        "--project", E32_ITEM_PROJECT, "--sprint", sid,
+        server,
+        "sprint",
+        "item",
+        "create",
+        "--title",
+        E32_ITEM_TITLE,
+        "--project",
+        E32_ITEM_PROJECT,
+        "--sprint",
+        sid,
     )["id"]
     ltid = cli(server, "ticket", "create", "--title", E32_LOOSE_TITLE, "--sprint", sid)["id"]
 
@@ -477,20 +505,21 @@ def test_sprint_overview_fields_and_edit(server, context_factory, open_page, api
     for key in ("mid_where_we_stand", "mid_whats_changed", "mid_what_to_adjust"):
         assert page.query_selector(f'[data-field="{key}"] .fval .ed') is not None
 
-    # Inline-edit round-trip on the NEW Mid-sprint field: open its section, focus the
-    # field, overwrite, blur → PATCH /api/sprints/{id} {mid_where_we_stand} → the WS
-    # flush re-renders from the saved value (no optimistic UI). Same driver as e29.
+    # Inline-edit round-trip on the NEW Mid-sprint field: open its section, edit
+    # the contenteditable surface, blur → PATCH /api/sprints/{id}
+    # {mid_where_we_stand} → the WS flush re-renders from the saved value.
     page.click('[data-phase="mid"] > summary')
     sel = '[data-field="mid_where_we_stand"] .fval .ed'
     f0 = page.evaluate("window.__plannerDebug.flushes")
     page.evaluate(
         "(a) => { const el = document.querySelector(a.sel);"
-        " el.focus(); el.textContent = a.text; el.blur(); }",
+        " el.focus(); el.textContent = a.text;"
+        " el.dispatchEvent(new InputEvent('input', "
+        "{ bubbles: true, inputType: 'insertText', data: a.text }));"
+        " el.blur(); }",
         {"sel": sel, "text": SO_MID_STAND},
     )
-    page.wait_for_function(
-        "(f0) => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS
-    )
+    page.wait_for_function("(f0) => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS)
     # Mid now has content → the section stays open (running phase) → the value shows.
     page.wait_for_function(
         "(a) => { const el = document.querySelector(a.sel);"
@@ -504,4 +533,4 @@ def test_sprint_overview_fields_and_edit(server, context_factory, open_page, api
     assert cur["mid_where_we_stand"] == SO_MID_STAND, cur
     assert cur["mid_whats_changed"] == "", cur
     assert cur["mid_what_to_adjust"] == "", cur
-    assert cur["limiting_factor"] == SO_LIMITING, cur   # untouched by the mid edit
+    assert cur["limiting_factor"] == SO_LIMITING, cur  # untouched by the mid edit

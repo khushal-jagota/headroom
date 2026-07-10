@@ -1,0 +1,26 @@
+# Atomic editable preview follow-up
+
+## Corrected contract
+
+Retain the original continuously editable Markdown interaction. A Markdown field is one `contenteditable` surface at rest and while focused. Every existing Markdown link remains its shared `FilePreview` block inside that surface; there is no separate source mode and no Edit/Save/Cancel UI.
+
+- Surrounding rich Markdown text remains directly editable with the prior focus, blur/save, Enter, Escape, and paste behavior.
+- Preview blocks are atomic, `contenteditable="false"`, and keep their actions/media usable.
+- Each block carries the exact supported Markdown link token that produced it. The hardened renderer must attach its original escaped token to the renderer-authored anchor before hydration; editable hydration must not reconstruct source from normalized DOM `href`/text. Serialization emits that token and ignores all generated preview descendants. Existing unsupported Markdown forms such as link-title syntax remain plain text rather than expanding the parser in this follow-up.
+- An untouched focus/blur never saves merely because an async preview changed from loading to loaded.
+- A newly typed Markdown link follows the old rich-editor rule: it becomes a preview when the normal save/repaint occurs. Existing links never disappear merely because the surface has focus.
+- No consumer classifies file types and no LLM chooses presentation.
+
+## Implementation shape
+
+1. **RED — continuous editable field.** Rewrite one normal passed-field Playwright assertion first: the Markdown surface is `contenteditable`, has no edit/source buttons, contains the same preview blocks before and after focus, accepts a real adjacent keyboard edit, saves on blur, and reloads with canonical Markdown links plus previews. Run it and confirm the current two-mode implementation fails for the expected reason.
+2. **Renderer token + shared mount adapter.** Add one safe renderer-authored source-token attribute to every supported rendered anchor and cover supported emphasis labels plus percent-encoded/query/fragment targets. Extract the anchor-to-`FilePreview` mounting used by `MarkdownBlock` into one Svelte adapter. In editable mode it replaces each rendered anchor with an atomic slot carrying that exact token; in read-only mode it keeps current behavior. It owns mount cleanup: repaint/destroy and deletion of a slot must unmount the component so pending preview fetch effects abort and iframe `srcdoc` clears.
+3. **Serializer contract.** Extend the framework-free Markdown editable serializer so an atomic slot serializes to its stored token before walking descendants. Drive dirtiness from real input events, not `innerHTML`, so async preview loading cannot trigger a save. Add a browser no-op test that focuses a field, waits for Markdown/HTML previews to finish, blurs, and proves no PATCH/flush and byte-identical storage. Keep generated iframe/media/Markdown DOM out of canonical text.
+4. **Restore shared inline editing.** Return Markdown `InlineEdit` to its original single `contenteditable` behavior and hydrate previews after each paint. Preserve focus, blur save, Cmd/Ctrl+Enter, single-line Enter, Escape, plain-text paste, placeholders, and Day data hooks. If focus moves from the parent to a preview descendant, do not commit/repaint before that action executes. Browser tests must focus the parent first, then exercise HTML/external new-tab actions and a download action without generated DOM persistence.
+5. **Restore proposal behavior.** Return gating approval drafts to their original continuously editable surface, using the same atomic preview adapter and serializer. Keep proposal reset on Escape. Prove both no-edit approval with loaded previews (no `edited_body`) and active real-keyboard edit followed directly by Approve (exact edited Markdown, no generated DOM). `ProposalCard` continues to reuse `InlineEdit`, so it inherits the same behavior without a second editor.
+6. **RED/GREEN edge slices.** Add browser proof for typing before and after a preview, Backspace/Delete at its boundaries, explicit selected deletion removing exactly one link, and plain-text paste adjacent to a preview without introducing preview DOM. Prove previews remain while editing normal field notes and proposal/result bodies, and no preview-generated tags persist. Add adapter cleanup and serializer tests where practical.
+7. **Close out.** Remove the added edit/source-mode CSS and Day placeholder workaround. Add negative browser assertions on Ticket, Review, Day, Sprint, and `ProposalCard` that no edit/source controls remain. Update docs/decision/progress and the reusable engineering reference, rebuild `web/dist`, live-check the real ticket field, obtain Codex diff review with no unresolved findings, then run one clean `./verify`.
+
+## Boundaries
+
+Do not add a structured-editor dependency, raw-source toggle, edit affordance, file registry, metadata unfurler, upload system, or per-surface preview logic. Do not change backend file serving or the `FilePreview` classification contract.

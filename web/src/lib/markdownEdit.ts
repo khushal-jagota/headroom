@@ -1,3 +1,5 @@
+import { mountFilePreviews } from "./filePreviewMount";
+
 function stringValue(value: unknown): string {
   return value === null || value === undefined ? "" : String(value);
 }
@@ -10,19 +12,23 @@ function setEmptyState(el: HTMLElement, raw: string): void {
   }
 }
 
-export function paintMarkdownEditable(el: HTMLElement, value: unknown): void {
+export function paintMarkdownEditable(el: HTMLElement, value: unknown): () => void {
   const raw = stringValue(value);
   el.replaceChildren();
   if (raw.trim()) {
     const rendered = window.Planner?.markdown?.render(raw);
     if (rendered) {
       rendered.classList.add("markdown-block");
+      const cleanup = mountFilePreviews(rendered, { editable: true });
       el.appendChild(rendered);
+      setEmptyState(el, raw);
+      return cleanup;
     } else {
       el.textContent = raw;
     }
   }
   setEmptyState(el, raw);
+  return () => {};
 }
 
 export function paintPlainEditable(el: HTMLElement, value: unknown): void {
@@ -85,12 +91,16 @@ function directMarkdownBlock(el: HTMLElement): HTMLElement | null {
   return only.classList.contains("markdown-block") ? only : null;
 }
 
+function editableText(value: string | null): string {
+  return (value || "").replace(/\u200b/g, "").replace(/\u00a0/g, " ");
+}
+
 function serializeBlockContainer(parent: Node): string {
   const blocks: string[] = [];
   let text = "";
   for (const child of Array.from(parent.childNodes)) {
     if (child.nodeType === Node.TEXT_NODE) {
-      text += child.textContent || "";
+      text += editableText(child.textContent);
       continue;
     }
     if (!(child instanceof HTMLElement)) continue;
@@ -150,8 +160,15 @@ function serializeInlineChildren(parent: Node): string {
 }
 
 function serializeInlineNode(node: Node): string {
-  if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
+  if (node.nodeType === Node.TEXT_NODE) return editableText(node.textContent);
   if (!(node instanceof HTMLElement)) return "";
+  if (node.hasAttribute("data-markdown-caret-guard")) {
+    return editableText(node.textContent);
+  }
+  const atomicToken = node.getAttribute("data-markdown-source-token");
+  if (node.getAttribute("data-markdown-atomic-slot") === "true" && atomicToken !== null) {
+    return atomicToken;
+  }
   const tag = node.tagName;
   if (tag === "BR") return "\n";
   if (tag === "STRONG" || tag === "B") return `**${serializeInlineChildren(node)}**`;

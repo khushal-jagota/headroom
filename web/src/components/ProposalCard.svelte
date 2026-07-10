@@ -1,6 +1,6 @@
 <script lang="ts">
   import ErrorLine from "./ErrorLine.svelte";
-  import MarkdownBlock from "./MarkdownBlock.svelte";
+  import InlineEdit from "./InlineEdit.svelte";
   import ScopePairPicker from "./ScopePairPicker.svelte";
 
   type ScopePair = { next_ceiling: string; at_cap: string };
@@ -23,6 +23,10 @@
   let inFlight = $state(false);
   let resolved = $state(false);
   let error = $state<unknown>(null);
+
+  async function saveDraft(raw: string): Promise<void> {
+    draft = raw;
+  }
 
   async function accept(): Promise<void> {
     const payload: Record<string, unknown> = {};
@@ -57,8 +61,14 @@
 
 <div class="proposal-card">
   <div class="proposal-meta">proposed by {proposal.proposed_by}</div>
-  <MarkdownBlock text={proposal.body} />
-  <textarea class="field-editor-input proposal-edit" data-edit rows="8" bind:value={draft}></textarea>
+  <InlineEdit
+    value={draft}
+    markdown
+    multiline
+    placeholder="Proposal..."
+    className="proposal-edit"
+    onSave={saveDraft}
+  />
   {#if requireScope}
     <ScopePairPicker {newState} bind:scope />
   {/if}

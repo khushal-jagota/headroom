@@ -1,13 +1,5 @@
 <script lang="ts">
   import { type Snippet } from "svelte";
-  import {
-    editableMarkupChanged,
-    editableMarkupSnapshot,
-    handlePlainTextPaste,
-    paintMarkdownEditable,
-    readMarkdownEditable,
-    refreshEditableEmptyState
-  } from "../lib/markdownEdit";
   import ContentDisclosure from "./ContentDisclosure.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import InlineEdit from "./InlineEdit.svelte";
@@ -45,14 +37,11 @@
   } = $props();
 
   let draft = $state("");
-  let draftEl = $state<HTMLDivElement | null>(null);
-  let draftEditing = $state(false);
   let lastProposalBody = $state<string | null>(null);
   let scope = $state<ScopePair | null>(null);
   let inFlight = $state(false);
   let resolved = $state(false);
   let error = $state<unknown>(null);
-  let draftSnapshot = "";
   let reviewLayout = $derived(layout === "review");
   let hasNote = $derived(Boolean(onNoteSave) || Boolean((note || "").trim()));
   let contentTitle = $derived(displayLabel(whatLabel || field.replace(/_/g, " ")));
@@ -63,52 +52,19 @@
     return trimmed[0].toUpperCase() + trimmed.slice(1);
   }
 
-  function paintDraft(): void {
-    const el = draftEl;
-    if (!el) return;
-    paintMarkdownEditable(el, draft);
+  async function saveDraft(raw: string): Promise<void> {
+    draft = raw;
   }
 
-  function enterDraftEdit(): void {
-    const el = draftEl;
-    if (!el || draftEditing || inFlight) return;
-    draftEditing = true;
-    draftSnapshot = editableMarkupSnapshot(el);
-  }
-
-  function commitDraft(): void {
-    const el = draftEl;
-    if (!el || !draftEditing) return;
-    if (!editableMarkupChanged(el, draftSnapshot)) {
-      draftEditing = false;
-      paintDraft();
-      return;
-    }
-    draft = readMarkdownEditable(el);
-    draftEditing = false;
-    paintDraft();
-  }
-
-  function draftKeydown(event: KeyboardEvent): void {
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-      event.preventDefault();
-      draftEl?.blur();
-      return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      draft = proposalBody || "";
-      draftEditing = false;
-      paintDraft();
-      draftEl?.blur();
-    }
+  function resetDraft(): string {
+    draft = proposalBody || "";
+    return draft;
   }
 
   async function approve(): Promise<void> {
     const payload: Record<string, unknown> = {};
     if (mode === "gating-pending") {
       if (!scope) return;
-      if (draftEditing) commitDraft();
       payload.next_ceiling = scope.next_ceiling;
       payload.at_cap = scope.at_cap;
       if (draft !== (proposalBody || "")) payload.edited_body = draft;
@@ -133,7 +89,6 @@
       scope = null;
       resolved = false;
     }
-    if (!draftEditing) paintDraft();
   });
 </script>
 
@@ -208,22 +163,17 @@
     {/if}
     <div class="approval-proposal-shell">
       <ContentDisclosure title={contentTitle} section="proposal">
-        <div
-          bind:this={draftEl}
-          class="ed approval-draft"
-          data-edit
-          contenteditable="true"
-          role="textbox"
-          aria-multiline="true"
-          tabindex="0"
-          onfocus={enterDraftEdit}
-          onblur={commitDraft}
-          onkeydown={draftKeydown}
-          oninput={() => {
-            if (draftEl) refreshEditableEmptyState(draftEl, true);
-          }}
-          onpaste={handlePlainTextPaste}
-        ></div>
+        <div class="approval-draft">
+          <InlineEdit
+            value={draft}
+            markdown
+            multiline
+            placeholder={`${contentTitle || "Proposal"}...`}
+            dataEdit
+            onCancel={resetDraft}
+            onSave={saveDraft}
+          />
+        </div>
       </ContentDisclosure>
       {#if reviewLayout}
         <div class="approval-actions">

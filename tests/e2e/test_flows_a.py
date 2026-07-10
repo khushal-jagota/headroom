@@ -33,6 +33,10 @@ E24_BODY = "Agent-drafted success criteria."
 E25_ORIG = "# Original proposal\n\n- old structure"
 E25_EDIT = "# Original proposal v2\n\n- kept structure\n- serialized from DOM"
 NOOP_MARKDOWN_BODY = "# Raw forms\n\n* star bullet\n\n1) ordered paren\n\n_line italic_"
+SELECT_NODE_CONTENTS = (
+    "node => { const r = document.createRange(); r.selectNodeContents(node);"
+    " const s = getSelection(); s.removeAllRanges(); s.addRange(r); }"
+)
 E27_SUCCESS = "Success body for the chain."
 E27_APPROACH = "Approach body for the chain."
 E27_PLAN = "Plan body for the chain."
@@ -57,7 +61,7 @@ def _wait_present(page: Page, selector: str) -> None:
 
 def _wait_chat_text(page: Page, who: str, text: str) -> None:
     page.wait_for_function(
-        "({ who, text }) => Array.from(document.querySelectorAll(`[data-chat-msg=\"${who}\"]`))"
+        '({ who, text }) => Array.from(document.querySelectorAll(`[data-chat-msg="${who}"]`))'
         ".some(el => el.textContent.includes(text))",
         arg={"who": who, "text": text},
         timeout=WAIT_MS,
@@ -83,8 +87,9 @@ def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api)
     assert created["state"] == "needs_success", created
 
     card = f'[data-card][data-ticket-state="needs_success"][data-ticket-id="{tid}"]'
-    page_b.wait_for_function("f => window.__plannerDebug.flushes > f", arg=flushes_b,
-                             timeout=WAIT_MS)
+    page_b.wait_for_function(
+        "f => window.__plannerDebug.flushes > f", arg=flushes_b, timeout=WAIT_MS
+    )
     assert page_b.query_selector(card) is None
     assert page_a.query_selector(card) is None
 
@@ -106,7 +111,12 @@ def test_e23_env_pinned_propose(server, context_factory, open_page, cli, api):
     # PLAN_TICKET_ID resolves the ticket (no positional id); stdin carries the body.
     cli(
         server,
-        "worker", "propose", "--body-file", "-", "--recap", "Success criteria proposed.",
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Success criteria proposed.",
         ticket_id=tid,
         stdin=MD_BODY,
     )
@@ -115,28 +125,37 @@ def test_e23_env_pinned_propose(server, context_factory, open_page, cli, api):
     page = open_page(context_factory(), server, f"#/ticket/{tid}", ready, settled=True)
 
     # Rendered: the proposal's markdown structure, with exact texts.
-    b = '[data-approval-block] .approval-draft .markdown-block'
+    b = "[data-approval-block] .approval-draft .markdown-block"
     assert page.inner_text(f"{b} h1") == "Success criteria"
-    assert page.eval_on_selector_all(
-        f"{b} ul li", "els => els.map(e => e.textContent)"
-    ) == ["six anchored tests", "two browser contexts"]
-    assert page.eval_on_selector_all(
-        f"{b} ol li", "els => els.map(e => e.textContent)"
-    ) == ["boot server", "drive UI"]
+    assert page.eval_on_selector_all(f"{b} ul li", "els => els.map(e => e.textContent)") == [
+        "six anchored tests",
+        "two browser contexts",
+    ]
+    assert page.eval_on_selector_all(f"{b} ol li", "els => els.map(e => e.textContent)") == [
+        "boot server",
+        "drive UI",
+    ]
     assert page.inner_text(f"{b} strong") == "exact"
     paras = page.eval_on_selector_all(f"{b} p", "els => els.map(e => e.textContent)")
     assert len(paras) == 2, paras
     assert paras[-1] == "Done when verify flips items 22-27."
 
-    # Focusing the contenteditable draft keeps the rendered markdown DOM in place.
-    page.focus('[data-approval-block] .approval-draft')
+    # Focusing keeps the same continuously editable rendered surface in place.
+    page.focus("[data-approval-block] [data-edit]")
+    assert (
+        page.locator("[data-approval-block] [data-edit]").get_attribute("contenteditable") == "true"
+    )
+    assert page.locator("[data-approval-block] [data-approval-draft-edit]").count() == 0
+    assert page.locator("[data-approval-block] [data-markdown-source-editor]").count() == 0
     assert page.inner_text(f"{b} h1") == "Success criteria"
-    assert page.eval_on_selector_all(
-        f"{b} ul li", "els => els.map(e => e.textContent)"
-    ) == ["six anchored tests", "two browser contexts"]
-    assert page.eval_on_selector_all(
-        f"{b} ol li", "els => els.map(e => e.textContent)"
-    ) == ["boot server", "drive UI"]
+    assert page.eval_on_selector_all(f"{b} ul li", "els => els.map(e => e.textContent)") == [
+        "six anchored tests",
+        "two browser contexts",
+    ]
+    assert page.eval_on_selector_all(f"{b} ol li", "els => els.map(e => e.textContent)") == [
+        "boot server",
+        "drive UI",
+    ]
     assert page.inner_text(f"{b} strong") == "exact"
 
     # Did not advance: still needs_success, and the value is still unset.
@@ -148,7 +167,12 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
     tid = cli(server, "ticket", "create", "--title", "T18 review ticket")["id"]
     cli(
         server,
-        "worker", "propose", "--body-file", "-", "--recap", "Success ready for review.",
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Success ready for review.",
         ticket_id=tid,
         stdin=E24_BODY,
     )
@@ -185,7 +209,7 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
 
     d = api.get(server, f"/api/tickets/{tid}")
     assert d["state"] == "needs_approach", d
-    assert d["ceiling"] == "needs_approach", d      # default approval scope is next stage
+    assert d["ceiling"] == "needs_approach", d  # default approval scope is next stage
     assert d["at_cap"] == "propose", d
     assert d["fields"]["success"]["value"] == E24_BODY
     assert d["fields"]["success"]["proposal"] is None
@@ -197,7 +221,12 @@ def test_review_return_for_revision_starts_agent_without_chat_copy(
     tid = cli(server, "ticket", "create", "--title", "Revision review ticket")["id"]
     cli(
         server,
-        "worker", "propose", "--body-file", "-", "--recap", "Needs revision.",
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Needs revision.",
         ticket_id=tid,
         stdin="Too much detail.",
     )
@@ -229,7 +258,12 @@ def test_markdown_approval_focus_noop_keeps_raw_source(
     tid = cli(server, "ticket", "create", "--title", "Markdown noop ticket")["id"]
     cli(
         server,
-        "worker", "propose", "--body-file", "-", "--recap", "Raw forms ready.",
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Raw forms ready.",
         ticket_id=tid,
         stdin=NOOP_MARKDOWN_BODY,
     )
@@ -237,17 +271,21 @@ def test_markdown_approval_focus_noop_keeps_raw_source(
     card = f'[data-review-card][data-entity-id="{tid}"]'
     page = open_page(context_factory(), server, "#/review", card, settled=True)
 
-    # Focus leaves the rendered structure in place, but an untouched focus/approve must
-    # not serialize the DOM back to canonical markdown forms.
+    # Untouched focus/blur keeps the rendered structure in place and must not
+    # serialize the DOM back to canonical markdown forms.
     page.focus(f"{card} [data-edit]")
-    assert page.inner_text(f"{card} [data-edit] h1") == "Raw forms"
+    assert page.locator(f"{card} [data-edit]").get_attribute("contenteditable") == "true"
+    assert page.locator(f"{card} [data-approval-draft-edit]").count() == 0
+    assert page.locator(f"{card} [data-markdown-source-editor]").count() == 0
+    page.locator(f"{card} [data-edit]").blur()
+    assert page.inner_text(f"{card} .approval-draft h1") == "Raw forms"
     assert page.eval_on_selector_all(
-        f"{card} [data-edit] ul li", "els => els.map(e => e.textContent)"
+        f"{card} .approval-draft ul li", "els => els.map(e => e.textContent)"
     ) == ["star bullet"]
     assert page.eval_on_selector_all(
-        f"{card} [data-edit] ol li", "els => els.map(e => e.textContent)"
+        f"{card} .approval-draft ol li", "els => els.map(e => e.textContent)"
     ) == ["ordered paren"]
-    assert page.inner_text(f"{card} [data-edit] em") == "line italic"
+    assert page.inner_text(f"{card} .approval-draft em") == "line italic"
 
     _wait_enabled(page, f"{card} [data-accept]")
     page.click(f"{card} [data-accept]")
@@ -262,7 +300,12 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
     tid = cli(server, "ticket", "create", "--title", "T18 edit ticket")["id"]
     cli(
         server,
-        "worker", "propose", "--body-file", "-", "--recap", "Success draft for edit review.",
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Success draft for edit review.",
         ticket_id=tid,
         stdin=E25_ORIG,
     )
@@ -270,34 +313,39 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
     card = f'[data-review-card][data-entity-id="{tid}"]'
     page = open_page(context_factory(), server, "#/review", card, settled=True)
 
-    # Focusing keeps the rendered markdown structure editable in place.
-    page.focus(f"{card} [data-edit]")
-    assert page.inner_text(f"{card} [data-edit] h1") == "Original proposal"
-    assert page.eval_on_selector_all(
-        f"{card} [data-edit] ul li", "els => els.map(e => e.textContent)"
-    ) == ["old structure"]
-
-    page.locator(f"{card} [data-edit] h1").click()
-    page.keyboard.press("End")
-    page.keyboard.type(" v2")
-    page.locator(f"{card} [data-edit]").evaluate(
-        """(el) => {
-            el.querySelector('li').textContent = 'kept structure';
-            const extra = document.createElement('li');
-            extra.textContent = 'serialized from DOM';
-            el.querySelector('ul').appendChild(extra);
-        }"""
-    )
-    page.locator(f"{card} [data-edit]").blur()
+    # The proposal remains one contenteditable surface. Escape discards an active
+    # keyboard edit, and approving after a real keyboard edit sends exact Markdown.
+    editor = page.locator(f"{card} [data-edit]")
+    assert editor.get_attribute("contenteditable") == "true"
+    assert page.locator(f"{card} [data-approval-draft-edit]").count() == 0
+    assert page.locator(f"{card} [data-markdown-source-editor]").count() == 0
+    editor.focus()
+    editor.locator("h1").evaluate(SELECT_NODE_CONTENTS)
+    page.keyboard.type("Saved local draft")
+    editor.blur()
+    assert page.inner_text(f"{card} .approval-draft h1") == "Saved local draft"
+    editor.focus()
+    editor.locator("h1").evaluate(SELECT_NODE_CONTENTS)
+    page.keyboard.type("Discard this edit.")
+    page.keyboard.press("Escape")
+    assert page.inner_text(f"{card} .approval-draft h1") == "Original proposal"
     page.select_option(f"{card} [data-scope-ceiling]", "needs_plan")
     page.select_option(f"{card} [data-scope-atcap] select", "propose")
+    editor.focus()
+    editor.locator("h1").evaluate(SELECT_NODE_CONTENTS)
+    page.keyboard.type("Original proposal v2")
+    editor.locator("li").evaluate(SELECT_NODE_CONTENTS)
+    page.keyboard.type("kept structure")
+    page.keyboard.press("End")
+    page.keyboard.press("Enter")
+    page.keyboard.type("serialized from DOM")
     _wait_enabled(page, f"{card} [data-accept]")
     page.click(f"{card} [data-accept]")
 
     page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
 
     d = api.get(server, f"/api/tickets/{tid}")
-    # Exact markdown serialized from the edited rendered DOM.
+    # Exact edited Markdown source was approved.
     assert d["fields"]["success"]["value"] == E25_EDIT, repr(d["fields"]["success"]["value"])
     assert d["ceiling"] == "needs_plan", d
     assert d["at_cap"] == "propose", d
@@ -311,9 +359,10 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
         'section[data-screen="ticket"][data-state="needs_approach"]',
         settled=True,
     )
-    assert ticket_page.text_content(
-        '[data-field="success"] .markdown-block h1'
-    ) == "Original proposal v2"
+    assert (
+        ticket_page.text_content('[data-field="success"] .markdown-block h1')
+        == "Original proposal v2"
+    )
     assert ticket_page.eval_on_selector_all(
         '[data-field="success"] .markdown-block ul li',
         "els => els.map(e => e.textContent)",
@@ -324,9 +373,9 @@ def test_e26_chat_panel_echo_and_offline(
     server, server_factory, context_factory, open_page, cli, api
 ):
     pending_server = server_factory(gateway="slow_fake")
-    pending_tid = cli(
-        pending_server, "ticket", "create", "--title", "T18 pending chat ticket"
-    )["id"]
+    pending_tid = cli(pending_server, "ticket", "create", "--title", "T18 pending chat ticket")[
+        "id"
+    ]
     pending_page = open_page(
         context_factory(),
         pending_server,
@@ -335,22 +384,22 @@ def test_e26_chat_panel_echo_and_offline(
         settled=True,
     )
     assert pending_page.text_content('[data-ticket-status="empty"]') == "status empty"
-    pending_page.fill('[data-chat] [data-chat-input]', "hold before first token")
-    pending_page.click('[data-chat] [data-chat-send]')
-    pending_page.wait_for_selector('[data-chat] [data-chat-pending]', timeout=WAIT_MS)
+    pending_page.fill("[data-chat] [data-chat-input]", "hold before first token")
+    pending_page.click("[data-chat] [data-chat-send]")
+    pending_page.wait_for_selector("[data-chat] [data-chat-pending]", timeout=WAIT_MS)
     pending_state = api.get(pending_server, f"/api/chat/{pending_tid}/state")
     assert pending_state["active_turn"]["status"] == "running"
     assert [msg["text"] for msg in pending_state["messages"]] == ["hold before first token"]
     assert "(none)" not in pending_page.inner_text("[data-chat] [data-chat-messages]")
 
-    pending_selector = '[data-chat] [data-chat-pending]'
+    pending_selector = "[data-chat] [data-chat-pending]"
     pending_page.wait_for_function(
         "selector => document.querySelector(selector) === null",
         arg=pending_selector,
         timeout=WAIT_MS,
     )
-    pending_page.fill('[data-chat] [data-chat-input]', TALL_CHAT_MESSAGE)
-    pending_page.click('[data-chat] [data-chat-send]')
+    pending_page.fill("[data-chat] [data-chat-input]", TALL_CHAT_MESSAGE)
+    pending_page.click("[data-chat] [data-chat-send]")
     pending_page.wait_for_selector(pending_selector, timeout=WAIT_MS)
     pending_page.wait_for_function(
         "selector => document.querySelector(selector) === null",
@@ -361,13 +410,13 @@ def test_e26_chat_panel_echo_and_offline(
 
     pending_page.goto(pending_server.base + "/#/workspace")
     pending_page.wait_for_selector('section[data-screen="workspace"]', timeout=WAIT_MS)
-    pending_page.add_style_tag(content='[data-chat-messages] { flex: 0 0 120px !important; }')
+    pending_page.add_style_tag(content="[data-chat-messages] { flex: 0 0 120px !important; }")
     pending_page.goto(pending_server.base + f"/#/ticket/{pending_tid}")
     pending_page.wait_for_selector(
         'section[data-screen="ticket"] [data-chat] [data-chat-input]', timeout=WAIT_MS
     )
     _wait_chat_text(pending_page, "planner", "history line 23")
-    pending_thread_selector = '[data-chat] [data-chat-messages]'
+    pending_thread_selector = "[data-chat] [data-chat-messages]"
     pending_page.wait_for_function(
         "selector => { const el = document.querySelector(selector);"
         " return el && el.scrollHeight > el.clientHeight; }",
@@ -375,8 +424,8 @@ def test_e26_chat_panel_echo_and_offline(
         timeout=WAIT_MS,
     )
     pending_page.eval_on_selector(pending_thread_selector, "el => { el.scrollTop = 0; }")
-    pending_page.fill('[data-chat] [data-chat-input]', "stream without moving")
-    pending_page.click('[data-chat] [data-chat-send]')
+    pending_page.fill("[data-chat] [data-chat-input]", "stream without moving")
+    pending_page.click("[data-chat] [data-chat-send]")
     pending_page.wait_for_selector(pending_selector, timeout=WAIT_MS)
     _wait_chat_text(pending_page, "planner", "echo: stream without moving")
     assert pending_page.query_selector(pending_selector) is not None
@@ -400,15 +449,15 @@ def test_e26_chat_panel_echo_and_offline(
     # A2: a warmup send mints the session and fires the one-and-only chat flush; the
     # asserted send follows it, so no re-render can race the reply paint.
     f0 = page.evaluate("window.__plannerDebug.flushes")
-    page.fill('[data-chat] [data-chat-input]', "warmup")
-    page.click('[data-chat] [data-chat-send]')
+    page.fill("[data-chat] [data-chat-input]", "warmup")
+    page.click("[data-chat] [data-chat-send]")
     page.wait_for_function("f => window.__plannerDebug.flushes > f", arg=f0, timeout=WAIT_MS)
-    page.wait_for_selector('[data-chat] [data-chat-input]', timeout=WAIT_MS)
+    page.wait_for_selector("[data-chat] [data-chat-input]", timeout=WAIT_MS)
 
     assert api.get(server, f"/api/tickets/{tid}")["chat_session_key"] == "fake-sess-1"
 
-    page.fill('[data-chat] [data-chat-input]', "hello from e2e")
-    page.click('[data-chat] [data-chat-send]')
+    page.fill("[data-chat] [data-chat-input]", "hello from e2e")
+    page.click("[data-chat] [data-chat-send]")
     page.wait_for_function(
         "() => { const els = document.querySelectorAll('[data-chat-msg=\"you\"]');"
         " return els.length > 0 && els[els.length - 1].textContent === 'hello from e2e'; }",
@@ -432,15 +481,15 @@ def test_e26_chat_panel_echo_and_offline(
 
     # Make the recovered transcript tall enough to prove initial and subsequent
     # scroll behavior without relying on viewport-specific message heights.
-    page.fill('[data-chat] [data-chat-input]', TALL_CHAT_MESSAGE)
-    page.click('[data-chat] [data-chat-send]')
+    page.fill("[data-chat] [data-chat-input]", TALL_CHAT_MESSAGE)
+    page.click("[data-chat] [data-chat-send]")
     _wait_chat_text(page, "planner", "history line 23")
 
     # The transcript is gateway history, not component-local state. Leaving the ticket,
     # returning, and a hard reload must all recover the visible turns.
     page.goto(server.base + "/#/workspace")
     page.wait_for_selector('section[data-screen="workspace"]', timeout=WAIT_MS)
-    page.add_style_tag(content='[data-chat-messages] { flex: 0 0 120px !important; }')
+    page.add_style_tag(content="[data-chat-messages] { flex: 0 0 120px !important; }")
     page.goto(server.base + f"/#/ticket/{tid}")
     page.wait_for_selector(
         'section[data-screen="ticket"] [data-chat] [data-chat-input]', timeout=WAIT_MS
@@ -453,7 +502,7 @@ def test_e26_chat_panel_echo_and_offline(
         "history line 23",
     )
 
-    thread_selector = '[data-chat] [data-chat-messages]'
+    thread_selector = "[data-chat] [data-chat-messages]"
     page.wait_for_function(
         "selector => { const el = document.querySelector(selector);"
         " return el && el.scrollHeight > el.clientHeight; }",
@@ -467,8 +516,8 @@ def test_e26_chat_panel_echo_and_offline(
     assert abs(initial_scroll["top"] - initial_scroll["max"]) <= 1, initial_scroll
 
     page.eval_on_selector(thread_selector, "el => { el.scrollTop = 0; }")
-    page.fill('[data-chat] [data-chat-input]', "do not move my scroll")
-    page.click('[data-chat] [data-chat-send]')
+    page.fill("[data-chat] [data-chat-input]", "do not move my scroll")
+    page.click("[data-chat] [data-chat-send]")
     _wait_chat_text(page, "planner", "echo: do not move my scroll")
     assert page.eval_on_selector(thread_selector, "el => el.scrollTop") == 0
 
@@ -489,9 +538,9 @@ def test_e26_chat_panel_echo_and_offline(
         'section[data-screen="ticket"] [data-chat] [data-chat-offline]',
         settled=True,
     )
-    assert page2.query_selector('[data-chat] [data-chat-offline]') is not None
-    assert page2.query_selector('[data-chat] [data-chat-send]') is None
-    assert page2.query_selector('[data-chat] [data-chat-input]') is None
+    assert page2.query_selector("[data-chat] [data-chat-offline]") is not None
+    assert page2.query_selector("[data-chat] [data-chat-send]") is None
+    assert page2.query_selector("[data-chat] [data-chat-input]") is None
 
 
 def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
@@ -507,21 +556,36 @@ def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
     # Success + approach auto-accept and advance; the plan proposal parks at the ceiling.
     r1 = cli(
         server,
-        "worker", "propose", "--body-file", "-", "--recap", "Success is ready.",
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Success is ready.",
         ticket_id=tid,
         stdin=E27_SUCCESS,
     )
     assert r1["state"] == "needs_approach", r1
     r2 = cli(
         server,
-        "worker", "propose", "--body-file", "-", "--recap", "Approach is ready.",
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Approach is ready.",
         ticket_id=tid,
         stdin=E27_APPROACH,
     )
     assert r2["state"] == "needs_plan", r2
     r3 = cli(
         server,
-        "worker", "propose", "--body-file", "-", "--recap", "Plan is ready.",
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Plan is ready.",
         ticket_id=tid,
         stdin=E27_PLAN,
     )
@@ -562,20 +626,20 @@ def test_slash_menu_runs_skill(server, context_factory, open_page, cli, api):
     # Warmup send mints the session and fires the one-and-only chat flush, so the skill
     # run below (key reused -> no event -> no flush) can't race the reply re-render.
     f0 = page.evaluate("window.__plannerDebug.flushes")
-    page.fill('[data-chat] [data-chat-input]', "warmup")
-    page.click('[data-chat] [data-chat-send]')
+    page.fill("[data-chat] [data-chat-input]", "warmup")
+    page.click("[data-chat] [data-chat-send]")
     page.wait_for_function("f => window.__plannerDebug.flushes > f", arg=f0, timeout=WAIT_MS)
-    page.wait_for_selector('[data-chat] [data-chat-input]', timeout=WAIT_MS)
+    page.wait_for_selector("[data-chat] [data-chat-input]", timeout=WAIT_MS)
 
     # Typing "/" opens the catalog popover; the Skills row is present (fetched, grouped).
-    page.fill('[data-chat] [data-chat-input]', "/")
+    page.fill("[data-chat] [data-chat-input]", "/")
     page.wait_for_selector(
         '[data-chat] [data-chat-menu] [data-chat-skill][data-chat-cmd="/writing-plans"]',
         timeout=WAIT_MS,
     )
 
     # Typing an alias ("/wp") keeps its canonical skill row visible (canon-aware filter).
-    page.fill('[data-chat] [data-chat-input]', "/wp")
+    page.fill("[data-chat] [data-chat-input]", "/wp")
     page.wait_for_selector(
         '[data-chat] [data-chat-menu] [data-chat-skill][data-chat-cmd="/writing-plans"]',
         timeout=WAIT_MS,
@@ -613,13 +677,13 @@ def test_slash_menu_runs_display_command(server, context_factory, open_page, cli
     # Warmup send mints the session and fires the one-and-only chat flush, so the command
     # runs below (key reused -> no event -> no flush) can't race the reply re-render.
     f0 = page.evaluate("window.__plannerDebug.flushes")
-    page.fill('[data-chat] [data-chat-input]', "warmup")
-    page.click('[data-chat] [data-chat-send]')
+    page.fill("[data-chat] [data-chat-input]", "warmup")
+    page.click("[data-chat] [data-chat-send]")
     page.wait_for_function("f => window.__plannerDebug.flushes > f", arg=f0, timeout=WAIT_MS)
-    page.wait_for_selector('[data-chat] [data-chat-input]', timeout=WAIT_MS)
+    page.wait_for_selector("[data-chat] [data-chat-input]", timeout=WAIT_MS)
 
     # Typing "/" opens the catalog popover; /status is present and Exit is hidden.
-    page.fill('[data-chat] [data-chat-input]', "/")
+    page.fill("[data-chat] [data-chat-input]", "/")
     page.wait_for_selector(
         '[data-chat] [data-chat-menu] [data-chat-cmd="/status"]', timeout=WAIT_MS
     )
@@ -637,8 +701,8 @@ def test_slash_menu_runs_display_command(server, context_factory, open_page, cli
 
     # (ii) Typed-Send: the same command via the send button also runs (routeSend ->
     # commandFor -> runCommand) — a second system line, not a plain-chat echo.
-    page.fill('[data-chat] [data-chat-input]', "/status")
-    page.click('[data-chat] [data-chat-send]')
+    page.fill("[data-chat] [data-chat-input]", "/status")
+    page.click("[data-chat] [data-chat-send]")
     page.wait_for_function(
         "() => { const els = document.querySelectorAll('[data-chat-msg=\"system\"]');"
         " let n = 0; for (const el of els) {"
@@ -652,8 +716,12 @@ def test_ticket_user_note_renders_as_own_intake_block(server, context_factory, o
     placeholder = "Preserve user guidance, source context, and boundaries..."
     tid = cli(
         server,
-        "ticket", "create", "--title", "User note UI ticket",
-        "--user-note", "Preserve this intake boundary.",
+        "ticket",
+        "create",
+        "--title",
+        "User note UI ticket",
+        "--user-note",
+        "Preserve this intake boundary.",
     )["id"]
 
     page = open_page(
@@ -664,7 +732,7 @@ def test_ticket_user_note_renders_as_own_intake_block(server, context_factory, o
         settled=True,
     )
     assert "Preserve this intake boundary." in page.inner_text("[data-user-note]")
-    assert page.query_selector('[data-user-note] .ed') is not None
+    assert page.query_selector("[data-user-note] [data-markdown-inline-edit]") is not None
 
     empty_tid = cli(server, "ticket", "create", "--title", "Empty user note UI ticket")["id"]
     empty_page = open_page(
@@ -675,4 +743,14 @@ def test_ticket_user_note_renders_as_own_intake_block(server, context_factory, o
         settled=True,
     )
     assert "No user note yet." not in empty_page.inner_text("[data-user-note]")
-    assert empty_page.get_attribute('[data-user-note] .ed', "data-ph") == placeholder
+    assert (
+        empty_page.get_attribute("[data-user-note] [data-markdown-inline-edit]", "data-ph")
+        == placeholder
+    )
+    assert (
+        empty_page.locator("[data-user-note] [data-markdown-inline-edit]").get_attribute(
+            "contenteditable"
+        )
+        == "true"
+    )
+    assert empty_page.locator("[data-user-note] [data-markdown-edit]").count() == 0

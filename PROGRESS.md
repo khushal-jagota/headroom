@@ -3,7 +3,7 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
-## Current work cycle (2026-07-09): Ticket files and centralized previews
+## Current work cycle (2026-07-10): Ticket files and centralized previews
 
 Current implementation:
 
@@ -13,26 +13,43 @@ Current implementation:
 - A guarded Panels file route rejects unsafe IDs, traversal/encoding tricks, missing/non-file paths,
   and symlink escapes. Direct responses use `nosniff`; only an explicit raster-image/audio/video MIME
   allowlist is inline, while Markdown, HTML, SVG, and unknown content is an attachment.
-- `FilePreviewTarget`, `resolvePreview`, and `FilePreview` are the one frontend seam used by read-only
-  Markdown, ticket fields, every persisted chat role, and the full hash preview route. Markdown uses
-  the hardened renderer; HTML uses `srcdoc` in an empty sandbox; editable Markdown is never hydrated.
-- Embedded Markdown/HTML stay compact links; image/video/audio preview inline with preserved aspect;
-  chat media is capped. No upload API, artifact rows, registry, file IDs, or per-stage slots were added.
+- `FilePreviewTarget`, `resolvePreview`, and `FilePreview` are the one frontend seam used by Markdown
+  surfaces, ticket fields, every persisted chat role, and the full hash preview route. Managed Markdown
+  expands inline through the hardened renderer with a fixed depth/self-link bound; HTML is a card whose
+  iframe receives fetched text through `srcdoc` in an empty sandbox and whose action opens the Panels
+  preview route in a new tab.
+- Editable Markdown retains the original continuous `contenteditable` interaction. Linked targets stay
+  mounted as atomic `FilePreview` blocks while surrounding text is edited; no edit/source buttons or
+  separate mode exist. Renderer-authored source tokens serialize each block back to canonical Markdown
+  while generated preview descendants are ignored. The lifecycle observer now distinguishes Chromium
+  moving/reinserting a slot during editing from real deletion, so structure-changing edits no longer
+  unmount a still-connected preview. Gated drafts use the same editor and reset to the original proposal
+  on Escape.
+- Image/video/audio preview inline with preserved aspect; unsupported ticket files are download cards;
+  external URLs are deterministic external-link cards. No upload API, artifact rows, registry, file IDs,
+  or per-stage slots were added.
 
 Verification status:
 
-- Focused classifier/backend/browser checks pass: 28 tests; Svelte check has 0 errors and the three
-  existing `TicketRoute.svelte` warnings; the production bundle was rebuilt.
-- Live browser inspection used real Markdown, HTML, PNG, and MP4 files and confirmed shared field/chat
-  rendering, playable media metadata, safe HTML isolation, compact layout, and the inline-edit
-  save/reload/reopen round trip without generated preview HTML entering the stored source.
-- Codex found frontend target-normalization/origin gaps and an over-broad MIME policy; all were fixed,
-  covered, and the final read-only follow-up reported `NO VIOLATIONS`.
-- Full `./verify` passed cleanly with `VERIFY: PASS`.
+- Focused frontend and browser checks pass: renderer/serializer/resolver Node tests, Svelte check,
+  production build, and 27 Playwright tests across the preview and affected flow modules.
+- Browser coverage now includes normal ticket and field notes, recaps, passed fields, gating and
+  non-gating proposals/results, every chat role, nested/self Markdown, HTML sandbox attributes and
+  isolation, external/download cards, continuous rich editing, adjacent typing, paste, boundary and
+  selected deletion, exact source-token persistence, async cleanup, Escape, direct approval payloads,
+  reload, and preview restoration.
+- Live validation on `t_c5sb8b0h` showed the screenshot and Markdown document inline, the populated
+  sandboxed HTML card with a new-tab Panels action, and the unsupported `.bin` download card. Image
+  geometry preserved the 1440×900 aspect ratio.
+- Codex's four atomic-editor findings were resolved. Its remaining read-only-mode finding was refuted:
+  it compared against the older initial implementation, while the accepted deterministic follow-up
+  deliberately makes embedded Markdown and HTML full component previews.
+- Full `./verify` passed after the lifecycle correction: Ruff and Mypy passed, 209 unit tests passed,
+  the frontend check/build passed, 47 E2E tests passed, and `VERIFY: PASS`.
 
 Immediate next step:
 
-- Propose the result on ticket `t_c5sb8b0h`.
+- The preview lifecycle correction is complete and ready to land.
 
 ## Current work cycle (2026-07-09): Real ticket hard deletion
 

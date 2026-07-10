@@ -231,7 +231,8 @@ textarea {
 
 .file-preview-media,
 .file-preview-doc,
-.file-preview-audio {
+.file-preview-audio,
+.file-preview-card {
   margin: 0;
   padding: var(--space-3);
   background: var(--surface-sunken);
@@ -269,6 +270,24 @@ textarea {
 
 .file-preview-doc .markdown-block {
   margin-top: var(--space-2);
+}
+
+.file-preview-card,
+.file-preview-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.file-preview-card-body {
+  min-width: 0;
+}
+
+.file-preview-meta {
+  color: var(--text-muted);
+  font-size: var(--type-xs);
+  overflow-wrap: anywhere;
 }
 
 .file-preview-frame {
@@ -309,13 +328,6 @@ textarea {
 .field-editor-input:focus {
   border-color: var(--accent-bright);
   outline: none;
-}
-
-.field-editor-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2);
 }
 
 /* --- Buttons (shared style class, not a component) ----------------------- */
@@ -1718,6 +1730,7 @@ select {
 
 .approval-draft,
 .approval-result {
+  position: relative;
   font-size: var(--type-md);
   line-height: 1.6;
   color: var(--text-default);

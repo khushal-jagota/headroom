@@ -2,6 +2,17 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D42 — Every Markdown link has one deterministic preview component
+
+Every Markdown surface routes every link through `FilePreview`; consumers never decide
+presentation and the LLM only writes an ordinary Markdown link. Safe image, video, audio, and managed
+Markdown targets render inline. HTML remains a sandboxed preview card whose action opens the full
+Panels preview page. Unsupported managed files and external URLs remain component cards with explicit
+download/open actions. Editable Markdown remains one continuous `contenteditable`; each link is an
+atomic preview island carrying the exact renderer-authored Markdown token. Serialization emits that
+token and skips generated preview descendants, so focus and editing never hide previews or persist
+component DOM. Managed Markdown expansion uses a fixed depth and visited-target bound.
+
 ## D41 — Ticket files are managed filesystem content behind one preview contract
 
 Canonical ticket fields, notes, proposals, results, and chat remain SQLite text. Standalone work

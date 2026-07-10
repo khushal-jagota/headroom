@@ -1,30 +1,19 @@
 <script lang="ts">
-  import { mount, onDestroy, unmount } from "svelte";
-  import { targetFromHref } from "../lib/filePreview";
-  import FilePreview from "./FilePreview.svelte";
+  import { onDestroy } from "svelte";
+  import { mountFilePreviews } from "../lib/filePreviewMount";
 
-  let { text = "", quiet = "(none)" }: { text?: unknown; quiet?: string } = $props();
+  let {
+    text = "",
+    quiet = "(none)",
+    depth = 0,
+    visited = []
+  }: { text?: unknown; quiet?: string; depth?: number; visited?: string[] } = $props();
   let host: HTMLDivElement;
-  let previewComponents: Record<string, any>[] = [];
+  let cleanupPreviews: (() => void) | null = null;
 
   function clearPreviewComponents(): void {
-    for (const component of previewComponents) {
-      void unmount(component);
-    }
-    previewComponents = [];
-  }
-
-  function hydrateFilePreviews(root: HTMLElement): void {
-    const anchors = Array.from(root.querySelectorAll("a[href]"));
-    for (const anchor of anchors) {
-      const href = anchor.getAttribute("href");
-      if (!href) continue;
-      const target = targetFromHref(href, anchor.textContent || href);
-      const slot = document.createElement("span");
-      slot.className = "file-preview-slot";
-      anchor.replaceWith(slot);
-      previewComponents.push(mount(FilePreview, { target: slot, props: { target } }));
-    }
+    cleanupPreviews?.();
+    cleanupPreviews = null;
   }
 
   function renderMarkdown(value: unknown): void {
@@ -42,7 +31,7 @@
     const rendered = window.Planner?.markdown?.render(raw);
     if (rendered) {
       rendered.classList.add("markdown-block");
-      hydrateFilePreviews(rendered);
+      cleanupPreviews = mountFilePreviews(rendered, { depth, visited });
       host.appendChild(rendered);
       return;
     }

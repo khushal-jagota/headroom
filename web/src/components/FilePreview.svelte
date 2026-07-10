@@ -1,36 +1,29 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import type { FilePreviewTarget } from "../lib/filePreview";
-  import { resolvePreview } from "../lib/filePreview";
+  import { markdownExpansionFor, resolvePreview } from "../lib/filePreview";
+  import MarkdownBlock from "./MarkdownBlock.svelte";
 
   let {
     target,
-    mode = "embedded"
+    mode = "embedded",
+    depth = 0,
+    visited = []
   }: {
     target: FilePreviewTarget;
     mode?: "embedded" | "full";
+    depth?: number;
+    visited?: string[];
   } = $props();
 
   let text = $state<string | null>(null);
   let error = $state("");
-  let markdownHost = $state<HTMLDivElement | null>(null);
   let htmlFrame = $state<HTMLIFrameElement | null>(null);
   let resolved = $derived(resolvePreview(target));
-  let shouldFetchText = $derived(mode === "full" && (resolved.kind === "markdown" || resolved.kind === "html"));
-
-  function renderMarkdown(): void {
-    if (!markdownHost || resolved.kind !== "markdown" || text === null) return;
-    markdownHost.replaceChildren();
-    const rendered = window.Planner?.markdown?.render(text);
-    if (rendered) {
-      rendered.classList.add("markdown-block");
-      markdownHost.appendChild(rendered);
-      return;
-    }
-    const fallback = document.createElement("div");
-    fallback.className = "markdown markdown-block";
-    fallback.textContent = text;
-    markdownHost.appendChild(fallback);
-  }
+  let expansion = $derived(markdownExpansionFor(resolved, depth, visited));
+  let shouldFetchText = $derived(
+    (resolved.kind === "markdown" && expansion.expandable) || resolved.kind === "html"
+  );
 
   $effect(() => {
     const current = resolved;
@@ -53,13 +46,13 @@
   });
 
   $effect(() => {
-    renderMarkdown();
+    if (resolved.kind === "html" && htmlFrame) {
+      htmlFrame.srcdoc = text || "";
+    }
   });
 
-  $effect(() => {
-    if (resolved.kind === "html" && htmlFrame && text !== null) {
-      htmlFrame.srcdoc = text;
-    }
+  onDestroy(() => {
+    if (htmlFrame) htmlFrame.srcdoc = "";
   });
 </script>
 
@@ -85,40 +78,83 @@
       <audio src={resolved.href} controls preload="metadata"></audio>
     </div>
   {:else if resolved.kind === "markdown"}
-    {#if mode === "embedded"}
-      <a class="file-preview-link" href={resolved.previewHref}>{resolved.label}</a>
-    {:else}
+    {#if expansion.expandable}
       <article class="file-preview-doc">
-        <a class="file-preview-title" href={resolved.previewHref}>{resolved.label}</a>
+        <a
+          class="file-preview-title"
+          href={resolved.previewHref}
+          target="_blank"
+          rel="noopener noreferrer"
+        >{resolved.label}</a>
         {#if error}
           <div class="quiet-line">{error}</div>
+        {:else if text === null}
+          <div class="quiet-line">Loading preview...</div>
         {:else}
-          <div bind:this={markdownHost}></div>
+          <MarkdownBlock
+            text={text}
+            depth={expansion.nextDepth}
+            visited={expansion.nextVisited}
+          />
         {/if}
+      </article>
+    {:else}
+      <article class="file-preview-card">
+        <div class="file-preview-card-body">
+          <div class="file-preview-title">{resolved.label}</div>
+          <div class="file-preview-meta">Markdown file</div>
+        </div>
+        <a
+          class="button"
+          href={resolved.previewHref}
+          target="_blank"
+          rel="noopener noreferrer"
+        >Open preview</a>
       </article>
     {/if}
   {:else if resolved.kind === "html"}
-    {#if mode === "embedded"}
-      <a class="file-preview-link" href={resolved.previewHref}>{resolved.label}</a>
-    {:else}
-      <article class="file-preview-doc">
-        <a class="file-preview-title" href={resolved.previewHref}>{resolved.label}</a>
-        {#if error}
-          <div class="quiet-line">{error}</div>
-        {:else}
-          <iframe
-            bind:this={htmlFrame}
-            class="file-preview-frame"
-            data-file-preview-html
-            sandbox=""
-            title={resolved.label}
-          ></iframe>
-        {/if}
-      </article>
-    {/if}
+    <article class="file-preview-doc file-preview-html-card">
+      <div class="file-preview-card-row">
+        <div class="file-preview-card-body">
+          <div class="file-preview-title">{resolved.label}</div>
+          <div class="file-preview-meta">HTML file</div>
+        </div>
+        <a
+          class="button"
+          href={resolved.previewHref}
+          target="_blank"
+          rel="noopener noreferrer"
+        >{resolved.actionLabel || "Open preview"}</a>
+      </div>
+      {#if error}
+        <div class="quiet-line">{error}</div>
+      {:else}
+        <iframe
+          bind:this={htmlFrame}
+          class="file-preview-frame"
+          data-file-preview-html
+          sandbox=""
+          title={resolved.label}
+        ></iframe>
+      {/if}
+    </article>
   {:else if resolved.kind === "download"}
-    <a class="file-preview-link" href={resolved.href} download>{resolved.label}</a>
+    <article class="file-preview-card">
+      <div class="file-preview-card-body">
+        <div class="file-preview-title">{resolved.label}</div>
+        <div class="file-preview-meta">Managed file</div>
+      </div>
+      <a class="button" href={resolved.href} download>{resolved.actionLabel || "Download"}</a>
+    </article>
   {:else}
-    <a class="file-preview-link" href={resolved.href} rel="noreferrer" target="_blank">{resolved.label}</a>
+    <article class="file-preview-card">
+      <div class="file-preview-card-body">
+        <div class="file-preview-title">{resolved.label}</div>
+        <div class="file-preview-meta">{resolved.displayHref || resolved.href}</div>
+      </div>
+      <a class="button" href={resolved.href} rel="noopener noreferrer" target="_blank">
+        {resolved.actionLabel || "Open external link"}
+      </a>
+    </article>
   {/if}
 </div>

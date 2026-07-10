@@ -16,6 +16,7 @@ const dir = await mkdtemp(join(tmpdir(), "planner-file-preview-"));
 const modulePath = join(dir, "filePreview.mjs");
 await writeFile(modulePath, compiled, "utf8");
 const {
+  markdownExpansionFor,
   previewHashHref,
   resolvePreview,
   ticketFileTarget,
@@ -55,7 +56,32 @@ assert.deepEqual(resolvePreview({ kind: "external-link", href: "https://example.
   kind: "external",
   target: { kind: "external-link", href: "https://example.com/x", label: "Example" },
   href: "https://example.com/x",
-  label: "Example"
+  label: "Example",
+  displayHref: "example.com",
+  actionLabel: "Open external link"
+});
+
+assert.equal(resolvePreview(ticketHtml).actionLabel, "Open preview");
+assert.equal(resolvePreview(ticketSvg).actionLabel, "Download");
+assert.deepEqual(markdownExpansionFor(resolvePreview(ticketMarkdown), 0, []), {
+  expandable: true,
+  nextDepth: 1,
+  nextVisited: ["/files/tickets/t_file123/notes/space%20name.md"]
+});
+assert.deepEqual(
+  markdownExpansionFor(resolvePreview(ticketMarkdown), 1, [
+    "/files/tickets/t_file123/notes/space%20name.md"
+  ]),
+  {
+    expandable: false,
+    nextDepth: 1,
+    nextVisited: ["/files/tickets/t_file123/notes/space%20name.md"]
+  }
+);
+assert.deepEqual(markdownExpansionFor(resolvePreview(ticketMarkdown), 2, []), {
+  expandable: false,
+  nextDepth: 2,
+  nextVisited: []
 });
 
 assert.deepEqual(targetFromHref("/files/tickets/t_file123/notes/space%20name.md"), ticketMarkdown);

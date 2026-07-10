@@ -21,11 +21,15 @@ def _write_ticket_files(server, ticket_id: str) -> None:
     (root / "images").mkdir(parents=True)
     (root / "video").mkdir(parents=True)
     (root / "notes" / "space name.md").write_text(
-        "# File Notes\n\nRendered **here**.", encoding="utf-8"
+        "# File Notes\n\nRendered **here**.\n\n"
+        f"[Nested](/files/tickets/{ticket_id}/notes/other.md)\n\n"
+        f"[Self](/files/tickets/{ticket_id}/notes/space%20name.md)",
+        encoding="utf-8",
     )
     (root / "notes" / "other.md").write_text(
         "# Other Notes\n\nFresh route content.", encoding="utf-8"
     )
+    (root / "notes" / "slow.md").write_text("# Slow preview", encoding="utf-8")
     (root / "page.html").write_text(
         "<h1>HTML File</h1><script>window.parent.__ticketFileScriptRan = true;</script>",
         encoding="utf-8",
@@ -94,9 +98,10 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     page.goto(
         f"{server.base}/#/preview?source=ticket&ticket={ticket_id}&path=notes%2Fspace%20name.md"
     )
-    page.wait_for_selector('[data-file-preview-route] [data-file-preview-kind="markdown"] h1',
-                           timeout=WAIT_MS)
-    assert page.inner_text('[data-file-preview-route] h1') == "File Notes"
+    page.wait_for_selector(
+        '[data-file-preview-route] [data-file-preview-kind="markdown"] h1', timeout=WAIT_MS
+    )
+    assert page.inner_text("[data-file-preview-route] h1") == "File Notes"
 
     page.evaluate("window.__previewHashNavigationMarker = 'kept'")
     page.evaluate(
@@ -109,7 +114,7 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
         "?.textContent === 'Other Notes'",
         timeout=WAIT_MS,
     )
-    assert page.inner_text('[data-file-preview-route] h1') == "Other Notes"
+    assert page.inner_text("[data-file-preview-route] h1") == "Other Notes"
     assert page.evaluate("window.__previewHashNavigationMarker") == "kept"
 
     page.evaluate(
@@ -117,9 +122,13 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
         "'#/preview?source=ticket&ticket=' + ticket + '&path=page.html'; }",
         ticket_id,
     )
-    page.wait_for_selector('[data-file-preview-route] iframe[data-file-preview-html]',
-                           timeout=WAIT_MS)
-    html_frame = page.frame_locator('[data-file-preview-route] iframe[data-file-preview-html]')
+    page.wait_for_selector(
+        "[data-file-preview-route] iframe[data-file-preview-html]", timeout=WAIT_MS
+    )
+    html_frame = page.frame_locator("[data-file-preview-route] iframe[data-file-preview-html]")
+    full_html_iframe = page.locator("[data-file-preview-route] iframe[data-file-preview-html]")
+    assert full_html_iframe.get_attribute("sandbox") == ""
+    assert full_html_iframe.get_attribute("allow") is None
     assert html_frame.locator("h1").inner_text(timeout=WAIT_MS) == "HTML File"
     assert page.evaluate("window.__ticketFileScriptRan === true") is False
     assert page.evaluate("window.__previewHashNavigationMarker") == "kept"
@@ -173,8 +182,35 @@ def test_read_only_ticket_and_chat_surfaces_share_file_preview(
         success.locator('[data-file-preview-kind="html"] a').first.get_attribute("href")
         == f"#/preview?source=ticket&ticket={ticket_id}&path=page.html"
     )
-    assert success.locator('[data-file-preview-kind="markdown"] h1').count() == 0
-    assert success.locator('[data-file-preview-kind="html"] iframe').count() == 0
+    assert (
+        success.locator('[data-file-preview-kind="markdown"] h1').first.inner_text() == "File Notes"
+    )
+    nested_heading = success.locator(
+        '[data-file-preview-kind="markdown"] h1', has_text="Other Notes"
+    )
+    nested_heading.wait_for(state="visible", timeout=WAIT_MS)
+    assert nested_heading.count() == 1
+    assert success.locator('[data-file-preview-kind="html"] iframe').count() == 1
+    embedded_html_iframe = success.locator('[data-file-preview-kind="html"] iframe').first
+    assert embedded_html_iframe.get_attribute("sandbox") == ""
+    assert embedded_html_iframe.get_attribute("allow") is None
+    html_action = success.locator('[data-file-preview-kind="html"] a.button').first
+    assert html_action.get_attribute("target") == "_blank"
+    assert html_action.get_attribute("rel") == "noopener noreferrer"
+    assert (
+        html_action.get_attribute("href")
+        == f"#/preview?source=ticket&ticket={ticket_id}&path=page.html"
+    )
+    assert success.locator('[data-file-preview-kind="download"] a[download]').count() == 1
+    assert (
+        success.locator('[data-file-preview-kind="external"]', has_text="example.com").count() == 1
+    )
+    self_link_card = success.locator(
+        '[data-file-preview-kind="markdown"] article.file-preview-card'
+    )
+    assert self_link_card.count() == 1
+    assert "space name.md" in self_link_card.inner_text()
+    assert self_link_card.locator("h1").count() == 0
     image = success.locator('[data-file-preview-kind="image"] img')
     image.wait_for(state="visible", timeout=WAIT_MS)
     image_metrics = image.evaluate(
@@ -189,14 +225,86 @@ def test_read_only_ticket_and_chat_surfaces_share_file_preview(
     assert f"/files/tickets/{ticket_id}/video/demo.mp4" in (video.get_attribute("src") or "")
 
     _open_ticket_field(page, "approach")
-    page.wait_for_selector('[data-field="approach"] [data-file-preview-kind="markdown"]',
-                           timeout=WAIT_MS)
+    page.wait_for_selector(
+        '[data-field="approach"] [data-file-preview-kind="markdown"]', timeout=WAIT_MS
+    )
     _open_ticket_field(page, "result")
-    page.wait_for_selector('[data-field="result"] [data-file-preview-kind="video"]',
-                           timeout=WAIT_MS)
+    page.wait_for_selector(
+        '[data-field="result"] [data-file-preview-kind="video"]', timeout=WAIT_MS
+    )
     for who in ("you", "planner", "system", "worker"):
-        page.wait_for_selector(f'[data-chat-msg="{who}"] [data-file-preview-kind="markdown"]',
-                               timeout=WAIT_MS)
+        page.wait_for_selector(
+            f'[data-chat-msg="{who}"] [data-file-preview-kind="markdown"]', timeout=WAIT_MS
+        )
+
+
+def test_normal_editable_ticket_field_renders_file_previews_at_rest(
+    server, context_factory, open_page, cli
+) -> None:
+    ticket_id = cli(server, "ticket", "create", "--title", "Normal field previews")["id"]
+    _write_ticket_files(server, ticket_id)
+    body = _links(ticket_id)
+    fields = {
+        "success": {"value": body, "proposal": None, "user_note": body},
+        "approach": {
+            "value": None,
+            "proposal": {"body": body, "proposed_by": "agent", "created_at": 1},
+            "user_note": None,
+        },
+        "plan": {"value": None, "proposal": None, "user_note": None},
+        "result": {
+            "value": None,
+            "proposal": {"body": body, "proposed_by": "agent", "created_at": 2},
+            "user_note": None,
+        },
+    }
+    _set_fields(server, ticket_id, fields, state="needs_approach")
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "UPDATE tickets SET user_note = ?, recap = ? WHERE id = ?",
+            (body, body, ticket_id),
+        )
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{ticket_id}",
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+        settled=False,
+    )
+
+    _open_ticket_field(page, "success")
+    field = page.locator('[data-field="success"] .ticket-field-value').first
+    field.locator('[data-file-preview-kind="markdown"]').first.wait_for(
+        state="visible",
+        timeout=WAIT_MS,
+    )
+    direct_anchor = f'a[href="/files/tickets/{ticket_id}/notes/space%20name.md"]'
+    assert field.locator(direct_anchor).count() == 0
+    page.locator('[data-user-note] [data-file-preview-kind="image"]').first.wait_for(
+        state="visible",
+        timeout=WAIT_MS,
+    )
+    page.locator('[data-recap] [data-file-preview-kind="html"]').first.wait_for(
+        state="visible",
+        timeout=WAIT_MS,
+    )
+    page.locator(
+        '[data-field="approach"] .approval-draft [data-file-preview-kind="external"]'
+    ).first.wait_for(state="visible", timeout=WAIT_MS)
+    page.locator(
+        '[data-field="success"] [data-content-section="note"] [data-file-preview-kind="image"]'
+    ).first.wait_for(state="visible", timeout=WAIT_MS)
+    _open_ticket_field(page, "result")
+    result_proposal = page.locator('[data-field="result"] .proposal-card').first
+    result_proposal.locator('[data-file-preview-kind="image"]').first.wait_for(
+        state="visible", timeout=WAIT_MS
+    )
+    assert result_proposal.locator("textarea.proposal-edit").count() == 0
+    assert result_proposal.locator("[data-markdown-edit]").count() == 0
+    assert (
+        result_proposal.locator("[data-markdown-inline-edit]").get_attribute("contenteditable")
+        == "true"
+    )
 
 
 def test_editable_markdown_file_links_round_trip_as_raw_markdown(
@@ -220,20 +328,24 @@ def test_editable_markdown_file_links_round_trip_as_raw_markdown(
         settled=False,
     )
 
-    editable = '[data-field="success"] .ticket-field-value > .ed'
+    editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
     _open_ticket_field(page, "success")
-    page.locator(f"{editable} a").first.wait_for(state="visible", timeout=WAIT_MS)
-    assert page.locator(f"{editable} [data-file-preview]").count() == 0
-    for label, href in _expected_hrefs(ticket_id).items():
-        assert page.locator(f"{editable} a", has_text=label).first.get_attribute("href") == href
+    page.locator(f"{editable} [data-file-preview-kind='markdown']").first.wait_for(
+        state="visible",
+        timeout=WAIT_MS,
+    )
+    assert page.locator(f"{editable}").get_attribute("contenteditable") == "true"
+    assert page.locator(f"{editable} [data-markdown-edit]").count() == 0
+    assert page.locator(f"{editable} [data-markdown-source-editor]").count() == 0
 
     edited_text = "Edited during preview regression."
     page.locator(editable).focus()
-    page.locator(editable).evaluate(
-        """(node) => {
+    assert page.locator(f"{editable} [data-file-preview-kind='markdown']").count() > 0
+    page.locator(f"{editable} [data-markdown-caret-guard='after']").last.evaluate(
+        """(guard) => {
             const selection = window.getSelection();
             const range = document.createRange();
-            range.selectNodeContents(node);
+            range.selectNodeContents(guard);
             range.collapse(false);
             selection.removeAllRanges();
             selection.addRange(range);
@@ -253,12 +365,479 @@ def test_editable_markdown_file_links_round_trip_as_raw_markdown(
     assert "<img" not in stored_body
 
     page.reload()
-    page.wait_for_selector(f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-                           timeout=WAIT_MS)
+    page.wait_for_selector(
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
+    )
     _open_ticket_field(page, "success")
-    page.locator(f"{editable} a").first.wait_for(state="visible", timeout=WAIT_MS)
-    assert page.locator(f"{editable} [data-file-preview]").count() == 0
-    for label, href in _expected_hrefs(ticket_id).items():
-        assert page.locator(f"{editable} a", has_text=label).first.get_attribute("href") == href
+    page.locator(f"{editable} [data-file-preview-kind='markdown']").first.wait_for(
+        state="visible",
+        timeout=WAIT_MS,
+    )
+    assert page.locator(f"{editable}").get_attribute("contenteditable") == "true"
+    assert page.locator(f"{editable} [data-markdown-edit]").count() == 0
+    assert page.locator(f"{editable} [data-markdown-source-editor]").count() == 0
     ticket = api.get(server, f"/api/tickets/{ticket_id}")
     assert ticket["fields"]["success"]["value"] == stored_body
+
+
+def test_editable_markdown_preview_focus_noop_and_actions_do_not_persist_generated_dom(
+    server, context_factory, open_page, cli, api
+) -> None:
+    ticket_id = cli(server, "ticket", "create", "--title", "Editable preview actions")["id"]
+    _write_ticket_files(server, ticket_id)
+    body = _links(ticket_id)
+    fields = {
+        "success": {"value": body, "proposal": None, "user_note": None},
+        "approach": {"value": None, "proposal": None, "user_note": None},
+        "plan": {"value": None, "proposal": None, "user_note": None},
+        "result": {"value": None, "proposal": None, "user_note": None},
+    }
+    _set_fields(server, ticket_id, fields, state="needs_approach")
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{ticket_id}",
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+        settled=False,
+    )
+
+    editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
+    _open_ticket_field(page, "success")
+    page.locator(f"{editable} [data-file-preview-kind='markdown'] h1").first.wait_for(
+        state="visible",
+        timeout=WAIT_MS,
+    )
+    page.locator(f"{editable} [data-file-preview-kind='html'] iframe").first.wait_for(
+        state="visible",
+        timeout=WAIT_MS,
+    )
+    writes: list[str] = []
+    page.on(
+        "request",
+        lambda request: (
+            writes.append(f"{request.method} {request.url}")
+            if request.method in {"PATCH", "POST", "PUT"}
+            else None
+        ),
+    )
+
+    page.locator(editable).focus()
+    html_action = page.locator(f"{editable} [data-file-preview-kind='html'] a.button").first
+    with page.expect_popup() as popup_info:
+        html_action.click()
+    popup = popup_info.value
+    popup.wait_for_load_state("domcontentloaded", timeout=WAIT_MS)
+    assert f"#/preview?source=ticket&ticket={ticket_id}&path=page.html" in popup.url
+    popup.close()
+
+    external_action = page.locator(f"{editable} [data-file-preview-kind='external'] a.button").first
+    with page.expect_popup() as external_popup_info:
+        external_action.click()
+    external_popup = external_popup_info.value
+    external_popup.wait_for_timeout(100)
+    assert external_popup.url.startswith("https://example.com/outside")
+    external_popup.close()
+
+    with page.expect_download() as download_info:
+        page.locator(f"{editable} [data-file-preview-kind='download'] a[download]").first.click()
+    assert download_info.value.suggested_filename == "archive.bin"
+
+    page.locator(editable).blur()
+    assert writes == []
+    ticket = api.get(server, f"/api/tickets/{ticket_id}")
+    assert ticket["fields"]["success"]["value"] == body
+
+
+def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
+    server, context_factory, open_page, cli, api
+) -> None:
+    ticket_id = cli(server, "ticket", "create", "--title", "Atomic preview editing")["id"]
+    _write_ticket_files(server, ticket_id)
+    markdown_token = f"[Markdown](/files/tickets/{ticket_id}/notes/space%20name.md)"
+    image_token = f"[Image](/files/tickets/{ticket_id}/images/pic.png)"
+    binary_token = f"[Binary](/files/tickets/{ticket_id}/archive.bin)"
+    entity_token = "[**Entity & label**](https://example.org/path?x=1&y=2#part)"
+    body = (
+        "Intro\n\n"
+        f"{markdown_token}\n\n"
+        f"{image_token}\n\n"
+        f"{binary_token}\n\n"
+        f"{entity_token}\n\n"
+        "Outro"
+    )
+    fields = {
+        "success": {"value": body, "proposal": None, "user_note": None},
+        "approach": {"value": None, "proposal": None, "user_note": None},
+        "plan": {"value": None, "proposal": None, "user_note": None},
+        "result": {"value": None, "proposal": None, "user_note": None},
+    }
+    _set_fields(server, ticket_id, fields, state="needs_approach")
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{ticket_id}",
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+        settled=False,
+    )
+
+    editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
+    _open_ticket_field(page, "success")
+    page.locator(f"{editable} [data-markdown-atomic-slot='true']").first.wait_for(
+        state="visible",
+        timeout=WAIT_MS,
+    )
+    page.locator(editable).focus()
+    markdown_slot = page.locator(
+        f"{editable} [data-markdown-source-token='{markdown_token}']"
+    ).first
+    before_guard = markdown_slot.locator(
+        "xpath=preceding-sibling::*[@data-markdown-caret-guard='before'][1]"
+    )
+    after_guard = markdown_slot.locator(
+        "xpath=following-sibling::*[@data-markdown-caret-guard='after'][1]"
+    )
+    before_guard.evaluate(
+        """(guard) => {
+            const range = document.createRange();
+            range.selectNodeContents(guard);
+            range.collapse(false);
+            const selection = getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }"""
+    )
+    page.keyboard.type("Before preview ")
+    after_guard.evaluate(
+        """(guard) => {
+            const range = document.createRange();
+            range.selectNodeContents(guard);
+            range.collapse(false);
+            const selection = getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }"""
+    )
+    page.keyboard.type(" after preview")
+
+    image_slot = page.locator(
+        f"{editable} [data-markdown-source-token='{image_token}']"
+    ).first
+    image_slot.locator(
+        "xpath=following-sibling::*[@data-markdown-caret-guard='after'][1]"
+    ).evaluate(
+        """(guard) => {
+            const range = document.createRange();
+            range.selectNodeContents(guard);
+            range.collapse(false);
+            const selection = getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            const data = new DataTransfer();
+            data.setData("text/plain", " pasted safely");
+            guard.dispatchEvent(
+                new ClipboardEvent("paste", { bubbles: true, clipboardData: data })
+            );
+        }"""
+    )
+    page.locator(editable).blur()
+    stored_body = _wait_for_field_text(api, server, ticket_id, "success", "Before preview")
+    assert "Before preview [Markdown](/files/tickets/" in stored_body
+    assert "space%20name.md) after preview" in stored_body
+    assert image_token in stored_body
+    assert "pasted safely" in stored_body
+    assert binary_token in stored_body
+    assert entity_token in stored_body
+    assert "data-file-preview" not in stored_body
+    assert "<iframe" not in stored_body
+
+    page.reload()
+    page.wait_for_selector(
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
+    )
+    _open_ticket_field(page, "success")
+    markdown_slot = page.locator(
+        f"{editable} [data-markdown-source-token='{markdown_token}']"
+    ).first
+    page.locator(editable).focus()
+    markdown_slot.locator(
+        "xpath=preceding-sibling::*[@data-markdown-caret-guard='before'][1]"
+    ).evaluate(
+        """(guard) => {
+            const selection = getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(guard);
+            range.collapse(false);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }"""
+    )
+    f0 = page.evaluate("window.__plannerDebug.flushes")
+    page.keyboard.press("Delete")
+    page.locator(editable).blur()
+    page.wait_for_function("f0 => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS)
+    stored_after_delete = api.get(server, f"/api/tickets/{ticket_id}")["fields"]["success"]["value"]
+    assert markdown_token not in stored_after_delete
+    assert image_token in stored_after_delete
+
+    page.reload()
+    page.wait_for_selector(
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
+    )
+    _open_ticket_field(page, "success")
+    image_slot = page.locator(
+        f"{editable} [data-markdown-source-token='{image_token}']"
+    ).first
+    page.locator(editable).focus()
+    image_slot.locator(
+        "xpath=following-sibling::*[@data-markdown-caret-guard='after'][1]"
+    ).evaluate(
+        """(guard) => {
+            const selection = getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(guard);
+            range.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }"""
+    )
+    f0 = page.evaluate("window.__plannerDebug.flushes")
+    page.keyboard.press("Backspace")
+    page.locator(editable).blur()
+    page.wait_for_function("f0 => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS)
+    stored_after_backspace = api.get(server, f"/api/tickets/{ticket_id}")["fields"]["success"][
+        "value"
+    ]
+    assert image_token not in stored_after_backspace
+    assert binary_token in stored_after_backspace
+
+    page.reload()
+    page.wait_for_selector(
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
+    )
+    _open_ticket_field(page, "success")
+    binary_slot = page.locator(
+        f"{editable} [data-markdown-source-token='{binary_token}']"
+    ).first
+    page.locator(editable).focus()
+    binary_slot.evaluate(
+        """(slot) => {
+            const selection = getSelection();
+            const range = document.createRange();
+            range.selectNode(slot);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }"""
+    )
+    f0 = page.evaluate("window.__plannerDebug.flushes")
+    page.keyboard.press("Delete")
+    page.locator(editable).blur()
+    page.wait_for_function("f0 => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS)
+    stored_after_selected_delete = api.get(server, f"/api/tickets/{ticket_id}")["fields"][
+        "success"
+    ]["value"]
+    assert binary_token not in stored_after_selected_delete
+
+
+def test_editable_preview_deletion_unmounts_pending_fetch_and_clears_iframe(
+    server, context_factory, open_page, cli, api
+) -> None:
+    ticket_id = cli(server, "ticket", "create", "--title", "Preview cleanup")["id"]
+    _write_ticket_files(server, ticket_id)
+    slow_token = f"[Slow](/files/tickets/{ticket_id}/notes/slow.md)"
+    html_token = f"[HTML](/files/tickets/{ticket_id}/page.html)"
+    body = f"{slow_token}\n\n{html_token}"
+    fields = {
+        "success": {"value": body, "proposal": None, "user_note": None},
+        "approach": {"value": None, "proposal": None, "user_note": None},
+        "plan": {"value": None, "proposal": None, "user_note": None},
+        "result": {"value": None, "proposal": None, "user_note": None},
+    }
+    _set_fields(server, ticket_id, fields, state="needs_approach")
+    context = context_factory()
+    context.add_init_script(
+        """(() => {
+            const originalFetch = window.fetch.bind(window);
+            window.__previewAborts = [];
+            window.fetch = (input, init = {}) => {
+                const url = typeof input === "string" ? input : input.url;
+                if (!url.includes("/notes/slow.md")) return originalFetch(input, init);
+                return new Promise((resolve, reject) => {
+                    const abort = () => {
+                        window.__previewAborts.push(url);
+                        reject(new DOMException("Aborted", "AbortError"));
+                    };
+                    if (init.signal?.aborted) abort();
+                    else init.signal?.addEventListener("abort", abort, { once: true });
+                });
+            };
+        })()"""
+    )
+    page = open_page(
+        context,
+        server,
+        f"#/ticket/{ticket_id}",
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+        settled=False,
+    )
+    editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
+    _open_ticket_field(page, "success")
+    slow_slot = page.locator(f"{editable} [data-markdown-source-token='{slow_token}']").first
+    slow_slot.locator("text=Loading preview...").wait_for(state="visible", timeout=WAIT_MS)
+    html_slot = page.locator(f"{editable} [data-markdown-source-token='{html_token}']").first
+    html_frame = html_slot.locator("iframe")
+    html_frame.wait_for(state="visible", timeout=WAIT_MS)
+    page.wait_for_function(
+        "sel => document.querySelector(sel)?.srcdoc.includes('HTML File')",
+        arg=f"{editable} [data-file-preview-kind='html'] iframe",
+        timeout=WAIT_MS,
+    )
+    page.evaluate(
+        "sel => { window.__removedPreviewFrame = document.querySelector(sel); }",
+        f"{editable} [data-file-preview-kind='html'] iframe",
+    )
+
+    page.locator(editable).focus()
+    slow_slot.evaluate(
+        """slot => {
+            const range = document.createRange();
+            range.selectNode(slot);
+            const selection = getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }"""
+    )
+    page.keyboard.press("Delete")
+    page.wait_for_function("() => window.__previewAborts.length === 1", timeout=WAIT_MS)
+
+    html_slot.evaluate(
+        """slot => {
+            const range = document.createRange();
+            range.selectNode(slot);
+            const selection = getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }"""
+    )
+    page.keyboard.press("Delete")
+    page.wait_for_function(
+        "() => !window.__removedPreviewFrame.isConnected "
+        "&& window.__removedPreviewFrame.srcdoc === ''",
+        timeout=WAIT_MS,
+    )
+    assert page.locator(f"{editable} [data-markdown-atomic-slot='true']").count() == 0
+    assert page.evaluate("() => window.__previewAborts.length") == 1
+    assert page.evaluate("() => window.__removedPreviewFrame.srcdoc") == ""
+
+
+def test_editing_that_moves_atomic_slot_keeps_preview_mounted(
+    server, context_factory, open_page, cli
+) -> None:
+    ticket_id = cli(server, "ticket", "create", "--title", "Moving atomic preview")["id"]
+    _write_ticket_files(server, ticket_id)
+    image_token = f"[Image](/files/tickets/{ticket_id}/images/pic.png)"
+    body = f"Before {image_token} after"
+    fields = {
+        "success": {"value": body, "proposal": None, "user_note": None},
+        "approach": {"value": None, "proposal": None, "user_note": None},
+        "plan": {"value": None, "proposal": None, "user_note": None},
+        "result": {"value": None, "proposal": None, "user_note": None},
+    }
+    _set_fields(server, ticket_id, fields, state="needs_approach")
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{ticket_id}",
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+        settled=False,
+    )
+    editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
+    _open_ticket_field(page, "success")
+    slot = page.locator(f"{editable} [data-markdown-source-token='{image_token}']").first
+    image = slot.locator('[data-file-preview-kind="image"] img')
+    image.wait_for(state="visible", timeout=WAIT_MS)
+    page.evaluate(
+        "sel => { window.__atomicPreviewBeforeEdit = document.querySelector(sel); }",
+        f"{editable} [data-markdown-source-token='{image_token}']",
+    )
+
+    page.locator(editable).focus()
+    for _ in range(3):
+        slot.evaluate(
+            """preview => {
+                const range = document.createRange();
+                range.setStartBefore(preview);
+                range.collapse(true);
+                const selection = getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+            }"""
+        )
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(50)
+
+        slot_state = page.evaluate(
+            """sel => {
+                const current = document.querySelector(sel);
+                return {
+                    sameElement: current === window.__atomicPreviewBeforeEdit,
+                    connected: !!current?.isConnected,
+                    stillInsideEditor: !!current?.closest('[data-markdown-inline-edit]'),
+                    previewCount: current?.querySelectorAll('[data-file-preview]').length ?? -1,
+                };
+            }""",
+            f"{editable} [data-markdown-source-token='{image_token}']",
+        )
+        assert slot.count() == 1
+        assert image.count() == 1, slot_state
+        assert image.is_visible()
+
+    page.locator(editable).click(position={"x": 8, "y": 8})
+    page.wait_for_timeout(50)
+    assert image.is_visible()
+
+
+def test_loaded_preview_proposal_approves_without_edited_body(
+    server, context_factory, open_page, cli, api
+) -> None:
+    ticket_id = cli(server, "ticket", "create", "--title", "Preview proposal approval")["id"]
+    _write_ticket_files(server, ticket_id)
+    body = _links(ticket_id)
+    cli(
+        server,
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Preview proposal ready.",
+        ticket_id=ticket_id,
+        stdin=body,
+    )
+    card = f'[data-review-card][data-entity-id="{ticket_id}"]'
+    page = open_page(context_factory(), server, "#/review", card, settled=True)
+    page.locator(f"{card} [data-file-preview-kind='markdown'] h1").first.wait_for(
+        state="visible", timeout=WAIT_MS
+    )
+    page.wait_for_function(
+        "sel => document.querySelector(sel)?.srcdoc.includes('HTML File')",
+        arg=f"{card} [data-file-preview-kind='html'] iframe",
+        timeout=WAIT_MS,
+    )
+    approval_payloads: list[dict] = []
+
+    def capture_accept(request) -> None:
+        if request.method == "POST" and f"/api/tickets/{ticket_id}/accept/success" in request.url:
+            approval_payloads.append(request.post_data_json)
+
+    page.on("request", capture_accept)
+    page.wait_for_function(
+        "sel => { const button = document.querySelector(sel); return button && !button.disabled; }",
+        arg=f"{card} [data-accept]",
+        timeout=WAIT_MS,
+    )
+    page.click(f"{card} [data-accept]")
+    page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
+    assert len(approval_payloads) == 1
+    assert "edited_body" not in approval_payloads[0]
+    ticket = api.get(server, f"/api/tickets/{ticket_id}")
+    assert ticket["fields"]["success"]["value"] == body

@@ -56,14 +56,24 @@ share.
   `/files/tickets/<ticket_id>/<relative-path>`. The server sends `nosniff`; only
   explicit image, audio, and video types are inline. Markdown, HTML, SVG, and
   unknown files are attachments when opened directly.
-- **File previews use one contract.** Read-only markdown turns normal links such as
+- **File previews use one contract.** Markdown turns normal links such as
   `/files/tickets/t_123/notes/plan.md` into the shared file preview component.
-  Markdown files render through the same markdown renderer. HTML files are fetched
-  as text and assigned to an empty-sandbox iframe. Images, video, and audio render
-  inline; unknown files stay as downloads; ordinary external links stay links.
-  The full preview route is `#/preview?source=ticket&ticket=<id>&path=<path>`.
-  Editable markdown does not hydrate previews, so focusing and saving preserves the
-  raw markdown source.
+  Markdown files render inline through the same markdown renderer, including nested
+  managed links until a fixed depth or self-link bound turns them back into compact
+  preview cards. HTML files render as cards with a fetched `srcdoc` iframe in an
+  empty sandbox and a new-tab action to the full Panels preview route. Images,
+  video, and audio render inline; unknown files stay as download cards; ordinary
+  external links stay external-link cards with deterministic host text. The full
+  preview route is `#/preview?source=ticket&ticket=<id>&path=<path>`.
+- **Editable Markdown stays one surface.** Ticket notes, recaps, passed fields,
+  approval drafts, and future Markdown surfaces remain directly editable with their
+  existing focus, blur/save, keyboard, paste, and Escape behavior. Links stay mounted
+  as atomic preview blocks while the surrounding text is edited. Each block retains
+  its original Markdown link token, so saving emits ordinary Markdown and ignores
+  generated images, media controls, nested Markdown, and iframe content. There is no
+  separate source mode and no Edit/Save/Cancel control set. Browser edits may move an
+  atomic block within the editable DOM; that move keeps its mounted component alive,
+  while actual deletion still unmounts it and cancels pending work.
 
 _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 (one route per screen), `web/src/components/` (shared pieces), `web/src/lib/`
@@ -87,4 +97,4 @@ _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 
 ---
 
-_Last verified: 2026-07-09._
+_Last verified: 2026-07-10._

@@ -1,8 +1,9 @@
 /* Minimal safe markdown renderer. The ONLY innerHTML assignment in the whole
  * codebase lives here — and it receives a string whose every character of user
  * origin was HTML-escaped BEFORE any parsing, so no un-entified "<", ">", or quote
- * can exist. Every tag is renderer-authored from a closed set; the only attribute
- * emitted is a scheme-whitelisted href. Classic script: attaches Planner.markdown. */
+ * can exist. Every tag and attribute name is renderer-authored from a closed set;
+ * href values are scheme-whitelisted, and source-token attribute values retain only
+ * already-escaped Markdown text. Classic script: attaches Planner.markdown. */
 (function () {
   "use strict";
   var Planner = (window.Planner = window.Planner || {});
@@ -11,6 +12,7 @@
   // user string can never forge a placeholder.
   var NUL = String.fromCharCode(0);
   var RESTORE_RE = new RegExp(NUL + "(\\d+)" + NUL, "g");
+  var LINK_RESTORE_RE = new RegExp(NUL + "L(\\d+)" + NUL, "g");
 
   function escapeHtml(s) {
     return s
@@ -42,6 +44,18 @@
 
   function renderInline(line) {
     var codes = [];
+    var links = [];
+    function renderEmphasis(s) {
+      s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+      s = s.replace(/_([^_]+)_/g, "<em>$1</em>");
+      return s;
+    }
+    function restoreCodes(s) {
+      return s.replace(RESTORE_RE, function (match, index) {
+        return "<code>" + codes[Number(index)] + "</code>";
+      });
+    }
     // 1. Code spans first — protected from all further processing.
     line = line.replace(/`([^`]+)`/g, function (match, inner) {
       var index = codes.length;
@@ -49,20 +63,33 @@
       return NUL + index + NUL;
     });
     // 2. Links — href is scheme-whitelisted; the value is already escaped.
+    // Protect the generated anchor from later emphasis passes so underscores in
+    // hrefs or renderer-authored attributes cannot be parsed as Markdown.
     line = line.replace(/\[([^\]]+)\]\(([^()\s]+)\)/g, function (match, text, url) {
       if (safeHref(url)) {
-        return '<a href="' + url + '">' + text + "</a>";
+        var index = links.length;
+        links.push(
+          restoreCodes(
+            '<a href="' +
+              url +
+              '" data-markdown-source-token="' +
+              match +
+              '">' +
+              renderEmphasis(text) +
+              "</a>"
+          )
+        );
+        return NUL + "L" + index + NUL;
       }
       return match;
     });
     // 3. Bold before italic so "**" is not eaten by "*".
-    line = line.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    line = renderEmphasis(line);
     // 4. Italic.
-    line = line.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-    line = line.replace(/_([^_]+)_/g, "<em>$1</em>");
     // 5. Restore code spans.
-    line = line.replace(RESTORE_RE, function (match, index) {
-      return "<code>" + codes[Number(index)] + "</code>";
+    line = restoreCodes(line);
+    line = line.replace(LINK_RESTORE_RE, function (match, index) {
+      return links[Number(index)];
     });
     return line;
   }

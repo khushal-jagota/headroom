@@ -17,6 +17,8 @@ export type ResolvedPreview = {
   href: string;
   label: string;
   previewHref?: string;
+  displayHref?: string;
+  actionLabel?: string;
 };
 
 const MARKDOWN_EXTENSIONS = new Set(["md", "markdown"]);
@@ -26,6 +28,7 @@ const VIDEO_EXTENSIONS = new Set(["m4v", "mov", "mp4", "ogg", "ogv", "webm"]);
 const AUDIO_EXTENSIONS = new Set(["aac", "flac", "m4a", "mp3", "oga", "ogg", "opus", "wav", "webm"]);
 const TICKET_ID_RE = /^t_[a-z0-9]+$/;
 const RESIDUAL_UNSAFE_RE = /%(?:25|2e|2f|5c)/i;
+const MAX_MARKDOWN_EMBED_DEPTH = 2;
 
 export function resolvePreview(target: FilePreviewTarget): ResolvedPreview {
   if (target.kind === "external-link") {
@@ -34,6 +37,8 @@ export function resolvePreview(target: FilePreviewTarget): ResolvedPreview {
       target,
       href: target.href,
       label: target.label || target.href,
+      displayHref: displayHrefForExternal(target.href),
+      actionLabel: "Open external link",
     };
   }
 
@@ -45,11 +50,27 @@ export function resolvePreview(target: FilePreviewTarget): ResolvedPreview {
   const previewHref = previewHashHref(target);
   const extension = extensionFor(target.path);
   if (MARKDOWN_EXTENSIONS.has(extension)) return { kind: "markdown", target, href, label, previewHref };
-  if (HTML_EXTENSIONS.has(extension)) return { kind: "html", target, href, label, previewHref };
+  if (HTML_EXTENSIONS.has(extension)) {
+    return { kind: "html", target, href, label, previewHref, actionLabel: "Open preview" };
+  }
   if (IMAGE_EXTENSIONS.has(extension)) return { kind: "image", target, href, label, previewHref };
   if (VIDEO_EXTENSIONS.has(extension)) return { kind: "video", target, href, label, previewHref };
   if (AUDIO_EXTENSIONS.has(extension)) return { kind: "audio", target, href, label, previewHref };
-  return { kind: "download", target, href, label, previewHref };
+  return { kind: "download", target, href, label, previewHref, actionLabel: "Download" };
+}
+
+export function markdownExpansionFor(
+  resolved: ResolvedPreview,
+  depth: number,
+  visited: string[]
+): { expandable: boolean; nextDepth: number; nextVisited: string[] } {
+  if (resolved.kind !== "markdown" || resolved.target.kind !== "ticket-file") {
+    return { expandable: false, nextDepth: depth, nextVisited: visited };
+  }
+  if (depth >= MAX_MARKDOWN_EMBED_DEPTH || visited.includes(resolved.href)) {
+    return { expandable: false, nextDepth: depth, nextVisited: visited };
+  }
+  return { expandable: true, nextDepth: depth + 1, nextVisited: [...visited, resolved.href] };
 }
 
 export function targetFromHref(href: string, label = ""): FilePreviewTarget {
@@ -134,4 +155,13 @@ function extensionFor(path: string): string {
 function filenameLabel(path: string): string {
   const parts = path.split("/").filter(Boolean);
   return parts[parts.length - 1] || path;
+}
+
+function displayHrefForExternal(href: string): string {
+  try {
+    const url = new URL(href);
+    return url.hostname || href;
+  } catch {
+    return href;
+  }
 }
