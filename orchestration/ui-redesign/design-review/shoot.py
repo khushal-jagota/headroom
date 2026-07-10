@@ -136,6 +136,11 @@ def seed(base: str) -> dict[str, str]:
             "4. Port the loop tests to the doorbell and delete the poll-interval knobs.\n")
     patch(base, f"/api/tickets/{tid}",
           {"user_note": "Keep this to the doorbell itself. The runtime loop has its own ticket."})
+    # A field-level note on the gating field so Review's Notes disclosure renders.
+    resp = httpx.put(base + f"/api/tickets/{tid}/notes/plan",
+                     json={"user_note": "Step 2 must ring after commit, not inside the tx."},
+                     timeout=10.0)
+    resp.raise_for_status()
 
     # Supporting cast for the roster.
     for title in ("Deepen employee runtime ownership", "Chat auto-scroll and Latest button",

@@ -1560,3 +1560,16 @@ Owner direction on the embeds mockup: full consistency — every embed, images i
 same recessed container with the bar at the top (name · kind · action) and the content on it;
 downloads/external links are just the bar with the verb changed (download ›/open link ›) and no
 body. The transparent-media special case and the separate slim-row treatment are gone.
+
+## D92 — t_ui03 review round: three fixes routed, one design finding refuted
+
+Codex xhigh: (1) missing event.repeat guard on the review keyboard shortcuts (holding 's' would
+auto-skip through cards) — routed to the implementer; (2) the new shortcut e2e used a 200ms
+sleep for its negative did-not-approve assertion (flaky) — routed, to be made deterministic.
+Design review: the ask header rendered as a collapsible title-case "Plan ⌄" disclosure instead
+of the mockup's static uppercase "PLAN · proposed by …" row (applies to both review and the
+ticket's gating ask via the shared review layout) — routed. REFUTED: the design reviewer's call
+to source Review's Notes disclosure from the ticket-level user_note instead of the field note;
+field notes are the surface's existing function and the spec pinned them — the mockup's
+matching text was demo content, not a data mapping. The screenshot seed now writes a field note
+so the disclosure renders in future design reviews.

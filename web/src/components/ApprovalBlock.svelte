@@ -133,7 +133,14 @@
     {/if}
 
     <div class="approval-proposal-shell">
-      <Disclosure title={contentTitle} variant="content" defaultOpen={true} data-content-section="proposal">
+      {#if reviewLayout}
+        <!-- The ask header is a static row — an uppercase field label and, when
+             known, the quiet byline — with the proposal always visible below it.
+             No collapse; the ask is the one thing on screen. -->
+        <div class="approval-what" data-content-section="proposal">
+          <span class="approval-what-label">{contentTitle}</span>
+          {#if proposedBy}<span class="approval-what-by">proposed by {proposedBy}</span>{/if}
+        </div>
         {#if mode === "needs_review"}
           <div class="approval-result">
             {#if onValueSave}
@@ -155,9 +162,31 @@
             />
           </div>
         {/if}
-      </Disclosure>
-      {#if reviewLayout}
         {@render actionGroup(false)}
+      {:else}
+        <Disclosure title={contentTitle} variant="content" defaultOpen={true} data-content-section="proposal">
+          {#if mode === "needs_review"}
+            <div class="approval-result">
+              {#if onValueSave}
+                <InlineEdit value={proposalBody} markdown multiline placeholder="Result..." onSave={onValueSave} />
+              {:else}
+                <MarkdownBlock text={proposalBody} />
+              {/if}
+            </div>
+          {:else}
+            <div class="approval-draft">
+              <InlineEdit
+                value={draft}
+                markdown
+                multiline
+                placeholder={`${contentTitle || "Proposal"}...`}
+                dataEdit
+                onCancel={mode === "gating-pending" ? resetDraft : undefined}
+                onSave={saveDraft}
+              />
+            </div>
+          {/if}
+        </Disclosure>
       {/if}
     </div>
 

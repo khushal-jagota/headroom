@@ -88,6 +88,56 @@
     skipped = { ...skipped, [entryKey(entry)]: true };
   }
 
+  function openTicket(entry: QueueEntry): void {
+    if (entry.entity_type !== "ticket") return;
+    window.location.hash = `#/ticket/${entry.entity_id}`;
+  }
+
+  // Global review shortcuts (approved addition): s = skip, o = open ticket,
+  // Cmd/Ctrl+Enter = approve the current ask. They fire only when the keystroke
+  // did not originate in an editable control and was not already handled there —
+  // InlineEdit's own Cmd/Ctrl+Enter preventDefaults and blurs to <body>, so an
+  // activeElement check alone would let that approve by accident.
+  function typingTarget(event: KeyboardEvent): boolean {
+    const target = event.target as HTMLElement | null;
+    if (!target) return false;
+    if (target.isContentEditable) return true;
+    return ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(target.tagName);
+  }
+
+  function onWindowKeydown(event: KeyboardEvent): void {
+    const entry = currentEntry;
+    if (!entry) return;
+    // Ignore auto-repeat: holding a key must not skip/approve through the queue.
+    if (event.repeat || event.defaultPrevented || typingTarget(event)) return;
+
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      const button = document.querySelector<HTMLButtonElement>(
+        "[data-review-card] [data-accept], [data-review-card] [data-approve]"
+      );
+      if (button && !button.disabled) {
+        event.preventDefault();
+        button.click();
+      }
+      return;
+    }
+
+    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+
+    if (event.key === "s" || event.key === "S") {
+      event.preventDefault();
+      skip(entry);
+    } else if (event.key === "o" || event.key === "O") {
+      event.preventDefault();
+      openTicket(entry);
+    }
+  }
+
+  $effect(() => {
+    window.addEventListener("keydown", onWindowKeydown);
+    return () => window.removeEventListener("keydown", onWindowKeydown);
+  });
+
   async function refreshQueuesAfter<T>(operation: Promise<T>): Promise<T> {
     const result = await operation;
     await queues.refresh().catch(() => undefined);
@@ -163,84 +213,94 @@
       {#if isStale(entry, detail)}
         <div class="quiet-line">Loading approval...</div>
       {:else}
-        <div
-          class="modern-review-content"
-          data-review-card
-          data-entity-id={entry.entity_id}
-          data-kind={entry.kind}
-          data-field={["success", "approach", "plan", "result"].includes(entry.kind) ? entry.kind : undefined}
-        >
-          {#if entry.entity_type === "ticket"}
-            <a href={`#/ticket/${entry.entity_id}`} class="review-ticket-title">
-              {entry.title}
-            </a>
-          {:else}
-            <h2 class="review-ticket-title" style="pointer-events: none;">{entry.title}</h2>
-          {/if}
-
-          {#if ["success", "approach", "plan", "result"].includes(entry.kind)}
-            <TicketStageSection
-              variant="review"
-              name={entry.kind}
-              slot={detail.fields[entry.kind]}
-              ticketState={detail.state}
-              ceiling={detail.ceiling}
-              stageState={fieldStageVisualState(detail, entry.kind)}
-              recap={detail.recap}
-              showRecap
-              onAccept={(payload) => accept(entry, payload)}
-            />
-          {:else if entry.kind === "review"}
-            <TicketStageSection
-              variant="review"
-              name="result"
-              slot={detail.fields.result}
-              ticketState={detail.state}
-              ceiling={detail.ceiling}
-              stageState={fieldStageVisualState(detail, "result")}
-              recap={detail.recap}
-              showRecap
-              onAccept={() => approve(entry)}
-              onApproveResult={() => approve(entry)}
-            />
-          {/if}
-
-          {#if entry.entity_type === "ticket"}
-            <div class="review-revision-box" data-review-revision>
-              <textarea
-                class="review-revision-input"
-                data-review-revision-input
-                rows="2"
-                placeholder="Tell the worker what to change..."
-                bind:value={revisionDraft}
-                disabled={revisionBusy}
-                onkeydown={(event) => {
-                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                    event.preventDefault();
-                    void returnForRevision(entry);
-                  }
-                }}
-              ></textarea>
-              {#if revisionError}
-                <ErrorLine error={revisionError} />
+        {#key entryKey(entry)}
+          <div
+            class="modern-review-content"
+            data-review-card
+            data-entity-id={entry.entity_id}
+            data-kind={entry.kind}
+            data-field={["success", "approach", "plan", "result"].includes(entry.kind) ? entry.kind : undefined}
+          >
+            <div class="review-queue-line review-arrive review-arrive--1">
+              <button data-skip="" onclick={() => skip(entry)}>Skip &rsaquo;</button>
+              {#if entry.entity_type === "ticket"}
+                <a data-open-ticket href={`#/ticket/${entry.entity_id}`}>Open ticket &rsaquo;</a>
               {/if}
-              <Button
-                variant="quiet"
-                data-review-revision-send=""
-                disabled={revisionBusy || !revisionDraft.trim()}
-                onclick={() => void returnForRevision(entry)}
-              >
-                Send back
-              </Button>
             </div>
-          {/if}
 
-          <div class="review-outside-actions">
-            <Button variant="quiet" data-skip="" onclick={() => skip(entry)}>Skip</Button>
             {#if entry.entity_type === "ticket"}
-              <a class="review-open-ticket" data-open-ticket href={`#/ticket/${entry.entity_id}`}>Open ticket</a>
+              <a href={`#/ticket/${entry.entity_id}`} class="review-ticket-title review-arrive review-arrive--2">
+                {entry.title}
+              </a>
+            {:else}
+              <h2 class="review-ticket-title review-arrive review-arrive--2" style="pointer-events: none;">{entry.title}</h2>
+            {/if}
+
+            <div class="review-arrive review-arrive--3">
+              {#if ["success", "approach", "plan", "result"].includes(entry.kind)}
+                <TicketStageSection
+                  variant="review"
+                  name={entry.kind}
+                  slot={detail.fields[entry.kind]}
+                  ticketState={detail.state}
+                  ceiling={detail.ceiling}
+                  stageState={fieldStageVisualState(detail, entry.kind)}
+                  recap={detail.recap}
+                  showRecap
+                  onAccept={(payload) => accept(entry, payload)}
+                />
+              {:else if entry.kind === "review"}
+                <TicketStageSection
+                  variant="review"
+                  name="result"
+                  slot={detail.fields.result}
+                  ticketState={detail.state}
+                  ceiling={detail.ceiling}
+                  stageState={fieldStageVisualState(detail, "result")}
+                  recap={detail.recap}
+                  showRecap
+                  onAccept={() => approve(entry)}
+                  onApproveResult={() => approve(entry)}
+                />
+              {/if}
+            </div>
+
+            {#if entry.entity_type === "ticket"}
+              <div class="review-revise review-arrive review-arrive--4" data-review-revision>
+                <div class="review-revision-box">
+                  <textarea
+                    class="review-revision-input"
+                    data-review-revision-input
+                    rows="1"
+                    placeholder="Or tell the employee what to change..."
+                    bind:value={revisionDraft}
+                    disabled={revisionBusy}
+                    onkeydown={(event) => {
+                      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                        event.preventDefault();
+                        void returnForRevision(entry);
+                      }
+                    }}
+                  ></textarea>
+                  <Button
+                    variant="quiet"
+                    data-review-revision-send=""
+                    disabled={revisionBusy || !revisionDraft.trim()}
+                    onclick={() => void returnForRevision(entry)}
+                  >
+                    Send back
+                  </Button>
+                </div>
+                {#if revisionError}
+                  <ErrorLine error={revisionError} />
+                {/if}
+              </div>
             {/if}
           </div>
+        {/key}
+
+        <div class="review-keys">
+          <kbd>⌘↩</kbd> approve &nbsp;·&nbsp; <kbd>S</kbd> skip &nbsp;·&nbsp; <kbd>O</kbd> open ticket
         </div>
       {/if}
     {/if}

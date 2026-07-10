@@ -64,9 +64,10 @@
 
 {#snippet stageBody()}
   {#if showRecap && recap}
-    <Disclosure title="Recap" variant="support" defaultOpen={true} data-content-section="recap">
-      <MarkdownBlock text={recap} />
-    </Disclosure>
+    <div class="review-context" data-content-section="recap">
+      <div class="review-context-label">Recap</div>
+      <div class="review-context-recap"><MarkdownBlock text={recap} /></div>
+    </div>
   {/if}
 
   {#if reviewVariant && hasNotes}

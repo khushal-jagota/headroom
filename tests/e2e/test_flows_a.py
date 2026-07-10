@@ -380,6 +380,107 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
     ) == ["kept structure", "serialized from DOM"]
 
 
+def test_review_keyboard_shortcuts(server, context_factory, open_page, cli, api):
+    # The review chamber's global shortcuts (s skip, o open, cmd/ctrl+enter approve)
+    # must never fire from inside an editable. Two queued tickets so a skip leaves a
+    # card behind, and so cmd/ctrl+enter inside the editor is proven not to approve.
+    first = cli(server, "ticket", "create", "--title", "Shortcut ticket one")["id"]
+    cli(
+        server,
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Recap one.",
+        ticket_id=first,
+        stdin="# Proposal one\n\n- a",
+    )
+    second = cli(server, "ticket", "create", "--title", "Shortcut ticket two")["id"]
+    cli(
+        server,
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Recap two.",
+        ticket_id=second,
+        stdin="# Proposal two\n\n- b",
+    )
+
+    card = "[data-review-card]"
+    page = open_page(context_factory(), server, "#/review", card, settled=True)
+    entity_before = page.get_attribute(card, "data-entity-id")
+
+    # Track every accept/approve POST so the negative assertion is deterministic —
+    # no sleep. If the in-editor shortcut approved, a request would appear here.
+    approve_requests: list[str] = []
+    page.on(
+        "request",
+        lambda request: (
+            approve_requests.append(request.url)
+            if request.method == "POST"
+            and ("/accept/" in request.url or request.url.endswith("/approve"))
+            else None
+        ),
+    )
+
+    # cmd/ctrl+enter with focus INSIDE the proposal editor must not approve: the
+    # editor's own handler prevents it. The handler runs synchronously on keydown;
+    # a subsequent real round-trip (fetching the ticket) is the flush boundary that
+    # guarantees any approve request would already have been observed.
+    editor = page.locator(f"{card} [data-edit]")
+    editor.focus()
+    page.keyboard.press("Meta+Enter")
+    # Flush the browser's network: this awaited round-trip resolves only after any
+    # request the (synchronous) keydown handler dispatched has already fired its
+    # request event, so approve_requests is authoritative without a sleep.
+    page.evaluate("() => fetch('/api/queues').then(r => r.text())")
+    page.wait_for_load_state("networkidle")
+    assert approve_requests == []
+    assert api.get(server, f"/api/tickets/{first}")["fields"]["success"]["proposal"] is not None
+    assert api.get(server, f"/api/tickets/{second}")["fields"]["success"]["proposal"] is not None
+    assert page.locator("[data-review-empty]").count() == 0
+    assert page.get_attribute(card, "data-entity-id") == entity_before
+
+    # 'o' typed inside the editor is a keystroke, not open-ticket: still on /review.
+    editor.focus()
+    page.keyboard.type("o")
+    assert page.url.endswith("#/review")
+
+    # A focused scope <select> is also an editable target: 's'/'o' must not fire.
+    page.locator(f"{card} [data-scope-ceiling]").focus()
+    page.keyboard.press("s")
+    page.keyboard.press("o")
+    assert page.url.endswith("#/review")
+    assert page.get_attribute(card, "data-entity-id") == entity_before
+
+    # With focus outside any editable, 's' skips to the next card (entity changes).
+    page.locator(".review-keys").click()
+    page.keyboard.press("s")
+    page.wait_for_function(
+        "(prev) => { const el = document.querySelector('[data-review-card]');"
+        " return !!el && el.getAttribute('data-entity-id') !== prev; }",
+        arg=entity_before,
+        timeout=WAIT_MS,
+    )
+
+    # cmd/ctrl+enter outside an editable approves via the same path as the button.
+    _wait_enabled(page, f"{card} [data-accept]")
+    approved_entity = page.get_attribute(card, "data-entity-id")
+    page.locator(".review-keys").click()
+    page.keyboard.press("Meta+Enter")
+    page.wait_for_function(
+        "(prev) => { const el = document.querySelector('[data-review-card]');"
+        " return !el || el.getAttribute('data-entity-id') !== prev; }",
+        arg=approved_entity,
+        timeout=WAIT_MS,
+    )
+    approved = api.get(server, f"/api/tickets/{approved_entity}")
+    assert approved["fields"]["success"]["proposal"] is None
+
+
 def test_e26_chat_panel_echo_and_offline(
     server, server_factory, context_factory, open_page, cli, api
 ):
