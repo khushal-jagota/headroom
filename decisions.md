@@ -2,6 +2,28 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D98 — Live agent activity is turn-owned, display-safe, and transient
+
+Keep the existing `activity_label` as the collapsed summary and add one ordered child collection for
+the running turn. A single framework-free normalizer admits only scalar category, short label,
+lifecycle, stable identity, and timing from accepted Hermes phase/tool/command events; raw reasoning,
+arguments, results, arbitrary payloads, and malformed structured label/identity values never enter
+Panels activity storage. Identity-bearing start/end events update one row, idless consecutive
+duplicates collapse, and the newest 100 entries are retained. Every settlement deletes the
+collection, while foreign-key cascade covers chat-turn and Ticket deletion, so this is live
+progressive disclosure rather than a permanent transcript or audit subsystem.
+
+The shared `ChatPanel` owns the one disclosure interaction for Ticket and Chief chat. It is collapsed
+by default, keeps the transcript and composer unchanged, and makes timeline renders explicit
+dependencies of the existing pre-growth follow decision. A reader near the bottom keeps following; a
+reader who scrolled upward keeps control and the distance-based Latest affordance.
+
+Implementation stayed in the owner-required worktree and merge remained Closeout work. During
+implementation, broad delegated routes stalled, overloaded, or exhausted their turn budgets; after
+three blocked routes, the orchestrator changed approach, preserved the tested partial work, and
+completed only the narrow integration/frontend slices inline under captured RED/GREEN tests. Final
+independent review and canonical verification remained hard gates.
+
 ## D57 — Sprint planning is one review-first Panels skill, not a cron or rollover path
 
 Replace the legacy file-based `sprint-planning` skill with a provisioned

@@ -23,6 +23,7 @@ from planner.chat.contracts import (
     CommandRunResult,
     GatewayStatus,
 )
+from planner.chat.logic.activity import normalize_gateway_activity
 from planner.core.errors import ErrorCode, PlannerError
 from planner.minds.config import hermes_src_root
 from planner.minds.contracts import OnEvent, RunResult, TransportUnknown
@@ -52,22 +53,6 @@ CHAT_SOURCE = "planner-chat"
 BUSY_CODE = 4009
 NOT_FOUND_CODE = 4007
 LIVE_SESSION_NOT_FOUND_CODE = 4001
-
-
-def _activity_label_for_gateway_event(event_type: str, payload: dict[str, Any]) -> str | None:
-    if event_type not in ("tool.start", "tool.delta", "tool.end", "command.start"):
-        return None
-    for key in ("label", "name", "command", "tool_name"):
-        value = str(payload.get(key) or "").strip()
-        if value:
-            return value
-    raw_tool = payload.get("tool")
-    tool = raw_tool if isinstance(raw_tool, dict) else {}
-    for key in ("label", "name"):
-        value = str(tool.get(key) or "").strip()
-        if value:
-            return value
-    return "Working"
 
 
 class SharedGatewayBusy(Exception):
@@ -981,9 +966,11 @@ class SharedGateway:
                 payload = observation.payload
                 if etype == "error":
                     raise GatewayError(str(payload.get("message") or "gateway error event"))
-                activity_label = _activity_label_for_gateway_event(etype, payload)
-                if activity_label is not None:
-                    yield ChatStreamChunk(type="activity", text=activity_label)
+                activity = normalize_gateway_activity(etype, payload)
+                if activity is not None:
+                    yield ChatStreamChunk(
+                        type="activity", text=activity.label, activity=activity
+                    )
                 if etype == "message.delta":
                     delta = str(payload.get("text") or payload.get("delta") or "")
                     if delta:

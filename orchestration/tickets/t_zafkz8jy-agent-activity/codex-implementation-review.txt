@@ -1,0 +1,9 @@
+**Findings**
+
+- **Medium**: Thinking activity is normalized but not reliably routed from the Hermes producer. `normalize_gateway_activity()` supports `reasoning.delta` / `thinking.delta`, but the session router only treats `message.start`, `message.delta`, `tool.start`, `tool.delta`, `tool.end`, and `command.start` as lifecycle activity, so an initial thinking delta can be dropped before it reaches either human or worker activity persistence. This violates the “thinking phases” producer coverage.
+  Ref: [src/planner/minds/sessions/service.py:939](/private/tmp/panels-t_zafkz8jy/src/planner/minds/sessions/service.py:939)
+  Fix: include `reasoning.delta` and `thinking.delta` in routed lifecycle activity, then update the SharedGateway activity test to expect one safe `Thinking` entry when a reasoning delta precedes tool activity.
+
+- **Low**: New activity CSS adds hard-coded pixel sizes in token-governed `assets/app.css`, against the file’s own token rule and `PRINCIPLES.md` design-system rule. The new literals are `11px`, `10px`, `4px`, and `7px`.
+  Refs: [assets/app.css:896](/private/tmp/panels-t_zafkz8jy/assets/app.css:896), [assets/app.css:914](/private/tmp/panels-t_zafkz8jy/assets/app.css:914), [assets/app.css:915](/private/tmp/panels-t_zafkz8jy/assets/app.css:915), [assets/app.css:916](/private/tmp/panels-t_zafkz8jy/assets/app.css:916)
+  Fix: express those offsets and marker dimensions with existing spacing/border tokens or token-based `calc(...)` values.

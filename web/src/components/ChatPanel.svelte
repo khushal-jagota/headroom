@@ -38,6 +38,8 @@
 
   let draft = $state("");
   let error = $state<unknown>(null);
+  let activityExpanded = $state(false);
+  let activityTurnId = $state<string | null>(null);
   let pausePending = $state(false);
   let threadElement = $state<HTMLDivElement | null>(null);
   let following = $state(true);
@@ -75,6 +77,9 @@
   let activeTurn = $derived(chatState.data?.active_turn || null);
   let pending = $derived(Boolean(activeTurn));
   let pendingWho = $derived(activeTurn?.origin === "worker" ? "worker" : "planner");
+  let activityEntries = $derived(activeTurn?.activity_entries || []);
+  let hasActivityEntries = $derived(activityEntries.length > 0);
+  const activityDetailsId = `chat-activity-${stableEntityId}`;
 
   function pendingLabelFor(turn: ChatTurn | null): string {
     const label = turn?.activity_label?.trim();
@@ -121,6 +126,14 @@
   }
 
   $effect(() => {
+    const nextTurnId = activeTurn?.id ?? null;
+    if (activityTurnId !== nextTurnId) {
+      activityTurnId = nextTurnId;
+      activityExpanded = false;
+    }
+  });
+
+  $effect(() => {
     if (activeTurn && !chatState.loading) {
       schedulePoll();
       return;
@@ -132,6 +145,8 @@
     transcript;
     pending;
     pendingLabel;
+    activityEntries;
+    activityExpanded;
 
     if (chatState.loading || chatState.data === undefined || !threadElement) {
       return;
@@ -224,9 +239,54 @@
           {/if}
         {/each}
         {#if pending}
-          <div class="chat-pending-row" data-chat-pending data-chat-msg={pendingWho}>
-            <span class="chat-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-            <span class="chat-pending-label" data-chat-activity>{pendingLabel}</span>
+          <div class="chat-pending-block" data-chat-pending data-chat-msg={pendingWho}>
+            {#if hasActivityEntries}
+              <button
+                type="button"
+                class="chat-pending-row chat-activity-toggle"
+                data-chat-activity-toggle
+                aria-expanded={activityExpanded}
+                aria-controls={activityDetailsId}
+                aria-label={activityExpanded ? "Collapse agent activity" : "Expand agent activity"}
+                onclick={() => (activityExpanded = !activityExpanded)}
+              >
+                <span class="chat-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                <span class="chat-pending-label" data-chat-activity>{pendingLabel}</span>
+                <span class="chat-activity-chevron" aria-hidden="true">{activityExpanded ? "⌃" : "⌄"}</span>
+              </button>
+              {#if activityExpanded}
+                <ol
+                  id={activityDetailsId}
+                  class="chat-activity-details"
+                  data-chat-activity-details
+                  aria-label="Agent activity details"
+                >
+                  {#each activityEntries as entry (entry.id)}
+                    <li
+                      class:chat-activity-entry--running={entry.lifecycle_state === "running"}
+                      class="chat-activity-entry"
+                      data-chat-activity-entry
+                      data-activity-category={entry.category}
+                      data-activity-state={entry.lifecycle_state}
+                    >
+                      <span class="chat-activity-marker" aria-hidden="true"></span>
+                      <span class="chat-activity-category">{entry.category}</span>
+                      <span class="chat-activity-label">{entry.label}</span>
+                      {#if entry.lifecycle_state === "complete"}
+                        <span class="chat-activity-state" aria-label="Complete">✓</span>
+                      {:else}
+                        <span class="chat-activity-state">active</span>
+                      {/if}
+                    </li>
+                  {/each}
+                </ol>
+              {/if}
+            {:else}
+              <div class="chat-pending-row">
+                <span class="chat-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                <span class="chat-pending-label" data-chat-activity>{pendingLabel}</span>
+              </div>
+            {/if}
           </div>
         {/if}
       {/if}

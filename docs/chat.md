@@ -38,6 +38,14 @@ immediately. The visible transcript and live activity indicator belong to Panels
 `chat_messages` records the product-facing lines, and `chat_turns` records the
 current phase, partial output, session key, error, and completion.
 
+While a turn is running, the quiet activity row shows the latest safe summary. Its
+chevron opens an ordered list of thinking phases, tool use, and commands for that
+turn. Panels stores only the category, short label, state, identity, and timing
+needed to keep that list current. It never stores reasoning text, tool arguments,
+or tool and command output in the activity list. Repeated updates change the same
+entry where Hermes supplies an identity, the list keeps at most 100 entries, and
+the entries are removed when the turn settles.
+
 That split matters: writing a row to Panels chat state does not append anything to
 the worker's Hermes conversation. A normal chat send reaches the worker because it
 goes through the gateway/session path and is then mirrored into Panels chat. Direct
