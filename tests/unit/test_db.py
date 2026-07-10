@@ -264,6 +264,48 @@ def test_lifecycle_migration_rejects_awaiting_approval_without_candidate(tmp_pat
     conn.close()
 
 
+def test_lifecycle_migration_preserves_early_stage_awaiting_approval(tmp_path):
+    db_path = tmp_path / "early-stage-awaiting.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(_OLD_TICKETS_DDL)
+    success_proposal = {
+        "body": "proposed outcome",
+        "proposed_by": "worker-1",
+        "created_at": 123,
+    }
+    _insert_ticket(
+        conn,
+        id="t_success_awaiting",
+        title="Awaiting Success approval",
+        state="needs_success",
+        ceiling="needs_success",
+        ticket_status="awaiting_approval",
+        fields=_fields_json(
+            success={"value": None, "proposal": success_proposal, "user_note": None},
+            result={"value": None, "proposal": None, "user_note": None},
+        ),
+        created_at=1,
+        updated_at=123,
+    )
+
+    create_schema(conn)
+
+    row = conn.execute(
+        "SELECT state, ceiling, ticket_status, fields FROM tickets "
+        "WHERE id = 't_success_awaiting'"
+    ).fetchone()
+    assert tuple(row[:3]) == ("needs_success", "needs_success", "awaiting_approval")
+    fields = json.loads(row["fields"])
+    assert fields["success"]["proposal"] == success_proposal
+    assert fields["implementation"] == {
+        "value": None,
+        "proposal": None,
+        "user_note": None,
+    }
+    conn.close()
+
+
 def test_create_schema_migrates_ticket_lifecycle_with_old_project_column_rebuild(tmp_path):
     db_path = tmp_path / "old-project-lifecycle.db"
     conn = sqlite3.connect(db_path)

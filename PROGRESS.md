@@ -3,6 +3,50 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-10): unblock lifecycle migration startup
+
+Current build stage:
+
+- The lifecycle startup repair is complete. Result-to-Implementation approval reconstruction now
+  applies only to legacy Result-stage rows (`in_progress` and `needs_review`); earlier-stage
+  approvals preserve the proposal owned by Success, Approach, or Plan.
+- The change used the trivial-ticket exception (D56): two migration-condition lines, one exact-shape
+  regression, and current migration documentation. No contract shape changed.
+
+What just passed:
+
+- `panels serve` reproduced the reported exception before the repair. The live database showed four
+  valid `needs_success` / `awaiting_approval` rows with Success proposals and empty Result slots,
+  proving the original status-only condition was over-broad.
+- The new focused regression failed with that exact exception before the repair, then passed; all
+  nine database unit tests passed, including the strict missing-candidate rejection for a genuine
+  Result-stage approval.
+- A temporary SQLite backup of the complete live database migrated successfully: all four early
+  approvals retained their proposals, and the one Result-stage approval migrated to
+  `needs_implementation`.
+- Independent read-only Codex review (`gpt-5.5`, high reasoning) against D55, its migration contract,
+  and the legacy state machine returned `NO VIOLATIONS`.
+- Final `./verify` passed: Ruff, Mypy across 104 source files, 406 unit tests, compile/static and
+  frontend gates, 58 browser tests, and `VERIFY: PASS`.
+- Retrying the exact live command reached `Application startup complete` and migrated the live DB.
+  Its bind then correctly reported port 8767 already in use by the existing healthy
+  `python -m planner serve` process in the frontend worktree; that listener returns HTTP 200 from
+  `/api/meta`.
+
+Current hypothesis:
+
+- The reported startup migration defect is closed, the live data is upgraded, and Panels is already
+  being served by the existing listener.
+
+Next step:
+
+- Continue using the running Panels server. Stop that existing process first only if this worktree
+  needs to become the port-8767 listener itself.
+
+Blockers:
+
+- None.
+
 ## This branch (worktree-frontend-shared-components, 2026-07-10): frontend component consolidation
 
 This worktree branch carries only the frontend consolidation program — five serial tickets under

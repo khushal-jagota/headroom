@@ -257,7 +257,9 @@ def _migrate_lifecycle_ceiling(state: str, ceiling: str, ticket_status: str) -> 
     return ceiling
 
 
-def _migrate_lifecycle_fields_json(fields_json: str, ticket_status: str, updated_at: int) -> str:
+def _migrate_lifecycle_fields_json(
+    fields_json: str, legacy_state: str, ticket_status: str, updated_at: int
+) -> str:
     try:
         payload = json.loads(fields_json)
     except ValueError:
@@ -267,7 +269,11 @@ def _migrate_lifecycle_fields_json(fields_json: str, ticket_status: str, updated
     result_slot = payload.get("result")
     if not isinstance(result_slot, dict):
         result_slot = dict(_EMPTY_FIELD_SLOT)
-    if ticket_status == "awaiting_approval":
+    awaiting_result_approval = (
+        ticket_status == "awaiting_approval"
+        and legacy_state in {"in_progress", "needs_review"}
+    )
+    if awaiting_result_approval:
         pending_proposal = result_slot.get("proposal")
         if pending_proposal is None:
             candidate = result_slot.get("value")
@@ -349,7 +355,7 @@ def _migrate_ticket_lifecycle(conn: sqlite3.Connection) -> None:
             str(row["state"]), str(row["ceiling"]), ticket_status
         )
         new_fields = _migrate_lifecycle_fields_json(
-            str(row["fields"]), ticket_status, int(row["updated_at"])
+            str(row["fields"]), str(row["state"]), ticket_status, int(row["updated_at"])
         )
         conn.execute(
             """

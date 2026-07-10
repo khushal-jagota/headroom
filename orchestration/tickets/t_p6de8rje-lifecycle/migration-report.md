@@ -40,9 +40,11 @@ file (frozen/out of scope). Did not commit, did not run `./verify`.
 - `fields`: `result` key renamed to `implementation`; `closeout` added as an empty slot
   (`{value: null, proposal: null, user_note: null}`). `success`/`approach`/`plan` carried over
   as-is (defaulted to empty slots if missing from a malformed/partial JSON blob).
-  - Normal case (`ticket_status != 'awaiting_approval'`): `implementation.value`,
-    `.proposal`, `.user_note` copied straight from the old `result` slot.
-  - `awaiting_approval` case: reconstructs a true pending proposal with
+  - Normal case (including an earlier-stage `awaiting_approval`): `implementation.value`,
+    `.proposal`, `.user_note` copied straight from the old `result` slot. Success, Approach, and
+    Plan slots pass through unchanged, including whichever one owns the earlier pending proposal.
+  - Result-stage `awaiting_approval` case (`in_progress` or `needs_review`): reconstructs a true
+    pending proposal with
     `implementation.value = null`. If the old slot already has a proposal, it is retained verbatim.
     Otherwise migration moves the old Result value into a synthesized proposal with
     `proposed_by: "migration"` and the row's `updated_at`. The user note is preserved. A row with
@@ -101,10 +103,21 @@ The surrounding domain and test migration is now complete. The full unit suite p
 codec reads the rebuilt rows, and no production/test code references the removed Ticket enums or
 Result field outside intentional legacy migration fixtures.
 
+## Post-landing repair
+
+The first real startup after the lifecycle merge exposed four `needs_success` Tickets with
+`ticket_status = 'awaiting_approval'`, a pending Success proposal, and an empty Result slot. The
+original migration keyed Result reconstruction from `ticket_status` alone and therefore rejected
+these valid earlier-stage approvals. D56 narrows reconstruction to the two legacy Result-stage
+states. The focused regression failed with the production exception before the repair and passed
+afterward; the full database also migrated successfully through a temporary SQLite backup with all
+four Success proposals preserved. Independent Codex review returned `NO VIOLATIONS`.
+
 ## Remaining risks
 
-- No known data-shape gap remains: both legacy value-only and proposal-bearing awaiting-approval
-  slots are covered, and the integrated five-field codec reads the migrated output.
+- No known data-shape gap remains: earlier-stage approvals retain their actual gated proposal;
+  Result-stage value-only and proposal-bearing approvals remain covered; and the integrated
+  five-field codec reads the migrated output.
 - `_migrate_ticket_lifecycle` is purely additive/structural (drop+rebuild), consistent with the
   existing `_rebuild_tickets_with_project_id` pattern in this file; it does not attempt to be
   transactional beyond SQLite's implicit connection-level atomicity already relied on elsewhere
