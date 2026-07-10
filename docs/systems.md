@@ -144,14 +144,22 @@ Code paths: `src/planner/runtime/readiness.py`,
 ### 5. The Hermes Gateway System
 
 Hermes is outside the planner. The planner talks to it through a gateway adapter.
-Production startup creates one shared gateway owner and installs it on app state.
-That owner spawns the child lazily on first use. Tests use fake adapters and never
-call the real gateway.
+Production owns two independently configured role gateways: one for employees and
+one for the Chief of Staff. Each gateway spawns its Hermes child lazily on first use.
+Each child has one listener for all of its live sessions. The listener separates
+observations by live Hermes session and gives each accepted Panels operation its own
+consequence, so a delayed completion cannot settle a different operation. Tests use
+fake adapters and never call the real gateway.
 
 Tickets, days, and top-level agent chats store a `chat_session_key` for Hermes
 transport. Panels owns the product chat state in `chat_messages` and `chat_turns`.
 Hermes history is still readable for old sessions, but the UI reads Panels'
 `ChatState` resource.
+
+The stored Hermes session key is durable conversation identity. The lightweight
+in-process listener for that conversation may detach after Hermes reports idle and
+no Panels consequence remains. A later operation resumes the stored session instead
+of replaying prior input.
 
 Panels chat state is not model context. Appending to `chat_messages` or `chat_turns`
 does not make a worker see that text. Anything the worker must read has to go

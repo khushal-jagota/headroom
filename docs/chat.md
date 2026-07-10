@@ -58,13 +58,17 @@ the composer's send button becomes the pause button; pressing it interrupts that
 chat session and settles the `chat_turns` row as interrupted with any partial output
 kept. Pause does not change the ticket's runtime status or dispatch ownership.
 
-Earlier the chat could only ever say "Gateway Offline", because it was wired to the
-wrong thing and, after a gateway restart, kept trying to resume a session that no
-longer existed. It now reaches the actual worker, and if the link is ever lost the
-system quietly starts a fresh session for that ticket instead of giving up — so the
-chat keeps working without you noticing the hiccup. The same repair is used when
-history is loaded: if Hermes says the durable key has rotated, the planner stores
-the fresh key and logs a `chat_session_created` event.
+Stop changes the visible Panels turn immediately. It does not guess that Hermes has
+finished unwinding the interrupted work. A following send goes straight to Hermes
+and follows Hermes's native `streaming`, `queued`, or `steered` result. The gateway
+keeps each accepted send tied to its own consequence, so delayed interruption or
+completion events cannot finish the wrong visible turn.
+
+The stored chat session key names the durable Hermes conversation. A gateway restart
+resumes that key and does not replay prior input. If Hermes rotates the durable key,
+Panels stores the new key and logs a `chat_session_created` event. If delivery becomes
+uncertain, Panels reports the gateway outcome honestly and does not guess or retry the
+prompt automatically.
 
 The Chief of Staff page uses the same chat state shape with its top-level entity id.
 Only the gateway routing differs: chief messages go to the `panels-chief-of-staff`

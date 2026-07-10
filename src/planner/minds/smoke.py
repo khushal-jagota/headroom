@@ -26,7 +26,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from planner.minds.config import hermes_src_root, resolve_hermes_python
-from planner.minds.gateway import GatewayChild, GatewayError, GatewayRpcError, JsonDict
+from planner.minds.gateway import (
+    ChildSessionEventIngress,
+    GatewayChild,
+    GatewayError,
+    GatewayRpcError,
+    JsonDict,
+)
 
 BUSY_CODE = 4009
 TURN_TIMEOUT = 180.0
@@ -50,33 +56,41 @@ def _build_env(role: str | None, home: str | None, python: Path) -> dict[str, st
     return env
 
 
-def _run_prompt(child: GatewayChild, live_sid: str, prompt: str) -> int:
-    with child.open_session_events(live_sid) as events:
-        child.request("prompt.submit", {"session_id": live_sid, "text": prompt})
-        while True:
-            event = events.next_event(timeout=120.0)
-            if event is None:
-                print("[smoke] child died mid-run", file=sys.stderr)
-                return 1
-            etype = str(event.get("type") or "")
-            raw = event.get("payload")
-            payload: JsonDict = raw if isinstance(raw, dict) else {}
-            if etype == "message.delta":
-                sys.stdout.write(str(payload.get("text") or ""))
-                sys.stdout.flush()
-            else:
-                print(f"[smoke] event: {etype}")
-            if etype == "error":
-                print(f"[smoke] error event: {payload.get('message')}", file=sys.stderr)
-                return 1
-            if etype == "message.complete":
-                print()
-                print(
-                    f"[smoke] complete: status={payload.get('status')} "
-                    f"usage={payload.get('usage')}"
-                )
-                print(f"[smoke] text: {payload.get('text')}")
-                return 0
+def _run_prompt(
+    child: GatewayChild,
+    ingress: ChildSessionEventIngress,
+    live_sid: str,
+    prompt: str,
+) -> int:
+    child.request("prompt.submit", {"session_id": live_sid, "text": prompt})
+    while True:
+        event = ingress.next_event(timeout=120.0)
+        if event is None:
+            print("[smoke] child died mid-run", file=sys.stderr)
+            return 1
+        wrong_session = _assert_own_event(event, live_sid, "prompt")
+        if wrong_session is not None:
+            print(f"[smoke] {wrong_session.message}", file=sys.stderr)
+            return 1
+        etype = str(event.get("type") or "")
+        raw = event.get("payload")
+        payload: JsonDict = raw if isinstance(raw, dict) else {}
+        if etype == "message.delta":
+            sys.stdout.write(str(payload.get("text") or ""))
+            sys.stdout.flush()
+        else:
+            print(f"[smoke] event: {etype}")
+        if etype == "error":
+            print(f"[smoke] error event: {payload.get('message')}", file=sys.stderr)
+            return 1
+        if etype == "message.complete":
+            print()
+            print(
+                f"[smoke] complete: status={payload.get('status')} "
+                f"usage={payload.get('usage')}"
+            )
+            print(f"[smoke] text: {payload.get('text')}")
+            return 0
 
 
 def _create_session(child: GatewayChild, source: str) -> tuple[str, str]:
@@ -112,81 +126,47 @@ def _assert_own_event(event: JsonDict, live_sid: str, name: str) -> _TurnCheck |
     return None
 
 
-def _concurrent_turn(
+def _submit_concurrent_turn(
     child: GatewayChild,
     *,
     name: str,
     live_sid: str,
     prompt: str,
-    expected: str,
-    forbidden: str,
     barrier: threading.Barrier,
 ) -> _TurnCheck:
     try:
-        with child.open_session_events(live_sid) as events:
-            barrier.wait(timeout=10.0)
-            child.request("prompt.submit", {"session_id": live_sid, "text": prompt})
-            while True:
-                event = events.next_event(timeout=TURN_TIMEOUT)
-                if event is None:
-                    return _TurnCheck(name, False, "gateway child died mid-run")
-                wrong_session = _assert_own_event(event, live_sid, name)
-                if wrong_session is not None:
-                    return wrong_session
-                etype = str(event.get("type") or "")
-                payload = _payload(event)
-                if etype == "error":
-                    return _TurnCheck(
-                        name,
-                        False,
-                        f"gateway error event: {payload.get('message')}",
-                    )
-                if etype == "message.complete":
-                    text = str(payload.get("text") or "")
-                    stripped = text.strip()
-                    if stripped != expected:
-                        return _TurnCheck(
-                            name,
-                            False,
-                            f"expected exactly {expected!r}, got {stripped!r}",
-                            text,
-                        )
-                    if forbidden in text:
-                        return _TurnCheck(
-                            name,
-                            False,
-                            f"reply contained other session marker {forbidden!r}",
-                            text,
-                        )
-                    return _TurnCheck(name, True, f"received exactly {expected!r}", text)
+        barrier.wait(timeout=10.0)
+        child.request("prompt.submit", {"session_id": live_sid, "text": prompt})
+        return _TurnCheck(name, True, "prompt accepted")
     except (GatewayError, threading.BrokenBarrierError) as exc:
         return _TurnCheck(name, False, str(exc))
 
 
-def _check_distinct_sessions_demux(child: GatewayChild, sid_a: str, sid_b: str) -> bool:
+def _check_distinct_sessions_demux(
+    child: GatewayChild,
+    ingress: ChildSessionEventIngress,
+    sid_a: str,
+    sid_b: str,
+) -> bool:
     print("[smoke:concurrency] CHECK distinct sessions on one child: START")
     barrier = threading.Barrier(3)
     prompt_a = "Reply with exactly ALPHA and no other text."
     prompt_b = "Reply with exactly BRAVO and no other text."
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         future_a = executor.submit(
-            _concurrent_turn,
+            _submit_concurrent_turn,
             child,
             name="session A",
             live_sid=sid_a,
             prompt=prompt_a,
-            expected="ALPHA",
-            forbidden="BRAVO",
             barrier=barrier,
         )
         future_b = executor.submit(
-            _concurrent_turn,
+            _submit_concurrent_turn,
             child,
             name="session B",
             live_sid=sid_b,
             prompt=prompt_b,
-            expected="BRAVO",
-            forbidden="ALPHA",
             barrier=barrier,
         )
         try:
@@ -195,13 +175,59 @@ def _check_distinct_sessions_demux(child: GatewayChild, sid_a: str, sid_b: str) 
             print("[smoke:concurrency] FAIL distinct sessions: workers did not start")
             return False
         try:
-            checks = [
+            submissions = [
                 future_a.result(timeout=TURN_TIMEOUT + 30.0),
                 future_b.result(timeout=TURN_TIMEOUT + 30.0),
             ]
         except concurrent.futures.TimeoutError:
             print("[smoke:concurrency] FAIL distinct sessions: timed out waiting for workers")
             return False
+    for submission in submissions:
+        if not submission.ok:
+            print(f"[smoke:concurrency] FAIL {submission.name}: {submission.message}")
+            return False
+
+    expected_by_session = {
+        sid_a: ("session A", "ALPHA", "BRAVO"),
+        sid_b: ("session B", "BRAVO", "ALPHA"),
+    }
+    checks: list[_TurnCheck] = []
+    while expected_by_session:
+        event = ingress.next_event(timeout=TURN_TIMEOUT)
+        if event is None:
+            print("[smoke:concurrency] FAIL distinct sessions: gateway child died")
+            return False
+        session_id = str(event.get("session_id") or "")
+        expected = expected_by_session.get(session_id)
+        if expected is None:
+            print(
+                "[smoke:concurrency] FAIL distinct sessions: "
+                f"received event for unexpected session {session_id!r}"
+            )
+            return False
+        name, expected_text, forbidden = expected
+        etype = str(event.get("type") or "")
+        payload = _payload(event)
+        if etype == "error":
+            checks.append(
+                _TurnCheck(name, False, f"gateway error event: {payload.get('message')}")
+            )
+            expected_by_session.pop(session_id)
+        elif etype == "message.complete":
+            text = str(payload.get("text") or "")
+            stripped = text.strip()
+            ok = stripped == expected_text and forbidden not in text
+            checks.append(
+                _TurnCheck(
+                    name,
+                    ok,
+                    f"received exactly {expected_text!r}"
+                    if ok
+                    else f"expected exactly {expected_text!r}, got {stripped!r}",
+                    text,
+                )
+            )
+            expected_by_session.pop(session_id)
     ok = True
     for check in checks:
         status = "PASS" if check.ok else "FAIL"
@@ -212,65 +238,69 @@ def _check_distinct_sessions_demux(child: GatewayChild, sid_a: str, sid_b: str) 
     return ok
 
 
-def _check_same_session_busy(child: GatewayChild, live_sid: str) -> bool:
+def _check_same_session_busy(
+    child: GatewayChild,
+    ingress: ChildSessionEventIngress,
+    live_sid: str,
+) -> bool:
     print("[smoke:concurrency] CHECK same-session 4009 busy guard: START")
     prompt = (
         "Concurrency smoke: produce exactly 80 numbered lines. "
         "Each line must be of the form BUSY-SMOKE-N where N increases from 1 to 80. "
         "Do not summarize and do not stop early."
     )
-    with child.open_session_events(live_sid) as events:
-        try:
-            child.request("prompt.submit", {"session_id": live_sid, "text": prompt})
-        except GatewayError as exc:
-            print(f"[smoke:concurrency] FAIL same-session first submit: {exc}")
-            return False
+    try:
+        child.request("prompt.submit", {"session_id": live_sid, "text": prompt})
+    except GatewayError as exc:
+        print(f"[smoke:concurrency] FAIL same-session first submit: {exc}")
+        return False
 
-        try:
-            child.request(
-                "prompt.submit",
-                {"session_id": live_sid, "text": "Reply with SHOULD_NOT_RUN."},
-                timeout=10.0,
+    try:
+        child.request(
+            "prompt.submit",
+            {"session_id": live_sid, "text": "Reply with SHOULD_NOT_RUN."},
+            timeout=10.0,
+        )
+    except GatewayRpcError as exc:
+        if exc.code != BUSY_CODE:
+            print(
+                "[smoke:concurrency] FAIL same-session busy guard: "
+                f"expected 4009, got {exc.code}",
             )
-        except GatewayRpcError as exc:
-            if exc.code != BUSY_CODE:
-                print(
-                    "[smoke:concurrency] FAIL same-session busy guard: "
-                    f"expected 4009, got {exc.code}",
-                )
-                return False
-            print("[smoke:concurrency] PASS same-session busy guard: got 4009 session busy")
-        except GatewayError as exc:
-            print(f"[smoke:concurrency] FAIL same-session busy guard: {exc}")
             return False
-        else:
-            print("[smoke:concurrency] FAIL same-session busy guard: second submit was accepted")
-            return False
+        print("[smoke:concurrency] PASS same-session busy guard: got 4009 session busy")
+    except GatewayError as exc:
+        print(f"[smoke:concurrency] FAIL same-session busy guard: {exc}")
+        return False
+    else:
+        print("[smoke:concurrency] FAIL same-session busy guard: second submit was accepted")
+        return False
 
-        while True:
-            event = events.next_event(timeout=TURN_TIMEOUT)
-            if event is None:
-                print("[smoke:concurrency] FAIL same-session drain: gateway child died mid-run")
-                return False
-            wrong_session = _assert_own_event(event, live_sid, "same-session drain")
-            if wrong_session is not None:
-                print(f"[smoke:concurrency] FAIL same-session drain: {wrong_session.message}")
-                return False
-            etype = str(event.get("type") or "")
-            payload = _payload(event)
-            if etype == "error":
-                print(
-                    "[smoke:concurrency] FAIL same-session drain: "
-                    f"gateway error event: {payload.get('message')}"
-                )
-                return False
-            if etype == "message.complete":
-                print("[smoke:concurrency] PASS same-session first turn drained cleanly")
-                return True
+    while True:
+        event = ingress.next_event(timeout=TURN_TIMEOUT)
+        if event is None:
+            print("[smoke:concurrency] FAIL same-session drain: gateway child died mid-run")
+            return False
+        wrong_session = _assert_own_event(event, live_sid, "same-session drain")
+        if wrong_session is not None:
+            print(f"[smoke:concurrency] FAIL same-session drain: {wrong_session.message}")
+            return False
+        etype = str(event.get("type") or "")
+        payload = _payload(event)
+        if etype == "error":
+            print(
+                "[smoke:concurrency] FAIL same-session drain: "
+                f"gateway error event: {payload.get('message')}"
+            )
+            return False
+        if etype == "message.complete":
+            print("[smoke:concurrency] PASS same-session first turn drained cleanly")
+            return True
 
 
 def _resume_leg(python: Path, env: dict[str, str], stored: str) -> int:
     child = GatewayChild(str(python), env)
+    ingress = child.claim_session_event_ingress()
     try:
         child.wait_ready()
         resumed = child.request("session.resume", {"session_id": stored})
@@ -285,12 +315,14 @@ def _resume_leg(python: Path, env: dict[str, str], stored: str) -> int:
         except GatewayError as exc:
             print(f"[smoke] resume close failed: {exc}", file=sys.stderr)
     finally:
+        ingress.close()
         child.shutdown()
     return 0
 
 
 def _run_concurrency_smoke(python: Path, env: dict[str, str]) -> int:
     child = GatewayChild(str(python), env)
+    ingress = child.claim_session_event_ingress()
     live_sessions: list[str] = []
     stored_sessions: list[str] = []
     demux_ok = False
@@ -305,7 +337,7 @@ def _run_concurrency_smoke(python: Path, env: dict[str, str]) -> int:
             sid_b, stored_b = _create_session(child, "minds-smoke-concurrency-b")
             live_sessions.extend([sid_a, sid_b])
             stored_sessions.extend([stored_a, stored_b])
-            demux_ok = _check_distinct_sessions_demux(child, sid_a, sid_b)
+            demux_ok = _check_distinct_sessions_demux(child, ingress, sid_a, sid_b)
         except GatewayError as exc:
             print(f"[smoke:concurrency] FAIL distinct sessions setup/run: {exc}")
 
@@ -313,13 +345,14 @@ def _run_concurrency_smoke(python: Path, env: dict[str, str]) -> int:
             sid_busy, stored_busy = _create_session(child, "minds-smoke-concurrency-busy")
             live_sessions.append(sid_busy)
             stored_sessions.append(stored_busy)
-            busy_ok = _check_same_session_busy(child, sid_busy)
+            busy_ok = _check_same_session_busy(child, ingress, sid_busy)
         except GatewayError as exc:
             print(f"[smoke:concurrency] FAIL same-session busy setup/run: {exc}")
 
         for live_sid in live_sessions:
             _close_live_session(child, live_sid)
     finally:
+        ingress.close()
         child.shutdown()
 
     for stored in stored_sessions:
@@ -365,6 +398,7 @@ def main() -> int:
         return _run_concurrency_smoke(python, env)
 
     child = GatewayChild(str(python), env)
+    ingress = child.claim_session_event_ingress()
     stored = ""
     try:
         started = time.perf_counter()
@@ -374,7 +408,7 @@ def main() -> int:
         live_sid = str(created.get("session_id") or "")
         stored = str(created.get("stored_session_id") or "")
         print(f"[smoke] live sid={live_sid} stored={stored}")
-        rc = _run_prompt(child, live_sid, prompt)
+        rc = _run_prompt(child, ingress, live_sid, prompt)
         if rc != 0:
             return rc
         try:
@@ -382,6 +416,7 @@ def main() -> int:
         except GatewayError as exc:
             print(f"[smoke] session.close failed: {exc}", file=sys.stderr)
     finally:
+        ingress.close()
         child.shutdown()
 
     if do_resume and stored:

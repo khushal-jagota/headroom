@@ -150,27 +150,50 @@ Verification status:
 
 Fix design:
 
-- Reusing the existing Panels `ChatTurn.id` / worker-turn ID as a causal Hermes turn ID is the
-  smallest complete fix. Hermes must retain it while queued, put it on every turn-scoped event, give
-  its own background turns different IDs, and make interrupt target the exact ID.
-- Panels must register and route drains by `(live_session_id, turn_id)` before submitting. It must no
-  longer accept the first session-level `message.complete` as the caller's result.
-- Hermes must never merge two differently identified queued turns. A bounded one-turn queue is enough
-  for the current product; a general FIFO is not required. Same-ID retries must be idempotent so a lost
-  JSON-RPC acknowledgement cannot run the model twice.
-- Session serialization is only a containment option for the visible stop race. It cannot prove
-  ownership when Hermes starts memory, goal, delegation, or notification turns itself, so it is not
-  the final correction.
-- The new protocol must fail closed when unsupported. Image and prompt-producing command paths must
-  migrate atomically or stay behind a temporary session lane until they do; neither may keep the old
-  session-level first-completion drain.
+- D76/D77 supersede the earlier ID-first design. Panels will keep its existing employee-configured and
+  Chief-configured gateway children, but each gains one faithful ordered ingress per live Hermes
+  session. Product callers will no longer open competing per-operation drains.
+- The ingress preserves Hermes's exact `streaming` / `queued` / `steered` submit disposition,
+  interrupt acknowledgement, ordered events, idle observations, and resume snapshot. It may
+  linearize command writes but cannot wait for locally inferred idle, retry an uncertain prompt, or
+  create a Panels FIFO.
+- Visible chat and employee workflow consequences remain separate Panels projections above that
+  transport seam. The current UI, visible transcript, and system/activity presentation stay
+  materially unchanged.
+- The owner fixed the scope at Panels only. Hermes is not modified. Where its existing observations
+  cannot prove an outcome after a transport gap, Panels reports unknown/offline rather than inferring
+  or retrying.
+- Live session objects may detach after Hermes is observed idle and Panels has no pending consequence.
+  The stored Hermes session ID survives and can reopen the same conversation.
 
 Immediate next step:
 
-- If implementation is authorized, first land deterministic failures for stop A + queued B, internal
-  turn I between them, a completion before the submit acknowledgement, delayed stop A after B starts,
-  and duplicate-submit retry. Then add the owned-turn protocol in Hermes, migrate Panels routing and
-  all prompt-producing callers, and run the full Chief and employee-step regressions through `./verify`.
+- Work remains isolated on `codex/hermes-session-ingress`. `t_hs01` and `t_hs02` are implemented and
+  independently reviewed; the integrated human-chat boundary passed the full gate with 393 unit and
+  57 browser tests.
+- `t_hs03` now moves employee execution onto the same consequence seam. Independent review found and
+  corrected one early-assignment race: old delta/tool activity can no longer activate queued work
+  before the observed predecessor lifecycle terminates. Worker context waits for proved delivery,
+  steered and unknown outcomes settle honestly without claiming later terminals, and a second
+  consequential employee attempt is busy before a second prompt write. Its focused 143-test gate,
+  Ruff, Mypy across 104 source files, and `git diff --check` pass.
+- `t_hs04` has removed the temporary per-session drains, receipt-only submit, session-wide
+  observation queue, and obsolete SharedGateway compatibility helpers. The source boundary is now an
+  executable AST contract. Standalone transport tools claim the one raw feed and reject cross-session
+  events. Public tests cover detach/resume, shutdown outcomes, child and role isolation, restart
+  without replay, and concurrent employee-session isolation. Final review also made router join
+  failure explicit, added the smoke/source guards, corrected queued-context docs, and fixed a real
+  gap where a streaming lifecycle arriving before its receipt could be discarded behind a running
+  resume snapshot. Registered predecessor, queued, steered, Stop-then-send, and image-cleanup
+  boundaries remain green. Its final 157-test focused gate, Ruff, Mypy across 104 source files, and
+  `git diff --check` pass.
+- The pre-review integrated `./verify` passed with 391 unit and 57 browser tests; its complete captured
+  output is in the hs04 implementation report. After the review fixes, both independent follow-ups
+  returned `NO VIOLATIONS` and the final post-review `./verify` passed with Ruff, Mypy across 104
+  source files, 394 unit tests, compile/static and frontend gates, 57 browser tests, and
+  `VERIFY: PASS`.
+- Next, land the complete hs01–hs04 feature as one rollback commit, merge it into `main`, restart the
+  server, and live-test Chief and Ticket Stop-then-send behavior.
 
 ## Completed work cycle (2026-07-10): Worker awareness of user ticket edits
 

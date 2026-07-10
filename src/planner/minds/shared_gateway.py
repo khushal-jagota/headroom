@@ -1,8 +1,8 @@
 """Shared worker-role Hermes gateway child.
 
 One process hosts many live Hermes sessions. Request responses are demuxed by
-JSON-RPC id in GatewayChild; turn events are drained through per-session event
-streams so concurrent sessions cannot consume each other's completion events.
+JSON-RPC id in GatewayChild; one session manager routes ordered observations to
+the accepted operation that owns each consequence.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from planner.chat.contracts import (
 )
 from planner.core.errors import ErrorCode, PlannerError
 from planner.minds.config import hermes_src_root
-from planner.minds.contracts import OnEvent, RunResult
+from planner.minds.contracts import OnEvent, RunResult, TransportUnknown
 from planner.minds.gateway import (
     READY_TIMEOUT_DEFAULT,
     REQUEST_TIMEOUT_DEFAULT,
@@ -36,7 +36,14 @@ from planner.minds.gateway import (
     SpawnFn,
     spawn_popen,
 )
-from planner.worker_context.contracts import WorkerContextService
+from planner.minds.sessions import (
+    AcceptedSubmission,
+    LiveSession,
+    LiveSessionDormant,
+    LiveSessionManager,
+    PendingSubmission,
+)
+from planner.worker_context.contracts import PreparedWorkerPrompt, WorkerContextService
 from planner.worker_context.service import EmptyWorkerContextService, visible_prompt_text
 
 SESSION_COLS = 100
@@ -148,7 +155,7 @@ class EntityRoutingGateway:
 
 
 class SharedGateway:
-    """Lifecycle owner for the planner's one shared worker gateway child."""
+    """Lifecycle owner for one role-configured shared Hermes gateway child."""
 
     def __init__(
         self,
@@ -172,6 +179,7 @@ class SharedGateway:
         self._worker_context = worker_context or EmptyWorkerContextService()
         self._lock = threading.Lock()
         self._child: GatewayChild | None = None
+        self._session_manager: LiveSessionManager | None = None
         self._live_session_ids_by_stored_key: dict[str, str] = {}
 
     def start(self) -> None:
@@ -180,10 +188,22 @@ class SharedGateway:
     def shutdown(self) -> None:
         with self._lock:
             child = self._child
+            session_manager = self._session_manager
             self._child = None
+            self._session_manager = None
             self._live_session_ids_by_stored_key.clear()
-        if child is not None:
-            child.shutdown()
+        try:
+            if session_manager is not None:
+                session_manager.shutdown()
+        finally:
+            if child is not None:
+                child.shutdown()
+
+    def live_session(self, session_key: str) -> LiveSession | None:
+        """Return the gateway-owned ingress for a currently live stored session."""
+        with self._lock:
+            manager = self._session_manager
+        return manager.session(session_key) if manager is not None else None
 
     def status(self) -> GatewayStatus:
         if not self._python.exists():
@@ -214,6 +234,12 @@ class SharedGateway:
                 str(resumed.get("session_id") or ""),
                 session_key,
                 stored,
+            )
+            self._bind_live_session(
+                child,
+                stored,
+                str(resumed.get("session_id") or ""),
+                resumed,
             )
             raw_messages = resumed.get("messages")
             messages = self._normalize_history_messages(raw_messages)
@@ -246,7 +272,7 @@ class SharedGateway:
         resolved_key = session_key
         try:
             child = self._child_or_spawn()
-            live_sid, resolved_key = self._resume_or_create(
+            _, resolved_key = self._resume_or_create(
                 child,
                 session_key,
                 SESSION_SOURCE,
@@ -254,8 +280,12 @@ class SharedGateway:
             )
             if resolved_key and on_session_key is not None:
                 on_session_key(resolved_key)
-            return self._submit_and_drain(
-                child, live_sid, resolved_key, entity_id, prompt_text, on_event
+            return self._submit_employee_consequence(
+                self._required_live_session(resolved_key),
+                resolved_key,
+                entity_id,
+                prompt_text,
+                on_event,
             )
         except SharedGatewayBusy:
             raise
@@ -273,10 +303,22 @@ class SharedGateway:
     ) -> ChatSendResult:
         try:
             child = self._child_or_spawn()
-            live_sid, stored = self._resume_or_create(child, session_key, CHAT_SOURCE)
+            _, stored = self._resume_or_create(
+                child,
+                session_key,
+                CHAT_SOURCE,
+                reuse_live_session=True,
+            )
             if on_session_key is not None:
                 on_session_key(stored)
-            result = self._submit_and_drain(child, live_sid, stored, entity_id, text, None)
+            result = self._submit_human_and_drain(
+                stored,
+                entity_id,
+                text,
+            )
+            resolved_stored = result.session_key or stored
+            if on_session_key is not None and resolved_stored != stored:
+                on_session_key(resolved_stored)
         except SharedGatewayBusy as exc:
             raise PlannerError(
                 ErrorCode.already_running,
@@ -287,7 +329,7 @@ class SharedGateway:
             raise PlannerError(
                 ErrorCode.gateway_offline, "chat gateway send failed", {"detail": str(exc)}
             ) from exc
-        return ChatSendResult(reply_text=result.text, session_key=stored)
+        return ChatSendResult(reply_text=result.text, session_key=resolved_stored)
 
     def stream(
         self,
@@ -300,21 +342,30 @@ class SharedGateway:
     ) -> Iterator[ChatStreamChunk]:
         try:
             child = self._child_or_spawn()
-            live_sid, stored = self._resume_or_create(child, session_key, CHAT_SOURCE)
+            _, stored = self._resume_or_create(
+                child,
+                session_key,
+                CHAT_SOURCE,
+                reuse_live_session=True,
+            )
             if on_session_key is not None:
                 on_session_key(stored)
             yield ChatStreamChunk(type="session", session_key=stored)
             if mode == "command":
-                yield from self._stream_command(child, live_sid, stored, entity_id, text)
+                yield from self._stream_command(
+                    stored,
+                    entity_id,
+                    text,
+                    on_session_key=on_session_key,
+                )
             else:
-                yield from self._stream_prompt(
-                    child,
-                    live_sid,
+                yield from self._stream_human_consequence(
                     stored,
                     entity_id,
                     text,
                     "assistant",
                     image_path=image_path,
+                    on_session_key=on_session_key,
                 )
         except SharedGatewayBusy as exc:
             raise PlannerError(
@@ -330,12 +381,14 @@ class SharedGateway:
     def interrupt(self, session_key: str, entity_id: str) -> None:
         try:
             child = self._child_or_spawn()
-            live_session_id = self._live_session_id_for_stored_key(child, session_key)
-            child.request(
-                "session.interrupt",
-                {"session_id": live_session_id},
-                timeout=self._request_timeout,
-            )
+            live_session = self.live_session(session_key)
+            if live_session is None:
+                live_session_id = self._live_session_id_for_stored_key(child, session_key)
+                self._bind_live_session(child, session_key, live_session_id, {})
+                live_session = self._required_live_session(session_key)
+            receipt = live_session.interrupt(timeout=self._request_timeout)
+            if isinstance(receipt, TransportUnknown):
+                raise GatewayError(receipt.detail)
         except GatewayRpcError as exc:
             if exc.code in (NOT_FOUND_CODE, LIVE_SESSION_NOT_FOUND_CODE):
                 raise PlannerError(
@@ -375,39 +428,36 @@ class SharedGateway:
     ) -> CommandRunResult:
         try:
             child = self._child_or_spawn()
-            live_sid, stored = self._resume_or_create(child, session_key, CHAT_SOURCE)
+            _, stored = self._resume_or_create(
+                child,
+                session_key,
+                CHAT_SOURCE,
+                reuse_live_session=True,
+            )
             if on_session_key is not None:
                 on_session_key(stored)
-            name, arg = self._split_command(command)
-            try:
-                result = child.request(
-                    "slash.exec",
-                    {"session_id": live_sid, "command": command},
-                    timeout=self._request_timeout,
+            pending, prepared, reply, kind, resolved_stored = (
+                self._begin_human_command_operation(
+                    stored,
+                    entity_id,
+                    command,
                 )
-            except GatewayRpcError as exc:
-                if exc.code == BUSY_CODE:
-                    raise SharedGatewayBusy(stored) from exc
-                if exc.code != 4018:
-                    raise
-                payload = child.request(
-                    "command.dispatch",
-                    {"session_id": live_sid, "name": name, "arg": arg},
-                    timeout=self._request_timeout,
+            )
+            if on_session_key is not None and resolved_stored != stored:
+                on_session_key(resolved_stored)
+            if pending is not None and prepared is not None:
+                accepted = self._accept_pending_submission(
+                    pending,
+                    prepared,
+                    resolved_stored,
+                    entity_id,
                 )
-                reply, kind = self._interpret(
-                    child, live_sid, stored, entity_id, payload, arg
-                )
-                return CommandRunResult(reply_text=reply, session_key=stored, kind=kind)
-            if result.get("type"):
-                reply, kind = self._interpret(
-                    child, live_sid, stored, entity_id, result, arg
-                )
-                return CommandRunResult(reply_text=reply, session_key=stored, kind=kind)
-            output = str(result.get("output") or "")
-            warning = str(result.get("warning") or "")
-            reply = (output + "\n" + warning).strip() if warning else output
-            return CommandRunResult(reply_text=reply, session_key=stored, kind="system")
+                reply = self._drain_accepted_submission(accepted, resolved_stored).text
+            return CommandRunResult(
+                reply_text=reply,
+                session_key=resolved_stored,
+                kind=kind,
+            )
         except SharedGatewayBusy as exc:
             raise PlannerError(
                 ErrorCode.already_running,
@@ -428,88 +478,154 @@ class SharedGateway:
 
     def _stream_command(
         self,
-        child: GatewayChild,
-        live_sid: str,
         stored: str,
         entity_id: str,
         command: str,
+        *,
+        on_session_key: Callable[[str], None] | None,
     ) -> Iterator[ChatStreamChunk]:
-        name, arg = self._split_command(command)
-        try:
-            result = child.request(
-                "slash.exec",
-                {"session_id": live_sid, "command": command},
-                timeout=self._request_timeout,
+        pending, prepared, reply, kind, resolved_stored = (
+            self._begin_human_command_operation(
+                stored,
+                entity_id,
+                command,
             )
+        )
+        if on_session_key is not None and resolved_stored != stored:
+            on_session_key(resolved_stored)
+        if pending is None or prepared is None:
+            yield from self._stream_done(reply, resolved_stored, kind)
+            return
+        accepted = self._accept_pending_submission(
+            pending,
+            prepared,
+            resolved_stored,
+            entity_id,
+        )
+        yield from self._stream_accepted_submission(accepted, resolved_stored, kind)
+
+    def _begin_human_command_operation(
+        self,
+        stored: str,
+        entity_id: str,
+        command: str,
+    ) -> tuple[PendingSubmission | None, PreparedWorkerPrompt | None, str, str, str]:
+        live_session = self._live_session_for_human_write(stored)
+        try:
+            result = self._begin_command_operation(
+                live_session,
+                stored,
+                entity_id,
+                command,
+            )
+        except LiveSessionDormant:
+            live_session = self._resume_live_session_for_human_write(stored)
+            result = self._begin_command_operation(
+                live_session,
+                stored,
+                entity_id,
+                command,
+            )
+        return (*result, live_session.stored_session_key)
+
+    def _begin_command_operation(
+        self,
+        live_session: LiveSession,
+        stored: str,
+        entity_id: str,
+        command: str,
+    ) -> tuple[PendingSubmission | None, PreparedWorkerPrompt | None, str, str]:
+        name, arg = self._split_command(command)
+        with live_session.ordered_operation() as operation:
+            try:
+                payload = operation.request(
+                    "slash.exec",
+                    {"session_id": live_session.live_session_id, "command": command},
+                    timeout=self._request_timeout,
+                )
+            except GatewayRpcError as exc:
+                if exc.code == BUSY_CODE:
+                    raise SharedGatewayBusy(stored) from exc
+                if exc.code != 4018:
+                    raise
+                payload = operation.request(
+                    "command.dispatch",
+                    {
+                        "session_id": live_session.live_session_id,
+                        "name": name,
+                        "arg": arg,
+                    },
+                    timeout=self._request_timeout,
+                )
+            if str(payload.get("type") or "") == "alias":
+                target_name, target_arg = self._split_command(
+                    str(payload.get("target") or "")
+                )
+                combined = (
+                    f"{target_arg} {arg}".strip()
+                    if target_arg and arg
+                    else (arg or target_arg)
+                )
+                payload = operation.request(
+                    "command.dispatch",
+                    {
+                        "session_id": live_session.live_session_id,
+                        "name": target_name,
+                        "arg": combined,
+                    },
+                    timeout=self._request_timeout,
+                )
+            payload_type = str(payload.get("type") or "")
+            if payload_type in ("skill", "send"):
+                prepared = self._worker_context.prepare(
+                    entity_id,
+                    str(payload.get("message") or ""),
+                )
+                pending = operation.begin_submission(prepared.model_text)
+                if isinstance(pending, TransportUnknown):
+                    raise GatewayError(pending.detail)
+                return pending, prepared, "", "assistant"
+            if payload_type in ("exec", "plugin"):
+                return None, None, str(payload.get("output") or ""), "system"
+            output = str(payload.get("output") or payload.get("message") or "")
+            warning = str(payload.get("warning") or "")
+            reply = (output + "\n" + warning).strip() if warning else output
+            return None, None, reply, "system"
+
+    def _accept_pending_submission(
+        self,
+        pending: PendingSubmission,
+        prepared: PreparedWorkerPrompt,
+        stored: str,
+        entity_id: str,
+    ) -> AcceptedSubmission:
+        try:
+            accepted = pending.wait(self._request_timeout)
         except GatewayRpcError as exc:
             if exc.code == BUSY_CODE:
                 raise SharedGatewayBusy(stored) from exc
-            if exc.code != 4018:
-                raise
-            payload = child.request(
-                "command.dispatch",
-                {"session_id": live_sid, "name": name, "arg": arg},
-                timeout=self._request_timeout,
-            )
-            yield from self._stream_interpret(
-                child, live_sid, stored, entity_id, payload, arg
-            )
-            return
-        if result.get("type"):
-            yield from self._stream_interpret(
-                child, live_sid, stored, entity_id, result, arg
-            )
-            return
-        output = str(result.get("output") or "")
-        warning = str(result.get("warning") or "")
-        reply = (output + "\n" + warning).strip() if warning else output
-        yield from self._stream_done(reply, stored, "system")
-
-    def _stream_interpret(
-        self,
-        child: GatewayChild,
-        live_sid: str,
-        stored: str,
-        entity_id: str,
-        payload: dict[str, Any],
-        arg: str,
-        *,
-        alias_ok: bool = True,
-    ) -> Iterator[ChatStreamChunk]:
-        ptype = str(payload.get("type") or "")
-        if ptype in ("skill", "send"):
-            message = str(payload.get("message") or "")
-            yield from self._stream_prompt(
-                child, live_sid, stored, entity_id, message, "assistant"
-            )
-            return
-        if ptype in ("exec", "plugin"):
-            yield from self._stream_done(str(payload.get("output") or ""), stored, "system")
-            return
-        if ptype == "alias" and alias_ok:
-            target_name, target_arg = self._split_command(str(payload.get("target") or ""))
-            combined = f"{target_arg} {arg}".strip() if target_arg and arg else (arg or target_arg)
-            resolved = child.request(
-                "command.dispatch",
-                {"session_id": live_sid, "name": target_name, "arg": combined},
-                timeout=self._request_timeout,
-            )
-            yield from self._stream_interpret(
-                child, live_sid, stored, entity_id, resolved, combined, alias_ok=False
-            )
-            return
-        reply = str(payload.get("output") or payload.get("message") or "")
-        yield from self._stream_done(reply, stored, "system")
+            raise
+        if isinstance(accepted, TransportUnknown):
+            raise GatewayError(accepted.detail)
+        if prepared.receipts:
+            self._worker_context.acknowledge(entity_id, prepared.receipts)
+        return accepted
 
     def _child_or_spawn(self) -> GatewayChild:
+        previous_manager: LiveSessionManager | None = None
         with self._lock:
             if self._child is not None and self._child.alive:
                 return self._child
+            previous_manager = self._session_manager
             child = GatewayChild(str(self._python), self._env(), spawn=self._spawn)
             child.wait_ready(self._ready_timeout)
+            session_manager = LiveSessionManager(child)
             self._live_session_ids_by_stored_key.clear()
             self._child = child
-            return child
+            self._session_manager = session_manager
+        if previous_manager is not None:
+            previous_manager.shutdown()
+        return child
 
     def _env(self) -> dict[str, str]:
         env = dict(self._base_env)
@@ -525,7 +641,12 @@ class SharedGateway:
         source: str,
         *,
         allow_create: bool = True,
+        reuse_live_session: bool = False,
     ) -> tuple[str, str]:
+        if session_key and reuse_live_session:
+            live_session = self.live_session(session_key)
+            if live_session is not None:
+                return live_session.live_session_id, live_session.stored_session_key
         if session_key:
             try:
                 resumed = child.request(
@@ -536,6 +657,7 @@ class SharedGateway:
                 live_session_id = str(resumed.get("session_id") or "")
                 stored_key = str(resumed.get("resumed") or session_key)
                 self._remember_session_identity(child, live_session_id, session_key, stored_key)
+                self._bind_live_session(child, stored_key, live_session_id, resumed)
                 return live_session_id, stored_key
             except GatewayRpcError as exc:
                 if exc.code == BUSY_CODE:
@@ -556,7 +678,22 @@ class SharedGateway:
         live_sid = str(created.get("session_id") or "")
         stored = str(created.get("stored_session_id") or live_sid)
         self._remember_session_identity(child, live_sid, stored)
+        self._bind_live_session(child, stored, live_sid, created)
         return live_sid, stored
+
+    def _bind_live_session(
+        self,
+        child: GatewayChild,
+        stored_session_key: str,
+        live_session_id: str,
+        snapshot: JsonDict,
+    ) -> None:
+        if not stored_session_key or not live_session_id:
+            return
+        with self._lock:
+            manager = self._session_manager if self._child is child else None
+        if manager is not None:
+            manager.bind(stored_session_key, live_session_id, snapshot=snapshot)
 
     def _remember_session_identity(
         self,
@@ -579,44 +716,177 @@ class SharedGateway:
                 return self._live_session_ids_by_stored_key.get(stored_key, stored_key)
         return stored_key
 
-    def _submit_and_drain(
+    def _required_live_session(self, stored_key: str) -> LiveSession:
+        live_session = self.live_session(stored_key)
+        if live_session is None:
+            raise GatewayError(f"Hermes session ingress is unavailable for {stored_key}")
+        return live_session
+
+    def _resume_live_session_for_human_write(self, stored_key: str) -> LiveSession:
+        child = self._child_or_spawn()
+        _, resumed_stored_key = self._resume_or_create(
+            child,
+            stored_key,
+            CHAT_SOURCE,
+            allow_create=False,
+        )
+        return self._required_live_session(resumed_stored_key)
+
+    def _live_session_for_human_write(self, stored_key: str) -> LiveSession:
+        live_session = self.live_session(stored_key)
+        if live_session is not None:
+            return live_session
+        return self._resume_live_session_for_human_write(stored_key)
+
+    def _submit_human_consequence(
         self,
-        child: GatewayChild,
-        live_sid: str,
+        stored_key: str,
+        text: str,
+        *,
+        image_path: Path | None = None,
+    ) -> tuple[AcceptedSubmission | TransportUnknown, str]:
+        live_session = self._live_session_for_human_write(stored_key)
+        try:
+            accepted = live_session.submit_consequence(
+                text,
+                timeout=self._request_timeout,
+                image_path=image_path,
+            )
+        except LiveSessionDormant:
+            # The prior consumer released between reuse lookup and write admission.
+            # No prompt was written, so one resume is safe; prompt outcomes are never retried.
+            live_session = self._resume_live_session_for_human_write(stored_key)
+            accepted = live_session.submit_consequence(
+                text,
+                timeout=self._request_timeout,
+                image_path=image_path,
+            )
+        return accepted, live_session.stored_session_key
+
+    def _submit_employee_consequence(
+        self,
+        live_session: LiveSession,
         stored_key: str,
         entity_id: str,
         text: str,
         on_event: OnEvent | None,
     ) -> RunResult:
-        with child.open_session_events(live_sid) as events:
+        with live_session.ordered_operation() as operation:
+            if live_session.pending_consequence_count:
+                raise SharedGatewayBusy(stored_key)
             prepared = self._worker_context.prepare(entity_id, text)
-            try:
-                child.request(
-                    "prompt.submit",
-                    {"session_id": live_sid, "text": prepared.model_text},
-                    timeout=self._request_timeout,
-                )
-            except GatewayRpcError as exc:
-                if exc.code == BUSY_CODE:
-                    raise SharedGatewayBusy(stored_key) from exc
-                raise
-            if prepared.receipts:
-                self._worker_context.acknowledge(entity_id, prepared.receipts)
+            pending = operation.begin_submission(prepared.model_text)
+        if isinstance(pending, TransportUnknown):
+            return RunResult(
+                "errored",
+                "",
+                None,
+                stored_key,
+                "Hermes prompt submission outcome is unknown; "
+                f"the employee prompt was not retried: {pending.detail}",
+            )
+        try:
+            accepted = pending.wait(self._request_timeout)
+        except GatewayRpcError as exc:
+            if exc.code == BUSY_CODE:
+                raise SharedGatewayBusy(stored_key) from exc
+            raise
+        if isinstance(accepted, TransportUnknown):
+            return RunResult(
+                "errored",
+                "",
+                None,
+                stored_key,
+                "Hermes prompt submission outcome is unknown; "
+                f"the employee prompt was not retried: {accepted.detail}",
+            )
+        context_acknowledged = False
+        if prepared.receipts and accepted.receipt.disposition in ("streaming", "steered"):
+            self._worker_context.acknowledge(entity_id, prepared.receipts)
+            context_acknowledged = True
+        if accepted.receipt.disposition == "steered":
+            accepted.consequence.release()
+            return RunResult(
+                "errored",
+                "",
+                None,
+                stored_key,
+                "Hermes delivered the employee prompt by steering the active execution; "
+                "no independent employee execution was created",
+            )
+        try:
             while True:
-                event = events.next_event()
-                if event is None:
+                observation = accepted.consequence.next_observation()
+                if prepared.receipts and not context_acknowledged:
+                    self._worker_context.acknowledge(entity_id, prepared.receipts)
+                    context_acknowledged = True
+                event = {
+                    "type": observation.event_type,
+                    "session_id": observation.live_session_id,
+                    "payload": observation.payload,
+                }
+                self._notify(on_event, event)
+                if observation.event_type == "error":
                     return RunResult(
                         "errored",
                         "",
                         None,
                         stored_key,
-                        f"gateway child died mid-run; stderr: {child.stderr_tail()!r}",
+                        str(observation.payload.get("message") or "gateway error event"),
                     )
-                self._notify(on_event, event)
-                etype = str(event.get("type") or "")
-                raw = event.get("payload")
-                payload = raw if isinstance(raw, dict) else {}
-                if etype == "error":
+                if observation.event_type != "message.complete":
+                    continue
+                text_out = str(observation.payload.get("text") or "")
+                usage_raw = observation.payload.get("usage")
+                usage = usage_raw if isinstance(usage_raw, dict) else None
+                status = str(observation.payload.get("status") or "complete")
+                if status == "complete":
+                    return RunResult("complete", text_out, usage, stored_key, None)
+                if status == "interrupted":
+                    return RunResult("interrupted", text_out, usage, stored_key, None)
+                return RunResult(
+                    "errored",
+                    text_out,
+                    usage,
+                    stored_key,
+                    text_out or "run ended with status=error",
+                )
+        finally:
+            accepted.consequence.release()
+
+    def _submit_human_and_drain(
+        self,
+        stored_key: str,
+        entity_id: str,
+        text: str,
+    ) -> RunResult:
+        prepared = self._worker_context.prepare(entity_id, text)
+        try:
+            accepted, resolved_stored_key = self._submit_human_consequence(
+                stored_key,
+                prepared.model_text,
+            )
+        except GatewayRpcError as exc:
+            if exc.code == BUSY_CODE:
+                raise SharedGatewayBusy(stored_key) from exc
+            raise
+        if isinstance(accepted, TransportUnknown):
+            raise GatewayError(accepted.detail)
+        if prepared.receipts:
+            self._worker_context.acknowledge(entity_id, prepared.receipts)
+        return self._drain_accepted_submission(accepted, resolved_stored_key)
+
+    def _drain_accepted_submission(
+        self,
+        accepted: AcceptedSubmission,
+        stored_key: str,
+    ) -> RunResult:
+        try:
+            while True:
+                observation = accepted.consequence.next_observation()
+                event_type = observation.event_type
+                payload = observation.payload
+                if event_type == "error":
                     return RunResult(
                         "errored",
                         "",
@@ -624,74 +894,66 @@ class SharedGateway:
                         stored_key,
                         str(payload.get("message") or "gateway error event"),
                     )
-                if etype == "message.complete":
-                    text_out = str(payload.get("text") or "")
-                    usage_raw = payload.get("usage")
-                    usage = usage_raw if isinstance(usage_raw, dict) else None
-                    gw_status = str(payload.get("status") or "complete")
-                    if gw_status == "complete":
-                        return RunResult("complete", text_out, usage, stored_key, None)
-                    if gw_status == "interrupted":
-                        return RunResult("interrupted", text_out, usage, stored_key, None)
-                    return RunResult(
-                        "errored",
-                        text_out,
-                        usage,
-                        stored_key,
-                        text_out or "run ended with status=error",
-                    )
+                if event_type != "message.complete":
+                    continue
+                text_out = str(payload.get("text") or "")
+                usage_raw = payload.get("usage")
+                usage = usage_raw if isinstance(usage_raw, dict) else None
+                status = str(payload.get("status") or "complete")
+                if status == "complete":
+                    return RunResult("complete", text_out, usage, stored_key, None)
+                if status == "interrupted":
+                    return RunResult("interrupted", text_out, usage, stored_key, None)
+                return RunResult(
+                    "errored",
+                    text_out,
+                    usage,
+                    stored_key,
+                    text_out or "run ended with status=error",
+                )
+        finally:
+            accepted.consequence.release()
 
-    def _stream_prompt(
+    def _stream_human_consequence(
         self,
-        child: GatewayChild,
-        live_sid: str,
         stored_key: str,
         entity_id: str,
         text: str,
         kind: str,
         image_path: Path | None = None,
+        on_session_key: Callable[[str], None] | None = None,
+    ) -> Iterator[ChatStreamChunk]:
+        prepared = self._worker_context.prepare(entity_id, text)
+        try:
+            accepted, resolved_stored_key = self._submit_human_consequence(
+                stored_key,
+                prepared.model_text,
+                image_path=image_path,
+            )
+        except GatewayRpcError as exc:
+            if exc.code == BUSY_CODE:
+                raise SharedGatewayBusy(stored_key) from exc
+            raise
+        if isinstance(accepted, TransportUnknown):
+            raise GatewayError(accepted.detail)
+        if on_session_key is not None and resolved_stored_key != stored_key:
+            on_session_key(resolved_stored_key)
+        if prepared.receipts:
+            self._worker_context.acknowledge(entity_id, prepared.receipts)
+        yield from self._stream_accepted_submission(accepted, resolved_stored_key, kind)
+
+    def _stream_accepted_submission(
+        self,
+        accepted: AcceptedSubmission,
+        stored_key: str,
+        kind: str,
     ) -> Iterator[ChatStreamChunk]:
         seen_delta = False
-        with child.open_session_events(live_sid) as events:
-            prepared = self._worker_context.prepare(entity_id, text)
-            if image_path is not None:
-                child.request(
-                    "image.attach",
-                    {"session_id": live_sid, "path": str(image_path)},
-                    timeout=self._request_timeout,
-                )
-            try:
-                child.request(
-                    "prompt.submit",
-                    {"session_id": live_sid, "text": prepared.model_text},
-                    timeout=self._request_timeout,
-                )
-            except GatewayError as exc:
-                if image_path is not None:
-                    try:
-                        child.request(
-                            "image.detach",
-                            {"session_id": live_sid, "path": str(image_path)},
-                            timeout=self._request_timeout,
-                        )
-                    except GatewayError as detach_exc:
-                        raise GatewayError(
-                            f"prompt submit failed ({exc}); image detach failed ({detach_exc})"
-                        ) from exc
-                if isinstance(exc, GatewayRpcError) and exc.code == BUSY_CODE:
-                    raise SharedGatewayBusy(stored_key) from exc
-                raise
-            if prepared.receipts:
-                self._worker_context.acknowledge(entity_id, prepared.receipts)
+        try:
             while True:
-                event = events.next_event()
-                if event is None:
-                    raise GatewayError(
-                        f"gateway child died mid-run; stderr: {child.stderr_tail()!r}"
-                    )
-                etype = str(event.get("type") or "")
-                raw = event.get("payload")
-                payload = raw if isinstance(raw, dict) else {}
+                observation = accepted.consequence.next_observation()
+                etype = observation.event_type
+                payload = observation.payload
                 if etype == "error":
                     raise GatewayError(str(payload.get("message") or "gateway error event"))
                 activity_label = _activity_label_for_gateway_event(etype, payload)
@@ -716,39 +978,8 @@ class SharedGateway:
                         )
                         return
                     raise GatewayError(text_out or "run ended with status=error")
-
-    def _interpret(
-        self,
-        child: GatewayChild,
-        live_sid: str,
-        stored: str,
-        entity_id: str,
-        payload: dict[str, Any],
-        arg: str,
-        *,
-        alias_ok: bool = True,
-    ) -> tuple[str, str]:
-        ptype = str(payload.get("type") or "")
-        if ptype in ("skill", "send"):
-            message = str(payload.get("message") or "")
-            result = self._submit_and_drain(
-                child, live_sid, stored, entity_id, message, None
-            )
-            return result.text, "assistant"
-        if ptype in ("exec", "plugin"):
-            return str(payload.get("output") or ""), "system"
-        if ptype == "alias" and alias_ok:
-            target_name, target_arg = self._split_command(str(payload.get("target") or ""))
-            combined = f"{target_arg} {arg}".strip() if target_arg and arg else (arg or target_arg)
-            resolved = child.request(
-                "command.dispatch",
-                {"session_id": live_sid, "name": target_name, "arg": combined},
-                timeout=self._request_timeout,
-            )
-            return self._interpret(
-                child, live_sid, stored, entity_id, resolved, combined, alias_ok=False
-            )
-        return str(payload.get("output") or payload.get("message") or ""), "system"
+        finally:
+            accepted.consequence.release()
 
     @staticmethod
     def _notify(on_event: OnEvent | None, event: JsonDict) -> None:

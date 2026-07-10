@@ -44,7 +44,12 @@ strictly. If that session is stale, Panels records an errored employee turn inst
 silently creating a different conversation.
 
 One employee is one ticket session, so Hermes' per-session busy guard keeps one turn
-in flight for that ticket while the shared child can hold many sessions. After a
+in flight for that ticket while the shared employee-role child can hold many sessions.
+The Ticket keeps its durable Hermes session key across stages. The lightweight Panels
+listener for that session may detach after Hermes is observed idle and no accepted
+operation remains; reopening the employee resumes the stored session. If delivery is
+unknown, Panels records that honest outcome and never retries the employee prompt
+automatically. After a
 readiness-changing action commits, it rings a small doorbell that asks the local loop
 to check again. A failed ring is logged and never changes the successful action. The
 database and periodic timer are still the source of truth. A process that does not own
@@ -77,9 +82,11 @@ which tells the employee to reread the ticket.
 The shared worker gateway adds every pending item immediately before it submits the
 next Hermes prompt. This covers an automatic step, a human message, and a model-backed
 slash command. Commands that do not submit a prompt do not consume anything. After
-Hermes accepts the prompt, Panels acknowledges the exact key revisions it sent. A
-failed or busy submission keeps them pending, and a newer revision written during a
-send cannot be erased by the older acknowledgement.
+Hermes accepts a streaming or steered prompt, Panels acknowledges the exact key
+revisions it sent. A queued employee prompt is accepted for later but is not yet
+acknowledged; Panels waits until that prompt's owned execution starts. A failed,
+busy, unknown, or queued-before-start submission keeps the context pending, and a
+newer revision written during a send cannot be erased by the older acknowledgement.
 
 Panels chat rows and event rows remain display and audit records. They are not this
 delivery mechanism. The generic storage, contracts, and composition live in
