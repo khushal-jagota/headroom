@@ -257,7 +257,9 @@ def _migrate_lifecycle_ceiling(state: str, ceiling: str, ticket_status: str) -> 
     return ceiling
 
 
-def _migrate_lifecycle_fields_json(fields_json: str, ticket_status: str, updated_at: int) -> str:
+def _migrate_lifecycle_fields_json(
+    fields_json: str, legacy_state: str, ticket_status: str, updated_at: int
+) -> str:
     try:
         payload = json.loads(fields_json)
     except ValueError:
@@ -267,8 +269,17 @@ def _migrate_lifecycle_fields_json(fields_json: str, ticket_status: str, updated
     result_slot = payload.get("result")
     if not isinstance(result_slot, dict):
         result_slot = dict(_EMPTY_FIELD_SLOT)
-    if ticket_status == "awaiting_approval":
-        pending_proposal = result_slot.get("proposal")
+    result_proposal = result_slot.get("proposal")
+    if result_proposal is not None and (
+        not isinstance(result_proposal, dict)
+        or not isinstance(result_proposal.get("body"), str)
+        or not isinstance(result_proposal.get("proposed_by"), str)
+        or not isinstance(result_proposal.get("created_at"), int)
+        or isinstance(result_proposal.get("created_at"), bool)
+    ):
+        raise RuntimeError("legacy Result proposal is corrupt")
+    if ticket_status == "awaiting_approval" and legacy_state in {"in_progress", "needs_review"}:
+        pending_proposal = result_proposal
         if pending_proposal is None:
             candidate = result_slot.get("value")
             if not isinstance(candidate, str) or not candidate.strip():
@@ -280,8 +291,6 @@ def _migrate_lifecycle_fields_json(fields_json: str, ticket_status: str, updated
                 "proposed_by": "migration",
                 "created_at": updated_at,
             }
-        elif not isinstance(pending_proposal, dict):
-            raise RuntimeError("legacy awaiting-approval Result proposal is corrupt")
         implementation_slot = {
             "value": None,
             "proposal": pending_proposal,
@@ -290,7 +299,7 @@ def _migrate_lifecycle_fields_json(fields_json: str, ticket_status: str, updated
     else:
         implementation_slot = {
             "value": result_slot.get("value"),
-            "proposal": result_slot.get("proposal"),
+            "proposal": result_proposal,
             "user_note": result_slot.get("user_note"),
         }
     new_payload = {
@@ -349,7 +358,7 @@ def _migrate_ticket_lifecycle(conn: sqlite3.Connection) -> None:
             str(row["state"]), str(row["ceiling"]), ticket_status
         )
         new_fields = _migrate_lifecycle_fields_json(
-            str(row["fields"]), ticket_status, int(row["updated_at"])
+            str(row["fields"]), str(row["state"]), ticket_status, int(row["updated_at"])
         )
         conn.execute(
             """
@@ -367,11 +376,42 @@ def _migrate_ticket_lifecycle(conn: sqlite3.Connection) -> None:
                 row["created_at"], row["updated_at"],
             ),
         )
-    conn.execute("DROP TABLE tickets")
-    conn.execute("ALTER TABLE tickets_new RENAME TO tickets")
-    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
-    if violations:
-        raise RuntimeError(f"foreign key check failed after ticket lifecycle migration: {violations!r}")
+    foreign_keys_enabled = bool(conn.execute("PRAGMA foreign_keys").fetchone()[0])
+    if foreign_keys_enabled and conn.in_transaction:
+        raise RuntimeError("ticket lifecycle migration requires an autocommit connection")
+    if foreign_keys_enabled:
+        conn.execute("PRAGMA foreign_keys=OFF")
+    use_savepoint = conn.in_transaction
+    try:
+        if use_savepoint:
+            conn.execute("SAVEPOINT ticket_lifecycle_swap")
+        else:
+            conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute("DROP TABLE tickets")
+            conn.execute("ALTER TABLE tickets_new RENAME TO tickets")
+            violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                raise RuntimeError(
+                    "foreign key check failed after ticket lifecycle migration: "
+                    f"{violations!r}"
+                )
+        except BaseException:
+            if use_savepoint:
+                conn.execute("ROLLBACK TO ticket_lifecycle_swap")
+                conn.execute("RELEASE ticket_lifecycle_swap")
+            else:
+                conn.rollback()
+            conn.execute("DROP TABLE IF EXISTS tickets_new")
+            raise
+        else:
+            if use_savepoint:
+                conn.execute("RELEASE ticket_lifecycle_swap")
+            else:
+                conn.commit()
+    finally:
+        if foreign_keys_enabled:
+            conn.execute("PRAGMA foreign_keys=ON")
 
 
 def _migrate_project_summary_column(conn: sqlite3.Connection) -> None:

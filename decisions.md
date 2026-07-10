@@ -1720,3 +1720,16 @@ the role gateway reaps the child even when surfacing it. Streaming receipt recon
 pre-receipt lifecycle observations when no registered Panels consequence preceded them, while
 discarding buffered predecessor activity before later streaming work. This preserves the original
 Stop and command boundaries without reopening the gap behind a stale running snapshot.
+
+## D93 — Repair the live lifecycle migration at the migration boundary
+
+The first post-merge restart proved two production-only assumptions false. `awaiting_approval` is a
+Ticket-wide control status, not proof that Result is the pending field, and the lifecycle table
+rebuild cannot drop `tickets` under production foreign-key enforcement while `day_tickets` rows
+exist. The migration now classifies legacy Result approval from the old state as well as the control
+status, preserves earlier field proposals verbatim, and disables foreign keys only for the
+drop/rename swap before restoring enforcement and checking all references.
+
+No canonical data is edited around the migration to make it pass. The migration must accept the
+real valid data shape. This was fixed inline rather than cut as a worker Ticket because the current
+server could not start and the change is confined to the migration plus its regression seam.

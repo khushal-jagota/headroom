@@ -3,7 +3,7 @@ import sqlite3
 
 import pytest
 
-from planner.core.db import SCHEMA_VERSION, create_schema
+from planner.core.db import SCHEMA_VERSION, connect, create_schema
 
 _OLD_TICKETS_DDL = """
 CREATE TABLE tickets (
@@ -66,13 +66,34 @@ def test_fresh_schema_rejects_old_lifecycle_state_values(tmp_path):
 
 def test_create_schema_migrates_current_schema_old_lifecycle_rows(tmp_path):
     db_path = tmp_path / "old-lifecycle.db"
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    conn = connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=OFF")
     conn.executescript(_OLD_TICKETS_DDL)
     _insert_ticket(
         conn, id="t_success", title="Success stage", state="needs_success",
         ceiling="needs_plan", ticket_status="empty", fields=_fields_json(),
         created_at=1, updated_at=1,
+    )
+    _insert_ticket(
+        conn,
+        id="t_success_awaiting",
+        title="Success awaiting approval",
+        state="needs_success",
+        ceiling="needs_success",
+        ticket_status="awaiting_approval",
+        fields=_fields_json(
+            success={
+                "value": None,
+                "proposal": {
+                    "body": "pending success",
+                    "proposed_by": "worker-1",
+                    "created_at": 50,
+                },
+                "user_note": "keep this guidance",
+            }
+        ),
+        created_at=1,
+        updated_at=50,
     )
     _insert_ticket(
         conn, id="t_in_progress", title="Mid work", state="in_progress",
@@ -140,6 +161,31 @@ def test_create_schema_migrates_current_schema_old_lifecycle_rows(tmp_path):
         ticket_status="empty", fields=_fields_json(),
         created_at=1, updated_at=1,
     )
+    conn.executescript(
+        """
+        CREATE TABLE days (
+          id TEXT PRIMARY KEY,
+          focus TEXT NOT NULL DEFAULT '',
+          brief_take TEXT NOT NULL DEFAULT '',
+          watchout TEXT NOT NULL DEFAULT '',
+          if_today_lands TEXT NOT NULL DEFAULT '',
+          notes TEXT NOT NULL DEFAULT '',
+          chat_session_key TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE day_tickets (
+          day_id TEXT NOT NULL REFERENCES days(id),
+          ticket_id TEXT NOT NULL REFERENCES tickets(id),
+          position INTEGER NOT NULL,
+          PRIMARY KEY (day_id, ticket_id)
+        );
+        INSERT INTO days (id, created_at, updated_at) VALUES ('day_2026-07-10', 1, 1);
+        INSERT INTO day_tickets (day_id, ticket_id, position)
+        VALUES ('day_2026-07-10', 't_success', 0);
+        """
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
 
     create_schema(conn)
 
@@ -156,6 +202,20 @@ def test_create_schema_migrates_current_schema_old_lifecycle_rows(tmp_path):
         "value": None, "proposal": None, "user_note": None,
     }
     assert "result" not in rows["t_success"][2]
+
+    assert rows["t_success_awaiting"][:2] == ("needs_success", "needs_success")
+    assert rows["t_success_awaiting"][2]["success"] == {
+        "value": None,
+        "proposal": {
+            "body": "pending success",
+            "proposed_by": "worker-1",
+            "created_at": 50,
+        },
+        "user_note": "keep this guidance",
+    }
+    assert rows["t_success_awaiting"][2]["implementation"] == {
+        "value": None, "proposal": None, "user_note": None,
+    }
 
     assert rows["t_in_progress"][:2] == ("needs_implementation", "needs_implementation")
     assert rows["t_in_progress"][2]["implementation"] == {
@@ -212,7 +272,65 @@ def test_create_schema_migrates_current_schema_old_lifecycle_rows(tmp_path):
     assert rows["t_dropped"][:2] == ("dropped", "needs_plan")
 
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    conn.close()
+
+
+def test_lifecycle_migration_rolls_back_failed_foreign_key_check(tmp_path):
+    db_path = tmp_path / "failed-foreign-key-check.db"
+    conn = connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.executescript(_OLD_TICKETS_DDL)
+    _insert_ticket(
+        conn,
+        id="t_existing",
+        title="Existing",
+        state="needs_success",
+        ceiling="needs_success",
+        ticket_status="empty",
+        fields=_fields_json(),
+        created_at=1,
+        updated_at=1,
+    )
+    conn.executescript(
+        """
+        CREATE TABLE days (
+          id TEXT PRIMARY KEY,
+          focus TEXT NOT NULL DEFAULT '',
+          brief_take TEXT NOT NULL DEFAULT '',
+          watchout TEXT NOT NULL DEFAULT '',
+          if_today_lands TEXT NOT NULL DEFAULT '',
+          notes TEXT NOT NULL DEFAULT '',
+          chat_session_key TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE day_tickets (
+          day_id TEXT NOT NULL REFERENCES days(id),
+          ticket_id TEXT NOT NULL REFERENCES tickets(id),
+          position INTEGER NOT NULL,
+          PRIMARY KEY (day_id, ticket_id)
+        );
+        INSERT INTO days (id, created_at, updated_at) VALUES ('day_2026-07-10', 1, 1);
+        INSERT INTO day_tickets (day_id, ticket_id, position)
+        VALUES ('day_2026-07-10', 't_missing', 0);
+        """
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    with pytest.raises(RuntimeError, match="foreign key check failed"):
+        create_schema(conn)
+
+    tickets_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()[0]
+    assert "in_progress" in tickets_sql
+    assert "needs_implementation" not in tickets_sql
+    assert conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tickets_new'"
+    ).fetchone() is None
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     conn.close()
 
 
@@ -260,6 +378,34 @@ def test_lifecycle_migration_rejects_awaiting_approval_without_candidate(tmp_pat
     )
 
     with pytest.raises(RuntimeError, match="no Result value or proposal"):
+        create_schema(conn)
+    conn.close()
+
+
+def test_lifecycle_migration_rejects_corrupt_legacy_result_proposal(tmp_path):
+    db_path = tmp_path / "corrupt-proposal.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(_OLD_TICKETS_DDL)
+    _insert_ticket(
+        conn,
+        id="t_corrupt_proposal",
+        title="Corrupt proposal",
+        state="needs_review",
+        ceiling="done",
+        ticket_status="user_takeover",
+        fields=_fields_json(
+            result={
+                "value": None,
+                "proposal": {"body": 5, "proposed_by": "worker", "created_at": 1},
+                "user_note": None,
+            }
+        ),
+        created_at=1,
+        updated_at=1,
+    )
+
+    with pytest.raises(RuntimeError, match="Result proposal is corrupt"):
         create_schema(conn)
     conn.close()
 

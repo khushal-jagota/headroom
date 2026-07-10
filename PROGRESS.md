@@ -3,6 +3,31 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Live recovery follow-up (2026-07-10): Ticket lifecycle migration startup
+
+Restarting the real Panels server after the lifecycle rename exposed two migration gaps that the
+fixture-only tests had missed. First, `ticket_status = awaiting_approval` is stage-agnostic: four
+live Tickets had pending Success proposals, but the migration treated every awaiting approval as a
+legacy Result approval and aborted because those Tickets correctly had no Result. Second, the
+Tickets table rebuild tried to drop the referenced table while production foreign-key enforcement
+was enabled and `day_tickets` contained rows.
+
+The recovery fix now uses the legacy Ticket state to distinguish Result approval
+(`in_progress`/`needs_review`) from earlier field approval, and temporarily disables foreign-key
+enforcement only around the table swap before restoring it and running `foreign_key_check`.
+Regression coverage uses the production `connect()` path, preserves an early pending Success
+proposal, and keeps a real `day_tickets` reference through the rebuild.
+
+What has passed: all ten database migration tests; a foreign-key-enabled migration of a backup
+of the live 50-Ticket database (four early pending proposals preserved, zero FK violations); and a
+real server restart against the canonical database. Panels is running on the migrated schema and
+the redesign completion record plus its two follow-ups have been written successfully. Codex's
+independent migration review found malformed-proposal validation, FK-restoration coverage, and
+rollback-atomicity gaps; each was fixed with a RED/GREEN regression, and the final follow-up returned
+`NO VIOLATIONS`. Final `./verify` passed Ruff, Mypy across 104 source files, 407 unit tests,
+compile/static and frontend gates, and 58 browser tests, ending with `VERIFY: PASS`. The recovery
+code remains uncommitted and is ready for owner integration.
+
 ## This branch (worktree-frontend-shared-components, 2026-07-10): frontend component consolidation
 
 This worktree branch carries only the frontend consolidation program — five serial tickets under
