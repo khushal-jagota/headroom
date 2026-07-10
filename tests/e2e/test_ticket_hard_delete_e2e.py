@@ -9,7 +9,6 @@ import httpx
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLAN_BIN = REPO_ROOT / ".venv" / "bin" / "panels"
-WAIT_MS = 10_000
 
 
 TITLE = "Mistaken ticket delete browser proof"
@@ -44,41 +43,22 @@ def test_ticket_delete_cli_requires_yes_and_deletes(server, cli) -> None:
     assert httpx.get(f"{server.base}/api/tickets/{ticket_id}").status_code == 404
 
 
-def test_ticket_page_names_confirmation_then_disappears_everywhere(
+def _assert_no_delete_control(page) -> None:
+    assert page.get_by_role("button", name="Delete ticket", exact=True).count() == 0
+    assert page.locator("[data-ticket-delete]").count() == 0
+
+
+def test_ticket_ui_has_no_delete_control(
     server, context_factory, open_page, cli, api
 ) -> None:
-    sprint = cli(
-        server,
-        "sprint",
-        "create",
-        "--name",
-        "Delete proof sprint",
-        "--date-start",
-        "2026-07-01",
-        "--date-end",
-        "2026-07-14",
-    )
     ticket_id = cli(
         server,
         "ticket",
         "create",
         "--title",
         TITLE,
-        "--sprint",
-        sprint["id"],
     )["id"]
-    cli(server, "day", "add-ticket", ticket_id, "--date", "today")
-    cli(
-        server,
-        "worker",
-        "propose",
-        "--body-file",
-        "-",
-        "--recap",
-        "Mistaken ticket waiting for deletion.",
-        ticket_id=ticket_id,
-        stdin="This proposal should disappear.",
-    )
+    api.human_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
 
     ctx = context_factory()
     page = open_page(
@@ -88,37 +68,14 @@ def test_ticket_page_names_confirmation_then_disappears_everywhere(
         f'[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
         settled=True,
     )
+    _assert_no_delete_control(page)
 
-    page.once("dialog", lambda dialog: dialog.dismiss())
-    page.click("[data-ticket-delete]")
-    assert httpx.get(f"{server.base}/api/tickets/{ticket_id}").status_code == 200
-
-    dialog_messages: list[str] = []
-
-    def accept_delete(dialog) -> None:
-        dialog_messages.append(dialog.message)
-        dialog.accept()
-
-    page.once("dialog", accept_delete)
-    page.click("[data-ticket-delete]")
-    assert dialog_messages
-    assert TITLE in dialog_messages[0]
-    assert "permanently" in dialog_messages[0].lower()
-
-    page.wait_for_url(f"{server.base}/#/workspace", timeout=WAIT_MS)
-    page.wait_for_selector('[data-screen="workspace"]', timeout=WAIT_MS)
-    page.wait_for_function(
-        "title => !document.body.innerText.includes(title)", arg=TITLE, timeout=WAIT_MS
+    page.goto(f"{server.base}/#/workspace")
+    page.wait_for_selector('section[data-screen="workspace"]', timeout=10_000)
+    page.click(f'[data-card][data-ticket-id="{ticket_id}"]')
+    page.wait_for_selector(
+        'section[data-screen="workspace"] '
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+        timeout=10_000,
     )
-    assert httpx.get(f"{server.base}/api/tickets/{ticket_id}").status_code == 404
-    assert ticket_id not in {
-        entry["entity_id"] for entry in api.get(server, "/api/queues")["approvals"]
-    }
-
-    page.click('[data-screen="sprint"]')
-    page.wait_for_selector('[data-screen="sprint"]', timeout=WAIT_MS)
-    assert TITLE not in page.locator("body").inner_text()
-
-    page.click('[data-screen="review"]')
-    page.wait_for_selector('[data-screen="review"]', timeout=WAIT_MS)
-    assert TITLE not in page.locator("body").inner_text()
+    _assert_no_delete_control(page)

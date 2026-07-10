@@ -417,19 +417,121 @@ def test_e26_chat_panel_echo_and_offline(
     )
     _wait_chat_text(pending_page, "planner", "history line 23")
     pending_thread_selector = "[data-chat] [data-chat-messages]"
+    pending_jump_selector = "[data-chat] [data-chat-jump]"
     pending_page.wait_for_function(
         "selector => { const el = document.querySelector(selector);"
         " return el && el.scrollHeight > el.clientHeight; }",
         arg=pending_thread_selector,
         timeout=WAIT_MS,
     )
-    pending_page.eval_on_selector(pending_thread_selector, "el => { el.scrollTop = 0; }")
+    initial_pending_scroll = pending_page.eval_on_selector(
+        pending_thread_selector,
+        "el => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight })",
+    )
+    assert abs(initial_pending_scroll["top"] - initial_pending_scroll["max"]) <= 1, (
+        initial_pending_scroll
+    )
+
+    # The affordance is based on distance alone: it appears as soon as the reader
+    # moves meaningfully upward, before any new message exists.
+    pending_page.eval_on_selector(
+        pending_thread_selector,
+        "el => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); }",
+    )
+    pending_page.wait_for_selector(pending_jump_selector, timeout=WAIT_MS)
+    assert (
+        pending_page.get_attribute(pending_jump_selector, "aria-label")
+        == "Jump to latest message"
+    )
+
+    # Clicking returns to the latest message and restores follow mode. The next live
+    # output growth remains pinned while the turn is still active.
+    pending_page.click(pending_jump_selector)
+    pending_page.wait_for_function(
+        "selector => { const el = document.querySelector(selector);"
+        " return el && Math.abs(el.scrollHeight - el.clientHeight - el.scrollTop) <= 1; }",
+        arg=pending_thread_selector,
+        timeout=WAIT_MS,
+    )
+    pending_page.fill("[data-chat] [data-chat-input]", "follow streaming growth")
+    pending_page.click("[data-chat] [data-chat-send]")
+    _wait_chat_text(pending_page, "you", "follow streaming growth")
+    pending_page.wait_for_selector(pending_selector, timeout=WAIT_MS)
+    following_after_send = pending_page.eval_on_selector(
+        pending_thread_selector,
+        "el => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight })",
+    )
+    assert abs(following_after_send["top"] - following_after_send["max"]) <= 1, (
+        following_after_send
+    )
+
+    _wait_chat_text(pending_page, "planner", "echo: follow streaming growth")
+    assert pending_page.query_selector(pending_selector) is not None
+    following_during_output = pending_page.eval_on_selector(
+        pending_thread_selector,
+        "el => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight })",
+    )
+    assert abs(following_during_output["top"] - following_during_output["max"]) <= 1, (
+        following_during_output
+    )
+    pending_page.wait_for_function(
+        "selector => document.querySelector(selector) === null",
+        arg=pending_selector,
+        timeout=WAIT_MS,
+    )
+    following_after_settlement = pending_page.eval_on_selector(
+        pending_thread_selector,
+        "el => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight })",
+    )
+    assert abs(following_after_settlement["top"] - following_after_settlement["max"]) <= 1, (
+        following_after_settlement
+    )
+
+    # Meaningful upward scrolling disables follow and preserves the viewport through
+    # the human line, live planner output, and final settlement separately.
+    pending_page.eval_on_selector(
+        pending_thread_selector,
+        "el => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); }",
+    )
+    pending_page.wait_for_selector(pending_jump_selector, timeout=WAIT_MS)
     pending_page.fill("[data-chat] [data-chat-input]", "stream without moving")
     pending_page.click("[data-chat] [data-chat-send]")
+    _wait_chat_text(pending_page, "you", "stream without moving")
+    assert pending_page.eval_on_selector(pending_thread_selector, "el => el.scrollTop") == 0
+
     pending_page.wait_for_selector(pending_selector, timeout=WAIT_MS)
     _wait_chat_text(pending_page, "planner", "echo: stream without moving")
     assert pending_page.query_selector(pending_selector) is not None
     assert pending_page.eval_on_selector(pending_thread_selector, "el => el.scrollTop") == 0
+    assert pending_page.query_selector(pending_jump_selector) is not None
+    pending_page.wait_for_function(
+        "selector => document.querySelector(selector) === null",
+        arg=pending_selector,
+        timeout=WAIT_MS,
+    )
+    assert pending_page.eval_on_selector(pending_thread_selector, "el => el.scrollTop") == 0
+
+    # Manually returning near the bottom also restores follow mode for later growth.
+    pending_page.eval_on_selector(
+        pending_thread_selector,
+        "el => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); }",
+    )
+    pending_page.wait_for_function(
+        "selector => document.querySelector(selector) === null",
+        arg=pending_jump_selector,
+        timeout=WAIT_MS,
+    )
+    pending_page.fill("[data-chat] [data-chat-input]", "follow after manual return")
+    pending_page.click("[data-chat] [data-chat-send]")
+    pending_page.wait_for_selector(pending_selector, timeout=WAIT_MS)
+    _wait_chat_text(pending_page, "planner", "echo: follow after manual return")
+    manual_follow_scroll = pending_page.eval_on_selector(
+        pending_thread_selector,
+        "el => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight })",
+    )
+    assert abs(manual_follow_scroll["top"] - manual_follow_scroll["max"]) <= 1, (
+        manual_follow_scroll
+    )
     pending_page.wait_for_function(
         "selector => document.querySelector(selector) === null",
         arg=pending_selector,

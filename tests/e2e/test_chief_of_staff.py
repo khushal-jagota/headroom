@@ -19,6 +19,13 @@ def _wait_chat_text(page: Page, who: str, text: str) -> None:
     )
 
 
+def _workspace_ticket(ticket_id: str) -> str:
+    return (
+        'section[data-screen="workspace"] '
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]'
+    )
+
+
 def test_chief_of_staff_route_nav_and_chat(server, context_factory, open_page) -> None:
     page = open_page(
         context_factory(),
@@ -56,6 +63,7 @@ def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
     assert "active" in (
         page.get_attribute('a.nav-link[data-screen="workspace"]', "class") or ""
     )
+    assert page.url == f"{server.base}/#/workspace"
     assert page.get_attribute("[data-chat-input]", "placeholder") == "Message Chief of Staff..."
     page.wait_for_selector('[data-workspace-filters] [data-status-filter="all"]', timeout=WAIT_MS)
     assert page.inner_text('[data-workspace-filters] [data-filter-group="ticket-status"]')
@@ -67,19 +75,101 @@ def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
 
     card = f'[data-card][data-ticket-id="{tid}"]'
     page.click(card)
-    ticket = (
-        'section[data-screen="workspace"] '
-        f'section[data-screen="ticket"][data-ticket-id="{tid}"]'
-    )
+    page.wait_for_url(f"{server.base}/#/workspace/{tid}", timeout=WAIT_MS)
+    ticket = _workspace_ticket(tid)
     page.wait_for_selector(f"{ticket} [data-chat-input]", timeout=WAIT_MS)
     assert page.query_selector('[aria-label="Workspace ticket tree"]') is not None
     assert page.inner_text(f"{ticket} .ticket-title") == "Workspace selectable ticket"
 
     page.click("[data-chief-of-staff-button]")
+    page.wait_for_url(f"{server.base}/#/workspace", timeout=WAIT_MS)
+    page.wait_for_selector(ticket, state="detached", timeout=WAIT_MS)
     page.wait_for_selector('section[data-screen="workspace"] [data-chat-input]', timeout=WAIT_MS)
-    assert page.query_selector(ticket) is None
     _wait_chat_text(page, "you", "triage from workspace")
     _wait_chat_text(page, "planner", "echo: triage from workspace")
+
+
+def test_workspace_ticket_route_restores_on_load_refresh_and_history(
+    server, context_factory, open_page, cli, api
+) -> None:
+    first_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--title",
+        "First routed workspace ticket",
+        "--project-id",
+        "project_vylo",
+    )["id"]
+    second_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--title",
+        "Second routed workspace ticket",
+        "--project-id",
+        "project_vylo",
+    )["id"]
+    other_id = cli(server, "ticket", "create", "--title", "Other workspace ticket")["id"]
+    for ticket_id in (first_id, second_id, other_id):
+        api.human_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
+    first_ticket = _workspace_ticket(first_id)
+    second_ticket = _workspace_ticket(second_id)
+    encoded_first_id = first_id.replace("_", "%5F", 1)
+
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/workspace/{encoded_first_id}",
+        first_ticket,
+        settled=True,
+    )
+    assert page.inner_text(".ticket-title") == "First routed workspace ticket"
+
+    page.reload()
+    page.wait_for_selector(first_ticket, timeout=WAIT_MS)
+    page.check("[data-hide-done-toggle]")
+    page.select_option('[data-filter-group="ticket-status"] select', "empty")
+    no_project_toggle = '[data-project-key="__no_project__"] .board-workspace-index-toggle'
+    page.click(no_project_toggle)
+    assert page.get_attribute(no_project_toggle, "aria-expanded") == "false"
+
+    page.click(f'[data-card][data-ticket-id="{second_id}"]')
+    page.wait_for_url(f"{server.base}/#/workspace/{second_id}", timeout=WAIT_MS)
+    page.wait_for_selector(second_ticket, timeout=WAIT_MS)
+    assert page.is_checked("[data-hide-done-toggle]")
+    assert page.input_value('[data-filter-group="ticket-status"] select') == "empty"
+    assert page.get_attribute(no_project_toggle, "aria-expanded") == "false"
+
+    page.go_back()
+    page.wait_for_url(f"{server.base}/#/workspace/{encoded_first_id}", timeout=WAIT_MS)
+    page.wait_for_selector(first_ticket, timeout=WAIT_MS)
+    assert page.input_value('[data-filter-group="ticket-status"] select') == "empty"
+    assert page.get_attribute(no_project_toggle, "aria-expanded") == "false"
+
+    page.go_forward()
+    page.wait_for_url(f"{server.base}/#/workspace/{second_id}", timeout=WAIT_MS)
+    page.wait_for_selector(second_ticket, timeout=WAIT_MS)
+
+    page.go_back()
+    page.wait_for_selector(first_ticket, timeout=WAIT_MS)
+    cli(server, "ticket", "delete", first_id, "--yes")
+    page.wait_for_url(f"{server.base}/#/workspace", timeout=WAIT_MS)
+    page.wait_for_selector(
+        'section[data-screen="workspace"] [data-chief-of-staff-button][aria-pressed="true"]',
+        timeout=WAIT_MS,
+    )
+
+    page.goto(f"{server.base}/#/workspace/t_missing")
+    page.wait_for_url(f"{server.base}/#/workspace", timeout=WAIT_MS)
+    page.wait_for_selector(
+        'section[data-screen="workspace"] [data-chief-of-staff-button][aria-pressed="true"]',
+        timeout=WAIT_MS,
+    )
+    assert (
+        page.locator('section[data-screen="workspace"] section[data-screen="ticket"]').count()
+        == 0
+    )
 
 
 def test_legacy_board_route_renders_workspace(server, context_factory, open_page) -> None:

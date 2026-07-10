@@ -766,6 +766,14 @@ textarea {
   letter-spacing: 0.03em;
 }
 
+.chat-thread-shell {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .chat-thread {
   flex: 1;
   min-height: 0;
@@ -783,6 +791,37 @@ textarea {
 .chat-thread::-webkit-scrollbar { width: 7px; }
 .chat-thread::-webkit-scrollbar-thumb { background: transparent; border-radius: var(--radius-pill); }
 .chat-thread:hover::-webkit-scrollbar-thumb { background: var(--border-color); }
+
+.chat-jump {
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-3);
+  transform: translateX(-50%);
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  white-space: nowrap;
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  line-height: 1;
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease);
+}
+.chat-jump:hover {
+  background: var(--surface-overlay);
+  border-color: var(--accent-bright);
+  color: var(--text-strong);
+}
 
 /* user = the only bubble */
 .chat-u {

@@ -101,10 +101,11 @@ _Code paths:_ `web/src/routes/TicketRoute.svelte` (the scope row),
 ## Permanent deletion
 
 Dropping a ticket keeps its record. Permanent deletion is different: it is a
-human-only action for a ticket created by mistake. The action is blocked while
-ticket activity is still running. After confirmation, one transaction removes the
-ticket from days, sprint views, links, Review, Workspace, and Panels chat. Other
-tickets and day ordering stay intact.
+human-only capability for a ticket created by mistake. The ticket UI intentionally
+has no delete control; deletion remains a manual API or CLI operation, and the CLI
+requires `--yes`. The operation is blocked while ticket activity is still running.
+One transaction removes the ticket from days, sprint views, links, Review, Workspace,
+and Panels chat. Other tickets and day ordering stay intact.
 
 The deletion also replaces that ticket's old event history with one small deletion
 record containing its identity, the human actor, and the time. This is the only
@@ -113,7 +114,7 @@ outside Panels' record and is not erased; once the ticket row is gone, Panels no
 longer has a route that resolves or resumes it.
 
 _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
-`web/src/routes/TicketRoute.svelte`.
+`src/planner/cli/main.py`.
 
 ## The event log
 

@@ -9,7 +9,7 @@
   import ErrorLine from "../components/ErrorLine.svelte";
   import TicketRoute from "./TicketRoute.svelte";
 
-  let { hideDone = $bindable(false) }: { hideDone?: boolean } = $props();
+  let { hideDone = $bindable(false), ticketId }: { hideDone?: boolean; ticketId?: string } = $props();
 
   const chiefOfStaffEntityId = "agent_panels_chief_of_staff";
   const noProjectKey = "__no_project__";
@@ -26,26 +26,25 @@
     fetchJson(`/api/chat/${chiefOfStaffEntityId}/status`, { signal })
   );
   let columns = $derived(board.data?.columns || []);
-  let selectedTicketId = $state<string | null>(null);
-  let rightPaneMode = $state<"chief" | "ticket">("chief");
   let collapsedProjects = $state<string[]>([]);
   let statusFilter = $state<string>("all");
   let allCards = $derived(columns.flatMap((column) => column.cards));
-  let selectedCard = $derived(allCards.find((card) => card.id === selectedTicketId) || null);
+  let selectedCard = $derived(allCards.find((card) => card.id === ticketId) || null);
+  let rightPaneMode = $derived<"chief" | "ticket">(selectedCard ? "ticket" : "chief");
   let projectSections = $derived(buildProjectSections(columns, statusFilter, hideDone));
 
+  $effect(() => {
+    if (ticketId && board.data && !board.loading && !board.stale && !selectedCard) {
+      window.location.replace("#/workspace");
+    }
+  });
+
   function selectCard(ticketId: string): void {
-    selectedTicketId = ticketId;
-    rightPaneMode = "ticket";
+    window.location.hash = `#/workspace/${encodeURIComponent(ticketId)}`;
   }
 
   function showChiefOfStaff(): void {
-    rightPaneMode = "chief";
-  }
-
-  function handleTicketDeleted(): void {
-    selectedTicketId = null;
-    rightPaneMode = "chief";
+    window.location.hash = "#/workspace";
   }
 
   function isCollapsed(projectKey: string): boolean {
@@ -256,7 +255,7 @@
             />
           {:else if selectedCard}
             {#key selectedCard.id}
-              <TicketRoute id={selectedCard.id} onDeleted={handleTicketDeleted} />
+              <TicketRoute id={selectedCard.id} />
             {/key}
           {/if}
         </section>

@@ -42,6 +42,7 @@ SESSION_SOURCE = "planner"
 CHAT_SOURCE = "planner-chat"
 BUSY_CODE = 4009
 NOT_FOUND_CODE = 4007
+LIVE_SESSION_NOT_FOUND_CODE = 4001
 
 
 def _activity_label_for_gateway_event(event_type: str, payload: dict[str, Any]) -> str | None:
@@ -162,6 +163,7 @@ class SharedGateway:
         self._request_timeout = request_timeout
         self._lock = threading.Lock()
         self._child: GatewayChild | None = None
+        self._live_session_ids_by_stored_key: dict[str, str] = {}
 
     def start(self) -> None:
         self._child_or_spawn()
@@ -170,6 +172,7 @@ class SharedGateway:
         with self._lock:
             child = self._child
             self._child = None
+            self._live_session_ids_by_stored_key.clear()
         if child is not None:
             child.shutdown()
 
@@ -197,6 +200,12 @@ class SharedGateway:
                 timeout=self._request_timeout,
             )
             stored = str(resumed.get("resumed") or session_key)
+            self._remember_session_identity(
+                child,
+                str(resumed.get("session_id") or ""),
+                session_key,
+                stored,
+            )
             raw_messages = resumed.get("messages")
             messages = self._normalize_history_messages(raw_messages)
             return ChatHistory(messages=messages, session_key=stored)
@@ -293,13 +302,14 @@ class SharedGateway:
     def interrupt(self, session_key: str, entity_id: str) -> None:
         try:
             child = self._child_or_spawn()
+            live_session_id = self._live_session_id_for_stored_key(child, session_key)
             child.request(
                 "session.interrupt",
-                {"session_id": session_key},
+                {"session_id": live_session_id},
                 timeout=self._request_timeout,
             )
         except GatewayRpcError as exc:
-            if exc.code == NOT_FOUND_CODE:
+            if exc.code in (NOT_FOUND_CODE, LIVE_SESSION_NOT_FOUND_CODE):
                 raise PlannerError(
                     ErrorCode.not_found,
                     "chat session not found",
@@ -453,6 +463,7 @@ class SharedGateway:
                 return self._child
             child = GatewayChild(str(self._python), self._env(), spawn=self._spawn)
             child.wait_ready(self._ready_timeout)
+            self._live_session_ids_by_stored_key.clear()
             self._child = child
             return child
 
@@ -473,10 +484,10 @@ class SharedGateway:
                     {"session_id": session_key},
                     timeout=self._request_timeout,
                 )
-                return (
-                    str(resumed.get("session_id") or ""),
-                    str(resumed.get("resumed") or session_key),
-                )
+                live_session_id = str(resumed.get("session_id") or "")
+                stored_key = str(resumed.get("resumed") or session_key)
+                self._remember_session_identity(child, live_session_id, session_key, stored_key)
+                return live_session_id, stored_key
             except GatewayRpcError as exc:
                 if exc.code == BUSY_CODE:
                     raise SharedGatewayBusy(session_key) from exc
@@ -489,7 +500,29 @@ class SharedGateway:
         )
         live_sid = str(created.get("session_id") or "")
         stored = str(created.get("stored_session_id") or live_sid)
+        self._remember_session_identity(child, live_sid, stored)
         return live_sid, stored
+
+    def _remember_session_identity(
+        self,
+        child: GatewayChild,
+        live_session_id: str,
+        *stored_keys: str,
+    ) -> None:
+        if not live_session_id:
+            return
+        with self._lock:
+            if self._child is not child:
+                return
+            for stored_key in stored_keys:
+                if stored_key:
+                    self._live_session_ids_by_stored_key[stored_key] = live_session_id
+
+    def _live_session_id_for_stored_key(self, child: GatewayChild, stored_key: str) -> str:
+        with self._lock:
+            if self._child is child:
+                return self._live_session_ids_by_stored_key.get(stored_key, stored_key)
+        return stored_key
 
     def _submit_and_drain(
         self,

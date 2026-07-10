@@ -24,6 +24,14 @@
   let route = $state<Route>(parseRoute());
   let workspaceHideDone = $state(false);
 
+  function decodeRouteSegment(segment: string): string {
+    try {
+      return decodeURIComponent(segment);
+    } catch {
+      return segment;
+    }
+  }
+
   function parseRoute(): Route {
     const hash = window.location.hash;
     if (hash === "" || hash === "#") {
@@ -40,11 +48,14 @@
     if (name === "ticket" && segments[1]) {
       params.id = segments[1];
     }
+    if (name === "workspace" && segments[1]) {
+      params.id = decodeRouteSegment(segments[1]);
+    }
     if (name === "sprint" && segments[1]) {
       params.sub = segments[1];
     }
-    const key = segments.join("/") || "day";
-    return { name, params, key: query ? `${key}${query}` : key };
+    const screenKey = name === "workspace" || name === "board" ? "workspace" : segments.join("/") || "day";
+    return { name, params, key: query ? `${screenKey}${query}` : screenKey };
   }
 
   function currentNav(name: string): boolean {
@@ -107,7 +118,7 @@
           {:else if route.name === "review"}
             <ReviewRoute />
           {:else if route.name === "workspace" || route.name === "board"}
-            <BoardRoute bind:hideDone={workspaceHideDone} />
+            <BoardRoute bind:hideDone={workspaceHideDone} ticketId={route.params.id} />
           {:else if route.name === "ticket"}
             <TicketRoute id={route.params.id} />
           {:else if route.name === "sprint"}

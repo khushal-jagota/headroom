@@ -12,8 +12,12 @@ you send a message it starts a server-owned chat turn. The browser reads one
 running. The same resource survives navigation, remounts, reloads, WebSocket
 misses, and simple polling.
 
-When the panel first loads, it starts at the latest message. After that one-time
-positioning, new messages and live output do not move the reader's scroll position.
+When the panel first loads, it starts at the latest message. New messages and live
+output stay in view while the reader is at or near the bottom. Scrolling
+meaningfully up leaves the viewport in place as the conversation grows. The Latest
+button appears whenever the bottom of the conversation is meaningfully below the
+viewport, even when no new content has arrived. Using it, or manually returning near
+the bottom, resumes following.
 
 Hermes is still the transport. The planner stores the durable `chat_session_key`
 before submitting a prompt, so tools inside a worker turn can resolve their ticket
@@ -88,4 +92,4 @@ underlying worker. The commands it does show run on the ticket's own worker:
 
 ---
 
-_Last verified: 2026-07-09._
+_Last verified: 2026-07-10._

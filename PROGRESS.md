@@ -3,53 +3,89 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
-## Current work cycle (2026-07-10): Ticket files and centralized previews
+## Current work cycle (2026-07-10): Normal chat auto-scroll
 
 Current implementation:
 
-- Standalone ticket work products live beside the configured database under
-  `files/tickets/<ticket_id>/`; canonical fields, notes, proposals, results, and chat remain SQLite
-  Markdown text with ordinary links to those files.
-- A guarded Panels file route rejects unsafe IDs, traversal/encoding tricks, missing/non-file paths,
-  and symlink escapes. Direct responses use `nosniff`; only an explicit raster-image/audio/video MIME
-  allowlist is inline, while Markdown, HTML, SVG, and unknown content is an attachment.
-- `FilePreviewTarget`, `resolvePreview`, and `FilePreview` are the one frontend seam used by Markdown
-  surfaces, ticket fields, every persisted chat role, and the full hash preview route. Managed Markdown
-  expands inline through the hardened renderer with a fixed depth/self-link bound; HTML is a card whose
-  iframe receives fetched text through `srcdoc` in an empty sandbox and whose action opens the Panels
-  preview route in a new tab.
-- Editable Markdown retains the original continuous `contenteditable` interaction. Linked targets stay
-  mounted as atomic `FilePreview` blocks while surrounding text is edited; no edit/source buttons or
-  separate mode exist. Renderer-authored source tokens serialize each block back to canonical Markdown
-  while generated preview descendants are ignored. The lifecycle observer now distinguishes Chromium
-  moving/reinserting a slot during editing from real deletion, so structure-changing edits no longer
-  unmount a still-connected preview. Gated drafts use the same editor and reset to the original proposal
-  on Escape.
-- Image/video/audio preview inline with preserved aspect; unsupported ticket files are download cards;
-  external URLs are deterministic external-link cards. No upload API, artifact rows, registry, file IDs,
-  or per-stage slots were added.
+- The shared chat panel opens at the latest message and follows rendered messages and live output
+  only while the reader remains near the bottom.
+- Meaningful upward scrolling disables follow and preserves the viewport through later human and
+  planner lines; a distance-based `Latest` control appears even when no content is newly unread.
+- Clicking `Latest` or manually returning near the bottom restores follow mode.
+- `docs/chat.md` now describes the live behavior; D45 supersedes the old one-time-scroll decision.
 
 Verification status:
 
-- Focused frontend and browser checks pass: renderer/serializer/resolver Node tests, Svelte check,
-  production build, and 27 Playwright tests across the preview and affected flow modules.
-- Browser coverage now includes normal ticket and field notes, recaps, passed fields, gating and
-  non-gating proposals/results, every chat role, nested/self Markdown, HTML sandbox attributes and
-  isolation, external/download cards, continuous rich editing, adjacent typing, paste, boundary and
-  selected deletion, exact source-token persistence, async cleanup, Escape, direct approval payloads,
-  reload, and preview restoration.
-- Live validation on `t_c5sb8b0h` showed the screenshot and Markdown document inline, the populated
-  sandboxed HTML card with a new-tab Panels action, and the unsupported `.bin` download card. Image
-  geometry preserved the 1440×900 aspect ratio.
-- Codex's four atomic-editor findings were resolved. Its remaining read-only-mode finding was refuted:
-  it compared against the older initial implementation, while the accepted deterministic follow-up
-  deliberately makes embedded Markdown and HTML full component previews.
-- Full `./verify` passed after the lifecycle correction: Ruff and Mypy passed, 209 unit tests passed,
-  the frontend check/build passed, 47 E2E tests passed, and `VERIFY: PASS`.
+- TDD browser coverage failed first on the missing jump control, then passed after implementation.
+- Focused Svelte check passed with 0 errors and the three existing TicketRoute warnings; the frontend
+  build passed.
+- Codex plan review returned `NO VIOLATIONS`. Implementation review found two intermediate-state test
+  gaps; both were strengthened and the follow-up returned `RESOLVED`.
+- Full `./verify` passed on the settled shared worktree: Ruff and Mypy passed, 211 unit tests
+  passed, frontend check/build passed, 48 E2E tests passed, and `VERIFY: PASS`.
 
 Immediate next step:
 
-- The preview lifecycle correction is complete and ready to land.
+- Propose the result on ticket `t_bpy3g36e`.
+
+## Completed work cycle (2026-07-10): Remove the ticket delete control
+
+Current implementation:
+
+- Standalone and Workspace-embedded ticket screens no longer expose a delete-ticket button.
+- The ticket route's delete-only state, handler, invalidation logic, response type, and callback prop
+  were removed; Workspace no longer carries the matching callback.
+- Permanent deletion remains available through the human-only API and `panels ticket delete <id>
+  --yes`. The live ticket documentation now names that manual boundary.
+
+Verification status:
+
+- TDD browser coverage failed against the old bundle because the accessible `Delete ticket` button
+  was present, then passed against the implementation on both standalone and embedded ticket screens.
+- Focused Svelte check/build passed; the hard-delete browser/CLI file passed 2 tests and the deletion
+  unit file passed 3 tests.
+- Codex's first review asked for accessible-name and embedded-Workspace coverage. Both were added;
+  the follow-up reported `RESOLVED: NO VIOLATIONS`.
+- Full `./verify` passed on the settled shared worktree: Ruff and Mypy passed, 211 unit tests passed,
+  the frontend check/build passed, 48 E2E tests passed, and `VERIFY: PASS`.
+
+Immediate next step:
+
+- Propose the result on ticket `t_w72dsctg`.
+
+## Completed work cycle (2026-07-10): URL-backed Workspace ticket selection
+
+Current implementation:
+
+- Workspace ticket selection now lives in the existing hash route as
+  `#/workspace/<ticket-id>`; plain `#/workspace` still opens Chief of Staff and `#/board` remains a
+  compatibility alias.
+- `App.svelte` decodes the optional ticket segment and passes it into `BoardRoute`; Workspace routes
+  share one stable screen key so ticket switching and browser history do not remount the rail or reset
+  its status filter, collapsed projects, or Hide done choice.
+- Card and Chief of Staff clicks write normal history entries. Once the settled board proves a routed
+  ticket is absent, Workspace replaces the stale route with `#/workspace`, covering invalid links and
+  ticket deletion/disappearance without a parallel selection store.
+- `docs/frontend.md` now describes direct load, refresh, sharing, and history behavior.
+
+Verification status:
+
+- Focused Svelte check passed with the existing three `TicketRoute.svelte` warnings; the production
+  build passed; `tests/e2e/test_chief_of_staff.py` passed with 4 browser tests.
+- Browser coverage proves plain Workspace, click-driven URL changes, encoded direct load, refresh,
+  switching, back/forward, stable Hide done/status/collapse state, Chief of Staff return, deletion
+  cleanup, invalid-route fallback, and the legacy board alias.
+- Codex plan review returned `NO VIOLATIONS`. Implementation review found remount state loss,
+  missing URL decoding, stale deletion URLs, and missing cases; all four were fixed and the follow-up
+  returned `NO VIOLATIONS`.
+- Full `./verify` passed: Ruff and Mypy passed, 211 unit tests passed, frontend check/build passed,
+  48 E2E tests passed, and `VERIFY: PASS`.
+
+Immediate next step:
+
+- Propose the result on ticket `t_30tkv9ba`.
+
+## Previous work cycle (2026-07-10): Ticket files and centralized previews
 
 ## Current work cycle (2026-07-09): Real ticket hard deletion
 
@@ -60,9 +96,9 @@ Current implementation:
   day/item/link/sprint/queue resources.
 - Prior Planner events owned by or referring to the ticket are pruned before fresh cleanup
   doorbells are written; one minimal `ticket_deleted` event remains as the audit.
-- `DELETE /api/tickets/{id}`, `panels ticket delete <id> --yes`, and a confirmed destructive action
-  on both standalone and embedded Ticket screens all use the same writer. The route wakes System A
-  because deleting a blocking ticket can make another ticket runnable.
+- `DELETE /api/tickets/{id}` and `panels ticket delete <id> --yes` use the same writer; ticket screens
+  intentionally expose no delete control. The route wakes System A because deleting a blocking
+  ticket can make another ticket runnable.
 - The separate stored Hermes session is explicitly outside the Panels-record deletion boundary.
 
 Verification status:
@@ -1911,5 +1947,36 @@ What passed:
   - `VERIFY: PASS`
 
 Immediate next step: ready for owner review/commit.
+
+Blockers: none.
+
+## Fix false `gateway_offline` when pausing chat
+
+Current build stage: implemented and verified.
+
+What changed:
+
+- `SharedGateway` now keeps the durable-key to live-session-ID association for its current child and
+  clears it with that child's lifecycle. Pause sends Hermes the live ID while persisted chat state stays
+  on the durable key.
+- Hermes interrupt `4001`/`4007` session-not-found responses now become Planner `not_found`; actual
+  gateway failures keep the existing `gateway_offline` behavior.
+- `tests/unit/test_minds.py` now reproduces an in-flight turn with different stored/live IDs and proves
+  that pause sends the live ID, receives interrupted completion, and maps a missing live session
+  truthfully.
+
+Verification so far:
+
+- The new in-flight regression failed against the baseline exactly because `session.interrupt` received
+  `20260706_120000_abcdef` instead of live ID `ab12cd34`.
+- `.venv/bin/pytest tests/unit/test_minds.py tests/unit/test_chat_seed.py -q` passed: 56 tests, with the
+  existing Starlette/httpx deprecation warning.
+- Initial Codex diff review found one unrelated-RPC error-mapping regression. The narrow integration
+  repair restored the existing contract; focused tests passed again and follow-up Codex review returned
+  `NO VIOLATIONS`.
+- Fresh `./verify` passed: ruff, mypy, 211 unit tests, compile/static checks, frontend check/build/test,
+  48 e2e tests, and `VERIFY: PASS`. Only the existing Python and Svelte warnings remained.
+
+Immediate next step: propose the verified result on ticket `t_k0nvxtny`.
 
 Blockers: none.

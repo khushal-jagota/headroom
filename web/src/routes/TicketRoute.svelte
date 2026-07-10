@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { fetchJson, fetchText } from "../lib/api";
-  import { invalidateMany, mutateJson, resource } from "../lib/resources";
+  import { mutateJson, resource } from "../lib/resources";
   import {
     FIELD_NAMES,
     PRIORITIES,
@@ -14,7 +14,6 @@
     GatewayStatus,
     ProjectsResponse,
     SprintsResponse,
-    TicketDeletionResponse,
     TicketDetail
   } from "../lib/types";
   import ChatPanel from "../components/ChatPanel.svelte";
@@ -26,7 +25,7 @@
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
 
-  let { id, onDeleted }: { id: string; onDeleted?: () => void } = $props();
+  let { id }: { id: string } = $props();
 
   const ticket = resource<TicketDetail>(`ticket:${id}`, (signal) =>
     fetchJson(`/api/tickets/${id}`, { signal })
@@ -50,7 +49,6 @@
 
   let headerError = $state<unknown>(null);
   let copied = $state(false);
-  let deleting = $state(false);
   let projectOptions = $derived([
     { value: "", label: "(no project)" },
     ...(projects.data?.projects || []).map((project) => ({ value: project.id, label: project.name }))
@@ -128,55 +126,6 @@
       await mutateJson(`/api/tickets/${id}/${action}`, { method: "POST" }, ticketInvalidations);
     } catch (err) {
       headerError = err;
-    }
-  }
-
-  function deletionInvalidations(deleted: TicketDeletionResponse): string[] {
-    const keys = [
-      `ticket:${deleted.ticket_id}`,
-      `chat:${deleted.ticket_id}`,
-      "board",
-      "queues",
-      "sprint:current"
-    ];
-    for (const dayId of deleted.day_ids) {
-      keys.push(`day:${dayId.replace(/^day_/, "")}`, "day:today");
-    }
-    for (const itemId of deleted.sprint_item_ids) {
-      keys.push(`item:${itemId}`, "items:backlog");
-    }
-    for (const sprintId of deleted.sprint_ids) keys.push(`sprint:${sprintId}`);
-    for (const entityId of deleted.linked_entity_ids) {
-      if (entityId.startsWith("t_")) keys.push(`ticket:${entityId}`, `chat:${entityId}`);
-      else if (entityId.startsWith("si_")) keys.push(`item:${entityId}`);
-      else if (entityId.startsWith("sp_")) keys.push(`sprint:${entityId}`);
-      else if (entityId.startsWith("day_")) {
-        keys.push(`day:${entityId.replace(/^day_/, "")}`, "day:today");
-      } else if (entityId.startsWith("idea_")) keys.push("ideas");
-      else if (entityId.startsWith("project_")) keys.push("projects");
-      else if (entityId.startsWith("agent_")) keys.push(`chat:${entityId}`);
-    }
-    return keys;
-  }
-
-  async function deleteTicket(detail: TicketDetail): Promise<void> {
-    const confirmed = window.confirm(
-      `Permanently delete "${detail.title}"? This cannot be undone.`
-    );
-    if (!confirmed) return;
-    headerError = null;
-    deleting = true;
-    try {
-      const deleted = await mutateJson<TicketDeletionResponse>(
-        `/api/tickets/${id}`,
-        { method: "DELETE" }
-      );
-      if (onDeleted) onDeleted();
-      else window.location.hash = "#/workspace";
-      invalidateMany(deletionInvalidations(deleted), "ticket permanently deleted");
-    } catch (err) {
-      headerError = err;
-      deleting = false;
     }
   }
 
@@ -272,15 +221,6 @@
             </button>
             <button class="pill pill-button" type="button" data-copy onclick={() => void copyTicket()}>
               {copied ? "Copied" : "Copy"}
-            </button>
-            <button
-              class="pill pill-button pill-button--danger"
-              type="button"
-              data-ticket-delete
-              disabled={deleting}
-              onclick={() => void deleteTicket(detail)}
-            >
-              {deleting ? "Deleting…" : "Delete ticket"}
             </button>
           </div>
           {#if detail.state !== "done"}

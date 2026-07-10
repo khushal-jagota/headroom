@@ -13,6 +13,8 @@
     pending?: boolean;
   };
 
+  const NEAR_BOTTOM_PX = 48;
+
   let {
     entityId,
     available,
@@ -38,8 +40,11 @@
   let error = $state<unknown>(null);
   let pausePending = $state(false);
   let threadElement = $state<HTMLDivElement | null>(null);
+  let following = $state(true);
+  let jumpVisible = $state(false);
   let pollTimer: ReturnType<typeof window.setTimeout> | null = null;
   let initialScrollComplete = false;
+  let scrollRenderRequest = 0;
 
   function whoForRole(role: string): ChatMessage["who"] {
     const normalized = role.toLowerCase();
@@ -96,10 +101,23 @@
     }, 500);
   }
 
+  function distanceFromBottom(element: HTMLDivElement): number {
+    return Math.max(0, element.scrollHeight - element.clientHeight - element.scrollTop);
+  }
+
+  function updateScrollMode(): void {
+    if (!threadElement) return;
+    const nearBottom = distanceFromBottom(threadElement) <= NEAR_BOTTOM_PX;
+    following = nearBottom;
+    jumpVisible = !nearBottom;
+  }
+
   async function scrollThreadToBottom(): Promise<void> {
+    following = true;
     await tick();
     if (!threadElement) return;
     threadElement.scrollTop = threadElement.scrollHeight;
+    jumpVisible = distanceFromBottom(threadElement) > NEAR_BOTTOM_PX;
   }
 
   $effect(() => {
@@ -110,12 +128,26 @@
     if (!activeTurn) clearPoll();
   });
 
-  $effect(() => {
-    if (initialScrollComplete || chatState.loading || chatState.data === undefined || !threadElement) {
+  $effect.pre(() => {
+    transcript;
+    pending;
+    pendingLabel;
+
+    if (chatState.loading || chatState.data === undefined || !threadElement) {
       return;
     }
-    initialScrollComplete = true;
-    void scrollThreadToBottom();
+
+    const shouldFollow = !initialScrollComplete || untrack(() => following);
+    const request = ++scrollRenderRequest;
+    void tick().then(() => {
+      if (request !== scrollRenderRequest || !threadElement) return;
+      initialScrollComplete = true;
+      if (shouldFollow) {
+        following = true;
+        threadElement.scrollTop = threadElement.scrollHeight;
+      }
+      jumpVisible = distanceFromBottom(threadElement) > NEAR_BOTTOM_PX;
+    });
   });
 
   async function submit(text: string, mode: "message" | "command"): Promise<void> {
@@ -155,32 +187,46 @@
     <span class="chat-lbl">{available ? label : `${label} · offline`}</span>
   </div>
 
-  <div class="chat-thread" data-chat-messages bind:this={threadElement}>
-    {#if !available}
-      <div class="chat-off" data-chat-offline>
-        <div>{label} is offline.</div>
-        <div class="chat-off-sub">Your draft is saved.</div>
-      </div>
-    {:else if transcript.length === 0 && !pending && !chatState.loading}
-      <div class="chat-empty"><h2 class="chat-empty-h">What do you need?</h2></div>
-    {:else}
-      {#each transcript as msg}
-        {#if msg.who === "you"}
-          <div class="chat-u" data-chat-msg="you"><MarkdownBlock text={msg.text} /></div>
-        {:else if msg.who === "worker"}
-          <div class="chat-sys" data-chat-msg="worker"><MarkdownBlock text={msg.text} /></div>
-        {:else if msg.who === "system"}
-          <div class="chat-sys" data-chat-msg="system"><MarkdownBlock text={msg.text} /></div>
-        {:else if msg.text.trim()}
-          <div class="chat-a" data-chat-msg="planner"><MarkdownBlock text={msg.text} /></div>
-        {/if}
-      {/each}
-      {#if pending}
-        <div class="chat-pending-row" data-chat-pending data-chat-msg={pendingWho}>
-          <span class="chat-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span class="chat-pending-label" data-chat-activity>{pendingLabel}</span>
+  <div class="chat-thread-shell">
+    <div class="chat-thread" data-chat-messages bind:this={threadElement} onscroll={updateScrollMode}>
+      {#if !available}
+        <div class="chat-off" data-chat-offline>
+          <div>{label} is offline.</div>
+          <div class="chat-off-sub">Your draft is saved.</div>
         </div>
+      {:else if transcript.length === 0 && !pending && !chatState.loading}
+        <div class="chat-empty"><h2 class="chat-empty-h">What do you need?</h2></div>
+      {:else}
+        {#each transcript as msg}
+          {#if msg.who === "you"}
+            <div class="chat-u" data-chat-msg="you"><MarkdownBlock text={msg.text} /></div>
+          {:else if msg.who === "worker"}
+            <div class="chat-sys" data-chat-msg="worker"><MarkdownBlock text={msg.text} /></div>
+          {:else if msg.who === "system"}
+            <div class="chat-sys" data-chat-msg="system"><MarkdownBlock text={msg.text} /></div>
+          {:else if msg.text.trim()}
+            <div class="chat-a" data-chat-msg="planner"><MarkdownBlock text={msg.text} /></div>
+          {/if}
+        {/each}
+        {#if pending}
+          <div class="chat-pending-row" data-chat-pending data-chat-msg={pendingWho}>
+            <span class="chat-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="chat-pending-label" data-chat-activity>{pendingLabel}</span>
+          </div>
+        {/if}
       {/if}
+    </div>
+
+    {#if jumpVisible}
+      <button
+        type="button"
+        class="chat-jump"
+        data-chat-jump
+        aria-label="Jump to latest message"
+        onclick={() => void scrollThreadToBottom()}
+      >
+        <span>Latest</span><span aria-hidden="true">↓</span>
+      </button>
     {/if}
   </div>
 

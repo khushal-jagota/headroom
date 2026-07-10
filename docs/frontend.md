@@ -20,9 +20,11 @@ One screen per part of the system:
   `ticket_status`, and can hide done tickets separately. The hide-done choice stays
   in place when the human visits another screen and returns.
 
-  The right side opens on the Chief of Staff chat, and selecting a ticket switches it
-  to the same complete ticket screen used by a direct ticket link while leaving the
-  Workspace rail in place.
+  The right side opens on the Chief of Staff chat. Selecting a ticket switches it to
+  the same complete ticket screen used by a direct ticket link while leaving the
+  Workspace rail in place, and records the selection at `#/workspace/<ticket-id>`.
+  That address can be loaded, refreshed, shared, or revisited with browser history;
+  a missing ticket safely leaves the Chief of Staff view open.
 - **Ticket** — the whole story of one piece of work: the four blanks, the scope row,
   live status markers, the `auto` run eligibility chip, chat, and a copy button that
   produces a plain-text block for pasting anywhere. Its project picker is backed by

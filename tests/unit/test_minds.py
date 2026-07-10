@@ -12,6 +12,7 @@ import pytest
 import planner.minds as minds
 from planner.chat.contracts import ChatHistory, ChatSendResult, CommandCatalog, GatewayStatus
 from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
+from planner.core.errors import ErrorCode, PlannerError
 from planner.minds.config import (
     boot_smoke_check,
     hermes_src_root,
@@ -483,6 +484,50 @@ def test_shared_gateway_run_reuses_child_for_multiple_sessions() -> None:
         "session.create",
         "prompt.submit",
     ]
+
+
+def test_shared_gateway_interrupt_resolves_stored_key_to_live_session() -> None:
+    fake = FakeGateway(
+        {
+            "session.create": [create_reply(LIVE_SID, STORED_KEY)],
+            "prompt.submit": [Reply(result={"status": "streaming"})],
+            "session.interrupt": [
+                Reply(result={}, events_after=(complete_ev(status="interrupted"),))
+            ],
+        }
+    )
+    gateway = shared(fake)
+    results: list[RunResult] = []
+    turn = threading.Thread(
+        target=lambda: results.append(gateway.run_ticket_step(None, "in flight"))
+    )
+
+    try:
+        turn.start()
+        assert fake.wait_sent(2, 5.0)
+        gateway.interrupt(STORED_KEY, "t_demo")
+        turn.join(5.0)
+    finally:
+        gateway.shutdown()
+
+    interrupt = next(frame for frame in fake.sent if frame["method"] == "session.interrupt")
+    assert interrupt["params"] == {"session_id": LIVE_SID}
+    assert not turn.is_alive()
+    assert [result.status for result in results] == ["interrupted"]
+    assert results[0].session_key == STORED_KEY
+
+
+def test_shared_gateway_interrupt_maps_live_session_not_found_to_not_found() -> None:
+    fake = FakeGateway({"session.interrupt": [Reply(error=(4001, "session not found"))]})
+    gateway = shared(fake)
+
+    try:
+        with pytest.raises(PlannerError) as caught:
+            gateway.interrupt(STORED_KEY, "t_demo")
+    finally:
+        gateway.shutdown()
+
+    assert caught.value.code == ErrorCode.not_found
 
 
 def test_resolve_hermes_python_precedence() -> None:

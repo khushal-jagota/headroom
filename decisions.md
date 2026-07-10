@@ -2,6 +2,33 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D45 — Chat follows only while the reader remains near the bottom
+
+D45 supersedes D35 after the owner's correction. The shared chat panel opens at the latest message
+and follows rendered messages and live output while the reader is within a small distance of the
+bottom. A meaningful upward scroll transfers control to the reader and later growth preserves that
+position. The `Latest` affordance is a separate distance signal: it appears whenever the conversation
+bottom is meaningfully out of view, regardless of whether content below is new. Clicking it or
+manually returning near the bottom resumes follow mode.
+
+## D44 — Permanent ticket deletion stays outside normal UI
+
+Keep the existing human-only delete writer and explicit `panels ticket delete <id> --yes` command,
+but expose no delete control on standalone or Workspace-embedded ticket screens. The route therefore
+loses the entire delete-only client path rather than hiding or conditionally rendering it. Browser
+coverage checks both the accessible button name and the former data hook on both ticket surfaces.
+This small implementation was delegated under TDD and independently reviewed by Codex; its one test-
+coverage finding was fixed before full verification.
+
+## D43 — Pause resolves durable chat keys through child-scoped live identity
+
+Tickets and chat turns continue to store Hermes' durable session key. `SharedGateway` records the
+corresponding live session ID only for the current gateway child and clears that runtime map when the
+child is replaced or shut down. Pause uses the live ID when available; it does not persist an ephemeral
+handle or resume/create another session just to interrupt one. Hermes live-session-not-found `4001`
+(and durable-session-not-found `4007`) is `not_found`; unrelated RPC and transport failures retain the
+existing `gateway_offline` contract.
+
 ## D42 — Every Markdown link has one deterministic preview component
 
 Every Markdown surface routes every link through `FilePreview`; consumers never decide
@@ -1205,3 +1232,13 @@ activity/thinking row, because it is the alternate action for the composer durin
 Ticket runtime status remains dispatch/readiness ownership, while chat pause is a session/transcript
 action. This keeps a paused chat turn from pretending to decide whether the ticket should rerun,
 remain owned by a worker, or wait for a human.
+
+## D73 — Workspace route owns ticket selection without remounting Workspace
+
+The optional `#/workspace/<ticket-id>` segment is the single source of truth for the Workspace
+inspector. Ticket segments are encoded when written and decoded when read, while every Workspace
+variant shares one stable screen key so switching tickets and browser history do not reset the rail's
+status filter, collapsed projects, or Hide done choice. Card and Chief of Staff clicks create normal
+history entries. Once a settled board proves a routed ticket is absent, Workspace replaces that stale
+entry with `#/workspace`; this covers invalid links and ticket disappearance without adding a second
+selection store.
