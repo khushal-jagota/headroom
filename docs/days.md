@@ -28,7 +28,9 @@ rollover or a thin scheduled check finds it missing. An automatic run writes the
 four-field overview and records only obvious carryover candidates pending review; it
 never adds tickets to today before the user agrees. The morning check drafts if missing.
 The afternoon check is only a failsafe: it drafts if still missing and otherwise does
-nothing. Broad reprioritization remains sprint-planning work.
+nothing. The scheduled draft uses Chief day-edit authority only for those overview and
+note writes; it cannot approve gates or place tickets onto the day. Broad reprioritization
+remains sprint-planning work.
 
 ## Quick capture
 

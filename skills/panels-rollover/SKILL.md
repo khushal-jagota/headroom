@@ -83,5 +83,6 @@ Cron prompts stay thin and load this skill.
 - **Morning:** prepare the kickoff draft if it is missing, then stop for review.
 - **Afternoon:** act only as a failsafe—prepare the same draft if it is still missing; otherwise no-op.
 - Scheduled runs never add tickets to today without the user's agreement.
+- Hermes cron sessions inherit worker identity, while Day overview and note writes are direct-only. For scheduled checks, prefix only the approved kickoff-draft `panels day set` commands with `PLAN_ACTOR=chief`. This authority is limited to the approved kickoff draft; never use it to edit ticket lifecycle state, approve gates, or add tickets before the user agrees.
 
 If Panels is unavailable, report the blocker. Never fall back to the old files.

@@ -2279,6 +2279,8 @@ def test_panels_rollover_contract_keeps_automatic_ticket_changes_pending_agreeme
     assert "**Afternoon:** act only as a failsafe" in rollover
     assert "otherwise no-op" in rollover
     assert "Scheduled runs never add tickets to today without the user's agreement" in rollover
+    assert "`PLAN_ACTOR=chief`" in rollover
+    assert "limited to the approved kickoff draft" in rollover
     assert "Never carry `done` or `dropped` tickets forward" in rollover
 
 

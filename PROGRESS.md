@@ -52,8 +52,8 @@ DB/CLI, gate/scope/resolution) + direct reads of the Hermes source + `machine.py
   unchanged. `fields` is a JSON blob, so heterogeneous field-sets cost nothing to store.
 - Worker seam already exists: `EntityRoutingGateway` routes per entity (Chief has its own gateway
   today); `SharedGateway` carries a per-child skill via `HERMES_TUI_SKILLS`. Hermes supports
-  per-session model override; toolsets are home-global (the one rough edge). `implementer` field
-  already exists but only drives plan→implementation takeover.
+  per-session model override; toolsets are per-child via `HERMES_TUI_TOOLSETS` (I first said
+  home-global — WRONG, corrected by the review). `implementer` exists but only drives takeover.
 
 Recommendation: a **type registry in code** (each type declares stages+gates+fields + skill/model/
 tools; core stays free of per-type conditionals — matches PRINCIPLES core/module contract). Ticket
@@ -63,7 +63,17 @@ migrate to `coding`. Precedent: type-discriminator + registry (Jira issue-type�
 the analog; deliberately NOT normalizing types into DB tables). Full write-up + stress tests +
 open forks: `orchestration/ticket-types-redesign/RECOMMENDATION.md`.
 
-Status: recommendation delivered to owner; nothing approved, no code changed. Next: owner
+Review (gpt-5.6-sol, high, read-only) folded into RECOMMENDATION §7: direction approved; "correctness
+heart untouched" overstated (contained refactor, not zero — terminal/scope/admission/resolution name
+stages). New load-bearing constraints: universal `done`/`dropped` terminals (other domains read exact
+state strings; a type ending at `complete` blocks forever + stalls its sprint item); Chief external-work
+is a first-class workflow interface; board can't take a heterogeneous state union; registry validates at
+startup; DB CHECK relaxation needs integrity replacement + audit; name it `ticket_type`, immutable v1.
+All 3 forks upheld (fix `implementer`'s muddled enum). Owner refinement (§8): one base worker skill +
+linked specialist skills, differentiate inside one shared gateway child; fork children only per toolset
+profile (1–2), not per type — kills duplicated shared orientation, keeps code thin.
+
+Status: reviewed recommendation delivered; nothing approved, no code changed. Next: owner
 questions / exploration. If approved, first proof = mock one non-coding type end-to-end.
 
 ## Current work cycle (2026-07-10): Panels sprint-planning workflow
@@ -2635,35 +2645,43 @@ Blockers: none.
 
 ## Current work cycle (2026-07-10): Panels rollover workflow
 
-Current build stage: Implementation in the isolated
-`ticket/t_wev4k9qy-rollover-implementation` worktree; live cutover is reserved for Closeout.
+Current build stage: Closeout integrated, deployed, and verified on `main`; the live default-Hermes
+skill and both scheduled jobs are cut over.
 
 What changed:
 
-- Added the lightweight repo-owned `panels-rollover` skill. Automatic runs draft today's four-field
-  kickoff and record obvious carryover candidates pending review; they do not add tickets before the
-  user agrees. Morning drafts if missing; afternoon is only a failsafe for that missing draft.
-- Added `panels-rollover` to planner-home skill provisioning and updated Panels/Chief role guidance.
-- Removed the retired deterministic `skills/planning-boundary.md` prompt.
-- Updated live system docs to describe agent-owned rollover and the external scheduler boundary.
-- Added focused provisioning and operating-contract tests.
+- Merged the verified ticket branch into `main`, retaining the concurrently landed
+  `panels-sprint-planning` provisioning and renumbering the rollover decision after D98/D99.
+- Linked the default Hermes home to the repo-owned `panels-rollover` skill.
+- Converted the existing 11:30 job into `panels-rollover-morning-kickoff` and the 16:00 job into
+  `panels-rollover-afternoon-failsafe`. Both load only `panels-rollover` and run from the Panels repo.
+- Archived the old Markdown `rollover` skill outside active skill discovery. Retained
+  `daily-planning` for explicit legacy intraday file work, but removed its old rollover route; the
+  legacy planning-viewer and workspace-shaping skills now hand rollover to `panels-rollover` only.
+- The first live morning smoke exposed a real authority gap: cron sessions inherit
+  `PLAN_ACTOR=worker`, while Day overview/notes are direct-only. Added a tested, narrow rule allowing
+  `PLAN_ACTOR=chief` only for the approved scheduled kickoff draft, never ticket placement or gates.
 
 Verification:
 
-- Strict RED: the three focused rollover tests failed because the skill was absent, provisioning did
-  not expose it, and `skills/planning-boundary.md` still existed.
-- GREEN: the same three tests pass; all `tests/unit/test_minds.py` tests pass (73 total), Ruff and mypy
-  pass, and a temporary-Hermes-home smoke lists the provisioned `panels-rollover` skill.
-- Initial Codex review found four issues: two live-deployment wording claims, Chief guidance that still
-  inspected backlog, no assertion for the `done`/`dropped` guard, and an incidental `uv.lock`. All were
-  fixed; the guard assertion was proved red-capable by temporarily removing only that skill line, then
-  restored to green. Follow-up Codex review returned `NO VIOLATIONS`.
-- Full `./verify` passed: Ruff, mypy (104 source files), 411 unit tests, compile/static checks,
-  frontend check/build/test, 58 e2e tests, and `VERIFY: PASS`. The only diagnostics were the existing
-  three Python warnings and three Svelte initial-value warnings.
+- Integration rebase resolved two additive conflicts: both sprint-planning and rollover remain
+  provisioned, and rollover became decision D100. The focused minds suite, Ruff, and mypy passed.
+- Initial live morning run reported the worker-authority blocker and made no changes. The regression
+  assertion failed against that baseline, then passed after the constrained Chief-authority rule.
+- The second live morning run wrote all four kickoff fields and a pending-review note from live Panels.
+  It found no unfinished previous-day tickets and added no tickets.
+- The live afternoon run returned `[SILENT]`; before/after comparison proved the overview, notes,
+  ticket set, and `updated_at` were unchanged.
+- Active jobs were read back from `~/.hermes/cron/jobs.json`: exactly two active rollover jobs remain,
+  both use `panels-rollover`, and no legacy rollover job reference remains. Global skill discovery lists
+  `panels-rollover`, does not list `rollover`, and still lists `daily-planning`.
+- Codex closeout review found stale legacy handoffs in three old planning skills. They were removed;
+  the final follow-up review returned `NO VIOLATIONS`.
+- The first full verifier run hit one unrelated timeout in the editable-preview deletion e2e. That
+  exact test passed immediately in isolation. A fresh complete rerun then passed: Ruff, mypy across
+  106 source files, 444 unit tests, compile/static checks, frontend check/build/test, 60 e2e tests,
+  and `VERIFY: PASS`. Full output is stored in the ticket's `closeout-verify.txt` artifact.
 
-Immediate next step: commit the verified ticket branch and propose Implementation. Closeout will merge
-and then update the two live default-Hermes jobs, create the global `panels-rollover` link, and retire
-the old global rollover skill.
+Immediate next step: propose Closeout for owner approval. No follow-up ticket is required.
 
 Blockers: none.

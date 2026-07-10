@@ -1855,3 +1855,11 @@ missing draft. Broad reprioritization remains sprint-planning work.
 The repository owns and provisions the skill. The default-Hermes jobs that schedule it and the global
 skill link are deployment state, so the ticket branch proves them in isolation and Closeout changes the
 live jobs only after Implementation approval.
+
+## D101 — Scheduled rollover gets narrow Chief authority for the kickoff draft
+
+The first live cron smoke proved that Hermes scheduled sessions inherit `PLAN_ACTOR=worker`, while Day
+overview and note writes are direct-only. Automatic kickoff drafting is already the owner-approved job,
+so `panels-rollover` may prefix only those scheduled `panels day set` commands with
+`PLAN_ACTOR=chief`. The elevation stops at the kickoff overview and pending-review note: it cannot edit
+ticket lifecycle state, approve gates, or add tickets before the user agrees.
