@@ -102,6 +102,17 @@ rule keys off status only, sprint-screen conflicts kept the redesign markup. Spr
 status enum (todo/in_progress/blocked/done) is unchanged and untouched. Post-merge
 `./verify`: PASS (58 e2e).
 
+FIDELITY PASS (owner-driven, 2026-07-10, D94): after the merge landed the owner reviewed the
+live app against the mockups and caught five deltas the wave design reviews had passed:
+workspace rail width/group spacing/filter row, the ask's right-pushed action row with
+underlined scope links instead of boxed pills, oversized ask padding plus serif leaking into
+the action row, review chamber rhythm (recap/notes/ask gaps, heavy Notes heading), and key
+hints not anchored to the viewport bottom. All fixed to the mockups in assets/app.css plus one
+label derivation in BoardRoute (statusFilterLabel "All statuses"); verified via the screenshot
+harness against the mockups and a full `./verify` PASS (407 unit, 58 e2e). Note: several
+verify runs flaked single e2e tests while a concurrent Hermes/Chief session ran on this
+machine — serialized runs on a quiet machine stayed green.
+
 ## Current work cycle (2026-07-10): Ticket Implementation and Closeout lifecycle
 
 Current build stage:
