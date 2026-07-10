@@ -32,6 +32,9 @@
   );
   let columns = $derived(board.data?.columns || []);
   let statusFilter = $state<string>("all");
+  let statusFilterLabel = $derived(
+    ticketStatusFilters.find((filter) => filter.value === statusFilter)?.label ?? "All"
+  );
   let allCards = $derived(columns.flatMap((column) => column.cards));
   let selectedCard = $derived(allCards.find((card) => card.id === ticketId) || null);
   let rightPaneMode = $derived<"chief" | "ticket">(selectedCard ? "ticket" : "chief");
@@ -147,35 +150,33 @@
           </div>
 
           <div class="board-workspace-filters" data-workspace-filters>
-            <div class="board-workspace-filter-head">Filters</div>
-            <div class="board-workspace-filter-row">
-              <label class="board-workspace-filter-group" data-filter-group="ticket-status">
-                <select
-                  aria-label="Ticket status"
-                  class="board-workspace-filter-select"
-                  data-status-filter={statusFilter}
-                  bind:value={statusFilter}
-                >
-                  {#each ticketStatusFilters as filter}
-                    <option
-                      value={filter.value}
-                      title={filter.value === "all" ? "All ticket statuses" : ticketStatusLabel(filter.value)}
-                    >
-                      {filter.label}
-                    </option>
-                  {/each}
-                </select>
-              </label>
+            <label class="board-workspace-filter-group" data-filter-group="ticket-status">
+              <span class="board-workspace-filter-value">{statusFilterLabel}</span>
+              <select
+                aria-label="Ticket status"
+                class="board-workspace-filter-select"
+                data-status-filter={statusFilter}
+                bind:value={statusFilter}
+              >
+                {#each ticketStatusFilters as filter}
+                  <option
+                    value={filter.value}
+                    title={filter.value === "all" ? "All ticket statuses" : ticketStatusLabel(filter.value)}
+                  >
+                    {filter.label}
+                  </option>
+                {/each}
+              </select>
+            </label>
 
-              <label class="board-workspace-hide-done-toggle">
-                <input
-                  type="checkbox"
-                  data-hide-done-toggle
-                  bind:checked={hideDone}
-                />
-                <span>Hide done</span>
-              </label>
-            </div>
+            <label class="board-workspace-hide-done-toggle" class:board-workspace-hide-done-toggle--on={hideDone}>
+              <input
+                type="checkbox"
+                data-hide-done-toggle
+                bind:checked={hideDone}
+              />
+              <span>Hide done</span>
+            </label>
           </div>
 
           {#each projectSections as section}
@@ -235,11 +236,13 @@
           aria-label="Workspace inspector"
         >
           {#if rightPaneMode === "chief"}
-            <ChatPanel
-              entityId={chiefOfStaffEntityId}
-              available={chiefChatStatus.data?.available ?? true}
-              label="Chief of Staff"
-            />
+            <div class="board-workspace-desk-inner">
+              <ChatPanel
+                entityId={chiefOfStaffEntityId}
+                available={chiefChatStatus.data?.available ?? true}
+                label="Chief of Staff"
+              />
+            </div>
           {:else if selectedCard}
             {#key selectedCard.id}
               <TicketRoute id={selectedCard.id} />

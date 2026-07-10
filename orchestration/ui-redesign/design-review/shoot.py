@@ -142,11 +142,19 @@ def seed(base: str) -> dict[str, str]:
                      timeout=10.0)
     resp.raise_for_status()
 
-    # Supporting cast for the roster.
+    # Supporting cast for the roster. The workspace board lists only tickets on
+    # TODAY'S board (day_tickets), so every roster ticket is added to the day.
+    roster = [tid]
     for title in ("Deepen employee runtime ownership", "Chat auto-scroll and Latest button",
                   "Ship the waitlist capture flow", "Consent copy for double opt-in"):
         c = cli(base, "ticket", "create", "--title", title)
         ids[title] = c["id"]
+        roster.append(c["id"])
+    for ticket_id in roster:
+        try:
+            cli(base, "day", "add-ticket", ticket_id)
+        except RuntimeError as err:
+            print(f"[seed] day add-ticket {ticket_id}: {err}", file=sys.stderr)
 
     # Day brief.
     try:

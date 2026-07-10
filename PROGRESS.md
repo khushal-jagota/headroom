@@ -58,9 +58,14 @@ code review (xhigh for t_ui02/03) + design review vs mockups + orchestrator-only
 follow — PLAN ground rule 2 rewritten. Wave 1 (t_ui01) LANDED: Codex clean, design review
 FAITHFUL 6/6, verify PASS, committed d4e81ae (one verify retry: my shoot.py tripped ruff E501,
 wrapped lines). Wave 2 (t_ui02 ticket document) dispatched to ui-implementer with the D89
-ruling and wave-1 lessons. Wave 2 (t_ui02) implemented and reported (3 test translations, none
-weakened; ask depth scoped to the ticket screen; chat bodies serif globally); Codex xhigh +
-design review running. Design pass additions: embeds mockup previews.html rev 2 (D90/D91 — one
+ruling and wave-1 lessons. Wave 2 (t_ui02, ticket document) LANDED at e7ff833 — Codex xhigh
+caught a proposal-mode double surface (flattened) + orphaned chip CSS (deleted); design review
+FAITHFUL 9/9 with one serif empty-state fix. Wave 3 (t_ui03, review chamber) LANDED at 9691420 —
+implementer self-ran a Codex plan review; my review round routed 3 fixes (static uppercase ask
+header with byline, shared with the ticket's gating ask; event.repeat guard on shortcuts;
+deterministic negative assertion in the new shortcut e2e — suite now 57) and refuted the
+notes-source design finding (field notes are the pinned function, D92). Wave 4 (t_ui04
+workspace) dispatched. Design pass additions: embeds mockup previews.html rev 2 (D90/D91 — one
 container + bar for every kind incl. images; downloads = bar only). FOLLOW-UPS QUEUED by the
 owner, not yet scoped: (1) embeds implementation (after mockup approval; overlaps preview CSS —
 slot between UI waves); (2) a PERF pass ("perf, that's a follow up now as well" — scope TBD with
