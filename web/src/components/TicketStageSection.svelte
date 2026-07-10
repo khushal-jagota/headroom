@@ -1,7 +1,7 @@
 <script lang="ts">
   import ApprovalBlock from "./ApprovalBlock.svelte";
-  import CollapsibleField from "./CollapsibleField.svelte";
-  import ContentDisclosure from "./ContentDisclosure.svelte";
+  import Disclosure from "./Disclosure.svelte";
+  import StageMark from "./StageMark.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import ProposalCard from "./ProposalCard.svelte";
@@ -70,15 +70,15 @@
 
 {#snippet stageBody()}
   {#if showRecap && recap}
-    <ContentDisclosure title="Recap" tone="support" section="recap">
+    <Disclosure title="Recap" variant="support" defaultOpen={true} data-content-section="recap">
       <MarkdownBlock text={recap} />
-    </ContentDisclosure>
+    </Disclosure>
   {/if}
 
   {#if reviewVariant && hasNotes}
-    <ContentDisclosure title="Notes" defaultOpen={false} tone="support" section="notes">
+    <Disclosure title="Notes" variant="support" defaultOpen={false} data-content-section="notes">
       <MarkdownBlock text={slot.user_note} />
-    </ContentDisclosure>
+    </Disclosure>
   {/if}
 
   {#if isDropped}
@@ -128,9 +128,9 @@
   {/if}
 
   {#if !reviewVariant && onSaveNote}
-    <ContentDisclosure title="Notes" defaultOpen={hasNotes} tone="support" section="note">
+    <Disclosure title="Notes" variant="support" defaultOpen={hasNotes} data-content-section="note">
       <InlineEdit value={slot.user_note} markdown multiline placeholder="Note..." onSave={onSaveNote} />
-    </ContentDisclosure>
+    </Disclosure>
   {/if}
 {/snippet}
 
@@ -139,7 +139,16 @@
     {@render stageBody()}
   </div>
 {:else}
-  <CollapsibleField {stageState} {name} {defaultOpen} dataField={name}>
+  <Disclosure
+    variant="stage"
+    {defaultOpen}
+    data-field={name}
+    data-stage-state={stageState}
+  >
+    {#snippet summary()}
+      <StageMark state={stageState} />
+      <span class="disclosure-stage-name">{name}</span>
+    {/snippet}
     {@render stageBody()}
-  </CollapsibleField>
+  </Disclosure>
 {/if}

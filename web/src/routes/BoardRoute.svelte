@@ -6,7 +6,9 @@
   import { gatingField, ticketStageVisualState, ticketStatusLabel } from "../lib/ui";
   import type { FieldStageVisualState } from "../lib/ui";
   import ChatPanel from "../components/ChatPanel.svelte";
+  import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
+  import StageMark from "../components/StageMark.svelte";
   import TicketRoute from "./TicketRoute.svelte";
 
   let { hideDone = $bindable(false), ticketId }: { hideDone?: boolean; ticketId?: string } = $props();
@@ -26,7 +28,6 @@
     fetchJson(`/api/chat/${chiefOfStaffEntityId}/status`, { signal })
   );
   let columns = $derived(board.data?.columns || []);
-  let collapsedProjects = $state<string[]>([]);
   let statusFilter = $state<string>("all");
   let allCards = $derived(columns.flatMap((column) => column.cards));
   let selectedCard = $derived(allCards.find((card) => card.id === ticketId) || null);
@@ -45,16 +46,6 @@
 
   function showChiefOfStaff(): void {
     window.location.hash = "#/workspace";
-  }
-
-  function isCollapsed(projectKey: string): boolean {
-    return collapsedProjects.includes(projectKey);
-  }
-
-  function toggleProject(projectKey: string): void {
-    collapsedProjects = isCollapsed(projectKey)
-      ? collapsedProjects.filter((current) => current !== projectKey)
-      : [...collapsedProjects, projectKey];
   }
 
   function cardStageState(card: Record<string, any>, fieldName: string): FieldStageVisualState {
@@ -189,56 +180,52 @@
           </div>
 
           {#each projectSections as section}
-            {@const collapsed = isCollapsed(section.key)}
-            <section
+            <Disclosure
+              variant="project"
               class="board-workspace-index-section"
+              chevron="none"
+              defaultOpen={true}
               data-project-section
               data-project-key={section.key}
             >
-              <button
-                aria-expanded={!collapsed}
-                class="board-workspace-index-heading board-workspace-index-toggle"
-                type="button"
-                onclick={() => toggleProject(section.key)}
-              >
+              {#snippet summary()}
                 <span class="board-workspace-index-heading-main">
-                  <span class:board-workspace-index-chevron--collapsed={collapsed} class="board-workspace-index-chevron">▸</span>
+                  <span class="board-workspace-index-chevron">▸</span>
                   <span>{section.label}</span>
                 </span>
                 <span class="board-workspace-index-count">{section.cards.length}</span>
-              </button>
+              {/snippet}
 
-              {#if !collapsed}
-                <div class="board-workspace-index-items">
-                  {#each section.cards as card}
-                    {@const stageField = currentStageField(card)}
-                    {@const stageState = currentStageState(card)}
-                    {@const marker = stageMarker(card, stageState)}
-                    <button
-                      class:active={rightPaneMode === "ticket" && selectedCard?.id === card.id}
-                      class="board-workspace-item-row"
-                      data-card
-                      data-ticket-id={card.id}
-                      data-ticket-state={card.state}
-                      data-ticket-status={card.ticket_status}
-                      type="button"
-                      onclick={() => selectCard(card.id)}
-                    >
-                      <span class="board-workspace-item-label entity-row-title">{card.title}</span>
-                      <span class="board-workspace-stage-rail" aria-label="Ticket current stage">
-                        <span
-                          class={`board-workspace-stage-mark fsec-mark fsec-mark--${stageState}`}
-                          data-stage-field={stageField}
-                          data-stage-state={stageState}
-                          data-marker={marker || undefined}
-                          aria-label={`${stageField} ${stageState.replace(/-/g, " ")}`}
-                        ></span>
-                      </span>
-                    </button>
-                  {/each}
-                </div>
-              {/if}
-            </section>
+              <div class="board-workspace-index-items">
+                {#each section.cards as card}
+                  {@const stageField = currentStageField(card)}
+                  {@const stageState = currentStageState(card)}
+                  {@const marker = stageMarker(card, stageState)}
+                  <button
+                    class:active={rightPaneMode === "ticket" && selectedCard?.id === card.id}
+                    class="board-workspace-item-row"
+                    data-card
+                    data-ticket-id={card.id}
+                    data-ticket-state={card.state}
+                    data-ticket-status={card.ticket_status}
+                    type="button"
+                    onclick={() => selectCard(card.id)}
+                  >
+                    <span class="board-workspace-item-label entity-row-title">{card.title}</span>
+                    <span class="board-workspace-stage-rail" aria-label="Ticket current stage">
+                      <StageMark
+                        state={stageState}
+                        class="board-workspace-stage-mark"
+                        data-stage-field={stageField}
+                        data-stage-state={stageState}
+                        data-marker={marker || undefined}
+                        aria-label={`${stageField} ${stageState.replace(/-/g, " ")}`}
+                      />
+                    </span>
+                  </button>
+                {/each}
+              </div>
+            </Disclosure>
           {/each}
         </section>
 

@@ -5,6 +5,7 @@
   import { PRIORITY_ORDER } from "../lib/ui";
   import type { BacklogResponse, ProjectsResponse } from "../lib/types";
   import Chip from "../components/Chip.svelte";
+  import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
 
@@ -87,8 +88,8 @@
       </div>
     </header>
     <div class="col">
-      <details class="make" data-create="item">
-        <summary><span class="plus">+</span> New backlog item</summary>
+      <Disclosure variant="make" chevron="none" data-create="item">
+        {#snippet summary()}<span class="plus">+</span> New backlog item{/snippet}
         <div class="form">
           {#if createError}<ErrorLine error={createError} />{/if}
           <div>
@@ -115,7 +116,7 @@
           </div>
           <button class="commit" type="button" data-commit disabled={creating || !title.trim() || !project} onclick={() => void createItem()}>Add to backlog</button>
         </div>
-      </details>
+      </Disclosure>
 
       <div class="groups" data-backlog-items>
         {#if backlog.error}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { type Snippet } from "svelte";
-  import ContentDisclosure from "./ContentDisclosure.svelte";
+  import Disclosure from "./Disclosure.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
@@ -99,7 +99,7 @@
 
   {#if mode === "needs_review"}
     <div class="approval-proposal-shell">
-      <ContentDisclosure title={contentTitle} section="proposal">
+      <Disclosure title={contentTitle} variant="content" defaultOpen={true} data-content-section="proposal">
         <div class="approval-result">
           {#if onValueSave}
             <InlineEdit value={proposalBody} markdown multiline placeholder="Result..." onSave={onValueSave} />
@@ -107,7 +107,7 @@
             <MarkdownBlock text={proposalBody} />
           {/if}
         </div>
-      </ContentDisclosure>
+      </Disclosure>
       {#if reviewLayout}
         <div class="approval-actions">
           {#if error}<ErrorLine {error} />{/if}
@@ -127,7 +127,7 @@
     </div>
     {#if hasNote}
       {#if !reviewLayout && onNoteSave}
-        <ContentDisclosure title="Notes" defaultOpen={Boolean((note || "").trim())} tone="support" section="note">
+        <Disclosure title="Notes" variant="support" defaultOpen={Boolean((note || "").trim())} data-content-section="note">
           <InlineEdit
             value={note}
             markdown
@@ -135,7 +135,7 @@
             placeholder="Things to check before you approve the result..."
             onSave={onNoteSave}
           />
-        </ContentDisclosure>
+        </Disclosure>
       {/if}
     {/if}
     {#if !reviewLayout}
@@ -162,7 +162,7 @@
       <div class="proposal-meta">proposed by {proposedBy}</div>
     {/if}
     <div class="approval-proposal-shell">
-      <ContentDisclosure title={contentTitle} section="proposal">
+      <Disclosure title={contentTitle} variant="content" defaultOpen={true} data-content-section="proposal">
         <div class="approval-draft">
           <InlineEdit
             value={draft}
@@ -174,7 +174,7 @@
             onSave={saveDraft}
           />
         </div>
-      </ContentDisclosure>
+      </Disclosure>
       {#if reviewLayout}
         <div class="approval-actions">
           {#if error}<ErrorLine {error} />{/if}
@@ -195,9 +195,9 @@
     </div>
     {#if hasNote}
       {#if !reviewLayout && onNoteSave}
-        <ContentDisclosure title="Notes" defaultOpen={Boolean((note || "").trim())} tone="support" section="note">
+        <Disclosure title="Notes" variant="support" defaultOpen={Boolean((note || "").trim())} data-content-section="note">
           <InlineEdit value={note} markdown multiline placeholder="Note..." onSave={onNoteSave} />
-        </ContentDisclosure>
+        </Disclosure>
       {/if}
     {/if}
     {#if !reviewLayout}

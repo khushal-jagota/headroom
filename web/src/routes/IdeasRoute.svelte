@@ -4,6 +4,7 @@
   import { mutateJson, resource } from "../lib/resources";
   import type { IdeasResponse, ProjectsResponse } from "../lib/types";
   import Chip from "../components/Chip.svelte";
+  import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
@@ -122,15 +123,14 @@
           {#each ideas.data?.ideas || [] as idea}
             {@const hasBody = idea.body !== null && idea.body !== undefined && String(idea.body).trim() !== ""}
             {#if hasBody}
-              <details class="idea" data-idea-id={idea.id}>
-                <summary>
-                  <span class="chev">›</span>
+              <Disclosure variant="idea" chevron="leading" data-idea-id={idea.id}>
+                {#snippet summary()}
                   <span class="it entity-row-title">{idea.title}</span>
                   {#if idea.project}<Chip variant="project" value={idea.project} />{/if}
                   <span class="when">{relDate(idea.created_at)}</span>
-                </summary>
-                <div class="body"><MarkdownBlock text={idea.body} /></div>
-              </details>
+                {/snippet}
+                <MarkdownBlock text={idea.body} />
+              </Disclosure>
             {:else}
               <div class="flat" data-idea-id={idea.id}>
                 <span class="chev"></span>

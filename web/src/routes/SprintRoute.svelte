@@ -4,6 +4,7 @@
   import { mutateJson, resource } from "../lib/resources";
   import type { AnyRecord, CurrentSprintResponse } from "../lib/types";
   import Chip from "../components/Chip.svelte";
+  import Disclosure from "../components/Disclosure.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
@@ -115,30 +116,27 @@
             { kind: "mid", name: "Mid-sprint Review", meta: "mid-sprint", open: reviewHas || midHas, fields: mid, refline: "" },
             { kind: "review", name: "Sprint Review", meta: "end of sprint", open: reviewHas, fields: review, refline: "Written with the Mid-sprint Review above in view — it's the raw material for this retrospective." }
           ] as phase}
-            <details class="phase" data-phase={phase.kind} open={phase.open}>
-              <summary>
+            <Disclosure variant="phase" data-phase={phase.kind} defaultOpen={phase.open}>
+              {#snippet summary()}
                 <span class="pnm">{phase.name}</span>
                 <span class="pmeta">{phase.meta}</span>
-                <span class="chev">›</span>
-              </summary>
-              <div class="body">
-                {#if phase.refline}<div class="refline">{phase.refline}</div>{/if}
-                {#each phase.fields as field}
-                  <div class="field" data-field={field[0]}>
-                    <div class="flabel">{field[1]}</div>
-                    <div class="fval">
-                      <InlineEdit
-                        value={sprint[field[0]]}
-                        markdown
-                        multiline
-                        placeholder="(none)"
-                        onSave={(raw) => saveSprint(sprint.id, field[0], raw)}
-                      />
-                    </div>
+              {/snippet}
+              {#if phase.refline}<div class="refline">{phase.refline}</div>{/if}
+              {#each phase.fields as field}
+                <div class="field" data-field={field[0]}>
+                  <div class="flabel">{field[1]}</div>
+                  <div class="fval">
+                    <InlineEdit
+                      value={sprint[field[0]]}
+                      markdown
+                      multiline
+                      placeholder="(none)"
+                      onSave={(raw) => saveSprint(sprint.id, field[0], raw)}
+                    />
                   </div>
-                {/each}
-              </div>
-            </details>
+                </div>
+              {/each}
+            </Disclosure>
           {/each}
         {:else}
           <section class="frame">
@@ -149,9 +147,8 @@
             <div class="grp" data-status-group={status}>
               <div class="glabel">{groupLabel[status]} <span class="n">· {(groups[status] || []).length}</span></div>
               {#each groups[status] || [] as item}
-                <details class="item" data-item-id={item.id}>
-                  <summary>
-                    <span class="chev">›</span>
+                <Disclosure variant="item" chevron="leading" data-item-id={item.id}>
+                  {#snippet summary()}
                     <span class="it entity-row-title">{item.title}</span>
                     <span class="chips">
                       <Chip variant="priority" value={item.priority} />
@@ -163,7 +160,7 @@
                       {/each}
                     </span>
                     <span class="count">{countText(item.tickets)}</span>
-                  </summary>
+                  {/snippet}
                   <div class="tkts">
                     {#if (item.tickets || []).length}
                       {#each item.tickets || [] as ticket}
@@ -177,37 +174,38 @@
                       <div class="none">No tickets on this item yet.</div>
                     {/if}
                   </div>
-                </details>
+                </Disclosure>
               {/each}
             </div>
           {/each}
           {#each settledOrder as status}
             {#if (groups[status] || []).length}
-              <details class="sett">
-                <summary>
+              <Disclosure variant="settled">
+                {#snippet summary()}
                   <span class={`glabel2${status === "done" ? " glabel2--done" : ""}`}>{groupLabel[status]} · {(groups[status] || []).length}</span>
-                  <span class="gchev">›</span>
-                </summary>
+                {/snippet}
                 <div class="grp settled" data-status-group={status}>
                   {#each groups[status] || [] as item}
-                    <details class="item" data-item-id={item.id}>
-                      <summary>
-                        <span class="chev">›</span>
+                    <Disclosure variant="item" chevron="leading" data-item-id={item.id}>
+                      {#snippet summary()}
                         <span class="it entity-row-title">{item.title}</span>
                         <span class="chips"><Chip variant="priority" value={item.priority} /><Chip variant="project" value={item.project} /></span>
                         <span class="count">{countText(item.tickets)}</span>
-                      </summary>
-                    </details>
+                      {/snippet}
+                    </Disclosure>
                   {/each}
                 </div>
-              </details>
+              </Disclosure>
             {/if}
           {/each}
           {#if current.data.loose_tickets.length}
-            <details class="sett">
-              <summary><span class="glabel2">Loose tickets · {current.data.loose_tickets.length}</span><span class="gchev">›</span></summary>
+            {@const looseTickets = current.data.loose_tickets}
+            <Disclosure variant="settled">
+              {#snippet summary()}
+                <span class="glabel2">Loose tickets · {looseTickets.length}</span>
+              {/snippet}
               <div class="tkts" data-loose>
-                {#each current.data.loose_tickets as ticket}
+                {#each looseTickets as ticket}
                   <a class="tk" href={`#/ticket/${ticket.id}`} data-ticket-id={ticket.id}>
                     <span class={`st st--${ticket.state}`}>{prettyState(ticket.state)}</span>
                     <span class="tt entity-row-title">{ticket.title}</span>
@@ -215,7 +213,7 @@
                   </a>
                 {/each}
               </div>
-            </details>
+            </Disclosure>
           {/if}
         {/if}
       </div>

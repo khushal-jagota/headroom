@@ -130,22 +130,23 @@ def test_workspace_ticket_route_restores_on_load_refresh_and_history(
     page.wait_for_selector(first_ticket, timeout=WAIT_MS)
     page.check("[data-hide-done-toggle]")
     page.select_option('[data-filter-group="ticket-status"] select', "empty")
-    no_project_toggle = '[data-project-key="__no_project__"] .board-workspace-index-toggle'
-    page.click(no_project_toggle)
-    assert page.get_attribute(no_project_toggle, "aria-expanded") == "false"
+    no_project_section = '[data-project-key="__no_project__"]'
+    no_project_summary = f'{no_project_section} > .disclosure-summary'
+    page.click(no_project_summary)
+    assert page.get_attribute(no_project_section, "open") is None
 
     page.click(f'[data-card][data-ticket-id="{second_id}"]')
     page.wait_for_url(f"{server.base}/#/workspace/{second_id}", timeout=WAIT_MS)
     page.wait_for_selector(second_ticket, timeout=WAIT_MS)
     assert page.is_checked("[data-hide-done-toggle]")
     assert page.input_value('[data-filter-group="ticket-status"] select') == "empty"
-    assert page.get_attribute(no_project_toggle, "aria-expanded") == "false"
+    assert page.get_attribute(no_project_section, "open") is None
 
     page.go_back()
     page.wait_for_url(f"{server.base}/#/workspace/{encoded_first_id}", timeout=WAIT_MS)
     page.wait_for_selector(first_ticket, timeout=WAIT_MS)
     assert page.input_value('[data-filter-group="ticket-status"] select') == "empty"
-    assert page.get_attribute(no_project_toggle, "aria-expanded") == "false"
+    assert page.get_attribute(no_project_section, "open") is None
 
     page.go_forward()
     page.wait_for_url(f"{server.base}/#/workspace/{second_id}", timeout=WAIT_MS)

@@ -18,7 +18,7 @@
   } from "../lib/types";
   import ChatPanel from "../components/ChatPanel.svelte";
   import Chip from "../components/Chip.svelte";
-  import ContentDisclosure from "../components/ContentDisclosure.svelte";
+  import Disclosure from "../components/Disclosure.svelte";
   import EnumPill from "../components/EnumPill.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
@@ -248,7 +248,7 @@
 
         <div class="ticket-col">
           <div class="ticket-user-note" data-user-note>
-            <ContentDisclosure title="User note" tone="support" section="user-note">
+            <Disclosure title="User note" variant="support" defaultOpen={true} data-content-section="user-note">
               <InlineEdit
                 value={detail.user_note || ""}
                 markdown
@@ -256,11 +256,11 @@
                 placeholder="Preserve user guidance, source context, and boundaries..."
                 onSave={(raw) => patch({ user_note: raw })}
               />
-            </ContentDisclosure>
+            </Disclosure>
           </div>
 
           <div class="ticket-recap" data-recap>
-            <ContentDisclosure title="Recap" tone="support" section="recap">
+            <Disclosure title="Recap" variant="support" defaultOpen={true} data-content-section="recap">
               {#if ["needs_approach", "needs_plan", "in_progress", "needs_review", "done"].includes(detail.state)}
                 <InlineEdit
                   value={detail.recap}
@@ -277,7 +277,7 @@
               {:else}
                 <MarkdownBlock text={detail.recap} quiet={emptyTicketRecapText} />
               {/if}
-            </ContentDisclosure>
+            </Disclosure>
           </div>
 
           <div class="fields">

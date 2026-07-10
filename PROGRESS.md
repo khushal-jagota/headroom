@@ -7,9 +7,11 @@ things stand right now, not a history log.
 
 This worktree branch carries only the frontend consolidation program — five serial tickets under
 `orchestration/frontend-consolidation/` (see PLAN.md there; decision D76). Baseline `./verify` on
-the branch: PASS (all gates, 56 e2e). Status: specs written, Codex spec review in flight; tickets
-t_fe01–t_fe05 pending, to be implemented by sub-agents one at a time with a Codex diff review and
-a full serial `./verify` + branch commit after each. The architecture-deepening section below is
+the branch: PASS (all gates, 56 e2e). Status: t_fe01 (Disclosure + StageMark) landed green —
+Codex diff review's single finding (glyph-swap vs rotation for the open chevron) refuted as
+within PLAN.md's normalization tolerance; one orchestrator fix (double chevron on board project
+headings, chevron="none"). t_fe02–t_fe05 pending, same pipeline: implementer sub-agent, Codex
+diff review, full serial `./verify`, branch commit per green wave. The architecture-deepening section below is
 the main tree's cycle and is not part of this branch's work.
 
 ## Current work cycle (2026-07-10): Approved architecture deepening 1–3

@@ -1418,7 +1418,13 @@ select {
   outline: var(--border-hairline) dashed transparent;
 }
 
-.board-workspace-index-heading {
+.disclosure--project > .disclosure-summary {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  text-align: left;
   margin: 0 0 var(--space-2);
   padding: 0 var(--board-workspace-rail-pad-x);
   font-family: var(--font-mono);
@@ -1428,18 +1434,6 @@ select {
   line-height: 1.35;
   text-transform: uppercase;
   color: var(--text-faint);
-}
-
-.board-workspace-index-toggle {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
 }
 
 .board-workspace-index-heading-main {
@@ -1452,12 +1446,11 @@ select {
 .board-workspace-index-chevron {
   flex: 0 0 auto;
   color: var(--text-faintest);
-  transform: rotate(90deg);
   transition: transform var(--motion-fast) var(--motion-ease);
 }
 
-.board-workspace-index-chevron--collapsed {
-  transform: none;
+.disclosure--project[open] > .disclosure-summary .board-workspace-index-chevron {
+  transform: rotate(90deg);
 }
 
 .board-workspace-index-count {
@@ -1694,63 +1687,88 @@ select {
   font-style: italic;
 }
 
-.content-disclosure {
+/* THE DISCLOSURE — one native <details> family for every expand/collapse surface.
+ * Base = the content/support look (ticket notes, recaps, proposals). The summary reset,
+ * the ::-webkit-details-marker reset, the chevron glyph + [open] swap live here once;
+ * per-screen variants (--stage, --phase, --item, --settled, --idea, --make, --project)
+ * override spacing/typography below. */
+.disclosure {
   margin: 0;
 }
 
-.content-disclosure + .content-disclosure {
-  margin-top: var(--space-3);
-}
-
-.content-disclosure-summary {
+.disclosure-summary {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  color: var(--text-muted);
   cursor: pointer;
-  font-size: var(--type-md);
-  font-weight: 600;
-  line-height: 1.3;
   list-style: none;
   user-select: none;
-  transition: color var(--motion-fast) var(--motion-ease);
 }
 
-.content-disclosure-summary::-webkit-details-marker {
+.disclosure-summary::-webkit-details-marker {
   display: none;
 }
 
-.content-disclosure-summary:hover,
-.content-disclosure[open] > .content-disclosure-summary {
-  color: var(--text-default);
-}
-
-.content-disclosure-title {
-  min-width: 0;
-}
-
-.content-disclosure-chev::before {
+/* Chevron via CSS content — collapsed points right, open points down (no angle
+ * literals; the disclosure glyph swaps on [open]). */
+.disclosure-chev::before {
   content: "\203A";
   color: var(--text-faintest);
   font-size: var(--type-md);
 }
 
-.content-disclosure[open] > .content-disclosure-summary .content-disclosure-chev::before {
+.disclosure[open] > .disclosure-summary .disclosure-chev::before {
   content: "\2304";
 }
 
-.content-disclosure-body {
+/* --- content / support variants ------------------------------------------ */
+.disclosure--content,
+.disclosure--support {
+  margin: 0;
+}
+
+.disclosure--content + .disclosure--content,
+.disclosure--content + .disclosure--support,
+.disclosure--support + .disclosure--content,
+.disclosure--support + .disclosure--support {
+  margin-top: var(--space-3);
+}
+
+.disclosure--content > .disclosure-summary,
+.disclosure--support > .disclosure-summary {
+  color: var(--text-muted);
+  font-size: var(--type-md);
+  font-weight: 600;
+  line-height: 1.3;
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+.disclosure--content > .disclosure-summary:hover,
+.disclosure--content[open] > .disclosure-summary,
+.disclosure--support > .disclosure-summary:hover,
+.disclosure--support[open] > .disclosure-summary {
+  color: var(--text-default);
+}
+
+.disclosure--content .disclosure-title,
+.disclosure--support .disclosure-title {
+  min-width: 0;
+}
+
+.disclosure--content > .disclosure-body,
+.disclosure--support > .disclosure-body {
   color: var(--text-default);
   font-size: var(--type-md);
   line-height: 1.58;
   margin-top: var(--space-2);
 }
 
-.content-disclosure--support .content-disclosure-body {
+.disclosure--support > .disclosure-body {
   color: var(--text-muted);
 }
 
-.content-disclosure-body .markdown p {
+.disclosure--content > .disclosure-body .markdown p,
+.disclosure--support > .disclosure-body .markdown p {
   margin-bottom: var(--space-2);
 }
 
@@ -1865,31 +1883,23 @@ select {
   line-height: 1.58;
 }
 
-/* Collapsible field sections — hairline seam ONLY between rows; body not inset. */
-details.fsec + details.fsec {
+/* Collapsible field sections (--stage) — hairline seam ONLY between rows; body not inset. */
+.disclosure--stage + .disclosure--stage {
   border-top: var(--border-hairline) solid var(--border-color);
 }
 
-details.fsec > summary {
-  list-style: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
+.disclosure--stage > .disclosure-summary {
   gap: var(--space-3);
   padding: var(--space-3) 0;
   color: var(--text-muted);
   transition: color var(--motion-fast) var(--motion-ease);
 }
 
-details.fsec > summary::-webkit-details-marker {
-  display: none;
-}
-
-details.fsec > summary:hover {
+.disclosure--stage > .disclosure-summary:hover {
   color: var(--text-strong);
 }
 
-.fsec-mark {
+.stage-mark {
   flex: none;
   width: 0.7rem;
   height: 0.7rem;
@@ -1898,50 +1908,50 @@ details.fsec > summary:hover {
   box-sizing: border-box;
 }
 
-.fsec-mark--completed {
+.stage-mark--completed {
   background: var(--accent-done);
   border-color: var(--accent-done);
 }
 
-.fsec-mark--current-running {
+.stage-mark--current-running {
   border-color: var(--accent-surface);
   border-right-color: var(--accent-bright);
   border-top-color: var(--accent-bright);
-  animation: fsec-stage-spin 900ms linear infinite;
+  animation: stage-mark-spin 900ms linear infinite;
 }
 
-.fsec-mark--current-waiting {
+.stage-mark--current-waiting {
   border-color: var(--accent-bright);
 }
 
-.fsec-mark--current-awaiting-approval {
+.stage-mark--current-awaiting-approval {
   background: var(--accent-bright);
   border-color: var(--accent-bright);
 }
 
-.fsec-mark--errored {
+.stage-mark--errored {
   background: var(--accent-error);
   border-color: var(--accent-error);
 }
 
-.fsec-mark--upcoming {
+.stage-mark--upcoming {
   border-color: var(--text-faintest);
   opacity: 0.56;
 }
 
-@keyframes fsec-stage-spin {
+@keyframes stage-mark-spin {
   to {
     transform: rotate(360deg);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fsec-mark--current-running {
+  .stage-mark--current-running {
     animation: none;
   }
 }
 
-.fsec-name {
+.disclosure--stage .disclosure-stage-name {
   flex: 1;
   font-size: var(--type-xs);
   font-weight: 600;
@@ -1949,30 +1959,23 @@ details.fsec > summary:hover {
   color: var(--text-faint);
 }
 
-details.fsec[open] > summary .fsec-name {
+.disclosure--stage[open] > .disclosure-summary .disclosure-stage-name {
   color: var(--text-default);
 }
 
-/* Chevron via CSS content — collapsed points right, open points down (no angle
- * literals; the disclosure glyph swaps on [open]). */
-.fsec-chev::before {
-  content: "\203A";
-  color: var(--text-faintest);
+.disclosure--stage .disclosure-chev::before {
   font-size: var(--type-sm);
 }
 
-details.fsec[open] > summary .fsec-chev::before {
-  content: "\2304";
-}
-
-.fsec-body {
+.disclosure--stage > .disclosure-body {
   padding: 0 0 var(--space-4);
   font-size: var(--type-md);
   line-height: 1.6;
   color: var(--text-default);
 }
 
-.fsec-body > .content-disclosure {
+.disclosure--stage > .disclosure-body > .disclosure--content,
+.disclosure--stage > .disclosure-body > .disclosure--support {
   margin-top: var(--space-3);
 }
 
@@ -2279,26 +2282,18 @@ details.fsec[open] > summary .fsec-chev::before {
 }
 
 /* Sprint Overview (rev6): Kickoff / Mid-sprint Review / Sprint Review. Three headed
-   <details.phase> sections; the phase decides which is open (JS). Each field is a
+   .disclosure--phase sections; the phase decides which is open (JS). Each field is a
    label + the shared .ed inline-edit surface. No freeze, no amber, no ✓/●/○ marks. */
-[data-screen="sprint"] details.phase {
+[data-screen="sprint"] .disclosure--phase {
   border-top: var(--border-hairline) solid var(--border-color);
 }
 
-[data-screen="sprint"] details.phase > summary {
-  list-style: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
+[data-screen="sprint"] .disclosure--phase > .disclosure-summary {
   gap: var(--space-3);
   padding: var(--space-5) 0;
 }
 
-[data-screen="sprint"] details.phase > summary::-webkit-details-marker {
-  display: none;
-}
-
-[data-screen="sprint"] .phase .pnm {
+[data-screen="sprint"] .disclosure--phase .pnm {
   font-size: var(--type-md);
   font-weight: 600;
   letter-spacing: 0.01em;
@@ -2306,11 +2301,11 @@ details.fsec[open] > summary .fsec-chev::before {
   transition: color var(--motion-fast) var(--motion-ease);
 }
 
-[data-screen="sprint"] details.phase > summary:hover .pnm {
+[data-screen="sprint"] .disclosure--phase > .disclosure-summary:hover .pnm {
   color: var(--text-strong);
 }
 
-[data-screen="sprint"] .phase .pmeta {
+[data-screen="sprint"] .disclosure--phase .pmeta {
   flex: 1;
   font-size: var(--type-xs);
   font-weight: 600;
@@ -2318,21 +2313,15 @@ details.fsec[open] > summary .fsec-chev::before {
   color: var(--text-faintest);
 }
 
-[data-screen="sprint"] .phase .chev {
+[data-screen="sprint"] .disclosure--phase .disclosure-chev::before {
   font-size: var(--type-sm);
-  color: var(--text-faintest);
-  transition: transform var(--motion-fast) var(--motion-ease);
 }
 
-[data-screen="sprint"] details.phase[open] > summary .chev {
-  transform: rotate(90deg);
-}
-
-[data-screen="sprint"] .phase .body {
+[data-screen="sprint"] .disclosure--phase > .disclosure-body {
   padding: 0 0 var(--space-6);
 }
 
-[data-screen="sprint"] .phase .refline {
+[data-screen="sprint"] .disclosure--phase .refline {
   font-size: var(--type-sm);
   line-height: 1.5;
   color: var(--text-faintest);
@@ -2382,41 +2371,31 @@ details.fsec[open] > summary .fsec-chev::before {
 
 /* item = the primary row, collapsed by default; expand reveals its tickets. Lines
    only between rows; the first row in a group has no top border. */
-[data-screen="sprint"] details.item {
+[data-screen="sprint"] .disclosure--item {
   border-top: var(--border-hairline) solid var(--border-color);
 }
 
-[data-screen="sprint"] .grp .item:first-of-type {
+[data-screen="sprint"] .grp .disclosure--item:first-of-type {
   border-top: 0;
 }
 
-[data-screen="sprint"] details.item > summary {
-  list-style: none;
-  cursor: pointer;
-  display: flex;
+[data-screen="sprint"] .disclosure--item > .disclosure-summary {
   align-items: baseline;
   gap: var(--space-3);
   padding: var(--space-3) 0;
   transition: color var(--motion-fast) var(--motion-ease);
 }
 
-[data-screen="sprint"] details.item > summary::-webkit-details-marker {
-  display: none;
-}
-
-[data-screen="sprint"] .item .chev {
+[data-screen="sprint"] .disclosure--item .disclosure-chev {
   flex: none;
   align-self: center;
+}
+
+[data-screen="sprint"] .disclosure--item .disclosure-chev::before {
   font-size: var(--type-xs);
-  color: var(--text-faintest);
-  transition: transform var(--motion-fast) var(--motion-ease);
 }
 
-[data-screen="sprint"] details.item[open] > summary .chev {
-  transform: rotate(90deg);
-}
-
-[data-screen="sprint"] .item .it {
+[data-screen="sprint"] .disclosure--item .it {
   flex: 1;
   font-size: var(--type-md);
   font-weight: 500;
@@ -2424,19 +2403,19 @@ details.fsec[open] > summary .fsec-chev::before {
   transition: color var(--motion-fast) var(--motion-ease);
 }
 
-[data-screen="sprint"] details.item > summary:hover .it,
-[data-screen="sprint"] details.item[open] > summary .it {
+[data-screen="sprint"] .disclosure--item > .disclosure-summary:hover .it,
+[data-screen="sprint"] .disclosure--item[open] > .disclosure-summary .it {
   color: var(--text-strong);
 }
 
-[data-screen="sprint"] .item .chips {
+[data-screen="sprint"] .disclosure--item .chips {
   display: flex;
   gap: var(--space-1);
   flex-wrap: wrap;
   align-items: baseline;
 }
 
-[data-screen="sprint"] .item .count {
+[data-screen="sprint"] .disclosure--item .count {
   align-self: center;
   white-space: nowrap;
   font-size: var(--type-xs);
@@ -2450,7 +2429,7 @@ details.fsec[open] > summary .fsec-chev::before {
 }
 
 /* tickets — revealed inside an open item: state · title · priority, navigate-only */
-[data-screen="sprint"] .item .tkts {
+[data-screen="sprint"] .disclosure--item .tkts {
   padding: var(--space-1) 0 var(--space-4);
 }
 
@@ -2512,26 +2491,18 @@ details.fsec[open] > summary .fsec-chev::before {
 
 /* settled group = a collapsed group-level disclosure (done / deferred / loose);
    its summary shares the whisper-label look + a chevron. */
-[data-screen="sprint"] details.sett {
+[data-screen="sprint"] .disclosure--settled {
   margin-top: var(--space-5);
 }
 
-[data-screen="sprint"] details.sett > summary {
-  list-style: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
+[data-screen="sprint"] .disclosure--settled > .disclosure-summary {
   gap: var(--space-2);
   padding: var(--space-1) 0;
   color: var(--text-faintest);
   transition: color var(--motion-fast) var(--motion-ease);
 }
 
-[data-screen="sprint"] details.sett > summary::-webkit-details-marker {
-  display: none;
-}
-
-[data-screen="sprint"] details.sett > summary:hover {
+[data-screen="sprint"] .disclosure--settled > .disclosure-summary:hover {
   color: var(--text-muted);
 }
 
@@ -2547,20 +2518,15 @@ details.fsec[open] > summary .fsec-chev::before {
   color: var(--accent-done);
 }
 
-[data-screen="sprint"] .gchev {
+[data-screen="sprint"] .disclosure--settled > .disclosure-summary .disclosure-chev::before {
   font-size: var(--type-xs);
-  transition: transform var(--motion-fast) var(--motion-ease);
 }
 
-[data-screen="sprint"] details.sett[open] > summary .gchev {
-  transform: rotate(90deg);
-}
-
-[data-screen="sprint"] .grp.settled .item .it {
+[data-screen="sprint"] .grp.settled .disclosure--item .it {
   color: var(--text-muted);
 }
 
-[data-screen="sprint"] details.sett .tkts {
+[data-screen="sprint"] .disclosure--settled .tkts {
   padding-top: var(--space-2);
 }
 
@@ -2623,15 +2589,11 @@ details.fsec[open] > summary .fsec-chev::before {
 }
 
 /* compose — dormant at rest; a quiet affordance that opens the labeled form */
-[data-screen="backlog"] details.make {
+[data-screen="backlog"] .disclosure--make {
   border-bottom: var(--border-hairline) solid var(--border-color);
 }
 
-[data-screen="backlog"] details.make > summary {
-  list-style: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
+[data-screen="backlog"] .disclosure--make > .disclosure-summary {
   gap: var(--space-2);
   padding: var(--space-4) 0;
   font-size: var(--type-sm);
@@ -2639,15 +2601,11 @@ details.fsec[open] > summary .fsec-chev::before {
   transition: color var(--motion-fast) var(--motion-ease);
 }
 
-[data-screen="backlog"] details.make > summary::-webkit-details-marker {
-  display: none;
-}
-
-[data-screen="backlog"] details.make > summary:hover {
+[data-screen="backlog"] .disclosure--make > .disclosure-summary:hover {
   color: var(--text-default);
 }
 
-[data-screen="backlog"] details.make .plus {
+[data-screen="backlog"] .disclosure--make .plus {
   width: var(--space-3);
   text-align: center;
   color: var(--text-faintest);
@@ -2655,11 +2613,11 @@ details.fsec[open] > summary .fsec-chev::before {
     color var(--motion-fast) var(--motion-ease);
 }
 
-[data-screen="backlog"] details.make[open] > summary {
+[data-screen="backlog"] .disclosure--make[open] > .disclosure-summary {
   color: var(--text-muted);
 }
 
-[data-screen="backlog"] details.make[open] > summary .plus {
+[data-screen="backlog"] .disclosure--make[open] > .disclosure-summary .plus {
   transform: rotate(45deg);       /* + becomes × when open */
 }
 
@@ -2853,17 +2811,17 @@ details.fsec[open] > summary .fsec-chev::before {
 /* idea = a disclosure (title + project + date; expand reveals the body). Title-only
    ideas are FLAT rows with an empty chevron. Rows are divided by seams only; the row
    right after the section label carries none. */
-[data-screen="ideas"] details.idea,
+[data-screen="ideas"] .disclosure--idea,
 [data-screen="ideas"] .flat {
   border-top: var(--border-hairline) solid var(--border-color);
 }
 
-[data-screen="ideas"] .list .glabel + details.idea,
+[data-screen="ideas"] .list .glabel + .disclosure--idea,
 [data-screen="ideas"] .list .glabel + .flat {
   border-top: 0;
 }
 
-[data-screen="ideas"] details.idea > summary,
+[data-screen="ideas"] .disclosure--idea > .disclosure-summary,
 [data-screen="ideas"] .flat {
   display: flex;
   align-items: baseline;
@@ -2871,27 +2829,16 @@ details.fsec[open] > summary .fsec-chev::before {
   padding: var(--space-3) 0;
 }
 
-[data-screen="ideas"] details.idea > summary {
-  list-style: none;
-  cursor: pointer;
-}
-
-[data-screen="ideas"] details.idea > summary::-webkit-details-marker {
-  display: none;
-}
-
-[data-screen="ideas"] .chev {
+[data-screen="ideas"] .flat .chev,
+[data-screen="ideas"] .disclosure--idea .disclosure-chev {
   flex: none;
   align-self: center;
   width: var(--space-3);
   text-align: center;
-  font-size: var(--type-xs);
-  color: var(--text-faintest);
-  transition: transform var(--motion-fast) var(--motion-ease);
 }
 
-[data-screen="ideas"] details.idea[open] > summary .chev {
-  transform: rotate(90deg);
+[data-screen="ideas"] .disclosure--idea .disclosure-chev::before {
+  font-size: var(--type-xs);
 }
 
 [data-screen="ideas"] .it {
@@ -2902,8 +2849,8 @@ details.fsec[open] > summary .fsec-chev::before {
   transition: color var(--motion-fast) var(--motion-ease);
 }
 
-[data-screen="ideas"] details.idea > summary:hover .it,
-[data-screen="ideas"] details.idea[open] > summary .it {
+[data-screen="ideas"] .disclosure--idea > .disclosure-summary:hover .it,
+[data-screen="ideas"] .disclosure--idea[open] > .disclosure-summary .it {
   color: var(--text-strong);
 }
 
@@ -2920,7 +2867,7 @@ details.fsec[open] > summary .fsec-chev::before {
   align-self: center;
 }
 
-[data-screen="ideas"] .idea .body {
+[data-screen="ideas"] .disclosure--idea > .disclosure-body {
   padding: 0 0 var(--space-4) var(--space-6);
   font-size: var(--type-md);
   line-height: 1.66;

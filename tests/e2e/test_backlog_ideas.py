@@ -26,11 +26,11 @@ def test_backlog_create_lands_in_priority_group(server, context_factory, open_pa
     # Empty backlog: the compose is the ready gate (rendered synchronously). settled=False
     # is safe — an unseeded DB has no prior events, so no flush fires before the create.
     page = open_page(
-        ctx, server, "#/backlog", '[data-screen="backlog"] details.make', settled=False
+        ctx, server, "#/backlog", '[data-screen="backlog"] details.disclosure--make', settled=False
     )
 
     # Open the dormant compose, fill it, choose Tribe / P1 via the chip toggles.
-    page.click('[data-screen="backlog"] details.make > summary')
+    page.click('[data-screen="backlog"] details.disclosure--make > summary')
     page.fill('[data-create="item"] [data-input="title"]', "Wire the audit log")
     page.click('[data-create="item"] [data-seg="project"] [data-value="project_tribe"]')
     page.click('[data-create="item"] [data-seg="priority"] [data-value="P1"]')
@@ -60,7 +60,7 @@ def test_ideas_capture_flat_and_disclosure(server, context_factory, open_page):
     flat = page.query_selector('[data-ideas] .flat[data-idea-id]')
     assert "Dark mode only, skip the light theme" in flat.text_content()
     # Title-only means no chevron to expand: no <details> disclosure exists yet.
-    assert page.query_selector('[data-ideas] details.idea') is None
+    assert page.query_selector('[data-ideas] details.disclosure--idea') is None
 
     # A bodied capture → a disclosure (newest-first, so it is the first row).
     page.fill('[data-create="idea"] [data-input="title"]', "One-question onboarding")
@@ -69,17 +69,17 @@ def test_ideas_capture_flat_and_disclosure(server, context_factory, open_page):
         "Ask one thing that matters, infer the rest.",
     )
     page.click('[data-create="idea"] [data-commit]')
-    page.wait_for_selector('[data-ideas] details.idea[data-idea-id]', timeout=WAIT_MS)
+    page.wait_for_selector('[data-ideas] details.disclosure--idea[data-idea-id]', timeout=WAIT_MS)
 
-    details = page.query_selector('[data-ideas] details.idea[data-idea-id]')
+    details = page.query_selector('[data-ideas] details.disclosure--idea[data-idea-id]')
     assert "One-question onboarding" in details.query_selector(".it").text_content()
     # The body is present in the DOM but the disclosure starts closed.
-    assert "Ask one thing that matters" in details.query_selector(".body").text_content()
+    assert "Ask one thing that matters" in details.query_selector(".disclosure-body").text_content()
     assert details.get_attribute("open") is None
 
     # Expanding the chevron opens the disclosure.
-    page.click('[data-ideas] details.idea > summary')
-    page.wait_for_selector('[data-ideas] details.idea[open]', timeout=WAIT_MS)
+    page.click('[data-ideas] details.disclosure--idea > summary')
+    page.wait_for_selector('[data-ideas] details.disclosure--idea[open]', timeout=WAIT_MS)
 
     # The title-only idea is still flat below it.
     assert page.query_selector('[data-ideas] .flat[data-idea-id]') is not None
