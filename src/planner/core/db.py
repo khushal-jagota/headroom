@@ -11,7 +11,7 @@ from typing import Final
 
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 13
+SCHEMA_VERSION: Final = 14
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -59,8 +59,8 @@ CREATE TABLE IF NOT EXISTS sprint_items (
 CREATE TABLE IF NOT EXISTS tickets (
   id                   TEXT PRIMARY KEY,             -- t_<slug>
   title                TEXT NOT NULL CHECK (length(title) <= 200),
-  state                TEXT NOT NULL DEFAULT 'needs_success'
-                       CHECK (state IN ('needs_success','needs_approach','needs_plan',
+  state                TEXT NOT NULL DEFAULT 'needs_kickoff'
+                       CHECK (state IN ('needs_kickoff','needs_success','needs_approach','needs_plan',
                                         'needs_implementation','needs_closeout','done','dropped')),
   priority             TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
   deadline             TEXT,
@@ -68,7 +68,8 @@ CREATE TABLE IF NOT EXISTS tickets (
   sprint_item_id       TEXT REFERENCES sprint_items(id),
   sprint_id            TEXT REFERENCES sprints(id),  -- writable only when sprint_item_id IS NULL
   recap                TEXT NOT NULL DEFAULT '',
-  user_note            TEXT NOT NULL DEFAULT '',      -- preserved intake context / user guidance
+  kickoff_note         TEXT NOT NULL DEFAULT '',      -- settled intake context / user guidance
+  kickoff_proposal     TEXT,                         -- pending ticket-level kickoff proposal
   ceiling              TEXT NOT NULL DEFAULT 'needs_success'
                        CHECK (ceiling IN ('needs_success','needs_approach','needs_plan',
                                           'needs_implementation','needs_closeout','done')),
@@ -216,10 +217,10 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _migrate_project_columns(conn)
     _migrate_ticket_lifecycle(conn)
     _migrate_ticket_implementer_column(conn)
+    _migrate_ticket_kickoff_columns(conn)
     _migrate_project_summary_column(conn)
     _migrate_derived_sprint_item_status(conn)
     _migrate_tickets_status_column(conn)
-    _migrate_ticket_user_note_column(conn)
     _create_indexes(conn)
     conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
@@ -251,7 +252,8 @@ def _migrate_tickets_status_column(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_ticket_user_note_column(conn: sqlite3.Connection) -> None:
-    if "user_note" in _table_columns(conn, "tickets"):
+    columns = _table_columns(conn, "tickets")
+    if "user_note" in columns or "kickoff_note" in columns:
         return
     conn.execute("ALTER TABLE tickets ADD COLUMN user_note TEXT NOT NULL DEFAULT ''")
 
@@ -263,6 +265,112 @@ def _migrate_ticket_implementer_column(conn: sqlite3.Connection) -> None:
         "ALTER TABLE tickets ADD COLUMN implementer TEXT "
         "CHECK (implementer IN ('khushal','panels_worker','hermes_codex','hermes_claude'))"
     )
+
+
+def _migrate_ticket_kickoff_columns(conn: sqlite3.Connection) -> None:
+    schema_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()
+    if (
+        schema_row is not None
+        and schema_row[0] is not None
+        and "kickoff_note" in schema_row[0]
+        and "kickoff_proposal" in schema_row[0]
+        and "needs_kickoff" in schema_row[0]
+    ):
+        return
+    columns = _table_columns(conn, "tickets")
+    rows = conn.execute("SELECT * FROM tickets").fetchall()
+    conn.execute("DROP TABLE IF EXISTS tickets_new")
+    conn.execute(
+        """
+        CREATE TABLE tickets_new (
+          id                   TEXT PRIMARY KEY,
+          title                TEXT NOT NULL CHECK (length(title) <= 200),
+          state                TEXT NOT NULL DEFAULT 'needs_kickoff'
+                               CHECK (state IN ('needs_kickoff','needs_success','needs_approach',
+                                                'needs_plan','needs_implementation',
+                                                'needs_closeout','done','dropped')),
+          priority             TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
+          deadline             TEXT,
+          project_id           TEXT REFERENCES projects(id),
+          sprint_item_id       TEXT REFERENCES sprint_items(id),
+          sprint_id            TEXT REFERENCES sprints(id),
+          recap                TEXT NOT NULL DEFAULT '',
+          kickoff_note         TEXT NOT NULL DEFAULT '',
+          kickoff_proposal     TEXT,
+          ceiling              TEXT NOT NULL DEFAULT 'needs_success'
+                               CHECK (ceiling IN ('needs_success','needs_approach','needs_plan',
+                                                  'needs_implementation','needs_closeout','done')),
+          at_cap               TEXT NOT NULL DEFAULT 'propose' CHECK (at_cap IN ('stop','propose')),
+          ticket_status        TEXT NOT NULL DEFAULT 'empty'
+                               CHECK (ticket_status IN ('empty','agent_running_step',
+                                                        'awaiting_approval','user_takeover','errored')),
+          implementer          TEXT CHECK (implementer IN ('khushal','panels_worker',
+                                                           'hermes_codex','hermes_claude')),
+          chat_session_key     TEXT,
+          alias                TEXT,
+          fields               TEXT NOT NULL DEFAULT '{"success":{"value":null,"proposal":null,"user_note":null},"approach":{"value":null,"proposal":null,"user_note":null},"plan":{"value":null,"proposal":null,"user_note":null},"implementation":{"value":null,"proposal":null,"user_note":null},"closeout":{"value":null,"proposal":null,"user_note":null}}',
+          created_at           INTEGER NOT NULL,
+          updated_at           INTEGER NOT NULL
+        )
+        """
+    )
+    for row in rows:
+        kickoff_note = row["kickoff_note"] if "kickoff_note" in columns else row["user_note"]
+        kickoff_proposal = row["kickoff_proposal"] if "kickoff_proposal" in columns else None
+        implementer = row["implementer"] if "implementer" in columns else None
+        conn.execute(
+            """
+            INSERT INTO tickets_new (
+              id, title, state, priority, deadline, project_id, sprint_item_id, sprint_id,
+              recap, kickoff_note, kickoff_proposal, ceiling, at_cap, ticket_status,
+              implementer, chat_session_key, alias, fields, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["id"], row["title"], row["state"], row["priority"], row["deadline"],
+                row["project_id"], row["sprint_item_id"], row["sprint_id"], row["recap"],
+                kickoff_note, kickoff_proposal, row["ceiling"], row["at_cap"],
+                row["ticket_status"], implementer, row["chat_session_key"], row["alias"],
+                row["fields"], row["created_at"], row["updated_at"],
+            ),
+        )
+    foreign_keys_enabled = bool(conn.execute("PRAGMA foreign_keys").fetchone()[0])
+    if foreign_keys_enabled and conn.in_transaction:
+        raise RuntimeError("ticket kickoff migration requires an autocommit connection")
+    if foreign_keys_enabled:
+        conn.execute("PRAGMA foreign_keys=OFF")
+    use_savepoint = conn.in_transaction
+    try:
+        if use_savepoint:
+            conn.execute("SAVEPOINT ticket_kickoff_swap")
+        else:
+            conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute("DROP TABLE tickets")
+            conn.execute("ALTER TABLE tickets_new RENAME TO tickets")
+            violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                raise RuntimeError(
+                    f"foreign key check failed after kickoff migration: {violations!r}"
+                )
+        except BaseException:
+            if use_savepoint:
+                conn.execute("ROLLBACK TO ticket_kickoff_swap")
+                conn.execute("RELEASE ticket_kickoff_swap")
+            else:
+                conn.rollback()
+            conn.execute("DROP TABLE IF EXISTS tickets_new")
+            raise
+        else:
+            if use_savepoint:
+                conn.execute("RELEASE ticket_kickoff_swap")
+            else:
+                conn.commit()
+    finally:
+        if foreign_keys_enabled:
+            conn.execute("PRAGMA foreign_keys=ON")
 
 
 _EMPTY_FIELD_SLOT: Final = {"value": None, "proposal": None, "user_note": None}

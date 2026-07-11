@@ -72,13 +72,14 @@ def _make_app(
 def _create_direct(db_path: Path, *, title: str = "Ready") -> str:
     conn = connect(str(db_path))
     try:
-        return tickets_data.create_ticket(
+        ticket = tickets_data.create_ticket(
             conn,
             title=title,
             actor="human",
             now=1,
             title_max_chars=TITLE_MAX_CHARS,
-        ).id
+        )
+        return tickets_data.accept_kickoff(conn, ticket.id, actor="human", now=1).id
     finally:
         conn.close()
 
@@ -150,7 +151,7 @@ def _external_body(state: str) -> dict[str, str]:
     }[state]
     return {
         "state": state,
-        "user_note": "external note",
+        "kickoff_note": "external note",
         **dict(list(values.items())[:count]),
     }
 
@@ -208,7 +209,7 @@ def test_chief_rejections_do_not_ring_or_change_canonical_records(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
             json={
                 "state": "needs_plan",
-                "user_note": "external note",
+                "kickoff_note": "external note",
                 "success": "success",
             },
             headers=_CHIEF,
@@ -352,7 +353,7 @@ def test_every_approved_ticket_control_action_rings_once_and_failures_ring_zero(
         review = tickets_data.create_ticket_from_external_work(
             conn,
             title="Approve",
-            user_note="external note",
+            kickoff_note="external note",
             target_state=TicketState.needs_closeout,
             provided_values={
                 FieldName.success: "success",
@@ -397,7 +398,7 @@ def test_every_approved_ticket_control_action_rings_once_and_failures_ring_zero(
         editable = tickets_data.create_ticket_from_external_work(
             conn,
             title="Edit value",
-            user_note="external note",
+            kickoff_note="external note",
             target_state=TicketState.needs_approach,
             provided_values={FieldName.success: "old"},
             actor="chief",
@@ -735,7 +736,7 @@ def test_successful_excluded_ticket_and_day_writes_do_not_ring(tmp_path: Path) -
     recap_ticket = tickets_data.create_ticket_from_external_work(
         conn,
         title="Recap-ready",
-        user_note="external note",
+        kickoff_note="external note",
         target_state=TicketState.needs_approach,
         provided_values={FieldName.success: "success"},
         actor="chief",
@@ -745,10 +746,10 @@ def test_successful_excluded_ticket_and_day_writes_do_not_ring(tmp_path: Path) -
     conn.close()
     with TestClient(app) as client:
         ordinary = client.patch(
-            f"/api/tickets/{ticket_id}", json={"user_note": "ordinary edit"}
+            f"/api/tickets/{ticket_id}", json={"kickoff_note": "ordinary edit"}
         )
         assert ordinary.status_code == 200, ordinary.text
-        assert ordinary.json()["user_note"] == "ordinary edit"
+        assert ordinary.json()["kickoff_note"] == "ordinary edit"
 
         note = client.put(
             f"/api/tickets/{ticket_id}/notes/success", json={"user_note": "field note"}

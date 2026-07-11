@@ -30,7 +30,18 @@ def _file(tmp_path: Path, name: str, text: str) -> str:
     return str(path)
 
 
-def test_real_server_chief_external_work_json_create_and_reconcile(server, tmp_path: Path) -> None:
+def test_chief_external_work_state_choices_exclude_unsettled_kickoff(server) -> None:
+    for command in (
+        "reconcile-ticket-from-external-work",
+        "create-ticket-from-external-work",
+    ):
+        result = _run(server, "chief", command, "--help", actor=None)
+        assert result.returncode == 0, result.stderr
+        assert "needs_success" in result.stdout
+        assert "needs_kickoff" not in result.stdout
+
+
+def test_chief_external_work_cli_create_and_reconcile(server, tmp_path: Path) -> None:
     note = _file(tmp_path, "note.md", "User report plus Chief reconciliation reasoning")
     recap = _file(tmp_path, "recap.md", "Imported work")
     success = _file(tmp_path, "success.md", "Success")
@@ -47,7 +58,7 @@ def test_real_server_chief_external_work_json_create_and_reconcile(server, tmp_p
         "Imported through CLI",
         "--state",
         "needs_plan",
-        "--user-note-file",
+        "--kickoff-note-file",
         note,
         "--recap-file",
         recap,
@@ -68,7 +79,7 @@ def test_real_server_chief_external_work_json_create_and_reconcile(server, tmp_p
         created_json["id"],
         "--state",
         "done",
-        "--user-note-file",
+        "--kickoff-note-file",
         note,
         "--success-file",
         success,
@@ -102,7 +113,7 @@ def test_real_server_chief_external_work_terse_output_and_actor_rejection(
         "Terse import",
         "--state",
         "needs_success",
-        "--user-note-file",
+        "--kickoff-note-file",
         note,
     )
     assert created.returncode == 0, created.stderr
@@ -114,6 +125,8 @@ def test_real_server_chief_external_work_terse_output_and_actor_rejection(
     ordinary = _run(server, "ticket", "create", "--title", "To reconcile", "--json", actor=None)
     assert ordinary.returncode == 0, ordinary.stderr
     ordinary_id = json.loads(ordinary.stdout)["id"]
+    kickoff = _run(server, "ticket", "approve", ordinary_id, "--json", actor=None)
+    assert kickoff.returncode == 0, kickoff.stderr
     reconciled = _run(
         server,
         "chief",
@@ -121,7 +134,7 @@ def test_real_server_chief_external_work_terse_output_and_actor_rejection(
         ordinary_id,
         "--state",
         "needs_approach",
-        "--user-note-file",
+        "--kickoff-note-file",
         note,
         "--success-file",
         success,
@@ -139,7 +152,7 @@ def test_real_server_chief_external_work_terse_output_and_actor_rejection(
         "Rejected import",
         "--state",
         "needs_success",
-        "--user-note-file",
+        "--kickoff-note-file",
         note,
         "--json",
         actor="worker",

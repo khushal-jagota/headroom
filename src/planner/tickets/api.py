@@ -48,6 +48,7 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AcceptBody,
+    AcceptKickoffBody,
     AtCap,
     CreateTicketBody,
     CreateTicketFromExternalWorkBody,
@@ -71,8 +72,14 @@ from planner.tickets.contracts import (
 router = APIRouter()
 
 # §8: workers drive priority/deadline/day/sprint via `ticket set`; title, project, and
-# user note are direct-only, so an attributed non-Chief PATCH is agent_forbidden.
-_TICKET_DIRECT_ONLY_FIELDS = ("title", "project", "project_id", "user_note", "implementer")
+# kickoff note are direct-only, so an attributed non-Chief PATCH is agent_forbidden.
+_TICKET_DIRECT_ONLY_FIELDS = (
+    "title",
+    "project",
+    "project_id",
+    "kickoff_note",
+    "implementer",
+)
 
 
 # --- shared plumbing (imported by the other api modules) -----------------------
@@ -162,7 +169,7 @@ def body_opt_str(body: JsonDict, key: str) -> str | None:
 def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
     return CreateTicketBody(
         title=body_str(raw, "title"),
-        user_note=body_str(raw, "user_note"),
+        kickoff_note=body_str(raw, "kickoff_note"),
         priority=body_opt_str(raw, "priority"),
         deadline=body_opt_str(raw, "deadline"),
         project=body_opt_str(raw, "project"),
@@ -175,7 +182,7 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
 _EXTERNAL_RECONCILE_KEYS = frozenset(
     {
         "state",
-        "user_note",
+        "kickoff_note",
         "recap",
         "success",
         "approach",
@@ -209,16 +216,16 @@ def _reject_unknown_external_keys(raw: JsonDict, allowed: frozenset[str]) -> Non
 
 def _marshal_external_reconcile(raw: JsonDict) -> ReconcileTicketFromExternalWorkBody:
     _reject_unknown_external_keys(raw, _EXTERNAL_RECONCILE_KEYS)
-    missing = [key for key in ("state", "user_note") if key not in raw]
+    missing = [key for key in ("state", "kickoff_note") if key not in raw]
     if missing:
         raise PlannerError(
             ErrorCode.validation,
-            "external-work reconciliation requires state and user_note",
+            "external-work reconciliation requires state and kickoff_note",
             {"missing": missing},
         )
     body = ReconcileTicketFromExternalWorkBody(
         state=body_str(raw, "state"),
-        user_note=body_str(raw, "user_note"),
+        kickoff_note=body_str(raw, "kickoff_note"),
     )
     for key in ("recap", "success", "approach", "plan", "implementation", "closeout"):
         if key in raw:
@@ -238,7 +245,7 @@ def _marshal_external_create(raw: JsonDict) -> CreateTicketFromExternalWorkBody:
     common = _marshal_external_reconcile(common_raw)
     body = CreateTicketFromExternalWorkBody(
         state=common["state"],
-        user_note=common["user_note"],
+        kickoff_note=common["kickoff_note"],
         title=body_str(raw, "title"),
     )
     for key in ("recap", "success", "approach", "plan", "implementation", "closeout"):
@@ -274,6 +281,13 @@ def _marshal_accept(raw: JsonDict) -> AcceptBody:
         edited_body=body_opt_str(raw, "edited_body"),
         next_ceiling=body_opt_str(raw, "next_ceiling"),
         at_cap=body_opt_str(raw, "at_cap"),
+    )
+
+
+def _marshal_accept_kickoff(raw: JsonDict) -> AcceptKickoffBody:
+    return AcceptKickoffBody(
+        edited_title=body_opt_str(raw, "edited_title"),
+        edited_kickoff_note=body_opt_str(raw, "edited_kickoff_note"),
     )
 
 
@@ -323,7 +337,7 @@ async def create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
         actor=ctx.actor,
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
-        user_note=body["user_note"],
+        kickoff_note=body["kickoff_note"],
         project_id=project.id if project is not None else None,
         priority=priority,
         deadline=body["deadline"],
@@ -357,7 +371,7 @@ async def create_ticket_from_external_work(
     ticket = tickets_actions.create_ticket_from_external_work(
         conn,
         title=body["title"],
-        user_note=body["user_note"],
+        kickoff_note=body["kickoff_note"],
         target_state=target_state,
         provided_values=_external_values(body),
         recap=body.get("recap"),
@@ -386,7 +400,7 @@ async def reconcile_ticket_from_external_work(
     ticket = tickets_actions.reconcile_ticket_from_external_work(
         conn,
         ticket_id,
-        user_note=body["user_note"],
+        kickoff_note=body["kickoff_note"],
         target_state=target_state,
         provided_values=_external_values(body),
         recap=body.get("recap"),
@@ -461,8 +475,8 @@ async def delete_ticket(
 async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
                        cfg: Cfg, clk: Clk) -> JsonDict:
     recognized = (
-        "title", "user_note", "priority", "deadline", "implementer", "project", "project_id",
-        "sprint_id",
+        "title", "kickoff_note", "priority", "deadline", "implementer",
+        "project", "project_id", "sprint_id",
     )
     for key in body:
         if key not in recognized:
@@ -474,8 +488,8 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
     edit = TicketEdit()
     if "title" in body:
         edit["title"] = body_str(body, "title")
-    if "user_note" in body:
-        edit["user_note"] = body_str(body, "user_note")
+    if "kickoff_note" in body:
+        edit["kickoff_note"] = body_str(body, "kickoff_note")
     if "priority" in body:
         edit["priority"] = parse_enum(Priority, body_str(body, "priority"), "priority")
     if "deadline" in body:
@@ -558,6 +572,24 @@ async def accept_field(ticket_id: str, field: str, raw: dict[str, Any], conn: Db
         edited_body=body["edited_body"],
         next_ceiling=next_ceiling,
         at_cap=at_cap,
+        readiness_doorbell=readiness_doorbell,
+    )
+    return tickets_views.ticket_json(ticket, now)
+
+
+@router.post("/tickets/{ticket_id}/accept-kickoff")
+async def accept_kickoff(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
+                         clk: Clk, readiness_doorbell: Doorbell) -> JsonDict:
+    body = _marshal_accept_kickoff(raw)
+    require_direct_write(ctx)
+    now = clk.now_unix()
+    ticket = tickets_actions.accept_kickoff(
+        conn,
+        ticket_id,
+        actor=ctx.actor,
+        now=now,
+        edited_title=body["edited_title"],
+        edited_kickoff_note=body["edited_kickoff_note"],
         readiness_doorbell=readiness_doorbell,
     )
     return tickets_views.ticket_json(ticket, now)

@@ -3,6 +3,46 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-11): t_5m7fmdk3 Kickoff implementation complete
+
+Current build stage:
+
+- Implementation is complete in the dedicated worktree on branch
+  `ticket/t_5m7fmdk3-kickoff`. Ordinary Tickets now begin with one editable,
+  user-approved ticket-level Kickoff proposal before the unchanged five worker stages.
+- No merge, deployment, or worktree cleanup has occurred; those remain Closeout work.
+
+What just passed:
+
+- Canonical `./verify`: Ruff; Mypy across 106 source files; 454 unit tests;
+  compile/static and frontend check/build/event-mapping gates; 63 browser/CLI e2e tests;
+  final `VERIFY: PASS`.
+- Browser coverage proves edited title-plus-note approval from both Ticket and Review,
+  transition to `needs_success`, settled note editing, hidden unresolved controls, and
+  exactly five worker-stage sections.
+- Migration coverage proves legacy `user_note` preservation, failure-atomic rollback,
+  foreign-key restoration, and linked-row survival. A disposable live-data rehearsal
+  preserved all 66 Tickets and all 36 non-empty intake notes with zero FK violations.
+- Independent Codex reviews found and drove fixes for canonical naming, direct-state
+  bypasses, migration atomicity, settled event history, the runner race seam, UI admission,
+  stale docs/skills, and Chief CLI state choices. Final review: `NO VIOLATIONS`.
+
+Current hypothesis:
+
+- Confirmed: Kickoff is a ticket-level parked proposal, not a worker field. Generic parked
+  proposal readiness prevents dispatch; approval atomically settles title plus canonical
+  `kickoff_note`, enters `needs_success`, commits, and rings readiness. Existing/imported
+  Tickets remain settled and the five worker fields are unchanged.
+
+Next step:
+
+- Commit the verified implementation, then propose the Ticket's Implementation field for
+  human approval. Do not merge or remove the worktree before Closeout.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-10): expandable live agent activity closeout
 
 Current build stage:

@@ -77,13 +77,18 @@ def test_ticket_approval_copy_events_and_worker_note_shape(server, cli, api) -> 
     tid = cli(
         server,
         "ticket", "create", "--title", "CLI approve ticket",
-        "--user-note", "intake context from user",
+        "--kickoff-note", "intake context from user",
     )["id"]
     created = api.get(server, f"/api/tickets/{tid}")
-    assert created["user_note"] == "intake context from user"
+    assert created["state"] == "needs_kickoff"
+    assert created["kickoff_proposal"]["kickoff_note"] == "intake context from user"
 
-    cli(server, "ticket", "set", tid, "user-note", "--value", "updated intake")
-    assert api.get(server, f"/api/tickets/{tid}")["user_note"] == "updated intake"
+    accepted_kickoff = cli(
+        server, "ticket", "approve", tid, "--kickoff-note-file", "-",
+        stdin="updated intake",
+    )
+    assert accepted_kickoff["state"] == "needs_success"
+    assert accepted_kickoff["kickoff_note"] == "updated intake"
 
     cli(
         server,

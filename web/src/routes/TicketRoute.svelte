@@ -23,6 +23,7 @@
   import EnumPill from "../components/EnumPill.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
+  import KickoffSection from "../components/KickoffSection.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import Pill from "../components/Pill.svelte";
   import ResourceState from "../components/ResourceState.svelte";
@@ -95,6 +96,14 @@
   function acceptField(field: string, body: Record<string, unknown>): Promise<unknown> {
     return mutateJson(
       `/api/tickets/${id}/accept/${field}`,
+      { method: "POST", body },
+      ticketInvalidations
+    );
+  }
+
+  function acceptKickoff(body: Record<string, unknown>): Promise<unknown> {
+    return mutateJson(
+      `/api/tickets/${id}/accept-kickoff`,
       { method: "POST", body },
       ticketInvalidations
     );
@@ -185,11 +194,15 @@
       <main class="ticket-doc">
         <header class="ticket-head">
           <div class="ticket-title">
-            <InlineEdit
-              value={detail.title}
-              placeholder="Untitled"
-              onSave={(raw) => patch({ title: raw })}
-            />
+            {#if detail.state === "needs_kickoff"}
+              <span>{detail.title}</span>
+            {:else}
+              <InlineEdit
+                value={detail.title}
+                placeholder="Untitled"
+                onSave={(raw) => patch({ title: raw })}
+              />
+            {/if}
           </div>
           <div class="ticket-facts">
             <span
@@ -249,14 +262,16 @@
               <span data-marker={marker}><Chip variant={marker} value={marker} /></span>
             {/each}
             <span class="ticket-facts-gap"></span>
-            <button class="ticket-act" data-ticket-takeover-toggle="" onclick={() => void takeover(detail)}>
-              {detail.ticket_status === "user_takeover" ? "Release" : "Take over"}
-            </button>
+            {#if detail.state !== "needs_kickoff"}
+              <button class="ticket-act" data-ticket-takeover-toggle="" onclick={() => void takeover(detail)}>
+                {detail.ticket_status === "user_takeover" ? "Release" : "Take over"}
+              </button>
+            {/if}
             <button class="ticket-act" data-copy="" onclick={() => void copyTicket()}>
               {copied ? "Copied" : "Copy"}
             </button>
           </div>
-          {#if detail.state !== "done"}
+          {#if detail.state !== "done" && detail.state !== "needs_kickoff"}
             <div class="ticket-leash">
               approved until
               <span class="ticket-leash-sel" data-scope-ceiling>
@@ -282,7 +297,7 @@
         <div class="ticket-col">
           <div class="ticket-recap" data-recap>
             <Disclosure title="Recap" variant="support" defaultOpen={true} data-content-section="recap">
-              {#if STATE_ORDER.indexOf(detail.state) > 0}
+              {#if STATE_ORDER.indexOf(detail.state) > STATE_ORDER.indexOf("needs_success")}
                 <InlineEdit
                   value={detail.recap}
                   markdown
@@ -302,25 +317,13 @@
           </div>
 
           <div class="fields">
-            <div class="ticket-user-note" data-user-note>
-              <Disclosure
-                variant="stage"
-                defaultOpen={false}
-                data-content-section="user-note"
-              >
-                {#snippet summary()}
-                  <span class="stage-mark stage-mark--blank"></span>
-                  <span class="disclosure-stage-name">User note</span>
-                {/snippet}
-                <InlineEdit
-                  value={detail.user_note || ""}
-                  markdown
-                  multiline
-                  placeholder="Preserve user guidance, source context, and boundaries..."
-                  onSave={(raw) => patch({ user_note: raw })}
-                />
-              </Disclosure>
-            </div>
+            <KickoffSection
+              title={detail.title}
+              kickoffNote={detail.kickoff_note || ""}
+              proposal={detail.kickoff_proposal || null}
+              onAccept={acceptKickoff}
+              onSaveNote={(raw) => patch({ kickoff_note: raw })}
+            />
             {#each FIELD_NAMES as name}
               {@const slot = fieldSlot(detail, name)}
               {@const stageState = fieldStageVisualState(detail, name)}

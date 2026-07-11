@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 import threading
 import time
@@ -46,6 +47,15 @@ LIVE_SID = "live-sid"
 STORED_KEY = "stored-key-1"
 ROLE = "planning-worker"
 BOUNDARY_HOUR = 5
+
+
+def _delete_kickoff_setup_events(conn: sqlite3.Connection, ticket_id: str) -> None:
+    conn.execute(
+        "DELETE FROM events WHERE entity_id = ? AND kind IN ("
+        "'kickoff_proposal_filed', 'kickoff_accepted', 'state_changed', "
+        "'ticket_status_changed')",
+        (ticket_id,),
+    )
 
 
 class _RecordingDoorbell:
@@ -118,6 +128,8 @@ def _new_ticket(
             title_max_chars=200,
             implementer=implementer,
         )
+        ticket = tickets_data.accept_kickoff(conn, ticket.id, actor="human", now=0)
+        _delete_kickoff_setup_events(conn, ticket.id)
         if ceiling is not None:
             tickets_data.change_scope(
                 conn, ticket.id, ceiling=ceiling, at_cap=AtCap.propose, actor="human", now=0
@@ -248,6 +260,31 @@ def test_kickoff_parked_proposal_awaits_approval(tmp_path: Path) -> None:
     assert all("worker" not in e for e in evs)
 
 
+def test_pending_kickoff_is_rechecked_before_runner_claim(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    conn = connect(db)
+    try:
+        ticket = tickets_data.create_ticket(
+            conn, title="Pending kickoff", actor="human", now=0, title_max_chars=200
+        )
+        today_id = dates.resolve_day_id("today", RealClock().now(), BOUNDARY_HOUR)
+        days_data.add_day_ticket(conn, today_id, ticket.id, 0)
+    finally:
+        conn.close()
+
+    fake = _ProposingFake(_create_script(_complete_ev()), on_submit=lambda: None)
+    runner = _runner(db, fake)
+    runner.run_ready_step(ticket.id)
+    assert runner.wait_idle(10.0)
+
+    unchanged = _read(db, ticket.id)
+    assert unchanged.state is TicketState.needs_kickoff
+    assert unchanged.ticket_status is TicketStatus.awaiting_approval
+    assert fake.sent_methods() == []
+    statuses = [event["ticket_status"] for event in _status_events(db, ticket.id)]
+    assert "agent_running_step" not in statuses
+
+
 def test_auto_accepted_proposal_completion_clears_to_empty(tmp_path: Path) -> None:
     db = _db(tmp_path)
     tid = _new_ticket(db, ceiling=TicketState.needs_plan)
@@ -299,9 +336,13 @@ def test_next_step_prompt_includes_implementer_wire_value_or_unassigned(tmp_path
             title_max_chars=200,
             implementer=Implementer.hermes_claude,
         )
+        assigned = tickets_data.accept_kickoff(conn, assigned.id, actor="human", now=0)
+        _delete_kickoff_setup_events(conn, assigned.id)
         unassigned = tickets_data.create_ticket(
             conn, title="T", actor="human", now=0, title_max_chars=200
         )
+        unassigned = tickets_data.accept_kickoff(conn, unassigned.id, actor="human", now=0)
+        _delete_kickoff_setup_events(conn, unassigned.id)
     finally:
         conn.close()
 
@@ -1054,6 +1095,8 @@ def test_runner_resolves_today_inside_claim_transaction_across_boundary(
         ticket = tickets_data.create_ticket(
             conn, title="Boundary ticket", actor="human", now=0, title_max_chars=200
         )
+        ticket = tickets_data.accept_kickoff(conn, ticket.id, actor="human", now=0)
+        _delete_kickoff_setup_events(conn, ticket.id)
         days_data.add_day_ticket(conn, old_today_id, ticket.id, 0)
     finally:
         conn.close()

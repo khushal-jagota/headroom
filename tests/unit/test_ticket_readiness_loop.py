@@ -70,6 +70,7 @@ def _new_ticket(
         ticket = tickets_data.create_ticket(
             conn, title="T", actor="human", now=0, title_max_chars=200
         )
+        ticket = tickets_data.accept_kickoff(conn, ticket.id, actor="human", now=0)
         if ceiling is not None or at_cap is not AtCap.propose:
             tickets_data.change_scope(
                 conn,
@@ -88,6 +89,17 @@ def _read(db: str, tid: str) -> Ticket:
     conn = connect(db)
     try:
         return tickets_data.read_ticket(conn, tid)
+    finally:
+        conn.close()
+
+
+def _new_kickoff_ticket(db: str) -> str:
+    conn = connect(db)
+    try:
+        ticket = tickets_data.create_ticket(
+            conn, title="T", actor="human", now=0, title_max_chars=200
+        )
+        return ticket.id
     finally:
         conn.close()
 
@@ -290,6 +302,22 @@ def test_is_runnable_parked_proposal_is_false(tmp_path: Path) -> None:
     conn = connect(db)
     try:
         assert readiness.is_runnable(conn, tickets_data.read_ticket(conn, tid)) is False
+    finally:
+        conn.close()
+
+
+def test_is_runnable_kickoff_uses_generic_parked_proposal_predicate(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    tid = _new_kickoff_ticket(db)
+    conn = connect(db)
+    try:
+        ticket = tickets_data.read_ticket(conn, tid)
+        assert ticket.state is TicketState.needs_kickoff
+        assert ticket.kickoff_proposal is not None
+        assert readiness.is_runnable(conn, ticket) is False
+        assert tickets_data.read_ticket(conn, tid).ticket_status is TicketStatus.awaiting_approval
     finally:
         conn.close()
 

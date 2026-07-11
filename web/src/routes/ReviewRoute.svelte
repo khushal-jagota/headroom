@@ -6,6 +6,7 @@
   import type { AnyRecord, QueueEntry, QueuesResponse, TicketDetail } from "../lib/types";
   import Button from "../components/Button.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
+  import KickoffSection from "../components/KickoffSection.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
 
@@ -56,6 +57,9 @@
   });
 
   function isStale(entry: QueueEntry, detail: AnyRecord): boolean {
+    if (entry.kind === "kickoff") {
+      return detail.state !== "needs_kickoff" || !detail.kickoff_proposal;
+    }
     if (!detail.fields?.[entry.kind]?.proposal) return true;
     return gatingField(String(detail.state)) !== entry.kind;
   }
@@ -148,8 +152,11 @@
   }
 
   function accept(entry: QueueEntry, payload: Record<string, unknown>): Promise<unknown> {
+    const path = entry.kind === "kickoff"
+      ? `/api/tickets/${entry.entity_id}/accept-kickoff`
+      : `/api/tickets/${entry.entity_id}/accept/${entry.kind}`;
     return refreshQueuesAfter(mutateJson(
-      `/api/tickets/${entry.entity_id}/accept/${entry.kind}`,
+      path,
       { method: "POST", body: payload },
       ["queues", `ticket:${entry.entity_id}`, "board", "sprint:current"]
     ));
@@ -245,10 +252,18 @@
                   showRecap
                   onAccept={(payload) => accept(entry, payload)}
                 />
+              {:else if entry.kind === "kickoff"}
+                <KickoffSection
+                  variant="review"
+                  title={detail.title}
+                  kickoffNote={detail.kickoff_note || ""}
+                  proposal={detail.kickoff_proposal || null}
+                  onAccept={(payload) => accept(entry, payload)}
+                />
               {/if}
             </div>
 
-            {#if entry.entity_type === "ticket"}
+            {#if entry.entity_type === "ticket" && entry.kind !== "kickoff"}
               <div class="review-revise review-arrive review-arrive--4" data-review-revision>
                 <div class="review-revision-box">
                   <textarea

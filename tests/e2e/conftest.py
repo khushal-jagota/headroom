@@ -224,7 +224,24 @@ def cli() -> Callable[..., dict]:
         assert proc.returncode == 0, (
             f"plan {' '.join(args)} rc={proc.returncode}\nstderr: {proc.stderr}"
         )
-        return json.loads(proc.stdout)
+        data = json.loads(proc.stdout)
+        # Most pre-Kickoff browser scenarios need a worker-stage ticket. Settle the
+        # new intake gate in the fixture unless the test supplied Kickoff content;
+        # those explicit cases exercise the parked proposal itself.
+        if args[:2] == ("ticket", "create") and "--kickoff-note" not in args:
+            approve = subprocess.run(
+                [str(PLAN_BIN), "ticket", "approve", data["id"], "--json"],
+                capture_output=True,
+                text=True,
+                cwd=str(REPO_ROOT),
+                env=env,
+                timeout=30,
+            )
+            assert approve.returncode == 0, (
+                f"automatic kickoff approval rc={approve.returncode}\nstderr: {approve.stderr}"
+            )
+            return json.loads(approve.stdout)
+        return data
 
     return _cli
 

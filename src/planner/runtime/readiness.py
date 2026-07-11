@@ -11,7 +11,7 @@ import sqlite3
 
 from planner.core import links as core_links
 from planner.tickets.contracts import AtCap, Ticket
-from planner.tickets.logic import fields_codec, machine
+from planner.tickets.logic import machine
 
 
 def is_runnable(conn: sqlite3.Connection, ticket: Ticket) -> bool:
@@ -21,11 +21,11 @@ def is_runnable(conn: sqlite3.Connection, ticket: Ticket) -> bool:
     ``admission.check_agent_proposal``); and it is not blocked by an open ``blocks`` link."""
     if machine.is_terminal(ticket.state):
         return False
+    if machine.has_pending_parked_proposal(ticket):
+        return False  # parked awaiting a human decision
     gating = machine.gating_field(ticket.state)
     if gating is None:
         return False
-    if fields_codec.get_slot(ticket.fields, gating).proposal is not None:
-        return False  # parked awaiting a human decision
     if machine.at_or_beyond_ceiling(ticket.state, ticket.ceiling) and ticket.at_cap is AtCap.stop:
         return False  # the scope says stop here
     if core_links.is_blocked(conn, ticket.id):

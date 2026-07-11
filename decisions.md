@@ -2,6 +2,21 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D102 — Kickoff is a ticket-level parked proposal, not a worker field
+
+Ordinary Tickets begin in `needs_kickoff` with one ticket-level proposal containing the proposed title
+and canonical `kickoff_note`, and with control already `awaiting_approval`. The existing generic
+parked-proposal rule is what prevents dispatch; there is no Kickoff-specific readiness or runner
+exclusion. Approval is one canonical resolution that applies user edits, settles the proposal, enters
+`needs_success`, commits, and rings normal readiness.
+
+Kickoff does not expand the exactly-five worker field contract. Review/UI/events gain an explicit
+non-field Kickoff kind; direct title/note edits and takeover/release are unavailable until settlement.
+Existing Tickets migrate as already settled with their top-level `user_note` preserved under the
+`kickoff_note` name, while external-work intake may create settled Tickets directly. The repeated
+Implementation instruction is treated as authorization to use the recommended Hermes-with-Codex route
+on a dedicated ticket branch; merge and cleanup remain Closeout work.
+
 ## D98 — Live agent activity is turn-owned, display-safe, and transient
 
 Keep the existing `activity_label` as the collapsed summary and add one ordered child collection for

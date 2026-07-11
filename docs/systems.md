@@ -85,16 +85,18 @@ Code paths: `src/planner/sprints/`, `src/planner/tickets/`,
 
 Tickets are the correctness center. A ticket has two different kinds of state:
 
-- `state` is the work stage: `needs_success`, `needs_approach`, `needs_plan`,
-  `needs_implementation`, `needs_closeout`, `done`, or `dropped`.
+- `state` is the work stage: `needs_kickoff`, `needs_success`, `needs_approach`,
+  `needs_plan`, `needs_implementation`, `needs_closeout`, `done`, or `dropped`.
 - `ticket_status` is runtime control: `empty`, `agent_running_step`,
   `awaiting_approval`, `user_takeover`, or `errored`.
 
-A ticket has a `user_note` for intake context plus five fields: `success`,
-`approach`, `plan`, `implementation`, and `closeout`. Each field has a settled value, a pending proposal,
-and a field `user_note` for step-specific user guidance. Workers write proposals. The
-resolution engine is the only code that can settle a proposed value or advance the
-ticket's `state`.
+An ordinary Ticket starts with a parked Kickoff proposal containing its title and
+canonical `kickoff_note`. The user can edit and approve both together. Approval advances
+the Ticket to `needs_success`; until then no worker stage runs. Kickoff is ticket-level,
+not a sixth worker field. The five worker fields remain `success`, `approach`, `plan`,
+`implementation`, and `closeout`. Each field has a settled value, a pending proposal,
+and a field `user_note` for step-specific guidance. Workers write field proposals. The
+resolution engine is the only code that can settle a proposal or advance the Ticket.
 
 Scope decides how far a worker may go without another human approval. It is the pair
 `ceiling` plus `at_cap`. Below the ceiling, a proposal can auto-accept. At the cap,
@@ -108,7 +110,7 @@ Chief external-work intake is a second, explicit canonical path for reality alre
 established outside Panels. It creates or reconciles a coherent settled-field prefix,
 sets the ticket to the reported state, and stops there. It refuses pending proposals,
 active control, running turns, backward moves, and malformed field prefixes. The report
-and reconciliation reasoning live in the existing ticket note; ordinary ticket and
+and reconciliation reasoning live in the Ticket's `kickoff_note`; ordinary Ticket and
 sprint-item events remain the audit and invalidation signals.
 
 Request identity is operational provenance in this local, same-user app, not an

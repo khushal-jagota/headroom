@@ -272,6 +272,11 @@ def decide_state_jump(ticket: Ticket, new_state: TicketState, actor: str) -> Dec
         raise PlannerError(ErrorCode.validation, "use the drop action")
     if ticket.state is TicketState.dropped:
         raise PlannerError(ErrorCode.validation, "dropped is terminal")
+    if ticket.state is TicketState.needs_kickoff or new_state is TicketState.needs_kickoff:
+        raise PlannerError(
+            ErrorCode.validation,
+            "kickoff state changes only through kickoff approval",
+        )
     if new_state is ticket.state:
         raise PlannerError(ErrorCode.validation, "ticket already in that state")
     events = (_state_change(ticket.state, new_state, CAUSE_DIRECT_STATE_JUMP),)
