@@ -764,6 +764,7 @@ async def add_link(
     raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk,
     readiness_doorbell: Doorbell,
 ) -> JsonDict:
+    require_direct_write(ctx)
     body = LinkBody(
         from_id=body_str(raw, "from_id"),
         to_id=body_str(raw, "to_id"),
@@ -786,6 +787,7 @@ async def add_link(
 async def remove_link(conn: DbConn, ctx: Ctx, clk: Clk,
                       readiness_doorbell: Doorbell, from_id: str, to_id: str,
                       kind: str) -> JsonDict:
+    require_direct_write(ctx)
     kind_enum = parse_enum(LinkKind, kind, "kind")
     now = clk.now_unix()
     link_actions.remove_link(

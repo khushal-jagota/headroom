@@ -1005,6 +1005,36 @@ def sprint_item_remove_ticket(item_id: str, ticket_id: str, as_json: bool) -> No
     http.emit(data, as_json, f"{ticket_id} removed from {item_id}")
 
 
+@sprint_item.command("block")
+@click.argument("item_id")
+@click.option("--by", "blocker_id", required=True, help="Blocking ticket id.")
+@json_option
+def sprint_item_block(item_id: str, blocker_id: str, as_json: bool) -> None:
+    data = http.send(
+        "POST",
+        "/api/links",
+        as_json=as_json,
+        json_body={"from_id": blocker_id, "to_id": item_id, "kind": "blocks"},
+        request_actor="ordinary",
+    )
+    http.emit(data, as_json, f"{item_id} blocked by {blocker_id}")
+
+
+@sprint_item.command("unblock")
+@click.argument("item_id")
+@click.option("--by", "blocker_id", required=True, help="Blocking ticket id.")
+@json_option
+def sprint_item_unblock(item_id: str, blocker_id: str, as_json: bool) -> None:
+    data = http.send(
+        "DELETE",
+        "/api/links",
+        as_json=as_json,
+        params={"from_id": blocker_id, "to_id": item_id, "kind": "blocks"},
+        request_actor="ordinary",
+    )
+    http.emit(data, as_json, f"{item_id} unblocked from {blocker_id}")
+
+
 # --- chief --------------------------------------------------------------------
 
 

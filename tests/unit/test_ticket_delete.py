@@ -60,6 +60,12 @@ def test_delete_ticket_removes_full_footprint_and_keeps_one_minimal_audit(
         (now, now),
     )
     before = _create(tmp_db, cfg, fake_clock, "Before")
+    blocked_item = _create(
+        tmp_db,
+        cfg,
+        fake_clock,
+        "Blocked item source",
+    )
     target = _create(
         tmp_db,
         cfg,
@@ -73,7 +79,9 @@ def test_delete_ticket_removes_full_footprint_and_keeps_one_minimal_audit(
     for ticket in (before, target, after):
         days_data.add_day_ticket(tmp_db, day_id, ticket.id, now)
     core_links.add_link(tmp_db, target.id, after.id, LinkKind.blocks, now)
-    core_links.add_link(tmp_db, before.id, target.id, LinkKind.relates, now)
+    core_links.add_link(tmp_db, before.id, target.id, LinkKind.blocks, now)
+    core_links.add_link(tmp_db, blocked_item.id, "si_delete_parent", LinkKind.blocks, now)
+    core_links.add_link(tmp_db, target.id, "si_delete_parent", LinkKind.blocks, now)
 
     turn = chat_data.start_turn(
         tmp_db,
@@ -102,7 +110,7 @@ def test_delete_ticket_removes_full_footprint_and_keeps_one_minimal_audit(
     assert deleted.title == "Mistaken ticket"
     assert deleted.day_ids == (day_id,)
     assert deleted.sprint_item_ids == ("si_delete_parent",)
-    assert deleted.linked_entity_ids == tuple(sorted((before.id, after.id)))
+    assert deleted.linked_entity_ids == tuple(sorted((before.id, after.id, "si_delete_parent")))
 
     with pytest.raises(PlannerError) as exc:
         tickets_data.read_ticket(tmp_db, target.id)
@@ -151,7 +159,7 @@ def test_delete_ticket_removes_full_footprint_and_keeps_one_minimal_audit(
         "AND kind = 'item_children_changed' ORDER BY id DESC LIMIT 1"
     ).fetchone()
     assert json.loads(item_event["payload"]) == {"ticket_id": target.id, "reason": "deleted"}
-    for survivor_id in (before.id, after.id):
+    for survivor_id in (before.id, after.id, "si_delete_parent"):
         event = tmp_db.execute(
             "SELECT payload FROM events WHERE entity_id = ? AND kind = 'link_removed' "
             "ORDER BY id DESC LIMIT 1",

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 JsonDict = dict[str, Any]  # event payloads, adapter blobs
 UnixTime = int             # unix seconds
@@ -21,11 +21,8 @@ class Priority(StrEnum):                     # SPEC §3.2/§3.3 — homed in cor
     P3 = "P3"
 
 
-class LinkKind(StrEnum):                     # SPEC §3.6, exact strings
-    belongs_to = "belongs_to"                # ticket -> sprint item
-    parent_child = "parent_child"            # ticket -> ticket
+class LinkKind(StrEnum):                     # the one explicit Ticket relationship
     blocks = "blocks"                        # ticket -> ticket | ticket -> sprint item
-    relates = "relates"                      # any -> any
 
 
 class EventKind(StrEnum):
@@ -94,6 +91,31 @@ class Link:                                  # SPEC §3.6 links row
     kind: LinkKind
 
 
+@dataclass(frozen=True)
+class BlockedBySummaryRow:
+    ticket_id: str
+    title: str
+    state: str
+    active: bool
+    href: str
+
+
+@dataclass(frozen=True)
+class BlocksTargetSummaryRow:
+    target_id: str
+    target_kind: Literal["ticket", "sprint_item"]
+    title: str
+    active: bool
+    href: str
+
+
+@dataclass(frozen=True)
+class BlockerSummary:
+    blocked: bool
+    blocked_by: tuple[BlockedBySummaryRow, ...]
+    blocks: tuple[BlocksTargetSummaryRow, ...]
+
+
 # --- structured errors (SPEC §14: pure logic imports these from contracts) ------
 # Every domain rejection raises PlannerError with a stable code; the API renders
 # it as {"error": {code, message, detail}} and the CLI keys its exit code off the
@@ -108,8 +130,8 @@ class ErrorCode(StrEnum):
     recap_too_early = "recap_too_early"            # §3.3 recap write at needs_success
     title_too_long = "title_too_long"              # §3.3 > title_max_chars
     sprint_overlap = "sprint_overlap"              # §3.1 overlapping date ranges
-    link_cycle = "link_cycle"                      # §3.6 blocks/parent_child transitive cycle
-    link_invalid = "link_invalid"                  # self-link, second belongs_to, bad endpoints
+    link_cycle = "link_cycle"                      # blocks active-cycle rejection
+    link_invalid = "link_invalid"                  # self-link, duplicate, or bad endpoints
     sprint_derived = "sprint_derived"              # §3.3 sprint_id write on a parented ticket
     agent_forbidden = "agent_forbidden"            # attributed agent hits a direct-only action
     gateway_offline = "gateway_offline"            # §11

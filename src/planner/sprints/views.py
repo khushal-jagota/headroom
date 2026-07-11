@@ -130,8 +130,7 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
 
 
 def blocked_by_titles(conn: sqlite3.Connection, blocked_by: list[str]) -> list[str]:
-    """Resolve an item's blocked_by ticket ids (§3.2 stores ids) to titles, order
-    preserved, unknown ids dropped — so the Blocked chip can name the blocker."""
+    """Resolve active/read blocker ids to titles, preserving order."""
     titles: list[str] = []
     for ticket_id in blocked_by:
         row = conn.execute(

@@ -81,15 +81,15 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert (
         report.sprints, report.sprint_items, report.deferred_items,
         report.tickets, report.ideas, report.links, report.duplicates_skipped,
-    ) == (1, 5, 4, 4, 3, 1, 0)
+    ) == (1, 5, 4, 4, 3, 0, 0)
 
     # (2) DB row counts.
     assert _count(tmp_db, "sprints") == 1
     assert _count(tmp_db, "sprint_items") == 9
     assert _count(tmp_db, "tickets") == 4
     assert _count(tmp_db, "ideas") == 3
-    assert _count(tmp_db, "links") == 1
-    assert _count(tmp_db, "events") == 18
+    assert _count(tmp_db, "links") == 0
+    assert _count(tmp_db, "events") == 17
     default_projects = _rows_by(tmp_db, "SELECT id, name FROM projects", "id")
     assert default_projects["project_vylo"]["name"] == "Vylo"
     assert default_projects["project_tribe"]["name"] == "Tribe"
@@ -222,10 +222,7 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert pipeline_row["project_id"] is None
     assert pipeline_row["project"] is None
     assert pipeline_row["sprint_id"] is None
-    link = tmp_db.execute("SELECT from_id, to_id, kind FROM links").fetchone()
-    assert (link["from_id"], link["to_id"], link["kind"]) == (
-        pipeline_row["id"], item_id, "belongs_to",
-    )
+    assert tmp_db.execute("SELECT 1 FROM links").fetchone() is None
     for alias in (
         "ticket-20260611-onboarding-survey",
         "ticket-20260611-export-format",
@@ -298,8 +295,8 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert _count(tmp_db, "sprint_items") == 9
     assert _count(tmp_db, "tickets") == 4
     assert _count(tmp_db, "ideas") == 3
-    assert _count(tmp_db, "links") == 1
-    assert _count(tmp_db, "events") == 18
+    assert _count(tmp_db, "links") == 0
+    assert _count(tmp_db, "events") == 17
 
 
 def test_match_item_title_ambiguity() -> None:

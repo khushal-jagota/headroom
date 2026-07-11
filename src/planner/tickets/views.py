@@ -11,7 +11,7 @@ import json
 import sqlite3
 
 from planner.core import links as core_links
-from planner.core.contracts import JsonDict
+from planner.core.contracts import BlockerSummary, JsonDict
 from planner.sprints.contracts import ItemStatus
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import GATING_FIELD, STATE_ORDER, Ticket, TicketState, TicketStatus
@@ -28,6 +28,32 @@ def _prio_rank(priority: str) -> int:
 
 
 # --- serializers ---------------------------------------------------------------
+
+
+def blocker_summary_json(summary: BlockerSummary) -> JsonDict:
+    return {
+        "blocked": summary.blocked,
+        "blocked_by": [
+            {
+                "ticket_id": row.ticket_id,
+                "title": row.title,
+                "state": row.state,
+                "active": row.active,
+                "href": row.href,
+            }
+            for row in summary.blocked_by
+        ],
+        "blocks": [
+            {
+                "target_id": row.target_id,
+                "target_kind": row.target_kind,
+                "title": row.title,
+                "active": row.active,
+                "href": row.href,
+            }
+            for row in summary.blocks
+        ],
+    }
 
 
 def ticket_json(ticket: Ticket, now: int) -> JsonDict:
@@ -108,22 +134,15 @@ def list_tickets(
 def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDict:
     ticket = tickets_data.read_ticket(conn, ticket_id)
     detail = ticket_json(ticket, now)
-    link_rows = conn.execute(
-        "SELECT from_id, to_id, kind FROM links WHERE from_id = ? OR to_id = ? "
-        "ORDER BY kind, from_id, to_id",
-        (ticket_id, ticket_id),
-    ).fetchall()
     day_rows = conn.execute(
         "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id ASC", (ticket_id,)
     ).fetchall()
+    blocker_summary = core_links.blocker_summary(conn, ticket_id)
     detail.update(
         {
-            "blocked": core_links.is_blocked(conn, ticket_id),
+            "blocked": blocker_summary.blocked,
+            "blocker_summary": blocker_summary_json(blocker_summary),
             "effective_sprint_id": tickets_data.get_effective_sprint_id(conn, ticket_id),
-            "links": [
-                {"from_id": str(r["from_id"]), "to_id": str(r["to_id"]), "kind": str(r["kind"])}
-                for r in link_rows
-            ],
             "day_ids": [str(r["day_id"]) for r in day_rows],
         }
     )
@@ -146,17 +165,27 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
     def show(value: str | None) -> str:
         return value if value else "(none)"
 
-    link_rows = conn.execute(
-        "SELECT from_id, to_id, kind FROM links WHERE from_id = ? OR to_id = ? "
-        "ORDER BY kind, from_id, to_id",
-        (ticket_id, ticket_id),
-    ).fetchall()
-    if link_rows:
-        links_block = "\n".join(
-            f"- {str(r['kind'])}: {str(r['from_id'])} -> {str(r['to_id'])}" for r in link_rows
+    blocker_summary = core_links.blocker_summary(conn, ticket_id)
+    blocked_by_rows = blocker_summary.blocked_by
+    blocks_rows = blocker_summary.blocks
+    blocked_by_block = (
+        "\n".join(
+            f"- {'active' if row.active else 'cleared'}: {row.title} "
+            f"({row.ticket_id}, {row.state})"
+            for row in blocked_by_rows
         )
-    else:
-        links_block = "(none)"
+        if blocked_by_rows
+        else "(none)"
+    )
+    blocks_block = (
+        "\n".join(
+            f"- {'active' if row.active else 'cleared'}: {row.title} "
+            f"({row.target_id}, {row.target_kind})"
+            for row in blocks_rows
+        )
+        if blocks_rows
+        else "(none)"
+    )
     return (
         f"{ticket.title}\n"
         f"state: {ticket.state.value}\n"
@@ -183,7 +212,8 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"\n"
         f"recap:\n{show(ticket.recap)}\n"
         f"\n"
-        f"links:\n{links_block}\n"
+        f"blocked_by:\n{blocked_by_block}\n"
+        f"blocks:\n{blocks_block}\n"
     )
 
 

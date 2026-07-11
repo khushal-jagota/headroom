@@ -3,6 +3,39 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-11): t_bqxt44fb blockers-only closeout integration
+
+Current build stage:
+
+- Accepted blocker implementation commit `14b0d5c` is being integrated from
+  `ticket/t_bqxt44fb-blockers` into current `main` while preserving the newer Chat image and ordinary
+  Kickoff work plus the unrelated dirty nested frontend worktree.
+- Shared source merged automatically. Memory records and seed expectations are being reconciled
+  explicitly, and the generated frontend bundle will be rebuilt from the combined source.
+- The live database remains at schema 14 with one legacy `belongs_to` row and has not yet been changed.
+
+What just passed:
+
+- Implementation-branch canonical `./verify`: Ruff; Mypy across 106 source files; 466 unit tests;
+  compile/static and frontend gates; 66 browser/CLI e2e tests; final `VERIFY: PASS`.
+- Follow-up independent implementation review: `NO VIOLATIONS`.
+- Live preflight: SQLite integrity is `ok`; 69 Tickets, 18 Sprint items, and the single expected legacy
+  membership row are readable before backup and migration.
+
+Current hypothesis:
+
+- The blocker and newer main contracts are additive. A rebuilt frontend, focused merge checks, safe
+  backup/migration cutover, and one post-merge canonical verifier remain the closeout gates.
+
+Next step:
+
+- Resolve the remaining seed expectation, rebuild the frontend, run focused integration checks, commit
+  the merge, then stop the live server for backup and migration before post-merge `./verify` and readback.
+
+Blockers:
+
+- None. The running server must be stopped for the live database cutover.
+
 ## Current work cycle (2026-07-11): ordinary Kickoff closeout integration
 
 Current build stage:

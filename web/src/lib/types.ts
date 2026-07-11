@@ -99,6 +99,28 @@ export type TicketField = {
   } | null;
 };
 
+export type BlockedByTicket = {
+  ticket_id: string;
+  title: string;
+  state: string;
+  active: boolean;
+  href: string;
+};
+
+export type BlocksTarget = {
+  target_id: string;
+  target_kind: "ticket" | "sprint_item";
+  title: string;
+  active: boolean;
+  href: string;
+};
+
+export type BlockerSummary = {
+  blocked: boolean;
+  blocked_by: BlockedByTicket[];
+  blocks: BlocksTarget[];
+};
+
 export type Implementer =
   | "khushal"
   | "panels_worker"
@@ -123,6 +145,7 @@ export type TicketDetail = {
   chat_session_key?: string | null;
   day_ids?: string[];
   blocked?: boolean;
+  blocker_summary?: BlockerSummary;
   recap?: string | null;
   fields: Record<string, TicketField>;
 };

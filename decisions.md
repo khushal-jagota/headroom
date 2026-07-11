@@ -2,6 +2,26 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D114 — Blocker closeout rebases semantics by merge, not by choosing one side
+
+Merge verified blocker commit `14b0d5c` into current `main` with a merge commit. Preserve the newer Chat
+image and ordinary Kickoff contracts, the unrelated dirty nested worktree, and the blocker branch's
+typed summary, active-cycle/reactivation rules, affected-target invalidation, and blocks-only migration.
+Resolve additive memory records explicitly, combine the seed expectations from the merged behavior, and
+rebuild generated frontend output from merged source. Closeout must back up the live schema-14 database,
+stop the old server for cutover, apply schema 15 through the canonical startup path, verify the legacy
+`belongs_to` row is removed while Ticket membership remains, run one post-merge `./verify`, read the
+migrated data back, restart the server, and only then remove the ticket worktree and branch.
+
+## D113 — Blockers stay one typed read model and one active relationship
+
+The merged contract retains the reviewed branch decisions: `blocks` is the only explicit Ticket
+relationship; `tickets.sprint_item_id` remains canonical membership; `done` and `dropped` sources are
+cleared; reopening validates active cycles; source-state changes report affected targets; and Ticket,
+worker/CLI, Sprint planning, and the read-only Ticket UI consume one typed blocker summary. The UI adds
+no editor or graph, and Sprint-item targets navigate by selecting the existing Sprint row. Detailed
+RED/GREEN and review dispositions remain in `orchestration/tickets/t_bqxt44fb-blockers/`.
+
 ## D112 — Ordinary Kickoff closeout preserves newer main work and rebuilds the shared frontend
 
 Merge verified branch `ticket/t_hvnv9gyc-kickoff-normal-stage` into current `main` rather than

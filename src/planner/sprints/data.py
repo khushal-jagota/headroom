@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from datetime import date
 from typing import NamedTuple, cast
 
+from planner.core import links as core_links
 from planner.core.clock import Clock
 from planner.core.contracts import EventKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
@@ -417,23 +418,12 @@ def assign_item_sprint(
 
 def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
     item = _load_item(conn, item_id)
-    blocking_rows = conn.execute(
-        "SELECT links.from_id, tickets.state FROM links "
-        "JOIN tickets ON tickets.id = links.from_id "
-        "WHERE links.to_id = ? AND links.kind = 'blocks' ORDER BY links.from_id",
-        (item_id,),
-    ).fetchall()
-    blocking_ticket_ids = [str(row["from_id"]) for row in blocking_rows]
-    blockers_cleared = bool(blocking_rows) and all(
-        str(row["state"]) == "done" for row in blocking_rows
-    )
+    blocker_summary = core_links.blocker_summary(conn, item_id)
+    blocking_ticket_ids = [row.ticket_id for row in blocker_summary.blocked_by]
+    blockers_cleared = bool(blocking_ticket_ids) and not blocker_summary.blocked
     child_rows = conn.execute(
         """
-        SELECT tickets.state, tickets.ticket_status,
-          EXISTS(
-            SELECT 1 FROM links
-            WHERE links.to_id = tickets.id AND links.kind = 'blocks'
-          ) AS blocked
+        SELECT tickets.id, tickets.state, tickets.ticket_status
         FROM tickets
         WHERE tickets.sprint_item_id = ?
         ORDER BY tickets.id
@@ -444,12 +434,12 @@ def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
         SprintItemChildStatus(
             state=str(row["state"]),
             ticket_status=str(row["ticket_status"]),
-            blocked=bool(row["blocked"]),
+            blocked=core_links.blocker_summary(conn, str(row["id"])).blocked,
         )
         for row in child_rows
     ]
     status = derive_sprint_item_status(
-        directly_blocked=bool(blocking_ticket_ids) and not blockers_cleared,
+        directly_blocked=blocker_summary.blocked,
         children=children,
     )
     return ItemRead(

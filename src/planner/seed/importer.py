@@ -257,17 +257,6 @@ def _import_tickets(
             now,
         )
         report.tickets += 1
-        if item_id is not None:
-            conn.execute(
-                "INSERT INTO links (from_id, to_id, kind) VALUES (?, ?, 'belongs_to')",
-                (ticket_id, item_id),
-            )
-            append_event(
-                conn, ticket_id, EventKind.link_added,
-                {"from_id": ticket_id, "to_id": item_id, "kind": "belongs_to", "source": "seed"},
-                now,
-            )
-            report.links += 1
 
 
 def _import_ideas(

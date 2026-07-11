@@ -102,6 +102,6 @@ class MigrationReport:             # printed, and structured under --json
     deferred_items: int = 0        # items imported with sprint_id NULL
     tickets: int = 0
     ideas: int = 0
-    links: int = 0                 # belongs_to links made by title match
+    links: int = 0                 # retained for old reports; seed no longer writes links
     duplicates_skipped: int = 0    # idempotent re-run hits (alias/title match)
     skipped: list[SkippedSection] = field(default_factory=list)

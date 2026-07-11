@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, tick } from "svelte";
   import { fetchJson } from "../lib/api";
   import { shortMonthDayLabel } from "../lib/dates";
   import { mutateJson, resource } from "../lib/resources";
@@ -11,7 +11,10 @@
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import ResourceState from "../components/ResourceState.svelte";
 
-  let { sub = "tracking" }: { sub?: string } = $props();
+  let {
+    sub = "tracking",
+    selectedItemId = null
+  }: { sub?: string; selectedItemId?: string | null } = $props();
   const current = resource<CurrentSprintResponse>("sprint:current", (signal) =>
     fetchJson("/api/sprint/current", { signal })
   );
@@ -136,6 +139,25 @@
     return fields.some((field) => String(sprint[field[0]] || "").trim() !== "");
   }
 
+  async function focusSelectedItem(): Promise<void> {
+    if (!selectedItemId || documents || !current.data?.sprint) return;
+    await tick();
+    const row = document.querySelector<HTMLElement>(
+      `[data-screen="sprint"] [data-item-id="${CSS.escape(selectedItemId)}"]`
+    );
+    if (!row) return;
+    if (row instanceof HTMLDetailsElement) row.open = true;
+    row.scrollIntoView({ block: "center", inline: "nearest" });
+    row.focus({ preventScroll: true });
+  }
+
+  $effect(() => {
+    void current.data;
+    void selectedItemId;
+    void documents;
+    void focusSelectedItem();
+  });
+
   onDestroy(() => current.dispose());
 </script>
 
@@ -220,6 +242,9 @@
                     class={item.status === "done" ? "item--dim" : ""}
                     data-item-id={item.id}
                     data-item-status={item.status}
+                    data-selected={selectedItemId === item.id ? "true" : undefined}
+                    tabindex={selectedItemId === item.id ? "-1" : undefined}
+                    defaultOpen={selectedItemId === item.id}
                   >
                     {#snippet summary()}
                       <span class="it list-row-title">{item.title}</span>
