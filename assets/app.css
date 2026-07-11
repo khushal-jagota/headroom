@@ -299,6 +299,11 @@ textarea {
   margin-top: var(--space-2);
 }
 
+.file-preview[data-file-preview-kind="markdown"] {
+  max-height: var(--file-preview-markdown-max-height);
+  overflow-y: auto;
+}
+
 .file-preview-card,
 .file-preview-card-row {
   display: flex;

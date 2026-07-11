@@ -180,6 +180,65 @@ def _update_running_worker_turn_label(server, entity_id: str, label: str) -> Non
         )
 
 
+def _seed_long_running_worker_activity(server, entity_id: str, count: int = 40) -> None:
+    with sqlite3.connect(server.db_path) as conn:
+        row = conn.execute(
+            "SELECT id FROM chat_turns WHERE entity_id = ? AND status = 'running'",
+            (entity_id,),
+        ).fetchone()
+        assert row is not None
+        turn_id = row[0]
+        conn.executemany(
+            "INSERT INTO chat_turn_activity_entries ("
+            "turn_id, action_identity, category, label, lifecycle_state, "
+            "started_at, updated_at, completed_at"
+            ") VALUES (?, ?, 'tool', ?, 'complete', ?, ?, ?)",
+            [
+                (
+                    turn_id,
+                    f"tool:seed-{index}",
+                    f"Seeded activity {index:02d}",
+                    10 + index,
+                    10 + index,
+                    10 + index,
+                )
+                for index in range(count)
+            ],
+        )
+
+
+def _chat_scroll_state(page: Page, selector: str) -> dict:
+    return page.eval_on_selector(
+        selector,
+        "el => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight })",
+    )
+
+
+def _wait_chat_at_bottom(page: Page, selector: str) -> None:
+    page.wait_for_function(
+        "selector => { const el = document.querySelector(selector); "
+        "return el && Math.abs(el.scrollHeight - el.clientHeight - el.scrollTop) <= 1; }",
+        arg=selector,
+        timeout=WAIT_MS,
+    )
+
+
+def _wheel_up_inside_chat_thread(page: Page, selector: str, delta_y: int = -24) -> None:
+    box = page.locator(selector).bounding_box()
+    assert box is not None
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    before = _chat_scroll_state(page, selector)
+    page.mouse.wheel(0, delta_y)
+    page.wait_for_function(
+        "({ selector, beforeTop }) => {"
+        " const el = document.querySelector(selector);"
+        " return el && el.scrollTop < beforeTop;"
+        "}",
+        arg={"selector": selector, "beforeTop": before["top"]},
+        timeout=WAIT_MS,
+    )
+
+
 def test_ticket_chat_send_survives_navigation_from_server_state(
     server, context_factory, open_page, cli, api
 ) -> None:
@@ -372,6 +431,75 @@ def test_activity_growth_respects_existing_chat_follow_mode(
     )
     assert page.eval_on_selector(thread_selector, "el => el.scrollTop") == 0
     assert page.locator("[data-chat-jump]").is_visible()
+
+
+def test_expanded_activity_live_updates_preserve_real_wheel_scrollback(
+    server, context_factory, open_page, cli
+) -> None:
+    entity_id = cli(server, "ticket", "create", "--title", "Wheel activity scroll ticket")[
+        "id"
+    ]
+    _seed_running_worker_turn(server, entity_id)
+    _seed_chat_history(server, entity_id, count=30)
+    _seed_long_running_worker_activity(server, entity_id, count=50)
+
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{entity_id}",
+        'section[data-screen="ticket"] [data-chat-activity-toggle]',
+        settled=True,
+    )
+    page.add_style_tag(
+        content="[data-chat-messages] { flex: 0 0 220px !important; }"
+    )
+    thread_selector = "[data-chat] [data-chat-messages]"
+    jump_selector = "[data-chat] [data-chat-jump]"
+    page.locator("[data-chat-activity-toggle]").click()
+    page.wait_for_selector("[data-chat-activity-details]", timeout=WAIT_MS)
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-chat-activity-entry]').length >= 52",
+        timeout=WAIT_MS,
+    )
+    _wait_chat_at_bottom(page, thread_selector)
+
+    for index in range(3):
+        label = f"Live wheel activity {index:02d}"
+        _update_running_worker_turn_label(server, entity_id, label)
+        _wait_chat_text(page, "worker", label)
+        _wait_chat_at_bottom(page, thread_selector)
+
+    _wheel_up_inside_chat_thread(page, thread_selector)
+    scrolled_back = _chat_scroll_state(page, thread_selector)
+    assert scrolled_back["top"] < scrolled_back["max"], scrolled_back
+
+    for index in range(3, 7):
+        label = f"Live wheel activity {index:02d}"
+        _update_running_worker_turn_label(server, entity_id, label)
+        _wait_chat_text(page, "worker", label)
+        after_update = _chat_scroll_state(page, thread_selector)
+        assert after_update["top"] == scrolled_back["top"], {
+            "before_live_updates": scrolled_back,
+            "after_update": after_update,
+            "label": label,
+        }
+
+    page.wait_for_selector(jump_selector, timeout=WAIT_MS)
+    assert page.locator(jump_selector).is_visible()
+
+    page.eval_on_selector(
+        thread_selector,
+        "el => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); }",
+    )
+    page.wait_for_function(
+        "selector => document.querySelector(selector) === null",
+        arg=jump_selector,
+        timeout=WAIT_MS,
+    )
+    resume_label = "Live wheel activity 07"
+    _update_running_worker_turn_label(server, entity_id, resume_label)
+    _wait_chat_text(page, "worker", resume_label)
+    _wait_chat_at_bottom(page, thread_selector)
 
 
 def test_ticket_chat_shows_running_worker_turn_after_remount(

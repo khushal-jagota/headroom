@@ -3,6 +3,82 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-11): bounded managed Markdown preview height
+
+Current build stage:
+
+- Ticket `t_uevrd406` is in Implementation. The approved corrected plan is implemented directly in
+  the shared `FilePreview` root: managed Markdown previews have one tokenized 32rem maximum height,
+  long previews scroll vertically, and short previews retain their natural height.
+- The mixed `main` worktree already contained unrelated concurrent Chat, ticket-type planning,
+  generated bundle, documentation, and test changes. This ticket touched only the shared preview CSS
+  tokens/style and its focused browser regression; the production frontend was rebuilt without
+  discarding the existing work.
+
+What just passed:
+
+- RED: the new browser regression failed on the old behavior because the long preview expanded to its
+  full 8043px scroll height.
+- GREEN: the focused regression passed after the component-root max height, and the complete managed
+  file-preview browser module passed (10 tests).
+- Codex found one standards violation in the first pass: the 32rem limit was inline despite the
+  repository token rule. The value moved to `assets/tokens.css`; the focused test passed again and the
+  final Codex review returned `NO VIOLATIONS`.
+
+Current hypothesis:
+
+- Confirmed: the owner-corrected requirement is visual containment, not a new transfer/parsing
+  subsystem. Applying the limit to the existing `data-file-preview-kind="markdown"` component root
+  gives every shared placement the same behavior without changing fetch, render, or editing logic.
+
+Next step:
+
+- Run canonical `./verify` once, then propose Implementation with the RED/GREEN, full-module, review,
+  and verifier evidence.
+
+Blockers:
+
+- None.
+
+## Current work cycle (2026-07-10): chat scroll-back during expanded activity
+
+Current build stage:
+
+- Ticket `t_1svweqjx` accepted Implementation and is in Closeout. The shared `ChatPanel` treats an
+  upward wheel as immediate reader intent instead of waiting for the 48px near-bottom threshold,
+  and the browser regression exercises a long expanded activity timeline through repeated updates.
+- The queued post-render callback hypothesis was ruled out as the root cause: old code escaped with
+  one large wheel movement, while a real small wheel movement failed because distance-only follow
+  mode stayed enabled until polling snapped the view back to the bottom.
+
+What just passed:
+
+- The exact new browser regression failed against rebuilt old source at 2693/2693 after a -24 wheel
+  attempt, then passed three consecutive focused runs after the root-cause fix. The pre-existing
+  activity-follow regression also passed.
+- Approved-plan Codex review returned `PLAN OK`. The final Codex review was blocked by the CLI
+  account usage limit; an independent read-only Claude review covered the final diff and returned
+  `NO VIOLATIONS`.
+- Canonical `./verify` passed: Ruff, Mypy across 106 source files, 444 unit tests, compile/static and
+  frontend gates, and 61 browser tests; final `VERIFY: PASS`.
+
+Current hypothesis:
+
+- Confirmed: the trap is caused by using the near-bottom distance as both the follow state and the
+  user-intent signal. Frequent activity renders reset a small upward movement before it can cross the
+  threshold. Separating upward intent from distance preserves scroll-back while keeping normal
+  near-bottom following and exact-bottom/Latest resumption.
+
+Next step:
+
+- Propose Closeout. No merge, commit, deploy, restart, or follow-up Ticket applies in the mixed shared
+  `main` worktree.
+
+Blockers:
+
+- None. Codex CLI usage remains exhausted until its displayed reset time, so the completed final
+  review used Claude as the independent fallback.
+
 ## Current work cycle (2026-07-10): expandable live agent activity closeout
 
 Current build stage:
@@ -73,8 +149,30 @@ All 3 forks upheld (fix `implementer`'s muddled enum). Owner refinement (§8): o
 linked specialist skills, differentiate inside one shared gateway child; fork children only per toolset
 profile (1–2), not per type — kills duplicated shared orientation, keeps code thin.
 
-Status: reviewed recommendation delivered; nothing approved, no code changed. Next: owner
-questions / exploration. If approved, first proof = mock one non-coding type end-to-end.
+Implementation plan written + reviewed: `orchestration/ticket-types-redesign/PLAN.md`. Registry-as-deep-
+module, 6 phases (0–1 route `coding` through the registry and prove PARITY before any user-visible
+change), maps to serial tickets `t_tt00`–`t_tt05b`. gpt-5.6-sol plan review (eng/architecture lens):
+verdict DONE_WITH_CONCERNS — direction sound, not executable as first written; corrections folded in:
+(P0) `needs_kickoff` is a HARD precondition — kickoff must land+verify before `t_tt00` (overlaps
+contracts/data/db); (P1) Phase 1 needs an explicit pre-persistence bridge — generic fns take a workflow
+definition and callers pass `registry.require("coding")`, codec = `fields_from_json(raw, def)`, NOT
+row-resolved (else Phase 2 must precede Phase 1); (P1) `exploration` must be a defined contract
+(`t_tt02x`) before Phases 2/3 use it; (P1) wider closed-world surface than named (seed importer,
+copy_text, queues, sprint views, `GET /tickets?state=` w/o type, api FieldName parse); (P1) name the
+registry-validation doors (`_row_to_ticket`, `_apply_decision`, all inserts, note writes bypass
+`_apply_decision`); (P1) replace `is`/identity comparisons with value equality (states become strings);
+tightened migration + Phase-3 go/no-go (drive through real propose/accept gates, not `/state` jumps).
+
+Scope (owner clarification): build ALL the machinery, N-type-ready (registry, parameterized engine, DB
+type column, type-driven CLI/API + manifest, type-aware read models/board, full worker layer = profile
+resolver + base-skill + specialist-loading + per-toolset gateway routing). Do NOT author a real second
+workflow — that (its stages + a real specialist skill, e.g. exploration) is the explicit NEXT task, a
+separate responsibility. Prove genericity with a minimal synthetic fixture type `probe` (test-registered
+only, not shipped); production ships coding-only. Full 6 phases stay (my earlier "defer workers/UI" was
+wrong, reverted). `t_tt02x` = fixture; Phase 5 authors the base skill + placeholder specialist.
+
+Status: reviewed plan delivered; nothing approved, no code changed. Blocked on owner's `needs_kickoff`
+landing before any implementation ticket. Next: owner decision to proceed.
 
 ## Current work cycle (2026-07-10): Panels sprint-planning workflow
 

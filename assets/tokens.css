@@ -55,6 +55,7 @@
   --measure-read: 680px;
   --measure-index: 760px;
   --space-page-tail: 128px;
+  --file-preview-markdown-max-height: 32rem;
 
   /* Borders — widths plus the hairline seam colour */
   --border-hairline: 1px;

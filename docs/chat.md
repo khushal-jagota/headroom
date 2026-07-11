@@ -13,11 +13,11 @@ running. The same resource survives navigation, remounts, reloads, WebSocket
 misses, and simple polling.
 
 When the panel first loads, it starts at the latest message. New messages and live
-output stay in view while the reader is at or near the bottom. Scrolling
-meaningfully up leaves the viewport in place as the conversation grows. The Latest
-button appears whenever the bottom of the conversation is meaningfully below the
-viewport, even when no new content has arrived. Using it, or manually returning near
-the bottom, resumes following.
+output stay in view while the reader is at or near the bottom. An upward scroll
+immediately leaves the viewport in the reader's control as the conversation grows.
+The Latest button appears whenever the bottom of the conversation is meaningfully
+below the viewport, even when no new content has arrived. Using it, or manually
+returning near the bottom, resumes following.
 
 The small image button directly beside `/` can add one image to a message. A message
 may contain text and an image or only an image. Panels keeps the selected image in the

@@ -47,6 +47,7 @@
   let pollTimer: ReturnType<typeof window.setTimeout> | null = null;
   let initialScrollComplete = false;
   let scrollRenderRequest = 0;
+  let lastScrollTop = 0;
 
   function whoForRole(role: string): ChatMessage["who"] {
     const normalized = role.toLowerCase();
@@ -112,9 +113,32 @@
 
   function updateScrollMode(): void {
     if (!threadElement) return;
+    const previousScrollTop = lastScrollTop;
+    lastScrollTop = threadElement.scrollTop;
     const nearBottom = distanceFromBottom(threadElement) <= NEAR_BOTTOM_PX;
-    following = nearBottom;
+    if (threadElement.scrollTop < previousScrollTop) {
+      following = false;
+    } else if (
+      threadElement.scrollTop > previousScrollTop &&
+      distanceFromBottom(threadElement) <= 1
+    ) {
+      following = true;
+    }
     jumpVisible = !nearBottom;
+  }
+
+  function handleThreadWheel(event: WheelEvent): void {
+    if (event.deltaY < 0) {
+      following = false;
+      return;
+    }
+    if (event.deltaY > 0) {
+      window.requestAnimationFrame(() => {
+        if (threadElement && distanceFromBottom(threadElement) <= NEAR_BOTTOM_PX) {
+          following = true;
+        }
+      });
+    }
   }
 
   async function scrollThreadToBottom(): Promise<void> {
@@ -122,6 +146,7 @@
     await tick();
     if (!threadElement) return;
     threadElement.scrollTop = threadElement.scrollHeight;
+    lastScrollTop = threadElement.scrollTop;
     jumpVisible = distanceFromBottom(threadElement) > NEAR_BOTTOM_PX;
   }
 
@@ -160,6 +185,7 @@
       if (shouldFollow) {
         following = true;
         threadElement.scrollTop = threadElement.scrollHeight;
+        lastScrollTop = threadElement.scrollTop;
       }
       jumpVisible = distanceFromBottom(threadElement) > NEAR_BOTTOM_PX;
     });
@@ -218,7 +244,13 @@
   </div>
 
   <div class="chat-thread-shell">
-    <div class="chat-thread" data-chat-messages bind:this={threadElement} onscroll={updateScrollMode}>
+    <div
+      class="chat-thread"
+      data-chat-messages
+      bind:this={threadElement}
+      onscroll={updateScrollMode}
+      onwheel={handleThreadWheel}
+    >
       {#if !available}
         <div class="chat-off" data-chat-offline>
           <div>{label} is offline.</div>

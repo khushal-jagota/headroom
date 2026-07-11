@@ -38,10 +38,14 @@ into a handful of module-level tables:
   `ADVANCE_TARGET` (stage → next stage), `FIELD_GATES` (inverse), `FieldName` (the 5 fields).
 
   → `state_index`, `advance_target`, `gating_field`, `auto_accept_target`, `resolve_scope`,
-  `field_is_passed`, `at_or_beyond_ceiling`, `has_pending_gating_proposal` are all pure index
-  math over those tables. Feed them a *type's* tables instead of the globals and every logic
-  body is unchanged. The single-door invariant (workers propose, `_apply_decision` is the
-  only writer of real values) is preserved verbatim.
+  `field_is_passed`, `at_or_beyond_ceiling`, `has_pending_gating_proposal` are pure index math over
+  those tables — the reusable **kernel**. Feed them a *type's* tables instead of the globals and the
+  kernel bodies are unchanged; the single-door invariant (workers propose, `_apply_decision` is the
+  only writer of real values) is preserved. **But the refactor is contained, not zero** — terminal
+  detection, `resolve_scope`, admission (`recap writable past needs_success`), and several
+  `resolution` rules still name the coding stages by literal and get generalized to read the type.
+  The honest blast radius is §7 (folded in from the gpt-5.6-sol review); "correctness heart doesn't
+  move" was too strong.
 
 **Where the fixed lifecycle is actually hardcoded** (the real change surface):
 - `tickets/contracts.py` — `TicketState`, `STATE_ORDER`, `FieldName`, `GATING_FIELD`,
@@ -77,14 +81,17 @@ no event kind), the chat/worker-context spine, `_apply_decision`, the `_txn` wra
   already exists per ticket but currently only drives the plan→implementation takeover; it does
   **not** route to different gateways/skills/models yet.
 
-**Hermes config levers, in decreasing ease of per-worker use:**
+**Hermes config levers — all scope per worker child:**
 - **Skill** — per worker child via `HERMES_TUI_SKILLS` (comma-joined list). Varies cleanly per
   type today. This is the primary behavior shaper.
-- **Model + reasoning effort** — Hermes supports a per-session model override
-  (`SessionEntry.model_override`, `set_model_override`, `_apply_session_model_override`); a type
-  can pin its own model. (Planner's `session.create` path doesn't pass it yet — wiring, not a gap.)
-- **Tools/plugins** — scoped per Hermes **home** (and per platform), not per session. Restricting
-  a type's toolset (e.g. read-only explorer) is the one lever that isn't free per-session.
+- **Model + reasoning effort** — Hermes accepts model/provider/effort on `session.create` and
+  persists a per-session model override; a type can pin its own model. (Planner's `session.create`
+  doesn't pass it yet — wiring, not a gap.)
+- **Tools** — a worker child sets its own toolset via `HERMES_TUI_TOOLSETS` (per-child, like
+  `HERMES_TUI_SKILLS`; `tui_gateway/server.py:2610`). Plugin *definitions* stay home-level, but tool
+  *availability* is per-child. (An earlier draft called toolsets home-global — that was **wrong**,
+  corrected by the gpt-5.6-sol review; see §7. A skill instruction is not tool enforcement — a
+  genuinely read-only explorer needs a real restricted toolset, which this gives.)
 
 ---
 
@@ -156,16 +163,14 @@ explorer skill, larger reasoning model, read-only tools.
 **`marketing`** (`brief → draft → review → done`) and **`debugging`**
 (`reproduce → diagnose → fix → verify → done`) generalize identically. ✓
 
-**Break points found (all thread-throughs, none architectural):**
-1. `fields_codec` → deserialize per-type field set.
-2. DB `CHECK` on `state`/`ceiling` → relax to app-layer validation via the registry.
+**Break points found** (§7 corrects "none architectural" — a few are more than thread-throughs):
+1. `fields_codec` → deserialize per-type field set (becomes a validated mapping, not a fixed 5).
+2. DB `CHECK` on `state`/`ceiling` → relax to registry/app-layer validation (with integrity replacement, §7).
 3. `fields` JSON default on create → from the type, not a literal.
-4. CLI/UI stage & field lists → from the type.
-5. Any state-columned board view → must handle mixed types (a real UI question, downstream).
-6. `plan_handoff_status` → becomes a per-type hook (no-op for types without those stages).
-
-The runtime spine, resolution engine, single-door invariant, scope model, readiness, events,
-chat, and worker-context are untouched in every case.
+4. CLI/UI stage & field lists → from the type (one serialized manifest, not a parallel TS registry).
+5. State-columned board view → cannot consume a heterogeneous state union as shaped (§7, real).
+6. `plan_handoff_status` → a per-type transition-effect hook.
+7. Universal terminals + Chief external-work → bigger than thread-throughs; see §7.
 
 ---
 
@@ -181,5 +186,99 @@ chat, and worker-context are untouched in every case.
 
 ---
 
-_Not verified against a build; this is a design recommendation. Next proof, if approved: mock one
-non-coding type end-to-end through the registry before any core code moves._
+## 7. Independent review (gpt-5.6-sol, high, read-only) — folded in
+
+**Verdict:** approve the direction (type discriminator + code registry + generic *linear* workflow
+interpreter), but **not** the "clean extension, correctness heart untouched" rationale — that
+overstated how localized the change is. Sharper framing: *introduce a code-registered, strictly
+linear ticket-workflow module; persist a stable `ticket_type`; preserve universal `done`/`dropped`
+and the generic control-status vocabulary; refactor contracts, codecs, ingress validation, read
+models, and routing to consume the registered workflow; serve one serialized manifest to UI/CLI;
+replace lost DB checks with registry validation + startup auditing.*
+
+**Corrections to my claims:**
+- **Toolsets are per-child, not home-global** (`HERMES_TUI_TOOLSETS`). My §2 error, fixed above.
+- **The refactor is contained but not zero.** `is_terminal`, `resolve_scope`, admission, and several
+  `resolution` rules name the coding stages literally; `FIELD_GATES` is a second lifecycle table;
+  contracts are closed enums + a fixed 5-field dataclass. Signatures/types/validation change.
+- **The two axes are separate in storage but coupled in operation** — filing/accepting a proposal
+  *derives* control status from workflow states. Say "separate persisted axes with explicit
+  transition coupling," not "independent." The reusable part is the control vocabulary + the
+  transport/claim/session skeleton.
+- **Fields aren't free:** `TicketFields` must become a validated mapping; codec/contract/API/views/
+  defaults/corruption rules all change (today's codec has an unsafe catch-all returning `closeout`).
+
+**Ranked constraints (folded into the design):**
+1. **[Critical] Universal terminals.** Other domains read exact state strings — blockers/links
+   (`state NOT IN ('done','dropped')`), sprint-item completion, approval/overdue queues. A type that
+   ends at `complete` would block forever and stall its sprint item. **v1: every type ends in the
+   universal `done`; `dropped` stays the universal exceptional terminal. Types vary only nonterminal
+   stages + fields.** (My mockups already ended each type at `done` — now it's a stated invariant.)
+2. **[Critical] Chief external-work is a first-class workflow interface.** `_FIELD_ORDER`/
+   `_PREFIX_COUNT` independently encode the lifecycle; create must pick `ticket_type` before parsing
+   state/fields; the settled-prefix derives from the type's ordered gates; a type may declare it
+   doesn't support prefix reconciliation.
+3. **[High] Board.** `board_view` builds a global `STATE_ORDER` map; `by_state[state]` fails on an
+   unknown state. Cards should carry `ticket_type` + state id/label + gating field/label +
+   is_done/is_dropped + control signals; keep **project** and **`ticket_status`** as the common axes;
+   don't synthesize a global column taxonomy from unrelated workflows.
+4. **[High] Scope = one registry source, two contextual slices.** Serialize the type's stage order
+   once; header floor = current state onward, approval floor = newly-entered state onward + `none`.
+   No parallel TS lifecycle.
+5. **[High] Registry = a constrained linear-workflow deep module.** Validates at startup: id
+   uniqueness, complete gate coverage, one successor per nonterminal stage, field refs, terminal
+   placement, worker-profile refs. Rejects branching/repeated gates/ambiguous terminals. (My
+   "terminal state(s)" over-promised; the engine is strictly linear.)
+6. **[High] DB CHECK relaxation needs integrity replacement:** validate type/state∈type/ceiling∈type/
+   fields-match on row-load and before-persist, plus a startup table audit. Keep cheap
+   type-independent checks (`at_cap`, `ticket_status`, priority, non-empty).
+7. **[High] Migration is more than "add a column."** SQLite needs a table rebuild to drop CHECKs;
+   the ticket DDL is duplicated in 3 places (canonical + two rebuild templates) and migration order
+   matters — a later template must not recreate old CHECKs/5-field default. Use the existing
+   atomic-swap/FK-check/rollback discipline; backfill every row as `coding` in the same migration.
+8. **[Medium] `plan_handoff_status`** → a named transition-effect hook the `coding` module declares
+   (plan→implementation + human override ⇒ `user_takeover`); core invokes the interface with no type
+   `if`. Decide whether direct jumps / external reconciliation should also fire it (today they bypass).
+9. **[Medium] `ticket_type` immutable in v1** — a durable Hermes session already exists per ticket;
+   changing type mid-life raises transcript/skill/model/field-conversion questions nobody needs yet.
+10. **Name it `ticket_type`, not `type`** (project naming rule; `type` is ambiguous).
+
+**Forks — all three of my picks upheld, with one sharpening:**
+- Type vs `implementer`: keep separate — **but** the current `Implementer` enum is muddled (a person,
+  a generic worker, two model-flavoured identities; only `khushal` has any effect). Redesign it as a
+  clean instance-level execution override: `None` = type's default worker; human = takeover at the
+  type's declared handoff; agent-profile = actually select another registered worker profile. Remove
+  or rename values that won't route.
+- Code registry over DB: strongly upheld (DB workflows buy runtime-editing nobody asked for + a
+  config UI + live-versioning). But "code registry" = one backend authority + a serialized manifest,
+  **not** parallel Python and TS constants. Changing a registered workflow is a data migration and
+  must fail startup validation, not silently reinterpret old rows.
+- Toolset: per-profile is viable in v1 within one shared home (`HERMES_TUI_TOOLSETS`); a skill
+  instruction is not tool enforcement.
+
+## 8. Worker realization — base skill + linked specialists (owner refinement)
+
+Rather than one gateway child per type, realize worker differentiation mostly in the **skill layer**:
+- **One base worker skill** (`panels-worker`) carries everything every worker needs — orientation,
+  the propose-only contract, the CLI, gates/scope, artifacts. Authored once; no duplication.
+- **Per-type specialist skills** (`…-explorer`, `…-marketer`, `…-debugger`) *link to* the base and add
+  only the type's craft. All specialists are provisioned into the one home (existing symlink path).
+- The employee runner's prompt already states the ticket's type/state; the base skill routes the
+  worker to the matching specialist for that ticket. → **behavior + skill + model differentiate inside
+  one shared gateway child** (model varies per session; skills are all home-available and selected by
+  base-skill + prompt).
+- Gateway children fork **only** where an OS-level capability must differ — i.e. a restricted
+  **toolset** (read-only explorer). So the realistic shape is 1–2 children keyed by *toolset profile*,
+  not one per type. The registry's worker-profile per type = `{specialist skill, model, toolset-profile}`;
+  the toolset-profile is the only thing that maps to a distinct child.
+
+This removes the duplicated "things every worker needs to know," keeps the code thin (lean on skills),
+and shrinks the "workers route by type" touch point to: type → toolset-profile → child (few) + type →
+specialist skill (in prompt).
+
+---
+
+_Not verified against a build; a reviewed design recommendation (gpt-5.6-sol folded in). Next proof,
+if approved: mock one non-coding type end-to-end through the registry — proving universal-terminal
+handling, external-work prefix from the type's gates, and base+specialist skill routing — before any
+core code moves._

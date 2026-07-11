@@ -134,6 +134,69 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     assert page.evaluate("window.__previewHashNavigationMarker") == "kept"
 
 
+def test_markdown_file_preview_has_component_owned_max_height(
+    server, context_factory, open_page, cli
+) -> None:
+    ticket_id = cli(server, "ticket", "create", "--title", "Bounded Markdown preview")["id"]
+    root = _ticket_files_dir(server, ticket_id) / "notes"
+    root.mkdir(parents=True)
+    (root / "short.md").write_text("# Short\n\nOne paragraph.", encoding="utf-8")
+    (root / "long.md").write_text(
+        "# Long\n\n" + "\n\n".join(f"Paragraph {index}" for index in range(200)),
+        encoding="utf-8",
+    )
+    fields = {
+        "success": {
+            "value": (
+                f"[Short](/files/tickets/{ticket_id}/notes/short.md)\n\n"
+                f"[Long](/files/tickets/{ticket_id}/notes/long.md)"
+            ),
+            "proposal": None,
+            "user_note": None,
+        },
+        "approach": {"value": None, "proposal": None, "user_note": None},
+        "plan": {"value": None, "proposal": None, "user_note": None},
+        "implementation": {"value": None, "proposal": None, "user_note": None},
+        "closeout": {"value": None, "proposal": None, "user_note": None},
+    }
+    _set_fields(server, ticket_id, fields)
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{ticket_id}",
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+        settled=False,
+    )
+    _open_ticket_field(page, "success")
+
+    short_preview = page.locator('[data-file-preview-kind="markdown"]', has_text="Short").first
+    long_preview = page.locator('[data-file-preview-kind="markdown"]', has_text="Long").first
+    short_preview.locator("h1", has_text="Short").wait_for(state="visible", timeout=WAIT_MS)
+    long_preview.locator("h1", has_text="Long").wait_for(state="visible", timeout=WAIT_MS)
+
+    short_metrics = short_preview.evaluate(
+        """node => ({
+            clientHeight: node.clientHeight,
+            scrollHeight: node.scrollHeight,
+            maxHeight: getComputedStyle(node).maxHeight,
+            overflowY: getComputedStyle(node).overflowY,
+        })"""
+    )
+    long_metrics = long_preview.evaluate(
+        """node => ({
+            clientHeight: node.clientHeight,
+            scrollHeight: node.scrollHeight,
+            maxHeight: getComputedStyle(node).maxHeight,
+            overflowY: getComputedStyle(node).overflowY,
+        })"""
+    )
+
+    assert short_metrics["scrollHeight"] <= short_metrics["clientHeight"] + 1
+    assert long_metrics["scrollHeight"] > long_metrics["clientHeight"]
+    assert long_metrics["maxHeight"] != "none"
+    assert long_metrics["overflowY"] == "auto"
+
+
 def test_read_only_ticket_and_chat_surfaces_share_file_preview(
     server, context_factory, open_page, cli
 ) -> None:

@@ -2,6 +2,36 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D104 — Managed Markdown preview bounds are component-level visual containment
+
+The owner's live correction supersedes the earlier transfer-range framing for `t_uevrd406`: this
+ticket is a maximum height on the shared preview component, not a new loader or document-truncation
+contract. Apply the max height and vertical overflow to the existing `FilePreview` root only when its
+resolved kind is Markdown. Keep the value in the shared token file because it is deliberately tunable;
+do not change fetching, parsing, nested expansion, full-route composition, or canonical Markdown
+editing. One real browser regression proves short previews remain natural and long previews scroll.
+
+## D103 — Chat scroll-back closeout does not commit or deploy the mixed main tree
+
+`t_1svweqjx` was implemented directly in the shared `main` worktree alongside unrelated concurrent
+changes. The ticket did not authorize a commit, history rewrite, service restart, or production
+deployment. Closeout therefore records the accepted implementation, clean canonical verification,
+and independent review without committing or deploying the mixed tree. No follow-up Ticket is needed:
+the confirmed root cause is fixed, its regression is covered, and no deferred defect remains.
+
+## D102 — Upward scroll intent is distinct from near-bottom distance
+
+The expanded activity trap is not caused by the suspected queued post-render callback. A large wheel
+movement already escapes on old code; a small real wheel movement does not, because the existing
+scroll handler keeps follow mode enabled while the reader remains within 48px of the bottom. Polling
+then renders again and returns the view to the bottom before several small movements can accumulate.
+
+Keep distance as the `Latest` visibility signal, but stop following immediately on upward wheel intent.
+Ordinary near-bottom scroll events and content growth do not resume a stopped reader; exact-bottom
+return, a downward wheel reaching the near-bottom zone, or the existing `Latest` action do. The shared
+component remains the single behavior for Ticket and Chief chat. The regression uses a long expanded
+activity timeline, a real -24 wheel input, repeated live updates, and resumption at the bottom.
+
 ## D98 — Live agent activity is turn-owned, display-safe, and transient
 
 Keep the existing `activity_label` as the collapsed summary and add one ordered child collection for
