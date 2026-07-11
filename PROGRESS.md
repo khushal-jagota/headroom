@@ -3,6 +3,56 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-11): stable historical chat Markdown previews
+
+Current build stage:
+
+- Ticket `t_svy3xjxj` has its scoped GREEN production fix in the isolated ticket worktree. Chat
+  transcript rows now use the stable server message/turn identities, and `MarkdownBlock` skips
+  teardown when normalized Markdown plus its rendering context are semantically unchanged.
+- The Ticket/Chief browser regression establishes one settled historical preview, then proves live
+  polling/activity/output adds no loading state, remount, or request. It finally updates the same
+  message id to a second real managed Markdown target and proves one deliberate replacement fetch.
+
+What just passed:
+
+- RED on untouched production source: both Ticket and Chief cases requested the same unchanged
+  managed Markdown URL twice before deliberate updates.
+- GREEN: the strengthened Ticket/Chief regression passed three consecutive focused runs; the shared
+  preview module passed all 10 tests; the complete e2e suite passed all 67 tests.
+- Frontend checks passed with 0 errors and the same 3 pre-existing `TicketRoute.svelte` warnings;
+  event mapping and `git diff --check` passed.
+- The first canonical `./verify` reached every gate but failed only the new regression under full-suite
+  startup load. The test had counted pre-settlement route startup fetches before installing its
+  stability observer. The test-only integration repair now waits for one connected settled preview,
+  resets that baseline, and measures only the live-update boundary named by the ticket.
+- Independent review requested changed-target preservation coverage; that coverage was added, and the
+  settled production plus generated-bundle diff returned `NO VIOLATIONS`. The later test-only
+  full-suite repair also received a final `NO VIOLATIONS` review.
+- Canonical isolated-worktree verification passed with the ticket source pinned ahead of the shared
+  editable virtualenv: Ruff; Mypy across 106 source files; 454 unit tests; compile/static, CSS,
+  Svelte, frontend build, and event-mapping gates; 67 browser/CLI e2e tests; final `VERIFY: PASS`.
+
+Current hypothesis:
+
+- Confirmed from the render path: polling replaces chat state and rebuilds fresh transcript wrapper
+  objects. The old `MarkdownBlock` effect treated that invalidation as a content change, destroyed
+  the managed preview, and mounted/fetched it again. Stable row keys preserve identity, while the
+  semantic guard makes equivalent prop delivery a no-op; changed live text or preview context still
+  follows the existing renderer.
+- Same-URL external file byte mutation is not a reactive Panels input: there is no managed-file
+  version/event, and adding polling or cache invalidation would contradict the approved one-fetch
+  stability behavior.
+
+Next step:
+
+- Propose the concise Implementation package with root cause, reviewed source changes, RED/GREEN
+  browser evidence, full verification, and the isolated branch commit. Integration remains Closeout.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-11): t_5m7fmdk3 Kickoff closeout integration
 
 Current build stage:

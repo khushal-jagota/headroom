@@ -2,6 +2,38 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D109 — Preview stability measurement begins after route startup settles
+
+The regression measures the ticket's live-activity boundary, not transient route startup. Under full
+suite load, the route's catch-up flush can remount the whole screen before one settled preview exists;
+a component-local chat fix cannot and should not preserve DOM across destruction of its parent route.
+Wait until exactly one connected historical preview has rendered, clear startup request observations,
+then install the loading/remount observer. Repeated activity and live-output updates must add zero
+requests and preserve that exact node; changing the same message to a new managed target must replace
+it and add exactly one request. This keeps the test deterministic without weakening the approved
+runtime behavior.
+
+## D108 — Reactive preservation coverage changes the same message text, not file bytes
+
+Same-URL external file byte mutation is not a reactive input: Panels has no managed-file version or
+event, and polling or invalidating the preview cache would contradict the approved one-fetch
+stability fix. The strengthened Ticket/Chief browser regression instead updates one stable
+historical `chat_messages.id` from its first real managed Markdown target to a second real target.
+That is the supported reactive input and proves changed message text replaces the preview while
+unchanged polling, activity, and live output preserve it. This test-and-memory-only follow-up is
+trivial enough to collapse ticket planning and implementation without expanding production scope.
+
+## D107 — Stable chat render identity plus a semantic Markdown guard prevent false remounts
+
+Chat polling returns fresh response objects even when historical messages are unchanged. Preserve
+each historical row by the existing database message id and the live row by the existing turn id;
+do not invent client identity. A keyed row alone still receives a fresh wrapper, so `MarkdownBlock`
+also snapshots normalized text, quiet text, preview depth, and visited paths and returns before DOM
+teardown when all are equivalent. Real text or context changes continue through the existing render
+and preview-mount path. This is local render stability, not a file cache, and it changes no preview
+size or fetch contract. The generated frontend output already exists and must not be rebuilt in
+this sandbox; the host orchestrator will include that existing asset when committing.
+
 ## D106 — Kickoff integration preserves concurrent main work and rebuilds the shared frontend
 
 Ticket `t_5m7fmdk3` was implemented and independently verified on its dedicated branch while `main`

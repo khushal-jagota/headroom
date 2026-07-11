@@ -8,6 +8,7 @@
   import MarkdownBlock from "./MarkdownBlock.svelte";
 
   type ChatMessage = {
+    renderKey: string;
     who: "you" | "planner" | "system" | "worker";
     text: string;
     pending?: boolean;
@@ -58,12 +59,17 @@
   }
 
   function messageFor(msg: ChatStateMessage): ChatMessage {
-    return { who: whoForRole(msg.role), text: msg.text };
+    return { renderKey: `message:${msg.id}`, who: whoForRole(msg.role), text: msg.text };
   }
 
   function activeMessage(turn: ChatTurn): ChatMessage | null {
     if (turn.output_text.trim()) {
-      return { who: whoForRole(turn.output_role), text: turn.output_text, pending: true };
+      return {
+        renderKey: `turn:${turn.id}`,
+        who: whoForRole(turn.output_role),
+        text: turn.output_text,
+        pending: true
+      };
     }
     return null;
   }
@@ -259,7 +265,7 @@
       {:else if transcript.length === 0 && !pending && !chatState.loading}
         <div class="chat-empty"><h2 class="chat-empty-h">What do you need?</h2></div>
       {:else}
-        {#each transcript as msg}
+        {#each transcript as msg (msg.renderKey)}
           {#if msg.who === "you"}
             <div class="chat-u" data-chat-msg="you"><MarkdownBlock text={msg.text} /></div>
           {:else if msg.who === "worker"}

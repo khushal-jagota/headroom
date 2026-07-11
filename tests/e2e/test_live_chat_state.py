@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 
+import pytest
 from playwright.sync_api import Page
 
 WAIT_MS = 10_000
 WORKER_PROMPT_TEXT = "Work this ticket step from the current system prompt."
+HISTORICAL_PREVIEW_MESSAGE_ID = 10_001_001
 
 
 def _wait_chat_text(page: Page, who: str, text: str) -> None:
@@ -180,6 +183,82 @@ def _update_running_worker_turn_label(server, entity_id: str, label: str) -> Non
         )
 
 
+def _update_running_turn_output(server, entity_id: str, label: str, output_text: str) -> None:
+    with sqlite3.connect(server.db_path) as conn:
+        row = conn.execute(
+            "SELECT id FROM chat_turns WHERE entity_id = ? AND status = 'running'",
+            (entity_id,),
+        ).fetchone()
+        assert row is not None
+        turn_id = row[0]
+        conn.execute(
+            "UPDATE chat_turns SET activity_label = ?, output_text = ?, "
+            "updated_at = updated_at + 1 WHERE id = ?",
+            (label, output_text, turn_id),
+        )
+        conn.execute(
+            "INSERT INTO events (entity_id, kind, payload, created_at) VALUES (?, ?, ?, 2)",
+            (
+                entity_id,
+                "chat_turn_updated",
+                json.dumps(
+                    {
+                        "turn_id": turn_id,
+                        "phase": "doing",
+                        "activity_label": label,
+                    }
+                ),
+            ),
+        )
+
+
+def _seed_replaceable_managed_markdown_chat_message(
+    server, entity_id: str, ticket_id: str
+) -> tuple[int, str, str]:
+    original_relative_path = "notes/stable-preview.md"
+    replacement_relative_path = "notes/replacement-preview.md"
+    root = Path(server.db_path).parent / "files" / "tickets" / ticket_id
+    (root / "notes").mkdir(parents=True, exist_ok=True)
+    (root / original_relative_path).write_text(
+        "# Stable managed preview\n\nThis historical source does not change.",
+        encoding="utf-8",
+    )
+    (root / replacement_relative_path).write_text(
+        "# Replacement managed preview\n\nThis is a different managed file.",
+        encoding="utf-8",
+    )
+    message = (
+        "Historical managed file:\n\n"
+        f"[Stable preview](/files/tickets/{ticket_id}/{original_relative_path})"
+    )
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "INSERT INTO chat_messages (id, entity_id, turn_id, role, text, created_at) "
+            "VALUES (?, ?, NULL, 'assistant', ?, 0)",
+            (HISTORICAL_PREVIEW_MESSAGE_ID, entity_id, message),
+        )
+    return (
+        HISTORICAL_PREVIEW_MESSAGE_ID,
+        f"/files/tickets/{ticket_id}/{original_relative_path}",
+        f"/files/tickets/{ticket_id}/{replacement_relative_path}",
+    )
+
+
+def _replace_managed_markdown_target_in_historical_message(
+    server, message_id: int, replacement_preview_path: str
+) -> None:
+    replacement_message = (
+        "Historical managed file:\n\n"
+        f"[Replacement preview]({replacement_preview_path})"
+    )
+    with sqlite3.connect(server.db_path) as conn:
+        cursor = conn.execute(
+            "UPDATE chat_messages SET text = ? WHERE id = ?",
+            (replacement_message, message_id),
+        )
+        assert cursor.rowcount == 1
+
+
 def _seed_long_running_worker_activity(server, entity_id: str, count: int = 40) -> None:
     with sqlite3.connect(server.db_path) as conn:
         row = conn.execute(
@@ -237,6 +316,147 @@ def _wheel_up_inside_chat_thread(page: Page, selector: str, delta_y: int = -24) 
         arg={"selector": selector, "beforeTop": before["top"]},
         timeout=WAIT_MS,
     )
+
+
+@pytest.mark.parametrize("chat_context", ["ticket", "chief"])
+def test_running_chat_preserves_unchanged_and_replaces_changed_managed_markdown_preview(
+    server, context_factory, open_page, cli, chat_context
+) -> None:
+    ticket_id = cli(server, "ticket", "create", "--title", "Stable chat preview")["id"]
+    if chat_context == "ticket":
+        entity_id = ticket_id
+        route = f"#/ticket/{ticket_id}"
+        ready_selector = 'section[data-screen="ticket"] [data-chat] [data-chat-input]'
+    else:
+        entity_id = "agent_panels_chief_of_staff"
+        route = "#/chief"
+        ready_selector = 'section[data-screen="chief"] [data-chat-input]'
+
+    message_id, preview_path, replacement_preview_path = (
+        _seed_replaceable_managed_markdown_chat_message(server, entity_id, ticket_id)
+    )
+    if chat_context == "ticket":
+        _seed_running_worker_turn(server, entity_id)
+    else:
+        _seed_running_chief_turn(server, entity_id)
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "UPDATE chat_turns SET output_text = ? "
+            "WHERE entity_id = ? AND status = 'running'",
+            ("Live response **before**", entity_id),
+        )
+
+    requests: list[str] = []
+    context = context_factory()
+    context.on(
+        "request",
+        lambda request: requests.append(request.url)
+        if request.url.endswith((preview_path, replacement_preview_path))
+        else None,
+    )
+    page = open_page(
+        context,
+        server,
+        route,
+        ready_selector,
+        settled=True,
+    )
+    historical_preview = page.locator(
+        '[data-chat-msg="planner"]', has_text="Historical managed file:"
+    ).locator('[data-file-preview-kind="markdown"]')
+    page.wait_for_function(
+        "() => {"
+        " const previews = document.querySelectorAll("
+        "   '[data-chat-msg=\"planner\"] [data-file-preview-kind=\"markdown\"]'"
+        " );"
+        " return previews.length === 1"
+        "   && previews[0].querySelector('h1')?.textContent === 'Stable managed preview';"
+        "}",
+        timeout=WAIT_MS,
+    )
+    page.locator('[data-chat-msg="planner"] strong', has_text="before").wait_for(
+        state="visible", timeout=WAIT_MS
+    )
+    requests.clear()
+
+    historical_preview.evaluate(
+        "node => {"
+        " window.__stableHistoricalPreview = node;"
+        " window.__stableHistoricalPreviewLoadingCount = 0;"
+        " window.__stableHistoricalPreviewObserver = new MutationObserver(records => {"
+        "   for (const record of records) {"
+        "     for (const added of record.addedNodes) {"
+        "       if ((added.textContent || '').includes('Loading preview...'))"
+        "         window.__stableHistoricalPreviewLoadingCount += 1;"
+        "     }"
+        "   }"
+        " });"
+        " window.__stableHistoricalPreviewObserver.observe("
+        "   document.querySelector('[data-chat-messages]'),"
+        "   { childList: true, subtree: true }"
+        " );"
+        "}"
+    )
+
+    for index in range(3):
+        label = f"Unrelated live activity {index + 1}"
+        _update_running_worker_turn_label(server, entity_id, label)
+        _wait_chat_text(page, "worker" if chat_context == "ticket" else "planner", label)
+        _wait_chat_text(page, "planner", "Live response before")
+        page.wait_for_function(
+            "() => {"
+            " const node = window.__stableHistoricalPreview;"
+            " return node?.isConnected && node === document.querySelector("
+            "   '[data-chat-msg=\"planner\"] [data-file-preview-kind=\"markdown\"]'"
+            " ) && window.__stableHistoricalPreviewLoadingCount === 0;"
+            "}",
+            timeout=WAIT_MS,
+        )
+
+    _update_running_turn_output(
+        server,
+        entity_id,
+        "Live output changed",
+        "Live response **after**",
+    )
+    page.locator('[data-chat-msg="planner"] strong', has_text="after").wait_for(
+        state="visible", timeout=WAIT_MS
+    )
+    assert page.locator(
+        '[data-chat-msg="planner"] strong', has_text="before"
+    ).count() == 0
+    assert requests == []
+    assert page.evaluate("() => window.__stableHistoricalPreviewLoadingCount") == 0
+    assert page.evaluate(
+        "() => window.__stableHistoricalPreview.isConnected"
+        " && window.__stableHistoricalPreview === document.querySelector("
+        "   '[data-chat-msg=\"planner\"] [data-file-preview-kind=\"markdown\"]'"
+        " )"
+    ) is True
+
+    _replace_managed_markdown_target_in_historical_message(
+        server, message_id, replacement_preview_path
+    )
+    replacement_preview = page.locator(
+        '[data-chat-msg="planner"]', has_text="Historical managed file:"
+    ).locator('[data-file-preview-kind="markdown"]')
+    replacement_preview.locator("h1", has_text="Replacement managed preview").wait_for(
+        state="visible", timeout=WAIT_MS
+    )
+    page.wait_for_function(
+        "() => {"
+        " const original = window.__stableHistoricalPreview;"
+        " const replacement = document.querySelector("
+        "   '[data-chat-msg=\"planner\"] [data-file-preview-kind=\"markdown\"]'"
+        " );"
+        " return !original.isConnected && replacement && replacement !== original;"
+        "}",
+        timeout=WAIT_MS,
+    )
+    assert historical_preview.locator("h1", has_text="Stable managed preview").count() == 0
+    assert requests.count(server.base + preview_path) == 0
+    assert requests.count(server.base + replacement_preview_path) == 1
+    page.evaluate("() => window.__stableHistoricalPreviewObserver.disconnect()")
 
 
 def test_ticket_chat_send_survives_navigation_from_server_state(
