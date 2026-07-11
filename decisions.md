@@ -2,6 +2,91 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D112 — Review corrections keep blocker JSON frozen while typing backend reads
+
+The implementation-review findings are handled as bounded corrections in the isolated
+`t_bqxt44fb` worktree with no delegation, commit, merge, live DB touch, or `./verify`. The backend
+blocker read contract now lives as frozen dataclasses in `core/contracts.py`; `core.links` returns
+those typed summaries, and only Ticket view/API serialization turns them into the already-approved
+JSON shape. Sprint child status uses that same summary reader rather than its own SQL predicate.
+
+The reviewer e2e state-jump finding is treated as refuted by the orchestrator's direct browser run,
+not as a production defect. The test now asserts the cleared blocker is `needs_success` before
+posting `done`; this sandbox still cannot launch Chromium, so parent browser evidence remains the
+proof for that behavior.
+
+## D111 — Frontend blockers consume the frozen summary without new controls
+
+The frontend slice keeps `blocker_summary` owned by Ticket detail types and does not reinterpret the
+backend shape. The Ticket screen renders one read-only Blockers section after Recap with only resolved
+links and active/cleared labels; it adds no relationship editor, graph, header marker change, or gated
+field behavior change. Sprint item blocker hrefs stay `#/sprint?item=<id>` and select the existing
+Sprint item disclosure by opening, scrolling, focusing, and marking that row; no item route or screen is
+created. State-change payloads with `affected_blocked_target_ids` invalidate those endpoint resources
+plus the same aggregates as link add/remove.
+
+## D110 — Backend leaf freezes blocker summary before frontend consumption
+
+The direct leaf instruction supersedes the earlier orchestrator/delegation route for this slice: implement
+only schema/backend/runtime/API/CLI/docs and focused tests in the isolated worktree, with no commit, merge,
+live database touch, frontend edit, or `./verify`. The frozen backend JSON contract is
+`blocker_summary: {blocked, blocked_by, blocks}`. `blocked_by` rows are resolved Ticket blockers with
+`ticket_id`, `title`, `state`, `active`, and `href`; `blocks` rows are resolved Ticket or Sprint-item
+targets with `target_id`, `target_kind`, `title`, `active`, and `href`. Ticket hrefs are
+`#/ticket/<id>`; Sprint-item hrefs are `#/sprint?item=<id>`.
+
+Source Tickets are active blockers unless their state is `done` or `dropped`. Link creation checks only
+active cycles; reactivation through the Ticket state writer validates the outgoing edges it would make
+active and rejects cycles. A state change that activates or clears outgoing blocks adds
+`affected_blocked_target_ids` to the `state_changed` event payload when there are affected targets.
+
+## D110 — Review findings are fixed without changing the external blocker summary
+
+The first integrated review found four valid gaps: link mutations lacked the direct-write guard, Sprint
+child status duplicated blocker SQL, the backend summary was an untyped JSON dictionary, and frontend
+tests/types retained loose relationship vocabulary. All are fixed under focused RED/GREEN coverage.
+The external `blocker_summary` JSON remains unchanged; typed frozen core rows now own it and Ticket views
+serialize at the boundary. The browser-test state-jump finding was refuted by a direct passing run and
+made explicit with a `needs_success` assertion. Parent reruns passed 60 focused backend tests, event
+mapping, frontend check/build, three browser flows, Ruff, and Mypy. Fresh follow-up Codex review returned
+`NO VIOLATIONS`; canonical `./verify` is the remaining Implementation gate.
+
+## D109 — Stalled broad Claude dispatch is replaced by serial bounded Codex slices
+
+The first Claude leaf dispatch produced no test edit, production diff, or durable report after repeated
+bounded checks, so it was stopped before touching ticket-owned code. Repeating the same broad route
+would violate the execution-budget and rule-of-three disciplines. Implementation is re-cut serially:
+first schema/backend/runtime/API/CLI plus their tests and a frozen resolved-summary contract, then the
+frontend consumer and browser coverage. The slices share one worktree but never write concurrently.
+A fresh read-only Codex session still reviews the integrated diff as the project-required independent
+review; the parent reruns every claimed focused check and the canonical verifier itself.
+
+## D108 — Active-blocker correctness includes reactivation and affected-target invalidation
+
+Codex plan review identified two state-transition obligations that link creation alone cannot satisfy.
+Inactive historical edges do not constrain a new dependency, but reopening a `done` source must reject
+any cycle that its outgoing edges would reactivate. Likewise, when a source enters or leaves active
+state, every outgoing target changes derived status even though the canonical Ticket event belongs to
+the source. The Ticket state writer must therefore validate reactivation under its write transaction,
+report affected target IDs through the existing event/invalidation contract, commit, then ring
+readiness. Sprint items are graph sinks: they can be blocked but never propagate a dependency.
+
+The same review pins the migration as a versioned links-table rebuild after legacy Sprint-item blocker
+conversion, with obsolete rows and the belongs-to index removed while `tickets.sprint_item_id` remains
+canonical. Endpoint existence is checked inside the serialized link write. Worker context is exposed
+through `my-ticket` and copy output, not injected into automatic prompts. Sprint-item links navigate to
+the existing Sprint screen with an item selection query rather than creating a new route.
+
+## D107 — Blocker implementation is branch-isolated and migration cutover stays in Closeout
+
+Ticket `t_bqxt44fb` changes shared schema, backend derivations, runtime readiness, CLI, and frontend
+contracts, so Implementation uses dedicated branch `ticket/t_bqxt44fb-blockers` and a worktree-local
+toolchain. Strict TDD, independent review, disposable migration tests, and branch-local `./verify` are
+Implementation gates. The branch may contain a tested migration but must not touch the live database.
+Closeout alone owns merging, backing up and migrating the live database, post-merge verification, and
+worktree cleanup. The broad multi-file implementation is delegated to Claude as a leaf implementer;
+Codex remains the independent plan and diff reviewer required by AGENTS.md.
+
 ## D106 — Kickoff integration preserves concurrent main work and rebuilds the shared frontend
 
 Ticket `t_5m7fmdk3` was implemented and independently verified on its dedicated branch while `main`

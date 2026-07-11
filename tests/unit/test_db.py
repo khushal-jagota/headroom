@@ -121,6 +121,156 @@ def test_fresh_schema_has_nullable_checked_ticket_implementer(tmp_path):
     conn.close()
 
 
+def test_fresh_schema_links_are_blocks_only_without_belongs_to_index(tmp_path):
+    db_path = tmp_path / "fresh-blocks-links.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    create_schema(conn)
+
+    conn.execute(
+        "INSERT INTO links (from_id, to_id, kind) VALUES ('t_source', 't_target', 'blocks')"
+    )
+    for obsolete_kind in ("belongs_to", "parent_child", "relates"):
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO links (from_id, to_id, kind) VALUES (?, ?, ?)",
+                (f"t_{obsolete_kind}", f"t_target_{obsolete_kind}", obsolete_kind),
+            )
+    indexes = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA index_list(links)")
+        if str(row["origin"]) != "pk"
+    }
+    assert indexes == {"idx_links_to"}
+    conn.close()
+
+
+def test_create_schema_rebuilds_legacy_links_after_sprint_blocker_conversion(tmp_path):
+    db_path = tmp_path / "legacy-links-rebuild.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE projects (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+          summary TEXT NOT NULL DEFAULT '',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES ('project_vylo', 'Vylo', 1, 1);
+        CREATE TABLE sprints (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          date_start TEXT NOT NULL,
+          date_end TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE sprint_items (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          body TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'todo',
+          priority TEXT NOT NULL DEFAULT 'P3',
+          deadline TEXT,
+          project_id TEXT NOT NULL REFERENCES projects(id),
+          sprint_id TEXT REFERENCES sprints(id),
+          blocked_by TEXT NOT NULL DEFAULT '[]',
+          status_proposal TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE tickets (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL CHECK (length(title) <= 200),
+          state TEXT NOT NULL DEFAULT 'needs_kickoff'
+                 CHECK (state IN ('needs_kickoff','needs_success','needs_approach',
+                                  'needs_plan','needs_implementation','needs_closeout',
+                                  'done','dropped')),
+          priority TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
+          deadline TEXT,
+          project_id TEXT REFERENCES projects(id),
+          sprint_item_id TEXT REFERENCES sprint_items(id),
+          sprint_id TEXT REFERENCES sprints(id),
+          recap TEXT NOT NULL DEFAULT '',
+          kickoff_note TEXT NOT NULL DEFAULT '',
+          kickoff_proposal TEXT,
+          ceiling TEXT NOT NULL DEFAULT 'needs_success'
+                  CHECK (ceiling IN ('needs_success','needs_approach','needs_plan',
+                                     'needs_implementation','needs_closeout','done')),
+          at_cap TEXT NOT NULL DEFAULT 'propose' CHECK (at_cap IN ('stop','propose')),
+          ticket_status TEXT NOT NULL DEFAULT 'empty'
+                        CHECK (ticket_status IN ('empty','agent_running_step',
+                                                 'awaiting_approval','user_takeover','errored')),
+          implementer TEXT CHECK (implementer IN ('khushal','panels_worker',
+                                                  'hermes_codex','hermes_claude')),
+          chat_session_key TEXT,
+          alias TEXT,
+          fields TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE links (
+          from_id TEXT NOT NULL,
+          to_id TEXT NOT NULL,
+          kind TEXT NOT NULL CHECK (kind IN ('belongs_to','parent_child','blocks','relates')),
+          PRIMARY KEY (from_id, to_id, kind),
+          CHECK (from_id <> to_id)
+        );
+        CREATE UNIQUE INDEX idx_links_one_belongs_to
+          ON links(from_id) WHERE kind = 'belongs_to';
+        CREATE INDEX idx_links_to ON links(to_id, kind);
+        INSERT INTO sprint_items (
+          id, title, project_id, blocked_by, created_at, updated_at
+        ) VALUES (
+          'si_legacy', 'Legacy item', 'project_vylo', '["t_blocker"]', 1, 1
+        );
+        INSERT INTO tickets (id, title, sprint_item_id, created_at, updated_at) VALUES
+          ('t_blocker', 'Blocker', NULL, 1, 1),
+          ('t_child', 'Child', 'si_legacy', 1, 1),
+          ('t_target', 'Target', NULL, 1, 1);
+        INSERT INTO links (from_id, to_id, kind) VALUES
+          ('t_child', 'si_legacy', 'belongs_to'),
+          ('t_child', 't_target', 'parent_child'),
+          ('t_target', 't_child', 'relates'),
+          ('t_target', 'si_legacy', 'blocks');
+        """
+    )
+
+    create_schema(conn)
+
+    assert conn.execute(
+        "SELECT sprint_item_id FROM tickets WHERE id = 't_child'"
+    ).fetchone()[0] == "si_legacy"
+    assert [
+        tuple(row)
+        for row in conn.execute("SELECT from_id, to_id, kind FROM links ORDER BY from_id, to_id")
+    ] == [
+        ("t_blocker", "si_legacy", "blocks"),
+        ("t_target", "si_legacy", "blocks"),
+    ]
+    links_sql = str(
+        conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='links'")
+        .fetchone()["sql"]
+    )
+    assert "kind = 'blocks'" in links_sql
+    indexes = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA index_list(links)")
+        if str(row["origin"]) != "pk"
+    }
+    assert indexes == {"idx_links_to"}
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO links (from_id, to_id, kind) VALUES ('t_late', 't_target', 'relates')"
+        )
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    conn.close()
+
+
 def test_create_schema_adds_ticket_implementer_after_lifecycle_migration_idempotently(tmp_path):
     db_path = tmp_path / "old-lifecycle-implementer.db"
     conn = sqlite3.connect(db_path)

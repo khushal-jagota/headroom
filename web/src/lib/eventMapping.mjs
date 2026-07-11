@@ -93,6 +93,13 @@ export function keysForEvent(event, options = {}) {
     keys.push("board", "queues", "sprint:current");
   }
 
+  if (Array.isArray(payload.affected_blocked_target_ids)) {
+    for (const targetId of payload.affected_blocked_target_ids) {
+      keys.push(...endpointEntityKeys(String(targetId)));
+    }
+    keys.push("board", "queues", "sprint:current");
+  }
+
   if (
     kind === "chat_session_created" ||
     kind === "chat_message_recorded" ||

@@ -1,0 +1,20 @@
+Implemented the backend/schema/runtime/API/CLI/docs slice for `t_bqxt44fb` in the isolated worktree. No frontend files were touched, no live DB was touched, no commit/merge was made, and I did not run `./verify`.
+
+Key outputs:
+- Blocks-only schema with `SCHEMA_VERSION = 15`, legacy links-table rebuild, obsolete seed `belongs_to` removal.
+- Canonical `blocker_summary` read model used by readiness, Ticket detail, `/tickets/by-session`, copy text, and Sprint item status.
+- Active-only cycle checks plus reactivation guard.
+- Source state changes include `affected_blocked_target_ids` when outgoing blocks activate/clear.
+- Blocks-only deletion cleanup/events/affected IDs/readiness coverage.
+- New thin CLI paths: `sprint item block` / `sprint item unblock`.
+- Report written at [backend-report.md](/private/tmp/panels-t_bqxt44fb/orchestration/tickets/t_bqxt44fb-blockers/backend-report.md).
+
+Final focused green evidence:
+- `pytest tests/unit/test_links.py tests/unit/test_db.py tests/unit/test_seed.py tests/unit/test_sprints.py tests/unit/test_ticket_delete.py tests/unit/test_readiness_actions.py tests/unit/test_cli_blockers.py tests/unit/test_ticket_readiness_loop.py tests/unit/test_tickets_engine.py -q`
+  - `112 passed`
+- `ruff check ...`
+  - `All checks passed!`
+- `mypy ...`
+  - `Success: no issues found in 12 source files`
+
+Only warnings were the existing Starlette/httpx deprecation and `TestClock` collection warning.

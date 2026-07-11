@@ -1,0 +1,17 @@
+Implemented the bounded review corrections directly in the isolated worktree. Key fixes landed in `src/planner/tickets/api.py`, `src/planner/core/contracts.py`, `src/planner/core/links.py`, `src/planner/sprints/data.py`, `src/planner/tickets/views.py`, `web/src/lib/types.ts`, `web/tests/event-mapping.test.mjs`, and `tests/e2e/test_blockers_frontend.py`.
+
+Recorded the required RED/GREEN commands and finding dispositions in [review-fixes.md](/private/tmp/panels-t_bqxt44fb/orchestration/tickets/t_bqxt44fb-blockers/review-fixes.md). Also updated `PROGRESS.md` and `decisions.md`.
+
+Verification run, excluding `./verify` as requested:
+
+- Focused RED then GREEN TDD command: GREEN, `3 passed`
+- Focused backend/API/CLI/migration/frontend-event unit set: `60 passed`
+- Ruff: passed
+- Mypy: passed
+- `npm --prefix web test -- event-mapping`: passed
+- `npm --prefix web run check`: passed with existing Svelte warnings only
+- `npm --prefix web run build`: passed
+- `py_compile` for the e2e file: passed
+- `git diff --check`: passed
+
+Focused Playwright rerun was attempted, but Chromium is still sandbox-blocked before app code with `MachPortRendezvousServer ... Permission denied (1100)`. No commit, merge, live DB touch, delegation, or `./verify` run was performed.

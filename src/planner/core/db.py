@@ -11,7 +11,7 @@ from typing import Final
 
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 14
+SCHEMA_VERSION: Final = 15
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -181,12 +181,10 @@ CREATE TABLE IF NOT EXISTS ideas (
 CREATE TABLE IF NOT EXISTS links (                   -- §3.6, exactly the spec's three columns
   from_id TEXT NOT NULL,
   to_id   TEXT NOT NULL,
-  kind    TEXT NOT NULL CHECK (kind IN ('belongs_to','parent_child','blocks','relates')),
+  kind    TEXT NOT NULL CHECK (kind = 'blocks'),
   PRIMARY KEY (from_id, to_id, kind),
   CHECK (from_id <> to_id)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_links_one_belongs_to
-  ON links(from_id) WHERE kind = 'belongs_to';       -- at most one belongs_to per ticket
 CREATE INDEX IF NOT EXISTS idx_links_to ON links(to_id, kind);
 
 CREATE TABLE IF NOT EXISTS events (                  -- append-only except entity hard-delete audit
@@ -220,6 +218,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _migrate_ticket_kickoff_columns(conn)
     _migrate_project_summary_column(conn)
     _migrate_derived_sprint_item_status(conn)
+    _migrate_links_blocks_only(conn)
     _migrate_tickets_status_column(conn)
     _create_indexes(conn)
     conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
@@ -589,6 +588,46 @@ def _migrate_derived_sprint_item_status(conn: sqlite3.Connection) -> None:
     for column in ("status_proposal", "blocked_by", "status"):
         if column in _table_columns(conn, "sprint_items"):
             conn.execute(f"ALTER TABLE sprint_items DROP COLUMN {column}")
+
+
+def _migrate_links_blocks_only(conn: sqlite3.Connection) -> None:
+    schema_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='links'"
+    ).fetchone()
+    if schema_row is None or schema_row[0] is None:
+        return
+    indexes = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA index_list(links)")
+        if str(row["origin"]) != "pk"
+    }
+    if "kind = 'blocks'" in str(schema_row[0]) and "idx_links_one_belongs_to" not in indexes:
+        return
+
+    rows = conn.execute(
+        "SELECT from_id, to_id, kind FROM links WHERE kind = 'blocks' ORDER BY from_id, to_id"
+    ).fetchall()
+    conn.execute("DROP INDEX IF EXISTS idx_links_one_belongs_to")
+    conn.execute("DROP INDEX IF EXISTS idx_links_to")
+    conn.execute("ALTER TABLE links RENAME TO links_legacy")
+    conn.execute(
+        """
+        CREATE TABLE links (
+          from_id TEXT NOT NULL,
+          to_id   TEXT NOT NULL,
+          kind    TEXT NOT NULL CHECK (kind = 'blocks'),
+          PRIMARY KEY (from_id, to_id, kind),
+          CHECK (from_id <> to_id)
+        )
+        """
+    )
+    for row in rows:
+        conn.execute(
+            "INSERT OR IGNORE INTO links (from_id, to_id, kind) VALUES (?, ?, 'blocks')",
+            (row["from_id"], row["to_id"]),
+        )
+    conn.execute("DROP TABLE links_legacy")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_links_to ON links(to_id, kind)")
 
 
 def _create_indexes(conn: sqlite3.Connection) -> None:

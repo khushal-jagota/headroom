@@ -13,6 +13,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import Final
 
+from planner.core import links as core_links
 from planner.core.contracts import EventKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event, delete_entity_history
@@ -132,6 +133,18 @@ def _load_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
     return _row_to_ticket(row)
 
 
+def _active_blocker_state(state: TicketState) -> bool:
+    return state not in {TicketState.done, TicketState.dropped}
+
+
+def _outgoing_block_target_ids(conn: sqlite3.Connection, ticket_id: str) -> tuple[str, ...]:
+    rows = conn.execute(
+        "SELECT to_id FROM links WHERE from_id = ? AND kind = 'blocks' ORDER BY to_id",
+        (ticket_id,),
+    ).fetchall()
+    return tuple(str(row["to_id"]) for row in rows)
+
+
 def _apply_decision(
     conn: sqlite3.Connection, ticket: Ticket, decision: Decision, now: int
 ) -> Ticket:
@@ -139,6 +152,19 @@ def _apply_decision(
     new_state = decision.new_state if decision.new_state is not None else ticket.state
     new_ceiling = decision.new_ceiling if decision.new_ceiling is not None else ticket.ceiling
     new_at_cap = decision.new_at_cap if decision.new_at_cap is not None else ticket.at_cap
+    active_before = _active_blocker_state(ticket.state)
+    active_after = _active_blocker_state(new_state)
+    affected_blocked_target_ids: tuple[str, ...] = ()
+    if active_before != active_after:
+        affected_blocked_target_ids = _outgoing_block_target_ids(conn, ticket.id)
+        if active_after:
+            for target_id in affected_blocked_target_ids:
+                if core_links.would_create_active_blocks_cycle(conn, ticket.id, target_id):
+                    raise PlannerError(
+                        ErrorCode.link_cycle,
+                        "ticket state change would activate a blocks cycle",
+                        {"ticket_id": ticket.id, "to_id": target_id},
+                    )
     conn.execute(
         "UPDATE tickets SET fields = ?, state = ?, ceiling = ?, at_cap = ?, updated_at = ? "
         "WHERE id = ?",
@@ -152,7 +178,13 @@ def _apply_decision(
         ),
     )
     for spec in decision.events:
-        append_event(conn, ticket.id, spec.kind, spec.payload, now)
+        payload = spec.payload
+        if spec.kind is EventKind.state_changed and affected_blocked_target_ids:
+            payload = {
+                **payload,
+                "affected_blocked_target_ids": list(affected_blocked_target_ids),
+            }
+        append_event(conn, ticket.id, spec.kind, payload, now)
     if any(spec.kind is EventKind.state_changed for spec in decision.events):
         _append_item_children_changed(conn, ticket.sprint_item_id, ticket.id, "state", now)
     return _load_ticket(conn, ticket.id)

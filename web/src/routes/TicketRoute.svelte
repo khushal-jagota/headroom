@@ -172,6 +172,11 @@
     return STATUS_DISPLAY[status] || status.replace(/_/g, " ");
   }
 
+  function hasBlockerRows(detail: TicketDetail): boolean {
+    const summary = detail.blocker_summary;
+    return Boolean(summary && (summary.blocked_by.length > 0 || summary.blocks.length > 0));
+  }
+
   onDestroy(() => {
     ticket.dispose();
     sprints.dispose();
@@ -315,6 +320,38 @@
               {/if}
             </Disclosure>
           </div>
+
+          {#if hasBlockerRows(detail)}
+            {@const blockerSummary = detail.blocker_summary}
+            <section class="ticket-blockers" data-blocker-summary>
+              <div class="ticket-blocker-group" data-blocker-group="blocked-by">
+                <div class="ticket-blocker-heading">Blocked by</div>
+                {#each blockerSummary?.blocked_by || [] as blocker}
+                  <a
+                    class="ticket-blocker-row"
+                    class:ticket-blocker-row--cleared={!blocker.active}
+                    href={blocker.href}
+                  >
+                    <span class="ticket-blocker-title">{blocker.title}</span>
+                    <span class="ticket-blocker-state">{blocker.active ? "active" : "cleared"}</span>
+                  </a>
+                {/each}
+              </div>
+              <div class="ticket-blocker-group" data-blocker-group="blocks">
+                <div class="ticket-blocker-heading">Blocks</div>
+                {#each blockerSummary?.blocks || [] as blockedTarget}
+                  <a
+                    class="ticket-blocker-row"
+                    class:ticket-blocker-row--cleared={!blockedTarget.active}
+                    href={blockedTarget.href}
+                  >
+                    <span class="ticket-blocker-title">{blockedTarget.title}</span>
+                    <span class="ticket-blocker-state">{blockedTarget.active ? "active" : "cleared"}</span>
+                  </a>
+                {/each}
+              </div>
+            </section>
+          {/if}
 
           <div class="fields">
             <KickoffSection

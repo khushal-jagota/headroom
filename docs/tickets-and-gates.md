@@ -152,6 +152,10 @@ requires `--yes`. The operation is blocked while ticket activity is still runnin
 One transaction removes the ticket from days, sprint views, links, Review, Workspace,
 and Panels chat. Other tickets and day ordering stay intact.
 
+Blocker links are removed in the same transaction. Surviving Ticket and Sprint-item
+endpoints get `link_removed` events, and the delete response lists those affected
+endpoint ids so clients can refresh them.
+
 The deletion also replaces that ticket's old event history with one small deletion
 record containing its identity, the direct actor, and the time. This is the only
 exception to normal append-only event history. The separate stored Hermes session is

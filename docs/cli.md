@@ -33,10 +33,11 @@ state setter.
 - **`sprint create / list / show / set / add-ticket / remove-ticket`** — plan and
   populate sprints. `current` resolves through `/api/sprint/current`; `none` means the
   backlog where a list supports it.
-- **`sprint item create / list / show / set / add-ticket / remove-ticket`**
+- **`sprint item create / list / show / set / add-ticket / remove-ticket / block / unblock`**
   — manage sprint items and their ticket membership. Creating a ticket is still
   `ticket create`; adding an existing ticket to an item is a sprint-item command.
-  Item status is read-only and derived from child tickets and open blocking links.
+  `sprint item block <item-id> --by <ticket-id>` records a Ticket blocking an item.
+  Item status is read-only and derived from child tickets and active blocking links.
 - **`worker propose / recap / note / my-ticket`** — worker actions. `worker propose`
   infers the current gating field from ticket state and requires a short recap
   (`--recap` or `--recap-file`) in the same request. `worker note` preserves

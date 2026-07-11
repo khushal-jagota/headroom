@@ -3,6 +3,99 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-11): t_bqxt44fb verified-branch gate
+
+Current build stage:
+
+- Approved Implementation remains isolated in `/private/tmp/panels-t_bqxt44fb` on branch
+  `ticket/t_bqxt44fb-blockers`, based on `9ab2111`.
+- The blocks-only migration, typed canonical summary, guarded writes, readiness/Sprint behavior,
+  worker/CLI context, invalidation, and minimal Ticket/Sprint UI are implemented.
+- First-review findings are fixed or factually refuted; follow-up Codex review is `NO VIOLATIONS`.
+- Canonical branch verification is clean; the verified branch is ready to commit and propose.
+
+What just passed:
+
+- Parent focused backend set: 60 tests.
+- Event mapping, frontend check/build, the new blocker browser flow, existing Sprint live-status flow,
+  and existing Ticket editing flow.
+- Ruff across source/tests and Mypy across all 106 source files.
+- Independent follow-up implementation review: `NO VIOLATIONS`.
+- Canonical `./verify`: Ruff; Mypy across 106 source files; 466 unit tests; compile/static, frontend
+  check/build/event mapping; 66 browser/CLI e2e tests; final `VERIFY: PASS`. Full output is in
+  `data/verify-t_bqxt44fb.log`.
+
+Current hypothesis:
+
+- Confirmed: the branch satisfies the approved Implementation contract. Merge, live database backup and
+  migration, post-merge verification, and worktree cleanup remain Closeout work only.
+
+Next step:
+
+- Commit the verified branch and propose Implementation with review and verifier evidence.
+
+Blockers:
+
+- None. Main and the live database remain untouched.
+
+## Current work cycle (2026-07-11): t_bqxt44fb frontend blocker context
+
+Current build stage:
+
+- Approved Implementation is isolated in `/private/tmp/panels-t_bqxt44fb` on branch
+  `ticket/t_bqxt44fb-blockers`, based on integration commit `9ab2111`.
+- The worktree has its own editable `.venv`; `planner.__file__` resolves under this worktree.
+- Contract brief: `orchestration/tickets/t_bqxt44fb-blockers/BRIEF.md`.
+- Backend/schema/runtime/API/CLI/docs slice is implemented directly in this isolated leaf worktree.
+  The frontend/invalidation/browser slice is now implemented directly in the same isolated worktree.
+  No live database, commit, merge, delegation, or `./verify` run was used.
+
+What just passed:
+
+- Worktree creation and clean branch preflight.
+- Worktree-local Python 3.13 environment installation, editable package install, and Chromium setup.
+- Focused backend tests: `tests/unit/test_links.py`, `test_db.py`, `test_seed.py`, `test_sprints.py`,
+  `test_ticket_delete.py`, `test_readiness_actions.py`, `test_cli_blockers.py`,
+  `test_ticket_readiness_loop.py`, and `test_tickets_engine.py` passed together.
+- Ruff passed on touched Python files. Mypy passed on the 12 touched source modules.
+- Frontend event mapping RED/GREEN for `affected_blocked_target_ids` is complete:
+  `npm --prefix web test -- event-mapping` failed before the mapper change and passed after it.
+- Frontend static gates passed: `npm --prefix web run check`, `npm --prefix web run build`,
+  `.venv/bin/python -m py_compile tests/e2e/test_blockers_frontend.py`, and `git diff --check`.
+- `web/dist/index.html` now references the rebuilt `index-r-Ug3uQu.js`, which exists under
+  `web/dist/assets`.
+
+Current hypothesis:
+
+- Confirmed for static/frontend logic: Ticket detail consumes the frozen `blocker_summary` shape,
+  renders one read-only Blockers section after Recap, preserves header/editing behavior, maps
+  affected target invalidations, and routes Sprint item blocker hrefs to the existing Sprint screen
+  with selected-row focus wiring.
+
+Next step:
+
+- Parent/integrator still needs to rerun the focused Playwright test/module in an environment where
+  Chromium can launch, then run independent review, full `./verify`, commit, merge, and any live DB
+  migration.
+
+Blockers:
+
+- Browser verification is blocked inside this sandbox before app code runs: Chromium fails during
+  Playwright launch with `bootstrap_check_in ... MachPortRendezvousServer ... Permission denied
+  (1100)`. Firefox and WebKit are not installed in the Playwright cache. A disposable server bind
+  check is also blocked by `PermissionError: [Errno 1] Operation not permitted`.
+
+## Current work cycle (2026-07-11): t_bqxt44fb blockers-only relationship implementation
+
+Current build stage:
+
+- Backend slice record retained below; the active t_bqxt44fb work cycle is the frontend blocker
+  context section above.
+
+What just passed:
+
+- Backend/schema/runtime/API/CLI/docs slice implemented directly in this isolated leaf worktree.
+
 ## Current work cycle (2026-07-11): t_5m7fmdk3 Kickoff closeout integration
 
 Current build stage:

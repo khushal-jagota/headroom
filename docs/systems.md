@@ -64,8 +64,8 @@ These are the things the planner is made of:
 - **Tickets** are worker-sized pieces of work.
 - **Days** are daily overview records and ordered lists of tickets.
 - **Ideas** are loose thoughts that are not work yet.
-- **Links** connect records. The most important link is `blocks`, because it can stop
-  a ticket from becoming runnable.
+- **Links** are only blockers. A Ticket can block another Ticket or a Sprint item.
+  A blocker only counts while its source Ticket is not `done` or `dropped`.
 
 The Board is not an inventory. It is today's execution board: tickets attached to
 today's day. TicketReadinessLoop starts from that same today membership, then narrows further
@@ -256,8 +256,8 @@ less clean than the rest.
 
 2. **Sprint item status is a read projection.** Sprint items no longer store their
    own status. They derive `todo`, `in_progress`, `blocked`, or `done` from child
-   tickets and open `links.kind='blocks'` rows. This keeps ticket readiness and item
-   blocking on the same link model.
+   tickets and active `links.kind='blocks'` rows. A `done` or `dropped` source clears
+   its block. This keeps ticket readiness and item blocking on the same read model.
 
 3. **The frontend copies some ticket state-machine constants.** The server owns the
    ticket state machine, but `web/src/lib/ui.ts` repeats `STATE_ORDER`, gating fields,
