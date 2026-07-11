@@ -11,7 +11,7 @@ The planning system is built from sprints, sprint items, and tickets:
 
 - A **sprint** is a two-week block of work.
 - A **sprint item** is a goal — something the user wants to achieve. Tickets are generated for it, for the individual bits of that work.
-- A **ticket** is one unit of work, done by agents alongside the user. A ticket moves through six stages — **Success → Approach → Plan → Implementation → Closeout → Done** — filling one of five canonical outputs each step it needs: `success`, `approach`, `plan`, `implementation`, and `closeout`.
+- A **ticket** is one unit of work, done by agents alongside the user. A ticket moves through seven stages — **Kickoff → Success → Approach → Plan → Implementation → Closeout → Done** — filling one canonical field each step it needs: `kickoff`, `success`, `approach`, `plan`, `implementation`, and `closeout`.
 
 Sprint items and tickets can also stand alone, outside a sprint.
 
@@ -21,7 +21,7 @@ A **day** is a day in the user's life — what they want to get done that day. E
 
 A ticket can own durable work products such as HTML, images, Markdown documents, and other files. These live in Panels-managed ticket storage — by default under `data/files/tickets/<ticket-id>/...` — and appear in ticket Markdown through ordinary links such as `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Use the served `/files/tickets/...` link rather than exposing a local filesystem path; Panels owns how the file is previewed or opened.
 
-Artifacts complement the ticket record. Success, approach, plan, implementation, closeout, recaps, and notes remain concise canonical Markdown, with links to richer work when it helps.
+Artifacts complement the ticket record. Kickoff, success, approach, plan, implementation, closeout, recaps, and notes remain concise canonical Markdown, with links to richer work when it helps.
 
 ## Rollover
 

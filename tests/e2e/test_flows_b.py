@@ -354,7 +354,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     rpage2.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
     assert api.get(server, f"/api/tickets/{mid}")["state"] == "done"
 
-    # Ticket page flips to done, rendering exactly the five ordered sections.
+    # Ticket page flips to done, rendering exactly the six ordered stages.
     page.wait_for_function(
         "() => { const s = document.querySelector('section[data-screen=\"ticket\"]');"
         " return !!s && s.getAttribute('data-state') === 'done'; }",
@@ -363,9 +363,14 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     fields_order = page.eval_on_selector_all(
         ".fields [data-field]", "els => els.map(e => e.getAttribute('data-field'))"
     )
-    assert fields_order == ["success", "approach", "plan", "implementation", "closeout"], (
-        fields_order
-    )
+    assert fields_order == [
+        "kickoff",
+        "success",
+        "approach",
+        "plan",
+        "implementation",
+        "closeout",
+    ], fields_order
 
 
 def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api):

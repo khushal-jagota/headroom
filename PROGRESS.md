@@ -3,6 +3,36 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-11): ordinary Kickoff closeout integration
+
+Current build stage:
+
+- Ticket `t_hvnv9gyc` accepted Implementation. Verified branch
+  `ticket/t_hvnv9gyc-kickoff-normal-stage` at `e411dd1` is being merged into current `main` while
+  preserving the newer preview and Chat image commits plus the unrelated dirty nested worktree.
+- Source and tests merged without conflict. Memory-file overlaps are being reconciled explicitly,
+  and the generated frontend bundle will be rebuilt from the combined source.
+
+What just passed:
+
+- Implementation-branch canonical verification: Ruff; Mypy across 106 source files; 457 unit tests;
+  compile/static and frontend gates; 65 browser/CLI e2e tests; final `VERIFY: PASS`.
+- Independent implementation review found two concrete issues, both fixed under migration, CLI, and
+  browser regressions; final Codex review returned `NO VIOLATIONS`.
+
+Current hypothesis:
+
+- The ordinary-stage correction is compatible with the newer preview and Chat work on `main`.
+
+Next step:
+
+- Rebuild the combined frontend, finish the merge commit, run one canonical post-merge `./verify`,
+  then propose Closeout. No deploy or restart is requested.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-11): full-page managed HTML previews
 
 Current build stage:

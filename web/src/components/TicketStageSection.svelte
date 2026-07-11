@@ -107,7 +107,7 @@
         onApprove={onAccept}
       />
       {#if hasValue}<MarkdownBlock text={slot.value} />{/if}
-    {:else if passed && hasValue && editableValue && onSaveValue}
+    {:else if passed && editableValue && onSaveValue}
       <div class="ticket-field-value">
         <InlineEdit value={slot.value} markdown multiline placeholder="Value..." onSave={onSaveValue} />
       </div>

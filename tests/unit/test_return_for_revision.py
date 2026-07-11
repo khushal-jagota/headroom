@@ -25,7 +25,7 @@ from planner.minds.shared_gateway import SharedGateway
 from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.runtime.readiness_doorbell import NoOpReadinessDoorbell
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap, FieldName, TicketState
+from planner.tickets.contracts import NO_FURTHER, AtCap, FieldName, TicketState
 from planner.tickets.data import (
     change_scope,
     create_ticket,
@@ -131,7 +131,15 @@ def _ticket_with_pending_plan(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
         ticket = create_ticket(conn, title="Revise plan", actor="human", now=0, title_max_chars=200)
-        ticket = tickets_data.accept_kickoff(conn, ticket.id, actor="human", now=0)
+        ticket = tickets_data.accept_proposal(
+            conn,
+            ticket.id,
+            field=FieldName.kickoff,
+            actor="human",
+            now=0,
+            next_ceiling=NO_FURTHER,
+            at_cap=AtCap.propose,
+        )
         change_scope(
             conn,
             ticket.id,
@@ -163,7 +171,15 @@ def _ticket_with_pending_closeout(db_path: Path) -> str:
         ticket = create_ticket(
             conn, title="Revise closeout", actor="human", now=0, title_max_chars=200
         )
-        ticket = tickets_data.accept_kickoff(conn, ticket.id, actor="human", now=0)
+        ticket = tickets_data.accept_proposal(
+            conn,
+            ticket.id,
+            field=FieldName.kickoff,
+            actor="human",
+            now=0,
+            next_ceiling=NO_FURTHER,
+            at_cap=AtCap.propose,
+        )
         change_scope(
             conn,
             ticket.id,

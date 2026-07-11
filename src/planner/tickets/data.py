@@ -7,7 +7,6 @@ seconds) and the title limit as an argument."""
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -20,13 +19,12 @@ from planner.core.ids import ID_PREFIXES, new_id
 from planner.days import data as days_data
 from planner.tickets import worker_context as ticket_worker_context
 from planner.tickets.contracts import (
-    TITLE_MAX_CHARS,
     AtCap,
     FieldName,
     FieldSlot,
     Implementer,
-    KickoffProposal,
     NextCeiling,
+    Proposal,
     Ticket,
     TicketDeletion,
     TicketEdit,
@@ -58,7 +56,6 @@ def _txn(conn: sqlite3.Connection) -> Iterator[None]:
 
 
 def _row_to_ticket(row: sqlite3.Row) -> Ticket:
-    kickoff_proposal = _kickoff_proposal_from_json(row["kickoff_proposal"])
     return Ticket(
         id=row["id"],
         title=row["title"],
@@ -70,8 +67,6 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         sprint_item_id=row["sprint_item_id"],
         sprint_id=row["sprint_id"],
         recap=row["recap"],
-        kickoff_note=row["kickoff_note"],
-        kickoff_proposal=kickoff_proposal,
         ceiling=TicketState(row["ceiling"]),
         at_cap=AtCap(row["at_cap"]),
         ticket_status=TicketStatus(row["ticket_status"]),
@@ -81,42 +76,6 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         fields=fields_codec.fields_from_json(row["fields"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
-    )
-
-
-def _kickoff_proposal_to_json(proposal: KickoffProposal | None) -> str | None:
-    if proposal is None:
-        return None
-    return json.dumps(
-        {
-            "title": proposal.title,
-            "kickoff_note": proposal.kickoff_note,
-            "proposed_by": proposal.proposed_by,
-            "created_at": proposal.created_at,
-        }
-    )
-
-
-def _kickoff_proposal_from_json(raw: object) -> KickoffProposal | None:
-    if raw is None:
-        return None
-    if not isinstance(raw, str):
-        raise PlannerError(ErrorCode.validation, "corrupt kickoff proposal")
-    payload = json.loads(raw)
-    if (
-        not isinstance(payload, dict)
-        or not isinstance(payload.get("title"), str)
-        or not isinstance(payload.get("kickoff_note"), str)
-        or not isinstance(payload.get("proposed_by"), str)
-        or not isinstance(payload.get("created_at"), int)
-        or isinstance(payload.get("created_at"), bool)
-    ):
-        raise PlannerError(ErrorCode.validation, "corrupt kickoff proposal")
-    return KickoffProposal(
-        title=payload["title"],
-        kickoff_note=payload["kickoff_note"],
-        proposed_by=payload["proposed_by"],
-        created_at=payload["created_at"],
     )
 
 
@@ -263,13 +222,14 @@ def create_ticket(
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
     ticket_id = new_id(ID_PREFIXES["ticket"])
-    empty_fields = fields_codec.fields_to_json(TicketFields())
-    kickoff_proposal = KickoffProposal(
-        title=title,
-        kickoff_note=kickoff_note,
-        proposed_by=actor,
-        created_at=now,
+    initial_fields = TicketFields(
+        kickoff=FieldSlot(
+            value=None,
+            proposal=Proposal(body=kickoff_note, proposed_by=actor, created_at=now),
+            user_note=None,
+        )
     )
+    fields_json = fields_codec.fields_to_json(initial_fields)
     with _txn(conn):
         if sprint_item_id is not None:
             if conn.execute(
@@ -295,10 +255,10 @@ def create_ticket(
         conn.execute(
             "INSERT INTO tickets ("
             "id, title, state, priority, deadline, project_id, sprint_item_id, "
-            "sprint_id, recap, kickoff_note, kickoff_proposal, ceiling, at_cap, "
+            "sprint_id, recap, ceiling, at_cap, "
             "ticket_status, implementer, "
             "chat_session_key, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -308,13 +268,11 @@ def create_ticket(
                 project_id,
                 sprint_item_id,
                 sprint_id,
-                kickoff_note,
-                _kickoff_proposal_to_json(kickoff_proposal),
                 TicketState.needs_success.value,
                 AtCap.propose.value,
                 TicketStatus.awaiting_approval.value,
                 implementer.value if implementer is not None else None,
-                empty_fields,
+                fields_json,
                 now,
                 now,
             ),
@@ -323,8 +281,8 @@ def create_ticket(
         append_event(
             conn,
             ticket_id,
-            EventKind.kickoff_proposal_filed,
-            {"title": title, "kickoff_note": kickoff_note, "proposed_by": actor},
+            EventKind.proposal_filed,
+            {"field": FieldName.kickoff.value, "body": kickoff_note, "proposed_by": actor},
             now,
         )
         append_event(
@@ -363,6 +321,7 @@ def create_ticket_from_external_work(
     if recap is not None:
         admission.validate_body(recap, "recap")
     ticket_id = new_id(ID_PREFIXES["ticket"])
+    initial_fields = TicketFields(kickoff=FieldSlot(value=kickoff_note))
     with _txn(conn):
         if sprint_item_id is not None:
             if conn.execute(
@@ -391,9 +350,9 @@ def create_ticket_from_external_work(
         conn.execute(
             "INSERT INTO tickets ("
             "id, title, state, priority, deadline, project_id, sprint_item_id, "
-            "sprint_id, recap, kickoff_note, kickoff_proposal, ceiling, at_cap, ticket_status, "
+            "sprint_id, recap, ceiling, at_cap, ticket_status, "
             "chat_session_key, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, NULL, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -403,28 +362,15 @@ def create_ticket_from_external_work(
                 project_id,
                 sprint_item_id,
                 sprint_id,
-                kickoff_note,
                 TicketState.needs_success.value,
                 AtCap.propose.value,
                 TicketStatus.empty.value,
-                fields_codec.fields_to_json(TicketFields()),
+                fields_codec.fields_to_json(initial_fields),
                 now,
                 now,
             ),
         )
         append_event(conn, ticket_id, EventKind.ticket_created, {}, now)
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.kickoff_accepted,
-            {
-                "title": title,
-                "kickoff_note": kickoff_note,
-                "resolved_by": "external_work",
-                "edited": False,
-            },
-            now,
-        )
         _append_item_children_changed(conn, sprint_item_id, ticket_id, "created", now)
         ticket = _load_ticket(conn, ticket_id)
         values_decision, position_decision = external_work.decide_external_work(
@@ -480,19 +426,6 @@ def reconcile_ticket_from_external_work(
         values_decision, position_decision = external_work.decide_external_work(
             ticket, target_state, provided_values
         )
-        if kickoff_note != ticket.kickoff_note:
-            conn.execute(
-                "UPDATE tickets SET kickoff_note = ?, updated_at = ? WHERE id = ?",
-                (kickoff_note, now, ticket_id),
-            )
-            append_event(
-                conn,
-                ticket_id,
-                EventKind.ticket_updated,
-                {"field": "kickoff_note", "from": ticket.kickoff_note, "to": kickoff_note},
-                now,
-            )
-            ticket = _load_ticket(conn, ticket_id)
         ticket = _apply_decision(conn, ticket, values_decision, now)
         if recap is not None and recap != ticket.recap:
             conn.execute(
@@ -689,75 +622,6 @@ def accept_proposal(
             ticket.implementer, ticket.state, decision.new_state
         )
         _write_ticket_status(conn, ticket_id, handoff_status or TicketStatus.empty, now)
-        return _load_ticket(conn, ticket_id)
-
-
-def accept_kickoff(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    actor: str,
-    now: int,
-    edited_title: str | None = None,
-    edited_kickoff_note: str | None = None,
-) -> Ticket:
-    admission.require_direct_actor(actor, "accept_kickoff")
-    with _txn(conn):
-        ticket = _load_ticket(conn, ticket_id)
-        if ticket.state is not TicketState.needs_kickoff:
-            raise PlannerError(
-                ErrorCode.validation,
-                "ticket is not awaiting kickoff",
-                {"state": ticket.state.value},
-            )
-        if ticket.kickoff_proposal is None:
-            raise PlannerError(
-                ErrorCode.not_found,
-                "no pending kickoff proposal",
-                {"ticket_id": ticket_id},
-            )
-        stored_title = (
-            edited_title if edited_title is not None else ticket.kickoff_proposal.title
-        )
-        stored_note = (
-            edited_kickoff_note
-            if edited_kickoff_note is not None
-            else ticket.kickoff_proposal.kickoff_note
-        )
-        admission.validate_title(stored_title, TITLE_MAX_CHARS)
-        edited = edited_title is not None or edited_kickoff_note is not None
-        conn.execute(
-            "UPDATE tickets SET title = ?, kickoff_note = ?, kickoff_proposal = NULL, "
-            "state = ?, updated_at = ? WHERE id = ?",
-            (stored_title, stored_note, TicketState.needs_success.value, now, ticket_id),
-        )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.kickoff_accepted,
-            {
-                "title": stored_title,
-                "kickoff_note": stored_note,
-                "resolved_by": "direct",
-                "edited": edited,
-            },
-            now,
-        )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.state_changed,
-            {
-                "from": TicketState.needs_kickoff.value,
-                "to": TicketState.needs_success.value,
-                "cause": "kickoff_accept",
-            },
-            now,
-        )
-        _append_item_children_changed(conn, ticket.sprint_item_id, ticket_id, "state", now)
-        _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
-        if edited:
-            ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket(conn, ticket_id)
 
 
@@ -1035,21 +899,11 @@ def edit_ticket(
         ticket = _load_ticket(conn, ticket_id)
 
         title = edit["title"] if "title" in edit else ticket.title
-        kickoff_note = edit["kickoff_note"] if "kickoff_note" in edit else ticket.kickoff_note
         priority = edit["priority"] if "priority" in edit else ticket.priority
         deadline = edit["deadline"] if "deadline" in edit else ticket.deadline
         implementer = edit["implementer"] if "implementer" in edit else ticket.implementer
         project_id = edit["project_id"] if "project_id" in edit else ticket.project_id
         sprint_id = edit["sprint_id"] if "sprint_id" in edit else ticket.sprint_id
-
-        if ticket.state is TicketState.needs_kickoff and (
-            "title" in edit or "kickoff_note" in edit
-        ):
-            raise PlannerError(
-                ErrorCode.validation,
-                "title and kickoff note edits must be made by approving kickoff",
-                {"ticket_id": ticket_id},
-            )
 
         # Validate the intended final Ticket before its first durable effect. Parent
         # restrictions use request-key presence: explicitly assigning the same/null
@@ -1075,7 +929,6 @@ def edit_ticket(
 
         candidates: tuple[tuple[str, str, str | None, str | None], ...] = (
             ("title", "title", ticket.title, title),
-            ("kickoff_note", "kickoff_note", ticket.kickoff_note, kickoff_note),
             ("priority", "priority", ticket.priority.value, priority.value),
             ("deadline", "deadline", ticket.deadline, deadline),
             (

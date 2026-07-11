@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 
 def _fields(**slots: FieldSlot) -> TicketFields:
     return TicketFields(
+        kickoff=slots.get("kickoff", FieldSlot()),
         success=slots.get("success", FieldSlot()),
         approach=slots.get("approach", FieldSlot()),
         plan=slots.get("plan", FieldSlot()),
@@ -60,8 +61,6 @@ def _ticket(
         sprint_item_id=None,
         sprint_id=None,
         recap="",
-        kickoff_note="",
-        kickoff_proposal=None,
         ceiling=ceiling,
         at_cap=AtCap.propose,
         ticket_status=TicketStatus.empty,
@@ -90,7 +89,15 @@ def _passed_ticket(conn: Connection, cfg: Config, clock: TestClock) -> Ticket:
     t = data.create_ticket(
         conn, title="T", actor="human", now=now, title_max_chars=TITLE_MAX_CHARS
     )
-    t = data.accept_kickoff(conn, t.id, actor="human", now=now)
+    t = data.accept_proposal(
+        conn,
+        t.id,
+        field=FieldName.kickoff,
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
+    )
     t = data.change_scope(
         conn, t.id, ceiling=TicketState.needs_plan, at_cap=AtCap.propose, actor="human", now=now
     )
@@ -219,7 +226,15 @@ def test_accept_dropped_ticket_with_pending_proposal_rejected(
     t = data.create_ticket(
         tmp_db, title="T", actor="human", now=now, title_max_chars=TITLE_MAX_CHARS
     )
-    t = data.accept_kickoff(tmp_db, t.id, actor="human", now=now)
+    t = data.accept_proposal(
+        tmp_db,
+        t.id,
+        field=FieldName.kickoff,
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
+    )
     t = data.change_scope(
         tmp_db, t.id, ceiling=TicketState.needs_plan, at_cap=AtCap.propose, actor="human", now=now
     )

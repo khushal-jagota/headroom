@@ -86,7 +86,15 @@ def _ticket(tmp_db):
     ticket = tickets_data.create_ticket(
         tmp_db, title="Context ticket", actor="human", now=1, title_max_chars=200
     )
-    return tickets_data.accept_kickoff(tmp_db, ticket.id, actor="human", now=1)
+    return tickets_data.accept_proposal(
+        tmp_db,
+        ticket.id,
+        field=FieldName.kickoff,
+        actor="human",
+        now=1,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
+    )
 
 
 def _pending(tmp_db, ticket_id: str):
@@ -127,11 +135,11 @@ def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(tmp
         actor="human",
         now=4,
     )
-    tickets_data.edit_ticket(
+    tickets_data.edit_field_value(
         tmp_db,
         ticket.id,
-        edit=TicketEdit(kickoff_note="ticket guidance"),
-        title_max_chars=TITLE_MAX_CHARS,
+        field=FieldName.kickoff,
+        new_body="ticket guidance",
         actor="human",
         now=5,
     )

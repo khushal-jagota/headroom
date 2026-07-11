@@ -43,17 +43,6 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "sprint_item_id": ticket.sprint_item_id,
         "sprint_id": ticket.sprint_id,
         "recap": ticket.recap,
-        "kickoff_note": ticket.kickoff_note,
-        "kickoff_proposal": (
-            {
-                "title": ticket.kickoff_proposal.title,
-                "kickoff_note": ticket.kickoff_proposal.kickoff_note,
-                "proposed_by": ticket.kickoff_proposal.proposed_by,
-                "created_at": ticket.kickoff_proposal.created_at,
-            }
-            if ticket.kickoff_proposal is not None
-            else None
-        ),
         "ceiling": ticket.ceiling.value,
         "at_cap": ticket.at_cap.value,
         "ticket_status": ticket.ticket_status.value,
@@ -174,7 +163,8 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"priority: {ticket.priority.value}\n"
         f"implementer: {ticket.implementer.value if ticket.implementer is not None else '(none)'}\n"
         f"\n"
-        f"kickoff_note:\n{show(ticket.kickoff_note)}\n"
+        f"kickoff:\n{show(fields.kickoff.value)}\n"
+        f"kickoff_user_note:\n{show(fields.kickoff.user_note)}\n"
         f"\n"
         f"success:\n{show(fields.success.value)}\n"
         f"success_user_note:\n{show(fields.success.user_note)}\n"
@@ -206,7 +196,7 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
         "tickets.project_id, ticket_projects.name AS project_name, tickets.sprint_item_id, "
         "sprint_items.project_id AS parent_project_id, "
         "parent_projects.name AS parent_project_name, tickets.fields, tickets.ticket_status, "
-        "tickets.kickoff_proposal, tickets.created_at, tickets.updated_at FROM tickets "
+        "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
         "LEFT JOIN projects AS parent_projects ON parent_projects.id = sprint_items.project_id "
@@ -243,10 +233,7 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
             "group_project_id": group_project_id,
             "group_project": group_project_name,
             "activity_at": int(row["updated_at"]),
-            "has_pending_proposal": (
-                row["kickoff_proposal"] is not None
-                or machine.has_pending_gating_proposal(TicketState(state), fields)
-            ),
+            "has_pending_proposal": machine.has_pending_gating_proposal(TicketState(state), fields),
             "ticket_status": str(row["ticket_status"]),
         }
         sort_key = (
@@ -275,18 +262,6 @@ def _approval_digest(tickets: list[JsonDict], items: list[JsonDict]) -> list[Jso
     for row in tickets:
         state = str(row["state"])
         if row.get("ticket_status") == TicketStatus.agent_running_step.value:
-            continue
-        if state == TicketState.needs_kickoff.value:
-            proposal = row.get("kickoff_proposal")
-            if not isinstance(proposal, dict):
-                continue
-            digest.append(
-                {
-                    "entity_id": row["id"],
-                    "kind": "kickoff",
-                    "waiting_since": proposal["created_at"],
-                }
-            )
             continue
         gating = GATING_FIELD.get(TicketState(state))
         if gating is None:
@@ -344,7 +319,7 @@ def _overdue_digest(
 
 def _approvals(conn: sqlite3.Connection, item_approval_rows: list[JsonDict]) -> list[JsonDict]:
     ticket_rows = conn.execute(
-        "SELECT id, title, state, ticket_status, fields, kickoff_proposal, updated_at FROM tickets "
+        "SELECT id, title, state, ticket_status, fields, updated_at FROM tickets "
         "WHERE state NOT IN ('done','dropped') ORDER BY id"
     ).fetchall()
     ticket_digest: list[dict[str, object]] = []
@@ -357,11 +332,6 @@ def _approvals(conn: sqlite3.Connection, item_approval_rows: list[JsonDict]) -> 
                 "state": str(r["state"]),
                 "ticket_status": str(r["ticket_status"]),
                 "fields": json.loads(str(r["fields"])),
-                "kickoff_proposal": (
-                    json.loads(str(r["kickoff_proposal"]))
-                    if r["kickoff_proposal"] is not None
-                    else None
-                ),
                 "updated_at": int(r["updated_at"]),
             }
         )

@@ -65,6 +65,37 @@ CREATE TABLE tickets (
 );
 """
 
+_CURRENT_KICKOFF_TICKETS_DDL = """
+CREATE TABLE tickets (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL CHECK (length(title) <= 200),
+  state TEXT NOT NULL DEFAULT 'needs_kickoff'
+             CHECK (state IN ('needs_kickoff','needs_success','needs_approach','needs_plan',
+                              'needs_implementation','needs_closeout','done','dropped')),
+  priority TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
+  deadline TEXT,
+  project_id TEXT,
+  sprint_item_id TEXT,
+  sprint_id TEXT,
+  recap TEXT NOT NULL DEFAULT '',
+  kickoff_note TEXT NOT NULL DEFAULT '',
+  kickoff_proposal TEXT,
+  ceiling TEXT NOT NULL DEFAULT 'needs_success'
+               CHECK (ceiling IN ('needs_success','needs_approach','needs_plan',
+                                  'needs_implementation','needs_closeout','done')),
+  at_cap TEXT NOT NULL DEFAULT 'propose' CHECK (at_cap IN ('stop','propose')),
+  ticket_status TEXT NOT NULL DEFAULT 'empty'
+                    CHECK (ticket_status IN ('empty','agent_running_step',
+                                             'awaiting_approval','user_takeover','errored')),
+  implementer TEXT,
+  chat_session_key TEXT,
+  alias TEXT,
+  fields TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+"""
+
 
 def _fields_json(**slots):
     return json.dumps(slots)
@@ -154,7 +185,7 @@ def test_create_schema_adds_ticket_implementer_after_lifecycle_migration_idempot
     conn.close()
 
 
-def test_kickoff_migration_preserves_existing_user_note_as_settled_kickoff(tmp_path):
+def test_kickoff_migration_moves_existing_user_note_into_kickoff_field_value(tmp_path):
     db_path = tmp_path / "old-kickoff.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -182,14 +213,201 @@ def test_kickoff_migration_preserves_existing_user_note_as_settled_kickoff(tmp_p
     create_schema(conn)
 
     columns = [str(row["name"]) for row in conn.execute("PRAGMA table_info(tickets)")]
-    assert "kickoff_note" in columns
-    assert "kickoff_proposal" in columns
+    assert "kickoff_note" not in columns
+    assert "kickoff_proposal" not in columns
     assert "user_note" not in columns
     row = conn.execute(
-        "SELECT state, kickoff_note, kickoff_proposal, ticket_status FROM tickets "
+        "SELECT state, fields, ticket_status FROM tickets "
         "WHERE id = 't_existing'"
     ).fetchone()
-    assert tuple(row) == ("needs_success", "preserve this intake note", None, "empty")
+    assert row["state"] == "needs_success"
+    assert json.loads(row["fields"])["kickoff"] == {
+        "value": "preserve this intake note",
+        "proposal": None,
+        "user_note": None,
+    }
+    assert row["ticket_status"] == "empty"
+    conn.close()
+
+
+def test_kickoff_migration_converts_current_schema_settled_and_pending_rows_idempotently(
+    tmp_path,
+):
+    db_path = tmp_path / "current-kickoff.db"
+    conn = connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.executescript(
+        """
+        CREATE TABLE days (id TEXT PRIMARY KEY);
+        INSERT INTO days VALUES ('day_2026-07-11');
+        """
+    )
+    conn.executescript(_CURRENT_KICKOFF_TICKETS_DDL)
+    fields = {
+        "success": {"value": "settled success", "proposal": None, "user_note": None},
+        "approach": {"value": None, "proposal": None, "user_note": None},
+        "plan": {"value": None, "proposal": None, "user_note": None},
+        "implementation": {"value": None, "proposal": None, "user_note": None},
+        "closeout": {"value": None, "proposal": None, "user_note": None},
+    }
+    _insert_ticket(
+        conn,
+        id="t_settled",
+        title="Canonical title",
+        state="needs_success",
+        ceiling="needs_success",
+        ticket_status="empty",
+        kickoff_note="settled intake",
+        kickoff_proposal=None,
+        fields=json.dumps(fields),
+        created_at=1,
+        updated_at=2,
+    )
+    _insert_ticket(
+        conn,
+        id="t_pending",
+        title="Preserved title",
+        state="needs_kickoff",
+        ceiling="needs_success",
+        ticket_status="awaiting_approval",
+        kickoff_note="old settled copy",
+        kickoff_proposal=json.dumps(
+            {
+                "title": "discard this duplicate title",
+                "kickoff_note": "pending intake",
+                "proposed_by": "direct",
+                "created_at": 7,
+            }
+        ),
+        fields=json.dumps(fields),
+        created_at=3,
+        updated_at=4,
+    )
+    conn.executescript(
+        """
+        CREATE TABLE day_tickets (
+          day_id TEXT NOT NULL REFERENCES days(id),
+          ticket_id TEXT NOT NULL REFERENCES tickets(id),
+          position INTEGER NOT NULL,
+          PRIMARY KEY (day_id, ticket_id)
+        );
+        INSERT INTO day_tickets VALUES ('day_2026-07-11', 't_pending', 0);
+        """
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    create_schema(conn)
+    create_schema(conn)
+
+    columns = [str(row["name"]) for row in conn.execute("PRAGMA table_info(tickets)")]
+    assert "kickoff_note" not in columns
+    assert "kickoff_proposal" not in columns
+
+    rows = {
+        row["id"]: row
+        for row in conn.execute("SELECT id, title, state, ticket_status, fields FROM tickets")
+    }
+    settled_fields = json.loads(rows["t_settled"]["fields"])
+    pending_fields = json.loads(rows["t_pending"]["fields"])
+    assert rows["t_settled"]["title"] == "Canonical title"
+    assert settled_fields["kickoff"] == {
+        "value": "settled intake",
+        "proposal": None,
+        "user_note": None,
+    }
+    assert settled_fields["success"]["value"] == "settled success"
+    assert rows["t_pending"]["title"] == "Preserved title"
+    assert pending_fields["kickoff"] == {
+        "value": None,
+        "proposal": {"body": "pending intake", "proposed_by": "direct", "created_at": 7},
+        "user_note": None,
+    }
+    assert rows["t_pending"]["ticket_status"] == "awaiting_approval"
+    assert [
+        tuple(row)
+        for row in conn.execute("SELECT day_id, ticket_id FROM day_tickets").fetchall()
+    ] == [("day_2026-07-11", "t_pending")]
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    conn.close()
+
+
+def test_kickoff_migration_keeps_later_stage_approval_on_current_field(tmp_path):
+    db_path = tmp_path / "pre-kickoff-later-approval.db"
+    conn = connect(str(db_path))
+    conn.executescript(_PRE_KICKOFF_TICKETS_DDL)
+    success_proposal = {"body": "pending success", "proposed_by": "worker", "created_at": 9}
+    _insert_ticket(
+        conn,
+        id="t_success_approval",
+        title="Success approval",
+        state="needs_success",
+        ceiling="needs_success",
+        ticket_status="awaiting_approval",
+        user_note="settled kickoff note",
+        fields=_fields_json(
+            success={"value": None, "proposal": success_proposal, "user_note": None}
+        ),
+        created_at=1,
+        updated_at=2,
+    )
+
+    create_schema(conn)
+
+    row = conn.execute(
+        "SELECT state, ticket_status, fields FROM tickets WHERE id = 't_success_approval'"
+    ).fetchone()
+    fields = json.loads(row["fields"])
+    assert row["state"] == "needs_success"
+    assert row["ticket_status"] == "awaiting_approval"
+    assert fields["kickoff"] == {
+        "value": "settled kickoff note",
+        "proposal": None,
+        "user_note": None,
+    }
+    assert fields["success"]["proposal"] == success_proposal
+    conn.close()
+
+
+def test_kickoff_migration_settles_stale_later_stage_compound_kickoff_proposal(tmp_path):
+    db_path = tmp_path / "stale-compound-kickoff.db"
+    conn = connect(str(db_path))
+    conn.executescript(_CURRENT_KICKOFF_TICKETS_DDL)
+    plan_proposal = {"body": "pending plan", "proposed_by": "worker", "created_at": 15}
+    _insert_ticket(
+        conn,
+        id="t_plan_approval",
+        title="Plan approval",
+        state="needs_plan",
+        ceiling="needs_plan",
+        ticket_status="awaiting_approval",
+        kickoff_note="older settled copy",
+        kickoff_proposal=json.dumps(
+            {
+                "title": "stale duplicate title",
+                "kickoff_note": "stale compound kickoff note",
+                "proposed_by": "direct",
+                "created_at": 7,
+            }
+        ),
+        fields=_fields_json(plan={"value": None, "proposal": plan_proposal, "user_note": None}),
+        created_at=1,
+        updated_at=2,
+    )
+
+    create_schema(conn)
+
+    row = conn.execute(
+        "SELECT state, ticket_status, fields FROM tickets WHERE id = 't_plan_approval'"
+    ).fetchone()
+    fields = json.loads(row["fields"])
+    assert row["state"] == "needs_plan"
+    assert row["ticket_status"] == "awaiting_approval"
+    assert fields["kickoff"] == {
+        "value": "stale compound kickoff note",
+        "proposal": None,
+        "user_note": None,
+    }
+    assert fields["plan"]["proposal"] == plan_proposal
     conn.close()
 
 
@@ -240,7 +458,7 @@ def test_kickoff_migration_rolls_back_failed_foreign_key_check_and_preserves_lin
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
     ).fetchone()[0]
     assert "user_note" in tickets_sql
-    assert "kickoff_note" not in tickets_sql
+    assert "kickoff" not in tickets_sql
     assert tuple(conn.execute(
         "SELECT title, user_note FROM tickets WHERE id = 't_existing'"
     ).fetchone()) == ("Existing", "preserve this intake note")
@@ -253,9 +471,10 @@ def test_kickoff_migration_rolls_back_failed_foreign_key_check_and_preserves_lin
     db_module._migrate_ticket_kickoff_columns(conn)
 
     migrated = conn.execute(
-        "SELECT state, kickoff_note, kickoff_proposal FROM tickets WHERE id = 't_existing'"
+        "SELECT state, fields FROM tickets WHERE id = 't_existing'"
     ).fetchone()
-    assert tuple(migrated) == ("needs_success", "preserve this intake note", None)
+    assert migrated["state"] == "needs_success"
+    assert json.loads(migrated["fields"])["kickoff"]["value"] == "preserve this intake note"
     assert [
         tuple(row)
         for row in conn.execute("SELECT day_id, ticket_id FROM day_tickets").fetchall()

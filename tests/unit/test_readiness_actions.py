@@ -22,6 +22,7 @@ from planner.runtime.readiness_doorbell import LoopReadinessDoorbell
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
+    NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
     FieldName,
@@ -79,7 +80,15 @@ def _create_direct(db_path: Path, *, title: str = "Ready") -> str:
             now=1,
             title_max_chars=TITLE_MAX_CHARS,
         )
-        return tickets_data.accept_kickoff(conn, ticket.id, actor="human", now=1).id
+        return tickets_data.accept_proposal(
+            conn,
+            ticket.id,
+            field=FieldName.kickoff,
+            actor="human",
+            now=1,
+            next_ceiling=NO_FURTHER,
+            at_cap=AtCap.propose,
+        ).id
     finally:
         conn.close()
 
@@ -745,11 +754,11 @@ def test_successful_excluded_ticket_and_day_writes_do_not_ring(tmp_path: Path) -
     )
     conn.close()
     with TestClient(app) as client:
-        ordinary = client.patch(
-            f"/api/tickets/{ticket_id}", json={"kickoff_note": "ordinary edit"}
+        ordinary = client.put(
+            f"/api/tickets/{ticket_id}/value/kickoff", json={"body": "ordinary edit"}
         )
         assert ordinary.status_code == 200, ordinary.text
-        assert ordinary.json()["kickoff_note"] == "ordinary edit"
+        assert ordinary.json()["fields"]["kickoff"]["value"] == "ordinary edit"
 
         note = client.put(
             f"/api/tickets/{ticket_id}/notes/success", json={"user_note": "field note"}
@@ -787,7 +796,7 @@ def test_successful_excluded_ticket_and_day_writes_do_not_ring(tmp_path: Path) -
         assert day.status_code == 200, day.text
         assert day.json()["focus"] == "Focus"
 
-    assert doorbell.calls == 0
+    assert doorbell.calls == 1
     conn = connect(str(db_path))
     try:
         persisted = tickets_data.read_ticket(conn, combined_proposal_id)

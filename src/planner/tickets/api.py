@@ -48,7 +48,6 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AcceptBody,
-    AcceptKickoffBody,
     AtCap,
     CreateTicketBody,
     CreateTicketFromExternalWorkBody,
@@ -71,13 +70,12 @@ from planner.tickets.contracts import (
 
 router = APIRouter()
 
-# §8: workers drive priority/deadline/day/sprint via `ticket set`; title, project, and
-# kickoff note are direct-only, so an attributed non-Chief PATCH is agent_forbidden.
+# §8: workers drive priority/deadline/day/sprint via `ticket set`; title and project are
+# direct-only, so an attributed non-Chief PATCH is agent_forbidden.
 _TICKET_DIRECT_ONLY_FIELDS = (
     "title",
     "project",
     "project_id",
-    "kickoff_note",
     "implementer",
 )
 
@@ -269,10 +267,17 @@ def _marshal_external_create(raw: JsonDict) -> CreateTicketFromExternalWorkBody:
 def _external_values(
     body: ReconcileTicketFromExternalWorkBody,
 ) -> dict[FieldName, str]:
-    values: dict[FieldName, str] = {}
-    for field in FieldName:
-        if field.value in body:
-            values[field] = body[field.value]
+    values: dict[FieldName, str] = {FieldName.kickoff: body["kickoff_note"]}
+    if "success" in body:
+        values[FieldName.success] = body["success"]
+    if "approach" in body:
+        values[FieldName.approach] = body["approach"]
+    if "plan" in body:
+        values[FieldName.plan] = body["plan"]
+    if "implementation" in body:
+        values[FieldName.implementation] = body["implementation"]
+    if "closeout" in body:
+        values[FieldName.closeout] = body["closeout"]
     return values
 
 
@@ -281,13 +286,6 @@ def _marshal_accept(raw: JsonDict) -> AcceptBody:
         edited_body=body_opt_str(raw, "edited_body"),
         next_ceiling=body_opt_str(raw, "next_ceiling"),
         at_cap=body_opt_str(raw, "at_cap"),
-    )
-
-
-def _marshal_accept_kickoff(raw: JsonDict) -> AcceptKickoffBody:
-    return AcceptKickoffBody(
-        edited_title=body_opt_str(raw, "edited_title"),
-        edited_kickoff_note=body_opt_str(raw, "edited_kickoff_note"),
     )
 
 
@@ -475,7 +473,7 @@ async def delete_ticket(
 async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
                        cfg: Cfg, clk: Clk) -> JsonDict:
     recognized = (
-        "title", "kickoff_note", "priority", "deadline", "implementer",
+        "title", "priority", "deadline", "implementer",
         "project", "project_id", "sprint_id",
     )
     for key in body:
@@ -488,8 +486,6 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
     edit = TicketEdit()
     if "title" in body:
         edit["title"] = body_str(body, "title")
-    if "kickoff_note" in body:
-        edit["kickoff_note"] = body_str(body, "kickoff_note")
     if "priority" in body:
         edit["priority"] = parse_enum(Priority, body_str(body, "priority"), "priority")
     if "deadline" in body:
@@ -572,24 +568,6 @@ async def accept_field(ticket_id: str, field: str, raw: dict[str, Any], conn: Db
         edited_body=body["edited_body"],
         next_ceiling=next_ceiling,
         at_cap=at_cap,
-        readiness_doorbell=readiness_doorbell,
-    )
-    return tickets_views.ticket_json(ticket, now)
-
-
-@router.post("/tickets/{ticket_id}/accept-kickoff")
-async def accept_kickoff(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                         clk: Clk, readiness_doorbell: Doorbell) -> JsonDict:
-    body = _marshal_accept_kickoff(raw)
-    require_direct_write(ctx)
-    now = clk.now_unix()
-    ticket = tickets_actions.accept_kickoff(
-        conn,
-        ticket_id,
-        actor=ctx.actor,
-        now=now,
-        edited_title=body["edited_title"],
-        edited_kickoff_note=body["edited_kickoff_note"],
         readiness_doorbell=readiness_doorbell,
     )
     return tickets_views.ticket_json(ticket, now)

@@ -1,5 +1,5 @@
 """The tickets.fields (de)serializer and slot accessors. Pure: json + contracts.
-The JSON shape mirrors the DDL default — five field keys, each a slot of
+The JSON shape mirrors the DDL default — field keys, each a slot of
 {value, proposal, user_note}, proposal being {body, proposed_by, created_at} or null.
 Legacy rows using {notes} are accepted on read. with_slot is copy-on-write so decision
 functions never mutate their input."""
@@ -26,6 +26,7 @@ def _slot_to_dict(slot: FieldSlot) -> dict[str, Any]:
 
 def fields_to_json(fields: TicketFields) -> str:
     payload = {
+        "kickoff": _slot_to_dict(fields.kickoff),
         "success": _slot_to_dict(fields.success),
         "approach": _slot_to_dict(fields.approach),
         "plan": _slot_to_dict(fields.plan),
@@ -69,9 +70,10 @@ def _slot_from_obj(obj: Any) -> FieldSlot:
 def fields_from_json(raw: str) -> TicketFields:
     data: Any = json.loads(raw)
     _require(isinstance(data, dict))
-    for key in ("success", "approach", "plan", "implementation", "closeout"):
+    for key in ("kickoff", "success", "approach", "plan", "implementation", "closeout"):
         _require(key in data)
     return TicketFields(
+        kickoff=_slot_from_obj(data["kickoff"]),
         success=_slot_from_obj(data["success"]),
         approach=_slot_from_obj(data["approach"]),
         plan=_slot_from_obj(data["plan"]),
@@ -81,6 +83,8 @@ def fields_from_json(raw: str) -> TicketFields:
 
 
 def get_slot(fields: TicketFields, field: FieldName) -> FieldSlot:
+    if field is FieldName.kickoff:
+        return fields.kickoff
     if field is FieldName.success:
         return fields.success
     if field is FieldName.approach:
@@ -94,6 +98,7 @@ def get_slot(fields: TicketFields, field: FieldName) -> FieldSlot:
 
 def with_slot(fields: TicketFields, field: FieldName, slot: FieldSlot) -> TicketFields:
     return TicketFields(
+        kickoff=slot if field is FieldName.kickoff else fields.kickoff,
         success=slot if field is FieldName.success else fields.success,
         approach=slot if field is FieldName.approach else fields.approach,
         plan=slot if field is FieldName.plan else fields.plan,
