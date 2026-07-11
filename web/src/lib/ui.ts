@@ -1,6 +1,13 @@
 import type { TicketDetail, TicketField } from "./types";
 
-export const FIELD_NAMES = ["success", "approach", "plan", "implementation", "closeout"] as const;
+export const FIELD_NAMES = [
+  "kickoff",
+  "success",
+  "approach",
+  "plan",
+  "implementation",
+  "closeout"
+] as const;
 export const PRIORITIES = ["P0", "P1", "P2", "P3"];
 export const PRIORITY_ORDER = ["P0", "P1", "P2", "P3"];
 
@@ -23,6 +30,7 @@ export const STATE_ORDER = [
 ];
 
 const GATING_FIELD: Record<string, string> = {
+  needs_kickoff: "kickoff",
   needs_success: "success",
   needs_approach: "approach",
   needs_plan: "plan",
@@ -31,6 +39,7 @@ const GATING_FIELD: Record<string, string> = {
 };
 
 const GATED_STATE: Record<string, string> = {
+  kickoff: "needs_kickoff",
   success: "needs_success",
   approach: "needs_approach",
   plan: "needs_plan",
@@ -39,6 +48,7 @@ const GATED_STATE: Record<string, string> = {
 };
 
 const ADVANCE: Record<string, string> = {
+  needs_kickoff: "needs_success",
   needs_success: "needs_approach",
   needs_approach: "needs_plan",
   needs_plan: "needs_implementation",

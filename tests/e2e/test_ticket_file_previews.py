@@ -61,6 +61,11 @@ def _links(ticket_id: str) -> str:
 
 
 def _set_fields(server, ticket_id: str, fields: dict, state: str = "dropped") -> None:
+    if "kickoff" not in fields:
+        fields = {
+            "kickoff": {"value": "", "proposal": None, "user_note": None},
+            **fields,
+        }
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
             "UPDATE tickets SET state = ?, fields = ?, updated_at = 2 WHERE id = ?",
@@ -313,6 +318,7 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
     _write_ticket_files(server, ticket_id)
     body = _links(ticket_id)
     fields = {
+        "kickoff": {"value": body, "proposal": None, "user_note": None},
         "success": {"value": body, "proposal": None, "user_note": body},
         "approach": {
             "value": None,
@@ -330,8 +336,8 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
     _set_fields(server, ticket_id, fields, state="needs_approach")
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
-            "UPDATE tickets SET kickoff_note = ?, recap = ? WHERE id = ?",
-            (body, body, ticket_id),
+            "UPDATE tickets SET recap = ? WHERE id = ?",
+            (body, ticket_id),
         )
     page = open_page(
         context_factory(),
@@ -350,9 +356,11 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
     direct_anchor = f'a[href="/files/tickets/{ticket_id}/notes/space%20name.md"]'
     assert field.locator(direct_anchor).count() == 0
     # The user note is a collapsed stage row by default; open it to render its body.
-    page.click("[data-kickoff] .disclosure-summary")
-    page.wait_for_selector("[data-kickoff][open]", timeout=WAIT_MS)
-    page.locator('[data-kickoff] [data-file-preview-kind="image"]').first.wait_for(
+    page.click('details[data-field="kickoff"] .disclosure-summary')
+    page.wait_for_selector('details[data-field="kickoff"][open]', timeout=WAIT_MS)
+    page.locator(
+        'details[data-field="kickoff"] [data-file-preview-kind="image"]'
+    ).first.wait_for(
         state="visible",
         timeout=WAIT_MS,
     )

@@ -2,6 +2,44 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D109 — Later-stage legacy approvals keep Kickoff settled
+
+The Kickoff migration must infer pending Kickoff approval from the gated stage, not from the
+stage-agnostic `ticket_status`. A legacy `awaiting_approval` row at `needs_success` or later is
+waiting on that row's current field proposal, so its old Kickoff note is migrated as a settled
+`fields.kickoff.value` with no Kickoff proposal. If stale compound `kickoff_proposal` JSON is present
+on a later-stage row, preserve the compound note as the settled Kickoff value instead of creating a
+non-gating proposal. That matches the repository migration convention here: recover valid legacy data
+and reserve rejection for corrupt JSON or broken referential integrity.
+
+Kickoff approval in the UI and CLI uses the same onward scope contract as every other current gating
+field. `--kickoff-title` remains an independent title PATCH, and `--kickoff-note-file` is only an
+alias for the edited accepted Kickoff body.
+
+## D108 — Kickoff uses ordinary field machinery; title remains independently editable metadata
+
+Add `kickoff` as the first `FieldName` and map `needs_kickoff` through the same gating, proposal,
+acceptance, scope, event, and visual-state paths as every later stage. Remove the dedicated kickoff
+accept route, compound proposal contract, top-level note storage, and custom stage component.
+Creation must atomically create `fields.kickoff.proposal` and leave the Ticket awaiting approval, so
+readiness can never dispatch an unapproved intake.
+
+The Ticket title remains canonical metadata from creation and is editable through the ordinary title
+edit path independently of stage approval, including while Kickoff is current and in Review. No new
+title-proposal type is justified: the old compound proposal only duplicated the already stored title,
+and unsaved UI draft edits were never durable. Migration therefore preserves `tickets.title`, moves a
+settled top-level note to `fields.kickoff.value`, moves a pending compound note to
+`fields.kickoff.proposal`, and discards only the redundant proposal-title copy. Current-schema settled,
+pending, retry/idempotence, link preservation, and rollback cases are required, along with a real
+runner regression proving pending Kickoff cannot dispatch. Existing special kickoff events may remain
+readable as history, but all new writes use ordinary proposal events and the ordinary accept route.
+
+The shared field component keeps an editable value surface for passed fields even when the settled
+value is empty, preserving the ability to fill an empty Kickoff without a custom component. Queue
+approvals retain their established concrete `kind` contract (`kickoff`, `success`, `plan`, and so on),
+and Review derives the field from that value. Review title editing uses the same independent ordinary
+Ticket PATCH as the Ticket header; it is never part of Kickoff acceptance.
+
 ## D106 — Kickoff integration preserves concurrent main work and rebuilds the shared frontend
 
 Ticket `t_5m7fmdk3` was implemented and independently verified on its dedicated branch while `main`

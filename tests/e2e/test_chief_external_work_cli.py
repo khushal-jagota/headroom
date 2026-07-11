@@ -125,7 +125,18 @@ def test_real_server_chief_external_work_terse_output_and_actor_rejection(
     ordinary = _run(server, "ticket", "create", "--title", "To reconcile", "--json", actor=None)
     assert ordinary.returncode == 0, ordinary.stderr
     ordinary_id = json.loads(ordinary.stdout)["id"]
-    kickoff = _run(server, "ticket", "approve", ordinary_id, "--json", actor=None)
+    kickoff = _run(
+        server,
+        "ticket",
+        "approve",
+        ordinary_id,
+        "--ceiling",
+        "none",
+        "--at-cap",
+        "propose",
+        "--json",
+        actor=None,
+    )
     assert kickoff.returncode == 0, kickoff.stderr
     reconciled = _run(
         server,

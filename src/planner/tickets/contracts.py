@@ -1,4 +1,4 @@
-"""Ticket domain shapes: the state machine order, the five fields, the scope pair,
+"""Ticket domain shapes: the state machine order, the ticket fields, the scope pair,
 and the ticket row."""
 
 from __future__ import annotations
@@ -40,7 +40,8 @@ WORKER_STATE_ORDER: Final[tuple[TicketState, ...]] = (
 )
 
 
-class FieldName(StrEnum):          # the exactly-five field keys
+class FieldName(StrEnum):          # ordinary gated field keys
+    kickoff = "kickoff"
     success = "success"
     approach = "approach"
     plan = "plan"
@@ -70,6 +71,7 @@ class TicketStatus(StrEnum):       # durable state-of-control, written by data-l
 
 # Gating field per non-terminal linear state: each state gates its same-named field.
 GATING_FIELD: Final[dict[TicketState, FieldName]] = {
+    TicketState.needs_kickoff: FieldName.kickoff,
     TicketState.needs_success: FieldName.success,
     TicketState.needs_approach: FieldName.approach,
     TicketState.needs_plan: FieldName.plan,
@@ -80,6 +82,7 @@ GATING_FIELD: Final[dict[TicketState, FieldName]] = {
 # Accepted proposal advances one linear step. needs_closeout advances to done through
 # the same ordinary machinery; there is no state that skips a gate.
 ADVANCE_TARGET: Final[dict[TicketState, TicketState]] = {
+    TicketState.needs_kickoff: TicketState.needs_success,
     TicketState.needs_success: TicketState.needs_approach,
     TicketState.needs_approach: TicketState.needs_plan,
     TicketState.needs_plan: TicketState.needs_implementation,
@@ -95,23 +98,16 @@ class Proposal:                    # §4.2 proposal slot
     created_at: int
 
 
-@dataclass(frozen=True)
-class KickoffProposal:
-    title: str
-    kickoff_note: str
-    proposed_by: str
-    created_at: int
-
-
 @dataclass
-class FieldSlot:                   # one of the five field objects
+class FieldSlot:                   # one ordinary field object
     value: str | None = None       # canonical; resolution engine is the only writer
     proposal: Proposal | None = None
     user_note: str | None = None   # preserved user guidance for this field / step
 
 
 @dataclass
-class TicketFields:                # tickets.fields JSON column, exactly five keys
+class TicketFields:                # tickets.fields JSON column
+    kickoff: FieldSlot = field(default_factory=FieldSlot)
     success: FieldSlot = field(default_factory=FieldSlot)
     approach: FieldSlot = field(default_factory=FieldSlot)
     plan: FieldSlot = field(default_factory=FieldSlot)
@@ -149,7 +145,6 @@ class CreateTicketBody(TypedDict, total=False):   # POST /tickets
 
 class TicketEdit(TypedDict, total=False):         # PATCH /tickets/{id}, parsed values
     title: str
-    kickoff_note: str
     priority: Priority
     deadline: str | None
     implementer: Implementer | None
@@ -191,11 +186,6 @@ class AcceptBody(TypedDict, total=False):         # POST /tickets/{id}/accept/{f
     edited_body: str | None        # direct edit applied before resolution
     next_ceiling: str | None       # TicketState value or NO_FURTHER; scope pair (§4.4.7)
     at_cap: str | None             # AtCap value; scope pair (§4.4.7)
-
-
-class AcceptKickoffBody(TypedDict, total=False):
-    edited_title: str | None
-    edited_kickoff_note: str | None
 
 
 class NoteBody(TypedDict, total=False):           # PUT /tickets/{id}/notes/{field}
@@ -242,8 +232,6 @@ class Ticket:                      # §3.3 — column names match exactly
     sprint_item_id: str | None
     sprint_id: str | None          # writable only when sprint_item_id IS NULL
     recap: str                     # writable only past needs_success
-    kickoff_note: str              # settled intake context / user guidance
-    kickoff_proposal: KickoffProposal | None  # pending ticket-level kickoff proposal
     ceiling: TicketState           # default needs_success (R2); restricted to WORKER_STATE_ORDER
     at_cap: AtCap                  # default propose (R2)
     ticket_status: TicketStatus    # durable state-of-control; transition functions write it

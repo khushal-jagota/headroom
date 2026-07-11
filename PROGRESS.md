@@ -3,6 +3,83 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-11): make Kickoff an ordinary Ticket stage
+
+Current build stage:
+
+- Ticket `t_hvnv9gyc` has approved Success, Approach, and Plan. Implementation is isolated on branch
+  `ticket/t_hvnv9gyc-kickoff-normal-stage` from the merged kickoff baseline `9ab2111`.
+- Implementation and both independent-review repairs are complete in the isolated worktree. The
+  final read-only Codex review reports `NO VIOLATIONS`, and the canonical verifier is clean.
+
+What just passed:
+
+- The corrected HTML model was opened and exercised: Kickoff advances from current/pending to
+  completed while Success becomes current, and title remains visibly separate metadata.
+- Independent Codex plan review completed against the contracts, migration, runtime, UI, and tests.
+- The current code was mapped: it still has ticket-level `KickoffProposal`, `kickoff_note`,
+  `/accept-kickoff`, and `KickoffSection`, so the first implementation seam is replacing those with
+  ordinary `fields.kickoff` machinery.
+- Focused RED/GREEN slice now passes under `PYTHONPATH=src`: lifecycle contract expects
+  `FieldName.kickoff`; creation parks `fields.kickoff.proposal`; current-schema migration folds
+  settled and pending old Kickoff columns into `fields.kickoff` and removes the old columns.
+- Focused backend unit set passed: tickets engine/lifecycle/migrations/readiness/employee runner/
+  seed/external-work/edit/value/revision/worker-context/auth/readiness-actions/chat/delete all green
+  under `PYTHONPATH=src`.
+- Frontend source now renders Kickoff through the shared field components. `npm run check`,
+  `npm run build`, and `npm run test` all passed; the focused backend unit set and the initial
+  RED/GREEN migration/creation slice passed again after frontend/docs changes.
+- Follow-up repair restored the queue approval API contract: ticket approval `kind` is again the
+  concrete field name (`kickoff`, `success`, `plan`, etc.), and Review treats `entry.kind` as the
+  field instead of requiring a parallel `field` property.
+- Review now edits the Ticket title independently through ordinary `PATCH /api/tickets/{id}` while
+  Kickoff approval still settles only `fields.kickoff`.
+- The settled-Kickoff browser selector now targets the canonical value editor, and the file-preview
+  `_set_fields` helper supplies a settled ordinary `kickoff` slot when callers pass old five-field
+  JSON.
+- Independent review follow-up is fixed: `_migrate_kickoff_fields_json` creates a pending Kickoff
+  proposal only for legacy `needs_kickoff` rows; later-stage `awaiting_approval` rows keep Kickoff
+  settled and preserve their current-field proposal. Stale compound Kickoff JSON on later-stage rows
+  is recovered as the settled Kickoff value, not as a hidden non-gating proposal.
+- `ApprovalBlock` has no Kickoff special case: current gating Kickoff renders `ScopePairPicker`,
+  requires the selected scope pair, and submits that pair through the ordinary accept payload. CLI
+  `ticket approve` now requires `--ceiling` and `--at-cap` for Kickoff, keeps `--kickoff-title` as a
+  separate title PATCH, maps `--kickoff-note-file` to `edited_body`, and posts to
+  `/api/tickets/{id}/accept/kickoff`.
+- `npm run check && npm run test && npm run build` passed in `web/` after the Review change. The
+  existing `TicketRoute.svelte` state-capture warnings remain.
+- Focused non-browser regression check passed:
+  `PYTHONPATH=$PWD/src .venv/bin/pytest -q tests/unit/test_tickets_engine.py::test_review_queue_exposes_kickoff_as_ordinary_field_approval tests/unit/test_tickets_engine.py::test_accept_kickoff_field_advances_to_success_and_leaves_title_independent`.
+- Focused migration/unit command passed, 19 tests:
+  `PYTHONPATH=$PWD/src .venv/bin/pytest -q tests/unit/test_db.py tests/unit/test_tickets_engine.py::test_accept_kickoff_field_advances_to_success_and_leaves_title_independent tests/unit/test_tickets_engine.py::test_review_queue_exposes_kickoff_as_ordinary_field_approval`.
+- Frontend focused gates passed after the review fixes: `npm run check` (0 errors, existing 3
+  `TicketRoute.svelte` warnings), `npm run test`, and `npm run build` (same Vite/Svelte warnings).
+- The complete unit suite passed under the worktree source. The focused browser/CLI selection passed
+  all 31 tests:
+  `PYTHONPATH=$PWD/src .venv/bin/pytest -q tests/e2e/test_flows_a.py tests/e2e/test_cli_verbs.py tests/e2e/test_ticket_file_previews.py`.
+- The first independent implementation review found two violations: stage-agnostic migration of
+  later approvals and special-cased Kickoff scope. Both were fixed with exact migration, CLI, and
+  browser regressions; the second review returned `NO VIOLATIONS`.
+- Canonical `PYTHONPATH=$PWD/src ./verify` passed: Ruff; Mypy across 106 source files; 457 unit tests;
+  compile/static and frontend gates; 65 browser/CLI e2e tests; final `VERIFY: PASS`. The explicit
+  `PYTHONPATH` selects this isolated worktree because its `.venv` is shared with the dirty main tree.
+
+Current hypothesis:
+
+- Kickoff can use the ordinary field/resolution/UI machinery without a second title-proposal type.
+  The existing canonical Ticket title stays editable independently; migration preserves it and drops
+  only the redundant title copy inside the old compound kickoff proposal. The follow-up failures were
+  contract/test-helper regressions, not a reason to reintroduce dedicated Kickoff state.
+
+Next step:
+
+- Propose Implementation with the corrected model, migration, shared UI, independent review, and
+  verifier evidence. Merge and integration remain Closeout work after human approval.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-11): t_5m7fmdk3 Kickoff closeout integration
 
 Current build stage:

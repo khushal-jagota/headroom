@@ -1,8 +1,7 @@
-"""Lifecycle contract (D55): six linear states, five fields, ordinary gates.
+"""Lifecycle contract (D108): Kickoff plus five worker stages as ordinary gates.
 
-Success -> Approach -> Plan -> Implementation -> Closeout -> Done. Implementation
-and Closeout are ordinary gated states using the same proposal/accept machinery;
-there is no separate ready/review lifecycle state and no in_progress/done jump.
+Kickoff -> Success -> Approach -> Plan -> Implementation -> Closeout -> Done.
+Ticket title remains separate metadata; every lifecycle stage gates a field slot.
 """
 
 from __future__ import annotations
@@ -33,7 +32,7 @@ if TYPE_CHECKING:
 
 
 def _create(conn: Connection, clock: TestClock, **kw: Any) -> Ticket:
-    ticket = data.create_ticket(
+    return data.create_ticket(
         conn,
         title=kw.pop("title", "Lifecycle ticket"),
         actor="human",
@@ -41,7 +40,6 @@ def _create(conn: Connection, clock: TestClock, **kw: Any) -> Ticket:
         title_max_chars=TITLE_MAX_CHARS,
         **kw,
     )
-    return data.accept_kickoff(conn, ticket.id, actor="human", now=clock.now_unix())
 
 
 def test_ticket_implementer_contract_and_nullable_create_storage(
@@ -59,7 +57,7 @@ def test_ticket_implementer_contract_and_nullable_create_storage(
         assert data.read_ticket(tmp_db, ticket.id).implementer is implementer
 
 
-def test_canonical_states_and_fields_are_the_five_plus_six_model() -> None:
+def test_canonical_states_and_fields_include_kickoff_as_first_ordinary_field() -> None:
     assert [s.value for s in TicketState] == [
         "needs_kickoff",
         "needs_success",
@@ -71,6 +69,7 @@ def test_canonical_states_and_fields_are_the_five_plus_six_model() -> None:
         "dropped",
     ]
     assert [f.value for f in FieldName] == [
+        "kickoff",
         "success",
         "approach",
         "plan",
@@ -98,6 +97,7 @@ def test_canonical_states_and_fields_are_the_five_plus_six_model() -> None:
 
 def test_each_non_terminal_state_gates_its_same_named_field() -> None:
     assert GATING_FIELD == {
+        TicketState.needs_kickoff: FieldName.kickoff,
         TicketState.needs_success: FieldName.success,
         TicketState.needs_approach: FieldName.approach,
         TicketState.needs_plan: FieldName.plan,
@@ -108,6 +108,7 @@ def test_each_non_terminal_state_gates_its_same_named_field() -> None:
 
 def test_advance_is_one_linear_step_ending_at_done() -> None:
     assert ADVANCE_TARGET == {
+        TicketState.needs_kickoff: TicketState.needs_success,
         TicketState.needs_success: TicketState.needs_approach,
         TicketState.needs_approach: TicketState.needs_plan,
         TicketState.needs_plan: TicketState.needs_implementation,
@@ -117,6 +118,7 @@ def test_advance_is_one_linear_step_ending_at_done() -> None:
     # Closeout advances to Done through ordinary machinery; ceiling does not skip
     # Closeout the way the retired in_progress/done special case skipped review.
     assert machine.advance_target(TicketState.needs_closeout) is TicketState.done
+    assert machine.advance_target(TicketState.needs_kickoff) is TicketState.needs_success
     assert (
         machine.advance_target(TicketState.needs_implementation) is TicketState.needs_closeout
     )
@@ -131,6 +133,7 @@ def test_full_linear_chain_auto_accepts_to_done(
         tmp_db, t.id, ceiling=TicketState.done, at_cap=AtCap.propose, actor="human", now=now
     )
     chain = [
+        (FieldName.kickoff, TicketState.needs_success),
         (FieldName.success, TicketState.needs_approach),
         (FieldName.approach, TicketState.needs_plan),
         (FieldName.plan, TicketState.needs_implementation),
@@ -142,6 +145,7 @@ def test_full_linear_chain_auto_accepts_to_done(
             tmp_db, t.id, field=fld, body=f"{fld.value} body", actor="agent", now=now
         )
         assert t.state is expected_state
+    assert t.fields.kickoff.value == "kickoff body"
     assert t.fields.implementation.value == "implementation body"
     assert t.fields.closeout.value == "closeout body"
 
@@ -159,7 +163,13 @@ def test_closeout_accept_requires_human_and_reaches_done(
         actor="human",
         now=now,
     )
-    for fld in (FieldName.success, FieldName.approach, FieldName.plan, FieldName.implementation):
+    for fld in (
+        FieldName.kickoff,
+        FieldName.success,
+        FieldName.approach,
+        FieldName.plan,
+        FieldName.implementation,
+    ):
         t = data.file_proposal(
             tmp_db, t.id, field=fld, body=f"{fld.value} body", actor="agent", now=now
         )

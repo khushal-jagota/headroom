@@ -23,7 +23,6 @@
   import EnumPill from "../components/EnumPill.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
-  import KickoffSection from "../components/KickoffSection.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import Pill from "../components/Pill.svelte";
   import ResourceState from "../components/ResourceState.svelte";
@@ -100,15 +99,6 @@
       ticketInvalidations
     );
   }
-
-  function acceptKickoff(body: Record<string, unknown>): Promise<unknown> {
-    return mutateJson(
-      `/api/tickets/${id}/accept-kickoff`,
-      { method: "POST", body },
-      ticketInvalidations
-    );
-  }
-
 
   function writeClipboard(text: string): Promise<void> {
     if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
@@ -194,15 +184,11 @@
       <main class="ticket-doc">
         <header class="ticket-head">
           <div class="ticket-title">
-            {#if detail.state === "needs_kickoff"}
-              <span>{detail.title}</span>
-            {:else}
-              <InlineEdit
-                value={detail.title}
-                placeholder="Untitled"
-                onSave={(raw) => patch({ title: raw })}
-              />
-            {/if}
+            <InlineEdit
+              value={detail.title}
+              placeholder="Untitled"
+              onSave={(raw) => patch({ title: raw })}
+            />
           </div>
           <div class="ticket-facts">
             <span
@@ -317,13 +303,6 @@
           </div>
 
           <div class="fields">
-            <KickoffSection
-              title={detail.title}
-              kickoffNote={detail.kickoff_note || ""}
-              proposal={detail.kickoff_proposal || null}
-              onAccept={acceptKickoff}
-              onSaveNote={(raw) => patch({ kickoff_note: raw })}
-            />
             {#each FIELD_NAMES as name}
               {@const slot = fieldSlot(detail, name)}
               {@const stageState = fieldStageVisualState(detail, name)}

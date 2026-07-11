@@ -173,11 +173,29 @@ def test_kickoff_accepts_from_review_without_worker_revision_control(
     card = f'[data-review-card][data-entity-id="{tid}"]'
     page = open_page(context_factory(), server, "#/review", card, settled=True)
     assert page.get_attribute(card, "data-kind") == "kickoff"
-    assert page.locator(f"{card} [data-kickoff-proposal]").count() == 1
+    assert page.get_attribute(card, "data-field") == "kickoff"
+    assert page.locator(f'{card} [data-field="kickoff"] [data-approval-block]').count() == 1
     assert page.locator(f"{card} [data-review-revision]").count() == 0
+    title_editor = page.locator(f"{card} .review-ticket-title [role=textbox]").first
+    title_editor.focus()
+    title_editor.evaluate(SELECT_NODE_CONTENTS)
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith(f"/api/tickets/{tid}")
+    ):
+        page.keyboard.type("Reviewed kickoff title")
+        title_editor.blur()
+    assert page.locator(f"{card} [data-scope-ceiling]").input_value() == "needs_success"
+    assert page.locator(f"{card} [data-scope-atcap] select").input_value() == "propose"
+    page.select_option(f"{card} [data-scope-ceiling]", "needs_approach")
+    page.select_option(f"{card} [data-scope-atcap] select", "stop")
     page.click(f"{card} [data-accept]")
     page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
-    assert api.get(server, f"/api/tickets/{tid}")["state"] == "needs_success"
+    detail = api.get(server, f"/api/tickets/{tid}")
+    assert detail["state"] == "needs_success"
+    assert detail["ceiling"] == "needs_approach"
+    assert detail["at_cap"] == "stop"
+    assert detail["title"] == "Reviewed kickoff title"
 
 
 def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
@@ -955,67 +973,82 @@ def test_pending_kickoff_edits_and_approves_before_five_worker_stages(
         f'section[data-screen="ticket"][data-ticket-id="{tid}"][data-state="needs_kickoff"]',
         settled=True,
     )
-    assert page.locator("[data-kickoff-proposal]").count() == 1
-    assert page.locator("[data-field]").count() == 5
+    assert page.locator('details[data-field="kickoff"] [data-approval-block]').count() == 1
+    assert page.locator("details[data-field]").count() == 6
     assert page.locator("[data-ticket-takeover-toggle]").count() == 0
-    assert page.locator("[data-scope-ceiling]").count() == 0
+    assert page.locator('details[data-field="kickoff"] [data-scope-ceiling]').input_value() == (
+        "needs_success"
+    )
+    assert (
+        page.locator('details[data-field="kickoff"] [data-scope-atcap] select').input_value()
+        == "propose"
+    )
 
-    title_editor = page.locator("[data-kickoff-proposal] [role=textbox]").nth(0)
+    title_editor = page.locator(".ticket-title [role=textbox]").first
     title_editor.focus()
     title_editor.evaluate(SELECT_NODE_CONTENTS)
-    page.keyboard.type("Approved title")
-    title_editor.blur()
-    note_editor = page.locator("[data-kickoff-proposal] [role=textbox]").nth(1)
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith(f"/api/tickets/{tid}")
+    ):
+        page.keyboard.type("Approved title")
+        title_editor.blur()
+    note_editor = page.locator('details[data-field="kickoff"] [data-edit]').first
     note_editor.focus()
     note_editor.evaluate(SELECT_NODE_CONTENTS)
     page.keyboard.type("Approved premise")
     note_editor.blur()
+    page.select_option('details[data-field="kickoff"] [data-scope-ceiling]', "needs_approach")
+    page.select_option('details[data-field="kickoff"] [data-scope-atcap] select', "stop")
     with page.expect_response(
         lambda response: response.request.method == "POST"
-        and response.url.endswith(f"/api/tickets/{tid}/accept-kickoff")
+        and response.url.endswith(f"/api/tickets/{tid}/accept/kickoff")
     ):
-        page.click("[data-kickoff-proposal] [data-accept]")
+        page.click('details[data-field="kickoff"] [data-accept]')
     page.wait_for_selector(
         f'section[data-screen="ticket"][data-ticket-id="{tid}"][data-state="needs_success"]',
         timeout=WAIT_MS,
     )
     detail = api.get(server, f"/api/tickets/{tid}")
     assert detail["title"] == "Approved title"
-    assert detail["kickoff_note"] == "Approved premise"
-    assert detail["kickoff_proposal"] is None
-    assert len(detail["fields"]) == 5
+    assert detail["ceiling"] == "needs_approach"
+    assert detail["at_cap"] == "stop"
+    assert detail["fields"]["kickoff"]["value"] == "Approved premise"
+    assert detail["fields"]["kickoff"]["proposal"] is None
+    assert len(detail["fields"]) == 6
 
 
-def test_settled_kickoff_note_renders_as_canonical_intake_block(
+def test_settled_kickoff_field_renders_as_canonical_intake_block(
     server, context_factory, open_page, cli
 ):
-    placeholder = "Ticket premise and boundaries..."
     tid = cli(
         server, "ticket", "create", "--title", "Kickoff note UI ticket",
         "--kickoff-note", "Preserve this intake boundary.",
     )["id"]
-    cli(server, "ticket", "approve", tid)
+    cli(server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "propose")
 
     page = open_page(
         context_factory(), server, f"#/ticket/{tid}",
-        f'section[data-screen="ticket"][data-ticket-id="{tid}"] [data-kickoff]',
+        f'section[data-screen="ticket"][data-ticket-id="{tid}"] details[data-field="kickoff"]',
         settled=True,
     )
-    assert page.locator("[data-kickoff][open]").count() == 0
-    page.click("[data-kickoff] .disclosure-summary")
-    page.wait_for_selector("[data-kickoff][open]", timeout=WAIT_MS)
-    assert "Preserve this intake boundary." in page.inner_text("[data-kickoff]")
-    editor = page.locator("[data-kickoff] [data-markdown-inline-edit]")
+    assert page.locator('details[data-field="kickoff"][open]').count() == 0
+    page.click('details[data-field="kickoff"] .disclosure-summary')
+    page.wait_for_selector('details[data-field="kickoff"][open]', timeout=WAIT_MS)
+    assert "Preserve this intake boundary." in page.inner_text('details[data-field="kickoff"]')
+    editor = page.locator(
+        'details[data-field="kickoff"] .ticket-field-value [data-markdown-inline-edit]'
+    )
     editor.focus()
     editor.evaluate(SELECT_NODE_CONTENTS)
     page.keyboard.type("Updated intake boundary.")
     with page.expect_response(
-        lambda response: response.request.method == "PATCH"
-        and response.url.endswith(f"/api/tickets/{tid}")
+        lambda response: response.request.method == "PUT"
+        and response.url.endswith(f"/api/tickets/{tid}/value/kickoff")
     ):
         editor.blur()
     page.wait_for_function(
-        "() => document.querySelector('[data-kickoff]')?.textContent?.includes("
+        "() => document.querySelector('details[data-field=\"kickoff\"]')?.textContent?.includes("
         "'Updated intake boundary.')"
     )
     with sqlite3.connect(server.db_path) as conn:
@@ -1027,17 +1060,21 @@ def test_settled_kickoff_note_renders_as_canonical_intake_block(
     empty_tid = cli(server, "ticket", "create", "--title", "Empty kickoff note UI ticket")["id"]
     empty_page = open_page(
         context_factory(), server, f"#/ticket/{empty_tid}",
-        f'section[data-screen="ticket"][data-ticket-id="{empty_tid}"] [data-kickoff]',
+        f'section[data-screen="ticket"][data-ticket-id="{empty_tid}"] '
+        'details[data-field="kickoff"]',
         settled=True,
     )
-    empty_page.click("[data-kickoff] .disclosure-summary")
-    empty_page.wait_for_selector("[data-kickoff][open]", timeout=WAIT_MS)
+    empty_page.click('details[data-field="kickoff"] .disclosure-summary')
+    empty_page.wait_for_selector('details[data-field="kickoff"][open]', timeout=WAIT_MS)
     assert (
-        empty_page.get_attribute("[data-kickoff] [data-markdown-inline-edit]", "data-ph")
-        == placeholder
+        empty_page.get_attribute(
+            'details[data-field="kickoff"] .ticket-field-value [data-markdown-inline-edit]',
+            "data-ph",
+        )
+        == "Value..."
     )
     assert empty_page.locator(
-        "[data-kickoff] [data-markdown-inline-edit]"
+        'details[data-field="kickoff"] .ticket-field-value [data-markdown-inline-edit]'
     ).get_attribute("contenteditable") == "true"
 
 def test_ticket_implementer_assignment_edits_in_facts_without_changing_workflow(

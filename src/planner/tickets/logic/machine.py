@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 # Inverse of GATING_FIELD: the state each field gates. A field is "passed"
 # once the ticket has advanced strictly beyond the state that field gates.
 FIELD_GATES: Final[dict[FieldName, TicketState]] = {
+    FieldName.kickoff: TicketState.needs_kickoff,
     FieldName.success: TicketState.needs_success,
     FieldName.approach: TicketState.needs_approach,
     FieldName.plan: TicketState.needs_plan,
@@ -134,8 +135,6 @@ def has_pending_gating_proposal(state: TicketState, fields: TicketFields) -> boo
 
 
 def has_pending_parked_proposal(ticket: Ticket) -> bool:
-    if ticket.kickoff_proposal is not None:
-        return True
     return has_pending_gating_proposal(ticket.state, ticket.fields)
 
 

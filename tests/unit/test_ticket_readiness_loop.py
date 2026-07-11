@@ -70,7 +70,15 @@ def _new_ticket(
         ticket = tickets_data.create_ticket(
             conn, title="T", actor="human", now=0, title_max_chars=200
         )
-        ticket = tickets_data.accept_kickoff(conn, ticket.id, actor="human", now=0)
+        ticket = tickets_data.accept_proposal(
+            conn,
+            ticket.id,
+            field=FieldName.kickoff,
+            actor="human",
+            now=0,
+            next_ceiling="none",
+            at_cap=AtCap.propose,
+        )
         if ceiling is not None or at_cap is not AtCap.propose:
             tickets_data.change_scope(
                 conn,
@@ -315,7 +323,7 @@ def test_is_runnable_kickoff_uses_generic_parked_proposal_predicate(
     try:
         ticket = tickets_data.read_ticket(conn, tid)
         assert ticket.state is TicketState.needs_kickoff
-        assert ticket.kickoff_proposal is not None
+        assert ticket.fields.kickoff.proposal is not None
         assert readiness.is_runnable(conn, ticket) is False
         assert tickets_data.read_ticket(conn, tid).ticket_status is TicketStatus.awaiting_approval
     finally:

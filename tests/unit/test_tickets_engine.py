@@ -59,10 +59,18 @@ def _create(conn: Connection, cfg: Config, clock: TestClock, **kw: Any) -> Ticke
     )
     if not settle_kickoff:
         return ticket
-    ticket = data.accept_kickoff(conn, ticket.id, actor="human", now=clock.now_unix())
+    ticket = data.accept_proposal(
+        conn,
+        ticket.id,
+        field=FieldName.kickoff,
+        actor="human",
+        now=clock.now_unix(),
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
+    )
     conn.execute(
         "DELETE FROM events WHERE entity_id = ? AND kind IN ("
-        "'kickoff_proposal_filed', 'kickoff_accepted', 'state_changed', "
+        "'proposal_filed', 'proposal_accepted', 'state_changed', 'scope_changed', "
         "'ticket_status_changed')",
         (ticket.id,),
     )
@@ -90,17 +98,17 @@ def test_ticket_and_field_user_notes_round_trip_with_legacy_field_notes(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     t = _create(tmp_db, cfg, fake_clock, kickoff_note="intake direction")
-    assert t.kickoff_note == "intake direction"
+    assert t.fields.kickoff.value == "intake direction"
 
-    t = data.edit_ticket(
+    t = data.edit_field_value(
         tmp_db,
         t.id,
-        edit=TicketEdit(kickoff_note="updated intake direction"),
-        title_max_chars=TITLE_MAX_CHARS,
+        field=FieldName.kickoff,
+        new_body="updated intake direction",
         actor="human",
         now=fake_clock.now_unix(),
     )
-    assert t.kickoff_note == "updated intake direction"
+    assert t.fields.kickoff.value == "updated intake direction"
 
     t = data.set_field_user_note(
         tmp_db,
@@ -114,6 +122,7 @@ def test_ticket_and_field_user_notes_round_trip_with_legacy_field_notes(
 
     legacy = json.dumps(
         {
+            "kickoff": {"value": None, "proposal": None, "notes": "legacy kickoff guidance"},
             "success": {"value": None, "proposal": None, "notes": "legacy guidance"},
             "approach": {"value": None, "proposal": None, "user_note": "new guidance"},
             "plan": {"value": None, "proposal": None, "notes": None},
@@ -122,6 +131,7 @@ def test_ticket_and_field_user_notes_round_trip_with_legacy_field_notes(
         }
     )
     parsed = fields_codec.fields_from_json(legacy)
+    assert parsed.kickoff.user_note == "legacy kickoff guidance"
     assert parsed.success.user_note == "legacy guidance"
     assert parsed.approach.user_note == "new guidance"
     assert json.loads(fields_codec.fields_to_json(parsed))["success"] == {
@@ -131,7 +141,7 @@ def test_ticket_and_field_user_notes_round_trip_with_legacy_field_notes(
     }
 
 
-def test_ordinary_create_parks_ticket_level_kickoff_without_sixth_field(
+def test_ordinary_create_parks_ordinary_kickoff_field_proposal(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     t = _create(
@@ -145,25 +155,28 @@ def test_ordinary_create_parks_ticket_level_kickoff_without_sixth_field(
 
     assert t.state is TicketState.needs_kickoff
     assert t.ticket_status is TicketStatus.awaiting_approval
-    assert t.kickoff_note == "draft kickoff note"
-    assert t.kickoff_proposal is not None
-    assert t.kickoff_proposal.title == "Draft kickoff title"
-    assert t.kickoff_proposal.kickoff_note == "draft kickoff note"
+    assert t.title == "Draft kickoff title"
+    assert t.fields.kickoff.value is None
+    assert t.fields.kickoff.proposal is not None
+    assert t.fields.kickoff.proposal.body == "draft kickoff note"
     assert set(json.loads(fields_codec.fields_to_json(t.fields))) == {
+        "kickoff",
         "success",
         "approach",
         "plan",
         "implementation",
         "closeout",
     }
-    assert all(
-        event.kind != EventKind.proposal_filed.value
-        for event in _events(tmp_db, cfg, t.id)
-    )
+    proposal_events = _events(tmp_db, cfg, t.id, EventKind.proposal_filed)
+    assert proposal_events[-1].payload == {
+        "field": "kickoff",
+        "body": "draft kickoff note",
+        "proposed_by": "human",
+    }
     assert machine.has_pending_parked_proposal(t) is True
 
 
-def test_review_queue_exposes_kickoff_as_non_field_approval(
+def test_review_queue_exposes_kickoff_as_ordinary_field_approval(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     t = _create(tmp_db, cfg, fake_clock, settle_kickoff=False)
@@ -182,12 +195,12 @@ def test_review_queue_exposes_kickoff_as_non_field_approval(
             "entity_type": "ticket",
             "kind": "kickoff",
             "title": t.title,
-            "waiting_since": t.kickoff_proposal.created_at,
+            "waiting_since": t.fields.kickoff.proposal.created_at,
         }
     ]
 
 
-def test_accept_kickoff_with_edits_advances_to_success_and_clears_pending(
+def test_accept_kickoff_field_advances_to_success_and_leaves_title_independent(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     t = _create(
@@ -199,41 +212,54 @@ def test_accept_kickoff_with_edits_advances_to_success_and_clears_pending(
         settle_kickoff=False,
     )
 
-    settled = data.accept_kickoff(
+    renamed = data.edit_ticket(
         tmp_db,
         t.id,
+        edit=TicketEdit(title="Approved title"),
+        title_max_chars=TITLE_MAX_CHARS,
         actor="human",
         now=fake_clock.now_unix(),
-        edited_title="Approved title",
-        edited_kickoff_note="approved note",
+    )
+    assert renamed.state is TicketState.needs_kickoff
+    assert renamed.fields.kickoff.proposal is not None
+
+    settled = data.accept_proposal(
+        tmp_db,
+        t.id,
+        field=FieldName.kickoff,
+        actor="human",
+        now=fake_clock.now_unix(),
+        edited_body="approved note",
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
     )
 
     assert settled.state is TicketState.needs_success
     assert settled.ticket_status is TicketStatus.empty
     assert settled.title == "Approved title"
-    assert settled.kickoff_note == "approved note"
-    assert settled.kickoff_proposal is None
+    assert settled.fields.kickoff.value == "approved note"
+    assert settled.fields.kickoff.proposal is None
     assert machine.has_pending_parked_proposal(settled) is False
-    accepted = _events(tmp_db, cfg, t.id, EventKind.kickoff_accepted)
-    assert accepted[-1].payload == {
-        "title": "Approved title",
-        "kickoff_note": "approved note",
-        "resolved_by": "direct",
-        "edited": True,
-    }
+    accepted = _events(tmp_db, cfg, t.id, EventKind.proposal_accepted)
+    assert accepted[-1].payload["field"] == "kickoff"
+    assert accepted[-1].payload["resolved_by"] == "direct"
+    assert accepted[-1].payload["edited"] is True
 
 
-def test_accept_kickoff_action_rings_and_leaves_ticket_runnable(
+def test_accept_kickoff_field_action_rings_and_leaves_ticket_runnable(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     t = _create(tmp_db, cfg, fake_clock, settle_kickoff=False)
     doorbell = _RecordingDoorbell()
 
-    settled = actions.accept_kickoff(
+    settled = actions.accept_proposal(
         tmp_db,
         t.id,
+        field=FieldName.kickoff,
         actor="human",
         now=fake_clock.now_unix(),
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
         readiness_doorbell=doorbell,
     )
 
@@ -242,24 +268,21 @@ def test_accept_kickoff_action_rings_and_leaves_ticket_runnable(
     assert readiness.is_runnable(tmp_db, settled) is True
 
 
-def test_kickoff_pending_guards_direct_title_note_takeover_and_release(
+def test_kickoff_pending_allows_title_edit_but_guards_takeover_and_release(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     t = _create(tmp_db, cfg, fake_clock, settle_kickoff=False)
 
-    for edit in (
-        TicketEdit(title="edited"),
-        TicketEdit(kickoff_note="edited"),
-    ):
-        with pytest.raises(PlannerError, match="approving kickoff"):
-            data.edit_ticket(
-                tmp_db,
-                t.id,
-                edit=edit,
-                title_max_chars=TITLE_MAX_CHARS,
-                actor="human",
-                now=fake_clock.now_unix(),
-            )
+    edited = data.edit_ticket(
+        tmp_db,
+        t.id,
+        edit=TicketEdit(title="edited"),
+        title_max_chars=TITLE_MAX_CHARS,
+        actor="human",
+        now=fake_clock.now_unix(),
+    )
+    assert edited.title == "edited"
+    assert edited.fields.kickoff.proposal is not None
     with pytest.raises(PlannerError, match="before takeover"):
         data.take_over_ticket(tmp_db, t.id, now=fake_clock.now_unix())
     with pytest.raises(PlannerError, match="before release"):
@@ -279,8 +302,14 @@ def test_direct_state_changes_cannot_bypass_or_reenter_kickoff(
             now=fake_clock.now_unix(),
         )
 
-    settled = data.accept_kickoff(
-        tmp_db, pending.id, actor="human", now=fake_clock.now_unix()
+    settled = data.accept_proposal(
+        tmp_db,
+        pending.id,
+        field=FieldName.kickoff,
+        actor="human",
+        now=fake_clock.now_unix(),
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
     )
     assert settled.state is TicketState.needs_success
     with pytest.raises(PlannerError, match="only through kickoff approval"):

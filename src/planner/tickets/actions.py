@@ -159,28 +159,6 @@ def accept_proposal(
     return ticket
 
 
-def accept_kickoff(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    actor: str,
-    now: int,
-    readiness_doorbell: ReadinessDoorbell,
-    edited_title: str | None = None,
-    edited_kickoff_note: str | None = None,
-) -> Ticket:
-    ticket = tickets_data.accept_kickoff(
-        conn,
-        ticket_id,
-        actor=actor,
-        now=now,
-        edited_title=edited_title,
-        edited_kickoff_note=edited_kickoff_note,
-    )
-    readiness_doorbell.ring()
-    return ticket
-
-
 def edit_field_value(
     conn: sqlite3.Connection,
     ticket_id: str,

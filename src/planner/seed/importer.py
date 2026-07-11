@@ -229,6 +229,7 @@ def _import_tickets(
             sprint_item_id = None
             row_sprint_id = sprint_id
         fields = {
+            "kickoff": {"value": ticket.body, "proposal": None, "user_note": None},
             "success": {"value": ticket.success, "proposal": None, "user_note": None},
             "approach": {"value": ticket.approach, "proposal": None, "user_note": None},
             "plan": {"value": None, "proposal": None, "user_note": None},
@@ -238,12 +239,12 @@ def _import_tickets(
         conn.execute(
             "INSERT INTO tickets ("
             "id, title, state, priority, deadline, project_id, sprint_item_id, "
-            "sprint_id, recap, kickoff_note, kickoff_proposal, ceiling, at_cap, "
+            "sprint_id, recap, ceiling, at_cap, "
             "chat_session_key, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ticket_id, ticket.title, ticket.state.value, ticket.priority.value, None, None,
-                sprint_item_id, row_sprint_id, "", ticket.body, ticket.state.value, "propose",
+                sprint_item_id, row_sprint_id, "", ticket.state.value, "propose",
                 ticket.chat_session_key, ticket.alias, json.dumps(fields), now, now,
             ),
         )
@@ -252,18 +253,6 @@ def _import_tickets(
             {
                 "title": ticket.title, "state": ticket.state.value,
                 "alias": ticket.alias, "source": "seed",
-            },
-            now,
-        )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.kickoff_accepted,
-            {
-                "title": ticket.title,
-                "kickoff_note": ticket.body,
-                "resolved_by": "seed",
-                "edited": False,
             },
             now,
         )

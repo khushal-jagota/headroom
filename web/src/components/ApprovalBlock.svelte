@@ -48,9 +48,12 @@
   let hasNote = $derived(Boolean(onNoteSave) || Boolean((note || "").trim()));
   let contentTitle = $derived(labelize(whatLabel || field.replace(/_/g, " ")));
 
-  // gating-pending always requires a scope; proposal requires one only when asked to.
-  let scopeRequired = $derived(mode === "gating-pending" || (mode === "proposal" && requireScope));
-  let showScope = $derived(mode === "gating-pending" || (mode === "proposal" && requireScope));
+  let scopeRequired = $derived(
+    mode === "gating-pending" || (mode === "proposal" && requireScope)
+  );
+  let showScope = $derived(
+    mode === "gating-pending" || (mode === "proposal" && requireScope)
+  );
   let actionLabel = $derived(mode === "proposal" ? "Accept" : "Approve");
   let actionDisabled = $derived(inFlight || resolved || (scopeRequired && scope === null));
 

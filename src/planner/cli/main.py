@@ -22,7 +22,13 @@ import click
 from click.core import ParameterSource
 
 from planner.cli import http
-from planner.tickets.contracts import GATING_FIELD, WORKER_STATE_ORDER, AtCap, TicketState
+from planner.tickets.contracts import (
+    GATING_FIELD,
+    WORKER_STATE_ORDER,
+    AtCap,
+    FieldName,
+    TicketState,
+)
 
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
 _FIELDS = ["success", "approach", "plan", "implementation", "closeout"]
@@ -38,7 +44,7 @@ _DAY_FIELDS = {
 
 _TICKET_SET_FIELDS = {
     "title": "title",
-    "kickoff-note": "kickoff_note",
+    "kickoff-note": "kickoff",
     "priority": "priority",
     "deadline": "deadline",
     "project": "project",
@@ -569,13 +575,22 @@ def ticket_set(
         http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
     if field == "kickoff-note" and new_value is None:
         new_value = ""
-    data = http.send(
-        "PATCH",
-        f"/api/tickets/{ticket_id}",
-        as_json=as_json,
-        json_body={api_field: new_value},
-        request_actor="ordinary",
-    )
+    if field == "kickoff-note":
+        data = http.send(
+            "PUT",
+            f"/api/tickets/{ticket_id}/value/kickoff",
+            as_json=as_json,
+            json_body={"body": new_value},
+            request_actor="ordinary",
+        )
+    else:
+        data = http.send(
+            "PATCH",
+            f"/api/tickets/{ticket_id}",
+            as_json=as_json,
+            json_body={api_field: new_value},
+            request_actor="ordinary",
+        )
     http.emit(data, as_json, f"{data['id']} {field} set")
 
 
@@ -604,21 +619,6 @@ def ticket_approve(
     tid = resolve_ticket_id(ticket_id, as_json)
     detail = http.send("GET", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary")
     state = TicketState(detail["state"])
-    if state is TicketState.needs_kickoff:
-        payload: dict[str, Any] = {}
-        if kickoff_title is not None:
-            payload["edited_title"] = kickoff_title
-        if kickoff_note_file is not None:
-            payload["edited_kickoff_note"] = _read_source(kickoff_note_file, as_json)
-        data = http.send(
-            "POST",
-            f"/api/tickets/{tid}/accept-kickoff",
-            as_json=as_json,
-            json_body=payload,
-            request_actor="ordinary",
-        )
-        http.emit(data, as_json, f"{data['id']} approved kickoff")
-        return
     field = GATING_FIELD.get(state)
     if field is None:
         http.fail_validation(f"ticket in {state.value} has nothing to approve", as_json)
@@ -627,9 +627,27 @@ def ticket_approve(
         http.fail_validation(f"no pending {field.value} proposal", as_json)
     if ceiling is None or at_cap is None:
         http.fail_validation("approval requires --ceiling and --at-cap", as_json)
+    if kickoff_title is not None:
+        if field is not FieldName.kickoff:
+            http.fail_validation("--kickoff-title only applies while approving kickoff", as_json)
+        http.send(
+            "PATCH",
+            f"/api/tickets/{tid}",
+            as_json=as_json,
+            json_body={"title": kickoff_title},
+            request_actor="ordinary",
+        )
     field_payload: dict[str, Any] = {"next_ceiling": ceiling, "at_cap": at_cap}
     if edit_file is not None:
         field_payload["edited_body"] = _read_source(edit_file, as_json)
+    if kickoff_note_file is not None:
+        if field is not FieldName.kickoff:
+            http.fail_validation(
+                "--kickoff-note-file only applies while approving kickoff", as_json
+            )
+        if "edited_body" in field_payload:
+            http.fail_validation("approval accepts only one edited body option", as_json)
+        field_payload["edited_body"] = _read_source(kickoff_note_file, as_json)
     data = http.send(
         "POST",
         f"/api/tickets/{tid}/accept/{field.value}",

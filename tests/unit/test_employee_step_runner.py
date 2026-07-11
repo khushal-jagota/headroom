@@ -52,9 +52,21 @@ BOUNDARY_HOUR = 5
 def _delete_kickoff_setup_events(conn: sqlite3.Connection, ticket_id: str) -> None:
     conn.execute(
         "DELETE FROM events WHERE entity_id = ? AND kind IN ("
-        "'kickoff_proposal_filed', 'kickoff_accepted', 'state_changed', "
+        "'proposal_filed', 'proposal_accepted', 'state_changed', "
         "'ticket_status_changed')",
         (ticket_id,),
+    )
+
+
+def _accept_kickoff_field(conn: sqlite3.Connection, ticket_id: str):
+    return tickets_data.accept_proposal(
+        conn,
+        ticket_id,
+        field=FieldName.kickoff,
+        actor="human",
+        now=0,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
     )
 
 
@@ -128,7 +140,7 @@ def _new_ticket(
             title_max_chars=200,
             implementer=implementer,
         )
-        ticket = tickets_data.accept_kickoff(conn, ticket.id, actor="human", now=0)
+        ticket = _accept_kickoff_field(conn, ticket.id)
         _delete_kickoff_setup_events(conn, ticket.id)
         if ceiling is not None:
             tickets_data.change_scope(
@@ -336,12 +348,12 @@ def test_next_step_prompt_includes_implementer_wire_value_or_unassigned(tmp_path
             title_max_chars=200,
             implementer=Implementer.hermes_claude,
         )
-        assigned = tickets_data.accept_kickoff(conn, assigned.id, actor="human", now=0)
+        assigned = _accept_kickoff_field(conn, assigned.id)
         _delete_kickoff_setup_events(conn, assigned.id)
         unassigned = tickets_data.create_ticket(
             conn, title="T", actor="human", now=0, title_max_chars=200
         )
-        unassigned = tickets_data.accept_kickoff(conn, unassigned.id, actor="human", now=0)
+        unassigned = _accept_kickoff_field(conn, unassigned.id)
         _delete_kickoff_setup_events(conn, unassigned.id)
     finally:
         conn.close()
@@ -1095,7 +1107,7 @@ def test_runner_resolves_today_inside_claim_transaction_across_boundary(
         ticket = tickets_data.create_ticket(
             conn, title="Boundary ticket", actor="human", now=0, title_max_chars=200
         )
-        ticket = tickets_data.accept_kickoff(conn, ticket.id, actor="human", now=0)
+        ticket = _accept_kickoff_field(conn, ticket.id)
         _delete_kickoff_setup_events(conn, ticket.id)
         days_data.add_day_ticket(conn, old_today_id, ticket.id, 0)
     finally:
