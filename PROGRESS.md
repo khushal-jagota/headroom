@@ -3,68 +3,103 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-11): full-page managed HTML previews
+
+Current build stage:
+
+- Ticket `t_zkw93h9k` accepted Implementation. Its production, test, documentation, and rebuilt
+  frontend files are integrated directly on `main` in commit `5924b83`; unrelated current changes
+  remain unstaged and untouched.
+- Embedded HTML cards remain unchanged. Their **Open preview** action now leads to a document-only
+  route whose sandboxed HTML frame fills the available page without repeated card chrome or controls.
+
+What just passed:
+
+- RED against the pre-change frontend bundle: the end-to-end popup regression found the old
+  `.file-preview-meta` card in the dedicated route instead of a document-only view.
+- GREEN: the focused popup regression passed with the exact destination, visible heading geometry,
+  empty sandbox, script isolation, no duplicate controls, and near-full-page frame dimensions.
+- Initial Codex implementation review found that the new full-page CSS also affected Markdown routes.
+  An added regression failed on their lost padding; HTML-only route scoping fixed it, and final Codex
+  review returned `NO VIOLATIONS`.
+- Canonical `./verify` passed after fixing two test-only Ruff line-length findings: Ruff; Mypy across
+  106 source files; 454 unit tests; CSS/static/Svelte/build/event gates; 65 browser/CLI e2e tests;
+  final `VERIFY: PASS`.
+
+Current hypothesis:
+
+- Confirmed: a dedicated Blob-backed iframe avoids the failing full-route `srcdoc` paint path while
+  `sandbox=""` preserves script and same-origin isolation. Scoping full-page layout to HTML keeps
+  Markdown and every other preview route unchanged.
+
+Next step:
+
+- Propose Closeout with the integration and existing verification evidence. No merge, deploy,
+  restart, or follow-up Ticket applies.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-11): t_5m7fmdk3 Kickoff closeout integration
 
 Current build stage:
 
-- Ticket `t_5m7fmdk3` accepted Implementation. Verified commit `f80c0e7` is being merged from
-  `ticket/t_5m7fmdk3-kickoff` into current `main` while preserving concurrent preview/Chat work and
-  the unrelated dirty nested frontend worktree.
-- Source and tests merge cleanly. Memory-file overlaps are reconciled explicitly, and the generated
-  frontend bundle is rebuilt from the combined source rather than hand-merged.
+- Ticket `t_5m7fmdk3` accepted Implementation. Verified commit `f80c0e7` is integrated into current
+  `main` by merge commit `9ab2111`, preserving concurrent preview/Chat work and the unrelated dirty
+  nested frontend worktree.
+- Memory-file overlaps were reconciled explicitly, the frontend bundle was rebuilt from combined
+  source, and the clean dedicated worktree plus merged ticket branch were removed.
 
 What just passed:
 
 - Implementation-branch `./verify`: Ruff; Mypy across 106 source files; 454 unit tests; frontend
   check/build/event mapping; 63 browser/CLI e2e tests; final `VERIFY: PASS`.
 - Independent implementation review drove all concrete fixes; final Codex verdict: `NO VIOLATIONS`.
+- Canonical post-merge `./verify`: Ruff; Mypy across 106 source files; 454 unit tests; compile/static
+  and frontend gates; 65 browser/CLI e2e tests; final `VERIFY: PASS`.
 
 Current hypothesis:
 
-- The Kickoff feature and current `main` changes are additive. The canonical post-merge verifier is
-  the remaining integration gate.
+- Confirmed: the Kickoff feature and current `main` changes are compatible and fully integrated.
 
 Next step:
 
-- Finish the merge commit, restore unrelated stashed closeout records, run one canonical `./verify`,
-  then propose Closeout with the merged commit and verification evidence.
+- Propose Closeout with the merge, verification, and cleanup evidence. No deploy, restart, or
+  follow-up Ticket applies.
 
 Blockers:
 
 - None.
 
-## Current work cycle (2026-07-11): t_tmfdg79v Chat image attachment UX
+## Current work cycle (2026-07-11): t_tmfdg79v Chat image attachment closeout
 
 Current build stage:
 
-- Ticket `t_tmfdg79v` is complete on dedicated branch `ticket/t_tmfdg79v-chat-image-ux` and remains
-  unmerged. Closeout owns integration into `main`.
-- The shared composer now uses one ordered pending-image collection for picker, paste, and composer-only
-  drop intake, with compact previews, individual removal, retry-safe failure behavior, and object URL
-  cleanup on removal, successful send, and teardown.
-- The API/domain/gateway/session path now carries ordered `image_references` / `image_paths`. Every
-  managed reference resolves before turn creation; visible Markdown and native Hermes delivery keep the
-  same order; all images attach before one prompt.
+- Verified ticket commit `7d54fd9` is integrated into `main` by merge commit `5ad4265`, on top of the
+  concurrent full-page preview commit `5924b83`.
+- The frontend bundle was rebuilt from the combined source in `9421e9e`. Merge repair `a6b0fed`
+  restored the preview ticket's full-page layout block that the CSS conflict resolution had dropped.
+- The shared composer, ordered managed references, centralized previews, and ordered native Hermes
+  attachment path are integrated. No deployment or service restart was requested.
 
 What just passed:
 
-- Focused backend: 129 tests across chat image, shared gateway, and live session modules; focused browser:
-  8 chat-image tests covering picker, real paste/drop, mixed clipboard validation, removal, multiple
-  send, reload, and retained previews after failures.
-- Initial Codex implementation review found two concrete gaps: invalid-disposition cleanup stopped after
-  the first detach failure, and paste filtered before the shared intake validator. Both were fixed with
-  regressions; follow-up review returned `NO VIOLATIONS`.
-- Canonical worktree `./verify`: Ruff; Mypy across 106 source files; 455 unit tests; compile/static,
+- Implementation branch: 129 focused backend tests, 8 focused chat-image browser tests, final independent
+  review `NO VIOLATIONS`, and canonical `./verify` with 455 unit and 67 e2e tests.
+- The first post-merge verifier exposed the missing full-page preview CSS through a 304px-wide iframe.
+  Restoring the exact 30-line block made the failed browser regression pass.
+- Final post-repair `./verify`: Ruff; Mypy across 106 source files; 455 unit tests; compile/static,
   frontend check/build/tests; 67 browser/CLI e2e tests; final `VERIFY: PASS`.
 
 Current hypothesis:
 
-- Confirmed: the ordered image path is complete end to end without adding another upload/preview system
-  or redesigning the composer.
+- Confirmed: the chat attachment and full-page preview changes are compatible and fully integrated.
 
 Next step:
 
-- Commit the verified ticket branch, propose Implementation with evidence, and wait for human review.
+- Remove the clean ticket worktree and merged branch, then propose Closeout. No deploy, restart, or
+  follow-up Ticket applies.
 
 Blockers:
 
@@ -74,7 +109,7 @@ Blockers:
 
 Current build stage:
 
-- Ticket `t_uevrd406` is in Implementation. The approved corrected plan is implemented directly in
+- Ticket `t_uevrd406` accepted Implementation and is in Closeout. The approved corrected plan is implemented directly in
   the shared `FilePreview` root: managed Markdown previews have one tokenized 32rem maximum height,
   long previews scroll vertically, and short previews retain their natural height.
 - The mixed `main` worktree already contained unrelated concurrent Chat, ticket-type planning,
@@ -91,6 +126,10 @@ What just passed:
 - Codex found one standards violation in the first pass: the 32rem limit was inline despite the
   repository token rule. The value moved to `assets/tokens.css`; the focused test passed again and the
   final Codex review returned `NO VIOLATIONS`.
+- Canonical `./verify` passed: Ruff; Mypy across 106 source files; 444 unit tests; compile/static,
+  CSS, Svelte, build, and event-mapping gates; 62 browser tests; final `VERIFY: PASS`.
+- The ticket files are integrated directly on `main` in commit `e4a607d`; no merge, deploy, restart,
+  or follow-up Ticket applies.
 
 Current hypothesis:
 
@@ -100,8 +139,7 @@ Current hypothesis:
 
 Next step:
 
-- Run canonical `./verify` once, then propose Implementation with the RED/GREEN, full-module, review,
-  and verifier evidence.
+- Propose Closeout with the integrated commit and existing verification evidence.
 
 Blockers:
 

@@ -2,17 +2,26 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
-## D108 — Chat image implementation remains isolated until Closeout
+## D111 — Chat image closeout reconciles the concurrent preview commit before verification
+
+While `t_tmfdg79v` Closeout preserved the dirty `main` tree, the concurrent full-page preview work landed
+as commit `5924b83`. Merge the verified chat branch on top rather than overwriting it, rebuild the
+frontend from both source changes, and preserve both sets of memory notes. The first post-merge verifier
+proved that choosing the chat side of the `assets/app.css` conflict had dropped the preview ticket's
+full-page layout block. Restore that exact block as a narrow integration repair, rerun its focused browser
+regression, then require a clean canonical verifier before cleanup. No deploy or restart is implied by
+source integration.
+
+## D110 — Chat image implementation remains isolated until Closeout
 
 Ticket `t_tmfdg79v` was implemented and verified on dedicated branch
 `ticket/t_tmfdg79v-chat-image-ux` from `9ab2111`. The first independent implementation review found two
 real gaps: invalid-disposition cleanup could stop after one detach failure, and clipboard files bypassed
 the shared intake validator. Both were corrected under focused regressions; follow-up review returned
-`NO VIOLATIONS`, and the canonical worktree verifier passed. Implementation ends with a verified branch
-commit. It does not merge, deploy, restart Panels, or remove the worktree; those actions belong to
-Closeout after human approval.
+`NO VIOLATIONS`, and the canonical worktree verifier passed. Implementation ended with a verified branch
+commit; merge and integration verification remained Closeout work.
 
-## D107 — Chat image sends are ordered collections, with cleanup on every failed admission path
+## D109 — Chat image sends are ordered collections, with cleanup on every failed admission path
 
 Ticket `t_tmfdg79v` replaces the old single image field with ordered `image_references` at the API
 and ordered `image_paths` at the gateway/session boundary. The service resolves every reference before
@@ -26,6 +35,25 @@ image before admission is released. The composer mirrors that lifecycle locally:
 revoked on individual removal, successful send cleanup, and component teardown, but previews are
 retained after upload or turn-start failure for retry.
 
+## D108 — Full-page HTML preview closeout integrates only ticket-owned files
+
+The accepted implementation was produced directly in a mixed `main` worktree. Closeout commits only
+the production, browser regression, current frontend documentation, and rebuilt bundle files owned by
+`t_zkw93h9k`; pre-existing and concurrent memory/worktree changes remain unstaged. There is no branch
+to merge and no requested deploy or service restart. Canonical verification and final independent
+review are already clean, and the repaired behavior has no deferred work, so no follow-up Ticket is
+needed.
+
+## D107 — Open preview is a document surface, not a larger preview card
+
+For managed HTML, the shared `FilePreview` remains the embedded at-rest card. Its **Open preview**
+action leads to a dedicated route where the sandboxed HTML document fills the available page; that
+route does not repeat the filename, file-kind label, card chrome, or open action. The dedicated
+renderer keeps an empty-permission sandbox and uses a browser-paintable document URL with explicit
+cleanup rather than weakening sandbox permissions. Markdown and all other managed-file behavior stay
+on the existing route/component path. Browser coverage must click the real action and prove the popup
+destination, visible document, full-page geometry, absent duplicate controls, and retained sandbox.
+
 ## D106 — Kickoff integration preserves concurrent main work and rebuilds the shared frontend
 
 Ticket `t_5m7fmdk3` was implemented and independently verified on its dedicated branch while `main`
@@ -33,6 +61,13 @@ advanced with the bounded Markdown preview and Chat changes. Closeout merges the
 a merge commit, preserves the concurrent records and nested worktree state, resolves the generated
 frontend index by rebuilding from the combined source, and runs the canonical verifier after the
 integration. No deployment or follow-up Ticket is required unless post-merge verification exposes one.
+
+## D105 — Bounded Markdown preview closeout needs no further integration or deployment
+
+The accepted implementation is already present directly on `main` in commit `e4a607d`, alongside the
+concurrent Chat work that shared the worktree. There is no branch left to merge and no requested deploy
+or service restart. The owner-corrected component-level behavior is complete, independently reviewed,
+and covered by the canonical verifier, so no follow-up Ticket is warranted.
 
 ## D104 — Managed Markdown preview bounds are component-level visual containment
 
