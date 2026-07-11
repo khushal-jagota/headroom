@@ -35,8 +35,12 @@ __all__ = [
     "WorkflowDefinition",
     "coding_definition",
     "coding_registry",
+    "default_ceiling",
     "field_ids",
     "has_field",
+    "registry",
+    "require",
+    "set_registry_for_test",
     "views",
 ]
 
@@ -47,6 +51,12 @@ _KNOWN_SKILLS: frozenset[str] = frozenset({"panels-worker"})
 _KNOWN_TOOLSET_PROFILES: frozenset[str] = frozenset({"default"})
 
 _registry: Registry | None = None
+
+# A test-installed registry that supersedes the production ``coding``-only one for
+# ``registry()`` / ``require()`` / ``default_ceiling()``. Production never sets it;
+# it exists so a test can resolve a SECOND type through the DB/validation doors
+# (t_tt02x) while ``coding_registry()`` / ``coding_definition()`` stay coding-only.
+_active_registry: Registry | None = None
 
 
 def coding_registry() -> Registry:
@@ -68,6 +78,35 @@ def coding_definition() -> WorkflowDefinition:
     """The shipped ``coding`` workflow definition — the compatibility default a
     parameterized engine op resolves when ``definition`` is omitted."""
     return coding_registry().require("coding")
+
+
+def registry() -> Registry:
+    """The registry the persistence doors resolve each row's type through — the
+    test-installed one when present, else the production ``coding``-only singleton.
+
+    This is the single swap point: every door and the startup audit resolve types
+    via this (and its ``require``/``default_ceiling`` passthroughs), so a test can
+    install a registry carrying a second type WITHOUT any door naming
+    ``ticket_types`` (the F6 import boundary stays intact)."""
+    return _active_registry if _active_registry is not None else coding_registry()
+
+
+def require(type_id: str) -> WorkflowDefinition:
+    """Resolve a type id through :func:`registry`; raises ``not_found`` if unknown."""
+    return registry().require(type_id)
+
+
+def default_ceiling(type_id: str) -> str:
+    """The per-type default ceiling (first entry of the type's ceiling range)."""
+    return registry().default_ceiling(type_id)
+
+
+def set_registry_for_test(reg: Registry | None) -> None:
+    """Install (or clear with ``None``) a registry that supersedes the production
+    ``coding``-only one for :func:`registry`. Test-only seam for driving a second
+    type through the persistence doors."""
+    global _active_registry
+    _active_registry = reg
 
 
 def field_ids(definition: WorkflowDefinition) -> tuple[str, ...]:

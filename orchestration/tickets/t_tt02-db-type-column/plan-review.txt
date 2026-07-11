@@ -1,0 +1,85 @@
+DONE_WITH_CONCERNS. The plan is not safe to implement against the live database yet. Five P1 gaps should be resolved first.
+
+## Findings
+
+1. **[P1] (confidence 10/10) The idempotence probe can silently accept an incomplete schema.**
+
+The proposed early return checks only whether `"ticket_type"` appears in `sqlite_master.sql` ([plan.md:145](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02-db-type-column/plan.md:145>)). That does not prove the column is `NOT NULL` or that the old state and ceiling checks are gone.
+
+Concrete failure: a prior/manual migration adds `ticket_type` but retains the enumerating checks. The migration returns immediately, leaving a schema that cannot store future registry states. `create_schema` then reports success.
+
+Recommendation: make the probe recognize the complete target shape: `ticket_type` exists and is `NOT NULL`, and both enumerating checks are absent. A schema with `ticket_type` but either old check should be rebuilt, not skipped. Add an explicit partial-shape test.
+
+2. **[P1] (confidence 10/10) The migration fidelity test does not compare every preserved column.**
+
+The planned assertions cover only a subset of the copied columns ([plan.md:529](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02-db-type-column/plan.md:529>)). They omit at least `title`, `priority`, `deadline`, `recap`, `at_cap`, `implementer`, and `alias`, even though the copy is positional ([plan.md:176](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02-db-type-column/plan.md:176>)).
+
+Concrete failure: an implementation shifts `priority` and `deadline`, drops `alias`, or writes the wrong `implementer`; all currently listed fidelity assertions can still pass.
+
+Recommendation: snapshot every old row as a mapping, migrate, remove only the new `ticket_type` key from the result, and assert exact mapping equality. Also retain the explicit raw `fields` byte-equality assertion.
+
+The FK portion is otherwise sound: the plan does explicitly require seeded `day_tickets` and `links` rows at [plan.md:631](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02-db-type-column/plan.md:631>). `day_tickets.ticket_id` is the actual FK ([db.py:163](</Users/khushaljagota/.hermes/planning-v2/src/planner/core/db.py:163>)); `links` is a soft reference without an FK ([db.py:179](</Users/khushaljagota/.hermes/planning-v2/src/planner/core/db.py:179>)).
+
+3. **[P1] (confidence 10/10) Keeping `ceiling DEFAULT 'needs_success'` violates the per-type invariant.**
+
+The plan calls this a “type-independent” backstop ([plan.md:91](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02-db-type-column/plan.md:91>)), but `needs_success` is specifically coding’s default. The BRIEF requires replacing the DDL default too ([BRIEF.md:47](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02-db-type-column/BRIEF.md:47>)).
+
+Concrete failure: a registered type defaults to `needs_approach`; a raw insert omitting `ceiling` silently stores `needs_success`. With the CHECK removed, the database accepts the wrong type/ceiling pair until a later load or startup audit.
+
+Recommendation: remove the DDL ceiling default. Every sanctioned writer already supplies a ceiling. An omitted ceiling should fail `NOT NULL`, not invent coding semantics.
+
+4. **[P1] (confidence 10/10) The startup audit cannot detect extra fields as promised.**
+
+The plan says decoding through the codec validates the field set ([plan.md:283](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02-db-type-column/plan.md:283>)), but the codec explicitly ignores extra top-level keys ([fields_codec.py:97](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/fields_codec.py:97>)). The audit tests omit the BRIEF’s required extra-field corruption case ([plan.md:564](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02-db-type-column/plan.md:564>), [BRIEF.md:74](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02-db-type-column/BRIEF.md:74>)).
+
+Concrete failure: a coding row contains a misspelled `"sucess"` key alongside the six valid keys. Startup succeeds and the corruption is silently ignored.
+
+Recommendation: define the intended policy explicitly. If exact field-key equality is required, add it to the shared audit/load validator and test both missing and extra keys. First prove the live database contains no intentionally preserved legacy extras, because this migration promises byte-for-byte `fields` preservation.
+
+5. **[P1] (confidence 10/10) `ticket_type NOT NULL` with no default breaks existing fixture inserts.**
+
+The plan says existing fixtures remain unedited because the dataclass and writer receive defaults ([plan.md:601](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02-db-type-column/plan.md:601>)). That does not cover numerous direct SQL fixtures that omit `ticket_type`, for example [test_links.py:16](</Users/khushaljagota/.hermes/planning-v2/tests/unit/test_links.py:16>), [test_days.py:28](</Users/khushaljagota/.hermes/planning-v2/tests/unit/test_days.py:28>), and [test_sprints.py:46](</Users/khushaljagota/.hermes/planning-v2/tests/unit/test_sprints.py:46>).
+
+Concrete failure: the first such fixture fails with `NOT NULL constraint failed: tickets.ticket_type`; `./verify` cannot pass unchanged.
+
+Recommendation: keep the no-default production schema, but inventory and update every direct test INSERT to specify `'coding'`. Assertions can remain unchanged, but the plan must stop claiming fixtures require no edits.
+
+6. **[P2] (confidence 10/10) The silent-pass reachability argument is false, though production remains safe while its registry contains only coding.**
+
+The codec rejects different field sets, not different type IDs ([fields_codec.py:89](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/fields_codec.py:89>)). The plan itself proposes a second, coding-shaped type that passes the codec ([plan.md:508](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02-db-type-column/plan.md:508>)). That row can then reach:
+
+- `file_proposal` → `resolution.decide_file_proposal` without a definition ([data.py:580](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:580>)).
+- Coding-default admission and auto-advance logic ([resolution.py:100](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/resolution.py:100>)).
+- Direct state and scope operations without a definition ([data.py:737](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:737>), [resolution.py:300](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/resolution.py:300>)).
+- External-work reconciliation’s explicit coding definition ([external_work.py:37](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/external_work.py:37>)).
+
+Concrete failure: install a coding-shaped test type with the same enum-compatible stage IDs but a different gate/order. It loads successfully, then `decide_accept` advances according to coding. `_apply_decision` may accept the result if that target also exists in the second definition, producing a valid-looking but semantically wrong transition.
+
+Ruling: deferral is safe for this coding-only production release because `coding_registry()` registers only coding ([coding_bridge.py:52](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/coding_bridge.py:52>)). But the plan must replace “non-coding unreachable” with the narrower invariant “no second production definition may be registered before t_tt02b threads definitions through resolution/external-work.” The injectable second-type test should demonstrate this boundary, not claim engine parameterization.
+
+7. **[P2] (confidence 9/10) Replacing the state index assumes queries have already become type-scoped; they have not.**
+
+The plan says state is never read alone ([plan.md:103](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02-db-type-column/plan.md:103>)), but current queries filter or group by state without `ticket_type`, including [tickets/views.py:225](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/views.py:225>) and [sprints/views.py:94](</Users/khushaljagota/.hermes/planning-v2/src/planner/sprints/views.py:94>).
+
+Concrete failure: `(ticket_type, state)` cannot efficiently serve a state-only lookup because `ticket_type` is its leading column. Existing boards can regress to table scans.
+
+Recommendation: retain `idx_tickets_state` alongside the composite index until readers add a type predicate, or prove with `EXPLAIN QUERY PLAN` that the current workloads do not need it.
+
+8. **[P2] (confidence 9/10) Copy-phase cleanup and audit invocation remain unresolved.**
+
+The copy occurs before the guarded swap block ([plan.md:170](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02-db-type-column/plan.md:170>)). A disk-full, conversion, or constraint failure during copying leaves `tickets_new` behind because cleanup begins only around the swap. The original table survives, but the promised “drop scratch table on failure” is not universal.
+
+Also, the audit is tentatively lifespan-only ([plan.md:410](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02-db-type-column/plan.md:410>)); standalone seed boot calls `create_schema` without entering that lifespan ([seed/__main__.py:53](</Users/khushaljagota/.hermes/planning-v2/src/planner/seed/__main__.py:53>)). The plan itself leaves this undecided at [plan.md:656](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02-db-type-column/plan.md:656>).
+
+Recommendation: wrap create/copy/swap in one cleanup envelope, and name exactly which composition roots must run the audit. At minimum, `panels serve` must audit once after migration and before background loops begin.
+
+## Sound points
+
+- The FK toggle, autocommit assertion, savepoint versus `BEGIN IMMEDIATE`, transactional swap, post-rename `foreign_key_check`, rollback, and FK restoration mirror the landed migration correctly ([db.py:353](</Users/khushaljagota/.hermes/planning-v2/src/planner/core/db.py:353>), [plan.md:194](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02-db-type-column/plan.md:194>)).
+- Ordering after kickoff migration and before `_create_indexes` is correct ([db.py:208](</Users/khushaljagota/.hermes/planning-v2/src/planner/core/db.py:208>), [plan.md:233](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02-db-type-column/plan.md:233>)).
+- Backfilling all existing rows to `coding` is correct because coding is the only shipped definition ([coding.py:95](</Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/coding.py:95>)).
+- Leaving the three historical `tickets_new` templates untouched is correct; current migrations subsequently advance their output to the final shape.
+- Trailing defaults on `Ticket.ticket_type` and the two creation functions preserve Python call compatibility. They do not preserve direct SQL fixture compatibility.
+- Load, prospective persist, creation, external creation, seed, and note doors are all identified. The shared-validator strategy is right once exact field-key policy and audit composition roots are fixed.
+
+**Verdict: P1 BLOCK.** Fix findings 1–5 before this plan is dispatched against the owner’s live database.

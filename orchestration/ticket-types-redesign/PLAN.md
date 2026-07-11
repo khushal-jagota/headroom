@@ -260,14 +260,15 @@ integrate → `./verify`). They **integrate serially** — they overlap `contrac
 `machine.py`/`db.py`/`views.py` and each depends on shapes the previous created. Keep the registry in
 its own module folder to minimize collisions with `tickets/contracts.py`.
 
-| Order | Ticket | Main scope | Depends on |
-|---|---|---|---|
-| Pre | kickoff landing | New coding lifecycle + migrations (owner work) | ✅ **DONE** — merge `304734e` |
-| 0 | `t_tt00` | Registry contracts, `coding` definition, manifest schema | kickoff landed (✅) |
-| 1 | `t_tt01` | Generic machine/resolution/admission/codec + explicit `coding` bridge + value-equality | `t_tt00` |
-| 2 | `t_tt02` | `ticket_type` persistence, migration, row/write validation, startup audit, seed importer | `t_tt01` |
-| 2.5 | `t_tt02x` | Minimal fixture type `probe` (test-registered) + contract tests | `t_tt00` |
-| 3 | `t_tt03` | Manifest endpoint, dynamic API/CLI parsing, create, external-work, filters | `t_tt02`, `t_tt02x` |
+| Order | Ticket | Main scope | Depends on | Status |
+|---|---|---|---|---|
+| Pre | kickoff landing | New coding lifecycle + migrations (owner work) | — | ✅ merge `304734e` |
+| 0 | `t_tt00` | Registry contracts, `coding` definition, manifest schema | kickoff landed (✅) | ✅ `824aa58` |
+| 1 | `t_tt01` | Parameterize engine via `coding_bridge` seam (Tier-1 string-native / Tier-2 coding-bound); value-equality | `t_tt00` | ✅ `eeef51d` |
+| 2 | `t_tt02` | `ticket_type` persistence, migration, row/write validation, startup audit, per-type default ceiling, seed importer; coding-only, `TicketFields` stays fixed | `t_tt01` | in progress |
+| 2b | `t_tt02b` | **Generic per-type field storage** (`TicketFields` fixed struct → per-field-id slot map; `get_slot`/`with_slot`/codec generic; lift `require_coding_field`) + **Tier-2 scope** (`ScopePair`/`resolve_scope`/`validate_ceiling` widen to the type's ceiling ids). Contract shape change — unblocks probe's fields + scope. | `t_tt02` |
+| 2.5 | `t_tt02x` | Minimal fixture type `probe` (test-registered) + contract tests; needs generic storage | `t_tt00`, `t_tt02b` |
+| 3 | `t_tt03` | Manifest endpoint, dynamic API/CLI parsing, create, external-work, filters | `t_tt02x` |
 | 4a | `t_tt04a` | Backend ticket/board/queue/sprint/copy read contracts | `t_tt03` |
 | 4b | `t_tt04b` | Web manifest consumer + mixed-type UI | `t_tt04a` |
 | 5a | `t_tt05a` | Base worker skill + specialist-loading mechanism + `probe` placeholder | `t_tt02x` |

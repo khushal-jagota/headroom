@@ -110,19 +110,29 @@ def _insert_ticket(conn, **cols):
     )
 
 
-def test_fresh_schema_rejects_old_lifecycle_state_values(tmp_path):
+def test_fresh_schema_drops_enumerating_state_and_ceiling_checks(tmp_path):
+    # t_tt02 retired the two enumerating CHECKs (state, ceiling): lifecycle integrity
+    # now lives in the registry validation doors, not the DB. The fresh schema no
+    # longer rejects a raw out-of-order write at the DB level — the registry is the
+    # enforcement (asserted by the door/audit tests). This is the inverse of the old
+    # "DB rejects old lifecycle values" behavior and pins the CHECK removal.
     db_path = tmp_path / "fresh.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     create_schema(conn)
+    tickets_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()[0]
+    assert "state IN ('needs_kickoff'" not in tickets_sql
+    assert "ceiling IN ('needs_success'" not in tickets_sql
     conn.execute(
-        "INSERT INTO tickets (id, title, created_at, updated_at) VALUES (?, ?, 1, 1)",
+        "INSERT INTO tickets (id, title, ticket_type, ceiling, created_at, updated_at) "
+        "VALUES (?, ?, 'coding', 'needs_success', 1, 1)",
         ("t_fresh", "Fresh"),
     )
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute("UPDATE tickets SET state = 'in_progress' WHERE id = 't_fresh'")
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute("UPDATE tickets SET ceiling = 'needs_review' WHERE id = 't_fresh'")
+    # No enumerating CHECK, so these DB-level writes now succeed (registry gates them).
+    conn.execute("UPDATE tickets SET state = 'in_progress' WHERE id = 't_fresh'")
+    conn.execute("UPDATE tickets SET ceiling = 'needs_review' WHERE id = 't_fresh'")
     conn.close()
 
 
@@ -139,7 +149,8 @@ def test_fresh_schema_has_nullable_checked_ticket_implementer(tmp_path):
     assert implementer_column["notnull"] == 0
     assert implementer_column["dflt_value"] is None
     conn.execute(
-        "INSERT INTO tickets (id, title, created_at, updated_at) VALUES ('t_assignment', 'A', 1, 1)"
+        "INSERT INTO tickets (id, title, ticket_type, ceiling, created_at, updated_at) "
+        "VALUES ('t_assignment', 'A', 'coding', 'needs_success', 1, 1)"
     )
     assert conn.execute(
         "SELECT implementer FROM tickets WHERE id = 't_assignment'"
@@ -1247,4 +1258,338 @@ def test_create_schema_adds_project_summary_to_existing_project_table(tmp_path):
         "project_vylo": "",
     }
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    conn.close()
+
+
+# --- t_tt02: ticket_type column, migration, schema shape ------------------------
+
+# The shape the kickoff migration produces and the type migration consumes: the
+# current pre-type tickets shape (no kickoff_note/kickoff_proposal, six-slot fields,
+# implementer column present, the enumerating state/ceiling CHECKs still present).
+# This is the honest INPUT to _migrate_ticket_type_column, distinct from
+# _CURRENT_KICKOFF_TICKETS_DDL which still carries kickoff_note/kickoff_proposal.
+_POST_KICKOFF_PRE_TYPE_TICKETS_DDL = """
+CREATE TABLE tickets (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL CHECK (length(title) <= 200),
+  state TEXT NOT NULL DEFAULT 'needs_kickoff'
+             CHECK (state IN ('needs_kickoff','needs_success','needs_approach','needs_plan',
+                              'needs_implementation','needs_closeout','done','dropped')),
+  priority TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
+  deadline TEXT,
+  project_id TEXT REFERENCES projects(id),
+  sprint_item_id TEXT REFERENCES sprint_items(id),
+  sprint_id TEXT REFERENCES sprints(id),
+  recap TEXT NOT NULL DEFAULT '',
+  ceiling TEXT NOT NULL DEFAULT 'needs_success'
+               CHECK (ceiling IN ('needs_success','needs_approach','needs_plan',
+                                  'needs_implementation','needs_closeout','done')),
+  at_cap TEXT NOT NULL DEFAULT 'propose' CHECK (at_cap IN ('stop','propose')),
+  ticket_status TEXT NOT NULL DEFAULT 'empty'
+                    CHECK (ticket_status IN ('empty','agent_running_step',
+                                             'awaiting_approval','user_takeover','errored')),
+  implementer TEXT CHECK (implementer IN ('khushal','panels_worker',
+                                          'hermes_codex','hermes_claude')),
+  chat_session_key TEXT,
+  alias TEXT,
+  fields TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+"""
+
+_CODING_SIX_SLOT_FIELDS = json.dumps(
+    {
+        "kickoff": {"value": "k", "proposal": None, "user_note": None},
+        "success": {"value": "s", "proposal": None, "user_note": None},
+        "approach": {"value": None, "proposal": None, "user_note": None},
+        "plan": {"value": None, "proposal": None, "user_note": None},
+        "implementation": {"value": None, "proposal": None, "user_note": None},
+        "closeout": {"value": None, "proposal": None, "user_note": None},
+    }
+)
+
+
+def _seed_kickoff_shape_relationships(conn) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE projects (id TEXT PRIMARY KEY);
+        CREATE TABLE sprints (id TEXT PRIMARY KEY);
+        CREATE TABLE sprint_items (id TEXT PRIMARY KEY);
+        CREATE TABLE days (id TEXT PRIMARY KEY);
+        INSERT INTO projects VALUES ('project_alpha');
+        INSERT INTO sprints VALUES ('sp_one');
+        INSERT INTO sprint_items VALUES ('si_one');
+        INSERT INTO days VALUES ('day_2026-07-11');
+        """
+    )
+
+
+def test_type_migration_preserves_every_column_and_fk_integrity(tmp_path):
+    # Acceptance 1 + R2: full per-row mapping equality across ALL columns (catches a
+    # shifted/dropped column), fields byte-equality, ticket_type backfilled to
+    # 'coding', ids/count unchanged, and FK integrity across a seeded day_tickets +
+    # links + parented (sprint_item_id) row after the DROP+RENAME swap.
+    db_path = tmp_path / "type-fidelity.db"
+    conn = connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=OFF")
+    _seed_kickoff_shape_relationships(conn)
+    conn.executescript(_POST_KICKOFF_PRE_TYPE_TICKETS_DDL)
+    _insert_ticket(
+        conn, id="t_a", title="Alpha ticket", state="needs_success", priority="P1",
+        deadline="2026-07-20", project_id="project_alpha", sprint_item_id=None,
+        sprint_id="sp_one", recap="alpha recap", ceiling="needs_plan", at_cap="stop",
+        ticket_status="empty", implementer="khushal",
+        chat_session_key="sess-a", alias="alias-a",
+        fields=_CODING_SIX_SLOT_FIELDS, created_at=11, updated_at=22,
+    )
+    _insert_ticket(
+        conn, id="t_b", title="Beta ticket", state="needs_kickoff", priority="P3",
+        deadline=None, project_id=None, sprint_item_id="si_one", sprint_id=None,
+        recap="", ceiling="needs_success", at_cap="propose",
+        ticket_status="awaiting_approval", implementer=None,
+        chat_session_key=None, alias=None,
+        fields=_CODING_SIX_SLOT_FIELDS, created_at=33, updated_at=44,
+    )
+    conn.executescript(
+        """
+        CREATE TABLE day_tickets (
+          day_id TEXT NOT NULL REFERENCES days(id),
+          ticket_id TEXT NOT NULL REFERENCES tickets(id),
+          position INTEGER NOT NULL,
+          PRIMARY KEY (day_id, ticket_id)
+        );
+        CREATE TABLE links (
+          from_id TEXT NOT NULL, to_id TEXT NOT NULL, kind TEXT NOT NULL,
+          PRIMARY KEY (from_id, to_id, kind)
+        );
+        INSERT INTO day_tickets VALUES ('day_2026-07-11', 't_a', 0);
+        INSERT INTO day_tickets VALUES ('day_2026-07-11', 't_b', 1);
+        INSERT INTO links VALUES ('t_a', 't_b', 'blocks');
+        """
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    before = {
+        row["id"]: dict(row) for row in conn.execute("SELECT * FROM tickets")
+    }
+
+    db_module._migrate_ticket_type_column(conn)
+
+    after = {
+        row["id"]: dict(row) for row in conn.execute("SELECT * FROM tickets")
+    }
+    assert set(after) == set(before)
+    assert len(after) == len(before) == 2
+    for ticket_id, after_row in after.items():
+        assert after_row["ticket_type"] == "coding"
+        stripped = {k: v for k, v in after_row.items() if k != "ticket_type"}
+        assert stripped == before[ticket_id]
+        assert after_row["fields"] == before[ticket_id]["fields"]  # byte-equal JSON
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert [
+        tuple(r) for r in conn.execute(
+            "SELECT day_id, ticket_id FROM day_tickets ORDER BY ticket_id"
+        )
+    ] == [("day_2026-07-11", "t_a"), ("day_2026-07-11", "t_b")]
+    assert [
+        tuple(r) for r in conn.execute("SELECT from_id, to_id FROM links").fetchall()
+    ] == [("t_a", "t_b")]
+    conn.close()
+
+
+def test_fresh_schema_has_ticket_type_not_null_no_default_and_composite_index(tmp_path):
+    # Acceptance 2 + F3 + F7: ticket_type NOT NULL, no enumerating CHECKs, ceiling
+    # NOT NULL with NO default, state default KEPT, type-independent checks present,
+    # both idx_tickets_state and idx_tickets_type_state present.
+    db_path = tmp_path / "fresh-type.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    create_schema(conn)
+
+    info = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(tickets)")}
+    assert info["ticket_type"]["notnull"] == 1
+    assert info["ticket_type"]["dflt_value"] is None
+    assert info["ceiling"]["notnull"] == 1
+    assert info["ceiling"]["dflt_value"] is None
+    assert info["state"]["notnull"] == 1
+    assert info["state"]["dflt_value"] == "'needs_kickoff'"
+
+    tickets_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()[0]
+    # NOT-NULL on ticket_type is asserted above via PRAGMA; here confirm the column
+    # exists and neither enumerating CHECK survives (spacing is DDL-aligned, so match
+    # on presence rather than an exact single-space fragment).
+    assert "ticket_type" in tickets_sql
+    assert "state IN ('needs_kickoff'" not in tickets_sql
+    assert "ceiling IN ('needs_success'" not in tickets_sql
+    assert "length(title) <= 200" in tickets_sql
+    assert "priority IN ('P0','P1','P2','P3')" in tickets_sql
+    assert "at_cap IN ('stop','propose')" in tickets_sql
+    assert "ticket_status IN ('empty'" in tickets_sql
+    assert "implementer IN ('khushal'" in tickets_sql
+
+    index_names = {str(row["name"]) for row in conn.execute("PRAGMA index_list(tickets)")}
+    assert "idx_tickets_state" in index_names
+    assert "idx_tickets_type_state" in index_names
+    composite_cols = [
+        str(row["name"])
+        for row in conn.execute("PRAGMA index_info(idx_tickets_type_state)")
+    ]
+    assert composite_cols == ["ticket_type", "state"]
+    conn.close()
+
+
+def test_canonical_ddl_and_final_schema_carry_no_retired_check(tmp_path):
+    # Acceptance 7: the canonical DDL constant carries ticket_type NOT NULL and
+    # neither enumerating CHECK; a later rebuild template cannot recreate the retired
+    # CHECKs — the post-create_schema table never carries a retired lifecycle value
+    # or an enumerating state/ceiling CHECK.
+    assert "ticket_type          TEXT NOT NULL" in db_module.DDL
+    tickets_block = db_module.DDL.split("CREATE TABLE IF NOT EXISTS tickets")[1].split(");")[0]
+    assert "state IN (" not in tickets_block
+    assert "ceiling IN (" not in tickets_block
+
+    db_path = tmp_path / "final-shape.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    create_schema(conn)
+    tickets_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()[0]
+    assert "in_progress" not in tickets_sql
+    assert "needs_review" not in tickets_sql
+    assert "state IN (" not in tickets_sql
+    assert "ceiling IN (" not in tickets_sql
+    conn.close()
+
+
+def test_type_migration_is_idempotent_on_migrated_db(tmp_path):
+    # Acceptance 3: re-running create_schema on a migrated DB is a no-op — schema SQL
+    # identical, rows identical.
+    db_path = tmp_path / "type-idempotent.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(_CURRENT_KICKOFF_TICKETS_DDL)
+    _insert_ticket(
+        conn, id="t_idem", title="Idempotent", state="needs_success",
+        ceiling="needs_success", ticket_status="empty", kickoff_note="",
+        kickoff_proposal=None, fields=_CODING_SIX_SLOT_FIELDS, created_at=1, updated_at=1,
+    )
+    create_schema(conn)
+    sql_before = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()[0]
+    rows_before = [tuple(r) for r in conn.execute("SELECT * FROM tickets ORDER BY id")]
+
+    create_schema(conn)
+    sql_after = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()[0]
+    rows_after = [tuple(r) for r in conn.execute("SELECT * FROM tickets ORDER BY id")]
+
+    assert sql_before == sql_after
+    assert rows_before == rows_after
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    conn.close()
+
+
+def test_type_migration_rebuilds_partial_shape_not_skipped(tmp_path):
+    # Acceptance 3 / F1: a table with ticket_type present BUT an old enumerating
+    # state CHECK retained (a partial prior migration) must be REBUILT, not skipped —
+    # the probe recognises the COMPLETE target shape, not merely the column's presence.
+    db_path = tmp_path / "partial-shape.db"
+    conn = connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=OFF")
+    _seed_kickoff_shape_relationships(conn)
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.executescript(
+        """
+        CREATE TABLE tickets (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL CHECK (length(title) <= 200),
+          ticket_type TEXT NOT NULL,
+          state TEXT NOT NULL DEFAULT 'needs_kickoff'
+                     CHECK (state IN ('needs_kickoff','needs_success','needs_approach','needs_plan',
+                                      'needs_implementation','needs_closeout','done','dropped')),
+          priority TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
+          deadline TEXT,
+          project_id TEXT,
+          sprint_item_id TEXT,
+          sprint_id TEXT,
+          recap TEXT NOT NULL DEFAULT '',
+          ceiling TEXT NOT NULL,
+          at_cap TEXT NOT NULL DEFAULT 'propose' CHECK (at_cap IN ('stop','propose')),
+          ticket_status TEXT NOT NULL DEFAULT 'empty'
+                            CHECK (ticket_status IN ('empty','agent_running_step',
+                                                     'awaiting_approval','user_takeover','errored')),
+          implementer TEXT,
+          chat_session_key TEXT,
+          alias TEXT,
+          fields TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        """
+    )
+    _insert_ticket(
+        conn, id="t_partial", title="Partial", ticket_type="coding", state="needs_success",
+        ceiling="needs_success", fields=_CODING_SIX_SLOT_FIELDS, created_at=1, updated_at=1,
+    )
+
+    db_module._migrate_ticket_type_column(conn)
+
+    tickets_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()[0]
+    assert "state IN ('needs_kickoff'" not in tickets_sql  # rebuilt, CHECK gone
+    assert "ceiling IN (" not in tickets_sql
+    row = conn.execute("SELECT ticket_type, title FROM tickets WHERE id = 't_partial'").fetchone()
+    assert tuple(row) == ("coding", "Partial")  # rows survived the rebuild
+    conn.close()
+
+
+def test_type_migration_rolls_back_failed_foreign_key_check_and_drops_scratch(tmp_path):
+    # Acceptance 3 + F8: a swap-phase failure leaves the ORIGINAL tickets intact with
+    # all rows, and tickets_new is dropped after the raised error.
+    db_path = tmp_path / "type-rollback.db"
+    conn = connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=OFF")
+    _seed_kickoff_shape_relationships(conn)
+    conn.executescript(_POST_KICKOFF_PRE_TYPE_TICKETS_DDL)
+    _insert_ticket(
+        conn, id="t_keep", title="Keep me", state="needs_success", ceiling="needs_success",
+        ticket_status="empty",
+        fields=_CODING_SIX_SLOT_FIELDS, created_at=1, updated_at=1,
+    )
+    conn.executescript(
+        """
+        CREATE TABLE day_tickets (
+          day_id TEXT NOT NULL,
+          ticket_id TEXT NOT NULL REFERENCES tickets(id),
+          position INTEGER NOT NULL,
+          PRIMARY KEY (day_id, ticket_id)
+        );
+        INSERT INTO day_tickets VALUES ('day_valid', 't_keep', 0);
+        INSERT INTO day_tickets VALUES ('day_dangling', 't_missing', 0);
+        """
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    with pytest.raises(RuntimeError, match="foreign key check failed after ticket type migration"):
+        db_module._migrate_ticket_type_column(conn)
+
+    tickets_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()[0]
+    # Original pre-type shape survived: it still carries the enumerating state CHECK
+    # and has no ticket_type column.
+    assert "state IN ('needs_kickoff'" in tickets_sql
+    assert "ticket_type" not in tickets_sql
+    assert conn.execute("SELECT title FROM tickets WHERE id = 't_keep'").fetchone()[0] == "Keep me"
+    assert conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tickets_new'"
+    ).fetchone() is None
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     conn.close()

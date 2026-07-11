@@ -397,11 +397,26 @@ importer); engine now definition-driven + string-id-native (Tier-1) with a StrEn
 foreign def. Only existing test touched: F6 (import-guard narrowed to `{coding_bridge}`).
 
 Owner set /goal "run this end to end now" — driving t_tt02 → t_tt02b → t_tt02x → t_tt03 → gate
-autonomously. Next: **t_tt02** — DB `ticket_type` column + migration (mirror
-`_migrate_ticket_kickoff_columns` db.py:272) + drop both enumerating CHECKs + registry validation on
-load/persist + startup audit + per-type default ceiling + thread the row's definition (removing t_tt01's
-coding default). Field-storage/Tier-2 genericization (so probe's alpha/beta store + probe's scope works)
-is the follow-on **t_tt02b**, required before probe can flow through the gate.
+autonomously.
+
+**t_tt02 DONE — verified green + committed.** DB `ticket_type` column + migration. Pipeline: plan → my
+independent plan review (8 findings incl. 5 P1 blocks; my R4 ruling REVERSED by the review — drop the
+ceiling DDL default) → revise → implement → my independent diff review (migration mechanics + lifecycle-
+guard fix sound; 3 findings: F1 High = write lock now spans snapshot→copy→swap [live-data loss window
+closed]; F2 audit names id on JSONDecodeError; F3 fixtures keep needs_success) → fix → `./verify` PASS
+(572 unit, e2e 68). New `_migrate_ticket_type_column` (mirrors kickoff, complete-shape probe, lock-held
+snapshot); shared `tickets/logic/ticket_type_guard.py` door (`resolve_and_validate`, strict-on-missing/
+lenient-on-extra) wired into load/persist/create/external-work/seed/note + startup audit; per-type default
+ceiling; `coding_bridge.set_registry_for_test`. Coding-only; `TicketFields`/`ScopePair` untouched.
+`resolution.decide_*`/`plan_handoff_status`/external-work stay coding-default → **invariant: no 2nd
+production type until t_tt02b threads them** (see D103). Live `planning.db` backed up first
+(`data/backups/planning-pre-tickettype-t_tt02-*`). NOTE: shipped kickoff migration has the same latent
+pre-lock snapshot window — flagged to owner, left unedited.
+
+Next: **t_tt02b** — genericize the fixed `TicketFields` struct → per-field-id slot map + generic codec/
+get_slot/with_slot; widen `ScopePair`/`resolve_scope`/`validate_ceiling`; thread `decide_*`/
+`plan_handoff_status`/external-work; lift `require_coding_field`. BRIEF ready. Then t_tt02x (probe) → t_tt03
++ gate.
 
 ## Current work cycle (2026-07-10): Panels sprint-planning workflow
 

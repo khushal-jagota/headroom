@@ -30,6 +30,7 @@ from planner.seed.logic.kickoff import parse_kickoff, parse_review
 from planner.seed.logic.latest import pick_latest_daily
 from planner.seed.logic.tracking import parse_tracking
 from planner.seed.logic.workspace import parse_workspace
+from planner.tickets.logic import ticket_type_guard
 
 
 def seed_from_source(conn: sqlite3.Connection, source_dir: str | Path,
@@ -236,15 +237,21 @@ def _import_tickets(
             "implementation": {"value": None, "proposal": None, "user_note": None},
             "closeout": {"value": None, "proposal": None, "user_note": None},
         }
+        # Seed door: the (type, state, ceiling) it is about to write must be
+        # registry-valid, so a malformed seed state fails with the specific error
+        # rather than a bad row. Reaches the registry only through coding_bridge (F6).
+        ticket_type_guard.resolve_and_validate(
+            "coding", state=ticket.state.value, ceiling=ticket.state.value
+        )
         conn.execute(
             "INSERT INTO tickets ("
-            "id, title, state, priority, deadline, project_id, sprint_item_id, "
+            "id, title, ticket_type, state, priority, deadline, project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, "
             "chat_session_key, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                ticket_id, ticket.title, ticket.state.value, ticket.priority.value, None, None,
-                sprint_item_id, row_sprint_id, "", ticket.state.value, "propose",
+                ticket_id, ticket.title, "coding", ticket.state.value, ticket.priority.value,
+                None, None, sprint_item_id, row_sprint_id, "", ticket.state.value, "propose",
                 ticket.chat_session_key, ticket.alias, json.dumps(fields), now, now,
             ),
         )

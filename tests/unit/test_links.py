@@ -15,8 +15,8 @@ from planner.tickets import views as ticket_views
 
 def _ticket(conn, ticket_id: str, state: str = "needs_success") -> None:
     conn.execute(
-        "INSERT INTO tickets (id, title, state, created_at, updated_at) "
-        "VALUES (?, ?, ?, 1, 1)",
+        "INSERT INTO tickets (id, title, ticket_type, state, ceiling, created_at, updated_at) "
+        "VALUES (?, ?, 'coding', ?, 'needs_success', 1, 1)",
         (ticket_id, ticket_id, state),
     )
 

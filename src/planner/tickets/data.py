@@ -7,6 +7,7 @@ seconds) and the title limit as an argument."""
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -40,6 +41,7 @@ from planner.tickets.logic import (
     fields_codec,
     machine,
     resolution,
+    ticket_type_guard,
 )
 from planner.tickets.logic.decisions import Decision
 
@@ -64,6 +66,10 @@ def _txn(conn: sqlite3.Connection) -> Iterator[None]:
 
 
 def _row_to_ticket(row: sqlite3.Row) -> Ticket:
+    ticket_type = str(row["ticket_type"])
+    defn = ticket_type_guard.resolve_and_validate(
+        ticket_type, state=str(row["state"]), ceiling=str(row["ceiling"])
+    )
     return Ticket(
         id=row["id"],
         title=row["title"],
@@ -81,9 +87,10 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         implementer=Implementer(row["implementer"]) if row["implementer"] is not None else None,
         chat_session_key=row["chat_session_key"],
         alias=row["alias"],
-        fields=fields_codec.fields_from_json(row["fields"], coding_bridge.coding_definition()),
+        fields=fields_codec.fields_from_json(row["fields"], defn),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        ticket_type=ticket_type,
     )
 
 
@@ -118,6 +125,11 @@ def _apply_decision(
     new_state = decision.new_state if decision.new_state is not None else ticket.state
     new_ceiling = decision.new_ceiling if decision.new_ceiling is not None else ticket.ceiling
     new_at_cap = decision.new_at_cap if decision.new_at_cap is not None else ticket.at_cap
+    # Pre-persist door: the prospective (state, ceiling) must be registry-valid for
+    # this ticket's type before any SQL — the enforcement the dropped DB CHECKs gave.
+    ticket_type_guard.resolve_and_validate(
+        ticket.ticket_type, state=new_state.value, ceiling=new_ceiling.value
+    )
     active_before = _active_blocker_state(ticket.state)
     active_after = _active_blocker_state(new_state)
     affected_blocked_target_ids: tuple[str, ...] = ()
@@ -257,9 +269,12 @@ def create_ticket(
     sprint_id: str | None = None,
     sprint_item_id: str | None = None,
     implementer: Implementer | None = None,
+    ticket_type: str = "coding",
 ) -> Ticket:
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
+    coding_bridge.require(ticket_type)   # creation door: unknown type rejected
+    default_ceiling = coding_bridge.default_ceiling(ticket_type)
     ticket_id = new_id(ID_PREFIXES["ticket"])
     initial_fields = TicketFields(
         kickoff=FieldSlot(
@@ -293,21 +308,22 @@ def create_ticket(
                 )
         conn.execute(
             "INSERT INTO tickets ("
-            "id, title, state, priority, deadline, project_id, sprint_item_id, "
+            "id, title, ticket_type, state, priority, deadline, project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, "
             "ticket_status, implementer, "
             "chat_session_key, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
                 title,
+                ticket_type,
                 TicketState.needs_kickoff.value,
                 priority.value,
                 deadline,
                 project_id,
                 sprint_item_id,
                 sprint_id,
-                TicketState.needs_success.value,
+                default_ceiling,
                 AtCap.propose.value,
                 TicketStatus.awaiting_approval.value,
                 implementer.value if implementer is not None else None,
@@ -351,6 +367,7 @@ def create_ticket_from_external_work(
     deadline: str | None = None,
     sprint_id: str | None = None,
     sprint_item_id: str | None = None,
+    ticket_type: str = "coding",
 ) -> Ticket:
     if kickoff_note is None:
         kickoff_note = ""
@@ -359,6 +376,8 @@ def create_ticket_from_external_work(
     admission.validate_deadline(deadline)
     if recap is not None:
         admission.validate_body(recap, "recap")
+    coding_bridge.require(ticket_type)   # creation door: unknown type rejected
+    default_ceiling = coding_bridge.default_ceiling(ticket_type)
     ticket_id = new_id(ID_PREFIXES["ticket"])
     initial_fields = TicketFields(kickoff=FieldSlot(value=kickoff_note))
     with _txn(conn):
@@ -388,20 +407,21 @@ def create_ticket_from_external_work(
 
         conn.execute(
             "INSERT INTO tickets ("
-            "id, title, state, priority, deadline, project_id, sprint_item_id, "
+            "id, title, ticket_type, state, priority, deadline, project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, ticket_status, "
             "chat_session_key, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
                 title,
+                ticket_type,
                 TicketState.needs_success.value,
                 priority.value,
                 deadline,
                 project_id,
                 sprint_item_id,
                 sprint_id,
-                TicketState.needs_success.value,
+                default_ceiling,
                 AtCap.propose.value,
                 TicketStatus.empty.value,
                 fields_codec.fields_to_json(initial_fields),
@@ -478,6 +498,47 @@ def reconcile_ticket_from_external_work(
             _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
             ticket = _load_ticket(conn, ticket_id)
         return ticket
+
+
+def audit_ticket_registry_integrity(conn: sqlite3.Connection) -> None:
+    """One linear scan over ``tickets`` at boot: every row's ``(ticket_type, state,
+    ceiling)`` must be registry-valid and its ``fields`` must decode against the type.
+
+    Reuses the exact load-door validator (``ticket_type_guard.resolve_and_validate``)
+    plus the field codec, so "valid" has one definition and the audit inherits the
+    codec's policy verbatim — strict on unknown type / bad state / bad ceiling /
+    missing declared field / malformed slot; lenient on extra top-level keys (a
+    legacy ``result`` key does not fail the audit). Scans ``ORDER BY id`` so the
+    first corrupt row is deterministic, and raises ``RuntimeError`` naming that
+    row's id and the specific reason.
+
+    Invocation is deliberately narrow: this full scan runs once in the ``panels
+    serve`` lifespan, after the registry build and before background loops. Seed and
+    CLI paths do NOT run it — they rely on the create door (validate-before-insert)
+    and the load door (validate-on-read), so a corrupt row cannot be created by a
+    sanctioned writer and any pre-existing corruption surfaces the moment that
+    ticket is loaded; this scan is the belt on top of those braces at the real boot
+    path."""
+    for row in conn.execute(
+        "SELECT id, ticket_type, state, ceiling, fields FROM tickets ORDER BY id"
+    ):
+        try:
+            defn = ticket_type_guard.resolve_and_validate(
+                str(row["ticket_type"]), state=str(row["state"]), ceiling=str(row["ceiling"])
+            )
+            fields_codec.fields_from_json(str(row["fields"]), defn)
+        except PlannerError as exc:
+            raise RuntimeError(
+                f"ticket integrity audit failed: id={row['id']} "
+                f"reason={exc.message} detail={exc.detail}"
+            ) from exc
+        except json.JSONDecodeError as exc:
+            # Syntactically-invalid fields JSON (the codec's json.loads) must name the
+            # offending id too, not abort startup with a raw decode traceback.
+            raise RuntimeError(
+                f"ticket integrity audit failed: id={row['id']} "
+                f"reason=fields JSON is not valid JSON detail={exc}"
+            ) from exc
 
 
 def read_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
@@ -615,7 +676,9 @@ def file_current_proposal_with_recap(
     admission.validate_body(recap, "recap")
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
-        field = machine.gating_field(ticket.state)
+        field = machine.gating_field(
+            ticket.state, definition=coding_bridge.require(ticket.ticket_type)
+        )
         if field is None:
             raise PlannerError(
                 ErrorCode.validation,
@@ -898,7 +961,7 @@ def set_field_user_note(
 ) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
-        defn = coding_bridge.coding_definition()
+        defn = coding_bridge.require(ticket.ticket_type)
         if not coding_bridge.has_field(defn, str(field)):
             raise PlannerError(
                 ErrorCode.validation, "unknown ticket field", {"field": str(field)}

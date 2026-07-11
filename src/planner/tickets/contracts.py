@@ -241,6 +241,7 @@ class Ticket:                      # §3.3 — column names match exactly
     fields: TicketFields
     created_at: int
     updated_at: int
+    ticket_type: str = "coding"    # registry type id resolved on load; trailing default
 
 
 @dataclass(frozen=True)

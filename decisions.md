@@ -2042,3 +2042,25 @@ Building the ticket-types redesign (`orchestration/ticket-types-redesign/PLAN.md
 - **Commit cadence:** owner delegated ("continue"); following the established redesign practice, each
   `t_tt*` ticket commits straight to `main` once its full `./verify` passes — per-ticket checkpoints so
   the DB migration (t_tt02) is never stacked on uncommitted work.
+
+## D103 — t_tt02 migration rulings (live-DB safety)
+
+Building the DB `ticket_type` column migration against the owner's live `planning.db` (backed up to
+`data/backups/planning-pre-tickettype-t_tt02-*.db` first).
+
+- **Ceiling DDL default dropped (reversed my own earlier ruling).** I first said keep `ceiling DEFAULT
+  'needs_success'` as a "harmless backstop"; the independent Codex review corrected me — `needs_success`
+  is coding's default, not type-independent, so a raw insert would silently store it for any type. Removed
+  the DDL ceiling default (kept NOT NULL → omitted ceiling fails loudly); kept `state DEFAULT
+  'needs_kickoff'` (that bookend IS universal).
+- **Audit field-key policy: strict-on-missing, lenient-on-extra.** The codec ignores extra top-level keys
+  (live rows carry a legacy `result` key — see [[dont-import-unraised-concerns]] / t_tt01 D-note), so the
+  audit is strict on unknown type / bad state / bad ceiling / MISSING declared field / malformed slot, and
+  lenient on extras. A misspelled key drops a required field, so the missing-field check still catches it.
+- **Silent-pass invariant (not "non-coding unreachable").** The codec gates on field-SET, not type-id, so
+  a coding-shaped second type would reach the coding-default engine paths. Deferral is safe ONLY because
+  production registers `coding` alone: **no second PRODUCTION type until t_tt02b threads
+  `resolution.decide_*` / `plan_handoff_status` / external-work.**
+- **Migration holds the exclusive write lock across snapshot→copy→swap** (Codex diff-review F1) — closes a
+  concurrent-write loss window. The shipped kickoff migration has the same latent window; left unedited,
+  flagged to the owner for a possible follow-up.

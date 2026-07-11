@@ -112,6 +112,16 @@ def create_app(
         # Build and validate the ticket-type registry once at startup so a malformed
         # definition refuses to boot loudly rather than failing on the first ticket op.
         coding_bridge.coding_registry()
+        # One integrity scan over the migrated tickets table: a corrupt live row
+        # (unknown type, bad state/ceiling, malformed fields) fails boot loudly here,
+        # after the registry is built and before any background loop touches a ticket.
+        from planner.tickets import data as tickets_data
+
+        audit_conn = conn_factory()
+        try:
+            tickets_data.audit_ticket_registry_integrity(audit_conn)
+        finally:
+            audit_conn.close()
         loops: Any = None
         shared_gateway: Any = None
         chat_gateway_to_shutdown: Any = None
