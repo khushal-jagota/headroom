@@ -37,20 +37,18 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from tests.support.probe import FIELD_ALPHA as _FA
+from tests.support.probe import FIELD_BETA as _FB
+from tests.support.probe import NEEDS_ALPHA as _A
+from tests.support.probe import NEEDS_BETA as _B
+from tests.support.probe import PROBE_FIELD_IDS as _PROBE_FIELD_IDS
+from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
 from planner.core.clock import TestClock
 from planner.core.contracts import ErrorCode, EventKind, PlannerError
 from planner.core.db import connect, create_schema
 from planner.core.events import read_events_since
-from planner.ticket_types.coding import CODING_DEFINITION
-from planner.ticket_types.contracts import (
-    FieldDef,
-    Stage,
-    TransitionHook,
-    WorkerProfile,
-    WorkflowDefinition,
-)
-from planner.ticket_types.registry import build_registry
+from planner.ticket_types.contracts import WorkflowDefinition
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     NO_FURTHER,
@@ -69,67 +67,16 @@ from planner.tickets.contracts import (
 )
 from planner.tickets.logic import coding_bridge, fields_codec, machine, resolution
 
-# --- the probe definition: fields kickoff/alpha/beta, NOT enum members ----------
-_A = "".join(("needs_", "alpha"))
-_B = "".join(("needs_", "beta"))
-_FA = "".join(("al", "pha"))
-_FB = "".join(("be", "ta"))
-
-PROBE = WorkflowDefinition(
-    type_id="probe",
-    label="Probe",
-    stages=(
-        Stage(id="needs_kickoff", label="Kickoff", gating_field="kickoff", is_terminal=False),
-        Stage(id=_A, label="Alpha", gating_field=_FA, is_terminal=False),
-        Stage(id=_B, label="Beta", gating_field=_FB, is_terminal=False),
-        Stage(id="done", label="Done", gating_field=None, is_terminal=True),
-    ),
-    dropped_stage=Stage(id="dropped", label="Dropped", gating_field=None, is_terminal=True),
-    fields=(
-        FieldDef(id="kickoff", label="Kickoff"),
-        FieldDef(id=_FA, label="Alpha"),
-        FieldDef(id=_FB, label="Beta"),
-    ),
-    worker_profile=WorkerProfile(
-        specialist_skill="probe-worker",
-        model=None,
-        reasoning_effort=None,
-        toolset_profile="default",
-    ),
-    # A probe transition hook so the non-None plan_handoff_status / transition_effect
-    # branch is exercised for a FOREIGN type: needs_alpha -> needs_beta under khushal
-    # maps to a durable user_takeover.
-    transition_hooks=(
-        TransitionHook(
-            old_state=_A,
-            new_state=_B,
-            implementer=Implementer.khushal.value,
-            effect=TicketStatus.user_takeover.value,
-        ),
-    ),
-    supports_prefix_reconciliation=False,
-)
-
-_PROBE_FIELD_IDS = ("kickoff", _FA, _FB)
-
-
-def _probe_registry():
-    return build_registry(
-        [CODING_DEFINITION, PROBE],
-        known_skills=frozenset({"panels-worker", "probe-worker"}),
-        known_toolset_profiles=frozenset({"default"}),
-    )
-
 
 @pytest.fixture
 def probe_registry() -> Iterator[WorkflowDefinition]:
-    """Install a registry carrying coding + probe for the persistence/engine doors,
-    then restore production coding-only after the test."""
-    coding_bridge.set_registry_for_test(_probe_registry())
+    """Install the canonical coding + probe registry for the persistence/engine
+    doors, then restore production coding-only after the test."""
+    definition = install_probe_registry()
     try:
-        yield coding_bridge.require("probe")
+        yield definition
     finally:
-        coding_bridge.set_registry_for_test(None)
+        uninstall_probe_registry()
 
 
 @pytest.fixture

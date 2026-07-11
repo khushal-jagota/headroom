@@ -427,8 +427,19 @@ read-path `.value`→`str()` (completeness-grep gate = zero ticket-carried domai
 drive path threaded per-row; external-work coding-only-with-explicit-rejection (genericization → t_tt03,
 per D103). The probe DATA-layer drive (T5) proves a non-enum-state type flows create→auto-accept→scope→done.
 
-Next: **t_tt02x** — the canonical `probe` fixture + contract tests + engine drive-to-done (BRIEF ready).
-Then t_tt03 (CLI/API + external-work genericization + the go/no-go gate).
+**t_tt02x DONE — verified green + committed.** Test-only: canonical `tests/support/probe.py` fixture
+(`PROBE_DEFINITION` + install/uninstall helpers) + `tests/unit/test_probe_type.py` (exact manifest, gate
+map, field order, `default_ceiling=="needs_alpha"`, negative codes, compact drive-to-done, production
+coding-only) + refactored t_tt02b's inline probe to the shared fixture (no assertion changed). Only
+non-test change: `pyproject.toml` `pythonpath=["."]` (for `tests.support` imports). Pipeline collapsed
+(implement + self-review + verify) — proportionate for a test-only ticket, no production behavior change.
+602 unit, `./verify` PASS.
+
+Next (FINAL before the gate): **t_tt03** — type-driven CLI/API ingress (create --type mandatory; propose/
+scope/state validated per-type via a served manifest endpoint) + finish external-work genericization
+(gate-based prefix derivation, honor supports_prefix_reconciliation, replace hardcoded needs_success, lift
+the coding-only rejection, golden coding prefix map) + the **go/no-go gate** (drive probe through real
+CLI/API propose/accept to done, no worker). BRIEF ready. Report to owner at the gate.
 
 ## Current work cycle (2026-07-10): Panels sprint-planning workflow
 

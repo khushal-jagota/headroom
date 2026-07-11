@@ -46,3 +46,7 @@ python_version = "3.12"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# Repo root on sys.path so shared fixtures import as ``tests.support.*`` (the
+# canonical probe type fixture, t_tt02x). ``tests`` has no __init__.py, so it is a
+# PEP 420 namespace package rooted here; ``tests/support`` is a regular package.
+pythonpath = ["."]
