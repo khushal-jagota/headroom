@@ -10,7 +10,7 @@ from dataclasses import dataclass
 class ChatTurnRequest:
     text: str
     mode: str = "message"
-    image_reference: str | None = None
+    image_references: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

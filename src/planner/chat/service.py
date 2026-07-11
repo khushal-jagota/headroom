@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
@@ -416,7 +416,7 @@ def start_human_turn(
     now: int,
     now_fn: Callable[[], int] | None = None,
     *,
-    image_reference: str | None = None,
+    image_references: Sequence[str] = (),
     db_path: str | Path | None = None,
 ) -> ChatTurn:
     if mode not in ("message", "command"):
@@ -425,13 +425,9 @@ def start_human_turn(
     try:
         _reject_if_ticket_worker_running(conn, entity_id)
         _resolve(conn, entity_id, now)
-        image_path = (
-            _resolve_turn_image(db_path, entity_id, image_reference)
-            if image_reference is not None
-            else None
-        )
-        visible_text = _visible_human_text(text, image_reference)
-        model_text = text or _IMAGE_ONLY_MODEL_CUE
+        image_paths = _resolve_turn_images(db_path, entity_id, image_references)
+        visible_text = _visible_human_text(text, image_references)
+        model_text = text or (_IMAGE_ONLY_MODEL_CUE if image_paths else "")
         turn = chat_data.start_turn(
             conn,
             entity_id,
@@ -457,7 +453,7 @@ def start_human_turn(
             model_text,
             mode,
             now_fn or _unix_now,
-            image_path,
+            image_paths,
         ),
         name=f"chat-turn-{turn.id}",
         daemon=True,
@@ -474,7 +470,7 @@ def _run_human_turn(
     text: str,
     mode: str,
     now_fn: Callable[[], int],
-    image_path: Path | None = None,
+    image_paths: tuple[Path, ...] = (),
 ) -> None:
     conn = conn_factory()
     try:
@@ -502,7 +498,7 @@ def _run_human_turn(
             )
 
         output_role = "system" if mode == "command" else "assistant"
-        if image_path is None:
+        if not image_paths:
             chunks = gateway.stream(
                 stored_key, entity_id, text, mode, persist_session_before_prompt
             )
@@ -513,7 +509,7 @@ def _run_human_turn(
                 text,
                 mode,
                 persist_session_before_prompt,
-                image_path=image_path,
+                image_paths=image_paths,
             )
         for chunk in chunks:
             now = now_fn()
@@ -585,11 +581,20 @@ def _run_human_turn(
         conn.close()
 
 
-def _resolve_turn_image(
-    db_path: str | Path | None, entity_id: str, image_reference: str
-) -> Path:
+def _resolve_turn_images(
+    db_path: str | Path | None, entity_id: str, image_references: Sequence[str]
+) -> tuple[Path, ...]:
+    if not image_references:
+        return ()
     if db_path is None:
         raise PlannerError(ErrorCode.validation, "image storage is unavailable")
+    return tuple(
+        _resolve_turn_image(db_path, entity_id, image_reference)
+        for image_reference in image_references
+    )
+
+
+def _resolve_turn_image(db_path: str | Path, entity_id: str, image_reference: str) -> Path:
     parsed = urlsplit(image_reference)
     if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment:
         raise PlannerError(ErrorCode.validation, "image reference must be a managed chat file")
@@ -614,10 +619,12 @@ def _resolve_turn_image(
     return chat_file.absolute_path
 
 
-def _visible_human_text(text: str, image_reference: str | None) -> str:
-    if image_reference is None:
+def _visible_human_text(text: str, image_references: Sequence[str]) -> str:
+    if not image_references:
         return text
-    markdown = f"![Attached image]({image_reference})"
+    markdown = "\n".join(
+        f"![Attached image]({image_reference})" for image_reference in image_references
+    )
     return f"{text}\n\n{markdown}" if text else markdown
 
 

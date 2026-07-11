@@ -1,7 +1,16 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
+  import {
+    clearSentPendingChatImages,
+    createPendingChatImages,
+    pendingChatImageFiles,
+    removePendingChatImage,
+    revokePendingChatImages
+  } from "../lib/chatImages.js";
   import type { CommandCatalog } from "../lib/types";
 
   type MenuItem = { name: string; description: string; skill: boolean };
+  type PendingImage = { id: number; file: File; url: string };
 
   let {
     catalog,
@@ -29,7 +38,7 @@
     onSubmit: (
       text: string,
       mode: "message" | "command",
-      image?: File
+      images?: File[]
     ) => Promise<boolean>;
     onPause?: () => Promise<void>;
     onError?: (error: unknown | null) => void;
@@ -39,8 +48,11 @@
   let lastInitialText = $state<string | null>(null);
   let menuOpen = $state(false);
   let busy = $state(false);
-  let pendingImage = $state<File | null>(null);
+  let pendingImages = $state<PendingImage[]>([]);
   let imageInput = $state<HTMLInputElement | null>(null);
+  let nextImageId = 1;
+  let dragDepth = 0;
+  let draggingImages = $state(false);
 
   function canonical(raw: string): string {
     const first = raw.split(/\s+/)[0].toLowerCase();
@@ -106,17 +118,25 @@
 
   async function send(raw = text): Promise<void> {
     const trimmed = raw.trim();
-    if ((!trimmed && !pendingImage) || busy || disabled || submitDisabled) return;
+    if ((!trimmed && pendingImages.length === 0) || busy || disabled || submitDisabled) return;
     const command = trimmed ? commandFor(trimmed) : null;
-    const image = command ? undefined : pendingImage || undefined;
+    const images = command ? [] : pendingImages;
     busy = true;
     menuOpen = false;
     text = "";
     onDraft?.("");
     try {
-      const started = await onSubmit(command || trimmed, command ? "command" : "message", image);
-      if (started && image === pendingImage) {
-        pendingImage = null;
+      const started = await onSubmit(
+        command || trimmed,
+        command ? "command" : "message",
+        pendingChatImageFiles(images)
+      );
+      if (started && images.length > 0) {
+        pendingImages = clearSentPendingChatImages(
+          pendingImages,
+          images.map((image) => image.id),
+          URL.revokeObjectURL
+        );
         if (imageInput) imageInput.value = "";
       }
     } finally {
@@ -124,16 +144,70 @@
     }
   }
 
-  function imageChanged(): void {
-    const file = imageInput?.files?.[0] || null;
-    if (!file) return;
-    if (file.type && !file.type.toLowerCase().startsWith("image/")) {
+  function intakeFiles(files: Iterable<File> | ArrayLike<File> | null | undefined): void {
+    const { accepted, rejected, nextId } = createPendingChatImages(
+      files,
+      nextImageId,
+      URL.createObjectURL
+    );
+    nextImageId = nextId;
+    if (accepted.length === 0 && rejected.length === 0) return;
+    if (rejected.length > 0) {
       if (imageInput) imageInput.value = "";
       onError?.(new Error("Choose an image file."));
-      return;
     }
-    pendingImage = file;
-    onError?.(null);
+    if (accepted.length === 0) return;
+    pendingImages = [...pendingImages, ...accepted];
+    if (rejected.length === 0) onError?.(null);
+  }
+
+  function imageChanged(): void {
+    intakeFiles(imageInput?.files);
+    if (imageInput) imageInput.value = "";
+  }
+
+  function removeImage(image: PendingImage): void {
+    pendingImages = removePendingChatImage(pendingImages, image.id, URL.revokeObjectURL);
+  }
+
+  function hasImageTransfer(event: DragEvent): boolean {
+    return Array.from(event.dataTransfer?.items || []).some((item) =>
+      item.type.toLowerCase().startsWith("image/")
+    );
+  }
+
+  function onDragEnter(event: DragEvent): void {
+    if (disabled || busy || !hasImageTransfer(event)) return;
+    event.preventDefault();
+    dragDepth += 1;
+    draggingImages = true;
+  }
+
+  function onDragOver(event: DragEvent): void {
+    if (disabled || busy || !hasImageTransfer(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    draggingImages = true;
+  }
+
+  function onDragLeave(): void {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) draggingImages = false;
+  }
+
+  function onDrop(event: DragEvent): void {
+    if (disabled || busy) return;
+    event.preventDefault();
+    dragDepth = 0;
+    draggingImages = false;
+    intakeFiles(event.dataTransfer?.files);
+  }
+
+  function onPaste(event: ClipboardEvent): void {
+    const files = event.clipboardData?.files;
+    if (!files || files.length === 0) return;
+    event.preventDefault();
+    intakeFiles(files);
   }
 
   async function activateButton(): Promise<void> {
@@ -163,9 +237,47 @@
     }
     if (event.key === "Escape") menuOpen = false;
   }
+
+  onDestroy(() => {
+    revokePendingChatImages(pendingImages, URL.revokeObjectURL);
+  });
 </script>
 
-<div class="chat-box">
+<div
+  class={`chat-box${draggingImages ? " drag" : ""}`}
+  data-chat-composer
+  data-chat-drag-active={draggingImages ? "true" : undefined}
+  role="group"
+  aria-label="Chat composer"
+  ondragenter={onDragEnter}
+  ondragover={onDragOver}
+  ondragleave={onDragLeave}
+  ondrop={onDrop}
+>
+  {#if pendingImages.length > 0}
+    <div class="chat-image-previews" data-chat-image-previews aria-label="Pending images">
+      {#each pendingImages as image, index (image.id)}
+        <div
+          class="chat-image-preview"
+          data-chat-image-preview
+          data-chat-image-name={image.file.name}
+        >
+          <img src={image.url} alt="" />
+          <button
+            type="button"
+            class="chat-image-remove"
+            data-chat-image-remove
+            aria-label={`Remove image ${index + 1}: ${image.file.name}`}
+            title="Remove image"
+            disabled={disabled || busy}
+            onclick={() => removeImage(image)}
+          >
+            ×
+          </button>
+        </div>
+      {/each}
+    </div>
+  {/if}
   <textarea
     class="chat-ta"
     data-chat-input
@@ -175,6 +287,7 @@
     disabled={disabled || busy}
     oninput={inputChanged}
     onkeydown={onKeydown}
+    onpaste={onPaste}
   ></textarea>
   <div class="chat-foot">
     <button
@@ -190,12 +303,13 @@
     </button>
     <button
       type="button"
-      class={`chat-image${pendingImage ? " on" : ""}`}
+      class={`chat-image${pendingImages.length ? " on" : ""}`}
       data-chat-image
-      data-chat-image-pending={pendingImage ? "true" : undefined}
+      data-chat-image-pending={pendingImages.length ? "true" : undefined}
+      data-chat-image-count={pendingImages.length || undefined}
       disabled={disabled || busy}
-      aria-label="Attach image"
-      title={pendingImage ? `Image selected: ${pendingImage.name}` : "Attach image"}
+      aria-label={pendingImages.length ? "Attach more images" : "Attach images"}
+      title={pendingImages.length ? `${pendingImages.length} image selected` : "Attach images"}
       onclick={() => imageInput?.click()}
     >
       <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -208,13 +322,14 @@
       data-chat-image-input
       type="file"
       accept="image/*"
+      multiple
       onchange={imageChanged}
     />
     <button
       type="button"
-      class={`chat-send${text.trim() || pendingImage || pauseMode ? " on" : ""}${pauseMode ? " pause" : ""}`}
+      class={`chat-send${text.trim() || pendingImages.length || pauseMode ? " on" : ""}${pauseMode ? " pause" : ""}`}
       data-chat-send
-      disabled={pauseMode ? (disabled || pauseDisabled || pausePending || busy) : (disabled || submitDisabled || busy || (!text.trim() && !pendingImage))}
+      disabled={pauseMode ? (disabled || pauseDisabled || pausePending || busy) : (disabled || submitDisabled || busy || (!text.trim() && pendingImages.length === 0))}
       onclick={() => void activateButton()}
       title={pauseMode ? "Pause" : "Send"}
     >
@@ -236,4 +351,5 @@
       </button>
     {/each}
   </div>
+  <div class="chat-drop-label" data-chat-drop-label aria-hidden="true">Drop images to attach</div>
 </div>

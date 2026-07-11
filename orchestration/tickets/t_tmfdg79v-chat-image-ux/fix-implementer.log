@@ -1,0 +1,24 @@
+Implemented the two accepted fixes only:
+
+- Invalid `prompt.submit` dispositions now attempt `image.detach` for every attached image, suppress detach failures, keep prompt admission held until cleanup finishes, and raise the original invalid-disposition `GatewayError`.
+- Clipboard paste now sends all clipboard files through the same `intakeFiles` validation path as picker/drop, while text-only paste remains untouched.
+
+Added regressions:
+
+- `tests/unit/test_minds_sessions.py::test_invalid_prompt_disposition_detaches_all_images_before_next_prompt`
+- `tests/e2e/test_chat_images.py::test_mixed_clipboard_files_accept_image_and_show_standard_rejection`
+
+Exact results:
+
+- `.venv/bin/python -m pytest tests/unit/test_minds_sessions.py tests/unit/test_minds.py tests/unit/test_chat_images.py`  
+  `129 passed, 1 warning in 2.70s`
+- `npm test`  
+  passed
+- `npm run check`  
+  `0 errors and 3 warnings in 1 file`
+- `npm run build`  
+  passed
+- `.venv/bin/python -m pytest tests/e2e/test_chat_images.py`  
+  `8 passed in 9.19s`
+
+I did not run `./verify`, commit, merge, delegate, or review.

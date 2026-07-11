@@ -194,15 +194,20 @@
   async function submit(
     text: string,
     mode: "message" | "command",
-    image?: File
+    images: File[] = []
   ): Promise<boolean> {
     error = null;
     try {
-      const uploaded = image ? await uploadChatImage(stableEntityId, image) : null;
+      const uploaded = [];
+      for (const image of images) {
+        uploaded.push(await uploadChatImage(stableEntityId, image));
+      }
       await startChatTurn(stableEntityId, {
         text,
         mode,
-        ...(uploaded ? { image_reference: uploaded.reference } : {})
+        ...(uploaded.length
+          ? { image_references: uploaded.map((image) => image.reference) }
+          : {})
       });
     } catch (err) {
       error = err;

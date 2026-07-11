@@ -33,6 +33,43 @@ Blockers:
 
 - None.
 
+## Current work cycle (2026-07-11): t_tmfdg79v Chat image attachment UX
+
+Current build stage:
+
+- Ticket `t_tmfdg79v` is complete on dedicated branch `ticket/t_tmfdg79v-chat-image-ux` and remains
+  unmerged. Closeout owns integration into `main`.
+- The shared composer now uses one ordered pending-image collection for picker, paste, and composer-only
+  drop intake, with compact previews, individual removal, retry-safe failure behavior, and object URL
+  cleanup on removal, successful send, and teardown.
+- The API/domain/gateway/session path now carries ordered `image_references` / `image_paths`. Every
+  managed reference resolves before turn creation; visible Markdown and native Hermes delivery keep the
+  same order; all images attach before one prompt.
+
+What just passed:
+
+- Focused backend: 129 tests across chat image, shared gateway, and live session modules; focused browser:
+  8 chat-image tests covering picker, real paste/drop, mixed clipboard validation, removal, multiple
+  send, reload, and retained previews after failures.
+- Initial Codex implementation review found two concrete gaps: invalid-disposition cleanup stopped after
+  the first detach failure, and paste filtered before the shared intake validator. Both were fixed with
+  regressions; follow-up review returned `NO VIOLATIONS`.
+- Canonical worktree `./verify`: Ruff; Mypy across 106 source files; 455 unit tests; compile/static,
+  frontend check/build/tests; 67 browser/CLI e2e tests; final `VERIFY: PASS`.
+
+Current hypothesis:
+
+- Confirmed: the ordered image path is complete end to end without adding another upload/preview system
+  or redesigning the composer.
+
+Next step:
+
+- Commit the verified ticket branch, propose Implementation with evidence, and wait for human review.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-11): bounded managed Markdown preview height
 
 Current build stage:
