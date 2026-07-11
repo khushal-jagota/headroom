@@ -336,6 +336,36 @@ textarea {
   max-width: 72rem;
 }
 
+.shell:has(.file-preview-route--document) {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.shell:has(.file-preview-route--document) .shell-content {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+}
+
+.shell:has(.file-preview-route--document) .screen {
+  height: 100%;
+  min-height: 0;
+}
+
+.file-preview-route--document {
+  height: 100%;
+  min-height: 0;
+}
+
+.file-preview-document-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--surface-base);
+  border: 0;
+}
+
 /* --- Field editor -------------------------------------------------------- */
 
 .field-editor {
@@ -3282,5 +3312,4 @@ select {
 [data-screen="ideas"] [data-commit].button:hover:not(:disabled) {
   filter: brightness(1.08);
 }
-
 

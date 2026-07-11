@@ -89,11 +89,24 @@ def _wait_for_field_text(api, server, ticket_id: str, field: str, expected_fragm
 
 
 def test_preview_hash_route_renders_markdown_and_sandboxes_html(
-    server, context_factory, cli
+    server, context_factory, open_page, cli
 ) -> None:
     ticket_id = cli(server, "ticket", "create", "--title", "File preview route")["id"]
     _write_ticket_files(server, ticket_id)
-    page = context_factory().new_page()
+    fields = {
+        "success": {
+            "value": f"[HTML](/files/tickets/{ticket_id}/page.html)",
+            "proposal": None,
+            "user_note": None,
+        },
+        "approach": {"value": None, "proposal": None, "user_note": None},
+        "plan": {"value": None, "proposal": None, "user_note": None},
+        "implementation": {"value": None, "proposal": None, "user_note": None},
+        "closeout": {"value": None, "proposal": None, "user_note": None},
+    }
+    _set_fields(server, ticket_id, fields)
+    context = context_factory()
+    page = context.new_page()
 
     page.goto(
         f"{server.base}/#/preview?source=ticket&ticket={ticket_id}&path=notes%2Fspace%20name.md"
@@ -102,6 +115,9 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
         '[data-file-preview-route] [data-file-preview-kind="markdown"] h1', timeout=WAIT_MS
     )
     assert page.inner_text("[data-file-preview-route] h1") == "File Notes"
+    assert page.locator(".shell-content").evaluate(
+        "node => getComputedStyle(node).paddingTop"
+    ) != "0px"
 
     page.evaluate("window.__previewHashNavigationMarker = 'kept'")
     page.evaluate(
@@ -117,20 +133,62 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     assert page.inner_text("[data-file-preview-route] h1") == "Other Notes"
     assert page.evaluate("window.__previewHashNavigationMarker") == "kept"
 
-    page.evaluate(
-        "ticket => { window.location.hash = "
-        "'#/preview?source=ticket&ticket=' + ticket + '&path=page.html'; }",
-        ticket_id,
+    ticket_page = open_page(
+        context,
+        server,
+        f"#/ticket/{ticket_id}",
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+        settled=False,
     )
-    page.wait_for_selector(
-        "[data-file-preview-route] iframe[data-file-preview-html]", timeout=WAIT_MS
+    _open_ticket_field(ticket_page, "success")
+    embedded_preview = ticket_page.locator('[data-file-preview-kind="html"]').first
+    embedded_preview.locator("iframe").wait_for(state="visible", timeout=WAIT_MS)
+    html_action = embedded_preview.locator("a.button", has_text="Open preview")
+    expected_html_url = f"{server.base}/#/preview?source=ticket&ticket={ticket_id}&path=page.html"
+    with ticket_page.expect_popup() as popup_info:
+        html_action.click()
+    popup = popup_info.value
+    popup.wait_for_load_state("domcontentloaded", timeout=WAIT_MS)
+    assert popup.url == expected_html_url
+
+    full_html_iframe = popup.locator(
+        "[data-file-preview-route] iframe[data-file-preview-html]"
     )
-    html_frame = page.frame_locator("[data-file-preview-route] iframe[data-file-preview-html]")
-    full_html_iframe = page.locator("[data-file-preview-route] iframe[data-file-preview-html]")
+    full_html_iframe.wait_for(state="visible", timeout=WAIT_MS)
+    html_frame = popup.frame_locator("[data-file-preview-route] iframe[data-file-preview-html]")
     assert full_html_iframe.get_attribute("sandbox") == ""
     assert full_html_iframe.get_attribute("allow") is None
     assert html_frame.locator("h1").inner_text(timeout=WAIT_MS) == "HTML File"
-    assert page.evaluate("window.__ticketFileScriptRan === true") is False
+    heading_box = html_frame.locator("h1").bounding_box(timeout=WAIT_MS)
+    assert heading_box is not None
+    assert heading_box["width"] > 0
+    assert heading_box["height"] > 0
+    assert popup.evaluate("window.__ticketFileScriptRan === true") is False
+    assert popup.locator("[data-file-preview-route] .file-preview-meta").count() == 0
+    assert popup.locator("[data-file-preview-route] a.button").count() == 0
+    html_geometry = popup.evaluate(
+        """() => {
+            const shell = document.querySelector('.shell-content').getBoundingClientRect();
+            const route = document.querySelector(
+                '[data-file-preview-route]'
+            ).getBoundingClientRect();
+            const frame = document.querySelector(
+                '[data-file-preview-html]'
+            ).getBoundingClientRect();
+            return {
+                shellWidth: shell.width,
+                routeWidth: route.width,
+                routeHeight: route.height,
+                frameWidth: frame.width,
+                frameHeight: frame.height,
+                frameBottomGap: window.innerHeight - frame.bottom,
+            };
+        }"""
+    )
+    assert html_geometry["frameWidth"] >= html_geometry["shellWidth"] - 2
+    assert html_geometry["frameHeight"] >= 0.75 * html_geometry["routeHeight"]
+    assert html_geometry["frameBottomGap"] <= 24
+    popup.close()
     assert page.evaluate("window.__previewHashNavigationMarker") == "kept"
 
 
