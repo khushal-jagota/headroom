@@ -3,6 +3,36 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-11): t_5m7fmdk3 Kickoff closeout integration
+
+Current build stage:
+
+- Ticket `t_5m7fmdk3` accepted Implementation. Verified commit `f80c0e7` is being merged from
+  `ticket/t_5m7fmdk3-kickoff` into current `main` while preserving concurrent preview/Chat work and
+  the unrelated dirty nested frontend worktree.
+- Source and tests merge cleanly. Memory-file overlaps are reconciled explicitly, and the generated
+  frontend bundle is rebuilt from the combined source rather than hand-merged.
+
+What just passed:
+
+- Implementation-branch `./verify`: Ruff; Mypy across 106 source files; 454 unit tests; frontend
+  check/build/event mapping; 63 browser/CLI e2e tests; final `VERIFY: PASS`.
+- Independent implementation review drove all concrete fixes; final Codex verdict: `NO VIOLATIONS`.
+
+Current hypothesis:
+
+- The Kickoff feature and current `main` changes are additive. The canonical post-merge verifier is
+  the remaining integration gate.
+
+Next step:
+
+- Finish the merge commit, restore unrelated stashed closeout records, run one canonical `./verify`,
+  then propose Closeout with the merged commit and verification evidence.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-11): bounded managed Markdown preview height
 
 Current build stage:

@@ -22,7 +22,7 @@ import click
 from click.core import ParameterSource
 
 from planner.cli import http
-from planner.tickets.contracts import GATING_FIELD, STATE_ORDER, AtCap, TicketState
+from planner.tickets.contracts import GATING_FIELD, WORKER_STATE_ORDER, AtCap, TicketState
 
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
 _FIELDS = ["success", "approach", "plan", "implementation", "closeout"]
@@ -38,7 +38,7 @@ _DAY_FIELDS = {
 
 _TICKET_SET_FIELDS = {
     "title": "title",
-    "user-note": "user_note",
+    "kickoff-note": "kickoff_note",
     "priority": "priority",
     "deadline": "deadline",
     "project": "project",
@@ -442,8 +442,12 @@ def ticket() -> None:
 @click.option("--project-id", default=None, help="Project id.")
 @click.option("--sprint", default=None, help="Sprint id, current, or none.")
 @click.option("--sprint-item", "sprint_item", default=None, help="Parent sprint item id.")
-@click.option("--user-note", default=None, help="Preserved intake context / user guidance.")
-@click.option("--user-note-file", default=None, help="Read intake user note from this file, or -.")
+@click.option("--kickoff-note", default=None, help="Proposed intake context / user guidance.")
+@click.option(
+    "--kickoff-note-file",
+    default=None,
+    help="Read proposed kickoff note from this file, or -.",
+)
 @json_option
 def ticket_create(
     title: str,
@@ -453,19 +457,17 @@ def ticket_create(
     project_id: str | None,
     sprint: str | None,
     sprint_item: str | None,
-    user_note: str | None,
-    user_note_file: str | None,
+    kickoff_note: str | None,
+    kickoff_note_file: str | None,
     as_json: bool,
 ) -> None:
     body: dict[str, Any] = {"title": title}
-    if user_note is not None and user_note_file is not None:
-        http.fail_validation(
-            "user note accepts only one of --user-note or --user-note-file", as_json
-        )
-    if user_note_file is not None:
-        body["user_note"] = _read_source(user_note_file, as_json)
-    elif user_note is not None:
-        body["user_note"] = user_note
+    if kickoff_note is not None and kickoff_note_file is not None:
+        http.fail_validation("kickoff note accepts only one note option", as_json)
+    if kickoff_note_file is not None:
+        body["kickoff_note"] = _read_source(kickoff_note_file, as_json)
+    elif kickoff_note is not None:
+        body["kickoff_note"] = kickoff_note
     if priority is not None:
         body["priority"] = priority
     if deadline is not None:
@@ -565,7 +567,7 @@ def ticket_set(
         http.fail_validation(f"{field} cannot be cleared", as_json)
     if field == "priority" and new_value not in _PRIORITIES:
         http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
-    if field == "user-note" and new_value is None:
+    if field == "kickoff-note" and new_value is None:
         new_value = ""
     data = http.send(
         "PATCH",
@@ -587,17 +589,36 @@ def ticket_set(
     help="propose or stop.",
 )
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
+@click.option("--kickoff-title", default=None, help="Edited Kickoff title.")
+@click.option("--kickoff-note-file", default=None, help="Edited Kickoff note, or - for stdin.")
 @json_option
 def ticket_approve(
     ticket_id: str | None,
     ceiling: str | None,
     at_cap: str | None,
     edit_file: str | None,
+    kickoff_title: str | None,
+    kickoff_note_file: str | None,
     as_json: bool,
 ) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
     detail = http.send("GET", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary")
     state = TicketState(detail["state"])
+    if state is TicketState.needs_kickoff:
+        payload: dict[str, Any] = {}
+        if kickoff_title is not None:
+            payload["edited_title"] = kickoff_title
+        if kickoff_note_file is not None:
+            payload["edited_kickoff_note"] = _read_source(kickoff_note_file, as_json)
+        data = http.send(
+            "POST",
+            f"/api/tickets/{tid}/accept-kickoff",
+            as_json=as_json,
+            json_body=payload,
+            request_actor="ordinary",
+        )
+        http.emit(data, as_json, f"{data['id']} approved kickoff")
+        return
     field = GATING_FIELD.get(state)
     if field is None:
         http.fail_validation(f"ticket in {state.value} has nothing to approve", as_json)
@@ -606,14 +627,14 @@ def ticket_approve(
         http.fail_validation(f"no pending {field.value} proposal", as_json)
     if ceiling is None or at_cap is None:
         http.fail_validation("approval requires --ceiling and --at-cap", as_json)
-    payload: dict[str, Any] = {"next_ceiling": ceiling, "at_cap": at_cap}
+    field_payload: dict[str, Any] = {"next_ceiling": ceiling, "at_cap": at_cap}
     if edit_file is not None:
-        payload["edited_body"] = _read_source(edit_file, as_json)
+        field_payload["edited_body"] = _read_source(edit_file, as_json)
     data = http.send(
         "POST",
         f"/api/tickets/{tid}/accept/{field.value}",
         as_json=as_json,
-        json_body=payload,
+        json_body=field_payload,
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"{data['id']} approved {field.value}")
@@ -972,7 +993,7 @@ def sprint_item_remove_ticket(item_id: str, ticket_id: str, as_json: bool) -> No
 def _external_work_body(
     *,
     state: str,
-    user_note_file: str,
+    kickoff_note_file: str,
     recap_file: str | None,
     success_file: str | None,
     approach_file: str | None,
@@ -983,7 +1004,7 @@ def _external_work_body(
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "state": state,
-        "user_note": read_required_option_body(user_note_file, as_json, "user-note"),
+        "kickoff_note": read_required_option_body(kickoff_note_file, as_json, "kickoff-note"),
     }
     for key, source in (
         ("recap", recap_file),
@@ -1005,8 +1026,12 @@ def chief() -> None:
 
 @chief.command("reconcile-ticket-from-external-work")
 @click.argument("ticket_id")
-@click.option("--state", required=True, type=click.Choice([state.value for state in STATE_ORDER]))
-@click.option("--user-note-file", required=True, help="Complete resulting ticket note file, or -.")
+@click.option(
+    "--state", required=True, type=click.Choice([state.value for state in WORKER_STATE_ORDER])
+)
+@click.option(
+    "--kickoff-note-file", required=True, help="Complete resulting ticket note file, or -."
+)
 @click.option("--recap-file", default=None, help="Read the recap from this file, or -.")
 @click.option("--success-file", default=None, help="Read settled success from this file, or -.")
 @click.option("--approach-file", default=None, help="Read settled approach from this file, or -.")
@@ -1019,7 +1044,7 @@ def chief() -> None:
 def chief_reconcile_ticket_from_external_work(
     ticket_id: str,
     state: str,
-    user_note_file: str,
+    kickoff_note_file: str,
     recap_file: str | None,
     success_file: str | None,
     approach_file: str | None,
@@ -1030,7 +1055,7 @@ def chief_reconcile_ticket_from_external_work(
 ) -> None:
     body = _external_work_body(
         state=state,
-        user_note_file=user_note_file,
+        kickoff_note_file=kickoff_note_file,
         recap_file=recap_file,
         success_file=success_file,
         approach_file=approach_file,
@@ -1055,8 +1080,12 @@ def chief_reconcile_ticket_from_external_work(
 
 @chief.command("create-ticket-from-external-work")
 @click.option("--title", required=True, help="Ticket title.")
-@click.option("--state", required=True, type=click.Choice([state.value for state in STATE_ORDER]))
-@click.option("--user-note-file", required=True, help="Complete resulting ticket note file, or -.")
+@click.option(
+    "--state", required=True, type=click.Choice([state.value for state in WORKER_STATE_ORDER])
+)
+@click.option(
+    "--kickoff-note-file", required=True, help="Complete resulting ticket note file, or -."
+)
 @click.option("--recap-file", default=None, help="Read the recap from this file, or -.")
 @click.option("--success-file", default=None, help="Read settled success from this file, or -.")
 @click.option("--approach-file", default=None, help="Read settled approach from this file, or -.")
@@ -1075,7 +1104,7 @@ def chief_reconcile_ticket_from_external_work(
 def chief_create_ticket_from_external_work(
     title: str,
     state: str,
-    user_note_file: str,
+    kickoff_note_file: str,
     recap_file: str | None,
     success_file: str | None,
     approach_file: str | None,
@@ -1092,7 +1121,7 @@ def chief_create_ticket_from_external_work(
 ) -> None:
     body = _external_work_body(
         state=state,
-        user_note_file=user_note_file,
+        kickoff_note_file=kickoff_note_file,
         recap_file=recap_file,
         success_file=success_file,
         approach_file=approach_file,

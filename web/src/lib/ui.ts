@@ -13,6 +13,7 @@ export type FieldStageVisualState =
   | "upcoming";
 
 export const STATE_ORDER = [
+  "needs_kickoff",
   "needs_success",
   "needs_approach",
   "needs_plan",

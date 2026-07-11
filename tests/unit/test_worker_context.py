@@ -83,9 +83,10 @@ def test_sqlite_service_composes_prompt_and_acknowledges_only_prepared_revision(
 
 
 def _ticket(tmp_db):
-    return tickets_data.create_ticket(
+    ticket = tickets_data.create_ticket(
         tmp_db, title="Context ticket", actor="human", now=1, title_max_chars=200
     )
+    return tickets_data.accept_kickoff(tmp_db, ticket.id, actor="human", now=1)
 
 
 def _pending(tmp_db, ticket_id: str):
@@ -129,7 +130,7 @@ def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(tmp
     tickets_data.edit_ticket(
         tmp_db,
         ticket.id,
-        edit=TicketEdit(user_note="ticket guidance"),
+        edit=TicketEdit(kickoff_note="ticket guidance"),
         title_max_chars=TITLE_MAX_CHARS,
         actor="human",
         now=5,

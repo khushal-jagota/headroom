@@ -46,6 +46,8 @@ class EventKind(StrEnum):
 
     # --- supplemental: proposals and fields ---
     proposal_filed = "proposal_filed"                # {field, body, proposed_by}
+    kickoff_proposal_filed = "kickoff_proposal_filed"  # {title, kickoff_note, proposed_by}
+    kickoff_accepted = "kickoff_accepted"            # {title, kickoff_note, resolved_by, edited}
     approval_returned = "approval_returned"          # {kind, field?} returned for revision
     note_updated = "note_updated"                    # field user_note slot {field}
     recap_updated = "recap_updated"                  # §3.3

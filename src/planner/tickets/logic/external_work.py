@@ -6,7 +6,7 @@ from collections.abc import Mapping
 
 from planner.core.contracts import ErrorCode, EventKind, PlannerError
 from planner.tickets.contracts import (
-    STATE_ORDER,
+    WORKER_STATE_ORDER,
     AtCap,
     FieldName,
     FieldSlot,
@@ -44,7 +44,7 @@ def decide_external_work(
     The caller may place a recap event between the two decisions. Both decisions are
     built before any write, so validation failure cannot partially mutate a ticket.
     """
-    if target_state not in STATE_ORDER:
+    if target_state not in WORKER_STATE_ORDER:
         raise PlannerError(
             ErrorCode.validation,
             "external work target must be a linear ticket state",

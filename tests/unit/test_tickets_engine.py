@@ -15,7 +15,9 @@ import pytest
 from planner.core.contracts import EventKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import read_events_since
-from planner.tickets import data
+from planner.runtime import readiness
+from planner.tickets import actions, data
+from planner.tickets import views as ticket_views
 from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
@@ -37,8 +39,17 @@ if TYPE_CHECKING:
     from planner.tickets.contracts import Ticket
 
 
+class _RecordingDoorbell:
+    def __init__(self) -> None:
+        self.rings = 0
+
+    def ring(self) -> None:
+        self.rings += 1
+
+
 def _create(conn: Connection, cfg: Config, clock: TestClock, **kw: Any) -> Ticket:
-    return data.create_ticket(
+    settle_kickoff = kw.pop("settle_kickoff", True)
+    ticket = data.create_ticket(
         conn,
         title=kw.pop("title", "Test ticket"),
         actor="human",
@@ -46,6 +57,16 @@ def _create(conn: Connection, cfg: Config, clock: TestClock, **kw: Any) -> Ticke
         title_max_chars=TITLE_MAX_CHARS,
         **kw,
     )
+    if not settle_kickoff:
+        return ticket
+    ticket = data.accept_kickoff(conn, ticket.id, actor="human", now=clock.now_unix())
+    conn.execute(
+        "DELETE FROM events WHERE entity_id = ? AND kind IN ("
+        "'kickoff_proposal_filed', 'kickoff_accepted', 'state_changed', "
+        "'ticket_status_changed')",
+        (ticket.id,),
+    )
+    return ticket
 
 
 def _scope(
@@ -68,18 +89,18 @@ def _events(
 def test_ticket_and_field_user_notes_round_trip_with_legacy_field_notes(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
-    t = _create(tmp_db, cfg, fake_clock, user_note="intake direction")
-    assert t.user_note == "intake direction"
+    t = _create(tmp_db, cfg, fake_clock, kickoff_note="intake direction")
+    assert t.kickoff_note == "intake direction"
 
     t = data.edit_ticket(
         tmp_db,
         t.id,
-        edit=TicketEdit(user_note="updated intake direction"),
+        edit=TicketEdit(kickoff_note="updated intake direction"),
         title_max_chars=TITLE_MAX_CHARS,
         actor="human",
         now=fake_clock.now_unix(),
     )
-    assert t.user_note == "updated intake direction"
+    assert t.kickoff_note == "updated intake direction"
 
     t = data.set_field_user_note(
         tmp_db,
@@ -108,6 +129,168 @@ def test_ticket_and_field_user_notes_round_trip_with_legacy_field_notes(
         "proposal": None,
         "user_note": "legacy guidance",
     }
+
+
+def test_ordinary_create_parks_ticket_level_kickoff_without_sixth_field(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    t = _create(
+        tmp_db,
+        cfg,
+        fake_clock,
+        title="Draft kickoff title",
+        kickoff_note="draft kickoff note",
+        settle_kickoff=False,
+    )
+
+    assert t.state is TicketState.needs_kickoff
+    assert t.ticket_status is TicketStatus.awaiting_approval
+    assert t.kickoff_note == "draft kickoff note"
+    assert t.kickoff_proposal is not None
+    assert t.kickoff_proposal.title == "Draft kickoff title"
+    assert t.kickoff_proposal.kickoff_note == "draft kickoff note"
+    assert set(json.loads(fields_codec.fields_to_json(t.fields))) == {
+        "success",
+        "approach",
+        "plan",
+        "implementation",
+        "closeout",
+    }
+    assert all(
+        event.kind != EventKind.proposal_filed.value
+        for event in _events(tmp_db, cfg, t.id)
+    )
+    assert machine.has_pending_parked_proposal(t) is True
+
+
+def test_review_queue_exposes_kickoff_as_non_field_approval(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    t = _create(tmp_db, cfg, fake_clock, settle_kickoff=False)
+
+    queues = ticket_views.queues_view(
+        tmp_db,
+        now=fake_clock.now_unix(),
+        today_iso="2026-07-04",
+        item_approval_rows=[],
+        item_overdue_rows=[],
+    )
+
+    assert queues["approvals"] == [
+        {
+            "entity_id": t.id,
+            "entity_type": "ticket",
+            "kind": "kickoff",
+            "title": t.title,
+            "waiting_since": t.kickoff_proposal.created_at,
+        }
+    ]
+
+
+def test_accept_kickoff_with_edits_advances_to_success_and_clears_pending(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    t = _create(
+        tmp_db,
+        cfg,
+        fake_clock,
+        title="Proposed title",
+        kickoff_note="proposed note",
+        settle_kickoff=False,
+    )
+
+    settled = data.accept_kickoff(
+        tmp_db,
+        t.id,
+        actor="human",
+        now=fake_clock.now_unix(),
+        edited_title="Approved title",
+        edited_kickoff_note="approved note",
+    )
+
+    assert settled.state is TicketState.needs_success
+    assert settled.ticket_status is TicketStatus.empty
+    assert settled.title == "Approved title"
+    assert settled.kickoff_note == "approved note"
+    assert settled.kickoff_proposal is None
+    assert machine.has_pending_parked_proposal(settled) is False
+    accepted = _events(tmp_db, cfg, t.id, EventKind.kickoff_accepted)
+    assert accepted[-1].payload == {
+        "title": "Approved title",
+        "kickoff_note": "approved note",
+        "resolved_by": "direct",
+        "edited": True,
+    }
+
+
+def test_accept_kickoff_action_rings_and_leaves_ticket_runnable(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    t = _create(tmp_db, cfg, fake_clock, settle_kickoff=False)
+    doorbell = _RecordingDoorbell()
+
+    settled = actions.accept_kickoff(
+        tmp_db,
+        t.id,
+        actor="human",
+        now=fake_clock.now_unix(),
+        readiness_doorbell=doorbell,
+    )
+
+    assert doorbell.rings == 1
+    assert settled.state is TicketState.needs_success
+    assert readiness.is_runnable(tmp_db, settled) is True
+
+
+def test_kickoff_pending_guards_direct_title_note_takeover_and_release(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    t = _create(tmp_db, cfg, fake_clock, settle_kickoff=False)
+
+    for edit in (
+        TicketEdit(title="edited"),
+        TicketEdit(kickoff_note="edited"),
+    ):
+        with pytest.raises(PlannerError, match="approving kickoff"):
+            data.edit_ticket(
+                tmp_db,
+                t.id,
+                edit=edit,
+                title_max_chars=TITLE_MAX_CHARS,
+                actor="human",
+                now=fake_clock.now_unix(),
+            )
+    with pytest.raises(PlannerError, match="before takeover"):
+        data.take_over_ticket(tmp_db, t.id, now=fake_clock.now_unix())
+    with pytest.raises(PlannerError, match="before release"):
+        data.release_ticket(tmp_db, t.id, now=fake_clock.now_unix())
+
+
+def test_direct_state_changes_cannot_bypass_or_reenter_kickoff(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    pending = _create(tmp_db, cfg, fake_clock, settle_kickoff=False)
+    with pytest.raises(PlannerError, match="only through kickoff approval"):
+        data.set_state(
+            tmp_db,
+            pending.id,
+            new_state=TicketState.needs_success,
+            actor="human",
+            now=fake_clock.now_unix(),
+        )
+
+    settled = data.accept_kickoff(
+        tmp_db, pending.id, actor="human", now=fake_clock.now_unix()
+    )
+    assert settled.state is TicketState.needs_success
+    with pytest.raises(PlannerError, match="only through kickoff approval"):
+        data.set_state(
+            tmp_db,
+            pending.id,
+            new_state=TicketState.needs_kickoff,
+            actor="human",
+            now=fake_clock.now_unix(),
+        )
 
 
 def test_ticket_status_transitions(

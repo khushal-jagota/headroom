@@ -7,35 +7,42 @@ stages by filling one blank at a time, and no value ever becomes real except thr
 one door — the resolution engine.
 
 ```
-   THE STAGES (one blank fills each step)
+   THE STAGES
 
-   success   ──►  approach  ──►  plan     ──►  implementation ──►  closeout    ──►  done
-   condition      (how,          (step-        (do the work,       (merge, deploy,      │
-   (what is        roughly)       by-step)      propose a           follow-up,           │
-    "done"?)                                    reviewable          bookkeeping;         │
-                                                 package)            propose a            │
-                                                                     verified report)     │
-        └─────────────────────  direct resolution may jump a ticket anywhere  ──────────────────┘
+   kickoff ──► success   ──►  approach  ──►  plan     ──►  implementation ──►  closeout ──► done
+   approve     condition      (how,          (step-        (do the work,       (merge,
+   title +     (what is        roughly)       by-step)      propose a           deploy,
+   intake       "done"?)                                    reviewable          follow-up,
+   note                                                      package)            report)
+        └────────────  direct resolution may jump between worker stages only  ────────────────┘
                                    dropped: any point, direct operation only
 ```
 
 ## The stages
 
-A ticket fills its blanks in order: a **success condition** (what does done mean?),
-an **approach** (how, roughly?), a **plan** (concretely, step by step), then
+A ticket starts with **Kickoff**. Kickoff is the human-approved title and intake
+note. It is not worker work and it is not one of the five worker blanks. A new
+ordinary ticket parks this Kickoff proposal for review before any worker turn can
+start. Approving Kickoff settles the title and **kickoff note**, then the ticket
+enters the worker stages.
+
+After Kickoff, a ticket fills its blanks in order: a **success condition** (what
+does done mean?), an **approach** (how, roughly?), a **plan** (concretely, step by
+step), then
 **implementation** (the plan is carried out and a reviewable work package is
 proposed), then **closeout** (only the applicable merge, deploy, follow-up, and
 bookkeeping happen, and a verified report is proposed), and finally it is **done**.
 Each stage has exactly one blank to fill; filling it — and having that accepted — is
 what moves the ticket one stage forward. A ticket can also be **dropped** at any
-point through a direct product operation. Direct operations can also jump a ticket;
-workers never can.
+point through a direct product operation. Direct operations can also jump between
+worker stages, but cannot bypass an unresolved Kickoff or re-enter Kickoff; workers
+never jump stages.
 
-A ticket also has a **user note**. This is not one of the five blanks and it does
-not advance the ticket. It preserves intake context: the user's original wording,
-source context, boundaries, and advice. It stays readable beside the work so agents
-can honor the user's direction without mixing that direction into success, approach,
-plan, implementation, or closeout.
+The **kickoff note** preserves intake context: the user's original wording, source
+context, boundaries, and advice. It stays readable beside the work so agents can
+honor the user's direction without mixing that direction into success, approach,
+plan, implementation, or closeout. After Kickoff is settled, later direct title and
+kickoff-note edits are authoritative ordinary ticket edits.
 
 _Code paths:_ `src/planner/tickets/` (the ticket state and its fields).
 
@@ -44,12 +51,12 @@ _Code paths:_ `src/planner/tickets/` (the ticket state and its fields).
 When work was completed elsewhere, the Chief can reconcile an existing ticket or create
 one already populated through the explicit `panels chief` external-work commands. This
 is not a worker proposal and not a general state bypass. The operation requires a
-complete ticket note, an exact settled-field prefix for the target state, and a Chief
+complete kickoff note, an exact settled-field prefix for the target state, and a Chief
 request. It refuses backward moves, pending proposals, active ticket control, and
 running chat turns. The resulting scope stops at the imported state, so the worker does
 not continue automatically.
 
-The create or reconciliation writer commits all fields, note, recap, state, scope,
+The create or reconciliation writer commits all fields, kickoff note, recap, state, scope,
 status normalization, and existing event signals together. A validation or concurrency
 failure leaves both the ticket and its event history unchanged. The surrounding action
 rings readiness after a new imported Ticket or a real reconciliation change. An exact
@@ -61,7 +68,7 @@ store its own project because the parent item owns that classification.
 
 ### Ordinary Ticket edits
 
-One ordinary edit may change a Ticket's title, user note, priority, deadline, project,
+One ordinary edit may change a Ticket's title, kickoff note, priority, deadline, project,
 sprint, and implementer together. The implementer is nullable and limited to four fixed
 assignments: Khushal, Panels worker, Hermes with Codex, and Hermes with Claude. Panels
 checks the whole request before saving any of it. All requested changes succeed together

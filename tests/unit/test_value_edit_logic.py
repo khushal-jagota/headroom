@@ -60,7 +60,8 @@ def _ticket(
         sprint_item_id=None,
         sprint_id=None,
         recap="",
-        user_note="",
+        kickoff_note="",
+        kickoff_proposal=None,
         ceiling=ceiling,
         at_cap=AtCap.propose,
         ticket_status=TicketStatus.empty,
@@ -89,6 +90,7 @@ def _passed_ticket(conn: Connection, cfg: Config, clock: TestClock) -> Ticket:
     t = data.create_ticket(
         conn, title="T", actor="human", now=now, title_max_chars=TITLE_MAX_CHARS
     )
+    t = data.accept_kickoff(conn, t.id, actor="human", now=now)
     t = data.change_scope(
         conn, t.id, ceiling=TicketState.needs_plan, at_cap=AtCap.propose, actor="human", now=now
     )
@@ -217,6 +219,7 @@ def test_accept_dropped_ticket_with_pending_proposal_rejected(
     t = data.create_ticket(
         tmp_db, title="T", actor="human", now=now, title_max_chars=TITLE_MAX_CHARS
     )
+    t = data.accept_kickoff(tmp_db, t.id, actor="human", now=now)
     t = data.change_scope(
         tmp_db, t.id, ceiling=TicketState.needs_plan, at_cap=AtCap.propose, actor="human", now=now
     )

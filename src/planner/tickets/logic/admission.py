@@ -39,6 +39,12 @@ def check_agent_proposal(
             ErrorCode.validation, "no proposals on a terminal ticket", {"state": state.value}
         )
     gating = machine.gating_field(state)
+    if gating is None:
+        raise PlannerError(
+            ErrorCode.validation,
+            "ticket state has no proposal field",
+            {"state": state.value},
+        )
     if not machine.at_or_beyond_ceiling(state, ceiling):
         return
     if at_cap is AtCap.stop:
@@ -65,7 +71,7 @@ def check_agent_proposal(
 
 
 def check_recap_writable(state: TicketState) -> None:
-    if state is TicketState.needs_success or state is TicketState.dropped:
+    if state in (TicketState.needs_kickoff, TicketState.needs_success, TicketState.dropped):
         raise PlannerError(
             ErrorCode.recap_too_early,
             "recap is writable only past needs_success",

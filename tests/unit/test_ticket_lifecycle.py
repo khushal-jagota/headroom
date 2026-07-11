@@ -16,6 +16,7 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     STATE_ORDER,
     TITLE_MAX_CHARS,
+    WORKER_STATE_ORDER,
     AtCap,
     FieldName,
     Implementer,
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
 
 
 def _create(conn: Connection, clock: TestClock, **kw: Any) -> Ticket:
-    return data.create_ticket(
+    ticket = data.create_ticket(
         conn,
         title=kw.pop("title", "Lifecycle ticket"),
         actor="human",
@@ -40,6 +41,7 @@ def _create(conn: Connection, clock: TestClock, **kw: Any) -> Ticket:
         title_max_chars=TITLE_MAX_CHARS,
         **kw,
     )
+    return data.accept_kickoff(conn, ticket.id, actor="human", now=clock.now_unix())
 
 
 def test_ticket_implementer_contract_and_nullable_create_storage(
@@ -59,6 +61,7 @@ def test_ticket_implementer_contract_and_nullable_create_storage(
 
 def test_canonical_states_and_fields_are_the_five_plus_six_model() -> None:
     assert [s.value for s in TicketState] == [
+        "needs_kickoff",
         "needs_success",
         "needs_approach",
         "needs_plan",
@@ -75,6 +78,15 @@ def test_canonical_states_and_fields_are_the_five_plus_six_model() -> None:
         "closeout",
     ]
     assert STATE_ORDER == (
+        TicketState.needs_kickoff,
+        TicketState.needs_success,
+        TicketState.needs_approach,
+        TicketState.needs_plan,
+        TicketState.needs_implementation,
+        TicketState.needs_closeout,
+        TicketState.done,
+    )
+    assert WORKER_STATE_ORDER == (
         TicketState.needs_success,
         TicketState.needs_approach,
         TicketState.needs_plan,

@@ -163,6 +163,23 @@ def test_e23_env_pinned_propose(server, context_factory, open_page, cli, api):
     assert api.get(server, f"/api/tickets/{tid}")["fields"]["success"]["value"] is None
 
 
+def test_kickoff_accepts_from_review_without_worker_revision_control(
+    server, context_factory, open_page, cli, api
+):
+    tid = cli(
+        server, "ticket", "create", "--title", "Review kickoff",
+        "--kickoff-note", "Review this premise",
+    )["id"]
+    card = f'[data-review-card][data-entity-id="{tid}"]'
+    page = open_page(context_factory(), server, "#/review", card, settled=True)
+    assert page.get_attribute(card, "data-kind") == "kickoff"
+    assert page.locator(f"{card} [data-kickoff-proposal]").count() == 1
+    assert page.locator(f"{card} [data-review-revision]").count() == 0
+    page.click(f"{card} [data-accept]")
+    page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
+    assert api.get(server, f"/api/tickets/{tid}")["state"] == "needs_success"
+
+
 def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
     tid = cli(server, "ticket", "create", "--title", "T18 review ticket")["id"]
     cli(
@@ -926,75 +943,102 @@ def test_slash_menu_runs_display_command(server, context_factory, open_page, cli
     )
 
 
-def test_ticket_user_note_renders_as_own_intake_block(server, context_factory, open_page, cli):
-    placeholder = "Preserve user guidance, source context, and boundaries..."
+def test_pending_kickoff_edits_and_approves_before_five_worker_stages(
+    server, context_factory, open_page, cli, api
+):
     tid = cli(
-        server,
-        "ticket",
-        "create",
-        "--title",
-        "User note UI ticket",
-        "--user-note",
-        "Preserve this intake boundary.",
+        server, "ticket", "create", "--title", "Draft title",
+        "--kickoff-note", "Draft premise",
     )["id"]
-
     page = open_page(
-        context_factory(),
-        server,
-        f"#/ticket/{tid}",
-        f'section[data-screen="ticket"][data-ticket-id="{tid}"] [data-user-note]',
+        context_factory(), server, f"#/ticket/{tid}",
+        f'section[data-screen="ticket"][data-ticket-id="{tid}"][data-state="needs_kickoff"]',
         settled=True,
     )
-    # The user note now lives in the stage spine, collapsed by default; open it before
-    # reading or editing its body.
-    assert page.locator("[data-user-note] details[open]").count() == 0
-    page.click("[data-user-note] .disclosure-summary")
-    page.wait_for_selector("[data-user-note] details[open]", timeout=WAIT_MS)
-    assert "Preserve this intake boundary." in page.inner_text("[data-user-note]")
-    assert page.query_selector("[data-user-note] [data-markdown-inline-edit]") is not None
-    user_note_editor = page.locator("[data-user-note] [data-markdown-inline-edit]")
-    user_note_editor.focus()
-    user_note_editor.evaluate(SELECT_NODE_CONTENTS)
+    assert page.locator("[data-kickoff-proposal]").count() == 1
+    assert page.locator("[data-field]").count() == 5
+    assert page.locator("[data-ticket-takeover-toggle]").count() == 0
+    assert page.locator("[data-scope-ceiling]").count() == 0
+
+    title_editor = page.locator("[data-kickoff-proposal] [role=textbox]").nth(0)
+    title_editor.focus()
+    title_editor.evaluate(SELECT_NODE_CONTENTS)
+    page.keyboard.type("Approved title")
+    title_editor.blur()
+    note_editor = page.locator("[data-kickoff-proposal] [role=textbox]").nth(1)
+    note_editor.focus()
+    note_editor.evaluate(SELECT_NODE_CONTENTS)
+    page.keyboard.type("Approved premise")
+    note_editor.blur()
+    with page.expect_response(
+        lambda response: response.request.method == "POST"
+        and response.url.endswith(f"/api/tickets/{tid}/accept-kickoff")
+    ):
+        page.click("[data-kickoff-proposal] [data-accept]")
+    page.wait_for_selector(
+        f'section[data-screen="ticket"][data-ticket-id="{tid}"][data-state="needs_success"]',
+        timeout=WAIT_MS,
+    )
+    detail = api.get(server, f"/api/tickets/{tid}")
+    assert detail["title"] == "Approved title"
+    assert detail["kickoff_note"] == "Approved premise"
+    assert detail["kickoff_proposal"] is None
+    assert len(detail["fields"]) == 5
+
+
+def test_settled_kickoff_note_renders_as_canonical_intake_block(
+    server, context_factory, open_page, cli
+):
+    placeholder = "Ticket premise and boundaries..."
+    tid = cli(
+        server, "ticket", "create", "--title", "Kickoff note UI ticket",
+        "--kickoff-note", "Preserve this intake boundary.",
+    )["id"]
+    cli(server, "ticket", "approve", tid)
+
+    page = open_page(
+        context_factory(), server, f"#/ticket/{tid}",
+        f'section[data-screen="ticket"][data-ticket-id="{tid}"] [data-kickoff]',
+        settled=True,
+    )
+    assert page.locator("[data-kickoff][open]").count() == 0
+    page.click("[data-kickoff] .disclosure-summary")
+    page.wait_for_selector("[data-kickoff][open]", timeout=WAIT_MS)
+    assert "Preserve this intake boundary." in page.inner_text("[data-kickoff]")
+    editor = page.locator("[data-kickoff] [data-markdown-inline-edit]")
+    editor.focus()
+    editor.evaluate(SELECT_NODE_CONTENTS)
     page.keyboard.type("Updated intake boundary.")
     with page.expect_response(
         lambda response: response.request.method == "PATCH"
         and response.url.endswith(f"/api/tickets/{tid}")
     ):
-        user_note_editor.blur()
+        editor.blur()
     page.wait_for_function(
-        "() => document.querySelector('[data-user-note]')?.textContent?.includes("
+        "() => document.querySelector('[data-kickoff]')?.textContent?.includes("
         "'Updated intake boundary.')"
     )
     with sqlite3.connect(server.db_path) as conn:
         assert conn.execute(
             "SELECT context_key, revision FROM pending_worker_context "
-            "WHERE worker_entity_id = ?",
-            (tid,),
+            "WHERE worker_entity_id = ?", (tid,),
         ).fetchall() == [("ticket_changed", 1)]
 
-    empty_tid = cli(server, "ticket", "create", "--title", "Empty user note UI ticket")["id"]
+    empty_tid = cli(server, "ticket", "create", "--title", "Empty kickoff note UI ticket")["id"]
     empty_page = open_page(
-        context_factory(),
-        server,
-        f"#/ticket/{empty_tid}",
-        f'section[data-screen="ticket"][data-ticket-id="{empty_tid}"] [data-user-note]',
+        context_factory(), server, f"#/ticket/{empty_tid}",
+        f'section[data-screen="ticket"][data-ticket-id="{empty_tid}"] [data-kickoff]',
         settled=True,
     )
-    empty_page.click("[data-user-note] .disclosure-summary")
-    empty_page.wait_for_selector("[data-user-note] details[open]", timeout=WAIT_MS)
-    assert "No user note yet." not in empty_page.inner_text("[data-user-note]")
+    empty_page.click("[data-kickoff] .disclosure-summary")
+    empty_page.wait_for_selector("[data-kickoff][open]", timeout=WAIT_MS)
     assert (
-        empty_page.get_attribute("[data-user-note] [data-markdown-inline-edit]", "data-ph")
+        empty_page.get_attribute("[data-kickoff] [data-markdown-inline-edit]", "data-ph")
         == placeholder
     )
-    assert (
-        empty_page.locator("[data-user-note] [data-markdown-inline-edit]").get_attribute(
-            "contenteditable"
-        )
-        == "true"
-    )
-    assert empty_page.locator("[data-user-note] [data-markdown-edit]").count() == 0
-
+    assert empty_page.locator(
+        "[data-kickoff] [data-markdown-inline-edit]"
+    ).get_attribute("contenteditable") == "true"
 
 def test_ticket_implementer_assignment_edits_in_facts_without_changing_workflow(
     server, context_factory, open_page, cli, api

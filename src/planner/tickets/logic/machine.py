@@ -4,7 +4,7 @@ resolution. Pure: contracts + fields_codec only."""
 
 from __future__ import annotations
 
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import (
@@ -12,6 +12,7 @@ from planner.tickets.contracts import (
     GATING_FIELD,
     NO_FURTHER,
     STATE_ORDER,
+    WORKER_STATE_ORDER,
     AtCap,
     FieldName,
     Implementer,
@@ -22,6 +23,9 @@ from planner.tickets.contracts import (
     TicketStatus,
 )
 from planner.tickets.logic import fields_codec
+
+if TYPE_CHECKING:
+    from planner.tickets.contracts import Ticket
 
 # Inverse of GATING_FIELD: the state each field gates. A field is "passed"
 # once the ticket has advanced strictly beyond the state that field gates.
@@ -88,7 +92,7 @@ def at_or_beyond_ceiling(state: TicketState, ceiling: TicketState) -> bool:
 
 
 def validate_ceiling(ceiling: TicketState) -> None:
-    if ceiling not in STATE_ORDER:
+    if ceiling not in WORKER_STATE_ORDER:
         raise PlannerError(
             ErrorCode.scope_invalid, "ceiling must be a linear state", {"ceiling": ceiling.value}
         )
@@ -113,7 +117,7 @@ def resolve_scope(
         raise PlannerError(
             ErrorCode.scope_invalid, "unknown next_ceiling", {"next_ceiling": str(next_ceiling)}
         )
-    if next_ceiling not in STATE_ORDER or state_index(next_ceiling) < state_index(new_state):
+    if next_ceiling not in WORKER_STATE_ORDER or state_index(next_ceiling) < state_index(new_state):
         raise PlannerError(
             ErrorCode.scope_invalid,
             "next_ceiling must be at or beyond the new state",
@@ -127,6 +131,12 @@ def has_pending_gating_proposal(state: TicketState, fields: TicketFields) -> boo
     if field is None:
         return False
     return fields_codec.get_slot(fields, field).proposal is not None
+
+
+def has_pending_parked_proposal(ticket: Ticket) -> bool:
+    if ticket.kickoff_proposal is not None:
+        return True
+    return has_pending_gating_proposal(ticket.state, ticket.fields)
 
 
 def plan_handoff_status(

@@ -61,7 +61,7 @@ Before running a `panels chief` command, export `PLAN_ACTOR=chief` so the CLI se
 
 1. Search the current tickets first. Reconcile an existing aligned ticket rather than creating a duplicate.
 2. Use `panels chief reconcile-ticket-from-external-work <ticket-id>` for an existing ticket, or `panels chief create-ticket-from-external-work` when no aligned ticket exists.
-3. Preserve the user's report and your reconciliation reasoning in the complete ticket note passed with `--user-note-file`. When reconciling, include any existing note that must remain.
+3. Preserve the user's report and your reconciliation reasoning in the complete kickoff note passed with `--kickoff-note-file`. When reconciling, include any existing kickoff note that must remain.
 4. Supply the exact settled field prefix required by the target state — one of `needs_success`, `needs_approach`, `needs_plan`, `needs_implementation`, `needs_closeout`, or `done`. External intake leaves the ticket stopped at that state; it does not create proposals or imitate worker progress.
 5. Add the reconciled or newly created external-work ticket to **today** with `panels day add-ticket <ticket-id> --json`, unless the user explicitly says the work belongs in backlog/later or should not appear on today's board. Work the user is reporting now is presumed to belong on today's record.
 6. Read the resulting ticket back with `panels ticket show <id> --json` and report the ticket id, resulting state, and today placement.

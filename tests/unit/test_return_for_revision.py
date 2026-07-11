@@ -131,6 +131,7 @@ def _ticket_with_pending_plan(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
         ticket = create_ticket(conn, title="Revise plan", actor="human", now=0, title_max_chars=200)
+        ticket = tickets_data.accept_kickoff(conn, ticket.id, actor="human", now=0)
         change_scope(
             conn,
             ticket.id,
@@ -162,6 +163,7 @@ def _ticket_with_pending_closeout(db_path: Path) -> str:
         ticket = create_ticket(
             conn, title="Revise closeout", actor="human", now=0, title_max_chars=200
         )
+        ticket = tickets_data.accept_kickoff(conn, ticket.id, actor="human", now=0)
         change_scope(
             conn,
             ticket.id,

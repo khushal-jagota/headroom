@@ -16,6 +16,7 @@ TITLE_MAX_CHARS: Final = 200
 
 
 class TicketState(StrEnum):        # linear lifecycle, exact order
+    needs_kickoff = "needs_kickoff"
     needs_success = "needs_success"
     needs_approach = "needs_approach"
     needs_plan = "needs_plan"
@@ -28,6 +29,12 @@ class TicketState(StrEnum):        # linear lifecycle, exact order
 # Linear pipeline order (dropped excluded). Index comparison implements "<= ceiling".
 # ceiling and next_ceiling values are restricted to members of this tuple (never dropped).
 STATE_ORDER: Final[tuple[TicketState, ...]] = (
+    TicketState.needs_kickoff, TicketState.needs_success, TicketState.needs_approach,
+    TicketState.needs_plan, TicketState.needs_implementation, TicketState.needs_closeout,
+    TicketState.done,
+)
+
+WORKER_STATE_ORDER: Final[tuple[TicketState, ...]] = (
     TicketState.needs_success, TicketState.needs_approach, TicketState.needs_plan,
     TicketState.needs_implementation, TicketState.needs_closeout, TicketState.done,
 )
@@ -88,6 +95,14 @@ class Proposal:                    # §4.2 proposal slot
     created_at: int
 
 
+@dataclass(frozen=True)
+class KickoffProposal:
+    title: str
+    kickoff_note: str
+    proposed_by: str
+    created_at: int
+
+
 @dataclass
 class FieldSlot:                   # one of the five field objects
     value: str | None = None       # canonical; resolution engine is the only writer
@@ -123,7 +138,7 @@ class ScopePair:                   # required on every direct accept/edit-accept
 
 class CreateTicketBody(TypedDict, total=False):   # POST /tickets
     title: str                     # default ""
-    user_note: str                 # default ""; preserved intake context / user guidance
+    kickoff_note: str              # default ""; proposed intake context / user guidance
     priority: str | None           # Priority value; default P3
     deadline: str | None           # ISO date
     project: str | None            # legacy project name
@@ -134,7 +149,7 @@ class CreateTicketBody(TypedDict, total=False):   # POST /tickets
 
 class TicketEdit(TypedDict, total=False):         # PATCH /tickets/{id}, parsed values
     title: str
-    user_note: str
+    kickoff_note: str
     priority: Priority
     deadline: str | None
     implementer: Implementer | None
@@ -144,7 +159,7 @@ class TicketEdit(TypedDict, total=False):         # PATCH /tickets/{id}, parsed 
 
 class ReconcileTicketFromExternalWorkBody(TypedDict):
     state: str
-    user_note: str
+    kickoff_note: str
     recap: NotRequired[str]
     success: NotRequired[str]
     approach: NotRequired[str]
@@ -176,6 +191,11 @@ class AcceptBody(TypedDict, total=False):         # POST /tickets/{id}/accept/{f
     edited_body: str | None        # direct edit applied before resolution
     next_ceiling: str | None       # TicketState value or NO_FURTHER; scope pair (§4.4.7)
     at_cap: str | None             # AtCap value; scope pair (§4.4.7)
+
+
+class AcceptKickoffBody(TypedDict, total=False):
+    edited_title: str | None
+    edited_kickoff_note: str | None
 
 
 class NoteBody(TypedDict, total=False):           # PUT /tickets/{id}/notes/{field}
@@ -222,8 +242,9 @@ class Ticket:                      # §3.3 — column names match exactly
     sprint_item_id: str | None
     sprint_id: str | None          # writable only when sprint_item_id IS NULL
     recap: str                     # writable only past needs_success
-    user_note: str                 # preserved intake context / user guidance
-    ceiling: TicketState           # default needs_success (R2); restricted to STATE_ORDER
+    kickoff_note: str              # settled intake context / user guidance
+    kickoff_proposal: KickoffProposal | None  # pending ticket-level kickoff proposal
+    ceiling: TicketState           # default needs_success (R2); restricted to WORKER_STATE_ORDER
     at_cap: AtCap                  # default propose (R2)
     ticket_status: TicketStatus    # durable state-of-control; transition functions write it
     implementer: Implementer | None  # human-overridable execution route

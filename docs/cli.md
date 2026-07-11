@@ -25,8 +25,8 @@ state setter.
 - **`project list / create`** — inspect and add projects. Project availability is
   data-backed, not enum-backed.
 - **`ticket create / show / list / set / approve / block / unblock / delete`** — manage
-  tickets. `ticket create` can take a `--user-note` / `--user-note-file` intake
-  note. `ticket set` names one field (`title`, `user-note`, `priority`, `deadline`,
+  tickets. `ticket create` can take a `--kickoff-note` / `--kickoff-note-file` intake
+  note. `ticket set` names one field (`title`, `kickoff-note`, `priority`, `deadline`,
   or `project` / `project-id`). Sprint placement is a sprint command, not a ticket
   setter. `ticket delete` is a permanent direct operation and requires `--yes`.
 - **`ticket copy / events`** — copy one ticket's plain-text packet or inspect its event log.
@@ -43,7 +43,8 @@ state setter.
   field-specific user guidance without changing the field's value.
 - **`chief reconcile-ticket-from-external-work / create-ticket-from-external-work`** —
   record reality established outside Panels. Both require an explicit Chief request,
-  a complete user note preserving the report and reconciliation reasoning, and the
+  a complete kickoff note through `--kickoff-note-file`, preserving the report and
+  reconciliation reasoning, and the
   exact settled field prefix for the target state. Reconciliation refuses pending or
   active ticket work; both operations leave the ticket stopped at the imported state.
 - **`serve`** — run the server and background worker runtime in the foreground.

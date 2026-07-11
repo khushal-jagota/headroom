@@ -2,6 +2,14 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D106 — Kickoff integration preserves concurrent main work and rebuilds the shared frontend
+
+Ticket `t_5m7fmdk3` was implemented and independently verified on its dedicated branch while `main`
+advanced with the bounded Markdown preview and Chat changes. Closeout merges the verified branch with
+a merge commit, preserves the concurrent records and nested worktree state, resolves the generated
+frontend index by rebuilding from the combined source, and runs the canonical verifier after the
+integration. No deployment or follow-up Ticket is required unless post-merge verification exposes one.
+
 ## D104 — Managed Markdown preview bounds are component-level visual containment
 
 The owner's live correction supersedes the earlier transfer-range framing for `t_uevrd406`: this

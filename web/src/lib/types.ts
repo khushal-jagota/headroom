@@ -124,7 +124,13 @@ export type TicketDetail = {
   day_ids?: string[];
   blocked?: boolean;
   recap?: string | null;
-  user_note?: string | null;
+  kickoff_note: string;
+  kickoff_proposal?: {
+    title: string;
+    kickoff_note: string;
+    proposed_by: string;
+    created_at?: number;
+  } | null;
   fields: Record<string, TicketField>;
 };
 

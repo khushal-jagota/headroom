@@ -64,12 +64,13 @@ def _create_ticket(db_path: Path, **values: Any) -> str:
         ticket = tickets_data.create_ticket(
             conn,
             title=values.pop("title", "Before edit"),
-            user_note=values.pop("user_note", "Before note"),
+            kickoff_note=values.pop("kickoff_note", "Before note"),
             actor="unattributed",
             now=1,
             title_max_chars=200,
             **values,
         )
+        ticket = tickets_data.accept_kickoff(conn, ticket.id, actor="unattributed", now=1)
         return ticket.id
     finally:
         conn.close()
@@ -82,7 +83,7 @@ def _snapshot(db_path: Path, ticket_id: str) -> dict[str, Any]:
         return {
             "values": (
                 ticket.title,
-                ticket.user_note,
+                ticket.kickoff_note,
                 ticket.priority.value,
                 ticket.deadline,
                 ticket.project_id,
@@ -243,14 +244,14 @@ def test_compound_patch_changes_all_fields_in_canonical_order_with_one_context_s
                 "project": "Vylo",
                 "deadline": "2026-08-01",
                 "priority": "P1",
-                "user_note": "After note",
+                "kickoff_note": "After note",
                 "title": "After edit",
             },
         )
 
     assert response.status_code == 200, response.json()
     assert response.json()["title"] == "After edit"
-    assert response.json()["user_note"] == "After note"
+    assert response.json()["kickoff_note"] == "After note"
     assert response.json()["priority"] == "P1"
     assert response.json()["deadline"] == "2026-08-01"
     assert response.json()["project_id"] == "project_vylo"
@@ -263,7 +264,7 @@ def test_compound_patch_changes_all_fields_in_canonical_order_with_one_context_s
         ),
         (
             "ticket_updated",
-            {"field": "user_note", "from": "Before note", "to": "After note"},
+            {"field": "kickoff_note", "from": "Before note", "to": "After note"},
         ),
         (
             "ticket_updated",
@@ -320,7 +321,7 @@ def test_compound_patch_rolls_back_row_events_and_context_after_event_insert_fai
             "CREATE TRIGGER abort_user_note_ticket_event "
             "BEFORE INSERT ON events "
             "WHEN NEW.kind = 'ticket_updated' "
-            "AND json_extract(NEW.payload, '$.field') = 'user_note' "
+            "AND json_extract(NEW.payload, '$.field') = 'kickoff_note' "
             "BEGIN SELECT RAISE(ABORT, 'forced ticket event failure'); END"
         )
     finally:
@@ -330,7 +331,7 @@ def test_compound_patch_rolls_back_row_events_and_context_after_event_insert_fai
     with TestClient(app, raise_server_exceptions=False) as client:
         response = client.patch(
             f"/api/tickets/{ticket_id}",
-            json={"title": "Must roll back", "user_note": "Trigger failure"},
+            json={"title": "Must roll back", "kickoff_note": "Trigger failure"},
         )
 
     assert response.status_code == 500
@@ -358,7 +359,7 @@ def test_patch_of_existing_non_null_values_is_a_true_noop(tmp_path: Path) -> Non
             f"/api/tickets/{ticket_id}",
             json={
                 "title": "Before edit",
-                "user_note": "Before note",
+                "kickoff_note": "Before note",
                 "priority": "P1",
                 "deadline": "2026-08-01",
                 "project": "vylo",

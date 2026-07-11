@@ -330,7 +330,7 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
     _set_fields(server, ticket_id, fields, state="needs_approach")
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
-            "UPDATE tickets SET user_note = ?, recap = ? WHERE id = ?",
+            "UPDATE tickets SET kickoff_note = ?, recap = ? WHERE id = ?",
             (body, body, ticket_id),
         )
     page = open_page(
@@ -350,9 +350,9 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
     direct_anchor = f'a[href="/files/tickets/{ticket_id}/notes/space%20name.md"]'
     assert field.locator(direct_anchor).count() == 0
     # The user note is a collapsed stage row by default; open it to render its body.
-    page.click("[data-user-note] .disclosure-summary")
-    page.wait_for_selector("[data-user-note] details[open]", timeout=WAIT_MS)
-    page.locator('[data-user-note] [data-file-preview-kind="image"]').first.wait_for(
+    page.click("[data-kickoff] .disclosure-summary")
+    page.wait_for_selector("[data-kickoff][open]", timeout=WAIT_MS)
+    page.locator('[data-kickoff] [data-file-preview-kind="image"]').first.wait_for(
         state="visible",
         timeout=WAIT_MS,
     )

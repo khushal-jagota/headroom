@@ -17,7 +17,8 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
 from planner.projects import data as projects_data
 from planner.sprints import data as sprints_data
-from planner.tickets.contracts import STATE_ORDER, FieldName, TicketState
+from planner.tickets import data as tickets_data
+from planner.tickets.contracts import WORKER_STATE_ORDER, FieldName, TicketState
 from planner.tickets.data import (
     create_ticket,
     file_proposal,
@@ -51,14 +52,15 @@ def _make_app(tmp_path: Path):
 def _ordinary_ticket(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
-        return create_ticket(
+        ticket = create_ticket(
             conn,
             title="Existing work",
             actor="unattributed",
             now=1,
             title_max_chars=200,
-            user_note="Original report",
-        ).id
+            kickoff_note="Original report",
+        )
+        return tickets_data.accept_kickoff(conn, ticket.id, actor="unattributed", now=1).id
     finally:
         conn.close()
 
@@ -66,7 +68,7 @@ def _ordinary_ticket(db_path: Path) -> str:
 def _external_body(
     state: TicketState, *, note: str = "External report and reasoning"
 ) -> dict[str, str]:
-    body = {"state": state.value, "user_note": note}
+    body = {"state": state.value, "kickoff_note": note}
     values = {
         "success": "Success settled",
         "approach": "Approach settled",
@@ -120,7 +122,7 @@ def test_both_external_work_routes_require_explicit_chief(
     assert created.json()["error"]["code"] == "agent_forbidden"
 
 
-@pytest.mark.parametrize("state", STATE_ORDER)
+@pytest.mark.parametrize("state", WORKER_STATE_ORDER)
 def test_create_external_work_enforces_exact_settled_prefix_and_coherent_control(
     tmp_path: Path, state: TicketState
 ) -> None:
@@ -159,7 +161,7 @@ def test_external_work_rejects_unknown_keys_and_prefix_mismatches_without_writes
             assert response.json()["error"]["code"] == "validation"
         missing = client.post(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
-            json={"state": "needs_plan", "user_note": "note", "success": "yes"},
+            json={"state": "needs_plan", "kickoff_note": "note", "success": "yes"},
             headers=_CHIEF,
         )
         future = client.post(
@@ -169,7 +171,7 @@ def test_external_work_rejects_unknown_keys_and_prefix_mismatches_without_writes
         )
         dropped = client.post(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
-            json={"state": "dropped", "user_note": "note"},
+            json={"state": "dropped", "kickoff_note": "note"},
             headers=_CHIEF,
         )
     assert [missing.status_code, future.status_code, dropped.status_code] == [400, 400, 400]
@@ -275,7 +277,7 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
             json={
                 "state": "needs_plan",
-                "user_note": "new complete note",
+                "kickoff_note": "new complete note",
                 "success": "valid first field",
                 "approach": "",
             },
@@ -346,6 +348,7 @@ def test_create_external_work_emits_exact_existing_events_and_rings(tmp_path: Pa
     events = _events(db_path, response.json()["id"])
     assert [kind for kind, _ in events] == [
         "ticket_created",
+        "kickoff_accepted",
         "field_value_edited",
         "field_value_edited",
         "field_value_edited",
@@ -362,12 +365,12 @@ def test_create_external_work_emits_exact_existing_events_and_rings(tmp_path: Pa
         "implementation",
         "closeout",
     ]
-    assert events[7][1] == {
+    assert events[8][1] == {
         "from": "needs_success",
         "to": "done",
         "cause": "external_work",
     }
-    assert events[8][1] == {
+    assert events[9][1] == {
         "ceiling": "done",
         "at_cap": "stop",
         "cause": "external_work",
@@ -398,7 +401,7 @@ def test_reconcile_safety_reads_happen_after_begin_immediate(tmp_path: Path) -> 
             reconcile_ticket_from_external_work(
                 conn,
                 ticket_id,
-                user_note="External report",
+                kickoff_note="External report",
                 target_state=TicketState.needs_success,
                 provided_values={},
                 actor="chief",
@@ -425,7 +428,7 @@ def test_reconcile_safety_reads_happen_after_begin_immediate(tmp_path: Path) -> 
     conn = connect(str(db_path))
     try:
         ticket = conn.execute(
-            "SELECT state, user_note, ticket_status FROM tickets WHERE id = ?", (ticket_id,)
+            "SELECT state, kickoff_note, ticket_status FROM tickets WHERE id = ?", (ticket_id,)
         ).fetchone()
         assert tuple(ticket) == ("needs_success", "Original report", "agent_running_step")
     finally:

@@ -3,6 +3,7 @@ import sqlite3
 
 import pytest
 
+from planner.core import db as db_module
 from planner.core.db import SCHEMA_VERSION, connect, create_schema
 
 _OLD_TICKETS_DDL = """
@@ -31,6 +32,36 @@ CREATE TABLE tickets (
   fields               TEXT NOT NULL DEFAULT '{}',
   created_at           INTEGER NOT NULL,
   updated_at           INTEGER NOT NULL
+);
+"""
+
+_PRE_KICKOFF_TICKETS_DDL = """
+CREATE TABLE tickets (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL CHECK (length(title) <= 200),
+  state TEXT NOT NULL DEFAULT 'needs_success'
+             CHECK (state IN ('needs_success','needs_approach','needs_plan',
+                              'needs_implementation','needs_closeout','done','dropped')),
+  priority TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
+  deadline TEXT,
+  project_id TEXT,
+  sprint_item_id TEXT,
+  sprint_id TEXT,
+  recap TEXT NOT NULL DEFAULT '',
+  user_note TEXT NOT NULL DEFAULT '',
+  ceiling TEXT NOT NULL DEFAULT 'needs_success'
+               CHECK (ceiling IN ('needs_success','needs_approach','needs_plan',
+                                  'needs_implementation','needs_closeout','done')),
+  at_cap TEXT NOT NULL DEFAULT 'propose' CHECK (at_cap IN ('stop','propose')),
+  ticket_status TEXT NOT NULL DEFAULT 'empty'
+                    CHECK (ticket_status IN ('empty','agent_running_step',
+                                             'awaiting_approval','user_takeover','errored')),
+  implementer TEXT,
+  chat_session_key TEXT,
+  alias TEXT,
+  fields TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
 );
 """
 
@@ -120,6 +151,117 @@ def test_create_schema_adds_ticket_implementer_after_lifecycle_migration_idempot
     conn.execute("UPDATE tickets SET implementer = 'hermes_codex' WHERE id = 't_existing'")
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("UPDATE tickets SET implementer = 'worker' WHERE id = 't_existing'")
+    conn.close()
+
+
+def test_kickoff_migration_preserves_existing_user_note_as_settled_kickoff(tmp_path):
+    db_path = tmp_path / "old-kickoff.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(_OLD_TICKETS_DDL)
+    fields = {
+        "success": {"value": None, "proposal": None, "user_note": None},
+        "approach": {"value": None, "proposal": None, "user_note": None},
+        "plan": {"value": None, "proposal": None, "user_note": None},
+        "implementation": {"value": None, "proposal": None, "user_note": None},
+        "closeout": {"value": None, "proposal": None, "user_note": None},
+    }
+    _insert_ticket(
+        conn,
+        id="t_existing",
+        title="Existing",
+        state="needs_success",
+        ceiling="needs_success",
+        ticket_status="empty",
+        user_note="preserve this intake note",
+        fields=json.dumps(fields),
+        created_at=1,
+        updated_at=1,
+    )
+
+    create_schema(conn)
+
+    columns = [str(row["name"]) for row in conn.execute("PRAGMA table_info(tickets)")]
+    assert "kickoff_note" in columns
+    assert "kickoff_proposal" in columns
+    assert "user_note" not in columns
+    row = conn.execute(
+        "SELECT state, kickoff_note, kickoff_proposal, ticket_status FROM tickets "
+        "WHERE id = 't_existing'"
+    ).fetchone()
+    assert tuple(row) == ("needs_success", "preserve this intake note", None, "empty")
+    conn.close()
+
+
+def test_kickoff_migration_rolls_back_failed_foreign_key_check_and_preserves_links(
+    tmp_path,
+):
+    db_path = tmp_path / "failed-kickoff-foreign-key-check.db"
+    conn = connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.executescript(
+        """
+        CREATE TABLE projects (id TEXT PRIMARY KEY);
+        CREATE TABLE sprint_items (id TEXT PRIMARY KEY);
+        CREATE TABLE sprints (id TEXT PRIMARY KEY);
+        """
+    )
+    conn.executescript(_PRE_KICKOFF_TICKETS_DDL)
+    _insert_ticket(
+        conn,
+        id="t_existing",
+        title="Existing",
+        state="needs_success",
+        ceiling="needs_success",
+        ticket_status="empty",
+        user_note="preserve this intake note",
+        fields="{}",
+        created_at=1,
+        updated_at=1,
+    )
+    conn.executescript(
+        """
+        CREATE TABLE day_tickets (
+          day_id TEXT NOT NULL,
+          ticket_id TEXT NOT NULL REFERENCES tickets(id),
+          position INTEGER NOT NULL,
+          PRIMARY KEY (day_id, ticket_id)
+        );
+        INSERT INTO day_tickets VALUES ('day_valid', 't_existing', 0);
+        INSERT INTO day_tickets VALUES ('day_dangling', 't_missing', 0);
+        """
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    with pytest.raises(RuntimeError, match="foreign key check failed after kickoff migration"):
+        db_module._migrate_ticket_kickoff_columns(conn)
+
+    tickets_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()[0]
+    assert "user_note" in tickets_sql
+    assert "kickoff_note" not in tickets_sql
+    assert tuple(conn.execute(
+        "SELECT title, user_note FROM tickets WHERE id = 't_existing'"
+    ).fetchone()) == ("Existing", "preserve this intake note")
+    assert conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tickets_new'"
+    ).fetchone() is None
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+    conn.execute("DELETE FROM day_tickets WHERE ticket_id = 't_missing'")
+    db_module._migrate_ticket_kickoff_columns(conn)
+
+    migrated = conn.execute(
+        "SELECT state, kickoff_note, kickoff_proposal FROM tickets WHERE id = 't_existing'"
+    ).fetchone()
+    assert tuple(migrated) == ("needs_success", "preserve this intake note", None)
+    assert [
+        tuple(row)
+        for row in conn.execute("SELECT day_id, ticket_id FROM day_tickets").fetchall()
+    ] == [("day_valid", "t_existing")]
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     conn.close()
 
 

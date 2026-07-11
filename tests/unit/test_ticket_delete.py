@@ -31,13 +31,16 @@ def _create(
     *,
     sprint_item_id: str | None = None,
 ):
-    return tickets_data.create_ticket(
+    ticket = tickets_data.create_ticket(
         conn,
         title=title,
         actor="human",
         now=clock.now_unix(),
         title_max_chars=TITLE_MAX_CHARS,
         sprint_item_id=sprint_item_id,
+    )
+    return tickets_data.accept_kickoff(
+        conn, ticket.id, actor="human", now=clock.now_unix()
     )
 
 

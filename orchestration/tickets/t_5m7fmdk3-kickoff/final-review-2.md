@@ -1,0 +1,1 @@
+1. `src/planner/cli/main.py:1029` and `src/planner/cli/main.py:1081` still use `STATE_ORDER` for Chief external-work `--state`, so the CLI advertises `needs_kickoff` even though external-work intake is settled-only and backend validation rejects anything outside `WORKER_STATE_ORDER` at `src/planner/tickets/logic/external_work.py:47`.

@@ -30,7 +30,7 @@ def create_ticket(
     now: int,
     title_max_chars: int,
     readiness_doorbell: ReadinessDoorbell,
-    user_note: str = "",
+    kickoff_note: str = "",
     project_id: str | None = None,
     priority: Priority = Priority.P3,
     deadline: str | None = None,
@@ -43,7 +43,7 @@ def create_ticket(
         actor=actor,
         now=now,
         title_max_chars=title_max_chars,
-        user_note=user_note,
+        kickoff_note=kickoff_note,
         project_id=project_id,
         priority=priority,
         deadline=deadline,
@@ -58,13 +58,13 @@ def create_ticket_from_external_work(
     conn: sqlite3.Connection,
     *,
     title: str,
-    user_note: str,
     target_state: TicketState,
     provided_values: Mapping[FieldName, str],
     actor: str,
     now: int,
     title_max_chars: int,
     readiness_doorbell: ReadinessDoorbell,
+    kickoff_note: str | None = None,
     recap: str | None = None,
     project_id: str | None = None,
     priority: Priority = Priority.P3,
@@ -75,7 +75,7 @@ def create_ticket_from_external_work(
     ticket = tickets_data.create_ticket_from_external_work(
         conn,
         title=title,
-        user_note=user_note,
+        kickoff_note=kickoff_note,
         target_state=target_state,
         provided_values=provided_values,
         actor=actor,
@@ -96,19 +96,19 @@ def reconcile_ticket_from_external_work(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    user_note: str,
     target_state: TicketState,
     provided_values: Mapping[FieldName, str],
     actor: str,
     now: int,
     readiness_doorbell: ReadinessDoorbell,
+    kickoff_note: str | None = None,
     recap: str | None = None,
 ) -> Ticket:
     before = tickets_data.read_ticket(conn, ticket_id)
     ticket = tickets_data.reconcile_ticket_from_external_work(
         conn,
         ticket_id,
-        user_note=user_note,
+        kickoff_note=kickoff_note,
         target_state=target_state,
         provided_values=provided_values,
         actor=actor,
@@ -154,6 +154,28 @@ def accept_proposal(
         edited_body=edited_body,
         next_ceiling=next_ceiling,
         at_cap=at_cap,
+    )
+    readiness_doorbell.ring()
+    return ticket
+
+
+def accept_kickoff(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    actor: str,
+    now: int,
+    readiness_doorbell: ReadinessDoorbell,
+    edited_title: str | None = None,
+    edited_kickoff_note: str | None = None,
+) -> Ticket:
+    ticket = tickets_data.accept_kickoff(
+        conn,
+        ticket_id,
+        actor=actor,
+        now=now,
+        edited_title=edited_title,
+        edited_kickoff_note=edited_kickoff_note,
     )
     readiness_doorbell.ring()
     return ticket
