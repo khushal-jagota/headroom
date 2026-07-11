@@ -82,7 +82,7 @@ def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api)
         assert count == 0, count
     flushes_b = page_b.evaluate("window.__plannerDebug.flushes")
 
-    created = cli(server, "ticket", "create", "--title", "T18 board ticket")
+    created = cli(server, "ticket", "create", "--type", "coding", "--title", "T18 board ticket")
     tid = created["id"]
     assert created["state"] == "needs_success", created
 
@@ -107,7 +107,7 @@ def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api)
 
 
 def test_e23_env_pinned_propose(server, context_factory, open_page, cli, api):
-    tid = cli(server, "ticket", "create", "--title", "T18 propose ticket")["id"]
+    tid = cli(server, "ticket", "create", "--type", "coding", "--title", "T18 propose ticket")["id"]
     # PLAN_TICKET_ID resolves the ticket (no positional id); stdin carries the body.
     cli(
         server,
@@ -167,7 +167,7 @@ def test_kickoff_accepts_from_review_without_worker_revision_control(
     server, context_factory, open_page, cli, api
 ):
     tid = cli(
-        server, "ticket", "create", "--title", "Review kickoff",
+        server, "ticket", "create", "--type", "coding", "--title", "Review kickoff",
         "--kickoff-note", "Review this premise",
     )["id"]
     card = f'[data-review-card][data-entity-id="{tid}"]'
@@ -199,7 +199,7 @@ def test_kickoff_accepts_from_review_without_worker_revision_control(
 
 
 def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
-    tid = cli(server, "ticket", "create", "--title", "T18 review ticket")["id"]
+    tid = cli(server, "ticket", "create", "--type", "coding", "--title", "T18 review ticket")["id"]
     cli(
         server,
         "worker",
@@ -253,7 +253,15 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
 def test_review_return_for_revision_starts_agent_without_chat_copy(
     server, context_factory, open_page, cli, api
 ):
-    tid = cli(server, "ticket", "create", "--title", "Revision review ticket")["id"]
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Revision review ticket",
+    )["id"]
     cli(
         server,
         "worker",
@@ -290,7 +298,15 @@ def test_review_return_for_revision_starts_agent_without_chat_copy(
 def test_markdown_approval_focus_noop_keeps_raw_source(
     server, context_factory, open_page, cli, api
 ):
-    tid = cli(server, "ticket", "create", "--title", "Markdown noop ticket")["id"]
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Markdown noop ticket",
+    )["id"]
     cli(
         server,
         "worker",
@@ -337,7 +353,7 @@ def test_markdown_approval_focus_noop_keeps_raw_source(
 
 
 def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api):
-    tid = cli(server, "ticket", "create", "--title", "T18 edit ticket")["id"]
+    tid = cli(server, "ticket", "create", "--type", "coding", "--title", "T18 edit ticket")["id"]
     cli(
         server,
         "worker",
@@ -419,7 +435,15 @@ def test_review_keyboard_shortcuts(server, context_factory, open_page, cli, api)
     # The review chamber's global shortcuts (s skip, o open, cmd/ctrl+enter approve)
     # must never fire from inside an editable. Two queued tickets so a skip leaves a
     # card behind, and so cmd/ctrl+enter inside the editor is proven not to approve.
-    first = cli(server, "ticket", "create", "--title", "Shortcut ticket one")["id"]
+    first = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Shortcut ticket one",
+    )["id"]
     cli(
         server,
         "worker",
@@ -431,7 +455,15 @@ def test_review_keyboard_shortcuts(server, context_factory, open_page, cli, api)
         ticket_id=first,
         stdin="# Proposal one\n\n- a",
     )
-    second = cli(server, "ticket", "create", "--title", "Shortcut ticket two")["id"]
+    second = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Shortcut ticket two",
+    )["id"]
     cli(
         server,
         "worker",
@@ -520,9 +552,15 @@ def test_e26_chat_panel_echo_and_offline(
     server, server_factory, context_factory, open_page, cli, api
 ):
     pending_server = server_factory(gateway="slow_fake")
-    pending_tid = cli(pending_server, "ticket", "create", "--title", "T18 pending chat ticket")[
-        "id"
-    ]
+    pending_tid = cli(
+        pending_server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "T18 pending chat ticket",
+    )["id"]
     pending_page = open_page(
         context_factory(),
         pending_server,
@@ -686,7 +724,7 @@ def test_e26_chat_panel_echo_and_offline(
     )
 
     # --- echo half (default echo gateway) ---
-    tid = cli(server, "ticket", "create", "--title", "T18 chat ticket")["id"]
+    tid = cli(server, "ticket", "create", "--type", "coding", "--title", "T18 chat ticket")["id"]
     page = open_page(
         context_factory(),
         server,
@@ -779,7 +817,7 @@ def test_e26_chat_panel_echo_and_offline(
 
     # --- offline half (boot-time adapter -> a second instance) ---
     off = server_factory(gateway="offline")
-    tid2 = cli(off, "ticket", "create", "--title", "T18 offline ticket")["id"]
+    tid2 = cli(off, "ticket", "create", "--type", "coding", "--title", "T18 offline ticket")["id"]
     page2 = open_page(
         context_factory(),
         off,
@@ -793,7 +831,7 @@ def test_e26_chat_panel_echo_and_offline(
 
 
 def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
-    tid = cli(server, "ticket", "create", "--title", "T18 chain ticket")["id"]
+    tid = cli(server, "ticket", "create", "--type", "coding", "--title", "T18 chain ticket")["id"]
 
     # Unattributed direct scope: ceiling needs_plan, at_cap propose.
     g = api.direct_post(
@@ -863,7 +901,7 @@ def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
 def test_slash_menu_runs_skill(server, context_factory, open_page, cli, api):
     # The "/" menu is a read of the gateway command catalog; selecting a Skill runs
     # it on the ticket's own mind via POST /command (fake gateway -> a scripted reply).
-    tid = cli(server, "ticket", "create", "--title", "T18 slash ticket")["id"]
+    tid = cli(server, "ticket", "create", "--type", "coding", "--title", "T18 slash ticket")["id"]
     page = open_page(
         context_factory(),
         server,
@@ -914,7 +952,7 @@ def test_slash_menu_runs_display_command(server, context_factory, open_page, cli
     # A non-skill display command (/status) executes on the ticket's own mind via POST
     # /command and renders as a system line — on BOTH the menu-pick and the typed-Send
     # path. The Exit category stays out of the menu (a web chat can't quit the mind).
-    tid = cli(server, "ticket", "create", "--title", "T18 display ticket")["id"]
+    tid = cli(server, "ticket", "create", "--type", "coding", "--title", "T18 display ticket")["id"]
     page = open_page(
         context_factory(),
         server,
@@ -965,7 +1003,7 @@ def test_pending_kickoff_edits_and_approves_before_five_worker_stages(
     server, context_factory, open_page, cli, api
 ):
     tid = cli(
-        server, "ticket", "create", "--title", "Draft title",
+        server, "ticket", "create", "--type", "coding", "--title", "Draft title",
         "--kickoff-note", "Draft premise",
     )["id"]
     page = open_page(
@@ -1022,7 +1060,7 @@ def test_settled_kickoff_field_renders_as_canonical_intake_block(
     server, context_factory, open_page, cli
 ):
     tid = cli(
-        server, "ticket", "create", "--title", "Kickoff note UI ticket",
+        server, "ticket", "create", "--type", "coding", "--title", "Kickoff note UI ticket",
         "--kickoff-note", "Preserve this intake boundary.",
     )["id"]
     cli(server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "propose")
@@ -1057,7 +1095,15 @@ def test_settled_kickoff_field_renders_as_canonical_intake_block(
             "WHERE worker_entity_id = ?", (tid,),
         ).fetchall() == [("ticket_changed", 1)]
 
-    empty_tid = cli(server, "ticket", "create", "--title", "Empty kickoff note UI ticket")["id"]
+    empty_tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Empty kickoff note UI ticket",
+    )["id"]
     empty_page = open_page(
         context_factory(), server, f"#/ticket/{empty_tid}",
         f'section[data-screen="ticket"][data-ticket-id="{empty_tid}"] '
@@ -1080,7 +1126,15 @@ def test_settled_kickoff_field_renders_as_canonical_intake_block(
 def test_ticket_implementer_assignment_edits_in_facts_without_changing_workflow(
     server, context_factory, open_page, cli, api
 ):
-    tid = cli(server, "ticket", "create", "--title", "Implementer assignment UI ticket")["id"]
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Implementer assignment UI ticket",
+    )["id"]
     ready = f'section[data-screen="ticket"][data-ticket-id="{tid}"]'
     page = open_page(
         context_factory(),

@@ -269,7 +269,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     # means the implementation proposal PARKS pending; approving it via Review defaults
     # the onward scope to the next stage (needs_closeout), where closeout PARKS pending
     # in turn until its own Review approval reaches done.
-    mid = cli(server, "ticket", "create", "--title", E30_TITLE)["id"]
+    mid = cli(server, "ticket", "create", "--type", "coding", "--title", E30_TITLE)["id"]
     _scope_and_advance(
         server,
         api,
@@ -374,7 +374,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
 
 
 def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api):
-    mid = cli(server, "ticket", "create", "--title", E31_TITLE)["id"]
+    mid = cli(server, "ticket", "create", "--type", "coding", "--title", E31_TITLE)["id"]
     _scope_and_advance(
         server,
         api,
@@ -478,7 +478,17 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
         "--sprint",
         sid,
     )["id"]
-    ltid = cli(server, "ticket", "create", "--title", E32_LOOSE_TITLE, "--sprint", sid)["id"]
+    ltid = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        E32_LOOSE_TITLE,
+        "--sprint",
+        sid,
+    )["id"]
 
     # Status groups were replaced by project groups; the item's status now lives on
     # the row itself as data-item-status. Assert the item is present exactly once and
@@ -499,7 +509,7 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
     child = cli(
         server,
         "ticket",
-        "create",
+        "create", "--type", "coding",
         "--title",
         f"{E32_ITEM_TITLE} child",
         "--sprint-item",

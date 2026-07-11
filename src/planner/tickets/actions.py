@@ -17,7 +17,6 @@ from planner.tickets.contracts import (
     NextCeiling,
     Ticket,
     TicketDeletion,
-    TicketState,
 )
 from planner.tickets.logic import admission
 
@@ -30,6 +29,7 @@ def create_ticket(
     now: int,
     title_max_chars: int,
     readiness_doorbell: ReadinessDoorbell,
+    ticket_type: str = "coding",
     kickoff_note: str = "",
     project_id: str | None = None,
     priority: Priority = Priority.P3,
@@ -49,6 +49,7 @@ def create_ticket(
         deadline=deadline,
         sprint_id=sprint_id,
         sprint_item_id=sprint_item_id,
+        ticket_type=ticket_type,
     )
     readiness_doorbell.ring()
     return ticket
@@ -58,12 +59,13 @@ def create_ticket_from_external_work(
     conn: sqlite3.Connection,
     *,
     title: str,
-    target_state: TicketState,
-    provided_values: Mapping[FieldName, str],
+    target_state: str,
+    provided_values: Mapping[str, str],
     actor: str,
     now: int,
     title_max_chars: int,
     readiness_doorbell: ReadinessDoorbell,
+    ticket_type: str,
     kickoff_note: str | None = None,
     recap: str | None = None,
     project_id: str | None = None,
@@ -87,6 +89,7 @@ def create_ticket_from_external_work(
         deadline=deadline,
         sprint_id=sprint_id,
         sprint_item_id=sprint_item_id,
+        ticket_type=ticket_type,
     )
     readiness_doorbell.ring()
     return ticket
@@ -96,8 +99,8 @@ def reconcile_ticket_from_external_work(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    target_state: TicketState,
-    provided_values: Mapping[FieldName, str],
+    target_state: str,
+    provided_values: Mapping[str, str],
     actor: str,
     now: int,
     readiness_doorbell: ReadinessDoorbell,
@@ -185,7 +188,7 @@ def change_scope(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    ceiling: TicketState,
+    ceiling: str,
     at_cap: AtCap,
     actor: str,
     now: int,
@@ -207,7 +210,7 @@ def set_state(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    new_state: TicketState,
+    new_state: str,
     actor: str,
     now: int,
     readiness_doorbell: ReadinessDoorbell,

@@ -103,7 +103,15 @@ def _dispatch_mixed_clipboard_file_event(page: Page, selector: str) -> None:
 def test_chat_image_control_is_directly_beside_slash_and_text_only_send_still_works(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Image composer placement")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Image composer placement",
+    )["id"]
     page = open_page(
         context_factory(),
         server,
@@ -142,7 +150,15 @@ def test_chat_image_control_is_directly_beside_slash_and_text_only_send_still_wo
 def test_pending_image_does_not_change_slash_command_behavior(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Image and slash command")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Image and slash command",
+    )["id"]
     page = open_page(
         context_factory(),
         server,
@@ -173,7 +189,15 @@ def test_pending_image_does_not_change_slash_command_behavior(
 def test_ticket_chat_text_and_image_render_immediately_after_navigation_and_reload(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Ticket image chat")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Ticket image chat",
+    )["id"]
     page = open_page(
         context_factory(),
         server,
@@ -237,7 +261,15 @@ def test_ticket_chat_text_and_image_render_immediately_after_navigation_and_relo
 def test_pending_images_support_removal_paste_and_drop_before_ordered_send(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Image intake paths")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Image intake paths",
+    )["id"]
     page = open_page(
         context_factory(),
         server,
@@ -324,9 +356,15 @@ def test_chief_chat_image_only_renders_immediately_after_navigation_and_reload(
 def test_invalid_image_selection_shows_one_error_and_creates_no_turn(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Reject invalid image selection")[
-        "id"
-    ]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Reject invalid image selection",
+    )["id"]
     page = open_page(
         context_factory(),
         server,
@@ -355,7 +393,15 @@ def test_invalid_image_selection_shows_one_error_and_creates_no_turn(
 def test_mixed_clipboard_files_accept_image_and_show_standard_rejection(
     server, context_factory, open_page, cli
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Mixed clipboard image")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Mixed clipboard image",
+    )["id"]
     page = open_page(
         context_factory(),
         server,
@@ -385,7 +431,15 @@ def test_mixed_clipboard_files_accept_image_and_show_standard_rejection(
 def test_pending_image_survives_upload_and_turn_start_failures(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Retain failed image")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Retain failed image",
+    )["id"]
     page = open_page(
         context_factory(),
         server,

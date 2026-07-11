@@ -435,11 +435,36 @@ non-test change: `pyproject.toml` `pythonpath=["."]` (for `tests.support` import
 (implement + self-review + verify) — proportionate for a test-only ticket, no production behavior change.
 602 unit, `./verify` PASS.
 
-Next (FINAL before the gate): **t_tt03** — type-driven CLI/API ingress (create --type mandatory; propose/
-scope/state validated per-type via a served manifest endpoint) + finish external-work genericization
-(gate-based prefix derivation, honor supports_prefix_reconciliation, replace hardcoded needs_success, lift
-the coding-only rejection, golden coding prefix map) + the **go/no-go gate** (drive probe through real
-CLI/API propose/accept to done, no worker). BRIEF ready. Report to owner at the gate.
+**t_tt03 DONE — verified green + committed. GO/NO-GO GATE PASSES.** Type-driven CLI/API ingress + external-
+work genericization + manifest endpoint (`GET /api/ticket-types`). Pipeline: plan → my derivation
+verification (gate-based prefix reproduces coding EXACTLY, no off-by-one) + rulings (single ticket; ?state=
+requires type for non-reserved; probe via in-process TestClient; not-found>invalid-field) → plan review
+killed (background reap) → implement (engine already per-type, so ingress parse-swap: no
+`parse_enum(TicketState/FieldName)`/`TicketState(...)`/`FieldName(...)` coercion left in api.py/cli;
+external-work `_gate_field_order`+`_prefix_count`=state_index, golden coding map + misaligned-type +
+declining-type tests; per-type marshalling; type-seeded external create) → implementer's internal Codex +
+MY independent verification (read the gate test — rigorous; grepped: NO consumer depends on the coding
+error MESSAGE strings, only codes) → `./verify` PASS (624 unit, e2e 68).
+
+**The go/no-go gate (`tests/unit/test_go_no_go_gate.py`) passes:** a `probe` ticket is created and driven
+`needs_kickoff → needs_alpha → needs_beta → done` through the REAL FastAPI TestClient (routes → marshallers
+→ per-type parse → writers → events), asserting exact state/ceiling/at_cap/parked-field/settled-value/
+cleared-proposal/EXACT-event-order at each step, NO worker session (`chat_session_key IS NULL`, 0
+`chat_turns`), exact invalid field/state/ceiling + missing/unknown-type codes, and external-work
+create+reconcile for coding+probe incl. probe prefix reconciliation + the coding golden. A missed ingress
+point would fail here (probe's states/fields aren't enum members).
+
+**Conscious relaxation (documented, D-note):** coding ingress ERROR MESSAGE strings became per-type-aware
+("unknown ticket field"+type_id, "state outside the linear order") — codes/flow/data/events byte-identical,
+no test/frontend asserted the old strings. This is the per-type-envelope feature, not a behavior break.
+
+**MILESTONE REACHED — the owner's "run to the go/no-go gate" scope is complete.** Backend ticket-types
+machinery is N-ary end-to-end and proven: 6 tickets committed (t_tt00 `824aa58`, t_tt01 `eeef51d`, t_tt02
+`ff8dbc9`, t_tt02b `85db3e3`, t_tt02x `0b6a0a4`, t_tt03 next). Production ships coding-only; probe is
+test-only. **Beyond the gate (NEXT, separate — Phases 4-5):** t_tt04 read models + mixed-type board/scope
+UI (web consumes the manifest); t_tt05 worker realization (per-type specialist skills + toolset routing);
+authoring the first real second workflow (e.g. exploration). Also flagged to owner: the shipped kickoff
+migration's latent pre-lock snapshot window (harden as a follow-up).
 
 ## Current work cycle (2026-07-10): Panels sprint-planning workflow
 

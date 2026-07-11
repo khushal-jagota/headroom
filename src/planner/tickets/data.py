@@ -357,8 +357,8 @@ def create_ticket_from_external_work(
     conn: sqlite3.Connection,
     *,
     title: str,
-    target_state: TicketState,
-    provided_values: Mapping[FieldName, str],
+    target_state: str,
+    provided_values: Mapping[str, str],
     actor: str,
     now: int,
     title_max_chars: int,
@@ -421,7 +421,11 @@ def create_ticket_from_external_work(
                 ticket_id,
                 title,
                 ticket_type,
-                TicketState.needs_success.value,
+                # Seed at the type's FIRST worker stage (== default_ceiling). The
+                # applied external-work decision then moves it to target_state; the
+                # seed only needs to be a valid non-terminal worker stage so the
+                # pre-persist guard passes (coding: needs_success; probe: needs_alpha).
+                default_ceiling,
                 priority.value,
                 deadline,
                 project_id,
@@ -457,8 +461,8 @@ def reconcile_ticket_from_external_work(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    target_state: TicketState,
-    provided_values: Mapping[FieldName, str],
+    target_state: str,
+    provided_values: Mapping[str, str],
     actor: str,
     now: int,
     kickoff_note: str | None = None,
@@ -816,10 +820,13 @@ def return_for_revision(
 
 
 def set_state(
-    conn: sqlite3.Connection, ticket_id: str, *, new_state: TicketState, actor: str, now: int
+    conn: sqlite3.Connection, ticket_id: str, *, new_state: str, actor: str, now: int
 ) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
+        # decide_state_jump guards only on the universal bookends + the equality check,
+        # so it needs no definition; the ingress validated new_state against the type,
+        # and _apply_decision re-validates the prospective (state, ceiling) per-type.
         decision = resolution.decide_state_jump(ticket, new_state, actor)
         return _apply_decision(conn, ticket, decision, now)
 

@@ -14,7 +14,17 @@ PLAN_BIN = REPO_ROOT / ".venv" / "bin" / "panels"
 def test_ticket_create_sprint_item_parents_it(server, cli, api) -> None:
     # --item -> --sprint-item: the option renamed; still parents the ticket under the item.
     iid = cli(server, "sprint", "item", "create", "--title", "Item A", "--project", "Vylo")["id"]
-    tid = cli(server, "ticket", "create", "--title", "Child", "--sprint-item", iid)["id"]
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Child",
+        "--sprint-item",
+        iid,
+    )["id"]
     detail = api.get(server, f"/api/tickets/{tid}")
     assert detail["sprint_item_id"] == iid
     assert [t["id"] for t in cli(server, "ticket", "list", "--sprint-item", iid)["tickets"]] == [
@@ -24,8 +34,8 @@ def test_ticket_create_sprint_item_parents_it(server, cli, api) -> None:
 
 def test_ticket_list_day_filter(server, cli, api) -> None:
     # `ticket list --day today` scopes to the day's board (day_tickets join).
-    t_on = cli(server, "ticket", "create", "--title", "On today")["id"]
-    t_off = cli(server, "ticket", "create", "--title", "Off day")["id"]
+    t_on = cli(server, "ticket", "create", "--type", "coding", "--title", "On today")["id"]
+    t_off = cli(server, "ticket", "create", "--type", "coding", "--title", "Off day")["id"]
     cli(server, "day", "add-ticket", t_on, "--date", "today")   # add t_on to today's day
 
     listed = cli(server, "ticket", "list", "--day", "today")
@@ -76,7 +86,7 @@ def test_queue_pickup_command_removed(server) -> None:
 def test_ticket_approval_copy_events_and_worker_note_shape(server, cli, api) -> None:
     tid = cli(
         server,
-        "ticket", "create", "--title", "CLI approve ticket",
+        "ticket", "create", "--type", "coding", "--title", "CLI approve ticket",
         "--kickoff-note", "intake context from user",
     )["id"]
     created = api.get(server, f"/api/tickets/{tid}")
@@ -130,7 +140,15 @@ def test_sprint_ticket_commands_use_sprint_option_and_current_selector(server, c
         "sprint", "create", "--name", "CLI sprint",
         "--date-start", "2026-07-01", "--date-end", "2026-07-14",
     )
-    tid = cli(server, "ticket", "create", "--title", "Loose sprint ticket")["id"]
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Loose sprint ticket",
+    )["id"]
 
     cli(server, "sprint", "add-ticket", tid, "--sprint", "current")
     assert api.get(server, f"/api/tickets/{tid}")["sprint_id"] == sprint["id"]

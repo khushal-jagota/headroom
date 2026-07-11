@@ -242,7 +242,15 @@ def _wheel_up_inside_chat_thread(page: Page, selector: str, delta_y: int = -24) 
 def test_ticket_chat_send_survives_navigation_from_server_state(
     server, context_factory, open_page, cli, api
 ) -> None:
-    tid = cli(server, "ticket", "create", "--title", "Live chat remount ticket")["id"]
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Live chat remount ticket",
+    )["id"]
     page = open_page(
         context_factory(),
         server,
@@ -393,7 +401,15 @@ def test_chief_chat_shows_running_activity_status_after_remount(
 def test_activity_growth_respects_existing_chat_follow_mode(
     server, context_factory, open_page, cli
 ) -> None:
-    entity_id = cli(server, "ticket", "create", "--title", "Activity scroll ticket")["id"]
+    entity_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Activity scroll ticket",
+    )["id"]
     _seed_running_worker_turn(server, entity_id)
     _seed_chat_history(server, entity_id)
     page = open_page(
@@ -436,9 +452,15 @@ def test_activity_growth_respects_existing_chat_follow_mode(
 def test_expanded_activity_live_updates_preserve_real_wheel_scrollback(
     server, context_factory, open_page, cli
 ) -> None:
-    entity_id = cli(server, "ticket", "create", "--title", "Wheel activity scroll ticket")[
-        "id"
-    ]
+    entity_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Wheel activity scroll ticket",
+    )["id"]
     _seed_running_worker_turn(server, entity_id)
     _seed_chat_history(server, entity_id, count=30)
     _seed_long_running_worker_activity(server, entity_id, count=50)
@@ -505,7 +527,15 @@ def test_expanded_activity_live_updates_preserve_real_wheel_scrollback(
 def test_ticket_chat_shows_running_worker_turn_after_remount(
     server, context_factory, open_page, cli, api
 ) -> None:
-    tid = cli(server, "ticket", "create", "--title", "Live worker state ticket")["id"]
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Live worker state ticket",
+    )["id"]
     _seed_running_worker_turn(server, tid)
 
     state = api.get(server, f"/api/chat/{tid}/state")
@@ -570,7 +600,15 @@ def test_ticket_chat_shows_running_worker_turn_after_remount(
 def test_ticket_chat_pause_settles_visible_active_turn(
     server, context_factory, open_page, cli, api
 ) -> None:
-    tid = cli(server, "ticket", "create", "--title", "Pause visible chat turn")["id"]
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Pause visible chat turn",
+    )["id"]
     _seed_running_worker_turn(server, tid)
 
     page = open_page(
@@ -596,7 +634,15 @@ def test_ticket_chat_pause_then_immediate_send_keeps_one_new_reply_after_remount
     server_factory, context_factory, open_page, cli, api
 ) -> None:
     slow_server = server_factory(gateway="slow_fake")
-    tid = cli(slow_server, "ticket", "create", "--title", "Pause then send ticket")["id"]
+    tid = cli(
+        slow_server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Pause then send ticket",
+    )["id"]
     page = open_page(
         context_factory(),
         slow_server,

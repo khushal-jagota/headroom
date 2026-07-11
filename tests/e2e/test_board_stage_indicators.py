@@ -42,14 +42,54 @@ def _stage(page, card: str, field: str) -> str:
 def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
     server, context_factory, open_page, cli, api
 ) -> None:
-    waiting = cli(server, "ticket", "create", "--title", "Board waiting indicator")["id"]
-    pending = cli(server, "ticket", "create", "--title", "Board pending indicator")["id"]
-    errored = cli(server, "ticket", "create", "--title", "Board errored indicator")["id"]
-    implementation = cli(
-        server, "ticket", "create", "--title", "Board implementation indicator"
+    waiting = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Board waiting indicator",
     )["id"]
-    closeout = cli(server, "ticket", "create", "--title", "Board closeout indicator")["id"]
-    done = cli(server, "ticket", "create", "--title", "Board done indicator")["id"]
+    pending = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Board pending indicator",
+    )["id"]
+    errored = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Board errored indicator",
+    )["id"]
+    implementation = cli(
+        server, "ticket", "create", "--type", "coding", "--title", "Board implementation indicator"
+    )["id"]
+    closeout = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Board closeout indicator",
+    )["id"]
+    done = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Board done indicator",
+    )["id"]
     for ticket_id in (waiting, pending, errored, implementation, closeout, done):
         _add_today(api, server, ticket_id)
 
@@ -137,7 +177,7 @@ def test_workspace_groups_by_project_orders_by_activity_and_filters_status(
     older_activity = cli(
         server,
         "ticket",
-        "create",
+        "create", "--type", "coding",
         "--title",
         "Vylo older activity",
         "--project-id",
@@ -146,7 +186,7 @@ def test_workspace_groups_by_project_orders_by_activity_and_filters_status(
     newer_activity = cli(
         server,
         "ticket",
-        "create",
+        "create", "--type", "coding",
         "--title",
         "Vylo newer activity",
         "--project-id",
@@ -155,7 +195,7 @@ def test_workspace_groups_by_project_orders_by_activity_and_filters_status(
     done_activity = cli(
         server,
         "ticket",
-        "create",
+        "create", "--type", "coding",
         "--title",
         "Vylo done activity",
         "--project-id",
@@ -164,13 +204,21 @@ def test_workspace_groups_by_project_orders_by_activity_and_filters_status(
     learning = cli(
         server,
         "ticket",
-        "create",
+        "create", "--type", "coding",
         "--title",
         "Learning errored ticket",
         "--project-id",
         "project_learning",
     )["id"]
-    no_project = cli(server, "ticket", "create", "--title", "No project ticket")["id"]
+    no_project = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "No project ticket",
+    )["id"]
     for ticket_id in (older_activity, newer_activity, done_activity, learning, no_project):
         _add_today(api, server, ticket_id)
 

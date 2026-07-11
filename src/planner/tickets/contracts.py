@@ -153,6 +153,7 @@ class ScopePair:                   # required on every direct accept/edit-accept
 
 
 class CreateTicketBody(TypedDict, total=False):   # POST /tickets
+    ticket_type: str               # required registry type id (no ingress default)
     title: str                     # default ""
     kickoff_note: str              # default ""; proposed intake context / user guidance
     priority: str | None           # Priority value; default P3

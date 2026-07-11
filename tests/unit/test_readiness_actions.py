@@ -182,25 +182,25 @@ def _external_body(state: str) -> dict[str, str]:
 def test_ticket_create_and_chief_create_ring_after_success_only(tmp_path: Path) -> None:
     app, db_path, _clock, doorbell = _make_app(tmp_path)
     with TestClient(app) as client:
-        invalid = client.post("/api/tickets", json={"title": ""})
+        invalid = client.post("/api/tickets", json={"title": "", "type": "coding"})
         assert invalid.status_code == 400
         assert doorbell.calls == 0
 
-        created = client.post("/api/tickets", json={"title": "Created"})
+        created = client.post("/api/tickets", json={"title": "Created", "type": "coding"})
         assert created.status_code == 200, created.text
         assert doorbell.calls == 1
         assert "ticket_created" in _event_kinds(db_path, created.json()["id"])
 
         unauthorized = client.post(
             "/api/chief/tickets/from-external-work",
-            json={"title": "Denied", **_external_body("needs_success")},
+            json={"title": "Denied", "type": "coding", **_external_body("needs_success")},
         )
         assert unauthorized.status_code == 400
         assert doorbell.calls == 1
 
         imported = client.post(
             "/api/chief/tickets/from-external-work",
-            json={"title": "Imported", **_external_body("needs_success")},
+            json={"title": "Imported", "type": "coding", **_external_body("needs_success")},
             headers=_CHIEF,
         )
         assert imported.status_code == 200, imported.text
@@ -214,7 +214,7 @@ def test_chief_rejections_do_not_ring_or_change_canonical_records(
     with TestClient(app) as client:
         malformed_create = client.post(
             "/api/chief/tickets/from-external-work",
-            json={"title": "Malformed", "state": "needs_success"},
+            json={"title": "Malformed", "type": "coding", "state": "needs_success"},
             headers=_CHIEF,
         )
         assert malformed_create.status_code == 400
@@ -265,7 +265,7 @@ def test_chief_reconcile_rings_for_semantic_change_and_errored_normalization_onl
         tmp_path, fake_now="2099-01-01T12:00:00+00:00"
     )
     assert isinstance(clock, planner_clock.TestClock)
-    body = {"title": "Imported", **_external_body("needs_success")}
+    body = {"title": "Imported", "type": "coding", **_external_body("needs_success")}
     with TestClient(app) as client:
         created = client.post(
             "/api/chief/tickets/from-external-work", json=body, headers=_CHIEF
@@ -1029,7 +1029,7 @@ def test_best_effort_rings_after_ticket_and_day_commits(
 
     app.state.readiness_doorbell = LoopReadinessDoorbell(ticket_delivery)
     with TestClient(app) as client:
-        created = client.post("/api/tickets", json={"title": "Committed first"})
+        created = client.post("/api/tickets", json={"title": "Committed first", "type": "coding"})
     assert created.status_code == 200, created.text
 
     ticket_id = created.json()["id"]

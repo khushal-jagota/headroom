@@ -68,6 +68,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
     return {
         "id": ticket.id,
         "title": ticket.title,
+        "ticket_type": ticket.ticket_type,
         "state": str(ticket.state),
         "priority": ticket.priority.value,
         "deadline": ticket.deadline,
@@ -105,7 +106,7 @@ def list_tickets(
     conn: sqlite3.Connection,
     now: int,
     *,
-    state: TicketState | None,
+    state: str | None,
     project_id: str | None,
     sprint_id: str | None,
     sprint_item_id: str | None,

@@ -96,7 +96,15 @@ def _wait_for_field_text(api, server, ticket_id: str, field: str, expected_fragm
 def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     server, context_factory, open_page, cli
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "File preview route")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "File preview route",
+    )["id"]
     _write_ticket_files(server, ticket_id)
     fields = {
         "success": {
@@ -200,7 +208,15 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
 def test_markdown_file_preview_has_component_owned_max_height(
     server, context_factory, open_page, cli
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Bounded Markdown preview")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Bounded Markdown preview",
+    )["id"]
     root = _ticket_files_dir(server, ticket_id) / "notes"
     root.mkdir(parents=True)
     (root / "short.md").write_text("# Short\n\nOne paragraph.", encoding="utf-8")
@@ -263,7 +279,15 @@ def test_markdown_file_preview_has_component_owned_max_height(
 def test_read_only_ticket_and_chat_surfaces_share_file_preview(
     server, context_factory, open_page, cli
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Read-only file previews")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Read-only file previews",
+    )["id"]
     _write_ticket_files(server, ticket_id)
     body = _links(ticket_id)
     fields = {
@@ -372,7 +396,15 @@ def test_read_only_ticket_and_chat_surfaces_share_file_preview(
 def test_normal_editable_ticket_field_renders_file_previews_at_rest(
     server, context_factory, open_page, cli
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Normal field previews")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Normal field previews",
+    )["id"]
     _write_ticket_files(server, ticket_id)
     body = _links(ticket_id)
     fields = {
@@ -450,7 +482,15 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
 def test_editable_markdown_file_links_round_trip_as_raw_markdown(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Editable file links")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Editable file links",
+    )["id"]
     _write_ticket_files(server, ticket_id)
     body = _links(ticket_id)
     fields = {
@@ -524,7 +564,15 @@ def test_editable_markdown_file_links_round_trip_as_raw_markdown(
 def test_editable_markdown_preview_focus_noop_and_actions_do_not_persist_generated_dom(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Editable preview actions")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Editable preview actions",
+    )["id"]
     _write_ticket_files(server, ticket_id)
     body = _links(ticket_id)
     fields = {
@@ -593,7 +641,15 @@ def test_editable_markdown_preview_focus_noop_and_actions_do_not_persist_generat
 def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Atomic preview editing")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Atomic preview editing",
+    )["id"]
     _write_ticket_files(server, ticket_id)
     markdown_token = f"[Markdown](/files/tickets/{ticket_id}/notes/space%20name.md)"
     image_token = f"[Image](/files/tickets/{ticket_id}/images/pic.png)"
@@ -784,7 +840,15 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
 def test_editable_preview_deletion_unmounts_pending_fetch_and_clears_iframe(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Preview cleanup")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Preview cleanup",
+    )["id"]
     _write_ticket_files(server, ticket_id)
     slow_token = f"[Slow](/files/tickets/{ticket_id}/notes/slow.md)"
     html_token = f"[HTML](/files/tickets/{ticket_id}/page.html)"
@@ -876,7 +940,15 @@ def test_editable_preview_deletion_unmounts_pending_fetch_and_clears_iframe(
 def test_editing_that_moves_atomic_slot_keeps_preview_mounted(
     server, context_factory, open_page, cli
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Moving atomic preview")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Moving atomic preview",
+    )["id"]
     _write_ticket_files(server, ticket_id)
     image_token = f"[Image](/files/tickets/{ticket_id}/images/pic.png)"
     body = f"Before {image_token} after"
@@ -944,7 +1016,15 @@ def test_editing_that_moves_atomic_slot_keeps_preview_mounted(
 def test_loaded_preview_proposal_approves_without_edited_body(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Preview proposal approval")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Preview proposal approval",
+    )["id"]
     _write_ticket_files(server, ticket_id)
     body = _links(ticket_id)
     cli(

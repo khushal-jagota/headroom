@@ -49,9 +49,33 @@ def test_ticket_blocker_summary_links_and_sprint_item_hash_selection(
         "--sprint",
         sprint["id"],
     )["id"]
-    active_blocker = cli(server, "ticket", "create", "--title", "Active blocker")["id"]
-    cleared_blocker = cli(server, "ticket", "create", "--title", "Cleared blocker")["id"]
-    blocked_ticket = cli(server, "ticket", "create", "--title", "Blocked ticket")["id"]
+    active_blocker = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Active blocker",
+    )["id"]
+    cleared_blocker = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Cleared blocker",
+    )["id"]
+    blocked_ticket = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Blocked ticket",
+    )["id"]
 
     cli(server, "ticket", "block", blocked_ticket, "--by", active_blocker)
     cli(server, "ticket", "block", blocked_ticket, "--by", cleared_blocker)

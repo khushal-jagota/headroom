@@ -22,13 +22,7 @@ import click
 from click.core import ParameterSource
 
 from planner.cli import http
-from planner.tickets.contracts import (
-    GATING_FIELD,
-    WORKER_STATE_ORDER,
-    AtCap,
-    FieldName,
-    TicketState,
-)
+from planner.tickets.contracts import AtCap
 
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
 _FIELDS = ["success", "approach", "plan", "implementation", "closeout"]
@@ -185,6 +179,35 @@ def _current_sprint_id(as_json: bool) -> str:
     if sprint is None:
         http.fail_validation("no current sprint", as_json)
     return str(sprint["id"])
+
+
+# The manifest arrives as a plain JSON body across the HTTP boundary, so the CLI holds
+# it as a plain dict — importing the ticket_types ManifestDict contract here would
+# breach the F6 import seam (only coding_bridge may import planner.ticket_types).
+def _ticket_types(as_json: bool) -> dict[str, dict[str, Any]]:
+    """The served manifests keyed by type_id — the single source for stage order /
+    gates / fields / ceiling range per type (no parallel lifecycle encoding in the CLI)."""
+    data = http.send("GET", "/api/ticket-types", as_json=as_json, request_actor="ordinary")
+    return {m["type_id"]: m for m in data["types"]}
+
+
+def _ticket_type(type_id: str, as_json: bool) -> dict[str, Any]:
+    types = _ticket_types(as_json)
+    if type_id not in types:
+        http.fail_validation(
+            f"unknown ticket type: {type_id} (known: {', '.join(sorted(types))})", as_json
+        )
+    return types[type_id]
+
+
+def _gating_field_for_state(manifest: dict[str, Any], state: str) -> str | None:
+    """The field the type's stage gates (None for a terminal). Driven off the ticket's
+    own type manifest, not a global gate map."""
+    for stage in manifest["stages"]:
+        if stage["id"] == state:
+            gating = stage["gating_field"]
+            return str(gating) if gating is not None else None
+    return None
 
 
 def sprint_value_for_write(raw: str | None, as_json: bool) -> str | None:
@@ -442,6 +465,7 @@ def ticket() -> None:
 
 @ticket.command("create")
 @click.option("--title", required=True, help="Ticket title.")
+@click.option("--type", "ticket_type", required=True, help="Ticket type id (e.g. coding).")
 @click.option("--priority", type=click.Choice(_PRIORITIES), default=None, help="Priority label.")
 @click.option("--deadline", default=None, help="Due date in YYYY-MM-DD form.")
 @click.option("--project", default=None, help="Project name.")
@@ -457,6 +481,7 @@ def ticket() -> None:
 @json_option
 def ticket_create(
     title: str,
+    ticket_type: str,
     priority: str | None,
     deadline: str | None,
     project: str | None,
@@ -467,7 +492,7 @@ def ticket_create(
     kickoff_note_file: str | None,
     as_json: bool,
 ) -> None:
-    body: dict[str, Any] = {"title": title}
+    body: dict[str, Any] = {"title": title, "type": ticket_type}
     if kickoff_note is not None and kickoff_note_file is not None:
         http.fail_validation("kickoff note accepts only one note option", as_json)
     if kickoff_note_file is not None:
@@ -521,6 +546,8 @@ def ticket_delete(ticket_id: str | None, yes: bool, as_json: bool) -> None:
 
 @ticket.command("list")
 @click.option("--state", default=None, help="Only show tickets in this state.")
+@click.option("--type", "ticket_type", default=None,
+              help="Type to disambiguate a non-reserved --state.")
 @click.option("--project", default=None, help="Only show project name.")
 @click.option("--project-id", default=None, help="Only show project id.")
 @click.option("--sprint", default=None, help="Sprint id, current, or none.")
@@ -529,6 +556,7 @@ def ticket_delete(ticket_id: str | None, yes: bool, as_json: bool) -> None:
 @json_option
 def ticket_list(
     state: str | None,
+    ticket_type: str | None,
     project: str | None,
     project_id: str | None,
     sprint: str | None,
@@ -539,6 +567,7 @@ def ticket_list(
     params = _drop_none(
         {
             "state": state,
+            "ticket_type": ticket_type,
             "project": project,
             "project_id": project_id,
             "sprint_id": sprint_value_for_filter(sprint, as_json),
@@ -618,17 +647,18 @@ def ticket_approve(
 ) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
     detail = http.send("GET", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary")
-    state = TicketState(detail["state"])
-    field = GATING_FIELD.get(state)
+    state = detail["state"]
+    manifest = _ticket_type(detail["ticket_type"], as_json)
+    field = _gating_field_for_state(manifest, state)
     if field is None:
-        http.fail_validation(f"ticket in {state.value} has nothing to approve", as_json)
-    proposal = detail["fields"][field.value]["proposal"]
+        http.fail_validation(f"ticket in {state} has nothing to approve", as_json)
+    proposal = detail["fields"][field]["proposal"]
     if proposal is None:
-        http.fail_validation(f"no pending {field.value} proposal", as_json)
+        http.fail_validation(f"no pending {field} proposal", as_json)
     if ceiling is None or at_cap is None:
         http.fail_validation("approval requires --ceiling and --at-cap", as_json)
     if kickoff_title is not None:
-        if field is not FieldName.kickoff:
+        if field != "kickoff":
             http.fail_validation("--kickoff-title only applies while approving kickoff", as_json)
         http.send(
             "PATCH",
@@ -641,7 +671,7 @@ def ticket_approve(
     if edit_file is not None:
         field_payload["edited_body"] = _read_source(edit_file, as_json)
     if kickoff_note_file is not None:
-        if field is not FieldName.kickoff:
+        if field != "kickoff":
             http.fail_validation(
                 "--kickoff-note-file only applies while approving kickoff", as_json
             )
@@ -650,12 +680,12 @@ def ticket_approve(
         field_payload["edited_body"] = _read_source(kickoff_note_file, as_json)
     data = http.send(
         "POST",
-        f"/api/tickets/{tid}/accept/{field.value}",
+        f"/api/tickets/{tid}/accept/{field}",
         as_json=as_json,
         json_body=field_payload,
         request_actor="ordinary",
     )
-    http.emit(data, as_json, f"{data['id']} approved {field.value}")
+    http.emit(data, as_json, f"{data['id']} approved {field}")
 
 
 @ticket.command("block")
@@ -1074,9 +1104,7 @@ def chief() -> None:
 
 @chief.command("reconcile-ticket-from-external-work")
 @click.argument("ticket_id")
-@click.option(
-    "--state", required=True, type=click.Choice([state.value for state in WORKER_STATE_ORDER])
-)
+@click.option("--state", required=True, help="Target worker state (validated per type).")
 @click.option(
     "--kickoff-note-file", required=True, help="Complete resulting ticket note file, or -."
 )
@@ -1128,9 +1156,8 @@ def chief_reconcile_ticket_from_external_work(
 
 @chief.command("create-ticket-from-external-work")
 @click.option("--title", required=True, help="Ticket title.")
-@click.option(
-    "--state", required=True, type=click.Choice([state.value for state in WORKER_STATE_ORDER])
-)
+@click.option("--type", "ticket_type", required=True, help="Ticket type id (e.g. coding).")
+@click.option("--state", required=True, help="Target worker state (validated per type).")
 @click.option(
     "--kickoff-note-file", required=True, help="Complete resulting ticket note file, or -."
 )
@@ -1151,6 +1178,7 @@ def chief_reconcile_ticket_from_external_work(
 @json_option
 def chief_create_ticket_from_external_work(
     title: str,
+    ticket_type: str,
     state: str,
     kickoff_note_file: str,
     recap_file: str | None,
@@ -1179,6 +1207,7 @@ def chief_create_ticket_from_external_work(
         as_json=as_json,
     )
     body["title"] = title
+    body["type"] = ticket_type
     if priority is not None:
         body["priority"] = priority
     if deadline is not None:

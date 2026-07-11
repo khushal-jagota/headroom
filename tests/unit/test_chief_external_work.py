@@ -121,7 +121,11 @@ def test_both_external_work_routes_require_explicit_chief(
         )
         created = client.post(
             "/api/chief/tickets/from-external-work",
-            json={"title": "Imported", **_external_body(TicketState.needs_success)},
+            json={
+                "title": "Imported",
+                "type": "coding",
+                **_external_body(TicketState.needs_success),
+            },
             headers=headers,
         )
     assert reconciled.status_code == 400
@@ -135,7 +139,12 @@ def test_create_external_work_enforces_exact_settled_prefix_and_coherent_control
     tmp_path: Path, state: TicketState
 ) -> None:
     app, _db_path = _make_app(tmp_path)
-    body = {"title": f"Imported {state.value}", "recap": "Imported recap", **_external_body(state)}
+    body = {
+        "title": f"Imported {state.value}",
+        "type": "coding",
+        "recap": "Imported recap",
+        **_external_body(state),
+    }
     with TestClient(app) as client:
         response = client.post(
             "/api/chief/tickets/from-external-work", json=body, headers=_CHIEF
@@ -191,7 +200,11 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
     with TestClient(app) as client:
         made = client.post(
             "/api/chief/tickets/from-external-work",
-            json={"title": "Forward", **_external_body(TicketState.needs_implementation)},
+            json={
+                "title": "Forward",
+                "type": "coding",
+                **_external_body(TicketState.needs_implementation),
+            },
             headers=_CHIEF,
         ).json()
         backward = client.post(
@@ -347,6 +360,7 @@ def test_create_external_work_emits_exact_existing_events_and_rings(tmp_path: Pa
             "/api/chief/tickets/from-external-work",
             json={
                 "title": "Already done",
+                "type": "coding",
                 "recap": "done elsewhere",
                 **_external_body(TicketState.done),
             },
@@ -465,6 +479,7 @@ def test_parent_item_events_cover_external_create_state_and_status_changes(tmp_p
             "/api/chief/tickets/from-external-work",
             json={
                 "title": "Parented external work",
+                "type": "coding",
                 "sprint_item_id": item.id,
                 **_external_body(TicketState.needs_success),
             },

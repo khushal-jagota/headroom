@@ -293,21 +293,28 @@ def decide_return_for_revision(
     )
 
 
-def decide_state_jump(ticket: Ticket, new_state: TicketState, actor: str) -> Decision:
+def decide_state_jump(ticket: Ticket, new_state: str, actor: str) -> Decision:
     admission.require_direct_actor(actor, "set_state")
-    if new_state == TicketState.dropped:
+    # The reserved bookends (dropped, needs_kickoff) are string-identical for every
+    # type; the ingress has already validated new_state is a linear stage of the
+    # ticket's type (or is dropped), so guarding on the bookend strings is type-safe.
+    # No definition is needed: only the universal bookends and the equality guard run.
+    if str(new_state) == TicketState.dropped.value:
         raise PlannerError(ErrorCode.validation, "use the drop action")
-    if ticket.state == TicketState.dropped:
+    if str(ticket.state) == TicketState.dropped.value:
         raise PlannerError(ErrorCode.validation, "dropped is terminal")
-    if ticket.state == TicketState.needs_kickoff or new_state == TicketState.needs_kickoff:
+    if (
+        str(ticket.state) == TicketState.needs_kickoff.value
+        or str(new_state) == TicketState.needs_kickoff.value
+    ):
         raise PlannerError(
             ErrorCode.validation,
             "kickoff state changes only through kickoff approval",
         )
-    if new_state == ticket.state:
+    if str(new_state) == str(ticket.state):
         raise PlannerError(ErrorCode.validation, "ticket already in that state")
     events = (_state_change(ticket.state, new_state, CAUSE_DIRECT_STATE_JUMP),)
-    return Decision(events=events, new_state=new_state)
+    return Decision(events=events, new_state=str(new_state))
 
 
 def decide_drop(ticket: Ticket, actor: str) -> Decision:

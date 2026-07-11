@@ -51,10 +51,8 @@ from planner.tickets.contracts import (
     AtCap,
     CreateTicketBody,
     CreateTicketFromExternalWorkBody,
-    FieldName,
     Implementer,
     LinkBody,
-    NextCeiling,
     NoteBody,
     ProposeBody,
     ProposeWithRecapBody,
@@ -63,10 +61,11 @@ from planner.tickets.contracts import (
     RevisionMessageBody,
     ScopeBody,
     StateBody,
+    Ticket,
     TicketEdit,
-    TicketState,
     ValueEditBody,
 )
+from planner.tickets.logic import coding_bridge
 
 router = APIRouter()
 
@@ -161,11 +160,56 @@ def body_opt_str(body: JsonDict, key: str) -> str | None:
     return raw
 
 
+# --- type-driven ingress helpers -----------------------------------------------
+# The ticket's type is resolved FIRST, then each ingress position is validated
+# against that type's definition (not a global enum), and a bare str is passed to
+# the engine (already str-native and definition-parameterized). This is what lets
+# a non-coding type (e.g. probe stages needs_alpha/needs_beta) flow through the
+# real routes. Reserved bookends (needs_kickoff/done/dropped) are shared by every
+# type (PLAN invariant 1); the type-specific middle stages/fields are not.
+
+RESERVED_STATES = frozenset({"needs_kickoff", "done", "dropped"})
+
+
+def _require_create_type(raw: JsonDict) -> str:
+    """A create's ticket type: required and known. Missing or unknown surfaces the
+    valid type list in one consistent validation error, before any writer runs."""
+    type_id = body_str(raw, "type")
+    known = coding_bridge.registry().type_ids()
+    if type_id not in known:
+        raise PlannerError(
+            ErrorCode.validation,
+            "ticket create requires a known type",
+            {"type": type_id, "types": list(known)},
+        )
+    return type_id
+
+
+def _resolve_ticket_type(
+    conn: sqlite3.Connection, ticket_id: str
+) -> tuple[Ticket, coding_bridge.WorkflowDefinition]:
+    """Load the ticket (not-found beats any position error) and resolve its type."""
+    ticket = tickets_data.read_ticket(conn, ticket_id)
+    return ticket, coding_bridge.require(ticket.ticket_type)
+
+
+def _validate_field(defn: coding_bridge.WorkflowDefinition, field: str) -> str:
+    """A field id validated against the type's declared fields; raises validation."""
+    if not coding_bridge.has_field(defn, field):
+        raise PlannerError(
+            ErrorCode.validation,
+            "unknown ticket field",
+            {"field": field, "type_id": defn.type_id},
+        )
+    return field
+
+
 # --- request-body marshallers (contract shapes in tickets/contracts.py) ---------
 
 
 def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
     return CreateTicketBody(
+        ticket_type=_require_create_type(raw),
         title=body_str(raw, "title"),
         kickoff_note=body_str(raw, "kickoff_note"),
         priority=body_opt_str(raw, "priority"),
@@ -177,21 +221,14 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
     )
 
 
-_EXTERNAL_RECONCILE_KEYS = frozenset(
-    {
-        "state",
-        "kickoff_note",
-        "recap",
-        "success",
-        "approach",
-        "plan",
-        "implementation",
-        "closeout",
-    }
-)
-_EXTERNAL_CREATE_KEYS = _EXTERNAL_RECONCILE_KEYS | frozenset(
+# The fixed external-work keys, allowed for every type. The field-value keys are
+# per-type (the type's declared field ids minus kickoff, which arrives as
+# kickoff_note), so the allowed set is computed once the type is resolved.
+_EXTERNAL_FIXED_RECONCILE_KEYS = frozenset({"state", "kickoff_note", "recap"})
+_EXTERNAL_FIXED_CREATE_KEYS = _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(
     {
         "title",
+        "type",
         "priority",
         "deadline",
         "project",
@@ -200,6 +237,12 @@ _EXTERNAL_CREATE_KEYS = _EXTERNAL_RECONCILE_KEYS | frozenset(
         "sprint_item_id",
     }
 )
+
+
+def _external_field_keys(defn: coding_bridge.WorkflowDefinition) -> tuple[str, ...]:
+    """The type's field-value body keys: its declared field ids minus kickoff (which
+    arrives as kickoff_note)."""
+    return tuple(fid for fid in coding_bridge.field_ids(defn) if fid != "kickoff")
 
 
 def _reject_unknown_external_keys(raw: JsonDict, allowed: frozenset[str]) -> None:
@@ -212,8 +255,13 @@ def _reject_unknown_external_keys(raw: JsonDict, allowed: frozenset[str]) -> Non
         )
 
 
-def _marshal_external_reconcile(raw: JsonDict) -> ReconcileTicketFromExternalWorkBody:
-    _reject_unknown_external_keys(raw, _EXTERNAL_RECONCILE_KEYS)
+def _marshal_external_reconcile(
+    raw: JsonDict, defn: coding_bridge.WorkflowDefinition
+) -> ReconcileTicketFromExternalWorkBody:
+    field_keys = _external_field_keys(defn)
+    _reject_unknown_external_keys(
+        raw, _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(field_keys)
+    )
     missing = [key for key in ("state", "kickoff_note") if key not in raw]
     if missing:
         raise PlannerError(
@@ -225,30 +273,34 @@ def _marshal_external_reconcile(raw: JsonDict) -> ReconcileTicketFromExternalWor
         state=body_str(raw, "state"),
         kickoff_note=body_str(raw, "kickoff_note"),
     )
-    for key in ("recap", "success", "approach", "plan", "implementation", "closeout"):
-        if key in raw:
-            body[key] = body_str(raw, key)
+    if "recap" in raw:
+        body["recap"] = body_str(raw, "recap")
     return body
 
 
-def _marshal_external_create(raw: JsonDict) -> CreateTicketFromExternalWorkBody:
-    _reject_unknown_external_keys(raw, _EXTERNAL_CREATE_KEYS)
+def _marshal_external_create(
+    raw: JsonDict, defn: coding_bridge.WorkflowDefinition
+) -> CreateTicketFromExternalWorkBody:
+    field_keys = _external_field_keys(defn)
+    _reject_unknown_external_keys(
+        raw, _EXTERNAL_FIXED_CREATE_KEYS | frozenset(field_keys)
+    )
     if "title" not in raw:
         raise PlannerError(
             ErrorCode.validation,
             "external-work creation requires title",
             {"missing": ["title"]},
         )
-    common_raw = {key: value for key, value in raw.items() if key in _EXTERNAL_RECONCILE_KEYS}
-    common = _marshal_external_reconcile(common_raw)
+    common_keys = _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(field_keys)
+    common_raw = {key: value for key, value in raw.items() if key in common_keys}
+    common = _marshal_external_reconcile(common_raw, defn)
     body = CreateTicketFromExternalWorkBody(
         state=common["state"],
         kickoff_note=common["kickoff_note"],
         title=body_str(raw, "title"),
     )
-    for key in ("recap", "success", "approach", "plan", "implementation", "closeout"):
-        if key in common:
-            body[key] = common[key]
+    if "recap" in common:
+        body["recap"] = common["recap"]
     if "priority" in raw:
         body["priority"] = body_opt_str(raw, "priority")
     if "deadline" in raw:
@@ -265,20 +317,28 @@ def _marshal_external_create(raw: JsonDict) -> CreateTicketFromExternalWorkBody:
 
 
 def _external_values(
-    body: ReconcileTicketFromExternalWorkBody,
-) -> dict[FieldName, str]:
-    values: dict[FieldName, str] = {FieldName.kickoff: body["kickoff_note"]}
-    if "success" in body:
-        values[FieldName.success] = body["success"]
-    if "approach" in body:
-        values[FieldName.approach] = body["approach"]
-    if "plan" in body:
-        values[FieldName.plan] = body["plan"]
-    if "implementation" in body:
-        values[FieldName.implementation] = body["implementation"]
-    if "closeout" in body:
-        values[FieldName.closeout] = body["closeout"]
+    raw: JsonDict, kickoff_note: str, defn: coding_bridge.WorkflowDefinition
+) -> dict[str, str]:
+    """The provided settled values keyed by field id: kickoff from kickoff_note, then
+    each declared non-kickoff field present in the raw body (validated as a str). The
+    field keys are type-declared, so this is genuinely per-type."""
+    values: dict[str, str] = {"kickoff": kickoff_note}
+    for key in _external_field_keys(defn):
+        if key in raw:
+            values[key] = body_str(raw, key)
     return values
+
+
+def _validate_external_state(
+    state: str, defn: coding_bridge.WorkflowDefinition
+) -> str:
+    """An external-work target state validated against the type's stages. A state that
+    is neither a linear stage of the type nor the reserved ``dropped`` is rejected at
+    the ingress; a linear-but-out-of-range target (needs_kickoff / dropped) is left for
+    ``decide_external_work`` to reject with its exact message (coding parity)."""
+    if state in coding_bridge.views.stage_ids(defn) or state == defn.dropped_stage.id:
+        return state
+    raise PlannerError(ErrorCode.validation, "invalid state", {"state": state})
 
 
 def _marshal_accept(raw: JsonDict) -> AcceptBody:
@@ -292,17 +352,18 @@ def _marshal_accept(raw: JsonDict) -> AcceptBody:
 # --- scope marshallers ---------------------------------------------------------
 
 
-def _parse_next_ceiling(raw: str | None) -> NextCeiling | None:
+def _parse_next_ceiling(
+    raw: str | None, defn: coding_bridge.WorkflowDefinition
+) -> str | None:
     if raw is None:
         return None
     if raw == NO_FURTHER:
         return NO_FURTHER
-    try:
-        return TicketState(raw)
-    except ValueError:
+    if raw not in coding_bridge.views.ceiling_range(defn):
         raise PlannerError(
             ErrorCode.scope_invalid, "unknown next_ceiling", {"next_ceiling": raw}
-        ) from None
+        )
+    return raw
 
 
 def _parse_scope_at_cap(raw: str | None) -> AtCap | None:
@@ -341,6 +402,7 @@ async def create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
         deadline=body["deadline"],
         sprint_id=body["sprint_id"],
         sprint_item_id=body["sprint_item_id"],
+        ticket_type=body["ticket_type"],
         readiness_doorbell=readiness_doorbell,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -352,8 +414,10 @@ async def create_ticket_from_external_work(
     readiness_doorbell: Doorbell,
 ) -> JsonDict:
     require_chief(ctx)
-    body = _marshal_external_create(raw)
-    target_state = parse_enum(TicketState, body["state"], "state")
+    ticket_type = _require_create_type(raw)
+    defn = coding_bridge.require(ticket_type)
+    body = _marshal_external_create(raw, defn)
+    target_state = _validate_external_state(body["state"], defn)
     priority_raw = body.get("priority")
     priority = (
         parse_enum(Priority, priority_raw, "priority")
@@ -371,7 +435,7 @@ async def create_ticket_from_external_work(
         title=body["title"],
         kickoff_note=body["kickoff_note"],
         target_state=target_state,
-        provided_values=_external_values(body),
+        provided_values=_external_values(raw, body["kickoff_note"], defn),
         recap=body.get("recap"),
         actor=ctx.actor,
         now=now,
@@ -381,6 +445,7 @@ async def create_ticket_from_external_work(
         deadline=body.get("deadline"),
         sprint_id=body.get("sprint_id"),
         sprint_item_id=body.get("sprint_item_id"),
+        ticket_type=ticket_type,
         readiness_doorbell=readiness_doorbell,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -392,15 +457,16 @@ async def reconcile_ticket_from_external_work(
     readiness_doorbell: Doorbell,
 ) -> JsonDict:
     require_chief(ctx)
-    body = _marshal_external_reconcile(raw)
-    target_state = parse_enum(TicketState, body["state"], "state")
+    _ticket, defn = _resolve_ticket_type(conn, ticket_id)
+    body = _marshal_external_reconcile(raw, defn)
+    target_state = _validate_external_state(body["state"], defn)
     now = clk.now_unix()
     ticket = tickets_actions.reconcile_ticket_from_external_work(
         conn,
         ticket_id,
         kickoff_note=body["kickoff_note"],
         target_state=target_state,
-        provided_values=_external_values(body),
+        provided_values=_external_values(raw, body["kickoff_note"], defn),
         recap=body.get("recap"),
         actor=ctx.actor,
         now=now,
@@ -411,10 +477,23 @@ async def reconcile_ticket_from_external_work(
 
 @router.get("/tickets")
 async def list_tickets(conn: DbConn, cfg: Cfg, clk: Clk, state: str | None = None,
+                       ticket_type: str | None = None,
                        project: str | None = None, project_id: str | None = None,
                        sprint_id: str | None = None,
                        sprint_item_id: str | None = None, day: str | None = None) -> JsonDict:
-    state_enum = parse_enum(TicketState, state, "state") if state is not None else None
+    # `state` alone is ambiguous across types (needs_alpha means nothing to coding). The
+    # reserved bookends (needs_kickoff/done/dropped) are the same string for every type,
+    # so they filter cross-type without a ticket_type; a non-reserved state requires
+    # ticket_type and is validated against that type's stages.
+    if state is not None and state not in RESERVED_STATES:
+        if ticket_type is None:
+            raise PlannerError(
+                ErrorCode.validation,
+                "filtering by a non-reserved state requires ticket_type",
+                {"state": state},
+            )
+        # Raises "state outside the linear order" for a state foreign to the type.
+        coding_bridge.views.state_index(coding_bridge.require(ticket_type), state)
     resolved_project = projects_data.resolve_project(
         conn, project_id=project_id, project_name=project
     )
@@ -424,7 +503,7 @@ async def list_tickets(conn: DbConn, cfg: Cfg, clk: Clk, state: str | None = Non
         "tickets": tickets_views.list_tickets(
             conn,
             clk.now_unix(),
-            state=state_enum,
+            state=state,
             project_id=resolved_project.id if resolved_project is not None else None,
             sprint_id=sprint_id,
             sprint_item_id=sprint_item_id,
@@ -542,10 +621,11 @@ async def propose_current_field(ticket_id: str, raw: dict[str, Any], conn: DbCon
 async def propose_field(ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                         clk: Clk) -> JsonDict:
     body = ProposeBody(body=body_str(raw, "body"))
-    field_enum = parse_enum(FieldName, field, "field")
+    _ticket, defn = _resolve_ticket_type(conn, ticket_id)
+    _validate_field(defn, field)
     now = clk.now_unix()
     ticket = tickets_data.file_proposal(
-        conn, ticket_id, field=field_enum, body=body["body"], actor=ctx.actor, now=now
+        conn, ticket_id, field=field, body=body["body"], actor=ctx.actor, now=now
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -555,14 +635,15 @@ async def accept_field(ticket_id: str, field: str, raw: dict[str, Any], conn: Db
                        clk: Clk, readiness_doorbell: Doorbell) -> JsonDict:
     body = _marshal_accept(raw)
     require_direct_write(ctx)
-    field_enum = parse_enum(FieldName, field, "field")
+    _ticket, defn = _resolve_ticket_type(conn, ticket_id)
+    _validate_field(defn, field)
     now = clk.now_unix()
-    next_ceiling = _parse_next_ceiling(body["next_ceiling"])
+    next_ceiling = _parse_next_ceiling(body["next_ceiling"], defn)
     at_cap = _parse_scope_at_cap(body["at_cap"])
     ticket = tickets_actions.accept_proposal(
         conn,
         ticket_id,
-        field=field_enum,
+        field=field,
         actor=ctx.actor,
         now=now,
         edited_body=body["edited_body"],
@@ -602,12 +683,13 @@ async def put_notes(ticket_id: str, field: str, raw: dict[str, Any], conn: DbCon
     body = NoteBody(note=body_opt_str(raw, "note"), user_note=body_opt_str(raw, "user_note"))
     if "note" in raw and "user_note" in raw:
         raise PlannerError(ErrorCode.validation, "use note or user_note, not both", {})
-    field_enum = parse_enum(FieldName, field, "field")
+    _ticket, defn = _resolve_ticket_type(conn, ticket_id)
+    _validate_field(defn, field)
     now = clk.now_unix()
     ticket = tickets_data.set_note(
         conn,
         ticket_id,
-        field=field_enum,
+        field=field,
         note=body["user_note"] if "user_note" in raw else body["note"],
         actor=ctx.actor,
         now=now,
@@ -629,12 +711,13 @@ async def put_value(ticket_id: str, field: str, raw: dict[str, Any], conn: DbCon
                     clk: Clk, readiness_doorbell: Doorbell) -> JsonDict:
     body = ValueEditBody(body=body_str(raw, "body"))
     require_direct_write(ctx)
-    field_enum = parse_enum(FieldName, field, "field")
+    _ticket, defn = _resolve_ticket_type(conn, ticket_id)
+    _validate_field(defn, field)
     now = clk.now_unix()
     ticket = tickets_actions.edit_field_value(
         conn,
         ticket_id,
-        field=field_enum,
+        field=field,
         new_body=body["body"],
         actor=ctx.actor,
         now=now,
@@ -657,12 +740,11 @@ async def scope_ticket(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: C
         raise PlannerError(
             ErrorCode.scope_missing, "scope requires ceiling and at_cap", {"missing": missing}
         )
-    try:
-        ceiling = TicketState(ceiling_raw)
-    except ValueError:
+    _ticket, defn = _resolve_ticket_type(conn, ticket_id)
+    if ceiling_raw not in coding_bridge.views.ceiling_range(defn):
         raise PlannerError(
             ErrorCode.scope_invalid, "unknown ceiling", {"ceiling": ceiling_raw}
-        ) from None
+        )
     try:
         at_cap = AtCap(at_cap_raw)
     except ValueError:
@@ -672,7 +754,7 @@ async def scope_ticket(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: C
     ticket = tickets_actions.change_scope(
         conn,
         ticket_id,
-        ceiling=ceiling,
+        ceiling=ceiling_raw,
         at_cap=at_cap,
         actor=ctx.actor,
         now=now,
@@ -686,12 +768,17 @@ async def set_state(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                     clk: Clk, readiness_doorbell: Doorbell) -> JsonDict:
     body = StateBody(to=body_str(raw, "to"))
     require_direct_write(ctx)
+    _ticket, defn = _resolve_ticket_type(conn, ticket_id)
+    to = body["to"]
+    # A linear stage of the type, or the reserved dropped (the writer rejects dropped
+    # with "use the drop action"); anything else is foreign to the type.
+    if to != defn.dropped_stage.id:
+        coding_bridge.views.state_index(defn, to)  # raises "state outside the linear order"
     now = clk.now_unix()
-    to_state = parse_enum(TicketState, body["to"], "state")
     ticket = tickets_actions.set_state(
         conn,
         ticket_id,
-        new_state=to_state,
+        new_state=to,
         actor=ctx.actor,
         now=now,
         readiness_doorbell=readiness_doorbell,

@@ -220,6 +220,14 @@ def create_app(
             "test_mode": config.test_mode,
         }
 
+    @app.get("/api/ticket-types")
+    async def ticket_types() -> dict[str, Any]:
+        # The single source of stage order / labels / gates / fields / ceiling range
+        # per registered type, served from the ACTIVE registry (a test-installed probe
+        # registry in-process; coding-only in production). One entry per type_id.
+        reg = coding_bridge.registry()
+        return {"types": [reg.manifest(tid) for tid in reg.type_ids()]}
+
     @app.websocket("/api/events")
     async def events_ws(websocket: WebSocket, since: int = 0) -> None:
         await tail_events(
