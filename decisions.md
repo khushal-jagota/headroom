@@ -2,6 +2,30 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D108 — Chat image implementation remains isolated until Closeout
+
+Ticket `t_tmfdg79v` was implemented and verified on dedicated branch
+`ticket/t_tmfdg79v-chat-image-ux` from `9ab2111`. The first independent implementation review found two
+real gaps: invalid-disposition cleanup could stop after one detach failure, and clipboard files bypassed
+the shared intake validator. Both were corrected under focused regressions; follow-up review returned
+`NO VIOLATIONS`, and the canonical worktree verifier passed. Implementation ends with a verified branch
+commit. It does not merge, deploy, restart Panels, or remove the worktree; those actions belong to
+Closeout after human approval.
+
+## D107 — Chat image sends are ordered collections, with cleanup on every failed admission path
+
+Ticket `t_tmfdg79v` replaces the old single image field with ordered `image_references` at the API
+and ordered `image_paths` at the gateway/session boundary. The service resolves every reference before
+creating a visible turn, so one invalid item prevents both prompt delivery and transcript mutation.
+Visible Markdown emits the managed image links in the same order the user kept in the composer.
+
+The live Hermes session attaches every image in order before one `prompt.submit`. A failed attach
+submits no prompt and best-effort detaches any earlier images from that attempt so they cannot leak
+into a later prompt. A rejected or invalid prompt disposition detaches every successfully attached
+image before admission is released. The composer mirrors that lifecycle locally: object URLs are
+revoked on individual removal, successful send cleanup, and component teardown, but previews are
+retained after upload or turn-start failure for retry.
+
 ## D106 — Kickoff integration preserves concurrent main work and rebuilds the shared frontend
 
 Ticket `t_5m7fmdk3` was implemented and independently verified on its dedicated branch while `main`

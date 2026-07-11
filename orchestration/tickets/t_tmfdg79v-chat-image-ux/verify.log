@@ -1,0 +1,151 @@
+
+=== /Users/khushaljagota/.hermes/worktrees/planning-v2-t_tmfdg79v/.venv/bin/ruff check . ===
+All checks passed!
+
+=== /Users/khushaljagota/.hermes/worktrees/planning-v2-t_tmfdg79v/.venv/bin/mypy src/ ===
+Success: no issues found in 106 source files
+
+=== /Users/khushaljagota/.hermes/worktrees/planning-v2-t_tmfdg79v/.venv/bin/pytest tests/unit --junitxml=/Users/khushaljagota/.hermes/worktrees/planning-v2-t_tmfdg79v/data/verify/unit.xml ===
+........................................................................ [ 15%]
+........................................................................ [ 31%]
+........................................................................ [ 47%]
+........................................................................ [ 63%]
+........................................................................ [ 79%]
+........................................................................ [ 94%]
+.......................                                                  [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.13/site-packages/fastapi/testclient.py:1
+  /Users/khushaljagota/.hermes/worktrees/planning-v2-t_tmfdg79v/.venv/lib/python3.13/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+src/planner/core/clock.py:27
+  /Users/khushaljagota/.hermes/worktrees/planning-v2-t_tmfdg79v/src/planner/core/clock.py:27: PytestCollectionWarning: cannot collect test class 'TestClock' because it has a __init__ constructor (from: tests/unit/test_core_loops.py)
+    class TestClock:
+
+src/planner/core/clock.py:27
+  /Users/khushaljagota/.hermes/worktrees/planning-v2-t_tmfdg79v/src/planner/core/clock.py:27: PytestCollectionWarning: cannot collect test class 'TestClock' because it has a __init__ constructor (from: tests/unit/test_ticket_readiness_loop.py)
+    class TestClock:
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+455 passed, 3 warnings in 9.55s
+
+=== /Users/khushaljagota/.hermes/worktrees/planning-v2-t_tmfdg79v/.venv/bin/python -m compileall -q src/ ===
+
+=== css check /Users/khushaljagota/.hermes/worktrees/planning-v2-t_tmfdg79v/assets/app.css ===
+
+=== node --check /Users/khushaljagota/.hermes/worktrees/planning-v2-t_tmfdg79v/assets/markdown.js ===
+
+=== css check /Users/khushaljagota/.hermes/worktrees/planning-v2-t_tmfdg79v/assets/tokens.css ===
+
+=== npm --prefix web run check ===
+
+> check
+> svelte-check --tsconfig ./tsconfig.json
+
+Loading svelte-check in workspace: /Users/khushaljagota/.hermes/worktrees/planning-v2-t_tmfdg79v/web
+Getting Svelte diagnostics...
+
+/Users/khushaljagota/.hermes/worktrees/planning-v2-t_tmfdg79v/web/src/routes/TicketRoute.svelte:34:51
+Warn: This reference only captures the initial value of `id`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally (svelte)
+
+  const ticket = resource<TicketDetail>(`ticket:${id}`, (signal) =>
+    fetchJson(`/api/tickets/${id}`, { signal })
+
+/Users/khushaljagota/.hermes/worktrees/planning-v2-t_tmfdg79v/web/src/routes/TicketRoute.svelte:43:61
+Warn: This reference only captures the initial value of `id`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally (svelte)
+  );
+  const chatStatus = resource<GatewayStatus>(`chat-status:${id}`, (signal) =>
+    fetchJson(`/api/chat/${id}/status`, { signal })
+
+/Users/khushaljagota/.hermes/worktrees/planning-v2-t_tmfdg79v/web/src/routes/TicketRoute.svelte:50:42
+Warn: This reference only captures the initial value of `id`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally (svelte)
+
+  const ticketInvalidations = [`ticket:${id}`, "board", "queues", "sprint:current"];
+  const emptyTicketFieldText = "Not written yet.";
+
+====================================
+svelte-check found 0 errors and 3 warnings in 1 file
+
+=== npm --prefix web run build ===
+
+> build
+> vite build
+
+vite v6.4.3 building for production...
+<script src="/assets/markdown.js"> in "/index.html" can't be bundled without type="module" attribute
+
+/assets/tokens.css doesn't exist at build time, it will remain unchanged to be resolved at runtime
+
+/assets/app.css doesn't exist at build time, it will remain unchanged to be resolved at runtime
+transforming...
+09:11:20 [vite-plugin-svelte] src/routes/TicketRoute.svelte:34:50 This reference only captures the initial value of `id`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+32:   let { id }: { id: string } = $props();
+33: 
+34:   const ticket = resource<TicketDetail>(`ticket:${id}`, (signal) =>
+                                                        ^
+35:     fetchJson(`/api/tickets/${id}`, { signal })
+36:   );
+09:11:20 [vite-plugin-svelte] src/routes/TicketRoute.svelte:43:60 This reference only captures the initial value of `id`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+41:     fetchJson("/api/projects", { signal })
+42:   );
+43:   const chatStatus = resource<GatewayStatus>(`chat-status:${id}`, (signal) =>
+                                                                  ^
+44:     fetchJson(`/api/chat/${id}/status`, { signal })
+45:   );
+09:11:20 [vite-plugin-svelte] src/routes/TicketRoute.svelte:50:41 This reference only captures the initial value of `id`. Did you mean to reference it inside a closure instead?
+https://svelte.dev/e/state_referenced_locally
+48:   );
+49: 
+50:   const ticketInvalidations = [`ticket:${id}`, "board", "queues", "sprint:current"];
+                                               ^
+51:   const emptyTicketFieldText = "Not written yet.";
+52:   const emptyTicketRecapText = "No recap yet.";
+✓ 154 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                                0.75 kB │ gzip:  0.38 kB
+dist/assets/newsreader-vietnamese-400-normal-DdKr49mV.woff2    5.43 kB
+dist/assets/newsreader-vietnamese-500-normal-CL6a8tp2.woff2    5.44 kB
+dist/assets/newsreader-vietnamese-600-normal-CaH84vfx.woff2    5.50 kB
+dist/assets/newsreader-vietnamese-400-normal-BekUZro8.woff     6.97 kB
+dist/assets/newsreader-vietnamese-500-normal-BEAbKU8A.woff     7.04 kB
+dist/assets/newsreader-vietnamese-600-normal-CVAR0otO.woff     7.06 kB
+dist/assets/newsreader-latin-ext-400-normal-svq1FPys.woff2    14.21 kB
+dist/assets/newsreader-latin-ext-500-normal-BNHmvKvI.woff2    15.07 kB
+dist/assets/newsreader-latin-ext-600-normal-BXv5iMHi.woff2    15.17 kB
+dist/assets/newsreader-latin-ext-400-normal-DYA1XoQK.woff     18.38 kB
+dist/assets/newsreader-latin-ext-500-normal-CZruMFou.woff     19.30 kB
+dist/assets/newsreader-latin-ext-600-normal-BrbfzHZ5.woff     19.39 kB
+dist/assets/newsreader-latin-400-normal-BFBkh4jY.woff2        22.48 kB
+dist/assets/newsreader-latin-500-normal-B66TYsaK.woff2        23.62 kB
+dist/assets/newsreader-latin-600-normal-30OJ_TG_.woff2        23.88 kB
+dist/assets/newsreader-latin-400-normal-gRTjlS2D.woff         28.29 kB
+dist/assets/newsreader-latin-500-normal-DFwuUcdu.woff         29.64 kB
+dist/assets/newsreader-latin-600-normal-DUnT2r2g.woff         29.78 kB
+dist/assets/index-CnGWKYPD.css                                 3.83 kB │ gzip:  0.66 kB
+dist/assets/index-1tJInE4F.js                                154.46 kB │ gzip: 52.80 kB
+✓ built in 584ms
+
+=== npm --prefix web test ===
+
+> test
+> node tests/event-mapping.test.mjs && node tests/file-preview.test.mjs && node tests/markdown-edit.test.mjs && node tests/markdown-renderer.test.mjs && node tests/chat-images.test.mjs
+
+
+=== /Users/khushaljagota/.hermes/worktrees/planning-v2-t_tmfdg79v/.venv/bin/pytest tests/e2e --junitxml=/Users/khushaljagota/.hermes/worktrees/planning-v2-t_tmfdg79v/data/verify/e2e.xml ===
+...................................................................      [100%]
+67 passed in 95.79s (0:01:35)
+
+[verify] gate ruff: ok
+[verify] gate mypy: ok
+[verify] gate unit suite: ok
+[verify] gate build check: ok
+[verify] gate frontend: ok
+[verify] gate e2e suite: ok
+
+VERIFY: PASS

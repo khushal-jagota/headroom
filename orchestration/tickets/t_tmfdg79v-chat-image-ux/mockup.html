@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chat image attachment interaction plan</title>
+  <style>
+    :root {
+      --base:#1b1917; --raised:#24211b; --overlay:#2b2721; --sunken:#141210;
+      --strong:#f4f1ea; --default:#dcd8cf; --muted:#b4b0a6; --faint:#8a867c; --faintest:#66625a;
+      --amber:#e7a742; --amber-ink:#1c1406; --error:#d85d5d; --border:rgba(230,210,175,.13);
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; background:var(--base); color:var(--default); font:13px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    .page { width:min(1120px,calc(100% - 40px)); margin:42px auto 72px; }
+    header { max-width:720px; margin-bottom:30px; }
+    .eyebrow { color:var(--amber); font:11px/1.2 ui-monospace,"SFMono-Regular",monospace; letter-spacing:.1em; text-transform:uppercase; }
+    h1 { margin:10px 0 8px; color:var(--strong); font:500 28px/1.15 Georgia,serif; }
+    header p { margin:0; color:var(--muted); font-size:14px; }
+    .principle { margin-top:15px; padding:10px 12px; background:var(--raised); border-left:2px solid var(--amber); border-radius:0 8px 8px 0; color:var(--default); }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
+    .state { min-width:0; padding:18px; background:var(--raised); border:1px solid var(--border); border-radius:12px; }
+    .state-head { display:flex; justify-content:space-between; gap:12px; align-items:baseline; margin-bottom:14px; }
+    .state h2 { margin:0; color:var(--strong); font-size:14px; font-weight:600; }
+    .state-tag { color:var(--faint); font:10px ui-monospace,"SFMono-Regular",monospace; letter-spacing:.05em; text-transform:uppercase; }
+    .stage { min-height:190px; display:flex; align-items:flex-end; padding:20px; background:#1d1a17; border-radius:9px; }
+    .composer { position:relative; width:100%; background:var(--sunken); border:1px solid var(--border); border-radius:12px; box-shadow:inset 0 1px 2px rgba(0,0,0,.35); padding:8px 8px 4px 12px; transition:150ms ease; }
+    .composer.drag { border-color:var(--amber); box-shadow:inset 0 1px 2px rgba(0,0,0,.35),0 0 0 2px rgba(231,167,66,.18); }
+    textarea { width:100%; min-height:44px; resize:none; border:0; outline:0; background:transparent; color:var(--strong); font:13px/1.5 inherit; padding:2px 0; }
+    textarea::placeholder { color:var(--faintest); }
+    .previews { display:flex; gap:8px; overflow-x:auto; padding:2px 0 8px; scrollbar-width:thin; }
+    .preview { position:relative; flex:0 0 62px; height:52px; overflow:visible; border:1px solid var(--border); border-radius:8px; background:var(--overlay); }
+    .preview .art { width:100%; height:100%; overflow:hidden; border-radius:7px; background:linear-gradient(145deg,#80684e,#3b4853 52%,#9e7952); }
+    .preview.alt .art { background:radial-gradient(circle at 68% 28%,#dfb86a 0 10%,transparent 11%),linear-gradient(160deg,#2b4b4a 0 48%,#a07155 49% 70%,#2e2924 71%); }
+    .preview.third .art { background:linear-gradient(135deg,#66595f,#283c4d 48%,#c99c6a); }
+    .remove { position:absolute; z-index:2; right:-5px; top:-5px; width:18px; height:18px; border:1px solid #413c35; border-radius:50%; background:#24211b; color:var(--strong); cursor:pointer; display:grid; place-items:center; font:14px/1 sans-serif; padding:0; }
+    .remove:hover { color:white; background:#4a2929; border-color:var(--error); }
+    .foot { display:flex; align-items:center; gap:2px; margin-top:4px; }
+    .icon { width:26px; height:26px; display:grid; place-items:center; border:0; border-radius:4px; background:transparent; color:var(--faintest); cursor:pointer; font:13px ui-monospace,monospace; }
+    .icon:hover,.icon.on { color:var(--muted); background:var(--overlay); }
+    .paperclip { font-size:15px; transform:rotate(-42deg); }
+    .send { margin-left:auto; width:24px; height:24px; border:0; border-radius:8px; background:var(--amber); color:var(--amber-ink); cursor:pointer; font-size:15px; }
+    .drop-label { position:absolute; inset:8px; display:none; align-items:center; justify-content:center; border:1px dashed rgba(231,167,66,.72); border-radius:8px; background:rgba(20,18,16,.88); color:var(--strong); font-weight:600; pointer-events:none; }
+    .composer.drag .drop-label { display:flex; }
+    .caption { margin:13px 1px 0; color:var(--faint); }
+    .caption strong { color:var(--muted); font-weight:600; }
+    .controls { display:flex; gap:8px; margin-top:18px; }
+    .control { border:1px solid var(--border); border-radius:8px; padding:8px 11px; background:var(--raised); color:var(--default); cursor:pointer; }
+    .control:hover { border-color:rgba(231,167,66,.42); color:var(--strong); }
+    .notes { margin-top:24px; padding-top:20px; border-top:1px solid var(--border); display:grid; grid-template-columns:repeat(3,1fr); gap:20px; }
+    .note h3 { margin:0 0 5px; color:var(--strong); font-size:12px; }
+    .note p { margin:0; color:var(--faint); }
+    @media (max-width:760px) { .grid,.notes { grid-template-columns:1fr; } .page { width:min(100% - 24px,560px); margin-top:24px; } }
+  </style>
+</head>
+<body>
+<main class="page">
+  <header>
+    <div class="eyebrow">Ticket t_tmfdg79v · planning mockup</div>
+    <h1>Image attachments stay inside the composer</h1>
+    <p>The existing box, text area, slash control, image control, and send action remain. The improvement is a compact pending-image row plus drop and paste intake.</p>
+    <div class="principle">One pending-image model, regardless of whether an image was selected, dropped, or pasted.</div>
+  </header>
+
+  <section class="grid" aria-label="Composer interaction states">
+    <article class="state">
+      <div class="state-head"><h2>1. Resting composer</h2><span class="state-tag">unchanged</span></div>
+      <div class="stage">
+        <div class="composer">
+          <textarea aria-label="Message" placeholder="Message the employee..."></textarea>
+          <div class="foot"><button class="icon">/</button><button class="icon paperclip" aria-label="Attach image">⌇</button><button class="send" aria-label="Send">↑</button></div>
+        </div>
+      </div>
+      <p class="caption"><strong>No redesign:</strong> the image affordance remains beside <code>/</code>; the composer does not grow until an image is pending.</p>
+    </article>
+
+    <article class="state">
+      <div class="state-head"><h2>2. Images pending</h2><span class="state-tag">selected or pasted</span></div>
+      <div class="stage">
+        <div class="composer" id="pending-composer">
+          <div class="previews" id="preview-row">
+            <div class="preview"><div class="art"></div><button class="remove" aria-label="Remove first image">×</button></div>
+            <div class="preview alt"><div class="art"></div><button class="remove" aria-label="Remove second image">×</button></div>
+          </div>
+          <textarea aria-label="Message" placeholder="Add a message..."></textarea>
+          <div class="foot"><button class="icon">/</button><button class="icon paperclip on" aria-label="Attach more images">⌇</button><button class="send" aria-label="Send">↑</button></div>
+        </div>
+      </div>
+      <p class="caption"><strong>Review before send:</strong> every pending image is visible; × removes only that item. The image control can add more.</p>
+    </article>
+
+    <article class="state">
+      <div class="state-head"><h2>3. Drag target</h2><span class="state-tag">drag over composer</span></div>
+      <div class="stage">
+        <div class="composer drag" id="drop-composer">
+          <textarea aria-label="Message" placeholder="Message the employee..."></textarea>
+          <div class="foot"><button class="icon">/</button><button class="icon paperclip" aria-label="Attach image">⌇</button><button class="send" aria-label="Send">↑</button></div>
+          <div class="drop-label">Drop images to attach</div>
+        </div>
+      </div>
+      <p class="caption"><strong>Bounded target:</strong> only the existing composer highlights. Dropping elsewhere does not create a hidden attachment.</p>
+    </article>
+
+    <article class="state">
+      <div class="state-head"><h2>4. Narrow composer</h2><span class="state-tag">horizontal overflow</span></div>
+      <div class="stage" style="padding-inline:54px">
+        <div class="composer">
+          <div class="previews">
+            <div class="preview"><div class="art"></div><button class="remove" aria-label="Remove image">×</button></div>
+            <div class="preview alt"><div class="art"></div><button class="remove" aria-label="Remove image">×</button></div>
+            <div class="preview third"><div class="art"></div><button class="remove" aria-label="Remove image">×</button></div>
+          </div>
+          <textarea aria-label="Message" placeholder="Add a message..."></textarea>
+          <div class="foot"><button class="icon">/</button><button class="icon paperclip on" aria-label="Attach more images">⌇</button><button class="send" aria-label="Send">↑</button></div>
+        </div>
+      </div>
+      <p class="caption"><strong>Stable footprint:</strong> previews scroll in one row rather than pushing the controls or turning the composer into a gallery.</p>
+    </article>
+  </section>
+
+  <div class="controls">
+    <button class="control" id="add">Simulate pasted image</button>
+    <button class="control" id="toggle-drag">Toggle drag state</button>
+  </div>
+
+  <section class="notes" aria-label="Implementation boundaries">
+    <div class="note"><h3>Input</h3><p>Picker, paste, and drop share validation, ordering, duplicate handling, and error presentation.</p></div>
+    <div class="note"><h3>Lifecycle</h3><p>Preview URLs are created locally, revoked on removal or teardown, and retained if send fails.</p></div>
+    <div class="note"><h3>Delivery</h3><p>Only images still pending at send time use the existing managed upload and native Hermes path.</p></div>
+  </section>
+</main>
+<script>
+  const row = document.querySelector('#preview-row');
+  const drag = document.querySelector('#drop-composer');
+  document.querySelectorAll('.remove').forEach((button) => button.addEventListener('click', () => button.parentElement.remove()));
+  document.querySelector('#add').addEventListener('click', () => {
+    const item = document.createElement('div');
+    item.className = 'preview third';
+    item.innerHTML = '<div class="art"></div><button class="remove" aria-label="Remove pasted image">×</button>';
+    item.querySelector('button').addEventListener('click', () => item.remove());
+    row.appendChild(item);
+  });
+  document.querySelector('#toggle-drag').addEventListener('click', () => drag.classList.toggle('drag'));
+</script>
+</body>
+</html>

@@ -98,20 +98,21 @@ async def start_chat_turn(
 ) -> dict[str, Any]:
     authctx.require_direct_write(authctx.request_context(request))  # §11/§8: chat is direct-only.
     text = body.get("text")
-    image_reference = body.get("image_reference")
+    raw_image_references = body.get("image_references", [])
     if not isinstance(text, str):
         raise PlannerError(ErrorCode.validation, "text is required")
     mode = body.get("mode", "message")
     if mode not in ("message", "command"):
         raise PlannerError(ErrorCode.validation, "mode must be message or command")
-    if image_reference is not None and not isinstance(image_reference, str):
-        raise PlannerError(ErrorCode.validation, "image_reference must be a string")
-    turn_request = ChatTurnRequest(
-        text=text.strip(), mode=mode, image_reference=image_reference
-    )
-    if not turn_request.text and turn_request.image_reference is None:
+    if not isinstance(raw_image_references, list) or not all(
+        isinstance(item, str) for item in raw_image_references
+    ):
+        raise PlannerError(ErrorCode.validation, "image_references must be a list of strings")
+    image_references = tuple(raw_image_references)
+    turn_request = ChatTurnRequest(text=text.strip(), mode=mode, image_references=image_references)
+    if not turn_request.text and not turn_request.image_references:
         raise PlannerError(ErrorCode.validation, "text is required")
-    if turn_request.image_reference is not None and turn_request.mode != "message":
+    if turn_request.image_references and turn_request.mode != "message":
         raise PlannerError(ErrorCode.validation, "images are supported only for messages")
     clock: Clock = request.app.state.clock
     adapters: Adapters = request.app.state.adapters
@@ -124,7 +125,7 @@ async def start_chat_turn(
         turn_request.mode,
         clock.now_unix(),
         clock.now_unix,
-        image_reference=turn_request.image_reference,
+        image_references=turn_request.image_references,
         db_path=request.app.state.config.db_path,
     )
     return asdict(result)

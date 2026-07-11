@@ -66,7 +66,7 @@ export type ChatImageUploadResponse = {
 export type StartChatTurnBody = {
   text: string;
   mode: "message" | "command";
-  image_reference?: string;
+  image_references?: string[];
 };
 
 export type SprintSummary = {

@@ -115,7 +115,8 @@ hand-rolling the same shapes per screen. Each does one job:
 - **InlineEdit** — the one editable-markdown surface (notes, recaps, drafts).
 - **MarkdownBlock** — read-only rendering through the hardened markdown renderer.
 - **FilePreview** — the one file preview card/inline renderer (see the file-preview rule).
-- **ChatPanel / ChatComposer** — the ticket and Chief-of-Staff chat rail and its input.
+- **ChatPanel / ChatComposer** — the ticket and Chief-of-Staff chat rail and its input,
+  including ordered pending image previews for picker, paste, and drop intake.
 - **EnumPill** — a pill whose value is chosen from a menu (project, sprint, scope).
 - **SegmentedControl** — a small set of toggle options (backlog project/priority).
 - **ScopePairPicker** — the "approve until … then …" scope control.
