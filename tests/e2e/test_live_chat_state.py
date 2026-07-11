@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import sqlite3
 from pathlib import Path
@@ -212,24 +213,112 @@ def _update_running_turn_output(server, entity_id: str, label: str, output_text:
         )
 
 
-def _seed_replaceable_managed_markdown_chat_message(
+def _seed_replaceable_preview_subtree_chat_message(
     server, entity_id: str, ticket_id: str
-) -> tuple[int, str, str]:
-    original_relative_path = "notes/stable-preview.md"
+) -> tuple[int, dict[str, str], str]:
+    original_relative_paths = {
+        "markdown": "notes/stable-preview.md",
+        "image": "images/stable-preview.png",
+        "video": "media/stable-preview.mp4",
+        "audio": "media/stable-preview.wav",
+        "html": "pages/stable-preview.html",
+        "download": "files/stable-preview.bin",
+    }
     replacement_relative_path = "notes/replacement-preview.md"
     root = Path(server.db_path).parent / "files" / "tickets" / ticket_id
-    (root / "notes").mkdir(parents=True, exist_ok=True)
-    (root / original_relative_path).write_text(
+    for relative_path in (*original_relative_paths.values(), replacement_relative_path):
+        (root / relative_path).parent.mkdir(parents=True, exist_ok=True)
+    (root / original_relative_paths["markdown"]).write_text(
         "# Stable managed preview\n\nThis historical source does not change.",
         encoding="utf-8",
     )
+    (root / original_relative_paths["image"]).write_bytes(
+        base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLv"
+            "AAAAAElFTkSuQmCC"
+        )
+    )
+    (root / original_relative_paths["video"]).write_bytes(
+        base64.b64decode(
+        "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAANcbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAA"
+        "AHgAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAgAAAod0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAAHgAAAAAAAAAAAAA"
+        "AAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAABAAAAAQAAAAAAAkZWR0cwAAABxlbHN0"
+        "AAAAAAAAAAEAAAB4AAAEAAABAAAAAAH/bWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAAyAAAACABVxAAAAAAALWhk"
+        "bHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABqm1pbmYAAAAUdm1oZAAAAAEAAAAAAAAA"
+        "AAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAWpzdGJsAAAAvnN0c2QAAAAAAAAAAQAAAK5h"
+        "dmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAABAAEABIAAAASAAAAAAAAAABFUxhdmM2Mi4xMS4xMDAgbGlieDI2"
+        "NAAAAAAAAAAAAAAAGP//AAAANGF2Y0MBZAAK/+EAF2dkAAqs2V7ARAAAAwAEAAADAMg8SJZYAQAGaOvjyyLA/fj4"
+        "AAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAAL7iAAAAAAAAABhzdHRzAAAAAAAAAAEAAAADAAACAAAAABRz"
+        "dHNzAAAAAAAAAAEAAAABAAAAKGN0dHMAAAAAAAAAAwAAAAEAAAQAAAAAAQAABgAAAAABAAACAAAAABxzdHNjAAAA"
+        "AAAAAAEAAAABAAAAAwAAAAEAAAAgc3RzegAAAAAAAAAAAAAAAwAAAsUAAAAMAAAADAAAABRzdGNvAAAAAAAAAAEA"
+        "AAOMAAAAYXVkdGEAAABZbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAsaWxzdAAA"
+        "ACSpdG9vAAAAHGRhdGEAAAABAAAAAExhdmY2Mi4zLjEwMAAAAAhmcmVlAAAC5W1kYXQAAAKuBgX//6rcRem95tlI"
+        "t5Ys2CDZI+7veDI2NCAtIGNvcmUgMTY1IHIzMjIyIGIzNTYwNWEgLSBILjI2NC9NUEVHLTQgQVZDIGNvZGVjIC0g"
+        "Q29weWxlZnQgMjAwMy0yMDI1IC0gaHR0cDovL3d3dy52aWRlb2xhbi5vcmcveDI2NC5odG1sIC0gb3B0aW9uczog"
+        "Y2FiYWM9MSByZWY9MyBkZWJsb2NrPTE6MDowIGFuYWx5c2U9MHgzOjB4MTEzIG1lPWhleCBzdWJtZT03IHBzeT0x"
+        "IHBzeV9yZD0xLjAwOjAuMDAgbWl4ZWRfcmVmPTEgbWVfcmFuZ2U9MTYgY2hyb21hX21lPTEgdHJlbGxpcz0xIDh4"
+        "OGRjdD0xIGNxbT0wIGRlYWR6b25lPTIxLDExIGZhc3RfcHNraXA9MSBjaHJvbWFfcXBfb2Zmc2V0PS0yIHRocmVh"
+        "ZHM9MSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFj"
+        "ZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTMgYl9weXJhbWlkPTIgYl9h"
+        "ZGFwdD0xIGJfYmlhcz0wIGRpcmVjdD0xIHdlaWdodGI9MSBvcGVuX2dvcD0wIHdlaWdodHA9MiBrZXlpbnQ9MjUw"
+        "IGtleWludF9taW49MjUgc2NlbmVjdXQ9NDAgaW50cmFfcmVmcmVzaD0wIHJjX2xvb2thaGVhZD00MCByYz1jcmYg"
+        "bWJ0cmVlPTEgY3JmPTIzLjAgcWNvbXA9MC42MCBxcG1pbj0wIHFwbWF4PTY5IHFwc3RlcD00IGlwX3JhdGlvPTEu"
+        "NDAgYXE9MToxLjAwAIAAAAAPZYiEADP//vbsvgU2FMjBAAAACEGaImxCv/7AAAAACAGeQXkK/8SB"
+    )
+    )
+    (root / original_relative_paths["audio"]).write_bytes(
+        base64.b64decode(
+        "UklGRoYGAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAATElTVBoAAABJTkZPSVNGVA0AAABMYXZmNjIuMy4x"
+        "MDAAAGRhdGFABgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+    )
+    )
+    (root / original_relative_paths["html"]).write_text(
+        "<!doctype html><html><body><h1>Stable HTML preview</h1></body></html>",
+        encoding="utf-8",
+    )
+    (root / original_relative_paths["download"]).write_bytes(b"stable managed download\n")
     (root / replacement_relative_path).write_text(
         "# Replacement managed preview\n\nThis is a different managed file.",
         encoding="utf-8",
     )
+    managed_paths = {
+        kind: f"/files/tickets/{ticket_id}/{relative_path}"
+        for kind, relative_path in original_relative_paths.items()
+    }
     message = (
-        "Historical managed file:\n\n"
-        f"[Stable preview](/files/tickets/{ticket_id}/{original_relative_path})"
+        "Historical preview subtree:\n\n"
+        f"[Stable Markdown preview]({managed_paths['markdown']})\n\n"
+        f"[Stable image preview]({managed_paths['image']})\n\n"
+        f"[Stable video preview]({managed_paths['video']})\n\n"
+        f"[Stable audio preview]({managed_paths['audio']})\n\n"
+        f"[Stable HTML preview]({managed_paths['html']})\n\n"
+        f"[Stable download preview]({managed_paths['download']})\n\n"
+        "[Stable external preview](https://example.com/stable-preview)"
     )
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
@@ -239,16 +328,16 @@ def _seed_replaceable_managed_markdown_chat_message(
         )
     return (
         HISTORICAL_PREVIEW_MESSAGE_ID,
-        f"/files/tickets/{ticket_id}/{original_relative_path}",
+        managed_paths,
         f"/files/tickets/{ticket_id}/{replacement_relative_path}",
     )
 
 
-def _replace_managed_markdown_target_in_historical_message(
+def _replace_preview_subtree_in_historical_message(
     server, message_id: int, replacement_preview_path: str
 ) -> None:
     replacement_message = (
-        "Historical managed file:\n\n"
+        "Historical preview subtree:\n\n"
         f"[Replacement preview]({replacement_preview_path})"
     )
     with sqlite3.connect(server.db_path) as conn:
@@ -319,7 +408,7 @@ def _wheel_up_inside_chat_thread(page: Page, selector: str, delta_y: int = -24) 
 
 
 @pytest.mark.parametrize("chat_context", ["ticket", "chief"])
-def test_running_chat_preserves_unchanged_and_replaces_changed_managed_markdown_preview(
+def test_running_chat_preserves_unchanged_preview_subtree_and_replaces_changed_target(
     server, context_factory, open_page, cli, chat_context
 ) -> None:
     ticket_id = cli(server, "ticket", "create", "--title", "Stable chat preview")["id"]
@@ -332,8 +421,8 @@ def test_running_chat_preserves_unchanged_and_replaces_changed_managed_markdown_
         route = "#/chief"
         ready_selector = 'section[data-screen="chief"] [data-chat-input]'
 
-    message_id, preview_path, replacement_preview_path = (
-        _seed_replaceable_managed_markdown_chat_message(server, entity_id, ticket_id)
+    message_id, managed_preview_paths, replacement_preview_path = (
+        _seed_replaceable_preview_subtree_chat_message(server, entity_id, ticket_id)
     )
     if chat_context == "ticket":
         _seed_running_worker_turn(server, entity_id)
@@ -347,11 +436,12 @@ def test_running_chat_preserves_unchanged_and_replaces_changed_managed_markdown_
         )
 
     requests: list[str] = []
+    observed_preview_paths = {*managed_preview_paths.values(), replacement_preview_path}
     context = context_factory()
     context.on(
         "request",
         lambda request: requests.append(request.url)
-        if request.url.endswith((preview_path, replacement_preview_path))
+        if any(request.url.endswith(path) for path in observed_preview_paths)
         else None,
     )
     page = open_page(
@@ -361,27 +451,80 @@ def test_running_chat_preserves_unchanged_and_replaces_changed_managed_markdown_
         ready_selector,
         settled=True,
     )
-    historical_preview = page.locator(
-        '[data-chat-msg="planner"]', has_text="Historical managed file:"
-    ).locator('[data-file-preview-kind="markdown"]')
+    historical_message = page.locator(
+        '[data-chat-msg="planner"]', has_text="Historical preview subtree:"
+    )
+    expected_kinds = (
+        "markdown",
+        "image",
+        "video",
+        "audio",
+        "html",
+        "download",
+        "external",
+    )
     page.wait_for_function(
-        "() => {"
-        " const previews = document.querySelectorAll("
-        "   '[data-chat-msg=\"planner\"] [data-file-preview-kind=\"markdown\"]'"
+        "kinds => {"
+        " const message = Array.from(document.querySelectorAll('[data-chat-msg=\"planner\"]'))"
+        "   .find(node => node.textContent.includes('Historical preview subtree:'));"
+        " return message && kinds.every(kind =>"
+        "   message.querySelectorAll(`[data-file-preview-kind=\"${kind}\"]`).length === 1"
         " );"
-        " return previews.length === 1"
-        "   && previews[0].querySelector('h1')?.textContent === 'Stable managed preview';"
         "}",
+        arg=expected_kinds,
         timeout=WAIT_MS,
+    )
+    historical_message.scroll_into_view_if_needed(timeout=WAIT_MS)
+    historical_message.locator('[data-file-preview-kind="markdown"] h1').wait_for(
+        state="visible", timeout=WAIT_MS
+    )
+    assert historical_message.locator(
+        '[data-file-preview-kind="markdown"] h1'
+    ).inner_text() == "Stable managed preview"
+    image = historical_message.locator('[data-file-preview-kind="image"] img')
+    image.scroll_into_view_if_needed(timeout=WAIT_MS)
+    image.wait_for(state="visible", timeout=WAIT_MS)
+    page.wait_for_function(
+        "image => image.complete && image.naturalWidth === 1 && image.naturalHeight === 1",
+        arg=image.element_handle(),
+        timeout=WAIT_MS,
+    )
+    for media_kind in ("video", "audio"):
+        media = historical_message.locator(
+            f'[data-file-preview-kind="{media_kind}"] {media_kind}'
+        )
+        assert media.get_attribute("controls") is not None
+        page.wait_for_function(
+            "media => media.readyState > 0 && media.error === null",
+            arg=media.element_handle(),
+            timeout=WAIT_MS,
+        )
+    html_frame = historical_message.locator('[data-file-preview-kind="html"] iframe')
+    html_frame.scroll_into_view_if_needed(timeout=WAIT_MS)
+    historical_message.frame_locator('[data-file-preview-kind="html"] iframe').locator(
+        "h1", has_text="Stable HTML preview"
+    ).wait_for(state="visible", timeout=WAIT_MS)
+    assert (
+        historical_message.locator('[data-file-preview-kind="download"] a[download]').inner_text()
+        == "Download"
+    )
+    external_preview = historical_message.locator('[data-file-preview-kind="external"]')
+    assert "example.com" in external_preview.inner_text()
+    assert external_preview.locator("a").get_attribute("href") == (
+        "https://example.com/stable-preview"
     )
     page.locator('[data-chat-msg="planner"] strong', has_text="before").wait_for(
         state="visible", timeout=WAIT_MS
     )
     requests.clear()
 
-    historical_preview.evaluate(
-        "node => {"
-        " window.__stableHistoricalPreview = node;"
+    page.evaluate(
+        "kinds => {"
+        " const message = Array.from(document.querySelectorAll('[data-chat-msg=\"planner\"]'))"
+        "   .find(node => node.textContent.includes('Historical preview subtree:'));"
+        " window.__stableHistoricalPreviews = Object.fromEntries(kinds.map(kind => ["
+        "   kind, message.querySelector(`[data-file-preview-kind=\"${kind}\"]`)"
+        " ]));"
         " window.__stableHistoricalPreviewLoadingCount = 0;"
         " window.__stableHistoricalPreviewObserver = new MutationObserver(records => {"
         "   for (const record of records) {"
@@ -395,7 +538,8 @@ def test_running_chat_preserves_unchanged_and_replaces_changed_managed_markdown_
         "   document.querySelector('[data-chat-messages]'),"
         "   { childList: true, subtree: true }"
         " );"
-        "}"
+        "}",
+        expected_kinds,
     )
 
     for index in range(3):
@@ -404,14 +548,19 @@ def test_running_chat_preserves_unchanged_and_replaces_changed_managed_markdown_
         _wait_chat_text(page, "worker" if chat_context == "ticket" else "planner", label)
         _wait_chat_text(page, "planner", "Live response before")
         page.wait_for_function(
-            "() => {"
-            " const node = window.__stableHistoricalPreview;"
-            " return node?.isConnected && node === document.querySelector("
-            "   '[data-chat-msg=\"planner\"] [data-file-preview-kind=\"markdown\"]'"
-            " ) && window.__stableHistoricalPreviewLoadingCount === 0;"
+            "kinds => {"
+            " const message = Array.from(document.querySelectorAll('[data-chat-msg=\"planner\"]'))"
+            "   .find(node => node.textContent.includes('Historical preview subtree:'));"
+            " return message && kinds.every(kind => {"
+            "   const original = window.__stableHistoricalPreviews[kind];"
+            "   return original?.isConnected"
+            "     && original === message.querySelector(`[data-file-preview-kind=\"${kind}\"]`);"
+            " }) && window.__stableHistoricalPreviewLoadingCount === 0;"
             "}",
+            arg=expected_kinds,
             timeout=WAIT_MS,
         )
+        assert requests == []
 
     _update_running_turn_output(
         server,
@@ -428,33 +577,41 @@ def test_running_chat_preserves_unchanged_and_replaces_changed_managed_markdown_
     assert requests == []
     assert page.evaluate("() => window.__stableHistoricalPreviewLoadingCount") == 0
     assert page.evaluate(
-        "() => window.__stableHistoricalPreview.isConnected"
-        " && window.__stableHistoricalPreview === document.querySelector("
-        "   '[data-chat-msg=\"planner\"] [data-file-preview-kind=\"markdown\"]'"
-        " )"
+        "kinds => {"
+        " const message = Array.from(document.querySelectorAll('[data-chat-msg=\"planner\"]'))"
+        "   .find(node => node.textContent.includes('Historical preview subtree:'));"
+        " return message && kinds.every(kind => {"
+        "   const original = window.__stableHistoricalPreviews[kind];"
+        "   return original.isConnected"
+        "     && original === message.querySelector(`[data-file-preview-kind=\"${kind}\"]`);"
+        " });"
+        "}",
+        expected_kinds,
     ) is True
 
-    _replace_managed_markdown_target_in_historical_message(
-        server, message_id, replacement_preview_path
-    )
+    _replace_preview_subtree_in_historical_message(server, message_id, replacement_preview_path)
     replacement_preview = page.locator(
-        '[data-chat-msg="planner"]', has_text="Historical managed file:"
+        '[data-chat-msg="planner"]', has_text="Historical preview subtree:"
     ).locator('[data-file-preview-kind="markdown"]')
     replacement_preview.locator("h1", has_text="Replacement managed preview").wait_for(
         state="visible", timeout=WAIT_MS
     )
     page.wait_for_function(
-        "() => {"
-        " const original = window.__stableHistoricalPreview;"
+        "kinds => {"
         " const replacement = document.querySelector("
         "   '[data-chat-msg=\"planner\"] [data-file-preview-kind=\"markdown\"]'"
         " );"
-        " return !original.isConnected && replacement && replacement !== original;"
+        " return kinds.every(kind => !window.__stableHistoricalPreviews[kind].isConnected)"
+        "   && replacement"
+        "   && replacement !== window.__stableHistoricalPreviews.markdown"
+        "   && document.querySelectorAll('[data-file-preview-kind]').length === 1;"
         "}",
+        arg=expected_kinds,
         timeout=WAIT_MS,
     )
-    assert historical_preview.locator("h1", has_text="Stable managed preview").count() == 0
-    assert requests.count(server.base + preview_path) == 0
+    assert historical_message.locator("h1", has_text="Stable managed preview").count() == 0
+    for preview_path in managed_preview_paths.values():
+        assert requests.count(server.base + preview_path) == 0
     assert requests.count(server.base + replacement_preview_path) == 1
     page.evaluate("() => window.__stableHistoricalPreviewObserver.disconnect()")
 

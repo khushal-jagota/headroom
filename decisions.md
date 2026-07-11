@@ -2,6 +2,17 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
+## D110 — Shared subtree identity proves preview stability across kinds
+
+`mountFilePreviews` scans every anchor rendered by `MarkdownBlock` and mounts the same `FilePreview`
+component regardless of whether it resolves to image, video, audio, Markdown, HTML, download, or
+external. The production guard therefore belongs at the `MarkdownBlock` source/context boundary, not
+inside a preview-kind branch. Broaden the Ticket/Chief regression with all seven resolved kinds—
+Markdown, image, video, audio, HTML, download, and external—and require exact DOM identity for every
+node through live activity. This removes assumptions about kind-specific coverage while still testing
+one shared lifecycle boundary. A real message-target change must disconnect the original subtree and
+mount/fetch the replacement once.
+
 ## D109 — Preview stability measurement begins after route startup settles
 
 The regression measures the ticket's live-activity boundary, not transient route startup. Under full

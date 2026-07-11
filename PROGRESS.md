@@ -3,16 +3,19 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
-## Current work cycle (2026-07-11): stable historical chat Markdown previews
+## Current work cycle (2026-07-11): stable historical chat file previews
 
 Current build stage:
 
 - Ticket `t_svy3xjxj` has its scoped GREEN production fix in the isolated ticket worktree. Chat
   transcript rows now use the stable server message/turn identities, and `MarkdownBlock` skips
-  teardown when normalized Markdown plus its rendering context are semantically unchanged.
-- The Ticket/Chief browser regression establishes one settled historical preview, then proves live
-  polling/activity/output adds no loading state, remount, or request. It finally updates the same
-  message id to a second real managed Markdown target and proves one deliberate replacement fetch.
+  teardown when its normalized source plus rendering context are semantically unchanged. Because
+  every link preview is mounted beneath that block, this preserves the whole shared preview subtree.
+- The Ticket/Chief browser regression establishes one settled historical message containing all seven
+  resolved preview kinds: Markdown, image, video, audio, HTML, download, and external. It then proves
+  live polling/activity/output adds no loading state, remount, or managed request and preserves every
+  exact preview node. Finally it updates the same message id to a second managed Markdown target and
+  proves deliberate subtree replacement.
 
 What just passed:
 
@@ -32,6 +35,12 @@ What just passed:
 - Canonical isolated-worktree verification passed with the ticket source pinned ahead of the shared
   editable virtualenv: Ruff; Mypy across 106 source files; 454 unit tests; compile/static, CSS,
   Svelte, frontend build, and event-mapping gates; 67 browser/CLI e2e tests; final `VERIFY: PASS`.
+- After the owner clarified the all-preview scope, the all-seven-kind shared-subtree regression passed
+  in both Ticket and Chief contexts. Independent review found the initial audio-coverage and
+  invalid-media-fixture gaps; both were fixed, and final re-review returned `NO VIOLATIONS`.
+- Final canonical isolated-worktree verification passed again on the all-preview artifact: Ruff, Mypy,
+  454 unit tests, compile/static, CSS, Svelte, frontend build, event mapping, and all 67 e2e tests;
+  final `VERIFY: PASS`.
 
 Current hypothesis:
 
@@ -46,8 +55,8 @@ Current hypothesis:
 
 Next step:
 
-- Propose the concise Implementation package with root cause, reviewed source changes, RED/GREEN
-  browser evidence, full verification, and the isolated branch commit. Integration remains Closeout.
+- Commit the all-preview proof follow-up and replace the awaiting Implementation proposal with corrected
+  scope, branch head, and evidence. Integration stays Closeout.
 
 Blockers:
 
