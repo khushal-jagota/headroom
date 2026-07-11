@@ -8,10 +8,10 @@ things stand right now, not a history log.
 Current build stage:
 
 - Ticket `t_hvnv9gyc` accepted Implementation. Verified branch
-  `ticket/t_hvnv9gyc-kickoff-normal-stage` at `e411dd1` is being merged into current `main` while
-  preserving the newer preview and Chat image commits plus the unrelated dirty nested worktree.
-- Source and tests merged without conflict. Memory-file overlaps are being reconciled explicitly,
-  and the generated frontend bundle will be rebuilt from the combined source.
+  `ticket/t_hvnv9gyc-kickoff-normal-stage` at `e411dd1` is integrated on current `main` by merge commit
+  `304734e`, preserving the newer preview and Chat image commits plus the unrelated dirty nested worktree.
+- Source and tests merged without conflict. Memory-file overlaps were reconciled explicitly, and the
+  generated frontend bundle was rebuilt from the combined source.
 
 What just passed:
 
@@ -19,15 +19,18 @@ What just passed:
   compile/static and frontend gates; 65 browser/CLI e2e tests; final `VERIFY: PASS`.
 - Independent implementation review found two concrete issues, both fixed under migration, CLI, and
   browser regressions; final Codex review returned `NO VIOLATIONS`.
+- Post-merge canonical `./verify`: Ruff; Mypy across 106 source files; 458 unit tests; compile/static
+  and frontend gates; 67 browser/CLI e2e tests; final `VERIFY: PASS`.
 
 Current hypothesis:
 
-- The ordinary-stage correction is compatible with the newer preview and Chat work on `main`.
+- Confirmed: the ordinary-stage correction is compatible with the newer preview and Chat work on
+  `main`; both verification totals increased because the combined tree includes their regressions.
 
 Next step:
 
-- Rebuild the combined frontend, finish the merge commit, run one canonical post-merge `./verify`,
-  then propose Closeout. No deploy or restart is requested.
+- Remove the clean implementation worktree and merged branch, then propose Closeout. No deploy,
+  restart, or follow-up Ticket applies.
 
 Blockers:
 
