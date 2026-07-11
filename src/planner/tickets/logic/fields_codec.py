@@ -10,7 +10,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from planner.core.contracts import ErrorCode, PlannerError
-from planner.tickets.contracts import FieldName, FieldSlot, Proposal, TicketFields
+from planner.tickets.contracts import FieldSlot, Proposal, TicketFields
 from planner.tickets.logic import coding_bridge
 
 if TYPE_CHECKING:
@@ -29,14 +29,7 @@ def _slot_to_dict(slot: FieldSlot) -> dict[str, Any]:
 
 
 def fields_to_json(fields: TicketFields) -> str:
-    payload = {
-        "kickoff": _slot_to_dict(fields.kickoff),
-        "success": _slot_to_dict(fields.success),
-        "approach": _slot_to_dict(fields.approach),
-        "plan": _slot_to_dict(fields.plan),
-        "implementation": _slot_to_dict(fields.implementation),
-        "closeout": _slot_to_dict(fields.closeout),
-    }
+    payload = {fid: _slot_to_dict(slot) for fid, slot in fields.slots.items()}
     return json.dumps(payload)
 
 
@@ -71,66 +64,39 @@ def _slot_from_obj(obj: Any) -> FieldSlot:
     )
 
 
-# The fixed TicketFields struct can only hold these six coding slots (Tier-2
-# storage is coding-bound in t_tt01; a generic slot map is deferred to t_tt02).
-_CODING_FIELD_IDS: tuple[str, ...] = (
-    "kickoff", "success", "approach", "plan", "implementation", "closeout",
-)
-
-
 def fields_from_json(
     raw: str, definition: WorkflowDefinition | None = None
 ) -> TicketFields:
     if definition is None:
         definition = coding_bridge.coding_definition()
-    # The fixed TicketFields struct cannot represent a non-coding field set. A
-    # definition whose declared fields are not exactly the coding six fails LOUDLY
-    # here rather than raising a raw KeyError below (deferred to t_tt02 storage).
-    if coding_bridge.field_ids(definition) != _CODING_FIELD_IDS:
-        raise PlannerError(
-            ErrorCode.validation,
-            "field storage is coding-bound; this definition's fields cannot be decoded yet",
-            {"fields": list(coding_bridge.field_ids(definition))},
-        )
     data: Any = json.loads(raw)
     _require(isinstance(data, dict))
     # Each DECLARED field must be present AND decode via _slot_from_obj; unknown
     # extra top-level keys are IGNORED (leniency preserved — legacy rows carry a
-    # top-level "result" key).
-    decoded: dict[str, FieldSlot] = {}
-    for key in coding_bridge.field_ids(definition):
-        _require(key in data)
-        decoded[key] = _slot_from_obj(data[key])
-    return TicketFields(
-        kickoff=decoded["kickoff"],
-        success=decoded["success"],
-        approach=decoded["approach"],
-        plan=decoded["plan"],
-        implementation=decoded["implementation"],
-        closeout=decoded["closeout"],
-    )
+    # top-level "result" key). The slot map is keyed by the definition's declared
+    # field ids in declared order, so a registered non-coding field set decodes into
+    # its own slots.
+    slots: dict[str, FieldSlot] = {}
+    for field_id in coding_bridge.field_ids(definition):
+        _require(field_id in data)
+        slots[field_id] = _slot_from_obj(data[field_id])
+    return TicketFields(slots)
 
 
-def get_slot(fields: TicketFields, field: FieldName) -> FieldSlot:
-    if field is FieldName.kickoff:
-        return fields.kickoff
-    if field is FieldName.success:
-        return fields.success
-    if field is FieldName.approach:
-        return fields.approach
-    if field is FieldName.plan:
-        return fields.plan
-    if field is FieldName.implementation:
-        return fields.implementation
-    return fields.closeout
+def get_slot(fields: TicketFields, field_id: str) -> FieldSlot:
+    slot = fields.slots.get(field_id)
+    if slot is None:
+        raise PlannerError(
+            ErrorCode.validation, "unknown ticket field", {"field": field_id}
+        )
+    return slot
 
 
-def with_slot(fields: TicketFields, field: FieldName, slot: FieldSlot) -> TicketFields:
-    return TicketFields(
-        kickoff=slot if field is FieldName.kickoff else fields.kickoff,
-        success=slot if field is FieldName.success else fields.success,
-        approach=slot if field is FieldName.approach else fields.approach,
-        plan=slot if field is FieldName.plan else fields.plan,
-        implementation=slot if field is FieldName.implementation else fields.implementation,
-        closeout=slot if field is FieldName.closeout else fields.closeout,
-    )
+def with_slot(fields: TicketFields, field_id: str, slot: FieldSlot) -> TicketFields:
+    if field_id not in fields.slots:
+        raise PlannerError(
+            ErrorCode.validation, "unknown ticket field", {"field": field_id}
+        )
+    new = dict(fields.slots)          # copy-on-write; declared order preserved
+    new[field_id] = slot
+    return TicketFields(new)

@@ -28,6 +28,7 @@ from planner.tickets.contracts import (
     FieldName,
     TicketState,
 )
+from planner.tickets.logic import fields_codec
 
 _AGENT = {"X-Plan-Actor": "agent"}
 _CHIEF = {"X-Plan-Actor": "chief"}
@@ -943,8 +944,8 @@ def test_successful_excluded_ticket_and_day_writes_do_not_ring(tmp_path: Path) -
         persisted = tickets_data.read_ticket(conn, combined_proposal_id)
     finally:
         conn.close()
-    assert persisted.fields.success.proposal is not None
-    assert persisted.fields.success.proposal.body == "combined proposal"
+    assert fields_codec.get_slot(persisted.fields, "success").proposal is not None
+    assert fields_codec.get_slot(persisted.fields, "success").proposal.body == "combined proposal"
     assert persisted.recap == "combined recap"
     assert _event_kinds(db_path, combined_proposal_id)[-3:] == [
         "proposal_filed",

@@ -21,7 +21,7 @@ from planner.tickets.contracts import (
     Implementer,
     TicketState,
 )
-from planner.tickets.logic import machine
+from planner.tickets.logic import fields_codec, machine
 
 if TYPE_CHECKING:
     from sqlite3 import Connection
@@ -144,10 +144,10 @@ def test_full_linear_chain_auto_accepts_to_done(
         t = data.file_proposal(
             tmp_db, t.id, field=fld, body=f"{fld.value} body", actor="agent", now=now
         )
-        assert t.state is expected_state
-    assert t.fields.kickoff.value == "kickoff body"
-    assert t.fields.implementation.value == "implementation body"
-    assert t.fields.closeout.value == "closeout body"
+        assert t.state == expected_state
+    assert fields_codec.get_slot(t.fields, "kickoff").value == "kickoff body"
+    assert fields_codec.get_slot(t.fields, "implementation").value == "implementation body"
+    assert fields_codec.get_slot(t.fields, "closeout").value == "closeout body"
 
 
 def test_closeout_accept_requires_human_and_reaches_done(
@@ -173,15 +173,15 @@ def test_closeout_accept_requires_human_and_reaches_done(
         t = data.file_proposal(
             tmp_db, t.id, field=fld, body=f"{fld.value} body", actor="agent", now=now
         )
-    assert t.state is TicketState.needs_closeout
+    assert t.state == TicketState.needs_closeout
 
     # Closeout is capped: the proposal parks for human approval, no auto-accept.
     t = data.file_proposal(
         tmp_db, t.id, field=FieldName.closeout, body="closeout body", actor="agent", now=now
     )
-    assert t.state is TicketState.needs_closeout
-    assert t.fields.closeout.proposal is not None
-    assert t.fields.closeout.value is None
+    assert t.state == TicketState.needs_closeout
+    assert fields_codec.get_slot(t.fields, "closeout").proposal is not None
+    assert fields_codec.get_slot(t.fields, "closeout").value is None
 
     t = data.accept_proposal(
         tmp_db,
@@ -192,5 +192,5 @@ def test_closeout_accept_requires_human_and_reaches_done(
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
     )
-    assert t.state is TicketState.done
-    assert t.fields.closeout.value == "closeout body"
+    assert t.state == TicketState.done
+    assert fields_codec.get_slot(t.fields, "closeout").value == "closeout body"

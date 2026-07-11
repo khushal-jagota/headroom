@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 from planner.core.contracts import ErrorCode, EventKind, PlannerError
 from planner.tickets.contracts import (
@@ -14,6 +15,9 @@ from planner.tickets.contracts import (
 )
 from planner.tickets.logic import admission, coding_bridge, fields_codec, machine
 from planner.tickets.logic.decisions import Decision, EventSpec
+
+if TYPE_CHECKING:
+    from planner.tickets.logic.coding_bridge import WorkflowDefinition
 
 CAUSE_EXTERNAL_WORK: str = "external_work"
 _FIELD_ORDER = (
@@ -38,13 +42,26 @@ def decide_external_work(
     ticket: Ticket,
     target_state: TicketState,
     provided_values: Mapping[FieldName, str],
+    *,
+    definition: WorkflowDefinition | None = None,
 ) -> tuple[Decision, Decision]:
     """Return value and position decisions in event order.
 
     The caller may place a recap event between the two decisions. Both decisions are
     built before any write, so validation failure cannot partially mutate a ticket.
+
+    External-work reconciliation is coding-only in t_tt02b: the reconciliation prefix
+    (`_FIELD_ORDER`/`_PREFIX_COUNT`) is coding-bound, so a non-coding definition is
+    rejected loudly here rather than silently reconciled with coding's prefix.
+    Genericizing external-work is deferred to t_tt03.
     """
-    defn = coding_bridge.coding_definition()
+    defn = definition or coding_bridge.coding_definition()
+    if defn.type_id != "coding":
+        raise PlannerError(
+            ErrorCode.validation,
+            "external-work reconciliation is coding-only until t_tt03",
+            {"type_id": defn.type_id},
+        )
     if str(target_state) not in coding_bridge.views.ceiling_range(defn):
         raise PlannerError(
             ErrorCode.validation,
@@ -57,7 +74,7 @@ def decide_external_work(
         raise PlannerError(
             ErrorCode.validation,
             "external work reconciliation cannot move backward",
-            {"from": ticket.state.value, "to": target_state.value},
+            {"from": str(ticket.state), "to": target_state.value},
         )
 
     for field in _FIELD_ORDER:
@@ -116,7 +133,7 @@ def decide_external_work(
             EventSpec(
                 EventKind.state_changed,
                 {
-                    "from": ticket.state.value,
+                    "from": str(ticket.state),
                     "to": target_state.value,
                     "cause": CAUSE_EXTERNAL_WORK,
                 },

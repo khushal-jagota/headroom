@@ -1,10 +1,15 @@
-"""t_tt01 strict-mypy overload cases (review F2/F4).
+"""t_tt01 strict-mypy overload cases (review F2/F4), updated for t_tt02b.
 
 This module is TYPE-CHECKED, not run: `./verify` invokes strict mypy over it so the
 machine.py overloads are genuinely enforced (assert_type is a runtime no-op, so a
-pytest test would give false confidence). If an overload stops narrowing as designed
-— e.g. widening the enum overload to `TicketState | str`, or widening
-resolve_scope.new_state to `str` — this file fails the mypy gate.
+pytest test would give false confidence). If a Tier-1 overload stops narrowing as
+designed (e.g. widening the enum overload to `TicketState | str`) this file fails the
+mypy gate.
+
+t_tt02b widens the Tier-2 scope surface: `resolve_scope.new_state` and
+`has_pending_gating_proposal.state` are now `str` (a foreign stage id flows), so a bare
+`str` new_state is accepted by design — the honest N-ary contract, no longer a guarded
+error.
 
 Pure typing surface: no runtime behavior, no fixtures.
 """
@@ -13,7 +18,7 @@ from __future__ import annotations
 
 from typing import assert_type
 
-from planner.tickets.contracts import AtCap, FieldName, TicketFields, TicketState
+from planner.tickets.contracts import AtCap, FieldName, ScopePair, TicketFields, TicketState
 from planner.tickets.logic import machine
 
 
@@ -33,11 +38,10 @@ def _cases() -> None:
     aat = machine.auto_accept_target(a_state, "needs_success", "success")
     assert_type(aat, TicketState | None)
 
-    # has_pending_gating_proposal type-checks: gating_field narrows to FieldName | None
-    # for a TicketState arg, which feeds get_slot (needs FieldName).
-    assert_type(machine.has_pending_gating_proposal(a_state, fields), bool)
+    # has_pending_gating_proposal is Tier-2 generic: it accepts a str state and returns
+    # bool; a foreign stage id is a valid arg (no enum narrowing required).
+    assert_type(machine.has_pending_gating_proposal(a_str, fields), bool)
 
-    # resolve_scope stays TicketState-typed (Tier 2): a bare str new_state is a mypy
-    # error by design — proving no bare string can reach ScopePair.next_ceiling. If
-    # this stops being an error (str wrongly accepted), the unused ignore fails mypy.
-    machine.resolve_scope(a_str, "none", AtCap.propose)  # type: ignore[arg-type]
+    # resolve_scope is Tier-2 generic (t_tt02b): a bare str new_state is accepted and
+    # yields a ScopePair carrying a str ceiling id — no bare-str guard remains.
+    assert_type(machine.resolve_scope(a_str, "none", AtCap.propose), ScopePair)

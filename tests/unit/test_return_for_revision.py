@@ -32,6 +32,7 @@ from planner.tickets.data import (
     file_proposal,
     finish_run_if_still_running_step,
 )
+from planner.tickets.logic import fields_codec
 from planner.worker_context import data as worker_context_data
 from planner.worker_context.service import SqliteWorkerContextService
 
@@ -648,7 +649,7 @@ def test_stale_revision_session_never_remints_and_settles_ticket_errored(
             conn.close()
         assert ticket.ticket_status.value == "errored"
         assert ticket.chat_session_key == stale_key
-        assert ticket.fields.plan.proposal is None
+        assert fields_codec.get_slot(ticket.fields, "plan").proposal is None
         assert turn is not None and turn["status"] == "errored"
         assert [(row["context_key"], row["revision"]) for row in pending] == pending_before
         assert session_events_after == session_events_before

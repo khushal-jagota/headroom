@@ -180,17 +180,17 @@ def at_or_beyond_ceiling(
 
 
 def validate_ceiling(
-    ceiling: TicketState, *, definition: WorkflowDefinition | None = None
+    ceiling: str, *, definition: WorkflowDefinition | None = None
 ) -> None:
     defn = definition or coding_bridge.coding_definition()
     if str(ceiling) not in coding_bridge.views.ceiling_range(defn):
         raise PlannerError(
-            ErrorCode.scope_invalid, "ceiling must be a linear state", {"ceiling": ceiling.value}
+            ErrorCode.scope_invalid, "ceiling must be a linear state", {"ceiling": str(ceiling)}
         )
 
 
 def resolve_scope(
-    new_state: TicketState,
+    new_state: str,
     next_ceiling: NextCeiling | None,
     at_cap: AtCap | None,
     *,
@@ -208,43 +208,31 @@ def resolve_scope(
         )
     if next_ceiling == NO_FURTHER:
         # the ceiling becomes exactly the newly entered state
-        return ScopePair(next_ceiling=new_state, at_cap=at_cap)
-    if not isinstance(next_ceiling, TicketState):
+        return ScopePair(next_ceiling=str(new_state), at_cap=at_cap)
+    ceiling_id = str(next_ceiling)
+    # Two DISTINCT rejections (coding-parity): an id outside the type's ceiling range is
+    # "unknown next_ceiling"; a valid ceiling whose index precedes new_state is
+    # "next_ceiling must be at or beyond the new state".
+    if ceiling_id not in coding_bridge.views.ceiling_range(defn):
         raise PlannerError(
-            ErrorCode.scope_invalid, "unknown next_ceiling", {"next_ceiling": str(next_ceiling)}
+            ErrorCode.scope_invalid, "unknown next_ceiling", {"next_ceiling": ceiling_id}
         )
-    if str(next_ceiling) not in coding_bridge.views.ceiling_range(defn) or state_index(
-        next_ceiling, definition=defn
-    ) < state_index(new_state, definition=defn):
+    if state_index(ceiling_id, definition=defn) < state_index(str(new_state), definition=defn):
         raise PlannerError(
             ErrorCode.scope_invalid,
             "next_ceiling must be at or beyond the new state",
-            {"next_ceiling": next_ceiling.value, "new_state": new_state.value},
+            {"next_ceiling": ceiling_id, "new_state": str(new_state)},
         )
-    return ScopePair(next_ceiling=next_ceiling, at_cap=at_cap)
-
-
-def require_coding_field(field: FieldName | str) -> FieldName:
-    """The Tier-2 field-storage boundary: the fixed 6-slot ``TicketFields`` struct can
-    only hold coding fields. A foreign field id (a bare ``str`` from ``_as_field`` on a
-    non-coding definition) must fail LOUDLY here, never silently mis-route to a slot.
-    Genericizing storage is deferred to t_tt02x/t_tt02."""
-    if isinstance(field, FieldName):
-        return field
-    raise PlannerError(
-        ErrorCode.validation,
-        "field storage is coding-bound; a foreign field id cannot be stored yet",
-        {"field": str(field)},
-    )
+    return ScopePair(next_ceiling=ceiling_id, at_cap=at_cap)
 
 
 def has_pending_gating_proposal(
-    state: TicketState, fields: TicketFields, *, definition: WorkflowDefinition | None = None
+    state: str, fields: TicketFields, *, definition: WorkflowDefinition | None = None
 ) -> bool:
     field = gating_field(state, definition=definition)
     if field is None:
         return False
-    return fields_codec.get_slot(fields, require_coding_field(field)).proposal is not None
+    return fields_codec.get_slot(fields, str(field)).proposal is not None
 
 
 def has_pending_parked_proposal(
@@ -254,12 +242,21 @@ def has_pending_parked_proposal(
 
 
 def plan_handoff_status(
-    implementer: Implementer | None, old_state: TicketState, new_state: TicketState | None
+    implementer: Implementer | None,
+    old_state: str,
+    new_state: str | None,
+    *,
+    definition: WorkflowDefinition | None = None,
 ) -> TicketStatus | None:
-    """An accepted Plan (direct or auto-accepted) that hands off to needs_implementation
-    routes to Khushal as a durable user_takeover; every other implementer and NULL keep
-    the existing status path. None means this transition carries no status override."""
-    if old_state == TicketState.needs_plan and new_state == TicketState.needs_implementation:
-        if implementer == Implementer.khushal:
-            return TicketStatus.user_takeover
-    return None
+    """The definition's matching transition hook maps an implementer + (old_state,
+    new_state) pair to a durable status override. For coding this reproduces the exact
+    plan-handoff rule (an accepted Plan handed to needs_implementation under khushal
+    becomes a durable user_takeover); every other implementer/transition returns None.
+    None means this transition carries no status override."""
+    if new_state is None or implementer is None:
+        return None
+    defn = definition or coding_bridge.coding_definition()
+    effect = coding_bridge.views.transition_effect(
+        defn, str(implementer), str(old_state), str(new_state)
+    )
+    return TicketStatus(effect) if effect is not None else None

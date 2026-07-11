@@ -14,7 +14,14 @@ from planner.core import links as core_links
 from planner.core.contracts import BlockerSummary, JsonDict
 from planner.sprints.contracts import ItemStatus
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import GATING_FIELD, STATE_ORDER, Ticket, TicketState, TicketStatus
+from planner.tickets.contracts import (
+    GATING_FIELD,
+    STATE_ORDER,
+    FieldSlot,
+    Ticket,
+    TicketState,
+    TicketStatus,
+)
 from planner.tickets.logic import coding_bridge, fields_codec, machine
 
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
@@ -61,7 +68,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
     return {
         "id": ticket.id,
         "title": ticket.title,
-        "state": ticket.state.value,
+        "state": str(ticket.state),
         "priority": ticket.priority.value,
         "deadline": ticket.deadline,
         "project_id": ticket.project_id,
@@ -69,7 +76,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "sprint_item_id": ticket.sprint_item_id,
         "sprint_id": ticket.sprint_id,
         "recap": ticket.recap,
-        "ceiling": ticket.ceiling.value,
+        "ceiling": str(ticket.ceiling),
         "at_cap": ticket.at_cap.value,
         "ticket_status": ticket.ticket_status.value,
         "implementer": ticket.implementer.value if ticket.implementer is not None else None,
@@ -108,7 +115,7 @@ def list_tickets(
     params: list[str] = []
     if state is not None:
         clauses.append("state = ?")
-        params.append(state.value)
+        params.append(str(state))
     if project_id is not None:
         clauses.append("project_id = ?")
         params.append(project_id)
@@ -165,6 +172,9 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
     def show(value: str | None) -> str:
         return value if value else "(none)"
 
+    def slot(field_id: str) -> FieldSlot:
+        return fields_codec.get_slot(fields, field_id)
+
     blocker_summary = core_links.blocker_summary(conn, ticket_id)
     blocked_by_rows = blocker_summary.blocked_by
     blocks_rows = blocker_summary.blocks
@@ -188,27 +198,27 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
     )
     return (
         f"{ticket.title}\n"
-        f"state: {ticket.state.value}\n"
+        f"state: {str(ticket.state)}\n"
         f"priority: {ticket.priority.value}\n"
         f"implementer: {ticket.implementer.value if ticket.implementer is not None else '(none)'}\n"
         f"\n"
-        f"kickoff:\n{show(fields.kickoff.value)}\n"
-        f"kickoff_user_note:\n{show(fields.kickoff.user_note)}\n"
+        f"kickoff:\n{show(slot('kickoff').value)}\n"
+        f"kickoff_user_note:\n{show(slot('kickoff').user_note)}\n"
         f"\n"
-        f"success:\n{show(fields.success.value)}\n"
-        f"success_user_note:\n{show(fields.success.user_note)}\n"
+        f"success:\n{show(slot('success').value)}\n"
+        f"success_user_note:\n{show(slot('success').user_note)}\n"
         f"\n"
-        f"approach:\n{show(fields.approach.value)}\n"
-        f"approach_user_note:\n{show(fields.approach.user_note)}\n"
+        f"approach:\n{show(slot('approach').value)}\n"
+        f"approach_user_note:\n{show(slot('approach').user_note)}\n"
         f"\n"
-        f"plan:\n{show(fields.plan.value)}\n"
-        f"plan_user_note:\n{show(fields.plan.user_note)}\n"
+        f"plan:\n{show(slot('plan').value)}\n"
+        f"plan_user_note:\n{show(slot('plan').user_note)}\n"
         f"\n"
-        f"implementation:\n{show(fields.implementation.value)}\n"
-        f"implementation_user_note:\n{show(fields.implementation.user_note)}\n"
+        f"implementation:\n{show(slot('implementation').value)}\n"
+        f"implementation_user_note:\n{show(slot('implementation').user_note)}\n"
         f"\n"
-        f"closeout:\n{show(fields.closeout.value)}\n"
-        f"closeout_user_note:\n{show(fields.closeout.user_note)}\n"
+        f"closeout:\n{show(slot('closeout').value)}\n"
+        f"closeout_user_note:\n{show(slot('closeout').user_note)}\n"
         f"\n"
         f"recap:\n{show(ticket.recap)}\n"
         f"\n"

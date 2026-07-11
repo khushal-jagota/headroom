@@ -97,7 +97,7 @@ def _snapshot(db_path: Path, ticket_id: str) -> dict[str, Any]:
                 ticket.project_id,
                 ticket.sprint_id,
                 ticket.implementer.value if ticket.implementer is not None else None,
-                ticket.state.value,
+                str(ticket.state),
                 ticket.ticket_status.value,
             ),
             "updated_at": ticket.updated_at,

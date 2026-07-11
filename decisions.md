@@ -2059,8 +2059,11 @@ Building the DB `ticket_type` column migration against the owner's live `plannin
   lenient on extras. A misspelled key drops a required field, so the missing-field check still catches it.
 - **Silent-pass invariant (not "non-coding unreachable").** The codec gates on field-SET, not type-id, so
   a coding-shaped second type would reach the coding-default engine paths. Deferral is safe ONLY because
-  production registers `coding` alone: **no second PRODUCTION type until t_tt02b threads
-  `resolution.decide_*` / `plan_handoff_status` / external-work.**
+  production registers `coding` alone: **no second PRODUCTION type until the coding-default paths are
+  threaded.** t_tt02b threads the engine + propose/accept/drop/scope drive path (and widens the domain
+  contract `Ticket.state`/`ceiling` → `str`); **external-work + direct-scope prefix genericization defer to
+  t_tt03** (t_tt02b keeps external-work coding-only with an explicit non-coding rejection — Codex t_tt02b
+  plan-review boundary). So the binding rule becomes: **no 2nd production type until t_tt03.**
 - **Migration holds the exclusive write lock across snapshot→copy→swap** (Codex diff-review F1) — closes a
   concurrent-write loss window. The shipped kickoff migration has the same latent window; left unedited,
   flagged to the owner for a possible follow-up.

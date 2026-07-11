@@ -39,10 +39,10 @@ def _next_step_prompt(ticket: Ticket) -> str:
 
     Route selection/suitability guidance lives in the panels-worker skill, not here."""
     gating = machine.gating_field(ticket.state)
-    field = gating.value if gating is not None else "the next step"
+    field = str(gating) if gating is not None else "the next step"
     implementer_wire = ticket.implementer.value if ticket.implementer is not None else "unassigned"
     return (
-        f"Work ticket {ticket.id} — {ticket.title}. It is in state '{ticket.state.value}'; "
+        f"Work ticket {ticket.id} — {ticket.title}. It is in state '{str(ticket.state)}'; "
         f"take the next step and propose the '{field}' field for approval. "
         f"Implementer: {implementer_wire}."
     )

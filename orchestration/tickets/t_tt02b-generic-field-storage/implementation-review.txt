@@ -1,0 +1,65 @@
+Implementation is not ready. I found one typing-contract defect, one coding-parity regression, and three material test/boundary gaps.
+
+## Findings
+
+1. **[P1] Foreign fields flow only because pytest ignores the false type annotations.**
+
+   [`data.file_proposal`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:648), [`data.accept_proposal`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:713), and [`resolution.decide_accept`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/resolution.py:156) still declare `field: FieldName`. T5 passes bare `_FA`/`_FB` strings at [`test_generic_field_storage.py:286`](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_generic_field_storage.py:286), [`:308`](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_generic_field_storage.py:308), and [`:321`](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_generic_field_storage.py:321).
+
+   Concrete failure: a strict-mypy production caller invoking `accept_proposal(..., field="alpha")` receives an incompatible-argument error. Unit tests conceal this because only `src/` and `tests/typing/` are type-checked. These seams need `FieldName | str`, with a checked typing fixture.
+
+2. **[P1] Coding error behavior is no longer byte-identical.**
+
+   [`machine.resolve_scope`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/machine.py:212) now merges “unknown ceiling” and “ceiling before state” into one branch. Before this diff, `resolve_scope(needs_approach, "bogus", stop)` raised:
+
+   ```text
+   "unknown next_ceiling", {"next_ceiling": "bogus"}
+   ```
+
+   It now raises at [`machine.py:216`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/machine.py:216):
+
+   ```text
+   "next_ceiling must be at or beyond the new state",
+   {"next_ceiling": "bogus", "new_state": "needs_approach"}
+   ```
+
+   That is an observable coding error-payload regression, and no test pins it.
+
+3. **[P2] T5 does not exercise the required foreign auto-accept path.**
+
+   The reviewed plan explicitly requires alpha with `ceiling="needs_beta"` to auto-accept ([plan.md:724](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02b-generic-field-storage/plan.md:724)). Instead T5 proposes alpha while `state == ceiling`, parks it, expands scope, then directly accepts it ([test:285–313](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_generic_field_storage.py:285)). Beta also parks and is directly accepted.
+
+   Concrete regression: break definition threading only in [`decide_file_proposal`’s auto-accept branch](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/resolution.py:118); every current probe drive still passes.
+
+   Other converted branches T5 leaves unexercised include proposal supersession, `file_current_proposal_with_recap`, the admission error payloads, return-for-revision, and the non-`None` transition-hook path in `plan_handoff_status`.
+
+4. **[P2] T5’s event assertion is far weaker than its advertised exact drive guard.**
+
+   At [`test_generic_field_storage.py:314`](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_generic_field_storage.py:314), it merely asserts that *some* `proposal_accepted` event names alpha. It does not assert exact event order or payloads, alpha proposal clearing, post-accept `at_cap`, beta’s parked intermediate state, or the final ceiling.
+
+   Concrete regression: emit `state_changed` before `proposal_accepted`, omit either `scope_changed`, or attach the wrong accepted body/cause; T5 can still pass.
+
+5. **[P2] `TicketFields` is shallow-frozen, not immutable.**
+
+   [`TicketFields.slots`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/contracts.py:108) is a public mutable `dict`, containing mutable `FieldSlot` objects. Although [`with_slot`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/fields_codec.py:95) itself correctly copies the dictionary, callers can do:
+
+   ```python
+   ticket.fields.slots["alpha"].value = "forged"
+   ticket.fields.slots["beta"] = FieldSlot(value="forged")
+   ```
+
+   `fields_to_json` then persists the mutation without passing through copy-on-write or resolution. `frozen=True` therefore does not enforce the stated value-object boundary.
+
+6. **[P3] The planned persisted coding-byte regression is missing.**
+
+   T1’s literal at [`test_generic_field_storage.py:135`](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_generic_field_storage.py:135) does exactly match the old hardcoded codec output. However, the plan also requires create→propose→accept followed by comparison of the stored JSON bytes ([plan.md:669](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02b-generic-field-storage/plan.md:669)). No such test exists.
+
+   Concrete regression: a writer constructs coding slots in a different insertion order; the standalone codec golden remains green while database bytes change.
+
+## Sound checks
+
+- No missed ticket-carried `.value` conversion was found. `_row_to_ticket` correctly keeps raw strings at [`data.py:76`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:76) and [`:84`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:84).
+- The eight added-line `.value` hits are harmless: six are `FieldSlot.value`, one is type-independent `AtCap.value`, and one is coding-only external-work `target_state.value`.
+- External work explicitly rejects non-coding definitions before its enum-only operations at [`external_work.py:58`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/external_work.py:58).
+- The sampled `is`→`==` and field-access rewrites preserve their RHS and asserted outcomes. The three lifted t_tt01 boundary tests meaningfully assert new foreign behavior.
+- `_apply_decision` remains the canonical state/ceiling/settled-field writer.

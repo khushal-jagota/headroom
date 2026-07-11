@@ -297,8 +297,8 @@ def test_created_coding_ticket_ceiling_is_registry_default(
         tmp_db, title="Ceiling", actor="human", now=now,
         title_max_chars=TITLE_MAX_CHARS, project_id="project_vylo",
     )
-    assert ticket.ceiling.value == coding_bridge.default_ceiling("coding")
-    assert ticket.ceiling.value == "needs_success"
+    assert str(ticket.ceiling) == coding_bridge.default_ceiling("coding")
+    assert str(ticket.ceiling) == "needs_success"
 
 
 def test_created_second_type_ticket_ceiling_is_its_registry_default(
@@ -313,7 +313,7 @@ def test_created_second_type_ticket_ceiling_is_its_registry_default(
         ticket_type="coding_probe",
     )
     assert ticket.ticket_type == "coding_probe"
-    assert ticket.ceiling.value == coding_bridge.default_ceiling("coding_probe")
+    assert str(ticket.ceiling) == coding_bridge.default_ceiling("coding_probe")
 
 
 # =====================================================================
@@ -334,7 +334,7 @@ def test_second_type_row_resolves_and_round_trips_the_load_door(
     )
     ticket = tickets_data.read_ticket(tmp_db, "t_probe")
     assert ticket.ticket_type == "coding_probe"
-    assert ticket.state is TicketState.needs_success
+    assert ticket.state == TicketState.needs_success
 
 
 def test_second_type_reaches_coding_default_engine_paths(
@@ -357,4 +357,4 @@ def test_second_type_reaches_coding_default_engine_paths(
         tmp_db, ticket.id, field=FieldName.kickoff, actor="human", now=now,
         next_ceiling=NO_FURTHER, at_cap=AtCap.propose,
     )
-    assert accepted.state is TicketState.needs_success
+    assert accepted.state == TicketState.needs_success

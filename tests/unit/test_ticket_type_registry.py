@@ -32,7 +32,6 @@ from planner.tickets.contracts import (
     WORKER_STATE_ORDER,
     FieldName,
     Implementer,
-    TicketFields,
     TicketState,
     TicketStatus,
 )
@@ -460,11 +459,12 @@ def test_coding_field_order_equals_fieldname() -> None:
     assert views.field_ids(CODING_DEFINITION) == tuple(f.value for f in FieldName)
 
 
-def test_coding_field_order_equals_ticketfields_slots() -> None:  # F4
-    assert (
-        tuple(f.name for f in dataclasses.fields(TicketFields))
-        == views.field_ids(CODING_DEFINITION)
-    )
+def test_coding_field_order_equals_field_name_order() -> None:  # F4
+    # t_tt02b: TicketFields is now a generic slot map (no six named dataclass fields),
+    # so the coding field-order invariant is pinned against the FieldName vocabulary in
+    # declared order — the coding field ids the definition is built from — not against
+    # TicketFields' internal shape.
+    assert views.field_ids(CODING_DEFINITION) == tuple(f.value for f in FieldName)
 
 
 def test_coding_field_gates_inverse_equals_field_gates() -> None:  # F4

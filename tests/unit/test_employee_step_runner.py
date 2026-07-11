@@ -40,6 +40,7 @@ from planner.tickets.contracts import (
     TicketState,
     TicketStatus,
 )
+from planner.tickets.logic import fields_codec
 
 HOME = "/tmp/planner-home"
 HERMES_PY = sys.executable
@@ -265,7 +266,7 @@ def test_kickoff_parked_proposal_awaits_approval(tmp_path: Path) -> None:
     ticket = _read(db, tid)
     assert ticket.ticket_status == TicketStatus.awaiting_approval
     assert ticket.chat_session_key == STORED_KEY
-    assert ticket.fields.success.proposal is not None
+    assert fields_codec.get_slot(ticket.fields, "success").proposal is not None
     assert fake.sent_methods() == ["session.create", "prompt.submit"]
     evs = _status_events(db, tid)
     assert [e["ticket_status"] for e in evs] == ["agent_running_step", "awaiting_approval"]
@@ -290,7 +291,7 @@ def test_pending_kickoff_is_rechecked_before_runner_claim(tmp_path: Path) -> Non
     assert runner.wait_idle(10.0)
 
     unchanged = _read(db, ticket.id)
-    assert unchanged.state is TicketState.needs_kickoff
+    assert unchanged.state == TicketState.needs_kickoff
     assert unchanged.ticket_status is TicketStatus.awaiting_approval
     assert fake.sent_methods() == []
     statuses = [event["ticket_status"] for event in _status_events(db, ticket.id)]
@@ -311,8 +312,8 @@ def test_auto_accepted_proposal_completion_clears_to_empty(tmp_path: Path) -> No
 
     ticket = _read(db, tid)
     assert ticket.state == TicketState.needs_approach
-    assert ticket.fields.success.value == "the success body"
-    assert ticket.fields.success.proposal is None
+    assert fields_codec.get_slot(ticket.fields, "success").value == "the success body"
+    assert fields_codec.get_slot(ticket.fields, "success").proposal is None
     assert ticket.ticket_status == TicketStatus.empty
 
 
@@ -568,7 +569,7 @@ def test_claimed_rejection_turn_revises_closeout_in_same_session_without_chat_co
             )
         finally:
             conn.close()
-        assert ticket.state is TicketState.needs_closeout
+        assert ticket.state == TicketState.needs_closeout
         assert ticket.ticket_status is TicketStatus.agent_running_step
         assert runner.wait_idle(10.0)
         conn = connect(db)
@@ -591,11 +592,14 @@ def test_claimed_rejection_turn_revises_closeout_in_same_session_without_chat_co
         "The user rejected your proposal and provided the following guidance:\n\nAdd evidence."
     )
     revised = _read(db, tid)
-    assert revised.state is TicketState.needs_closeout
+    assert revised.state == TicketState.needs_closeout
     assert revised.ticket_status is TicketStatus.awaiting_approval
-    assert revised.fields.closeout.value is None
-    assert revised.fields.closeout.proposal is not None
-    assert revised.fields.closeout.proposal.body == "revised closeout with evidence"
+    assert fields_codec.get_slot(revised.fields, "closeout").value is None
+    assert fields_codec.get_slot(revised.fields, "closeout").proposal is not None
+    assert (
+        fields_codec.get_slot(revised.fields, "closeout").proposal.body
+        == "revised closeout with evidence"
+    )
     assert [(message.role, message.text) for message in state.messages] == [("assistant", "ok")]
     assert queues["approvals"][0]["waiting_since"] == 3
 
@@ -612,7 +616,7 @@ def test_claimed_rejection_turn_revises_closeout_in_same_session_without_chat_co
         )
     finally:
         conn.close()
-    assert approved.state is TicketState.done
+    assert approved.state == TicketState.done
     assert approved.ticket_status is TicketStatus.empty
 
 

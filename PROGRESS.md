@@ -413,10 +413,22 @@ production type until t_tt02b threads them** (see D103). Live `planning.db` back
 (`data/backups/planning-pre-tickettype-t_tt02-*`). NOTE: shipped kickoff migration has the same latent
 pre-lock snapshot window — flagged to owner, left unedited.
 
-Next: **t_tt02b** — genericize the fixed `TicketFields` struct → per-field-id slot map + generic codec/
-get_slot/with_slot; widen `ScopePair`/`resolve_scope`/`validate_ceiling`; thread `decide_*`/
-`plan_handoff_status`/external-work; lift `require_coding_field`. BRIEF ready. Then t_tt02x (probe) → t_tt03
-+ gate.
+**t_tt02b DONE — verified green + committed.** Generic field storage + domain-contract widening. Pipeline:
+plan → my independent plan review (P0 BLOCKER caught pre-code: keeping `Ticket.state`/`ceiling` enum-typed
+fails probe at CREATION, `TicketState("needs_alpha")` ValueError; + external-work→t_tt03; + full drive-path
+threading) → revise → implement → my independent diff review (core sound; 6 findings incl. 2 P1: field
+seams type-dishonest [widened to `FieldName|str` + mypy fixture]; `resolve_scope` merged two error branches
+[coding-parity regression verify MISSED — restored + pinned]; T5 didn't hit auto-accept [now does + exact
+events]; `TicketFields.slots` publicly reassignable [MappingProxyType]; +2) → fix → `./verify` PASS (587
+unit, e2e 68). `TicketFields` now a frozen `MappingProxyType`-backed slot map keyed by field id (`.empty()`
+ctor); `Ticket.state`/`ceiling`/`Decision.new_*`/`ScopePair.next_ceiling` → `str`; ~30 write-path +
+read-path `.value`→`str()` (completeness-grep gate = zero ticket-carried domain `.value`); coding
+`fields_to_json` AND stored bytes byte-identical (T1 + F6 goldens); the full propose/accept/scope/drop
+drive path threaded per-row; external-work coding-only-with-explicit-rejection (genericization → t_tt03,
+per D103). The probe DATA-layer drive (T5) proves a non-enum-state type flows create→auto-accept→scope→done.
+
+Next: **t_tt02x** — the canonical `probe` fixture + contract tests + engine drive-to-done (BRIEF ready).
+Then t_tt03 (CLI/API + external-work genericization + the go/no-go gate).
 
 ## Current work cycle (2026-07-10): Panels sprint-planning workflow
 

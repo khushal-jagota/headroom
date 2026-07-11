@@ -7,7 +7,7 @@ from datetime import date
 from typing import TYPE_CHECKING, Final
 
 from planner.core.contracts import ErrorCode, PlannerError
-from planner.tickets.contracts import AtCap, FieldName, TicketState
+from planner.tickets.contracts import AtCap, FieldName
 from planner.tickets.logic import coding_bridge, machine
 
 if TYPE_CHECKING:
@@ -35,28 +35,25 @@ def require_direct_actor(actor: str, action: str) -> None:
 
 
 def check_agent_proposal(
-    state: TicketState,
-    ceiling: TicketState,
+    state: str,
+    ceiling: str,
     at_cap: AtCap,
-    field: FieldName,
+    field: FieldName | str,
     *,
     definition: WorkflowDefinition | None = None,
 ) -> None:
     defn = definition or coding_bridge.coding_definition()
     if machine.is_terminal(state, definition=defn):
         raise PlannerError(
-            ErrorCode.validation, "no proposals on a terminal ticket", {"state": state.value}
+            ErrorCode.validation, "no proposals on a terminal ticket", {"state": str(state)}
         )
     gating = machine.gating_field(state, definition=defn)
     if gating is None:
         raise PlannerError(
             ErrorCode.validation,
             "ticket state has no proposal field",
-            {"state": state.value},
+            {"state": str(state)},
         )
-    # Tier-2 field-storage boundary: a foreign gate id fails loudly here rather than
-    # reaching `.value` on a bare str (AttributeError) below.
-    gating = machine.require_coding_field(gating)
     if not machine.at_or_beyond_ceiling(state, ceiling, definition=defn):
         return
     if at_cap == AtCap.stop:
@@ -64,20 +61,20 @@ def check_agent_proposal(
             ErrorCode.at_cap_stop,
             "ticket is at its ceiling with at_cap=stop",
             {
-                "gating_field": gating.value if gating is not None else None,
-                "state": state.value,
-                "ceiling": ceiling.value,
+                "gating_field": str(gating),
+                "state": str(state),
+                "ceiling": str(ceiling),
                 "at_cap": "stop",
             },
         )
-    if field != gating:
+    if str(field) != str(gating):
         raise PlannerError(
             ErrorCode.validation,
             "at the ceiling agents may propose only the current gating field",
             {
-                "field": field.value,
-                "gating_field": gating.value if gating is not None else None,
-                "state": state.value,
+                "field": str(field),
+                "gating_field": str(gating),
+                "state": str(state),
             },
         )
 

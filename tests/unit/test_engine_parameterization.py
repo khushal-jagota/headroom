@@ -155,9 +155,9 @@ def test_codec_lenient_on_unknown_extra_top_level_keys() -> None:
     payload["result"] = "legacy value"          # the live-data legacy key
     payload["audit"] = {"who": "someone"}
     parsed = fields_codec.fields_from_json(json.dumps(payload), coding_bridge.coding_definition())
-    assert parsed.kickoff.value == "k"
-    assert parsed.success.value == "s"
-    assert parsed.approach.value is None
+    assert fields_codec.get_slot(parsed, "kickoff").value == "k"
+    assert fields_codec.get_slot(parsed, "success").value == "s"
+    assert fields_codec.get_slot(parsed, "approach").value is None
 
 
 def test_codec_requires_each_declared_field() -> None:
@@ -169,22 +169,28 @@ def test_codec_requires_each_declared_field() -> None:
 
 
 def test_codec_round_trips_declared_fields() -> None:
-    fields = TicketFields(
-        kickoff=FieldSlot(value="k", user_note="note"),
-        success=FieldSlot(
-            value="s", proposal=Proposal(body="p", proposed_by="agent", created_at=7)
-        ),
+    fields = TicketFields.empty(coding_bridge.field_ids(coding_bridge.coding_definition()))
+    fields = fields_codec.with_slot(fields, "kickoff", FieldSlot(value="k", user_note="note"))
+    fields = fields_codec.with_slot(
+        fields,
+        "success",
+        FieldSlot(value="s", proposal=Proposal(body="p", proposed_by="agent", created_at=7)),
     )
     raw = fields_codec.fields_to_json(fields)
     parsed = fields_codec.fields_from_json(raw, coding_bridge.coding_definition())
-    assert parsed.kickoff.value == "k"
-    assert parsed.kickoff.user_note == "note"
-    assert parsed.success.proposal is not None
-    assert parsed.success.proposal.body == "p"
+    assert fields_codec.get_slot(parsed, "kickoff").value == "k"
+    assert fields_codec.get_slot(parsed, "kickoff").user_note == "note"
+    assert fields_codec.get_slot(parsed, "success").proposal is not None
+    assert fields_codec.get_slot(parsed, "success").proposal.body == "p"
 
 
 def test_codec_default_definition_matches_explicit_coding() -> None:
-    raw = fields_codec.fields_to_json(TicketFields(kickoff=FieldSlot(value="k")))
+    fields = fields_codec.with_slot(
+        TicketFields.empty(coding_bridge.field_ids(coding_bridge.coding_definition())),
+        "kickoff",
+        FieldSlot(value="k"),
+    )
+    raw = fields_codec.fields_to_json(fields)
     one_arg = fields_codec.fields_from_json(raw)
     explicit = fields_codec.fields_from_json(raw, coding_bridge.coding_definition())
     assert one_arg == explicit
@@ -199,19 +205,20 @@ def test_codec_decodes_each_declared_value_not_only_presence() -> None:
     assert exc.value.code == ErrorCode.validation
 
 
-def test_codec_rejects_non_coding_field_set_loudly() -> None:
-    # The F2 storage boundary: the fixed TicketFields struct cannot hold a non-coding
-    # field set. A synthetic definition (fields kickoff/_FA/_FB) raises a clear
-    # PlannerError rather than a raw KeyError when the coding keys are decoded.
+def test_codec_decodes_non_coding_field_set() -> None:
+    # t_tt02b lifts the coding-bound storage boundary: a registered non-coding field
+    # set (kickoff/_FA/_FB) now DECODES into its own slots against the definition's
+    # declared field ids, rather than raising a coding-bound rejection.
     _build_synthetic()
     payload = {
         "kickoff": {"value": "k", "proposal": None, "user_note": None},
         _FA: {"value": "a", "proposal": None, "user_note": None},
         _FB: {"value": "b", "proposal": None, "user_note": None},
     }
-    with pytest.raises(PlannerError) as exc:
-        fields_codec.fields_from_json(json.dumps(payload), SYNTHETIC)
-    assert exc.value.code == ErrorCode.validation
+    parsed = fields_codec.fields_from_json(json.dumps(payload), SYNTHETIC)
+    assert fields_codec.get_slot(parsed, "kickoff").value == "k"
+    assert fields_codec.get_slot(parsed, _FA).value == "a"
+    assert fields_codec.get_slot(parsed, _FB).value == "b"
 
 
 # =====================================================================
@@ -269,41 +276,39 @@ def test_auto_accept_target_survives_interning_on_synthetic_field() -> None:
     assert result == _B
 
 
-def test_admission_rejects_foreign_gate_loudly() -> None:
-    # The F1 Tier-2 boundary: a foreign definition whose gate is a non-FieldName id
-    # must fail with a clear PlannerError before any `.value`/slot access, never an
-    # AttributeError. check_agent_proposal resolves gating_field(_A)=_FA (a bare str
-    # for SYNTHETIC) and rejects it at the coding-bound field-storage boundary.
+def test_admission_accepts_foreign_gate_generically() -> None:
+    # t_tt02b lifts the coding-bound gate boundary: admission for a foreign definition
+    # whose gate is a non-FieldName id (_FA) now resolves gating_field(_A)=_FA and
+    # validates against the definition's own gate, not the coding six. At its ceiling
+    # with at_cap=propose, proposing the current gating field (_FA) is admitted (no
+    # raise) — proving the generic path handles a bare-str gate without AttributeError.
     from planner.tickets.logic import admission
 
     _build_synthetic()
+    admission.check_agent_proposal(_A, _A, AtCap.propose, _FA, definition=SYNTHETIC)
+
+    # A non-gating field at the ceiling is still rejected — but against the type's own
+    # gate (_FA), not coding's, and with a clean PlannerError, not an AttributeError.
     with pytest.raises(PlannerError) as exc:
-        admission.check_agent_proposal(
-            _A,  # type: ignore[arg-type]
-            _A,  # type: ignore[arg-type]
-            AtCap.propose,
-            _FA,  # type: ignore[arg-type]
-            definition=SYNTHETIC,
-        )
+        admission.check_agent_proposal(_A, _A, AtCap.propose, _FB, definition=SYNTHETIC)
     assert exc.value.code == ErrorCode.validation
-    assert exc.value.detail == {"field": _FA}
+    assert exc.value.detail == {"field": _FB, "gating_field": _FA, "state": _A}
 
 
-def test_has_pending_gating_proposal_rejects_foreign_gate_loudly() -> None:
-    # The F1 Tier-2 boundary at the machine layer: a foreign gate id (_FA is not a
-    # FieldName) must raise a clear PlannerError, never silently fall through to the
-    # closeout slot. Proves the concrete break the reviewer named cannot happen.
+def test_has_pending_gating_proposal_reads_foreign_gate_generically() -> None:
+    # t_tt02b: the machine reads the type's OWN gate slot generically. For SYNTHETIC at
+    # state _A the gate is _FA; a proposal parked on the _FA slot is seen as pending,
+    # never silently mis-routed to a coding slot. A bare-str gate flows without error.
     _build_synthetic()
-    fields = TicketFields(
-        closeout=FieldSlot(proposal=Proposal(body="p", proposed_by="agent", created_at=1))
+    fields = fields_codec.with_slot(
+        TicketFields.empty(("kickoff", _FA, _FB)),
+        _FA,
+        FieldSlot(proposal=Proposal(body="p", proposed_by="agent", created_at=1)),
     )
-    with pytest.raises(PlannerError) as exc:
-        machine.has_pending_gating_proposal(
-            _A,  # type: ignore[arg-type]  # _A is a synthetic state, not a TicketState
-            fields,
-            definition=SYNTHETIC,
-        )
-    assert exc.value.code == ErrorCode.validation
+    assert machine.has_pending_gating_proposal(_A, fields, definition=SYNTHETIC) is True
+
+    empty = TicketFields.empty(("kickoff", _FA, _FB))
+    assert machine.has_pending_gating_proposal(_A, empty, definition=SYNTHETIC) is False
 
 
 def test_two_definitions_flow_through_engine_at_once() -> None:
@@ -428,12 +433,18 @@ def test_valid_note_changes_only_user_note(
         actor="human",
         now=now,
     )
-    assert updated.fields.approach.user_note == "guidance"
+    up_approach = fields_codec.get_slot(updated.fields, "approach")
+    be_approach = fields_codec.get_slot(before.fields, "approach")
+    assert up_approach.user_note == "guidance"
     # every other slot's value/proposal preserved; approach's own value/proposal too
-    assert updated.fields.approach.value == before.fields.approach.value
-    assert updated.fields.approach.proposal == before.fields.approach.proposal
-    assert updated.fields.kickoff == before.fields.kickoff
-    assert updated.fields.success == before.fields.success
+    assert up_approach.value == be_approach.value
+    assert up_approach.proposal == be_approach.proposal
+    assert fields_codec.get_slot(updated.fields, "kickoff") == fields_codec.get_slot(
+        before.fields, "kickoff"
+    )
+    assert fields_codec.get_slot(updated.fields, "success") == fields_codec.get_slot(
+        before.fields, "success"
+    )
     assert updated.state == before.state
     assert updated.ceiling == before.ceiling
     assert updated.at_cap == before.at_cap

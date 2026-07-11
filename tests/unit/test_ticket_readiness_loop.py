@@ -36,6 +36,7 @@ from planner.runtime.readiness_doorbell import LoopReadinessDoorbell, NoOpReadin
 from planner.runtime.ticket_readiness_loop import TicketReadinessLoop
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, FieldName, Ticket, TicketState, TicketStatus
+from planner.tickets.logic import fields_codec
 
 HOME = "/tmp/planner-home"
 HERMES_PY = sys.executable
@@ -322,8 +323,8 @@ def test_is_runnable_kickoff_uses_generic_parked_proposal_predicate(
     conn = connect(db)
     try:
         ticket = tickets_data.read_ticket(conn, tid)
-        assert ticket.state is TicketState.needs_kickoff
-        assert ticket.fields.kickoff.proposal is not None
+        assert ticket.state == TicketState.needs_kickoff
+        assert fields_codec.get_slot(ticket.fields, "kickoff").proposal is not None
         assert readiness.is_runnable(conn, ticket) is False
         assert tickets_data.read_ticket(conn, tid).ticket_status is TicketStatus.awaiting_approval
     finally:
@@ -373,7 +374,7 @@ def test_is_runnable_below_ceiling_after_auto_accept_is_true(tmp_path: Path) -> 
     conn = connect(db)
     try:
         ticket = tickets_data.read_ticket(conn, tid)
-        assert ticket.state is TicketState.needs_approach
+        assert ticket.state == TicketState.needs_approach
         assert readiness.is_runnable(conn, ticket) is True  # next step (approach) is ready
     finally:
         conn.close()
@@ -539,14 +540,19 @@ def test_settlement_doorbell_drives_the_auto_advance_chain(tmp_path: Path) -> No
     loop_box.append(loop)
     loop.start(30)  # the settlement ring, not the timer, advances the chain
     try:
-        assert _wait_until(lambda: _read(db, tid).fields.approach.proposal is not None, 10.0)
+        assert _wait_until(
+            lambda: fields_codec.get_slot(_read(db, tid).fields, "approach").proposal is not None,
+            10.0,
+        )
     finally:
         loop.stop()
 
     ticket = _read(db, tid)
-    assert ticket.state is TicketState.needs_approach       # step 0 auto-accepted + advanced
-    assert ticket.fields.success.value == "s"                # step 0 value settled
-    assert ticket.fields.approach.proposal is not None        # step 1 parked at the ceiling
+    assert ticket.state == TicketState.needs_approach       # step 0 auto-accepted + advanced
+    assert fields_codec.get_slot(ticket.fields, "success").value == "s"  # step 0 value settled
+    assert (
+        fields_codec.get_slot(ticket.fields, "approach").proposal is not None
+    )  # step 1 parked at the ceiling
     assert ticket.ticket_status == TicketStatus.awaiting_approval
     assert fake.sent_methods().count("session.create") == 1
     assert fake.sent_methods().count("session.resume") == 1
@@ -645,7 +651,7 @@ def test_poll_sets_off_today_ticket_after_approval_advance(tmp_path: Path) -> No
     _add_to_day(db, tid)
     _file_proposal(db, tid, "success", "s")               # auto-accepts below ceiling
     _set_key(db, tid, STORED_KEY)
-    assert _read(db, tid).state is TicketState.needs_approach
+    assert _read(db, tid).state == TicketState.needs_approach
 
     fake = _ProposingFake(
         _resume_script(STORED_KEY, _complete_ev()),
