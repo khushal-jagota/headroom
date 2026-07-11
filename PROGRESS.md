@@ -342,8 +342,49 @@ separate responsibility. Prove genericity with a minimal synthetic fixture type 
 only, not shipped); production ships coding-only. Full 6 phases stay (my earlier "defer workers/UI" was
 wrong, reverted). `t_tt02x` = fixture; Phase 5 authors the base skill + placeholder specialist.
 
-Status: reviewed plan delivered; nothing approved, no code changed. Blocked on owner's `needs_kickoff`
-landing before any implementation ticket. Next: owner decision to proceed.
+Kickoff landed (merge `304734e`, "make kickoff a normal ticket stage") — reviewed the diff and
+accommodated PLAN.md. It came in as a real GATED first stage (`FieldName.kickoff`, gate/advance/
+field-slot + `kickoff` in the DB fields-JSON default; advances `needs_kickoff → needs_success`), so the
+universal prefix is now a `(state, field)` pair. One genuinely NEW structural fact: a second ordering
+`WORKER_STATE_ORDER` (= linear order minus `needs_kickoff`) that ceiling validation
+(`validate_ceiling`/`resolve_scope`) keys off — so each workflow now has TWO orderings (full stage order
++ ceiling range) and a per-type default ceiling (first worker stage), all registry-derived (new invariant
+9). Kickoff also dragged in new coding-specific literals to parameterize: recap guard names
+`needs_kickoff`+`needs_success` (admission.py:74), direct-jump guard names `needs_kickoff`
+(resolution.py:275), `SETTLED_PREFIX_INDEX` coding-state→index map (external_work.py:29); the `is`→`==`
+set grew. `_migrate_ticket_kickoff_columns` (db.py:272) is now the closest Phase-2 migration template.
+Plan scope/phases UNCHANGED — the architecture held; kickoff validated it. P0 is now SATISFIED, `t_tt00`
+unblocked.
+
+Status: plan accommodated to landed kickoff; nothing approved, no impl code changed. Only remaining
+pre-`t_tt00` step: one clean baseline `./verify` on current tree. Next: owner decision to proceed.
+
+**BUILD STARTED (2026-07-11).** Owner chose cadence = **run autonomously to the go/no-go gate** (Phases
+0–3, report at the falsifiable `probe`-through-real-gates test). Baseline `./verify`: green modulo ONE
+flaky e2e (`test_editable_markdown_preview_focus_noop…`, a Playwright popup-event 30s timeout under
+CPU load from the live `panels serve` + full suite) — reproduces green 4/4 in isolation; all
+deterministic gates pass. Treated as effectively green.
+
+t_tt00 (registry contracts) pipeline in flight: BRIEF written
+(`orchestration/tickets/t_tt00-registry-contracts/BRIEF.md`); Opus planner produced `plan.md` — new
+`src/planner/ticket_types/` sibling domain (contracts/logic/registry/coding), no-cycle proven (only
+imports leaf `tickets/contracts` + `core/contracts`), ceiling range + default ceiling DERIVED from stage
+order, parity golden tests assert equality vs the LIVE constants, additive-only (ast check that no
+production module imports the registry). Confirmed the planner's 4 inert open decisions (coding profile =
+panels-worker/None/None/"default"; KNOWN_TOOLSET_PROFILES={"default"}; stage labels; reuse
+ErrorCode.validation).
+
+**t_tt00 DONE — verified green + committed to main.** Full pipeline ran: plan → codex plan review
+(DONE_WITH_CONCERNS, 6 findings folded via planner) → Opus implement → codex diff review
+(DONE_WITH_CONCERNS, 5 findings: `dropped` misclassified by gating_field/advance_target [fidelity];
+`Registry.__init__` bypassed validation [invariant]; strict-bool R6/prefix-flag; unsound relative-import
+AST guard; two under-asserted negatives — all fixed) → my spot-check of the two high-sev fixes → full
+`./verify` PASS (ruff/mypy/unit 528/build/frontend/e2e 68 all green, no flake). New package
+`src/planner/ticket_types/` (contracts/logic{validation R0–R20,views,manifest}/registry/coding), 58
+tests, additive-only (0 existing files touched; AST allowlist proves nothing imports it yet). Commit
+cadence (D102): owner delegated → commit each green ticket straight to main. Next: **t_tt01** — thread
+the workflow through machine/resolution/admission/codec via the pre-persistence bridge, prove coding
+parity. See D102 for registry seam + no-cycle rule.
 
 ## Current work cycle (2026-07-10): Panels sprint-planning workflow
 

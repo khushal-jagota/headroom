@@ -2026,3 +2026,19 @@ overview and note writes are direct-only. Automatic kickoff drafting is already 
 so `panels-rollover` may prefix only those scheduled `panels day set` commands with
 `PLAN_ACTOR=chief`. The elevation stops at the kickoff overview and pending-review note: it cannot edit
 ticket lifecycle state, approve gates, or add tickets before the user agrees.
+
+## D102 — Ticket-types build (t_tt*): registry location, no-cycle seam, commit cadence
+
+Building the ticket-types redesign (`orchestration/ticket-types-redesign/PLAN.md`) to the go/no-go gate
+(owner cadence: run autonomously through Phases 0–3, report at the gate).
+
+- **Registry module** lives at `src/planner/ticket_types/` — a first-class sibling domain, split
+  contracts/logic/registry/coding like every other domain. It imports ONLY the two leaves
+  `tickets/contracts` + `core/contracts`; nothing imports back (allowlist-tested over the whole package).
+- **No-cycle seam:** the validator's reference catalogs (known specialist-skill ids, toolset-profile ids)
+  are **injected into the constructor**, not imported — specifically to avoid importing `minds/config`
+  (not a leaf; Phase 5 makes the gateway consume worker profiles from `ticket_types`, so importing it now
+  would plant a latent cycle). Caught by Codex plan review.
+- **Commit cadence:** owner delegated ("continue"); following the established redesign practice, each
+  `t_tt*` ticket commits straight to `main` once its full `./verify` passes — per-ticket checkpoints so
+  the DB migration (t_tt02) is never stacked on uncommitted work.
