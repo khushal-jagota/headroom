@@ -7,10 +7,14 @@ functions never mutate their input."""
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import FieldName, FieldSlot, Proposal, TicketFields
+from planner.tickets.logic import coding_bridge
+
+if TYPE_CHECKING:
+    from planner.tickets.logic.coding_bridge import WorkflowDefinition
 
 
 def _slot_to_dict(slot: FieldSlot) -> dict[str, Any]:
@@ -67,18 +71,43 @@ def _slot_from_obj(obj: Any) -> FieldSlot:
     )
 
 
-def fields_from_json(raw: str) -> TicketFields:
+# The fixed TicketFields struct can only hold these six coding slots (Tier-2
+# storage is coding-bound in t_tt01; a generic slot map is deferred to t_tt02).
+_CODING_FIELD_IDS: tuple[str, ...] = (
+    "kickoff", "success", "approach", "plan", "implementation", "closeout",
+)
+
+
+def fields_from_json(
+    raw: str, definition: WorkflowDefinition | None = None
+) -> TicketFields:
+    if definition is None:
+        definition = coding_bridge.coding_definition()
+    # The fixed TicketFields struct cannot represent a non-coding field set. A
+    # definition whose declared fields are not exactly the coding six fails LOUDLY
+    # here rather than raising a raw KeyError below (deferred to t_tt02 storage).
+    if coding_bridge.field_ids(definition) != _CODING_FIELD_IDS:
+        raise PlannerError(
+            ErrorCode.validation,
+            "field storage is coding-bound; this definition's fields cannot be decoded yet",
+            {"fields": list(coding_bridge.field_ids(definition))},
+        )
     data: Any = json.loads(raw)
     _require(isinstance(data, dict))
-    for key in ("kickoff", "success", "approach", "plan", "implementation", "closeout"):
+    # Each DECLARED field must be present AND decode via _slot_from_obj; unknown
+    # extra top-level keys are IGNORED (leniency preserved — legacy rows carry a
+    # top-level "result" key).
+    decoded: dict[str, FieldSlot] = {}
+    for key in coding_bridge.field_ids(definition):
         _require(key in data)
+        decoded[key] = _slot_from_obj(data[key])
     return TicketFields(
-        kickoff=_slot_from_obj(data["kickoff"]),
-        success=_slot_from_obj(data["success"]),
-        approach=_slot_from_obj(data["approach"]),
-        plan=_slot_from_obj(data["plan"]),
-        implementation=_slot_from_obj(data["implementation"]),
-        closeout=_slot_from_obj(data["closeout"]),
+        kickoff=decoded["kickoff"],
+        success=decoded["success"],
+        approach=decoded["approach"],
+        plan=decoded["plan"],
+        implementation=decoded["implementation"],
+        closeout=decoded["closeout"],
     )
 
 

@@ -59,7 +59,10 @@ def run_ruff() -> GateResult:
 
 
 def run_mypy() -> GateResult:
-    rc, _ = _run([str(VENV_BIN / "mypy"), "src/"])
+    # src/ is the production surface; tests/typing/ holds strict-mypy fixtures that
+    # are type-checked (not run) — e.g. the t_tt01 overload-narrowing cases, which are
+    # only genuinely enforced when mypy sees them (assert_type is a runtime no-op).
+    rc, _ = _run([str(VENV_BIN / "mypy"), "src/", "tests/typing/"])
     return GateResult("mypy", rc == 0)
 
 

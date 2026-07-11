@@ -26,7 +26,7 @@ def is_runnable(conn: sqlite3.Connection, ticket: Ticket) -> bool:
     gating = machine.gating_field(ticket.state)
     if gating is None:
         return False
-    if machine.at_or_beyond_ceiling(ticket.state, ticket.ceiling) and ticket.at_cap is AtCap.stop:
+    if machine.at_or_beyond_ceiling(ticket.state, ticket.ceiling) and ticket.at_cap == AtCap.stop:
         return False  # the scope says stop here
     if core_links.is_blocked(conn, ticket.id):
         return False

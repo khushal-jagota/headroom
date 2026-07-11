@@ -6,14 +6,13 @@ from collections.abc import Mapping
 
 from planner.core.contracts import ErrorCode, EventKind, PlannerError
 from planner.tickets.contracts import (
-    WORKER_STATE_ORDER,
     AtCap,
     FieldName,
     FieldSlot,
     Ticket,
     TicketState,
 )
-from planner.tickets.logic import admission, fields_codec, machine
+from planner.tickets.logic import admission, coding_bridge, fields_codec, machine
 from planner.tickets.logic.decisions import Decision, EventSpec
 
 CAUSE_EXTERNAL_WORK: str = "external_work"
@@ -45,13 +44,14 @@ def decide_external_work(
     The caller may place a recap event between the two decisions. Both decisions are
     built before any write, so validation failure cannot partially mutate a ticket.
     """
-    if target_state not in WORKER_STATE_ORDER:
+    defn = coding_bridge.coding_definition()
+    if str(target_state) not in coding_bridge.views.ceiling_range(defn):
         raise PlannerError(
             ErrorCode.validation,
             "external work target must be a linear ticket state",
             {"state": target_state.value},
         )
-    if ticket.state is TicketState.dropped:
+    if ticket.state == TicketState.dropped:
         raise PlannerError(ErrorCode.validation, "dropped is terminal")
     if machine.state_index(target_state) < machine.state_index(ticket.state):
         raise PlannerError(
@@ -110,7 +110,7 @@ def decide_external_work(
 
     position_events: list[EventSpec] = []
     new_state: TicketState | None = None
-    if target_state is not ticket.state:
+    if target_state != ticket.state:
         new_state = target_state
         position_events.append(
             EventSpec(
@@ -122,7 +122,7 @@ def decide_external_work(
                 },
             )
         )
-    scope_changes = ticket.ceiling is not target_state or ticket.at_cap is not AtCap.stop
+    scope_changes = ticket.ceiling != target_state or ticket.at_cap != AtCap.stop
     if scope_changes:
         position_events.append(
             EventSpec(

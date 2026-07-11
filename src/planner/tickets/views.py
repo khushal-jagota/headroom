@@ -15,7 +15,7 @@ from planner.core.contracts import BlockerSummary, JsonDict
 from planner.sprints.contracts import ItemStatus
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import GATING_FIELD, STATE_ORDER, Ticket, TicketState, TicketStatus
-from planner.tickets.logic import fields_codec, machine
+from planner.tickets.logic import coding_bridge, fields_codec, machine
 
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
@@ -241,7 +241,9 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
         state = str(row["state"])
         priority = str(row["priority"])
         deadline = str(row["deadline"]) if row["deadline"] is not None else None
-        fields = fields_codec.fields_from_json(str(row["fields"]))
+        fields = fields_codec.fields_from_json(
+            str(row["fields"]), coding_bridge.coding_definition()
+        )
         parent_project_id = (
             str(row["parent_project_id"]) if row["parent_project_id"] is not None else None
         )

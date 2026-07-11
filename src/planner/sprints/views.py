@@ -14,7 +14,7 @@ from planner.sprints.contracts import ItemStatus, Sprint, SprintItem
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TicketState
-from planner.tickets.logic import fields_codec, machine
+from planner.tickets.logic import coding_bridge, fields_codec, machine
 from planner.tickets.views import ticket_json
 
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
@@ -113,7 +113,7 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
     result: list[JsonDict] = []
     for r in rows:
         state = str(r["state"])
-        fields = fields_codec.fields_from_json(str(r["fields"]))
+        fields = fields_codec.fields_from_json(str(r["fields"]), coding_bridge.coding_definition())
         result.append(
             {
                 "id": str(r["id"]),

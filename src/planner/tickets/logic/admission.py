@@ -4,11 +4,14 @@ gate, and ticket body/title/deadline validators. Pure domain rules only."""
 from __future__ import annotations
 
 from datetime import date
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import AtCap, FieldName, TicketState
-from planner.tickets.logic import machine
+from planner.tickets.logic import coding_bridge, machine
+
+if TYPE_CHECKING:
+    from planner.tickets.logic.coding_bridge import WorkflowDefinition
 
 # Compatibility for direct domain callers and historical fixtures. Request
 # classification never synthesizes this value; live callers are unattributed or Chief.
@@ -32,22 +35,31 @@ def require_direct_actor(actor: str, action: str) -> None:
 
 
 def check_agent_proposal(
-    state: TicketState, ceiling: TicketState, at_cap: AtCap, field: FieldName
+    state: TicketState,
+    ceiling: TicketState,
+    at_cap: AtCap,
+    field: FieldName,
+    *,
+    definition: WorkflowDefinition | None = None,
 ) -> None:
-    if machine.is_terminal(state):
+    defn = definition or coding_bridge.coding_definition()
+    if machine.is_terminal(state, definition=defn):
         raise PlannerError(
             ErrorCode.validation, "no proposals on a terminal ticket", {"state": state.value}
         )
-    gating = machine.gating_field(state)
+    gating = machine.gating_field(state, definition=defn)
     if gating is None:
         raise PlannerError(
             ErrorCode.validation,
             "ticket state has no proposal field",
             {"state": state.value},
         )
-    if not machine.at_or_beyond_ceiling(state, ceiling):
+    # Tier-2 field-storage boundary: a foreign gate id fails loudly here rather than
+    # reaching `.value` on a bare str (AttributeError) below.
+    gating = machine.require_coding_field(gating)
+    if not machine.at_or_beyond_ceiling(state, ceiling, definition=defn):
         return
-    if at_cap is AtCap.stop:
+    if at_cap == AtCap.stop:
         raise PlannerError(
             ErrorCode.at_cap_stop,
             "ticket is at its ceiling with at_cap=stop",
@@ -58,7 +70,7 @@ def check_agent_proposal(
                 "at_cap": "stop",
             },
         )
-    if field is not gating:
+    if field != gating:
         raise PlannerError(
             ErrorCode.validation,
             "at the ceiling agents may propose only the current gating field",
@@ -70,12 +82,19 @@ def check_agent_proposal(
         )
 
 
-def check_recap_writable(state: TicketState) -> None:
-    if state in (TicketState.needs_kickoff, TicketState.needs_success, TicketState.dropped):
+def check_recap_writable(
+    state: str, *, definition: WorkflowDefinition | None = None
+) -> None:
+    defn = definition or coding_bridge.coding_definition()
+    first_worker = coding_bridge.views.default_ceiling(defn)  # "needs_success" for coding
+    if str(state) == defn.dropped_stage.id or not (
+        machine.state_index(state, definition=defn)
+        > machine.state_index(first_worker, definition=defn)
+    ):
         raise PlannerError(
             ErrorCode.recap_too_early,
             "recap is writable only past needs_success",
-            {"state": state.value},
+            {"state": str(state)},
         )
 
 

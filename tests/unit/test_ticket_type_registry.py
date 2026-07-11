@@ -751,16 +751,23 @@ def _classify_outbound(module: str) -> set[str]:
     return {module}
 
 
+# t_tt01: the registry now has exactly one production importer — the designated
+# seam. F6 is narrowed from "no production importer" to "exactly {coding_bridge}",
+# which is stronger: it still fails on any second (scattered) importer AND fails if
+# the seam itself stops importing ticket_types.
+_ALLOWED_TICKET_TYPES_IMPORTER = _PLANNER_ROOT / "tickets" / "logic" / "coding_bridge.py"
+
+
 def test_no_production_module_imports_ticket_types() -> None:  # F6 hardened matcher
-    offending: list[str] = []
+    importers: set[Path] = set()
     for path in _PLANNER_ROOT.rglob("*.py"):
         if _TICKET_TYPES_ROOT in path.parents or path == _TICKET_TYPES_ROOT:
             continue
         anchor = _anchor_package_for(path)
         tree = ast.parse(path.read_text(), filename=str(path))
         if _file_imports_ticket_types(tree, anchor):
-            offending.append(str(path))
-    assert offending == []
+            importers.add(path)
+    assert importers == {_ALLOWED_TICKET_TYPES_IMPORTER}
 
 
 def _resolves_to_ticket_types(module: str) -> bool:

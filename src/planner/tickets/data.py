@@ -33,7 +33,14 @@ from planner.tickets.contracts import (
     TicketState,
     TicketStatus,
 )
-from planner.tickets.logic import admission, external_work, fields_codec, machine, resolution
+from planner.tickets.logic import (
+    admission,
+    coding_bridge,
+    external_work,
+    fields_codec,
+    machine,
+    resolution,
+)
 from planner.tickets.logic.decisions import Decision
 
 
@@ -74,7 +81,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         implementer=Implementer(row["implementer"]) if row["implementer"] is not None else None,
         chat_session_key=row["chat_session_key"],
         alias=row["alias"],
-        fields=fields_codec.fields_from_json(row["fields"]),
+        fields=fields_codec.fields_from_json(row["fields"], coding_bridge.coding_definition()),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -660,7 +667,7 @@ def accept_proposal(
 def take_over_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
-        if ticket.state is TicketState.needs_kickoff:
+        if ticket.state == TicketState.needs_kickoff:
             raise PlannerError(
                 ErrorCode.validation,
                 "kickoff must be settled before takeover",
@@ -673,7 +680,7 @@ def take_over_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> T
 def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
-        if ticket.state is TicketState.needs_kickoff:
+        if ticket.state == TicketState.needs_kickoff:
             raise PlannerError(
                 ErrorCode.validation,
                 "kickoff must be settled before release",
@@ -891,6 +898,11 @@ def set_field_user_note(
 ) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
+        defn = coding_bridge.coding_definition()
+        if not coding_bridge.has_field(defn, str(field)):
+            raise PlannerError(
+                ErrorCode.validation, "unknown ticket field", {"field": str(field)}
+            )
         slot = fields_codec.get_slot(ticket.fields, field)
         new_slot = FieldSlot(value=slot.value, proposal=slot.proposal, user_note=user_note)
         new_fields = fields_codec.with_slot(ticket.fields, field, new_slot)

@@ -382,9 +382,26 @@ AST guard; two under-asserted negatives — all fixed) → my spot-check of the 
 `./verify` PASS (ruff/mypy/unit 528/build/frontend/e2e 68 all green, no flake). New package
 `src/planner/ticket_types/` (contracts/logic{validation R0–R20,views,manifest}/registry/coding), 58
 tests, additive-only (0 existing files touched; AST allowlist proves nothing imports it yet). Commit
-cadence (D102): owner delegated → commit each green ticket straight to main. Next: **t_tt01** — thread
-the workflow through machine/resolution/admission/codec via the pre-persistence bridge, prove coding
-parity. See D102 for registry seam + no-cycle rule.
+cadence (D102): owner delegated → commit each green ticket straight to main.
+
+**t_tt01 DONE — verified green + committed.** Correctness-core parameterization. Pipeline: plan → 2 planner
+self-Codex rounds + my independent plan review (5 rulings: optional-`definition=` param seam not internal
+resolution; honest Tier-1 string-native / Tier-2 coding-bound split; corrected note-path + tests; DROP
+reject-unknown-JSON-key [confirmed live-data risk — dogfood/ui-qa DBs carry a legacy `result` key]; full
+is-sweep) → revise → implement → my independent diff review (coding parity GENUINE; 4 findings: loud
+foreign-field boundary `require_coding_field`; codec decodes declared values; vacuous is-tests made to
+bite; assert_type cases mypy-enforced via `tests/typing/`) → fix → full `./verify` PASS (547 unit, e2e 68,
+mypy src/+tests/typing/). New `tickets/logic/coding_bridge.py` (the one seam, sole `ticket_types`
+importer); engine now definition-driven + string-id-native (Tier-1) with a StrEnum re-wrap preserving the
+3 `is TicketState.done` identities; Tier-2 scope/field-storage stays coding-bound and fails LOUD on a
+foreign def. Only existing test touched: F6 (import-guard narrowed to `{coding_bridge}`).
+
+Owner set /goal "run this end to end now" — driving t_tt02 → t_tt02b → t_tt02x → t_tt03 → gate
+autonomously. Next: **t_tt02** — DB `ticket_type` column + migration (mirror
+`_migrate_ticket_kickoff_columns` db.py:272) + drop both enumerating CHECKs + registry validation on
+load/persist + startup audit + per-type default ceiling + thread the row's definition (removing t_tt01's
+coding default). Field-storage/Tier-2 genericization (so probe's alpha/beta store + probe's scope works)
+is the follow-on **t_tt02b**, required before probe can flow through the gate.
 
 ## Current work cycle (2026-07-10): Panels sprint-planning workflow
 

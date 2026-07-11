@@ -36,6 +36,7 @@ from planner.projects.api import router as projects_router
 from planner.runtime.readiness_doorbell import NoOpReadinessDoorbell
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
+from planner.tickets.logic import coding_bridge
 from planner.worker_context.contracts import WorkerContextService
 
 _log = logging.getLogger("planner.server")
@@ -108,6 +109,9 @@ def create_app(
     async def _lifespan(app_: FastAPI) -> AsyncIterator[None]:
         Path(config.db_path).parent.mkdir(parents=True, exist_ok=True)
         Path(config.logs_dir).mkdir(parents=True, exist_ok=True)
+        # Build and validate the ticket-type registry once at startup so a malformed
+        # definition refuses to boot loudly rather than failing on the first ticket op.
+        coding_bridge.coding_registry()
         loops: Any = None
         shared_gateway: Any = None
         chat_gateway_to_shutdown: Any = None

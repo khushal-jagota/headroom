@@ -150,7 +150,7 @@ def decide_accept(
     if edited_body is not None:
         admission.validate_body(edited_body, "edit-accept text")
     edited = edited_body is not None
-    if ticket.state is TicketState.dropped:
+    if ticket.state == TicketState.dropped:
         raise PlannerError(
             ErrorCode.validation, "dropped tickets cannot be accepted", {"state": "dropped"}
         )
@@ -162,7 +162,7 @@ def decide_accept(
             {"ticket_id": ticket.id, "field": field.value},
         )
     stored_body = edited_body if edited_body is not None else slot.proposal.body
-    if field is machine.gating_field(ticket.state):
+    if field == machine.gating_field(ticket.state):
         new_state = machine.advance_target(ticket.state)
         scope = machine.resolve_scope(new_state, next_ceiling, at_cap)
         return _accept_gating_proposal(
@@ -199,7 +199,7 @@ def decide_edit_value(
     carrying a live proposal, and the current gating or any future field."""
     admission.require_direct_actor(actor, "edit_field_value")
     admission.validate_body(new_body, "field value")
-    if ticket.state is TicketState.dropped:
+    if ticket.state == TicketState.dropped:
         raise PlannerError(
             ErrorCode.validation, "dropped tickets cannot be edited", {"state": "dropped"}
         )
@@ -268,16 +268,16 @@ def decide_return_for_revision(ticket: Ticket, actor: str) -> Decision:
 
 def decide_state_jump(ticket: Ticket, new_state: TicketState, actor: str) -> Decision:
     admission.require_direct_actor(actor, "set_state")
-    if new_state is TicketState.dropped:
+    if new_state == TicketState.dropped:
         raise PlannerError(ErrorCode.validation, "use the drop action")
-    if ticket.state is TicketState.dropped:
+    if ticket.state == TicketState.dropped:
         raise PlannerError(ErrorCode.validation, "dropped is terminal")
-    if ticket.state is TicketState.needs_kickoff or new_state is TicketState.needs_kickoff:
+    if ticket.state == TicketState.needs_kickoff or new_state == TicketState.needs_kickoff:
         raise PlannerError(
             ErrorCode.validation,
             "kickoff state changes only through kickoff approval",
         )
-    if new_state is ticket.state:
+    if new_state == ticket.state:
         raise PlannerError(ErrorCode.validation, "ticket already in that state")
     events = (_state_change(ticket.state, new_state, CAUSE_DIRECT_STATE_JUMP),)
     return Decision(events=events, new_state=new_state)
@@ -285,11 +285,11 @@ def decide_state_jump(ticket: Ticket, new_state: TicketState, actor: str) -> Dec
 
 def decide_drop(ticket: Ticket, actor: str) -> Decision:
     admission.require_direct_actor(actor, "drop_ticket")
-    if ticket.state is TicketState.done:
+    if ticket.state == TicketState.done:
         raise PlannerError(
             ErrorCode.validation, "done tickets cannot be dropped", {"state": "done"}
         )
-    if ticket.state is TicketState.dropped:
+    if ticket.state == TicketState.dropped:
         raise PlannerError(
             ErrorCode.validation, "ticket is already dropped", {"state": "dropped"}
         )
