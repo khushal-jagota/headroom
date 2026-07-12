@@ -3,6 +3,41 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-12): Phase 4a — backend read-models type-driven
+
+Current build stage:
+
+- `t_tt04a` implemented, reviewed, and committed on top of `919e014` (t_tt03). The five backend
+  read-models — `copy_text`, `board_view`, `queues`/`_approval_digest`, `sprints/views.item_tickets`, and
+  the sprint in-progress rollup (`derive_sprint_item_status`) — now resolve each row's own
+  `WorkflowDefinition` via `coding_bridge` instead of assuming coding. Coding output is byte-identical;
+  `probe` projects correctly and no read-model throws on a non-coding state. Board payload SHAPE unchanged
+  (reshape is 4b). Production registry stays coding-only.
+
+What just passed:
+
+- Full unit suite (637), ruff, mypy, build, frontend gates. e2e excluding the preview file: 58/58.
+- Codex plan review (3 fixes folded in: F1 dropped-child short-circuit, F2 keep `TicketState` import,
+  F3 per-module `probe_registry` fixtures) and Codex diff review — both clean.
+- 4a exonerated of the e2e failure via a stash-baseline (the failure reproduces with 4a removed).
+
+Current hypothesis:
+
+- 4a is clean and complete. A full `./verify` is blocked ONLY by a pre-existing, load-triggered flaky
+  family in `tests/e2e/test_ticket_file_previews.py` (≥2 tests — the max-height measurement and the
+  fetch-abort deletion — race under CPU load; independent of 4a; passes in isolation / 68-68 at normal load).
+
+Next step:
+
+- (1) Focused de-flake pass on `test_ticket_file_previews.py` so `./verify` is reliably green (a
+  `settled=True` hardening for the max-height test is staged uncommitted, to land with that pass).
+- (2) Phase 4b — frontend: render variable per-type stages from the served manifest + add the worker pill
+  to the facts line; retire the hardcoded `ui.ts` lifecycle in favour of the manifest.
+
+Blockers:
+
+- Pre-existing preview e2e flakiness blocks a clean full `./verify` (being de-flaked next, as owner-approved).
+
 ## Current work cycle (2026-07-11): t_bqxt44fb blockers-only closeout integration
 
 Current build stage:

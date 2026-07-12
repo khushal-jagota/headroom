@@ -16,13 +16,11 @@ class SprintItemChildStatus(NamedTuple):
     state: str
     ticket_status: str
     blocked: bool
+    state_in_progress: bool
 
 
 _DROPPED_STATE = "dropped"
 _DONE_STATE = "done"
-_IN_PROGRESS_STATES = frozenset(
-    {"needs_approach", "needs_plan", "needs_implementation", "needs_closeout"}
-)
 _IN_PROGRESS_TICKET_STATUSES = frozenset(
     {"agent_running_step", "awaiting_approval", "user_takeover"}
 )
@@ -38,8 +36,7 @@ def derive_sprint_item_status(
     if non_dropped and all(child.state == _DONE_STATE for child in non_dropped):
         return ItemStatus.done
     if any(
-        child.ticket_status in _IN_PROGRESS_TICKET_STATUSES
-        or child.state in _IN_PROGRESS_STATES
+        child.ticket_status in _IN_PROGRESS_TICKET_STATUSES or child.state_in_progress
         for child in non_dropped
     ):
         return ItemStatus.in_progress

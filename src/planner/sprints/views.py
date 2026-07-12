@@ -106,14 +106,15 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
     loose-ticket ordering). A light projection — not full ticket_json — since the
     disclosure only lists rows that link to the ticket."""
     rows = conn.execute(
-        "SELECT id, title, state, priority, ticket_status, fields FROM tickets "
+        "SELECT id, title, state, priority, ticket_status, fields, ticket_type FROM tickets "
         "WHERE sprint_item_id = ? ORDER BY created_at, id",
         (item_id,),
     ).fetchall()
     result: list[JsonDict] = []
     for r in rows:
         state = str(r["state"])
-        fields = fields_codec.fields_from_json(str(r["fields"]), coding_bridge.coding_definition())
+        defn = coding_bridge.require(str(r["ticket_type"]))
+        fields = fields_codec.fields_from_json(str(r["fields"]), defn)
         result.append(
             {
                 "id": str(r["id"]),
@@ -121,7 +122,7 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
                 "state": state,
                 "priority": str(r["priority"]),
                 "has_pending_proposal": machine.has_pending_gating_proposal(
-                    TicketState(state), fields
+                    state, fields, definition=defn
                 ),
                 "ticket_status": str(r["ticket_status"]),
             }

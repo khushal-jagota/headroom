@@ -32,6 +32,7 @@ from planner.sprints.logic import (
     derive_sprint_item_status,
     find_overlap,
 )
+from planner.tickets.logic import coding_bridge
 
 
 class ItemRead(NamedTuple):
@@ -416,6 +417,22 @@ def assign_item_sprint(
 # --- reads ----------------------------------------------------------------------
 
 
+def _child_state_in_progress(ticket_type: str, state: str) -> bool:
+    """Per-type "in progress by state": a non-terminal linear stage strictly past the
+    type's default ceiling (its first worker stage). Resolves the row's own definition
+    so the pure ``derive_sprint_item_status`` consumes only a precomputed boolean.
+
+    Terminality is checked FIRST so ``and`` short-circuits: ``dropped`` is outside the
+    linear order and ``state_index`` raises on it, so the index is never computed for a
+    terminal (done/dropped) state."""
+    defn = coding_bridge.require(ticket_type)
+    terminal = coding_bridge.views.is_terminal(defn, state)
+    default_ceiling_idx = coding_bridge.views.state_index(
+        defn, coding_bridge.views.default_ceiling(defn)
+    )
+    return (not terminal) and coding_bridge.views.state_index(defn, state) > default_ceiling_idx
+
+
 def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
     item = _load_item(conn, item_id)
     blocker_summary = core_links.blocker_summary(conn, item_id)
@@ -423,7 +440,7 @@ def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
     blockers_cleared = bool(blocking_ticket_ids) and not blocker_summary.blocked
     child_rows = conn.execute(
         """
-        SELECT tickets.id, tickets.state, tickets.ticket_status
+        SELECT tickets.id, tickets.state, tickets.ticket_status, tickets.ticket_type
         FROM tickets
         WHERE tickets.sprint_item_id = ?
         ORDER BY tickets.id
@@ -435,6 +452,9 @@ def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
             state=str(row["state"]),
             ticket_status=str(row["ticket_status"]),
             blocked=core_links.blocker_summary(conn, str(row["id"])).blocked,
+            state_in_progress=_child_state_in_progress(
+                str(row["ticket_type"]), str(row["state"])
+            ),
         )
         for row in child_rows
     ]

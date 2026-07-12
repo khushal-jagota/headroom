@@ -2067,3 +2067,24 @@ Building the DB `ticket_type` column migration against the owner's live `plannin
 - **Migration holds the exclusive write lock across snapshot→copy→swap** (Codex diff-review F1) — closes a
   concurrent-write loss window. The shipped kickoff migration has the same latent window; left unedited,
   flagged to the owner for a possible follow-up.
+
+## D104 — t_tt04a read-model delegated calls (per plan §4/§5/§9)
+
+Making the five backend read-models type-driven (resolve each row's own `WorkflowDefinition` via
+`coding_bridge`, never assume coding). Two things the plan explicitly left in place, out of 4a's named
+scope, recorded here:
+
+- **`item_rollup` coding-shaped seed kept.** `sprints/views.py::item_rollup` still seeds its dict with
+  `{s.value for s in TicketState}` (so `TicketState` STAYS imported there). It is not a named 4a seam and
+  no probe rollup assertion is required; left untouched.
+- **Universal `done`/`dropped` bookend literals kept.** `derive_sprint_item_status` keeps its
+  `_DONE_STATE`/`_DROPPED_STATE` literal checks — these bookends are shared by every type by validation,
+  so they are universal, not a per-type coding table. Only `_IN_PROGRESS_STATES` (the last hardcoded
+  coding mid-state table in a read-model) was deleted, replaced by a precomputed per-child
+  `state_in_progress` boolean computed at `read_item` from the child's own definition (plan Option A —
+  keeps the pure function dependency-free). `tickets/views.py::_TICKET_CLOSED` likewise keeps
+  `TicketState.done/.dropped` bookends (Codex F2 — `TicketState` must stay imported).
+- **Per-module local `probe_registry` fixtures (Codex F3).** Each new test module defines its OWN local
+  yield fixture wrapping `install_probe_registry()`/`uninstall_probe_registry()` rather than sharing one —
+  the fixture in `test_probe_type.py` is module-local, not in `conftest.py`. Chose per-module copies over
+  adding a shared `conftest` fixture to keep `conftest.py` (orchestrator-owned glue) untouched.
