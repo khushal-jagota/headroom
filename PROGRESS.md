@@ -27,16 +27,20 @@ Current hypothesis:
   family in `tests/e2e/test_ticket_file_previews.py` (≥2 tests — the max-height measurement and the
   fetch-abort deletion — race under CPU load; independent of 4a; passes in isolation / 68-68 at normal load).
 
+- The preview e2e family (`test_ticket_file_previews.py`) was de-flaked as a separate commit: steady-state
+  tests drain the since=0 catch-up flush (`settled=True`); the deletion test keeps its un-settled
+  loading/abort coverage but drains on a neutral `#/day` route so the ticket-resource rebuild (which
+  detached measured nodes / fired a phantom fetch-abort) never happens. Full `./verify`: **PASS** (68/68 e2e).
+
 Next step:
 
-- (1) Focused de-flake pass on `test_ticket_file_previews.py` so `./verify` is reliably green (a
-  `settled=True` hardening for the max-height test is staged uncommitted, to land with that pass).
-- (2) Phase 4b — frontend: render variable per-type stages from the served manifest + add the worker pill
-  to the facts line; retire the hardcoded `ui.ts` lifecycle in favour of the manifest.
+- Phase 4b — frontend: render variable per-type stages from the served manifest + add the worker pill to
+  the facts line; retire the hardcoded `ui.ts` lifecycle. Brief drafted at
+  `orchestration/tickets/t_tt04b-web-manifest-consumer/BRIEF.md`.
 
 Blockers:
 
-- Pre-existing preview e2e flakiness blocks a clean full `./verify` (being de-flaked next, as owner-approved).
+- None. 4a committed (`2ff4857`); the de-flake landed; full `./verify` green.
 
 ## Current work cycle (2026-07-11): t_bqxt44fb blockers-only closeout integration
 
