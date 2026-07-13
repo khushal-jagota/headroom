@@ -85,18 +85,22 @@ Code paths: `src/planner/sprints/`, `src/planner/tickets/`,
 
 Tickets are the correctness center. A ticket has two different kinds of state:
 
-- `state` is the work stage: `needs_kickoff`, `needs_success`, `needs_approach`,
-  `needs_plan`, `needs_implementation`, `needs_closeout`, `done`, or `dropped`.
+- `state` is the work stage. Which stages exist is set by the ticket's **type**, not
+  fixed for all tickets; the gate reads each row's stage order, gates, and fields from
+  the type registry (see `ticket-types.md`). For the default `coding` type the states are
+  `needs_kickoff`, `needs_success`, `needs_approach`, `needs_plan`,
+  `needs_implementation`, `needs_closeout`, `done`, or `dropped`.
 - `ticket_status` is runtime control: `empty`, `agent_running_step`,
-  `awaiting_approval`, `user_takeover`, or `errored`.
+  `awaiting_approval`, `user_takeover`, or `errored`. This set is universal.
 
-An ordinary Ticket starts with a parked proposal on the `kickoff` field. The title is
-separate editable Ticket metadata; approving Kickoff settles only the Kickoff field and
-advances the Ticket to `needs_success`. Until then no worker stage runs. The Ticket fields
-are `kickoff`, `success`, `approach`, `plan`, `implementation`, and `closeout`. Each field
-has a settled value, a pending proposal, and a field `user_note` for step-specific guidance.
-Workers write field proposals. The resolution engine is the only code that can settle a
-proposal or advance the Ticket.
+An ordinary Ticket starts with a parked proposal on the `kickoff` field — every type
+leads with Kickoff. The title is separate editable Ticket metadata; approving Kickoff
+settles only the Kickoff field and advances the Ticket to its first working stage
+(`needs_success` for coding). Until then no worker stage runs. For coding the fields are
+`kickoff`, `success`, `approach`, `plan`, `implementation`, and `closeout`; another type
+carries its own. Each field has a settled value, a pending proposal, and a field
+`user_note` for step-specific guidance. Workers write field proposals. The resolution
+engine is the only code that can settle a proposal or advance the Ticket.
 
 Scope decides how far a worker may go without another human approval. It is the pair
 `ceiling` plus `at_cap`. Below the ceiling, a proposal can auto-accept. At the cap,
@@ -259,11 +263,12 @@ less clean than the rest.
    tickets and active `links.kind='blocks'` rows. A `done` or `dropped` source clears
    its block. This keeps ticket readiness and item blocking on the same read model.
 
-3. **The frontend copies some ticket state-machine constants.** The server owns the
-   ticket state machine, but `web/src/lib/ui.ts` repeats `STATE_ORDER`, gating fields,
-   and advance targets so the UI can render controls. That is acceptable as a view
-   projection, but it is a drift risk. A shared generated contract or server-provided
-   metadata would make the boundary cleaner.
+3. **The frontend no longer copies the ticket state machine (resolved).** The UI used
+   to repeat stage order, gating fields, and advance targets in `web/src/lib/ui.ts`. It
+   now derives them per type from the served `GET /api/ticket-types` manifest, through
+   `web/src/lib/lifecycle.ts` — the server is the single source and the drift risk is
+   closed (see `ticket-types.md`). `ui.ts` keeps only the label helper and visual-state
+   shapes the lifecycle builds on.
 
 4. **Gateway bootstrap is indirect.** The adapter registry returns a real adapter
    placeholder, then production startup replaces app-state adapters with
@@ -283,4 +288,4 @@ less clean than the rest.
 
 ---
 
-_Last verified: 2026-07-10._
+_Last verified: 2026-07-13._

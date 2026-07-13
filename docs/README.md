@@ -51,6 +51,9 @@ its old event lines are replaced by one minimal deletion audit.
 - **Tickets & the gates** (`tickets-and-gates.md`) — what a ticket is, the stages
   it moves through, and the resolution engine, scope, and approval gate that govern
   every advance. The correctness heart of the system.
+- **Ticket types** (`ticket-types.md`) — the registry that declares each workflow: one
+  type's stages, gates, fields, and its worker (a specialist skill). Two ship — `coding`
+  and `new_worker`; the engine and the workers both read the type instead of branching.
 - **The employee runtime** (`employee-runtime.md`) — the single AI worker that
   carries each ticket forward, and the loop that fires it, watches it, and feeds an
   approval back in. The wiring is in place; a live end-to-end worker smoke is still
@@ -82,5 +85,5 @@ its old event lines are replaced by one minimal deletion audit.
 
 ---
 
-_Last verified: 2026-07-10 · Covers the system landscape; each doc carries its own
+_Last verified: 2026-07-13 · Covers the system landscape; each doc carries its own
 code paths._

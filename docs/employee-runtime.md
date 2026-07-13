@@ -102,12 +102,16 @@ stuck ticket from a mystery into something you can debug.
 
 ## What is proved
 
-The runtime now points at the **`panels-worker`** role skill, and the CLI entry point
-workers use is **`panels`**. By default, a server uses the `hermes-home` directory
-beside its configured planning database, resolved to an absolute path before the
-gateways start. An explicit `PLAN_HERMES_HOME` overrides that location. On startup
-the server links only this repo's `panels`, `panels-worker`,
-`panels-chief-of-staff`, and `panels-rollover` skills into the selected home. The
+The runtime launches the **`panels-worker`** base role — deliberately type-agnostic;
+it points the worker to load its type's specialist skill on demand rather than baking
+one type's stages in (see `ticket-types.md`). The CLI entry point workers use is
+**`panels`**. By default, a server uses the `hermes-home` directory beside its
+configured planning database, resolved to an absolute path before the gateways start.
+An explicit `PLAN_HERMES_HOME` overrides that location. On startup the server links this
+repo's role skills into the selected home — the base `panels-worker`, the per-type
+specialists (`panels-worker-coding`, `panels-worker-new-worker`, and the `probe-worker`
+test fixture), plus `panels`, `panels-chief-of-staff`, `panels-sprint-planning`, and
+`panels-rollover`. That link is what lets a worker `skill_view` its specialist. The
 rollover skill is an operating role for manual or thin scheduled prompts, not a
 deterministic server rollover engine. It does not copy or link credentials, provider
 configuration, or global Hermes state; those remain configuration owned by the
@@ -134,6 +138,8 @@ today now rings the readiness doorbell without a follow-up scope edit. The ticke
 
 ## Handoffs
 
+- **Ticket types** (`ticket-types.md`) — how the base worker self-routes to its type's
+  specialist skill, and the registry that declares each type's stages and worker.
 - **Tickets & the gates** (`tickets-and-gates.md`) — the proposals the employee
   files, the scope that decides whether a step auto-accepts, and the approval that
   rings the readiness doorbell.
@@ -157,4 +163,4 @@ today now rings the readiness doorbell without a follow-up scope edit. The ticke
 
 ---
 
-_Last verified: 2026-07-10._
+_Last verified: 2026-07-13._

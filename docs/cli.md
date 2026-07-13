@@ -41,7 +41,9 @@ state setter.
 - **`worker propose / recap / note / my-ticket`** — worker actions. `worker propose`
   infers the current gating field from ticket state and requires a short recap
   (`--recap` or `--recap-file`) in the same request. `worker note` preserves
-  field-specific user guidance without changing the field's value.
+  field-specific user guidance without changing the field's value. `worker my-ticket`
+  reports the current ticket, and names the **specialist skill** for its type — the one
+  the base worker loads to learn that type's stages (see `ticket-types.md`).
 - **`chief reconcile-ticket-from-external-work / create-ticket-from-external-work`** —
   record reality established outside Panels. Both require an explicit Chief request,
   a complete Kickoff field value through `--kickoff-note-file`, preserving the report and
@@ -73,6 +75,8 @@ lease; the employee runtime runs one step at a time and writes status itself (se
 - **Tickets & the gates** (`tickets-and-gates.md`) — the proposals, recaps, and notes
   this tool files, and the scope the server enforces on them.
 - **The employee runtime** (`employee-runtime.md`) — the worker that drives this tool.
+- **Ticket types** (`ticket-types.md`) — the registry `worker my-ticket` reads the
+  ticket's specialist skill from.
 
 ## Deferred
 
@@ -82,4 +86,4 @@ lease; the employee runtime runs one step at a time and writes status itself (se
 
 ---
 
-_Last verified: 2026-07-10._
+_Last verified: 2026-07-13._

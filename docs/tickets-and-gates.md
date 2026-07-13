@@ -2,12 +2,17 @@
 
 A ticket is one piece of work small enough to hand to a single AI worker. It is the
 correctness heart of the planner: everything about _how far a worker may go on its
-own_ and _what waits for the human_ is decided here. A ticket moves through fixed
-stages by filling one blank at a time, and no value ever becomes real except through
-one door — the resolution engine.
+own_ and _what waits for the human_ is decided here. A ticket moves through its stages
+by filling one blank at a time, and no value ever becomes real except through one
+door — the resolution engine.
+
+The stage set is not fixed for all tickets — it is declared by the ticket's **type**
+(see `ticket-types.md`). The lifecycle below is the **`coding`** type's, the default;
+another type walks its own stages the same way. What every type shares is the leading
+Kickoff, the `done`/`dropped` bookends, and the single-door rule.
 
 ```
-   THE STAGES
+   THE CODING STAGES
 
    kickoff ──► success   ──►  approach  ──►  plan     ──►  implementation ──►  closeout ──► done
    approve     condition      (how,          (step-        (do the work,       (merge,
@@ -18,7 +23,10 @@ one door — the resolution engine.
                                    dropped: any point, direct operation only
 ```
 
-## The stages
+## The stages (the coding type)
+
+Every type starts with **Kickoff** and ends at **done** (or **dropped**); the stages
+between are the type's own. What follows is the `coding` lifecycle.
 
 A ticket starts with **Kickoff**. Kickoff is the first ordinary Ticket field: the
 human-approved intake context. The title is separate editable Ticket metadata, not
@@ -111,11 +119,14 @@ Every ticket carries a permission with two parts — together, its **scope**:
   it for approval).
 
 Below the ceiling, a worker's proposal is accepted automatically and the ticket
-advances. At the ceiling, the at-cap rule decides. New tickets start with the
-tightest sensible scope: the worker may draft a success condition, and nothing moves
-without approval. Every stage behaves the same way, including the last two: an
-accepted implementation advances to **needs closeout**, and an accepted closeout
-advances straight to **done**.
+advances. At the ceiling, the at-cap rule decides. New tickets start leashed right at
+**Kickoff**: the ceiling is `needs_kickoff` for every type, so nothing advances past
+the human-approved intake until the human grants scope onward — review before agents
+start. Every later stage behaves the same way, including the last two: an accepted
+implementation advances to **needs closeout**, and an accepted closeout advances
+straight to **done**. (The threshold three other behaviours key off — the recap gate,
+sprint-in-progress, external-work seed — is the *second* stage, held distinct from this
+start ceiling; see `ticket-types.md`.)
 
 ## The approval gate, and the scope row
 
@@ -182,6 +193,8 @@ _Code paths:_ `src/planner/core/events.py`.
 
 ## Handoffs
 
+- **Ticket types** (`ticket-types.md`) — the registry that declares this ticket's stage
+  set, its gates and fields, and its worker. The six stages above are the `coding` type's.
 - **The employee runtime** (`employee-runtime.md`) — the worker that files the
   proposals and does the drafting; committed readiness-changing actions ring its
   best-effort doorbell so the ticket can advance at once.
@@ -199,4 +212,4 @@ _Code paths:_ `src/planner/core/events.py`.
 
 ---
 
-_Last verified: 2026-07-10._
+_Last verified: 2026-07-13._
