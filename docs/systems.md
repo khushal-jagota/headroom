@@ -124,6 +124,41 @@ unattributed and Chief requests while rejecting the worker role. This prevents t
 normal worker and Chief paths from confusing their authority, but it is not a security
 barrier against a local process that deliberately forges headers or environment values.
 
+Hosted access keeps that same local trust model. Panels still binds only to
+`127.0.0.1`; a public interface should sit in front of it. The first supported
+hosted ingress is Tailscale Serve. Configure it with:
+
+```
+PLAN_TRUSTED_INGRESS_PROVIDER=tailscale
+PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN=khushal@example.com
+PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN=https://<tailscale-serve-name>
+```
+
+When `Tailscale-User-Login` is present, Panels treats the request as the remote
+user path. The login must exactly match `PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN`, and
+any public `X-Plan-Actor` header on that request is ignored. When that Tailscale
+identity header is absent, Panels treats the request as the co-located trusted-host
+path and preserves the existing `X-Plan-Actor` provenance rules. Same-host processes
+are trusted in this phase; Panels is not trying to isolate one local process from
+another.
+
+This depends on a Tailscale policy assumption: only Khushal's user-owned, non-tagged
+devices should reach the served Panels URL. Tagged nodes do not provide the user
+login header this boundary relies on, so they are not a supported remote-client path.
+Tailscale enforces device enrollment and ACLs; Panels only verifies the trusted
+identity header that Serve forwards.
+
+Browser Origin protection is narrow and explicit. In hosted mode, an unsafe HTTP
+request with an `Origin` header must match `PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN`.
+Requests without `Origin`, such as `curl` or Python scripts, remain valid. WebSocket
+handshakes follow the same rule: a present wrong `Origin` is rejected, while an absent
+Origin is allowed for non-browser clients.
+
+The Tailscale parsing lives behind the trusted-ingress contract in
+`src/planner/core/trusted_ingress.py`. A later Cloudflare Access, Pomerium, or other
+gateway can replace that provider adapter without changing ticket, chat, or file
+routes.
+
 ### 4. The Employee Runtime
 
 The runtime has two systems.
@@ -230,6 +265,8 @@ generic state setter.
 The server classifies a missing `X-Plan-Actor` as **unattributed**, not human. `chief` is
 the explicit Chief role; every other non-empty value is an attributed non-Chief agent.
 Direct-only routes allow unattributed and Chief requests while rejecting worker agents.
+Hosted Tailscale user requests deliberately ignore `X-Plan-Actor`; same-host internal
+requests still use it as provenance.
 
 Code paths: `src/planner/cli/main.py`, `src/planner/cli/http.py`,
 `src/planner/core/authctx.py`.

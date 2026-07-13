@@ -85,6 +85,35 @@ The Chief of Staff page uses the same chat state shape with its top-level entity
 Only the gateway routing differs: chief messages go to the `panels-chief-of-staff`
 role, while ticket and day chat keep the worker gateway.
 
+Hosted clients can send a plain HTTP Chief message without using the local Panels
+CLI:
+
+```
+curl -X POST https://<tailscale-serve-name>/api/messages/chief \
+  -H 'Content-Type: application/json' \
+  --data '{"text":"What should I look at next?"}'
+```
+
+Python scripts use the same JSON body:
+
+```
+import requests
+
+response = requests.post(
+    "https://<tailscale-serve-name>/api/messages/chief",
+    json={"text": "What should I look at next?"},
+    timeout=30,
+)
+response.raise_for_status()
+turn = response.json()
+```
+
+The body must be exactly one nonblank string field: `{"text": "..."}`. Panels sends
+that text through the real Chief Hermes session with message mode and returns the
+created chat turn. If a Chief turn is already running, the route returns
+`already_running` with HTTP 409. Browser clients in hosted mode must use the
+configured canonical HTTPS origin; script clients may omit `Origin`.
+
 _Code paths:_ `src/planner/chat/` (the gateway-backed chat service and state writer),
 `web/src/components/ChatPanel.svelte` and `web/src/components/ChatComposer.svelte`
 (the panel).

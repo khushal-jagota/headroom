@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -41,6 +42,10 @@ class Config:
     db_busy_timeout_ms: int
     # adapter selection (registry §9.4)
     gateway_adapter: str
+    # optional hosted trusted-ingress boundary
+    trusted_ingress_provider: str | None
+    trusted_ingress_allowed_login: str | None
+    trusted_ingress_canonical_origin: str | None
     # test mode — ENV ONLY, never in config.yaml
     test_mode: bool
     fake_now: str | None
@@ -93,6 +98,20 @@ def _str_value(
     return str(value)
 
 
+def _optional_str_value(
+    file_cfg: Mapping[str, object], env: Mapping[str, str], key: str, env_var: str
+) -> str | None:
+    value: object | None = None
+    if key in file_cfg:
+        value = file_cfg[key]
+    if env_var in env:
+        value = env[env_var]
+    if value is None:
+        return None
+    stripped = str(value).strip()
+    return stripped or None
+
+
 def _int_value(
     file_cfg: Mapping[str, object], env: Mapping[str, str], key: str, env_var: str, default: int
 ) -> int:
@@ -115,6 +134,63 @@ def _bool_value(
     return _parse_bool(value, key)
 
 
+def _is_test_loopback_http_origin(parsed_scheme: str, parsed_netloc: str, test_mode: bool) -> bool:
+    if not test_mode or parsed_scheme != "http":
+        return False
+    host = parsed_netloc.rsplit("@", 1)[-1].split(":", 1)[0]
+    return host in {"127.0.0.1", "localhost"}
+
+
+def _validate_trusted_ingress(
+    provider: str | None,
+    allowed_login: str | None,
+    canonical_origin: str | None,
+    *,
+    test_mode: bool,
+) -> tuple[str | None, str | None, str | None]:
+    if provider is not None:
+        provider = provider.lower()
+    if provider is None and (allowed_login is not None or canonical_origin is not None):
+        raise PlannerError(
+            ErrorCode.validation,
+            "trusted_ingress_provider is required when trusted ingress is configured",
+        )
+    if provider is None:
+        return None, None, None
+    if provider != "tailscale":
+        raise PlannerError(
+            ErrorCode.validation,
+            f"unsupported trusted_ingress_provider: {provider}",
+        )
+    if allowed_login is None:
+        raise PlannerError(
+            ErrorCode.validation,
+            "trusted_ingress_allowed_login is required for Tailscale trusted ingress",
+        )
+    if canonical_origin is None:
+        raise PlannerError(
+            ErrorCode.validation,
+            "trusted_ingress_canonical_origin is required for trusted ingress",
+        )
+    parsed = urlsplit(canonical_origin)
+    origin_is_https = parsed.scheme == "https"
+    origin_is_test_loopback_http = _is_test_loopback_http_origin(
+        parsed.scheme, parsed.netloc, test_mode
+    )
+    if (
+        not (origin_is_https or origin_is_test_loopback_http)
+        or not parsed.netloc
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise PlannerError(
+            ErrorCode.validation,
+            "trusted_ingress_canonical_origin must be an HTTPS origin with no path",
+        )
+    return provider, allowed_login, f"{parsed.scheme}://{parsed.netloc}"
+
+
 def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -> Config:
     env = os.environ if env is None else env
     cfg = _read_yaml(path)
@@ -123,6 +199,29 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
     fake_now: str | None = env.get("PLAN_FAKE_NOW") or None
     if not test_mode:
         fake_now = None  # §13/item 21: PLAN_FAKE_NOW is ignored when test mode is off
+
+    trusted_ingress_provider = _optional_str_value(
+        cfg, env, "trusted_ingress_provider", "PLAN_TRUSTED_INGRESS_PROVIDER"
+    )
+    trusted_ingress_allowed_login = _optional_str_value(
+        cfg, env, "trusted_ingress_allowed_login", "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN"
+    )
+    trusted_ingress_canonical_origin = _optional_str_value(
+        cfg,
+        env,
+        "trusted_ingress_canonical_origin",
+        "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN",
+    )
+    (
+        trusted_ingress_provider,
+        trusted_ingress_allowed_login,
+        trusted_ingress_canonical_origin,
+    ) = _validate_trusted_ingress(
+        trusted_ingress_provider,
+        trusted_ingress_allowed_login,
+        trusted_ingress_canonical_origin,
+        test_mode=test_mode,
+    )
 
     return Config(
         db_path=_str_value(cfg, env, "db_path", "PLAN_DB_PATH", "data/planning.db"),
@@ -144,6 +243,9 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
             cfg, env, "db_busy_timeout_ms", "PLAN_DB_BUSY_TIMEOUT_MS", 5000
         ),
         gateway_adapter=_str_value(cfg, env, "gateway_adapter", "PLAN_GATEWAY_ADAPTER", "auto"),
+        trusted_ingress_provider=trusted_ingress_provider,
+        trusted_ingress_allowed_login=trusted_ingress_allowed_login,
+        trusted_ingress_canonical_origin=trusted_ingress_canonical_origin,
         test_mode=test_mode,
         fake_now=fake_now,
     )

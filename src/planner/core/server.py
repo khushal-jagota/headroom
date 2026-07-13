@@ -29,6 +29,7 @@ from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.testmode import TestModeAcceptingEmployeeRevisionRunner, build_test_router
+from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
 from planner.core.ws import tail_events
 from planner.days.api import router as days_router
 from planner.files.api import router as files_router
@@ -183,6 +184,10 @@ def create_app(
                 shared_gateway.shutdown()
 
     app = FastAPI(title="planner", version="2.0.0", lifespan=_lifespan)
+    app.add_middleware(
+        TrustedIngressMiddleware,
+        config=trusted_ingress_config(config),
+    )
     app.state.config = config
     app.state.clock = clock
     app.state.adapters = adapters

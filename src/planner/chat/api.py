@@ -131,6 +131,30 @@ async def start_chat_turn(
     return asdict(result)
 
 
+@router.post("/messages/chief")
+async def start_chief_message(body: dict[str, Any], request: Request) -> dict[str, Any]:
+    authctx.require_direct_write(authctx.request_context(request))
+    if set(body.keys()) != {"text"}:
+        raise PlannerError(ErrorCode.validation, "text is required")
+    text = body["text"]
+    if not isinstance(text, str) or not text.strip():
+        raise PlannerError(ErrorCode.validation, "text is required")
+    clock: Clock = request.app.state.clock
+    adapters: Adapters = request.app.state.adapters
+    conn_factory: Callable[[], sqlite3.Connection] = request.app.state.conn_factory
+    result = service.start_human_turn(
+        conn_factory,
+        adapters.gateway,
+        service.CHIEF_OF_STAFF_ENTITY_ID,
+        text,
+        "message",
+        clock.now_unix(),
+        clock.now_unix,
+        db_path=request.app.state.config.db_path,
+    )
+    return asdict(result)
+
+
 @router.post("/chat/{entity_id}/pause")
 async def pause_chat_turn(entity_id: str, request: Request) -> dict[str, Any]:
     authctx.require_direct_write(authctx.request_context(request))  # chat pause is direct-only.

@@ -17,7 +17,7 @@ import os
 import socket
 import subprocess
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -65,7 +65,11 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
     handles: list[ServerHandle] = []
     counter = 0
 
-    def make(gateway: str | None = None, fake_now: str | None = None) -> ServerHandle:
+    def make(
+        gateway: str | None = None,
+        fake_now: str | None = None,
+        trusted_ingress_env: Mapping[str, str] | Callable[[str], Mapping[str, str]] | None = None,
+    ) -> ServerHandle:
         nonlocal counter
         srvdir = tmp_path / f"srv{counter}"
         counter += 1
@@ -93,6 +97,10 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
         )
         if gateway is not None:
             env["PLAN_GATEWAY_ADAPTER"] = gateway
+        if trusted_ingress_env is not None:
+            env.update(
+                trusted_ingress_env(base) if callable(trusted_ingress_env) else trusted_ingress_env
+            )
 
         log = log_path.open("wb")
         try:

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from planner.core.config import Config, load_config
+from planner.core.errors import PlannerError
 
 _RETIRED_CONFIG_NAMES = (
     "claim_ttl_seconds",
@@ -18,8 +21,70 @@ def test_config_defaults_expose_only_live_runtime_knobs() -> None:
     assert isinstance(cfg, Config)
     assert cfg.dispatch_enabled is True
     assert cfg.tick_seconds == 60
+    assert cfg.trusted_ingress_provider is None
+    assert cfg.trusted_ingress_allowed_login is None
+    assert cfg.trusted_ingress_canonical_origin is None
     for name in _RETIRED_CONFIG_NAMES:
         assert not hasattr(cfg, name)
+
+
+def test_trusted_ingress_config_loads_tailscale_contract() -> None:
+    cfg = load_config(
+        path=None,
+        env={
+            "PLAN_TRUSTED_INGRESS_PROVIDER": "tailscale",
+            "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN": "khushal@example.com",
+            "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN": "https://panels.tailnet.ts.net/",
+        },
+    )
+
+    assert cfg.trusted_ingress_provider == "tailscale"
+    assert cfg.trusted_ingress_allowed_login == "khushal@example.com"
+    assert cfg.trusted_ingress_canonical_origin == "https://panels.tailnet.ts.net"
+
+
+def test_trusted_ingress_config_allows_loopback_http_origin_only_in_test_mode() -> None:
+    cfg = load_config(
+        path=None,
+        env={
+            "PLAN_TEST_MODE": "1",
+            "PLAN_TRUSTED_INGRESS_PROVIDER": "tailscale",
+            "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN": "khushal@example.com",
+            "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN": "http://127.0.0.1:8767/",
+        },
+    )
+
+    assert cfg.trusted_ingress_canonical_origin == "http://127.0.0.1:8767"
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN": "khushal@example.com"},
+        {"PLAN_TRUSTED_INGRESS_PROVIDER": "cloudflare"},
+        {"PLAN_TRUSTED_INGRESS_PROVIDER": "tailscale"},
+        {
+            "PLAN_TRUSTED_INGRESS_PROVIDER": "tailscale",
+            "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN": "khushal@example.com",
+        },
+        {
+            "PLAN_TRUSTED_INGRESS_PROVIDER": "tailscale",
+            "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN": "khushal@example.com",
+            "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN": "http://panels.tailnet.ts.net",
+        },
+        {
+            "PLAN_TEST_MODE": "1",
+            "PLAN_TRUSTED_INGRESS_PROVIDER": "tailscale",
+            "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN": "khushal@example.com",
+            "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN": "http://panels.tailnet.ts.net",
+        },
+    ],
+)
+def test_trusted_ingress_config_rejects_partial_or_unsupported_contract(
+    env: dict[str, str],
+) -> None:
+    with pytest.raises(PlannerError):
+        load_config(path=None, env=env)
 
 
 def test_retired_yaml_keys_are_ignored(tmp_path: Path) -> None:

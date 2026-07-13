@@ -17,6 +17,7 @@ from fastapi import Request
 from planner.core.errors import ErrorCode, PlannerError
 
 X_PLAN_ACTOR: Final = "X-Plan-Actor"
+PLAN_ACTOR_SCOPE_KEY: Final = "planner.request_actor"
 _UNATTRIBUTED_ACTOR: Final = "unattributed"
 _CHIEF_ACTOR: Final = "chief"
 
@@ -52,6 +53,8 @@ def _classify(actor: str | None) -> RequestContext:
 
 def request_context(request: Request) -> RequestContext:
     """FastAPI dependency: normalize and classify ``X-Plan-Actor``."""
+    if PLAN_ACTOR_SCOPE_KEY in request.scope:
+        return _classify(_normalize(request.scope[PLAN_ACTOR_SCOPE_KEY]))
     return _classify(_normalize(request.headers.get(X_PLAN_ACTOR)))
 
 

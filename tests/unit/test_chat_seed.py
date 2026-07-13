@@ -14,6 +14,7 @@ from sqlite3 import Connection
 import pytest
 from fastapi.testclient import TestClient
 
+from planner.chat import data as chat_data
 from planner.chat import service
 from planner.chat.contracts import (
     ChatHistory,
@@ -216,6 +217,78 @@ def test_chat_state_records_server_owned_human_turn(tmp_path: Path) -> None:
     assert _events(db_path, tid, "chat_turn_finished") == [
         {"turn_id": body["messages"][0]["turn_id"], "status": "complete"}
     ]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"text": ""},
+        {"text": "   "},
+        {"text": 123},
+        {"text": "hello", "mode": "message"},
+    ],
+)
+def test_chief_message_endpoint_requires_exact_nonblank_text(
+    tmp_path: Path, payload: dict[str, object]
+) -> None:
+    app, _db_path = _make_app(tmp_path)
+
+    with TestClient(app) as client:
+        response = client.post("/api/messages/chief", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation"
+
+
+def test_chief_message_endpoint_starts_chief_message_turn(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    text = "  hello chief\nwith preserved spacing  "
+
+    with TestClient(app) as client:
+        response = client.post("/api/messages/chief", json={"text": text})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["entity_id"] == CHIEF_OF_STAFF_ENTITY_ID
+    assert body["origin"] == "human"
+    assert body["mode"] == "message"
+    assert body["status"] == "running"
+    conn = connect(str(db_path))
+    try:
+        row = conn.execute(
+            "SELECT role, text, turn_id FROM chat_messages WHERE entity_id = ?",
+            (CHIEF_OF_STAFF_ENTITY_ID,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert tuple(row) == ("human", text, body["id"])
+
+
+def test_chief_message_endpoint_preserves_already_running_409(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    conn = connect(str(db_path))
+    try:
+        chat_data.start_turn(
+            conn,
+            CHIEF_OF_STAFF_ENTITY_ID,
+            origin="human",
+            mode="message",
+            visible_role="human",
+            visible_text="still running",
+            output_role="assistant",
+            phase="thinking",
+            activity_label="Thinking",
+            now=1,
+        )
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        response = client.post("/api/messages/chief", json={"text": "second"})
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "already_running"
 
 
 def test_chat_state_shows_active_turn_while_gateway_is_running(tmp_path: Path) -> None:
