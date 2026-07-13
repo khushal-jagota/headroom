@@ -1,5 +1,5 @@
 """The tickets.fields (de)serializer and slot accessors. Pure: json + contracts.
-The JSON shape mirrors the DDL default — five field keys, each a slot of
+The JSON shape mirrors the DDL default — field keys, each a slot of
 {value, proposal, user_note}, proposal being {body, proposed_by, created_at} or null.
 Legacy rows using {notes} are accepted on read. with_slot is copy-on-write so decision
 functions never mutate their input."""
@@ -7,10 +7,14 @@ functions never mutate their input."""
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from planner.core.contracts import ErrorCode, PlannerError
-from planner.tickets.contracts import FieldName, FieldSlot, Proposal, TicketFields
+from planner.tickets.contracts import FieldSlot, Proposal, TicketFields
+from planner.tickets.logic import coding_bridge
+
+if TYPE_CHECKING:
+    from planner.tickets.logic.coding_bridge import WorkflowDefinition
 
 
 def _slot_to_dict(slot: FieldSlot) -> dict[str, Any]:
@@ -25,13 +29,7 @@ def _slot_to_dict(slot: FieldSlot) -> dict[str, Any]:
 
 
 def fields_to_json(fields: TicketFields) -> str:
-    payload = {
-        "success": _slot_to_dict(fields.success),
-        "approach": _slot_to_dict(fields.approach),
-        "plan": _slot_to_dict(fields.plan),
-        "implementation": _slot_to_dict(fields.implementation),
-        "closeout": _slot_to_dict(fields.closeout),
-    }
+    payload = {fid: _slot_to_dict(slot) for fid, slot in fields.slots.items()}
     return json.dumps(payload)
 
 
@@ -66,37 +64,39 @@ def _slot_from_obj(obj: Any) -> FieldSlot:
     )
 
 
-def fields_from_json(raw: str) -> TicketFields:
+def fields_from_json(
+    raw: str, definition: WorkflowDefinition | None = None
+) -> TicketFields:
+    if definition is None:
+        definition = coding_bridge.coding_definition()
     data: Any = json.loads(raw)
     _require(isinstance(data, dict))
-    for key in ("success", "approach", "plan", "implementation", "closeout"):
-        _require(key in data)
-    return TicketFields(
-        success=_slot_from_obj(data["success"]),
-        approach=_slot_from_obj(data["approach"]),
-        plan=_slot_from_obj(data["plan"]),
-        implementation=_slot_from_obj(data["implementation"]),
-        closeout=_slot_from_obj(data["closeout"]),
-    )
+    # Each DECLARED field must be present AND decode via _slot_from_obj; unknown
+    # extra top-level keys are IGNORED (leniency preserved — legacy rows carry a
+    # top-level "result" key). The slot map is keyed by the definition's declared
+    # field ids in declared order, so a registered non-coding field set decodes into
+    # its own slots.
+    slots: dict[str, FieldSlot] = {}
+    for field_id in coding_bridge.field_ids(definition):
+        _require(field_id in data)
+        slots[field_id] = _slot_from_obj(data[field_id])
+    return TicketFields(slots)
 
 
-def get_slot(fields: TicketFields, field: FieldName) -> FieldSlot:
-    if field is FieldName.success:
-        return fields.success
-    if field is FieldName.approach:
-        return fields.approach
-    if field is FieldName.plan:
-        return fields.plan
-    if field is FieldName.implementation:
-        return fields.implementation
-    return fields.closeout
+def get_slot(fields: TicketFields, field_id: str) -> FieldSlot:
+    slot = fields.slots.get(field_id)
+    if slot is None:
+        raise PlannerError(
+            ErrorCode.validation, "unknown ticket field", {"field": field_id}
+        )
+    return slot
 
 
-def with_slot(fields: TicketFields, field: FieldName, slot: FieldSlot) -> TicketFields:
-    return TicketFields(
-        success=slot if field is FieldName.success else fields.success,
-        approach=slot if field is FieldName.approach else fields.approach,
-        plan=slot if field is FieldName.plan else fields.plan,
-        implementation=slot if field is FieldName.implementation else fields.implementation,
-        closeout=slot if field is FieldName.closeout else fields.closeout,
-    )
+def with_slot(fields: TicketFields, field_id: str, slot: FieldSlot) -> TicketFields:
+    if field_id not in fields.slots:
+        raise PlannerError(
+            ErrorCode.validation, "unknown ticket field", {"field": field_id}
+        )
+    new = dict(fields.slots)          # copy-on-write; declared order preserved
+    new[field_id] = slot
+    return TicketFields(new)

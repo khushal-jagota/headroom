@@ -113,13 +113,13 @@ class PendingSubmission:
         session_state: _SessionState,
         consequence_state: _ConsequenceState,
         handle: GatewayRequestHandle,
-        image_path: Path | None = None,
+        image_paths: tuple[Path, ...] = (),
     ) -> None:
         self._manager = manager
         self._session_state = session_state
         self._consequence_state = consequence_state
         self._handle = handle
-        self._image_path = image_path
+        self._image_paths = image_paths
 
     def wait(self, timeout: float) -> AcceptedSubmission | TransportUnknown:
         return self._manager._await_consequence_submission(
@@ -127,7 +127,7 @@ class PendingSubmission:
             self._consequence_state,
             self._handle,
             timeout,
-            image_path=self._image_path,
+            image_paths=self._image_paths,
         )
 
 
@@ -238,13 +238,13 @@ class LiveSession:
         text: str,
         *,
         timeout: float,
-        image_path: Path | None = None,
+        image_paths: tuple[Path, ...] = (),
     ) -> AcceptedSubmission | TransportUnknown:
         return self._manager._submit_consequence(
             self._state,
             text,
             timeout,
-            image_path=image_path,
+            image_paths=image_paths,
         )
 
     def request(
@@ -413,7 +413,7 @@ class LiveSessionManager:
         text: str,
         timeout: float,
         *,
-        image_path: Path | None,
+        image_paths: tuple[Path, ...],
     ) -> AcceptedSubmission | TransportUnknown:
         self._admit_operation(state)
         prompt_admission_held = False
@@ -424,19 +424,27 @@ class LiveSessionManager:
                 prompt_admission_held = True
                 with self._lock:
                     self._require_live(state)
-                if image_path is not None:
-                    self._request_while_locked(
-                        state,
-                        "image.attach",
-                        {"session_id": state.live_session_id, "path": str(image_path)},
-                        timeout,
+                attached_image_paths: list[Path] = []
+                try:
+                    for image_path in image_paths:
+                        self._request_while_locked(
+                            state,
+                            "image.attach",
+                            {"session_id": state.live_session_id, "path": str(image_path)},
+                            timeout,
+                        )
+                        attached_image_paths.append(image_path)
+                except GatewayError:
+                    self._detach_image_paths_while_locked_best_effort(
+                        state, tuple(attached_image_paths), timeout
                     )
+                    raise
                 pending = self._begin_consequence_submission_while_locked(
                     state,
                     text,
-                    image_path=image_path,
+                    image_paths=tuple(attached_image_paths),
                 )
-            if image_path is None:
+            if not image_paths:
                 state.prompt_admission_lock.release()
                 prompt_admission_held = False
                 self._release_operation_admission(state)
@@ -455,7 +463,7 @@ class LiveSessionManager:
         state: _SessionState,
         text: str,
         *,
-        image_path: Path | None = None,
+        image_paths: tuple[Path, ...] = (),
     ) -> PendingSubmission | TransportUnknown:
         consequence_state = _ConsequenceState()
         transport_error: GatewayError | None
@@ -487,7 +495,7 @@ class LiveSessionManager:
             state,
             consequence_state,
             handle,
-            image_path,
+            image_paths,
         )
 
     def _await_consequence_submission(
@@ -497,7 +505,7 @@ class LiveSessionManager:
         handle: GatewayRequestHandle,
         timeout: float,
         *,
-        image_path: Path | None,
+        image_paths: tuple[Path, ...],
     ) -> AcceptedSubmission | TransportUnknown:
         try:
             try:
@@ -506,17 +514,7 @@ class LiveSessionManager:
                 self._untrack_request_handle(handle)
         except GatewayRpcError:
             self._reject_consequence(state, consequence_state)
-            if image_path is not None:
-                try:
-                    self._request(
-                        state,
-                        "image.detach",
-                        {"session_id": state.live_session_id, "path": str(image_path)},
-                        timeout,
-                    )
-                except GatewayError:
-                    # Compensation is best-effort; preserve Hermes's prompt rejection.
-                    pass
+            self._detach_image_paths_best_effort(state, image_paths, timeout)
             raise
         except GatewayError as exc:
             self._mark_routed_submission_unknown(state, consequence_state)
@@ -528,13 +526,7 @@ class LiveSessionManager:
         disposition = str(result.get("status") or "")
         if disposition not in ("streaming", "queued", "steered"):
             self._reject_consequence(state, consequence_state)
-            if image_path is not None:
-                self._request(
-                    state,
-                    "image.detach",
-                    {"session_id": state.live_session_id, "path": str(image_path)},
-                    timeout,
-                )
+            self._detach_image_paths_best_effort(state, image_paths, timeout)
             raise GatewayError(f"unexpected prompt.submit disposition: {disposition!r}")
         typed_disposition = cast(SubmitDisposition, disposition)
         with self._lock:
@@ -548,6 +540,56 @@ class LiveSessionManager:
             receipt,
             SubmissionConsequence(self, state, consequence_state),
         )
+
+    def _detach_image_paths(
+        self,
+        state: _SessionState,
+        image_paths: tuple[Path, ...],
+        timeout: float,
+    ) -> None:
+        for image_path in image_paths:
+            self._request(
+                state,
+                "image.detach",
+                {"session_id": state.live_session_id, "path": str(image_path)},
+                timeout,
+            )
+
+    def _detach_image_paths_best_effort(
+        self,
+        state: _SessionState,
+        image_paths: tuple[Path, ...],
+        timeout: float,
+    ) -> None:
+        for image_path in image_paths:
+            try:
+                self._request(
+                    state,
+                    "image.detach",
+                    {"session_id": state.live_session_id, "path": str(image_path)},
+                    timeout,
+                )
+            except GatewayError:
+                # Compensation is best-effort; preserve the original Hermes failure.
+                pass
+
+    def _detach_image_paths_while_locked_best_effort(
+        self,
+        state: _SessionState,
+        image_paths: tuple[Path, ...],
+        timeout: float,
+    ) -> None:
+        for image_path in image_paths:
+            try:
+                self._request_while_locked(
+                    state,
+                    "image.detach",
+                    {"session_id": state.live_session_id, "path": str(image_path)},
+                    timeout,
+                )
+            except GatewayError:
+                # Compensation is best-effort; preserve the original Hermes failure.
+                pass
 
     def _request(
         self,

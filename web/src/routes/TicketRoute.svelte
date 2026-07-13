@@ -2,14 +2,14 @@
   import { onDestroy } from "svelte";
   import { fetchJson, fetchText } from "../lib/api";
   import { mutateJson, resource } from "../lib/resources";
+  import { PRIORITIES, fieldSlot, labelize } from "../lib/ui";
+  import { manifestResource } from "../lib/manifest.svelte";
   import {
-    FIELD_NAMES,
-    PRIORITIES,
-    STATE_ORDER,
-    ceilingOptions,
-    fieldStageVisualState,
-    fieldSlot,
-  } from "../lib/ui";
+    ceilingOptionsFor,
+    fieldStageVisualStateFor,
+    lifecycleFor,
+    recapVisibleFor
+  } from "../lib/lifecycle";
   import type {
     CurrentSprintResponse,
     GatewayStatus,
@@ -23,7 +23,6 @@
   import EnumPill from "../components/EnumPill.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
-  import KickoffSection from "../components/KickoffSection.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import Pill from "../components/Pill.svelte";
   import ResourceState from "../components/ResourceState.svelte";
@@ -45,6 +44,21 @@
   );
   const currentSprint = resource<CurrentSprintResponse>("sprint:current", (signal) =>
     fetchJson("/api/sprint/current", { signal })
+  );
+  const manifest = manifestResource();
+
+  // Derive the per-type lifecycle from the RESOURCE (ticket.data?.ticket_type), not
+  // the markup-local {@const detail} which is only bound inside {#if ticket.data}
+  // (Codex F2). Null while the manifest is still loading OR when the type is absent
+  // from a loaded manifest; the markup tells those apart via manifest.loading /
+  // manifest.error + a type-present check (Codex F3).
+  let lc = $derived(lifecycleFor(manifest.data, ticket.data?.ticket_type));
+  let manifestMissingType = $derived(
+    Boolean(
+      ticket.data &&
+        manifest.data &&
+        !manifest.data.types.some((t) => t.type_id === ticket.data?.ticket_type)
+    )
   );
 
   const ticketInvalidations = [`ticket:${id}`, "board", "queues", "sprint:current"];
@@ -100,15 +114,6 @@
       ticketInvalidations
     );
   }
-
-  function acceptKickoff(body: Record<string, unknown>): Promise<unknown> {
-    return mutateJson(
-      `/api/tickets/${id}/accept-kickoff`,
-      { method: "POST", body },
-      ticketInvalidations
-    );
-  }
-
 
   function writeClipboard(text: string): Promise<void> {
     if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
@@ -172,12 +177,18 @@
     return STATUS_DISPLAY[status] || status.replace(/_/g, " ");
   }
 
+  function hasBlockerRows(detail: TicketDetail): boolean {
+    const summary = detail.blocker_summary;
+    return Boolean(summary && (summary.blocked_by.length > 0 || summary.blocks.length > 0));
+  }
+
   onDestroy(() => {
     ticket.dispose();
     sprints.dispose();
     projects.dispose();
     chatStatus.dispose();
     currentSprint.dispose();
+    manifest.dispose();
   });
 </script>
 
@@ -188,21 +199,23 @@
   data-state={ticket.data?.state}
 >
   <ResourceState error={ticket.error} loading={ticket.loading} hasData={Boolean(ticket.data)} loadingText="Loading ticket...">
-    {#if ticket.data}
+    {#if ticket.data && (manifest.error || manifestMissingType)}
+      <div class="ticket-page" data-ticket-manifest-error>
+        <ErrorLine
+          error={manifest.error ?? { code: "unknown_ticket_type", message: `no manifest for type "${ticket.data.ticket_type}"` }}
+        />
+      </div>
+    {:else if ticket.data}
       {@const detail = ticket.data}
       <div class="ticket-page">
       <main class="ticket-doc">
         <header class="ticket-head">
           <div class="ticket-title">
-            {#if detail.state === "needs_kickoff"}
-              <span>{detail.title}</span>
-            {:else}
-              <InlineEdit
-                value={detail.title}
-                placeholder="Untitled"
-                onSave={(raw) => patch({ title: raw })}
-              />
-            {/if}
+            <InlineEdit
+              value={detail.title}
+              placeholder="Untitled"
+              onSave={(raw) => patch({ title: raw })}
+            />
           </div>
           <div class="ticket-facts">
             <span
@@ -231,6 +244,9 @@
                 }}
               />
             </span>
+            <Pill keyLabel="type" data-ticket-type={detail.ticket_type}>
+              {lc?.typeLabel ?? labelize(detail.ticket_type)}
+            </Pill>
             <Pill keyLabel="due">
               {detail.deadline || ""}
               <input
@@ -277,7 +293,7 @@
               <span class="ticket-leash-sel" data-scope-ceiling>
                 <EnumPill
                   value={detail.ceiling}
-                  options={ceilingOptions(detail.state)}
+                  options={ceilingOptionsFor(lc, detail.state)}
                   onChange={(ceiling) => void saveScope({ ceiling, at_cap: detail.at_cap })}
                 />
               </span>
@@ -297,7 +313,7 @@
         <div class="ticket-col">
           <div class="ticket-recap" data-recap>
             <Disclosure title="Recap" variant="support" defaultOpen={true} data-content-section="recap">
-              {#if STATE_ORDER.indexOf(detail.state) > STATE_ORDER.indexOf("needs_success")}
+              {#if recapVisibleFor(lc, detail.state)}
                 <InlineEdit
                   value={detail.recap}
                   markdown
@@ -316,21 +332,47 @@
             </Disclosure>
           </div>
 
+          {#if hasBlockerRows(detail)}
+            {@const blockerSummary = detail.blocker_summary}
+            <section class="ticket-blockers" data-blocker-summary>
+              <div class="ticket-blocker-group" data-blocker-group="blocked-by">
+                <div class="ticket-blocker-heading">Blocked by</div>
+                {#each blockerSummary?.blocked_by || [] as blocker}
+                  <a
+                    class="ticket-blocker-row"
+                    class:ticket-blocker-row--cleared={!blocker.active}
+                    href={blocker.href}
+                  >
+                    <span class="ticket-blocker-title">{blocker.title}</span>
+                    <span class="ticket-blocker-state">{blocker.active ? "active" : "cleared"}</span>
+                  </a>
+                {/each}
+              </div>
+              <div class="ticket-blocker-group" data-blocker-group="blocks">
+                <div class="ticket-blocker-heading">Blocks</div>
+                {#each blockerSummary?.blocks || [] as blockedTarget}
+                  <a
+                    class="ticket-blocker-row"
+                    class:ticket-blocker-row--cleared={!blockedTarget.active}
+                    href={blockedTarget.href}
+                  >
+                    <span class="ticket-blocker-title">{blockedTarget.title}</span>
+                    <span class="ticket-blocker-state">{blockedTarget.active ? "active" : "cleared"}</span>
+                  </a>
+                {/each}
+              </div>
+            </section>
+          {/if}
+
           <div class="fields">
-            <KickoffSection
-              title={detail.title}
-              kickoffNote={detail.kickoff_note || ""}
-              proposal={detail.kickoff_proposal || null}
-              onAccept={acceptKickoff}
-              onSaveNote={(raw) => patch({ kickoff_note: raw })}
-            />
-            {#each FIELD_NAMES as name}
+            {#each lc?.fieldIds ?? [] as name}
               {@const slot = fieldSlot(detail, name)}
-              {@const stageState = fieldStageVisualState(detail, name)}
+              {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
               <TicketStageSection
                 {name}
                 {slot}
                 {stageState}
+                lifecycle={lc}
                 ticketState={detail.state}
                 ceiling={detail.ceiling}
                 emptyText={emptyTicketFieldText}

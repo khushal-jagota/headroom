@@ -318,7 +318,7 @@ def test_chat_file_route_serves_managed_image_inline_with_nosniff(tmp_path: Path
 def test_chat_turn_accepts_same_entity_image_and_keeps_transcript_reference(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     ticket_id = _ticket(db_path)
-    calls: list[tuple[str, Path | None]] = []
+    calls: list[tuple[str, tuple[Path, ...]]] = []
 
     class RecordingGateway:
         def status(self) -> GatewayStatus:
@@ -334,9 +334,9 @@ def test_chat_turn_accepts_same_entity_image_and_keeps_transcript_reference(tmp_
             text: str,
             mode: str,
             on_session_key: Callable[[str], None] | None = None,
-            image_path: Path | None = None,
+            image_paths: tuple[Path, ...] = (),
         ) -> Iterator[ChatStreamChunk]:
-            calls.append((text, image_path))
+            calls.append((text, image_paths))
             if on_session_key:
                 on_session_key("image-session")
             yield ChatStreamChunk(type="session", session_key="image-session")
@@ -349,13 +349,16 @@ def test_chat_turn_accepts_same_entity_image_and_keeps_transcript_reference(tmp_
 
     app.state.adapters = Adapters(gateway=RecordingGateway())
     with TestClient(app) as client:
-        uploaded = client.post(f"/api/chat/{ticket_id}/images", content=PNG).json()
+        uploaded = [
+            client.post(f"/api/chat/{ticket_id}/images", content=PNG).json(),
+            client.post(f"/api/chat/{ticket_id}/images", content=GIF).json(),
+        ]
         started = client.post(
             f"/api/chat/{ticket_id}/turns",
             json={
                 "text": "What is shown?",
                 "mode": "message",
-                "image_reference": uploaded["reference"],
+                "image_references": [image["reference"] for image in uploaded],
             },
         )
         assert started.status_code == 200, started.text
@@ -369,10 +372,15 @@ def test_chat_turn_accepts_same_entity_image_and_keeps_transcript_reference(tmp_
         else:
             raise AssertionError(state)
 
-    expected_path = db_path.parent / uploaded["reference"].lstrip("/")
-    assert calls == [("What is shown?", expected_path.resolve(strict=True))]
+    expected_paths = tuple(
+        (db_path.parent / image["reference"].lstrip("/")).resolve(strict=True)
+        for image in uploaded
+    )
+    assert calls == [("What is shown?", expected_paths)]
     assert state["messages"][0]["text"] == (
-        f"What is shown?\n\n![Attached image]({uploaded['reference']})"
+        "What is shown?\n\n"
+        f"![Attached image]({uploaded[0]['reference']})\n"
+        f"![Attached image]({uploaded[1]['reference']})"
     )
     assert state["messages"][1]["text"] == "I can see it"
 
@@ -380,7 +388,7 @@ def test_chat_turn_accepts_same_entity_image_and_keeps_transcript_reference(tmp_
 def test_chat_turn_accepts_image_only_with_nonempty_model_cue(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     ticket_id = _ticket(db_path)
-    calls: list[tuple[str, Path | None]] = []
+    calls: list[tuple[str, tuple[Path, ...]]] = []
 
     class RecordingGateway:
         def status(self) -> GatewayStatus:
@@ -396,9 +404,9 @@ def test_chat_turn_accepts_image_only_with_nonempty_model_cue(tmp_path: Path) ->
             text: str,
             mode: str,
             on_session_key: Callable[[str], None] | None = None,
-            image_path: Path | None = None,
+            image_paths: tuple[Path, ...] = (),
         ) -> Iterator[ChatStreamChunk]:
-            calls.append((text, image_path))
+            calls.append((text, image_paths))
             yield ChatStreamChunk(
                 type="done",
                 reply_text="image received",
@@ -411,7 +419,7 @@ def test_chat_turn_accepts_image_only_with_nonempty_model_cue(tmp_path: Path) ->
         uploaded = client.post(f"/api/chat/{ticket_id}/images", content=PNG).json()
         started = client.post(
             f"/api/chat/{ticket_id}/turns",
-            json={"text": "", "mode": "message", "image_reference": uploaded["reference"]},
+            json={"text": "", "mode": "message", "image_references": [uploaded["reference"]]},
         )
         assert started.status_code == 200, started.text
         for _ in range(40):
@@ -428,7 +436,7 @@ def test_chat_turn_accepts_image_only_with_nonempty_model_cue(tmp_path: Path) ->
     assert len(calls) == 1
     assert calls[0][0].strip()
     assert uploaded["reference"] not in calls[0][0]
-    assert calls[0][1] == expected_path
+    assert calls[0][1] == (expected_path,)
     assert state["messages"][0]["text"] == f"![Attached image]({uploaded['reference']})"
 
 
@@ -452,18 +460,32 @@ def test_chat_turn_rejects_non_owned_or_unsafe_image_before_creating_turn(tmp_pa
         for reference in references:
             response = client.post(
                 f"/api/chat/{route_id}/turns",
-                json={"text": "look", "mode": "message", "image_reference": reference},
+                json={"text": "look", "mode": "message", "image_references": [reference]},
             )
             assert response.status_code == 400, (reference, response.text)
             assert response.json()["error"]["code"] == "validation"
 
+        response = client.post(
+            f"/api/chat/{owner_id}/turns",
+            json={
+                "text": "look",
+                "mode": "message",
+                "image_references": [
+                    owned,
+                    f"/files/chats/{owner_id}/missing.png",
+                ],
+            },
+        )
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "validation"
+
     conn = connect(str(db_path))
     try:
         assert conn.execute(
-            "SELECT COUNT(*) FROM chat_turns WHERE entity_id = ?", (route_id,)
+            "SELECT COUNT(*) FROM chat_turns WHERE entity_id IN (?, ?)", (route_id, owner_id)
         ).fetchone()[0] == 0
         assert conn.execute(
-            "SELECT COUNT(*) FROM chat_messages WHERE entity_id = ?", (route_id,)
+            "SELECT COUNT(*) FROM chat_messages WHERE entity_id IN (?, ?)", (route_id, owner_id)
         ).fetchone()[0] == 0
     finally:
         conn.close()

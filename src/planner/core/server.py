@@ -36,6 +36,7 @@ from planner.projects.api import router as projects_router
 from planner.runtime.readiness_doorbell import NoOpReadinessDoorbell
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
+from planner.tickets.logic import coding_bridge
 from planner.worker_context.contracts import WorkerContextService
 
 _log = logging.getLogger("planner.server")
@@ -108,6 +109,19 @@ def create_app(
     async def _lifespan(app_: FastAPI) -> AsyncIterator[None]:
         Path(config.db_path).parent.mkdir(parents=True, exist_ok=True)
         Path(config.logs_dir).mkdir(parents=True, exist_ok=True)
+        # Build and validate the ticket-type registry once at startup so a malformed
+        # definition refuses to boot loudly rather than failing on the first ticket op.
+        coding_bridge.coding_registry()
+        # One integrity scan over the migrated tickets table: a corrupt live row
+        # (unknown type, bad state/ceiling, malformed fields) fails boot loudly here,
+        # after the registry is built and before any background loop touches a ticket.
+        from planner.tickets import data as tickets_data
+
+        audit_conn = conn_factory()
+        try:
+            tickets_data.audit_ticket_registry_integrity(audit_conn)
+        finally:
+            audit_conn.close()
         loops: Any = None
         shared_gateway: Any = None
         chat_gateway_to_shutdown: Any = None
@@ -205,6 +219,14 @@ def create_app(
             "ws_poll_ms": config.ws_poll_ms,
             "test_mode": config.test_mode,
         }
+
+    @app.get("/api/ticket-types")
+    async def ticket_types() -> dict[str, Any]:
+        # The single source of stage order / labels / gates / fields / ceiling range
+        # per registered type, served from the ACTIVE registry (a test-installed probe
+        # registry in-process; coding-only in production). One entry per type_id.
+        reg = coding_bridge.registry()
+        return {"types": [reg.manifest(tid) for tid in reg.type_ids()]}
 
     @app.websocket("/api/events")
     async def events_ws(websocket: WebSocket, since: int = 0) -> None:

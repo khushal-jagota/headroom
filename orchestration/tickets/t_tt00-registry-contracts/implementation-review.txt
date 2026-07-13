@@ -1,0 +1,80 @@
+## Verdict
+
+The implementation is not fully faithful. The coding definition and most parity checks are strong, but two contract-level defects allow incorrect behavior or invalid registries despite all 49 new tests passing.
+
+## Findings
+
+1. **High — `dropped` is misclassified as unknown by two derived views.**
+
+`is_terminal` correctly recognizes the exceptional `dropped` stage, but `gating_field` and `advance_target` use linear-only lookup functions and therefore raise `PlannerError` for it: [views.py:56](/Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/logic/views.py:56), [views.py:67](/Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/logic/views.py:67), [views.py:108](/Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/logic/views.py:108).
+
+Concrete failure:
+
+```python
+views.gating_field(CODING_DEFINITION, "dropped")
+views.advance_target(CODING_DEFINITION, "dropped")
+```
+
+Both raise `"state outside the linear order"` instead of returning `None` for the known terminal. The landed machine explicitly treats `dropped` as terminal and its gate lookup returns `None`: [machine.py:51](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/machine.py:51), [machine.py:55](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/machine.py:55).
+
+The tests cover `done` and `"ghost"`, but omit `dropped`, masking the defect: [test_ticket_type_registry.py:457](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_ticket_type_registry.py:457), [test_ticket_type_registry.py:467](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_ticket_type_registry.py:467).
+
+2. **High — public construction bypasses the startup validator.**
+
+`Registry.__init__` accepts and retains any caller-provided dictionary without validation or defensive copying: [registry.py:26](/Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/registry.py:26). Although `build_registry` validates correctly at [registry.py:102](/Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/registry.py:102), `Registry` is publicly re-exported at [__init__.py:25](/Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/__init__.py:25).
+
+Concrete failure:
+
+```python
+bad = replace(CODING_DEFINITION, stages=())
+registry = Registry({"coding": bad})  # succeeds
+```
+
+A caller can also mutate the retained dictionary after construction. Thus the promised invariant “an invalid registry cannot be constructed” is not enforced by the public API.
+
+3. **Medium — runtime boolean validation is incomplete.**
+
+R6 uses truthiness rather than requiring `is_terminal is True`: [validation.py:62](/Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/logic/validation.py:62). I confirmed that replacing the final stage with `is_terminal=1` passes validation. Afterwards, `views.is_terminal(..., "done")` returns integer `1`, and the manifest serializes a number where its contract requires a boolean.
+
+This is inconsistent with the stricter dropped-stage check at [validation.py:85](/Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/logic/validation.py:85).
+
+Likewise, `supports_prefix_reconciliation` is declared boolean at [contracts.py:57](/Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/contracts.py:57), but validation ends without checking it at [validation.py:177](/Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/logic/validation.py:177). A value such as `"yes"` passes `build_registry`.
+
+4. **Medium — the AST import tests have a real relative-import escape.**
+
+`_module_name_for` collapses package `__init__.py` paths to package names, but `_resolve_relative` then drops components as though the final component were still a module: [test_ticket_type_registry.py:624](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_ticket_type_registry.py:624), [test_ticket_type_registry.py:633](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_ticket_type_registry.py:633).
+
+Concrete escapes:
+
+```python
+# planner/tickets/__init__.py
+from ..ticket_types import Registry
+
+# planner/ticket_types/__init__.py
+from ..minds import SharedGateway
+```
+
+Python resolves these to `planner.ticket_types` and `planner.minds`, respectively, but the helper computes unqualified names and both invariant tests miss them. The current import graph is clean on manual inspection; the regression guard is what is unsound.
+
+5. **Low — two negative tests do not assert the complete error contract.**
+
+The `gated_state` and `require_stage` negatives assert only `ErrorCode.validation`: [test_ticket_type_registry.py:482](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_ticket_type_registry.py:482), [test_ticket_type_registry.py:493](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_ticket_type_registry.py:493). They would pass with the wrong message or detail dictionary, contrary to the file’s complete-error assertion claim. The R0–R19 negative tests themselves do use the exact helper correctly.
+
+## Confirmed correct
+
+- Coding stages, gates, and fields are genuinely sourced from live enums/constants: [coding.py:22](/Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/coding.py:22).
+- Golden tests compare against live `STATE_ORDER`, `GATING_FIELD`, `ADVANCE_TARGET`, `FieldName`, `TicketFields`, `FIELD_GATES`, and `WORKER_STATE_ORDER`: [test_ticket_type_registry.py:376](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_ticket_type_registry.py:376).
+- Ceiling range is exactly `stage_ids()[1:]`, and default ceiling is its first entry: [views.py:130](/Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/logic/views.py:130).
+- The transition hook matches the live exact tuple: [coding.py:84](/Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/coding.py:84), [machine.py:141](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/machine.py:141).
+- The manifest assertion is an exact dictionary equality.
+- Gate/field bijection, hook uniqueness, deterministic validation order, and `build_registry`’s normal validation path are otherwise sound.
+- No coding-specific literal leaked into generic logic beyond the explicitly reserved vocabulary.
+
+## Verification facts
+
+- All 49 focused tests passed independently.
+- Ruff passed.
+- Mypy passed for all eight new production source files. Directly type-checking the new test file reports two annotations missing on `assert_raises_planner`; the project’s normal source-only Mypy target does not include that test.
+- Pytest collects **519 total unit tests**, comprising 470 pre-existing tests plus 49 new tests. Thus “519 existing plus 49 new” is numerically inaccurate if meant literally.
+- A full unit run could not be independently completed in this read-only environment because many existing tests require a writable temporary directory.
+- No tracked production or existing test file is modified. The broader worktree is not globally additive-clean: `PROGRESS.md`, the redesign plan, and a nested worktree entry are already modified.

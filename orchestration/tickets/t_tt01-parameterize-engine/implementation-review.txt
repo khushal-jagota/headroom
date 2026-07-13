@@ -1,0 +1,59 @@
+No valid canonical `coding` parity divergence found. The default coding paths preserve state order, errors, transitions, and enum identity. However, the foreign-definition seam and several new assertions are weaker than claimed.
+
+## Findings
+
+1. High — Tier-2 permits a bare foreign field into fixed coding storage.
+
+[`gating_field`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/machine.py:86) promises `FieldName | None` whenever its state is a `TicketState`, even when an explicit foreign definition is supplied. At runtime `_as_field` may return a plain string, which [`has_pending_gating_proposal`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/machine.py:227) forwards to [`get_slot`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/fields_codec.py:95). Unknown values silently fall through to `closeout` at line 106.
+
+Concrete break: define `needs_success` as gated by foreign field `"alpha"`, then call:
+
+```python
+has_pending_gating_proposal(
+    TicketState.needs_success,
+    fields_with_closeout_proposal,
+    definition=foreign_definition,
+)
+```
+
+It returns `True` by inspecting `closeout`, not `"alpha"`. Either Tier-2 functions must reject foreign definitions until storage is generic, or verify the returned gate is a `FieldName` before slot access.
+
+The same boundary is inconsistent in admission: `check_agent_proposal(..., AtCap.stop, definition=SYNTHETIC)` reaches `.value` on bare strings at [`admission.py:64-66`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/admission.py:64), raising `AttributeError` instead of `PlannerError`.
+
+2. Medium — the codec checks declared-field presence, not declared-field decoding.
+
+[`fields_from_json`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/fields_codec.py:74) checks that every definition field is present, then unconditionally decodes the six coding keys at lines 85–91.
+
+Concrete breaks:
+
+- Synthetic-only JSON containing valid `kickoff`/`alpha`/`beta` slots passes the declared-key loop, then raises raw `KeyError("success")`.
+- JSON containing six valid coding slots plus malformed declared values `"alpha": 7, "beta": 8` succeeds without decoding either declared field.
+
+Default coding behavior remains identical, and unknown extras such as legacy `result` remain correctly ignored. But the advertised definition-validation contract is not implemented. Validate every declared value with `_slot_from_obj`, or explicitly restrict this codec seam to the coding definition.
+
+3. Medium — the two tests intended to detect surviving identity comparisons are vacuous.
+
+`_FA` is created once and stored directly in `SYNTHETIC` at [`test_engine_parameterization.py:59-68`](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_engine_parameterization.py:59). Both tests pass that exact object at [line 238](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_engine_parameterization.py:238) and [line 256](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_engine_parameterization.py:256). The view and `_as_field` return the same object.
+
+Concrete regression: restore `field is not gating_field(...)` at [`machine.py:164`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/machine.py:164) or admission’s equivalent at [`admission.py:70`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/admission.py:70); both tests still pass. Construct a second equal-but-distinct field string at the call site and assert `call_field == _FA` and `call_field is not _FA`.
+
+4. Medium — the claimed strict-mypy overload tests are not type-checked.
+
+The cases are under `tests/` at [`test_engine_parameterization.py:397-415`](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_engine_parameterization.py:397), while mypy is configured for `src` only at [`pyproject.toml:40-44`](/Users/khushaljagota/.hermes/planning-v2/pyproject.toml:40), and verification explicitly runs `mypy src/` at [`scripts/verify.py:61-63`](/Users/khushaljagota/.hermes/planning-v2/scripts/verify.py:61). At runtime, `assert_type` performs no static validation.
+
+Concrete regression: widen `resolve_scope.new_state` to `str`, or widen the enum overload to `TicketState | str`; pytest remains green. Put these cases in a mypy-included fixture/module or add a dedicated mypy invocation.
+
+## Sound points
+
+- Coding parity is genuine: the coding definition derives stages and gates from the existing constants at [`coding.py:54-75`](/Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/coding.py:54).
+- All three `advance_target(...) is TicketState.*` assertions remain valid because targets are re-wrapped through `TicketState(state_id)` at [`machine.py:59-63`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/machine.py:59).
+- Resolution therefore supplies `TicketState` to `Decision`, and `_apply_decision`’s `.value` access remains safe for coding at [`data.py:114-141`](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:114).
+- `coding_bridge` is the sole production `ticket_types` importer, mechanically enforced at [`test_ticket_type_registry.py:761-770`](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_ticket_type_registry.py:761). The import direction is acyclic.
+- The server warm-call is benign. Two concurrent pre-warm calls could construct equivalent registries because the lazy singleton lacks locking, but no behavioral or test-state leak is apparent.
+- Existing `data.*` signatures are unchanged. Engine/admission definition parameters are optional keyword-only; the codec retains its compatible optional positional second argument.
+- `auto_accept_target` and admission consistently thread one resolved definition through their subcalls.
+- Codec extras remain lenient, including legacy `result`.
+- `FIELD_GATES` has no Load-context read; the AST assertion is genuine.
+- The same-function multi-definition test is real.
+- The undeclared-note test strongly asserts no field, state, scope, or event change.
+- The canonical-writer implementation remains sound. Its structural test is weaker than ideal: `UPDATE tickets SET state=?`—without the exact `"state ="` spacing—would evade [`test_engine_parameterization.py:287-291`](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_engine_parameterization.py:287).

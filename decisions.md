@@ -2,48 +2,133 @@
 
 Every delegated or judgment call, briefly justified. Numbered for reference from PROGRESS.md and ticket records.
 
-## D110 — Shared subtree identity proves preview stability across kinds
+## D116 — Revalidate preview stability by merging committed main before approval
 
-`mountFilePreviews` scans every anchor rendered by `MarkdownBlock` and mounts the same `FilePreview`
-component regardless of whether it resolves to image, video, audio, Markdown, HTML, download, or
-external. The production guard therefore belongs at the `MarkdownBlock` source/context boundary, not
-inside a preview-kind branch. Broaden the Ticket/Chief regression with all seven resolved kinds—
-Markdown, image, video, audio, HTML, download, and external—and require exact DOM identity for every
-node through live activity. This removes assumptions about kind-specific coverage while still testing
-one shared lifecycle boundary. A real message-target change must disconnect the original subtree and
-mount/fetch the replacement once.
+The ticket branch's original base predates 22 committed main changes, including multi-image chat and
+explicit ticket-type creation. Merge committed `main` `0595b94` into the isolated ticket branch now,
+not during Closeout after approval. Preserve main's multi-image payload and typed lifecycle changes,
+then retain this ticket's stable chat row keys and shared `MarkdownBlock` semantic-input guard. Port the
+all-seven-kind regression to `--type coding`, rebuild generated frontend output from integrated source,
+and require independent review plus canonical verification. Do not include or modify the unrelated
+uncommitted Job B work in the main checkout.
 
-## D109 — Preview stability measurement begins after route startup settles
+## D114 — Blocker closeout rebases semantics by merge, not by choosing one side
 
-The regression measures the ticket's live-activity boundary, not transient route startup. Under full
-suite load, the route's catch-up flush can remount the whole screen before one settled preview exists;
-a component-local chat fix cannot and should not preserve DOM across destruction of its parent route.
-Wait until exactly one connected historical preview has rendered, clear startup request observations,
-then install the loading/remount observer. Repeated activity and live-output updates must add zero
-requests and preserve that exact node; changing the same message to a new managed target must replace
-it and add exactly one request. This keeps the test deterministic without weakening the approved
-runtime behavior.
+Merge verified blocker commit `14b0d5c` into current `main` with a merge commit. Preserve the newer Chat
+image and ordinary Kickoff contracts, the unrelated dirty nested worktree, and the blocker branch's
+typed summary, active-cycle/reactivation rules, affected-target invalidation, and blocks-only migration.
+Resolve additive memory records explicitly, combine the seed expectations from the merged behavior, and
+rebuild generated frontend output from merged source. Closeout must back up the live schema-14 database,
+stop the old server for cutover, apply schema 15 through the canonical startup path, verify the legacy
+`belongs_to` row is removed while Ticket membership remains, run one post-merge `./verify`, read the
+migrated data back, restart the server, and only then remove the ticket worktree and branch.
 
-## D108 — Reactive preservation coverage changes the same message text, not file bytes
+## D113 — Blockers stay one typed read model and one active relationship
 
-Same-URL external file byte mutation is not a reactive input: Panels has no managed-file version or
-event, and polling or invalidating the preview cache would contradict the approved one-fetch
-stability fix. The strengthened Ticket/Chief browser regression instead updates one stable
-historical `chat_messages.id` from its first real managed Markdown target to a second real target.
-That is the supported reactive input and proves changed message text replaces the preview while
-unchanged polling, activity, and live output preserve it. This test-and-memory-only follow-up is
-trivial enough to collapse ticket planning and implementation without expanding production scope.
+The merged contract retains the reviewed branch decisions: `blocks` is the only explicit Ticket
+relationship; `tickets.sprint_item_id` remains canonical membership; `done` and `dropped` sources are
+cleared; reopening validates active cycles; source-state changes report affected targets; and Ticket,
+worker/CLI, Sprint planning, and the read-only Ticket UI consume one typed blocker summary. The UI adds
+no editor or graph, and Sprint-item targets navigate by selecting the existing Sprint row. Detailed
+RED/GREEN and review dispositions remain in `orchestration/tickets/t_bqxt44fb-blockers/`.
 
-## D107 — Stable chat render identity plus a semantic Markdown guard prevent false remounts
+## D112 — Ordinary Kickoff closeout preserves newer main work and rebuilds the shared frontend
 
-Chat polling returns fresh response objects even when historical messages are unchanged. Preserve
-each historical row by the existing database message id and the live row by the existing turn id;
-do not invent client identity. A keyed row alone still receives a fresh wrapper, so `MarkdownBlock`
-also snapshots normalized text, quiet text, preview depth, and visited paths and returns before DOM
-teardown when all are equivalent. Real text or context changes continue through the existing render
-and preview-mount path. This is local render stability, not a file cache, and it changes no preview
-size or fetch contract. The generated frontend output already exists and must not be rebuilt in
-this sandbox; the host orchestrator will include that existing asset when committing.
+Merge verified branch `ticket/t_hvnv9gyc-kickoff-normal-stage` into current `main` rather than
+replaying its changes over the newer full-page preview and Chat image commits. Preserve both memory
+records, keep the unrelated dirty nested worktree untouched, and rebuild the generated frontend from
+the combined source instead of choosing either conflicted bundle index. A clean post-merge canonical
+verifier is required before cleanup and Closeout. No deploy or restart is part of this ticket.
+
+## D109 — Later-stage legacy approvals keep Kickoff settled
+
+The Kickoff migration must infer pending Kickoff approval from the gated stage, not from the
+stage-agnostic `ticket_status`. A legacy `awaiting_approval` row at `needs_success` or later is
+waiting on that row's current field proposal, so its old Kickoff note is migrated as a settled
+`fields.kickoff.value` with no Kickoff proposal. If stale compound `kickoff_proposal` JSON is present
+on a later-stage row, preserve the compound note as the settled Kickoff value instead of creating a
+non-gating proposal. That matches the repository migration convention here: recover valid legacy data
+and reserve rejection for corrupt JSON or broken referential integrity.
+
+Kickoff approval in the UI and CLI uses the same onward scope contract as every other current gating
+field. `--kickoff-title` remains an independent title PATCH, and `--kickoff-note-file` is only an
+alias for the edited accepted Kickoff body.
+
+## D108 — Kickoff uses ordinary field machinery; title remains independently editable metadata
+
+Add `kickoff` as the first `FieldName` and map `needs_kickoff` through the same gating, proposal,
+acceptance, scope, event, and visual-state paths as every later stage. Remove the dedicated kickoff
+accept route, compound proposal contract, top-level note storage, and custom stage component.
+Creation must atomically create `fields.kickoff.proposal` and leave the Ticket awaiting approval, so
+readiness can never dispatch an unapproved intake.
+
+The Ticket title remains canonical metadata from creation and is editable through the ordinary title
+edit path independently of stage approval, including while Kickoff is current and in Review. No new
+title-proposal type is justified: the old compound proposal only duplicated the already stored title,
+and unsaved UI draft edits were never durable. Migration therefore preserves `tickets.title`, moves a
+settled top-level note to `fields.kickoff.value`, moves a pending compound note to
+`fields.kickoff.proposal`, and discards only the redundant proposal-title copy. Current-schema settled,
+pending, retry/idempotence, link preservation, and rollback cases are required, along with a real
+runner regression proving pending Kickoff cannot dispatch. Existing special kickoff events may remain
+readable as history, but all new writes use ordinary proposal events and the ordinary accept route.
+
+The shared field component keeps an editable value surface for passed fields even when the settled
+value is empty, preserving the ability to fill an empty Kickoff without a custom component. Queue
+approvals retain their established concrete `kind` contract (`kickoff`, `success`, `plan`, and so on),
+and Review derives the field from that value. Review title editing uses the same independent ordinary
+Ticket PATCH as the Ticket header; it is never part of Kickoff acceptance.
+
+## D111 — Chat image closeout reconciles the concurrent preview commit before verification
+
+While `t_tmfdg79v` Closeout preserved the dirty `main` tree, the concurrent full-page preview work landed
+as commit `5924b83`. Merge the verified chat branch on top rather than overwriting it, rebuild the
+frontend from both source changes, and preserve both sets of memory notes. The first post-merge verifier
+proved that choosing the chat side of the `assets/app.css` conflict had dropped the preview ticket's
+full-page layout block. Restore that exact block as a narrow integration repair, rerun its focused browser
+regression, then require a clean canonical verifier before cleanup. No deploy or restart is implied by
+source integration.
+
+## D110 — Chat image implementation remains isolated until Closeout
+
+Ticket `t_tmfdg79v` was implemented and verified on dedicated branch
+`ticket/t_tmfdg79v-chat-image-ux` from `9ab2111`. The first independent implementation review found two
+real gaps: invalid-disposition cleanup could stop after one detach failure, and clipboard files bypassed
+the shared intake validator. Both were corrected under focused regressions; follow-up review returned
+`NO VIOLATIONS`, and the canonical worktree verifier passed. Implementation ended with a verified branch
+commit; merge and integration verification remained Closeout work.
+
+## D109 — Chat image sends are ordered collections, with cleanup on every failed admission path
+
+Ticket `t_tmfdg79v` replaces the old single image field with ordered `image_references` at the API
+and ordered `image_paths` at the gateway/session boundary. The service resolves every reference before
+creating a visible turn, so one invalid item prevents both prompt delivery and transcript mutation.
+Visible Markdown emits the managed image links in the same order the user kept in the composer.
+
+The live Hermes session attaches every image in order before one `prompt.submit`. A failed attach
+submits no prompt and best-effort detaches any earlier images from that attempt so they cannot leak
+into a later prompt. A rejected or invalid prompt disposition detaches every successfully attached
+image before admission is released. The composer mirrors that lifecycle locally: object URLs are
+revoked on individual removal, successful send cleanup, and component teardown, but previews are
+retained after upload or turn-start failure for retry.
+
+## D108 — Full-page HTML preview closeout integrates only ticket-owned files
+
+The accepted implementation was produced directly in a mixed `main` worktree. Closeout commits only
+the production, browser regression, current frontend documentation, and rebuilt bundle files owned by
+`t_zkw93h9k`; pre-existing and concurrent memory/worktree changes remain unstaged. There is no branch
+to merge and no requested deploy or service restart. Canonical verification and final independent
+review are already clean, and the repaired behavior has no deferred work, so no follow-up Ticket is
+needed.
+
+## D107 — Open preview is a document surface, not a larger preview card
+
+For managed HTML, the shared `FilePreview` remains the embedded at-rest card. Its **Open preview**
+action leads to a dedicated route where the sandboxed HTML document fills the available page; that
+route does not repeat the filename, file-kind label, card chrome, or open action. The dedicated
+renderer keeps an empty-permission sandbox and uses a browser-paintable document URL with explicit
+cleanup rather than weakening sandbox permissions. Markdown and all other managed-file behavior stay
+on the existing route/component path. Browser coverage must click the real action and prove the popup
+destination, visible document, full-page geometry, absent duplicate controls, and retained sandbox.
 
 ## D106 — Kickoff integration preserves concurrent main work and rebuilds the shared frontend
 
@@ -52,6 +137,13 @@ advanced with the bounded Markdown preview and Chat changes. Closeout merges the
 a merge commit, preserves the concurrent records and nested worktree state, resolves the generated
 frontend index by rebuilding from the combined source, and runs the canonical verifier after the
 integration. No deployment or follow-up Ticket is required unless post-merge verification exposes one.
+
+## D105 — Bounded Markdown preview closeout needs no further integration or deployment
+
+The accepted implementation is already present directly on `main` in commit `e4a607d`, alongside the
+concurrent Chat work that shared the worktree. There is no branch left to merge and no requested deploy
+or service restart. The owner-corrected component-level behavior is complete, independently reviewed,
+and covered by the canonical verifier, so no follow-up Ticket is warranted.
 
 ## D104 — Managed Markdown preview bounds are component-level visual containment
 
@@ -1944,3 +2036,159 @@ overview and note writes are direct-only. Automatic kickoff drafting is already 
 so `panels-rollover` may prefix only those scheduled `panels day set` commands with
 `PLAN_ACTOR=chief`. The elevation stops at the kickoff overview and pending-review note: it cannot edit
 ticket lifecycle state, approve gates, or add tickets before the user agrees.
+
+## D102 — Ticket-types build (t_tt*): registry location, no-cycle seam, commit cadence
+
+Building the ticket-types redesign (`orchestration/ticket-types-redesign/PLAN.md`) to the go/no-go gate
+(owner cadence: run autonomously through Phases 0–3, report at the gate).
+
+- **Registry module** lives at `src/planner/ticket_types/` — a first-class sibling domain, split
+  contracts/logic/registry/coding like every other domain. It imports ONLY the two leaves
+  `tickets/contracts` + `core/contracts`; nothing imports back (allowlist-tested over the whole package).
+- **No-cycle seam:** the validator's reference catalogs (known specialist-skill ids, toolset-profile ids)
+  are **injected into the constructor**, not imported — specifically to avoid importing `minds/config`
+  (not a leaf; Phase 5 makes the gateway consume worker profiles from `ticket_types`, so importing it now
+  would plant a latent cycle). Caught by Codex plan review.
+- **Commit cadence:** owner delegated ("continue"); following the established redesign practice, each
+  `t_tt*` ticket commits straight to `main` once its full `./verify` passes — per-ticket checkpoints so
+  the DB migration (t_tt02) is never stacked on uncommitted work.
+
+## D103 — t_tt02 migration rulings (live-DB safety)
+
+Building the DB `ticket_type` column migration against the owner's live `planning.db` (backed up to
+`data/backups/planning-pre-tickettype-t_tt02-*.db` first).
+
+- **Ceiling DDL default dropped (reversed my own earlier ruling).** I first said keep `ceiling DEFAULT
+  'needs_success'` as a "harmless backstop"; the independent Codex review corrected me — `needs_success`
+  is coding's default, not type-independent, so a raw insert would silently store it for any type. Removed
+  the DDL ceiling default (kept NOT NULL → omitted ceiling fails loudly); kept `state DEFAULT
+  'needs_kickoff'` (that bookend IS universal).
+- **Audit field-key policy: strict-on-missing, lenient-on-extra.** The codec ignores extra top-level keys
+  (live rows carry a legacy `result` key — see [[dont-import-unraised-concerns]] / t_tt01 D-note), so the
+  audit is strict on unknown type / bad state / bad ceiling / MISSING declared field / malformed slot, and
+  lenient on extras. A misspelled key drops a required field, so the missing-field check still catches it.
+- **Silent-pass invariant (not "non-coding unreachable").** The codec gates on field-SET, not type-id, so
+  a coding-shaped second type would reach the coding-default engine paths. Deferral is safe ONLY because
+  production registers `coding` alone: **no second PRODUCTION type until the coding-default paths are
+  threaded.** t_tt02b threads the engine + propose/accept/drop/scope drive path (and widens the domain
+  contract `Ticket.state`/`ceiling` → `str`); **external-work + direct-scope prefix genericization defer to
+  t_tt03** (t_tt02b keeps external-work coding-only with an explicit non-coding rejection — Codex t_tt02b
+  plan-review boundary). So the binding rule becomes: **no 2nd production type until t_tt03.**
+- **Migration holds the exclusive write lock across snapshot→copy→swap** (Codex diff-review F1) — closes a
+  concurrent-write loss window. The shipped kickoff migration has the same latent window; left unedited,
+  flagged to the owner for a possible follow-up.
+
+## D104 — t_tt04a read-model delegated calls (per plan §4/§5/§9)
+
+Making the five backend read-models type-driven (resolve each row's own `WorkflowDefinition` via
+`coding_bridge`, never assume coding). Two things the plan explicitly left in place, out of 4a's named
+scope, recorded here:
+
+- **`item_rollup` coding-shaped seed kept.** `sprints/views.py::item_rollup` still seeds its dict with
+  `{s.value for s in TicketState}` (so `TicketState` STAYS imported there). It is not a named 4a seam and
+  no probe rollup assertion is required; left untouched.
+- **Universal `done`/`dropped` bookend literals kept.** `derive_sprint_item_status` keeps its
+  `_DONE_STATE`/`_DROPPED_STATE` literal checks — these bookends are shared by every type by validation,
+  so they are universal, not a per-type coding table. Only `_IN_PROGRESS_STATES` (the last hardcoded
+  coding mid-state table in a read-model) was deleted, replaced by a precomputed per-child
+  `state_in_progress` boolean computed at `read_item` from the child's own definition (plan Option A —
+  keeps the pure function dependency-free). `tickets/views.py::_TICKET_CLOSED` likewise keeps
+  `TicketState.done/.dropped` bookends (Codex F2 — `TicketState` must stay imported).
+- **Per-module local `probe_registry` fixtures (Codex F3).** Each new test module defines its OWN local
+  yield fixture wrapping `install_probe_registry()`/`uninstall_probe_registry()` rather than sharing one —
+  the fixture in `test_probe_type.py` is module-local, not in `conftest.py`. Chose per-module copies over
+  adding a shared `conftest` fixture to keep `conftest.py` (orchestrator-owned glue) untouched.
+
+## D105 — t_tt05 worker realization: skill-driven, no wiring
+
+Activating the declared-but-inert `WorkerProfile` so a worker self-routes to its type's specialist skill.
+Owner ruling: SKILL-DRIVEN, not code-routed — the old PLAN 5b gateway/session/toolset wiring is CUT.
+
+- **Mechanism = `skill_view` (a Hermes core tool), not code routing.** `HERMES_TUI_SKILLS` only PRELOADS the
+  base role's text; it does not gate later skill access. `skill_view(name)` loads any home skill on demand
+  and is in `_HERMES_CORE_TOOLS` (present under the default worker toolset). Precondition (Codex F1): don't
+  restrict the worker toolset below one that includes `skill_view` (a `HERMES_TUI_TOOLSETS=safe` would omit
+  it). No relative-path file fallback worded (Codex F4 — relative reads resolve against CWD, not the home).
+- **Base role `panels-worker` / `config.worker_skill` UNCHANGED.** The launched base role stays type-agnostic;
+  only the on-demand specialist is per-type. Coding's `WorkerProfile.specialist_skill` → `panels-worker-coding`;
+  four R14 catalogs updated to accept it (`coding_bridge._KNOWN_SKILLS`, the registry test `KNOWN_SKILLS`,
+  `test_ticket_type_persistence::_two_type_registry`, `PROBE_KNOWN_SKILLS` — Codex F2).
+- **Base skill is EXTRACT-AND-PLACE, no rewriting (owner constraint).** Cut `### The stages` + `### How to
+  complete ticket stages effectively` verbatim into `panels-worker-coding`; blended line 32 → exactly
+  `you handle the one current step only.` (rest dropped — the agent needn't know who/why approval happens);
+  add one section (my-ticket → skill_view → the specialist list). Everything else byte-identical.
+- **Probe placeholder ships as a real `skills/probe-worker/` dir** (not test-only) so the structural invariant
+  (`SKILL.md` `.is_file()` — Codex F6) and provisioning pass.
+- **`my-ticket` returns just the worker name** (`detail["worker"]`), owner-simplified.
+- **The agentic proof (a live worker self-routing) is OUT-OF-BAND** — an owner run against `panels serve`, not
+  a `./verify` gate. Phase 5 lands as "mechanism built + code-verified", not "self-routing observed live".
+
+## D115 — Job B: the `new_worker` production type (the create-a-worker worker)
+
+The payoff of the type machinery: a real, production-shipped type whose worker designs and lands ANOTHER
+worker. Design produced by the `worker-smith` sub-agent as a sense-check, owner-driven; implemented on the
+same agent. Because t_tt02–t_tt05 made the stack type-driven, the type itself needs no engine/UI change — a
+definition + a specialist skill + registration (+ the two seam fixes below).
+
+- **Owner-designed lifecycle (bespoke, NOT coding's):** `needs_kickoff → needs_stages → needs_thinking →
+  needs_drafting → needs_closeout → done`, `dropped` reserved. ONE thinking stage. Novel ids
+  (`needs_stages`/`stages`, `needs_thinking`/`thinking`, `needs_drafting`/`drafting`) are plain strings like
+  probe; shared ids reuse the enum values. Rationale: the value of a worker is the quality of thinking its
+  skill forces, so the lifecycle IS the thinking scaffold — a thin "write me a skill" pass is the failure mode.
+- **Ships to PRODUCTION** — into `coding_registry()` `[CODING_DEFINITION, NEW_WORKER_DEFINITION]`;
+  `panels-worker-new-worker` added to `_KNOWN_SKILLS` + `PLANNER_SKILL_NAMES`. (Contrast probe = test-only.)
+- **Specialist skill `panels-worker-new-worker`** — abstracted from `panels-worker-coding`/`panels-worker`
+  (lifted the general disciplines; dropped git/PR/code-review/implementer-routes). Crux = `needs_thinking`
+  (good-result bar + per-stage implementer + per-stage standard, under a genericity test). Owner drove a
+  lightening pass (clearer, ~30% shorter, same content). Approved draft persisted at scratchpad
+  `panels-worker-new-worker-SKILL.md`, written verbatim.
+- **Kickoff-ceiling change — GLOBAL, owner-decided.** Default start ceiling moves to `needs_kickoff` for
+  EVERY type (coding included): a fresh ticket is leashed at kickoff and nothing advances until the human
+  grants scope = review before any agent work. Coding's default moves `needs_success` → `needs_kickoff`.
+  Stays derived — no per-type ceiling field (owner: skip the knob).
+- **The ceiling change is a DECOUPLING, not a one-liner (worker-smith surfaced; I corroborated).**
+  `default_ceiling` was overloaded: the fresh-ticket start ceiling AND the "first worker stage" threshold read
+  by the recap-writable gate (`admission.py:86`) and sprint in-progress (`sprints/data.py:431`). Moving it
+  naively would make recap writable + sprint in-progress one stage too early. Fix (my call — Option 1): add
+  `needs_kickoff` to `ceiling_range` so `default_ceiling = ceiling_range[0]` derives to it and it becomes a
+  valid/selectable ceiling; ADD a distinct `first_worker_stage(defn)` view (= `stage_ids[1]`; `needs_success`
+  for coding) and re-point recap + sprint at it — PRESERVING their current behavior. The `(needs_kickoff,
+  propose)` valid / `(needs_kickoff, stop)` invalid rule and the fresh-ticket `(needs_kickoff, propose)` start
+  both fall out of existing `admission.py`/`data.py` with no new rule. The recap error string is genericized
+  off "needs_success". Option 2 (leave `ceiling_range`, special-case `default_ceiling`) is a dead end — the
+  default wouldn't pass the validity set `validate_ceiling`/`resolve_scope` enforce.
+- **A — step-runner fix (found by worker-smith's seam check).** `employee_step_runner._next_step_prompt`
+  called `machine.gating_field(ticket.state)` with no definition → defaulted to coding → crashed for a foreign
+  state. The lone straggler still on the coding default (every `data.py` door already threads the ticket's own
+  definition). Fixed by threading `coding_bridge.require(ticket.ticket_type)`. Without it a live new_worker
+  step crashes — the "unproven live" caveat becomes a hard failure.
+- **B — no transition hooks.** new_worker is bounded agent work; no stage hands accepted work to a human to
+  execute (the agent sets everything up at closeout). With the kickoff ceiling, every advance is already gated.
+- **C — structural invariant points at the production registry** (`coding_registry().type_ids()`, now
+  `[coding, new_worker]`) rather than the probe fixture — the truthful "every shipped specialist is shipped +
+  provisioned" assertion.
+- **Third hidden `default_ceiling`-as-first-worker consumer, found during implementation.** The original
+  seam analysis named two threshold consumers of `default_ceiling` (recap gate, sprint in-progress). A THIRD
+  surfaced only when `test_chief_external_work` failed: `create_ticket_from_external_work` seeds a row at
+  `default_ceiling` as its start state/ceiling, with a comment asserting `== FIRST worker stage`. That
+  equivalence broke — a `needs_kickoff` seed would wrongly re-park kickoff for "already done elsewhere" work.
+  Re-pointed the external-work seed at `first_worker_stage` too. All three consumers now key off
+  `first_worker_stage`; only the fresh-ticket START ceiling changed (to `needs_kickoff`, global). Recap-writable,
+  sprint-in-progress, and external-work seed behavior are all preserved for coding.
+- **Codex P1 — second coding-default straggler (`runtime/readiness.py::is_runnable`).** `./verify` passed but
+  Codex caught what it can't: `is_runnable` called four machine predicates (`is_terminal`, `gating_field`,
+  `at_or_beyond_ceiling`, `has_pending_parked_proposal`) with no definition → coding default → a new_worker
+  ticket at needs_stages makes `gating_field` raise "state outside the linear order". Blast radius is the WHOLE
+  poll: `ticket_readiness_loop.poll_once` iterates candidates in a bare `for` with no per-row guard, so the
+  raise aborts discovery for every ticket (and the claim recheck at `employee_step_runner.py:217` calls it too).
+  Fixed by resolving `coding_bridge.require(ticket.ticket_type)` and threading `definition=defn` into all four —
+  no import-cycle (`coding_bridge` is in `tickets.logic`, already the invariant boundary). Added two regression
+  tests (novel-stage runnable / at-ceiling-stop not runnable, both without raising).
+- **Comprehensive coding-default sweep (so we stop finding these one at a time).** Audited EVERY `machine.*` /
+  `coding_bridge.views.*` / registry call on a runtime path a non-coding ticket traverses. Findings: `readiness.is_runnable`
+  was the only straggler. All other bare-looking calls (`data.py` plan_handoff_status x3, `tickets/views.py` +
+  `sprints/views.py` has_pending_gating_proposal) already thread `definition=defn` on the continuation line. The two
+  non-fallback `coding_definition()` uses are intentional and safe: `board_view` uses coding's stage order only as
+  the DEFAULT COLUMN SEED (novel states get appended as new columns, lines 292-294), and `fields_codec.fields_from_json`
+  is the `definition or coding_definition()` fallback every caller overrides. `api.py:496` resolves the caller's
+  ticket_type inline. No other fix needed.

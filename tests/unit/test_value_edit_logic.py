@@ -26,7 +26,7 @@ from planner.tickets.contracts import (
     TicketState,
     TicketStatus,
 )
-from planner.tickets.logic import resolution
+from planner.tickets.logic import fields_codec, resolution
 
 if TYPE_CHECKING:
     from sqlite3 import Connection
@@ -37,13 +37,8 @@ if TYPE_CHECKING:
 
 
 def _fields(**slots: FieldSlot) -> TicketFields:
-    return TicketFields(
-        success=slots.get("success", FieldSlot()),
-        approach=slots.get("approach", FieldSlot()),
-        plan=slots.get("plan", FieldSlot()),
-        implementation=slots.get("implementation", FieldSlot()),
-        closeout=slots.get("closeout", FieldSlot()),
-    )
+    ids = ("kickoff", "success", "approach", "plan", "implementation", "closeout")
+    return TicketFields({fid: slots.get(fid, FieldSlot()) for fid in ids})
 
 
 def _ticket(
@@ -60,8 +55,6 @@ def _ticket(
         sprint_item_id=None,
         sprint_id=None,
         recap="",
-        kickoff_note="",
-        kickoff_proposal=None,
         ceiling=ceiling,
         at_cap=AtCap.propose,
         ticket_status=TicketStatus.empty,
@@ -90,7 +83,15 @@ def _passed_ticket(conn: Connection, cfg: Config, clock: TestClock) -> Ticket:
     t = data.create_ticket(
         conn, title="T", actor="human", now=now, title_max_chars=TITLE_MAX_CHARS
     )
-    t = data.accept_kickoff(conn, t.id, actor="human", now=now)
+    t = data.accept_proposal(
+        conn,
+        t.id,
+        field=FieldName.kickoff,
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
+    )
     t = data.change_scope(
         conn, t.id, ceiling=TicketState.needs_plan, at_cap=AtCap.propose, actor="human", now=now
     )
@@ -98,9 +99,9 @@ def _passed_ticket(conn: Connection, cfg: Config, clock: TestClock) -> Ticket:
                            now=now)
     t = data.file_proposal(conn, t.id, field=FieldName.approach, body="approach v1", actor="agent",
                            now=now)
-    assert t.state is TicketState.needs_plan
-    assert t.fields.success.value == "success v1"
-    assert t.fields.approach.value == "approach v1"
+    assert t.state == TicketState.needs_plan
+    assert fields_codec.get_slot(t.fields, "success").value == "success v1"
+    assert fields_codec.get_slot(t.fields, "approach").value == "approach v1"
     return t
 
 
@@ -121,8 +122,9 @@ def test_edit_passed_field_succeeds(
     assert decision.events[0].kind is EventKind.field_value_edited
     assert decision.events[0].payload == {"field": "success", "body": "new success"}
     assert decision.new_fields is not None
-    assert decision.new_fields.success.value == "new success"
-    assert decision.new_fields.success.user_note == "keep me"  # user note preserved
+    edited_slot = fields_codec.get_slot(decision.new_fields, "success")
+    assert edited_slot.value == "new success"
+    assert edited_slot.user_note == "keep me"  # user note preserved
 
     # End-to-end through the sole appender: value persists, state/ceiling untouched,
     # one field_value_edited row logged.
@@ -131,9 +133,9 @@ def test_edit_passed_field_succeeds(
     t = data.edit_field_value(
         tmp_db, t.id, field=FieldName.success, new_body="success EDITED", actor="human", now=now
     )
-    assert t.fields.success.value == "success EDITED"
-    assert t.state is TicketState.needs_plan
-    assert t.ceiling is TicketState.needs_plan
+    assert fields_codec.get_slot(t.fields, "success").value == "success EDITED"
+    assert t.state == TicketState.needs_plan
+    assert t.ceiling == TicketState.needs_plan
     assert t.at_cap is AtCap.propose
     logged = _events(tmp_db, cfg, t.id, EventKind.field_value_edited)
     assert len(logged) == 1
@@ -219,19 +221,28 @@ def test_accept_dropped_ticket_with_pending_proposal_rejected(
     t = data.create_ticket(
         tmp_db, title="T", actor="human", now=now, title_max_chars=TITLE_MAX_CHARS
     )
-    t = data.accept_kickoff(tmp_db, t.id, actor="human", now=now)
+    t = data.accept_proposal(
+        tmp_db,
+        t.id,
+        field=FieldName.kickoff,
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
+    )
     t = data.change_scope(
         tmp_db, t.id, ceiling=TicketState.needs_plan, at_cap=AtCap.propose, actor="human", now=now
     )
     t = data.file_proposal(tmp_db, t.id, field=FieldName.success, body="s", actor="agent", now=now)
-    assert t.state is TicketState.needs_approach
+    assert t.state == TicketState.needs_approach
     # plan is non-gating at needs_approach and below the ceiling: the proposal stays pending.
     t = data.file_proposal(tmp_db, t.id, field=FieldName.plan, body="plan draft", actor="agent",
                            now=now)
-    assert t.state is TicketState.needs_approach
-    assert t.fields.plan.proposal is not None and t.fields.plan.value is None
+    assert t.state == TicketState.needs_approach
+    plan_slot = fields_codec.get_slot(t.fields, "plan")
+    assert plan_slot.proposal is not None and plan_slot.value is None
     t = data.drop_ticket(tmp_db, t.id, actor="human", now=now)
-    assert t.state is TicketState.dropped
+    assert t.state == TicketState.dropped
 
     count_before = len(_events(tmp_db, cfg, t.id))
     with pytest.raises(PlannerError) as exc:
@@ -242,6 +253,6 @@ def test_accept_dropped_ticket_with_pending_proposal_rejected(
     assert exc.value.code is ErrorCode.validation
     assert exc.value.detail == {"state": "dropped"}
     t = data.read_ticket(tmp_db, t.id)
-    assert t.fields.plan.value is None  # the write never landed
-    assert t.fields.plan.proposal is not None
+    assert fields_codec.get_slot(t.fields, "plan").value is None  # the write never landed
+    assert fields_codec.get_slot(t.fields, "plan").proposal is not None
     assert len(_events(tmp_db, cfg, t.id)) == count_before

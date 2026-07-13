@@ -25,13 +25,14 @@ from planner.minds.shared_gateway import SharedGateway
 from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.runtime.readiness_doorbell import NoOpReadinessDoorbell
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap, FieldName, TicketState
+from planner.tickets.contracts import NO_FURTHER, AtCap, FieldName, TicketState
 from planner.tickets.data import (
     change_scope,
     create_ticket,
     file_proposal,
     finish_run_if_still_running_step,
 )
+from planner.tickets.logic import fields_codec
 from planner.worker_context import data as worker_context_data
 from planner.worker_context.service import SqliteWorkerContextService
 
@@ -131,7 +132,15 @@ def _ticket_with_pending_plan(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
         ticket = create_ticket(conn, title="Revise plan", actor="human", now=0, title_max_chars=200)
-        ticket = tickets_data.accept_kickoff(conn, ticket.id, actor="human", now=0)
+        ticket = tickets_data.accept_proposal(
+            conn,
+            ticket.id,
+            field=FieldName.kickoff,
+            actor="human",
+            now=0,
+            next_ceiling=NO_FURTHER,
+            at_cap=AtCap.propose,
+        )
         change_scope(
             conn,
             ticket.id,
@@ -163,7 +172,15 @@ def _ticket_with_pending_closeout(db_path: Path) -> str:
         ticket = create_ticket(
             conn, title="Revise closeout", actor="human", now=0, title_max_chars=200
         )
-        ticket = tickets_data.accept_kickoff(conn, ticket.id, actor="human", now=0)
+        ticket = tickets_data.accept_proposal(
+            conn,
+            ticket.id,
+            field=FieldName.kickoff,
+            actor="human",
+            now=0,
+            next_ceiling=NO_FURTHER,
+            at_cap=AtCap.propose,
+        )
         change_scope(
             conn,
             ticket.id,
@@ -632,7 +649,7 @@ def test_stale_revision_session_never_remints_and_settles_ticket_errored(
             conn.close()
         assert ticket.ticket_status.value == "errored"
         assert ticket.chat_session_key == stale_key
-        assert ticket.fields.plan.proposal is None
+        assert fields_codec.get_slot(ticket.fields, "plan").proposal is None
         assert turn is not None and turn["status"] == "errored"
         assert [(row["context_key"], row["revision"]) for row in pending] == pending_before
         assert session_events_after == session_events_before

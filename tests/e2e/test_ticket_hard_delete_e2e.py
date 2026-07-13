@@ -28,7 +28,15 @@ def _cli_process(server, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_ticket_delete_cli_requires_yes_and_deletes(server, cli) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "CLI hard delete")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "CLI hard delete",
+    )["id"]
 
     refused = _cli_process(server, "ticket", "delete", ticket_id)
     assert refused.returncode == 1
@@ -54,7 +62,7 @@ def test_ticket_ui_has_no_delete_control(
     ticket_id = cli(
         server,
         "ticket",
-        "create",
+        "create", "--type", "coding",
         "--title",
         TITLE,
     )["id"]

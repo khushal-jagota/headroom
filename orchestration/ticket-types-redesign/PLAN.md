@@ -33,8 +33,10 @@ finished machinery next.
 
 1. **Universal bookends.** Every type's lifecycle is `needs_kickoff → (type-specific middle stages) →
    done`; `dropped` is reachable anywhere. `needs_kickoff`, `done`, `dropped` are **reserved words**
-   shared identically by all types. (`needs_kickoff` is landing separately as the owner's concurrent
-   work; this plan builds on it.)
+   shared identically by all types. `needs_kickoff` **has landed** (commit `304734e`) as a real *gated*
+   first stage: it carries a reserved gating field `kickoff` and advances `needs_kickoff → needs_success`
+   through the ordinary propose/accept machinery. So the universal prefix is the **pair**
+   `(state=needs_kickoff, gating field=kickoff)`, not a bare state — every type shares it identically.
 2. **`ticket_type` is mandatory at creation.** No default. Existing rows are backfilled to `coding` by
    migration (fixing old data, not a creation default).
 3. **States are per-type strings.** `(ticket_type, state)` is the real key — `state` is never read
@@ -47,6 +49,13 @@ finished machinery next.
 7. **Workers: base skill + linked specialists.** One base worker skill + per-type specialist skills;
    differentiate inside a shared gateway child; fork children only per *toolset profile*.
 8. **`ticket_type` is immutable after creation in v1.**
+9. **Two orderings per workflow (landed with kickoff).** The kickoff change split the linear order in
+   two: the **full stage order** `STATE_ORDER` (kickoff → … → done — drives `state_index`, advance,
+   gating) and a **worker/ceiling range** `WORKER_STATE_ORDER` = the full order **minus the leading
+   `needs_kickoff` bookend` (first worker stage → done — the only values a ceiling may take;
+   `validate_ceiling`/`resolve_scope` key off *this*, never `STATE_ORDER`). The **default ceiling** is
+   the first worker stage (`needs_success` for coding). Both orderings, and the default, are now
+   **per-type** and must be derived from the registry — not the two module constants they are today.
 
 ---
 
@@ -54,12 +63,18 @@ finished machinery next.
 
 A `ticket_type` definition declares:
 - stable id + display labels
-- ordered stages (first = `needs_kickoff`, last = `done`)
+- ordered stages — first is the shared prefix `needs_kickoff` (gated by the reserved `kickoff` field),
+  last is `done`
 - the gating field for each non-terminal stage
-- the ordered field set
+- the ordered field set (always led by the reserved `kickoff` field)
 - a worker profile: specialist skill, model (+ effort), toolset profile
 - optional transition-effect hooks (e.g. coding's `plan → implementation` + human override ⇒
   `user_takeover`)
+
+From the ordered stages the registry **derives** (callers never hand-build these): the full stage order
+(for indexing/advance/gating), the **ceiling range** = stage order minus the leading `needs_kickoff`
+bookend (the only legal ceilings), and the **default ceiling** = first entry of that range. These replace
+the module-global `STATE_ORDER` / `WORKER_STATE_ORDER` and the hard-coded `needs_success` default.
 
 At startup it **validates and refuses to boot on violation**: id uniqueness, complete gate coverage,
 one successor per non-terminal stage, terminal placement (`needs_kickoff` first / `done` last /
@@ -67,20 +82,36 @@ one successor per non-terminal stage, terminal placement (`needs_kickoff` first 
 consumed by both CLI and web. Changing a registered workflow (renaming/removing a stage or field) is a
 data migration and must fail startup validation against stored rows — never silently reinterpret.
 
-Callers ask it for: gating field of `(type, state)`, advance target, field order, allowed ceilings,
-terminal status, serialized manifest — without seeing its internal tables. Core holds zero per-type
-conditionals (the standing core/module rule).
+Callers ask it for: gating field of `(type, state)`, advance target, field order, the ceiling range +
+default ceiling, terminal status, serialized manifest — without seeing its internal tables. Core holds
+zero per-type conditionals (the standing core/module rule).
 
 ---
 
-## Hard precondition (P0, from the plan review)
+## Hard precondition (P0) — SATISFIED
 
-**`needs_kickoff` must land first.** This plan assumes the universal `needs_kickoff` bookend, and the
-owner's concurrent kickoff work overlaps `contracts.py`, `data.py`, `db.py`, machine behavior, and the
-lifecycle tests. Planning against it as an assumption creates rework + merge-conflict risk. So before
-`t_tt00` is dispatched: rebase onto the kickoff change; record its commit; run one clean `./verify`;
-confirm contracts, creation defaults, migration DDL, and lifecycle tests all express the new coding
-lifecycle. **Do not start until this passes.**
+**`needs_kickoff` has landed** (commits `f80c0e7` → `e411dd1` → merge `304734e`, "make kickoff a normal
+ticket stage"). The precondition this plan was blocked on is cleared; `t_tt00` is unblocked. What landed,
+and what it changes for this plan:
+
+- `needs_kickoff` is a full **gated** first stage: `FieldName.kickoff`, entries in
+  `GATING_FIELD`/`ADVANCE_TARGET`/`FIELD_GATES`, a `kickoff` `FieldSlot`, and a `kickoff` slot in the DB
+  `fields` JSON default. It advances `needs_kickoff → needs_success` through ordinary machinery — the
+  universal prefix is now a `(state, field)` pair (invariant 1).
+- **New second ordering `WORKER_STATE_ORDER`** (contracts.py:37) = the linear order minus
+  `needs_kickoff`; `validate_ceiling`/`resolve_scope` (machine.py:95/102) key off it; the DB `ceiling`
+  CHECK now excludes `needs_kickoff` (db.py:71). This is the ceiling-range concept the registry must
+  model per-type (invariant 9).
+- Kickoff dragged in **new coding-specific literals** the parameterization must absorb: the
+  recap-writability guard names `needs_kickoff` + `needs_success` (admission.py:74); a direct-jump guard
+  names `needs_kickoff` (resolution.py:275); `SETTLED_PREFIX_INDEX` maps coding states → prefix indices
+  (external_work.py:29); the default ceiling `needs_success` is hard-coded (data.py:303/391/397).
+- A fresh migration `_migrate_ticket_kickoff_columns` (db.py:272) is now the **newest, closest template**
+  for the Phase-2 `ticket_type` migration (atomic swap / FK-disable-check / SAVEPOINT rollback, plus a
+  fields-JSON rebuild).
+
+Before dispatching `t_tt00`: run one clean `./verify` on the current tree to confirm the landed lifecycle
+is green as the baseline this plan extends.
 
 ## Phases
 
@@ -91,10 +122,13 @@ DB + CLI operation). Full corrected sequencing, enforcement doors, and tightened
 
 ### Phase 0 — Registry + contracts skeleton (contracts first)
 - Define the registry interface + manifest shape; register `coding` as the first definition,
-  reproducing today's lifecycle exactly (today's stages **plus** the universal `needs_kickoff`).
+  reproducing the **now-landed** lifecycle exactly: `needs_kickoff → needs_success → needs_approach →
+  needs_plan → needs_implementation → needs_closeout → done`, with `kickoff` as the leading field.
 - Nothing else consumes the registry yet; no behavior change.
 - **Acceptance:** registry startup validation passes; a golden test asserts the `coding` definition
-  equals the current stage order / gating map / advance map / field set.
+  equals the current stage order / gating map / advance map / field set **and** the derived ceiling
+  range (`STATE_ORDER` minus `needs_kickoff` = today's `WORKER_STATE_ORDER`) and default ceiling
+  (`needs_success`) — asserted against the live constants so a drift in either fails.
 
 ### Phase 1 — Parameterize machine + resolution + codec by the type (with a pre-persistence bridge)
 - The generic functions take a **workflow definition explicitly**; every production caller temporarily
@@ -103,26 +137,41 @@ DB + CLI operation). Full corrected sequencing, enforcement doors, and tightened
   lets Phase 1 be green *before* persistence; Phase 2 removes it by resolving the definition from each
   row's stored type. (If Phase 1 instead resolved from `ticket.ticket_type`, Phase 2 would have to
   precede it — the bridge is what keeps the order safe.)
-- Thread the workflow through the machine in place of module constants; generalize terminal detection
-  to the reserved bookends; scope resolution, admission, and the accept/edit/drop/jump rules read the
-  definition. Codec becomes a validated mapping over the type's declared fields (drop the unsafe
-  catch-all default).
-- **Replace every workflow-ID `is`/identity comparison with value equality** (`machine.py:78`,
-  `resolution.py:153/165`, `external_work.py:112`). Per-type states/fields are strings — identity
-  breaks. Acceptance must use dynamically-constructed-but-equal strings so Python interning can't mask
-  a surviving `is`.
+- Thread the workflow through the machine in place of module constants — **both orderings**: the full
+  stage order (for `state_index`/advance/gating) *and* the ceiling range (for `validate_ceiling`/
+  `resolve_scope`, machine.py:95/102, which key off `WORKER_STATE_ORDER` today). Generalize terminal
+  detection to the reserved bookends; scope resolution, admission, and the accept/edit/drop/jump rules
+  read the definition. Codec becomes a validated mapping over the type's declared fields (drop the
+  unsafe catch-all default).
+- **New coding-specific literals kickoff added, to parameterize here:** the recap-writability guard
+  (admission.py:74) names `needs_kickoff` + `needs_success` — generalize to "past the first worker
+  stage"; the direct-jump guard (resolution.py:275) names the reserved `needs_kickoff` (keep the
+  reserved-bookend reference, just de-identity it); `SETTLED_PREFIX_INDEX` (external_work.py:29) is a
+  coding-state→index map — derive it from the type's ordered stages (this is a Phase-3 external-work
+  concern, flagged here so it isn't missed).
+- **Replace every workflow-ID `is`/identity comparison with value equality.** The set grew with kickoff
+  — beyond `machine.py:83`, at minimum: `resolution.py:153/165/202/271/273/275/280/288/292`,
+  `external_work.py:54/113`, `admission.py:61`, and `machine.py:147` (`plan_handoff_status`). Reserved
+  bookends (`done`/`dropped`/`needs_kickoff`) may still be named literally, but the comparison must be
+  `==`. Per-type states/fields are strings — identity breaks. Acceptance must use
+  dynamically-constructed-but-equal strings so Python interning can't mask a surviving `is`.
 - **Acceptance:** the full existing ticket-engine / resolution / admission / readiness suite passes
-  unchanged with `coding` routed through the registry (parity proof); the machine imports no lifecycle
-  constants; an assertion that no production caller reads lifecycle from the old constants and every
-  temporary resolution is exactly `coding`.
+  unchanged with `coding` routed through the registry (parity proof); the machine imports neither
+  `STATE_ORDER` nor `WORKER_STATE_ORDER` (nor the gate/advance maps); an assertion that no production
+  caller reads lifecycle from the old constants and every temporary resolution is exactly `coding`.
 
 ### Phase 2 — Database: type column, integrity moves to the registry
-- Add `ticket_type` (required at the write layer). Drop the enumerating `CHECK` on `state`/`ceiling`;
-  keep the type-independent checks (non-empty, `at_cap`, `ticket_status`, priority). Add registry
-  validation on row load and before persist, plus a **startup integrity audit** over the tickets table.
-- Migration: rebuild via the existing atomic-swap / FK-disable-check / rollback discipline; backfill
-  every row to `coding`; ensure no later migration template recreates the old CHECKs or the fixed-field
-  default.
+- Add `ticket_type` (required at the write layer). Drop **both** enumerating `CHECK`s — on `state`
+  (db.py:62) and on `ceiling` (db.py:71, which now excludes `needs_kickoff`); keep the type-independent
+  checks (non-empty, `at_cap`, `ticket_status`, priority). Add registry validation on row load and
+  before persist, plus a **startup integrity audit** over the tickets table.
+- Derive the **default ceiling per-type** (first worker stage) instead of the hard-coded `needs_success`
+  at write/create (data.py:303/391/397) and the DB `ceiling` default — coding's stays `needs_success`,
+  but the source becomes the registry.
+- Migration: mirror the **just-landed** `_migrate_ticket_kickoff_columns` (db.py:272) — atomic swap /
+  FK-disable-check / SAVEPOINT rollback, and it already rebuilds the `fields` JSON (now including the
+  `kickoff` slot), so it's the closest template. Backfill every row to `coding`; ensure no later
+  migration template recreates the old CHECKs or the fixed-field default.
 - **Acceptance (tightened, from review):** all pre-migration row IDs/counts survive; every migrated
   `ticket_type == "coding"`; state/ceiling/fields/status/session-key/relationships/timestamps
   unchanged; `PRAGMA foreign_key_check` returns `[]`; final `sqlite_master.sql` has
@@ -135,10 +184,13 @@ DB + CLI operation). Full corrected sequencing, enforcement doors, and tightened
 ### Phase 2.5 — Minimal fixture type for the machinery proof (`t_tt02x`, contract-only; depends on `t_tt00`)
 - A **synthetic** second type (`probe`) used **only in tests** to exercise the machinery with a shape
   structurally different from `coding` — deliberately minimal, not a designed workflow: a short
-  made-up stage order (`needs_kickoff → needs_alpha → needs_beta → done`), a gate-to-field map, ordered
-  fields (`alpha`, `beta`), labels, a `prefix-reconciliation: yes` flag, and a worker-profile id
-  pointing at a placeholder. Registered by the **test harness**, not the production registry — so the
-  live app still offers only `coding`.
+  made-up stage order (`needs_kickoff → needs_alpha → needs_beta → done`) sharing the reserved
+  `needs_kickoff`/`kickoff` prefix, a gate-to-field map, ordered fields (`kickoff`, `alpha`, `beta`),
+  labels, a `prefix-reconciliation: yes` flag, and a worker-profile id pointing at a placeholder.
+  Because its ceiling range is `needs_alpha → done` and its default ceiling is **`needs_alpha`** (not
+  `needs_success`), it also proves the ceiling-range + default-ceiling derivation is genuinely per-type.
+  Registered by the **test harness**, not the production registry — so the live app still offers only
+  `coding`.
 - Its only purpose: force out `coding`-specific assumptions (the `is`→`==` string bug, hidden literal
   field names, closed-world spots) that `coding` alone can't reveal. Not "defining a workflow."
 - **Acceptance:** the registry validates `probe`; its manifest JSON is asserted exactly; golden tests
@@ -149,15 +201,16 @@ DB + CLI operation). Full corrected sequencing, enforcement doors, and tightened
   create / propose / approve operate relative to the current position via the served manifest;
   `propose` keeps `--recap`; scope `--ceiling` validated against the type's stages by the server.
 - **Own the whole ingress surface** (review found it wider than first named): the external-work wire
-  contracts and allowed-key parsing (`contracts.py:145`, `api.py:175`), the global-`FieldName` parse
-  (`api.py:262`), scope/state routes that parse global `TicketState` before loading the ticket
-  (`api.py:636`), the `GET /tickets?state=` filter that reads state without a type (`api.py:400` /
-  `views.py:84` — require `ticket_type` when filtering by a non-reserved state, or make it an explicit
-  cross-type union), the CLI approval constants and Chief CLI static Click choices/file options
-  (`cli/main.py:599/972/1006`), and the **seed importer** (direct insert of fixed coding fields, no
-  discriminator — `seed/importer.py:231`).
-- Chief external-work: select `ticket_type` before parsing state/fields; derive the settled-prefix from
-  the type's ordered gates; a type may declare it doesn't support prefix reconciliation.
+  contracts and allowed-key parsing (`contracts.py:155` — now carries `kickoff_note` + the ordered
+  field keys; `api.py` marshal), the global-`FieldName` parse, scope/state routes that parse global
+  `TicketState` before loading the ticket, the `GET /tickets?state=` filter that reads state without a
+  type (`views.py:84` — require `ticket_type` when filtering by a non-reserved state, or make it an
+  explicit cross-type union), the CLI approval constants and Chief CLI static Click choices/file
+  options, and the **seed importer** (direct insert of fixed coding fields, no discriminator —
+  `seed/importer.py`). (Re-resolve exact line refs at ticket time; kickoff's merge shifted them.)
+- Chief external-work: select `ticket_type` before parsing state/fields; **replace the hard-coded
+  `SETTLED_PREFIX_INDEX` coding-state→index map (external_work.py:29)** with one derived from the type's
+  ordered gates; a type may declare it doesn't support prefix reconciliation.
 - **Acceptance:** the falsifiable go/no-go gate at the bottom of this plan (create + drive the fixture
   `probe` type through *real* propose/accept gates to `done`, no worker), plus external-work
   create/reconcile for `coding` + `probe`.
@@ -207,14 +260,15 @@ integrate → `./verify`). They **integrate serially** — they overlap `contrac
 `machine.py`/`db.py`/`views.py` and each depends on shapes the previous created. Keep the registry in
 its own module folder to minimize collisions with `tickets/contracts.py`.
 
-| Order | Ticket | Main scope | Depends on |
-|---|---|---|---|
-| Pre | kickoff landing | New coding lifecycle + migrations (owner work) | — |
-| 0 | `t_tt00` | Registry contracts, `coding` definition, manifest schema | kickoff verified |
-| 1 | `t_tt01` | Generic machine/resolution/admission/codec + explicit `coding` bridge + value-equality | `t_tt00` |
-| 2 | `t_tt02` | `ticket_type` persistence, migration, row/write validation, startup audit, seed importer | `t_tt01` |
-| 2.5 | `t_tt02x` | Minimal fixture type `probe` (test-registered) + contract tests | `t_tt00` |
-| 3 | `t_tt03` | Manifest endpoint, dynamic API/CLI parsing, create, external-work, filters | `t_tt02`, `t_tt02x` |
+| Order | Ticket | Main scope | Depends on | Status |
+|---|---|---|---|---|
+| Pre | kickoff landing | New coding lifecycle + migrations (owner work) | — | ✅ merge `304734e` |
+| 0 | `t_tt00` | Registry contracts, `coding` definition, manifest schema | kickoff landed (✅) | ✅ `824aa58` |
+| 1 | `t_tt01` | Parameterize engine via `coding_bridge` seam (Tier-1 string-native / Tier-2 coding-bound); value-equality | `t_tt00` | ✅ `eeef51d` |
+| 2 | `t_tt02` | `ticket_type` persistence, migration, row/write validation, startup audit, per-type default ceiling, seed importer; coding-only, `TicketFields` stays fixed | `t_tt01` | in progress |
+| 2b | `t_tt02b` | **Generic per-type field storage** (`TicketFields` fixed struct → per-field-id slot map; `get_slot`/`with_slot`/codec generic; lift `require_coding_field`) + **Tier-2 scope** (`ScopePair`/`resolve_scope`/`validate_ceiling` widen to the type's ceiling ids). Contract shape change — unblocks probe's fields + scope. | `t_tt02` |
+| 2.5 | `t_tt02x` | Minimal fixture type `probe` (test-registered) + contract tests; needs generic storage | `t_tt00`, `t_tt02b` |
+| 3 | `t_tt03` | Manifest endpoint, dynamic API/CLI parsing, create, external-work, filters | `t_tt02x` |
 | 4a | `t_tt04a` | Backend ticket/board/queue/sprint/copy read contracts | `t_tt03` |
 | 4b | `t_tt04b` | Web manifest consumer + mixed-type UI | `t_tt04a` |
 | 5a | `t_tt05a` | Base worker skill + specialist-loading mechanism + `probe` placeholder | `t_tt02x` |
@@ -271,8 +325,10 @@ reconciliation explicitly.
 Reachable without a worker (`propose` needs no worker claim; accept is a human/API op). **Do not use
 `/state` jumps as the proof** — that bypasses gates and would only prove string storage, not the engine.
 Drive through the *real* gates:
-1. Create `ticket_type="probe"` (the fixture); assert exact initial state, ceiling, empty ordered
-   fields, serialized type.
+1. Create `ticket_type="probe"` (the fixture); assert exact initial state (`needs_kickoff`), default
+   ceiling (`needs_alpha` — its first worker stage, *not* `needs_success`, which alone proves the
+   per-type default-ceiling derivation), empty ordered fields (`kickoff`, `alpha`, `beta`), serialized
+   type.
 2. At every non-terminal stage: file the current gating proposal with a non-empty recap.
 3. Assert it parks at the current ceiling on the exact field the registry selects.
 4. Accept with an exact next ceiling + `at_cap`.

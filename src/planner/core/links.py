@@ -6,22 +6,21 @@ from __future__ import annotations
 
 import sqlite3
 from collections import deque
-from typing import Final
+from typing import Final, Literal
 
-from planner.core.contracts import EventKind, LinkKind
+from planner.core.contracts import (
+    BlockedBySummaryRow,
+    BlockerSummary,
+    BlocksTargetSummaryRow,
+    EventKind,
+    LinkKind,
+)
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event
 
-# blocks/parent_child are two independently-checked transitive relations (§3.6).
-_CYCLE_CHECKED: Final[frozenset[LinkKind]] = frozenset(
-    {LinkKind.blocks, LinkKind.parent_child}
-)
-# Endpoint prefix rules (D8): (allowed from-prefixes, allowed to-prefixes); None = any.
+# Endpoint prefix rules: (allowed from-prefixes, allowed to-prefixes).
 _ENDPOINT_RULES: Final[dict[LinkKind, tuple[frozenset[str] | None, frozenset[str] | None]]] = {
-    LinkKind.belongs_to: (frozenset({"t"}), frozenset({"si"})),
-    LinkKind.parent_child: (frozenset({"t"}), frozenset({"t"})),
     LinkKind.blocks: (frozenset({"t"}), frozenset({"t", "si"})),
-    LinkKind.relates: (None, None),
 }
 
 
@@ -30,11 +29,74 @@ def _prefix(entity_id: str) -> str:
     return entity_id.split("_", 1)[0]
 
 
+def _ticket_is_active(conn: sqlite3.Connection, ticket_id: str) -> bool:
+    row = conn.execute("SELECT state FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+    return row is not None and str(row["state"]) not in {"done", "dropped"}
+
+
+def _require_ticket(conn: sqlite3.Connection, entity_id: str, field: str) -> None:
+    if conn.execute("SELECT 1 FROM tickets WHERE id = ?", (entity_id,)).fetchone() is None:
+        raise PlannerError(
+            ErrorCode.link_invalid,
+            f"{field} must be an existing ticket",
+            {field: entity_id},
+        )
+
+
+def _require_target(conn: sqlite3.Connection, entity_id: str) -> None:
+    if _prefix(entity_id) == "t":
+        _require_ticket(conn, entity_id, "to_id")
+        return
+    if (
+        conn.execute("SELECT 1 FROM sprint_items WHERE id = ?", (entity_id,)).fetchone()
+        is None
+    ):
+        raise PlannerError(
+            ErrorCode.link_invalid,
+            "to_id must be an existing ticket or sprint item",
+            {"to_id": entity_id},
+        )
+
+
+def _active_successor_ids(conn: sqlite3.Connection, ticket_id: str) -> list[str]:
+    rows = conn.execute(
+        """
+        SELECT links.to_id
+        FROM links
+        JOIN tickets source ON source.id = links.from_id
+        WHERE links.from_id = ?
+          AND links.kind = 'blocks'
+          AND source.state NOT IN ('done', 'dropped')
+        ORDER BY links.to_id
+        """,
+        (ticket_id,),
+    ).fetchall()
+    return [str(row["to_id"]) for row in rows]
+
+
+def would_create_active_blocks_cycle(
+    conn: sqlite3.Connection, from_id: str, to_id: str
+) -> bool:
+    """True when an active edge from ``from_id`` to ``to_id`` closes an active cycle."""
+    queue: deque[str] = deque([to_id])
+    visited: set[str] = {to_id}
+    while queue:
+        node = queue.popleft()
+        if node == from_id:
+            return True
+        if _prefix(node) != "t":
+            continue
+        for nxt in _active_successor_ids(conn, node):
+            if nxt not in visited:
+                visited.add(nxt)
+                queue.append(nxt)
+    return False
+
+
 def add_link(
     conn: sqlite3.Connection, from_id: str, to_id: str, kind: LinkKind, now: int
 ) -> None:
-    """Create a link, enforcing §3.6: no self-links, fixed endpoint kinds per link,
-    at most one belongs_to per ticket, and no blocks/parent_child transitive cycle."""
+    """Create a blocks link, enforcing no self-links, real endpoints, and no active cycle."""
     detail = {"from_id": from_id, "to_id": to_id, "kind": kind.value}
     # 1. Self-link (§3.6): the two endpoints must differ. Pure check, outside the txn.
     if from_id == to_id:
@@ -53,47 +115,23 @@ def add_link(
             f"{kind.value} to-endpoint must be one of {sorted(to_rule)}",
             detail,
         )
-    # Steps 3–6 serialize under the write lock (A2): BEGIN IMMEDIATE takes the lock
+    # Steps 3–6 serialize under the write lock: BEGIN IMMEDIATE takes the lock
     # before the reads, so two connections cannot interleave BFS-then-insert to admit
-    # a cycle or a second belongs_to. Contention resolves via db.connect's busy_timeout.
+    # a cycle or duplicate edge. Contention resolves via db.connect's busy_timeout.
     own_txn = not conn.in_transaction
     if own_txn:
         conn.execute("BEGIN IMMEDIATE")
     try:
-        # 3. belongs_to uniqueness (§3.6): at most one per ticket.
-        if kind is LinkKind.belongs_to:
-            existing = conn.execute(
-                "SELECT 1 FROM links WHERE from_id=? AND kind='belongs_to' LIMIT 1",
-                (from_id,),
-            ).fetchone()
-            if existing is not None:
-                raise PlannerError(
-                    ErrorCode.link_invalid,
-                    "ticket already has a belongs_to link",
-                    {"from_id": from_id},
-                )
-        # 4. Transitive cycle check (§3.6, D10): from->to makes a cycle iff `from` is
-        # reachable from `to` along same-kind edges. BFS from to_id, visited-guarded.
-        if kind in _CYCLE_CHECKED:
-            queue: deque[str] = deque([to_id])
-            visited: set[str] = {to_id}
-            while queue:
-                node = queue.popleft()
-                if node == from_id:
-                    raise PlannerError(
-                        ErrorCode.link_cycle,
-                        f"link would create a {kind.value} cycle",
-                        detail,
-                    )
-                rows = conn.execute(
-                    "SELECT to_id FROM links WHERE from_id=? AND kind=?",
-                    (node, kind.value),
-                ).fetchall()
-                for succ in rows:
-                    nxt = str(succ["to_id"])
-                    if nxt not in visited:
-                        visited.add(nxt)
-                        queue.append(nxt)
+        _require_ticket(conn, from_id, "from_id")
+        _require_target(conn, to_id)
+        if _ticket_is_active(conn, from_id) and would_create_active_blocks_cycle(
+            conn, from_id, to_id
+        ):
+            raise PlannerError(
+                ErrorCode.link_cycle,
+                f"link would create a {kind.value} cycle",
+                detail,
+            )
         # 5. Insert; any IntegrityError (PK dup, partial unique index race, CHECK) is
         # re-raised as link_invalid (D9) — a raw IntegrityError never escapes.
         try:
@@ -143,14 +181,73 @@ def blocked_target_ids(conn: sqlite3.Connection) -> set[str]:
 
 
 def is_blocked(conn: sqlite3.Connection, entity_id: str) -> bool:
-    """Whether one entity is blocked. The join to tickets makes the rule literal:
-    only a ticket source in an open state blocks; a missing/non-ticket source never
-    does (D8)."""
-    row = conn.execute(
-        "SELECT 1 FROM links l "
-        "JOIN tickets src ON src.id = l.from_id "
-        "WHERE l.kind = 'blocks' AND src.state NOT IN ('done', 'dropped') "
-        "AND l.to_id = ? LIMIT 1",
+    """Whether one entity is blocked by the canonical resolved summary."""
+    return blocker_summary(conn, entity_id).blocked
+
+
+def blocker_summary(conn: sqlite3.Connection, entity_id: str) -> BlockerSummary:
+    """Resolved active/read summary for the one Ticket relationship."""
+    incoming_rows = conn.execute(
+        """
+        SELECT source.id, source.title, source.state
+        FROM links
+        JOIN tickets source ON source.id = links.from_id
+        WHERE links.kind = 'blocks' AND links.to_id = ?
+        ORDER BY source.state NOT IN ('done', 'dropped') DESC,
+          source.title COLLATE NOCASE,
+          source.id
+        """,
         (entity_id,),
-    ).fetchone()
-    return row is not None
+    ).fetchall()
+    blocked_by = tuple(
+        BlockedBySummaryRow(
+            ticket_id=str(row["id"]),
+            title=str(row["title"]),
+            state=str(row["state"]),
+            active=str(row["state"]) not in {"done", "dropped"},
+            href=f"#/ticket/{row['id']}",
+        )
+        for row in incoming_rows
+    )
+
+    source_active = _ticket_is_active(conn, entity_id)
+    outgoing_rows = conn.execute(
+        """
+        SELECT links.to_id,
+          tickets.title AS ticket_title,
+          sprint_items.title AS item_title
+        FROM links
+        LEFT JOIN tickets ON tickets.id = links.to_id
+        LEFT JOIN sprint_items ON sprint_items.id = links.to_id
+        WHERE links.kind = 'blocks' AND links.from_id = ?
+        ORDER BY links.to_id
+        """,
+        (entity_id,),
+    ).fetchall()
+    blocks: list[BlocksTargetSummaryRow] = []
+    for row in outgoing_rows:
+        target_id = str(row["to_id"])
+        target_kind: Literal["ticket", "sprint_item"]
+        if _prefix(target_id) == "si":
+            target_kind = "sprint_item"
+            title = str(row["item_title"])
+            href = f"#/sprint?item={target_id}"
+        else:
+            target_kind = "ticket"
+            title = str(row["ticket_title"])
+            href = f"#/ticket/{target_id}"
+        blocks.append(
+            BlocksTargetSummaryRow(
+                target_id=target_id,
+                target_kind=target_kind,
+                title=title,
+                active=source_active,
+                href=href,
+            )
+        )
+
+    return BlockerSummary(
+        blocked=any(row.active for row in blocked_by),
+        blocked_by=blocked_by,
+        blocks=tuple(blocks),
+    )

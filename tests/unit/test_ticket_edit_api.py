@@ -18,6 +18,7 @@ from planner.core.db import connect, create_schema
 from planner.core.events import read_events_since
 from planner.core.server import create_app
 from planner.tickets import data as tickets_data
+from planner.tickets.contracts import NO_FURTHER, AtCap, FieldName
 from planner.worker_context import data as worker_context_data
 
 
@@ -70,7 +71,15 @@ def _create_ticket(db_path: Path, **values: Any) -> str:
             title_max_chars=200,
             **values,
         )
-        ticket = tickets_data.accept_kickoff(conn, ticket.id, actor="unattributed", now=1)
+        ticket = tickets_data.accept_proposal(
+            conn,
+            ticket.id,
+            field=FieldName.kickoff,
+            actor="unattributed",
+            now=1,
+            next_ceiling=NO_FURTHER,
+            at_cap=AtCap.propose,
+        )
         return ticket.id
     finally:
         conn.close()
@@ -83,13 +92,12 @@ def _snapshot(db_path: Path, ticket_id: str) -> dict[str, Any]:
         return {
             "values": (
                 ticket.title,
-                ticket.kickoff_note,
                 ticket.priority.value,
                 ticket.deadline,
                 ticket.project_id,
                 ticket.sprint_id,
                 ticket.implementer.value if ticket.implementer is not None else None,
-                ticket.state.value,
+                str(ticket.state),
                 ticket.ticket_status.value,
             ),
             "updated_at": ticket.updated_at,
@@ -244,14 +252,12 @@ def test_compound_patch_changes_all_fields_in_canonical_order_with_one_context_s
                 "project": "Vylo",
                 "deadline": "2026-08-01",
                 "priority": "P1",
-                "kickoff_note": "After note",
                 "title": "After edit",
             },
         )
 
     assert response.status_code == 200, response.json()
     assert response.json()["title"] == "After edit"
-    assert response.json()["kickoff_note"] == "After note"
     assert response.json()["priority"] == "P1"
     assert response.json()["deadline"] == "2026-08-01"
     assert response.json()["project_id"] == "project_vylo"
@@ -261,10 +267,6 @@ def test_compound_patch_changes_all_fields_in_canonical_order_with_one_context_s
         (
             "ticket_updated",
             {"field": "title", "from": "Before edit", "to": "After edit"},
-        ),
-        (
-            "ticket_updated",
-            {"field": "kickoff_note", "from": "Before note", "to": "After note"},
         ),
         (
             "ticket_updated",
@@ -318,10 +320,10 @@ def test_compound_patch_rolls_back_row_events_and_context_after_event_insert_fai
     conn = connect(str(db_path))
     try:
         conn.execute(
-            "CREATE TRIGGER abort_user_note_ticket_event "
+            "CREATE TRIGGER abort_priority_ticket_event "
             "BEFORE INSERT ON events "
             "WHEN NEW.kind = 'ticket_updated' "
-            "AND json_extract(NEW.payload, '$.field') = 'kickoff_note' "
+            "AND json_extract(NEW.payload, '$.field') = 'priority' "
             "BEGIN SELECT RAISE(ABORT, 'forced ticket event failure'); END"
         )
     finally:
@@ -331,7 +333,7 @@ def test_compound_patch_rolls_back_row_events_and_context_after_event_insert_fai
     with TestClient(app, raise_server_exceptions=False) as client:
         response = client.patch(
             f"/api/tickets/{ticket_id}",
-            json={"title": "Must roll back", "kickoff_note": "Trigger failure"},
+            json={"title": "Must roll back", "priority": "P1"},
         )
 
     assert response.status_code == 500
@@ -359,7 +361,6 @@ def test_patch_of_existing_non_null_values_is_a_true_noop(tmp_path: Path) -> Non
             f"/api/tickets/{ticket_id}",
             json={
                 "title": "Before edit",
-                "kickoff_note": "Before note",
                 "priority": "P1",
                 "deadline": "2026-08-01",
                 "project": "vylo",

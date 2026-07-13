@@ -1,0 +1,21 @@
+Implemented `t_tmfdg79v` in the ticket worktree. No delegation, reviewer, commit, merge, or `./verify`.
+
+Changed:
+- Backend chat contract/API/service: `image_references` and ordered resolved `image_paths`.
+- Gateway protocol, fakes, real adapter, shared gateway, live session layer.
+- Hermes image flow: ordered attach before one prompt; no prompt on attach failure; detach all attached images on rejected/invalid prompt.
+- Frontend composer/panel: multi-image picker/paste/drop intake, compact previews, individual removal, composer-only drag state, object URL cleanup, ordered upload/send.
+- Added frontend helper/unit coverage: `web/src/lib/chatImages.js`, `web/tests/chat-images.test.mjs`.
+- Updated chat/frontend docs and memory files.
+- Rebuilt `web/dist` bundle: old hashed JS removed, new hashed JS generated.
+
+Validation run:
+- `.venv/bin/python -m pytest tests/unit/test_chat_images.py ...` → `35 passed, 1 warning`
+- `.venv/bin/python -m ruff check ...` → `All checks passed!`
+- `.venv/bin/python -m mypy src/planner/chat src/planner/core/adapters src/planner/minds` → `Success: no issues found in 22 source files`
+- `npm --prefix web test` → passed
+- `npm --prefix web run check` → `0 errors`, 3 pre-existing `TicketRoute.svelte` warnings
+- `npm --prefix web run build` → built successfully, same pre-existing warnings
+- `.venv/bin/python -m pytest tests/e2e/test_chat_images.py` → `7 passed`
+
+The existing untracked ticket artifact directory under `orchestration/tickets/t_tmfdg79v-chat-image-ux/` remains intact.

@@ -230,7 +230,10 @@ def cli() -> Callable[..., dict]:
         # those explicit cases exercise the parked proposal itself.
         if args[:2] == ("ticket", "create") and "--kickoff-note" not in args:
             approve = subprocess.run(
-                [str(PLAN_BIN), "ticket", "approve", data["id"], "--json"],
+                [
+                    str(PLAN_BIN), "ticket", "approve", data["id"],
+                    "--ceiling", "none", "--at-cap", "propose", "--json",
+                ],
                 capture_output=True,
                 text=True,
                 cwd=str(REPO_ROOT),

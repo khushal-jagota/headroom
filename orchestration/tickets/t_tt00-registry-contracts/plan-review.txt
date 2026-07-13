@@ -1,0 +1,106 @@
+STATUS: DONE_WITH_CONCERNS
+
+The `coding` transcription is faithful, but the plan is not fully executable as written. Three corrections should land before implementation: complete the registry validator, finish the t_tt01-facing lookup API, and remove the hidden `minds.config` dependency. Those prevent the most downstream rework.
+
+## Findings
+
+1. [P1] (confidence: 10/10) The validator does not enforce all the invariants the plan claims.
+
+The plan says it rejects repeated gates and ambiguous structures at [plan.md:218](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt00-registry-contracts/plan.md:218), but R1–R8 at [plan.md:203](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt00-registry-contracts/plan.md:203) omit:
+
+- Unique stage IDs.
+- Unique field IDs.
+- One-to-one gate usage; two stages may gate the same field.
+- `fields[0].id == "kickoff"`, required by the settled definition at [PLAN.md:69](/Users/khushaljagota/.hermes/planning-v2/orchestration/ticket-types-redesign/PLAN.md:69).
+- Every declared field being gated exactly once, preventing inert extra fields.
+- `done.gating_field is None` and `dropped_stage.gating_field is None`.
+- Non-empty stages and fields, before indexing `stages[0]`, `stages[-1]`, or `ceiling_range[0]`.
+- Transition-hook reference integrity: known stages, implementer, effect, and no duplicate hook key.
+
+These are not theoretical. Duplicate stage IDs make the derived dictionary at [plan.md:185](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt00-registry-contracts/plan.md:185) silently collapse entries. Repeated gates break the inverse lookup required by `field_is_passed`, whose current behavior relies on a one-field-to-one-state `FIELD_GATES` table at [machine.py:30](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/machine.py:30).
+
+Recommendation: expand validation and add one isolated negative test per invariant. This is the most important correction.
+
+2. [P1] (confidence: 10/10) The derived API is insufficient to parameterize the current machine without rebuilding registry logic in consumers.
+
+The proposed API at [plan.md:161](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt00-registry-contracts/plan.md:161) covers order, forward gates, advance and ceiling, but t_tt01 must replace all of these current operations:
+
+- State indexing: [machine.py:42](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/machine.py:42).
+- Terminal recognition, including exceptional `dropped`: [machine.py:51](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/machine.py:51).
+- Inverse field-to-stage lookup: [machine.py:59](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/machine.py:59).
+- Transition-effect lookup: [machine.py:141](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/machine.py:141).
+
+Add derived operations equivalent to:
+
+- `state_index(defn, state_id) -> int`
+- `require_stage(defn, state_id) -> Stage`
+- `is_terminal(defn, state_id) -> bool`
+- `gated_state(defn, field_id) -> str`
+- `has_field(defn, field_id) -> bool`
+- `transition_effect(defn, implementer, old_state, new_state) -> str | None`
+
+Also distinguish unknown states from terminals. Currently both `gating_field` and `advance_target` return `None` for either condition at [plan.md:162](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt00-registry-contracts/plan.md:162). With per-type strings, silently treating an unknown state as terminal is unsafe.
+
+Finally, rename `terminal_status`; it returns a stage ID, while `TicketStatus` is a different established concept at [contracts.py:64](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/contracts.py:64). `linear_terminal_stage_id` is unambiguous.
+
+3. [P1] (confidence: 10/10) The no-cycle proof contradicts the proposed implementation.
+
+The plan claims `ticket_types` imports only two leaves at [plan.md:53](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt00-registry-contracts/plan.md:53), but later sources `PLANNER_SKILL_NAMES` from `minds/config.py` at [plan.md:120](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt00-registry-contracts/plan.md:120).
+
+That is not a leaf:
+
+- `minds.config` imports gateway runtime classes at [minds/config.py:14](/Users/khushaljagota/.hermes/planning-v2/src/planner/minds/config.py:14).
+- Importing `planner.minds.config` initializes `planner.minds`, whose package initializer imports `SharedGateway` at [minds/__init__.py:20](/Users/khushaljagota/.hermes/planning-v2/src/planner/minds/__init__.py:20).
+- Phase 5 explicitly makes the gateway consume worker profiles from ticket types at [PLAN.md:236](/Users/khushaljagota/.hermes/planning-v2/orchestration/ticket-types-redesign/PLAN.md:236), creating a likely future back-edge.
+
+Recommendation: keep validator reference catalogs inside a leaf contract/catalog module, or inject known skill/toolset IDs into `build_registry`. Add an outbound-import allowlist test for the entire new package. Testing only that `tickets/contracts.py` does not import back, as proposed at [plan.md:387](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt00-registry-contracts/plan.md:387), does not prove the claimed graph.
+
+4. [P2] (confidence: 10/10) Golden parity misses two independently landed encodings.
+
+The main live comparisons are correctly imported at [plan.md:335](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt00-registry-contracts/plan.md:335). However:
+
+- `FIELD_GATES` is an independent live inverse table in [machine.py:32](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/machine.py:32), and current `field_is_passed` uses it directly at [machine.py:64](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/machine.py:64). Assert it equals the exact inverse of the registry gate map.
+- The field-order test compares only `FieldName`; it does not prove parity with the actual `TicketFields` slots at [contracts.py:108](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/contracts.py:108). Assert `tuple(field.name for field in dataclasses.fields(TicketFields)) == field_ids(coding)`.
+
+Without these, one side of the current behavior can drift while all planned golden tests remain green.
+
+5. [P2] (confidence: 9/10) The foundational definition omits a capability already required by the settled later phases.
+
+The test-only `probe` type is required to declare a `prefix-reconciliation` capability at [PLAN.md:184](/Users/khushaljagota/.hermes/planning-v2/orchestration/ticket-types-redesign/PLAN.md:184), and t_tt03 consumes that decision at [PLAN.md:211](/Users/khushaljagota/.hermes/planning-v2/orchestration/ticket-types-redesign/PLAN.md:211). Neither `WorkflowDefinition` at [plan.md:100](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt00-registry-contracts/plan.md:100) nor the manifest at [plan.md:140](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt00-registry-contracts/plan.md:140) carries it.
+
+Add a precisely named boolean such as `supports_prefix_reconciliation`. It belongs in the definition now. Serialize it only if a CLI or web consumer needs the capability; otherwise keep it in the backend contract and avoid an unused manifest field.
+
+The remainder of the manifest is sufficient for t_tt03 create/propose/scope parsing and t_tt04b labels/pickers: ordered stages, gates, advance, fields, ceiling range and labels are all present. No second lifecycle encoding is necessary.
+
+6. [P2] (confidence: 10/10) Two negative tests are not isolated and may be impossible to satisfy with the stated validation order.
+
+Both of these mutate the definition to end with non-terminal `needs_closeout`:
+
+- “nonterminal without successor” at [plan.md:316](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt00-registry-contracts/plan.md:316)
+- “last stage not done” at [plan.md:321](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt00-registry-contracts/plan.md:321)
+
+The same invalid definition cannot reliably produce two different first-failure details. Isolate them:
+
+- No successor: final stage has `id="done"` but `is_terminal=False`; R3 fires first.
+- Wrong terminal ID: final stage is `Stage(id="finished", is_terminal=True, ...)`; R3 passes and R5 rejects the ID.
+
+For every negative test, assert the complete `PlannerError.detail` dictionary, not selected keys, plus the exact error code and stable message. Add the currently untested `Registry.require("unknown")` error contract from [plan.md:174](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt00-registry-contracts/plan.md:174).
+
+The AST consumer test is a real structural check, but its matcher must explicitly catch `import planner.ticket_types`, submodules, `from planner.ticket_types import …`, `from planner import ticket_types`, and resolved relative imports. “Targeting” at [plan.md:383](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt00-registry-contracts/plan.md:383) is not executable enough.
+
+## Fidelity verdict
+
+The planned `coding` values themselves are exact:
+
+- Stage order matches [contracts.py:31](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/contracts.py:31).
+- Ceiling range correctly drops only `needs_kickoff`, matching [contracts.py:37](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/contracts.py:37).
+- Default ceiling is genuinely derived as the first ceiling entry.
+- Gates and advance match [contracts.py:73](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/contracts.py:73) and [contracts.py:84](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/contracts.py:84).
+- Fields match [contracts.py:43](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/contracts.py:43).
+- `dropped` remains outside the linear order.
+- The declared handoff tuple exactly matches [machine.py:147](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/machine.py:147).
+- No off-by-one error exists in the ceiling derivation.
+
+The scope is genuinely additive: the proposed production edits are confined to the new package, with no existing consumer rewired. The plan’s §9 “open questions” should simply be removed or marked resolved, since the BRIEF already confirms all four decisions at [BRIEF.md:86](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt00-registry-contracts/BRIEF.md:86).
+
+Bottom line: correct lifecycle, correct sequencing, incomplete enforcement surface. Fix findings 1–3 before dispatch; findings 4–6 should land in the same plan revision because they are cheap now and expensive after t_tt01.

@@ -13,6 +13,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import Final
 
+from planner.core import links as core_links
 from planner.core.contracts import EventKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event, delete_entity_history
@@ -20,13 +21,12 @@ from planner.core.ids import ID_PREFIXES, new_id
 from planner.days import data as days_data
 from planner.tickets import worker_context as ticket_worker_context
 from planner.tickets.contracts import (
-    TITLE_MAX_CHARS,
     AtCap,
     FieldName,
     FieldSlot,
     Implementer,
-    KickoffProposal,
     NextCeiling,
+    Proposal,
     Ticket,
     TicketDeletion,
     TicketEdit,
@@ -34,7 +34,15 @@ from planner.tickets.contracts import (
     TicketState,
     TicketStatus,
 )
-from planner.tickets.logic import admission, external_work, fields_codec, machine, resolution
+from planner.tickets.logic import (
+    admission,
+    coding_bridge,
+    external_work,
+    fields_codec,
+    machine,
+    resolution,
+    ticket_type_guard,
+)
 from planner.tickets.logic.decisions import Decision
 
 
@@ -58,11 +66,14 @@ def _txn(conn: sqlite3.Connection) -> Iterator[None]:
 
 
 def _row_to_ticket(row: sqlite3.Row) -> Ticket:
-    kickoff_proposal = _kickoff_proposal_from_json(row["kickoff_proposal"])
+    ticket_type = str(row["ticket_type"])
+    defn = ticket_type_guard.resolve_and_validate(
+        ticket_type, state=str(row["state"]), ceiling=str(row["ceiling"])
+    )
     return Ticket(
         id=row["id"],
         title=row["title"],
-        state=TicketState(row["state"]),
+        state=str(row["state"]),      # RAW stage id; resolve_and_validate already checked it
         priority=Priority(row["priority"]),
         deadline=row["deadline"],
         project_id=row["project_id"],
@@ -70,53 +81,16 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         sprint_item_id=row["sprint_item_id"],
         sprint_id=row["sprint_id"],
         recap=row["recap"],
-        kickoff_note=row["kickoff_note"],
-        kickoff_proposal=kickoff_proposal,
-        ceiling=TicketState(row["ceiling"]),
+        ceiling=str(row["ceiling"]),  # RAW ceiling id; already validated against the type
         at_cap=AtCap(row["at_cap"]),
         ticket_status=TicketStatus(row["ticket_status"]),
         implementer=Implementer(row["implementer"]) if row["implementer"] is not None else None,
         chat_session_key=row["chat_session_key"],
         alias=row["alias"],
-        fields=fields_codec.fields_from_json(row["fields"]),
+        fields=fields_codec.fields_from_json(row["fields"], defn),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
-    )
-
-
-def _kickoff_proposal_to_json(proposal: KickoffProposal | None) -> str | None:
-    if proposal is None:
-        return None
-    return json.dumps(
-        {
-            "title": proposal.title,
-            "kickoff_note": proposal.kickoff_note,
-            "proposed_by": proposal.proposed_by,
-            "created_at": proposal.created_at,
-        }
-    )
-
-
-def _kickoff_proposal_from_json(raw: object) -> KickoffProposal | None:
-    if raw is None:
-        return None
-    if not isinstance(raw, str):
-        raise PlannerError(ErrorCode.validation, "corrupt kickoff proposal")
-    payload = json.loads(raw)
-    if (
-        not isinstance(payload, dict)
-        or not isinstance(payload.get("title"), str)
-        or not isinstance(payload.get("kickoff_note"), str)
-        or not isinstance(payload.get("proposed_by"), str)
-        or not isinstance(payload.get("created_at"), int)
-        or isinstance(payload.get("created_at"), bool)
-    ):
-        raise PlannerError(ErrorCode.validation, "corrupt kickoff proposal")
-    return KickoffProposal(
-        title=payload["title"],
-        kickoff_note=payload["kickoff_note"],
-        proposed_by=payload["proposed_by"],
-        created_at=payload["created_at"],
+        ticket_type=ticket_type,
     )
 
 
@@ -132,6 +106,18 @@ def _load_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
     return _row_to_ticket(row)
 
 
+def _active_blocker_state(state: str) -> bool:
+    return state not in {TicketState.done, TicketState.dropped}
+
+
+def _outgoing_block_target_ids(conn: sqlite3.Connection, ticket_id: str) -> tuple[str, ...]:
+    rows = conn.execute(
+        "SELECT to_id FROM links WHERE from_id = ? AND kind = 'blocks' ORDER BY to_id",
+        (ticket_id,),
+    ).fetchall()
+    return tuple(str(row["to_id"]) for row in rows)
+
+
 def _apply_decision(
     conn: sqlite3.Connection, ticket: Ticket, decision: Decision, now: int
 ) -> Ticket:
@@ -139,20 +125,44 @@ def _apply_decision(
     new_state = decision.new_state if decision.new_state is not None else ticket.state
     new_ceiling = decision.new_ceiling if decision.new_ceiling is not None else ticket.ceiling
     new_at_cap = decision.new_at_cap if decision.new_at_cap is not None else ticket.at_cap
+    # Pre-persist door: the prospective (state, ceiling) must be registry-valid for
+    # this ticket's type before any SQL — the enforcement the dropped DB CHECKs gave.
+    ticket_type_guard.resolve_and_validate(
+        ticket.ticket_type, state=str(new_state), ceiling=str(new_ceiling)
+    )
+    active_before = _active_blocker_state(ticket.state)
+    active_after = _active_blocker_state(new_state)
+    affected_blocked_target_ids: tuple[str, ...] = ()
+    if active_before != active_after:
+        affected_blocked_target_ids = _outgoing_block_target_ids(conn, ticket.id)
+        if active_after:
+            for target_id in affected_blocked_target_ids:
+                if core_links.would_create_active_blocks_cycle(conn, ticket.id, target_id):
+                    raise PlannerError(
+                        ErrorCode.link_cycle,
+                        "ticket state change would activate a blocks cycle",
+                        {"ticket_id": ticket.id, "to_id": target_id},
+                    )
     conn.execute(
         "UPDATE tickets SET fields = ?, state = ?, ceiling = ?, at_cap = ?, updated_at = ? "
         "WHERE id = ?",
         (
             fields_codec.fields_to_json(new_fields),
-            new_state.value,
-            new_ceiling.value,
+            str(new_state),
+            str(new_ceiling),
             new_at_cap.value,
             now,
             ticket.id,
         ),
     )
     for spec in decision.events:
-        append_event(conn, ticket.id, spec.kind, spec.payload, now)
+        payload = spec.payload
+        if spec.kind is EventKind.state_changed and affected_blocked_target_ids:
+            payload = {
+                **payload,
+                "affected_blocked_target_ids": list(affected_blocked_target_ids),
+            }
+        append_event(conn, ticket.id, spec.kind, payload, now)
     if any(spec.kind is EventKind.state_changed for spec in decision.events):
         _append_item_children_changed(conn, ticket.sprint_item_id, ticket.id, "state", now)
     return _load_ticket(conn, ticket.id)
@@ -259,17 +269,23 @@ def create_ticket(
     sprint_id: str | None = None,
     sprint_item_id: str | None = None,
     implementer: Implementer | None = None,
+    ticket_type: str = "coding",
 ) -> Ticket:
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
+    defn = coding_bridge.require(ticket_type)   # creation door: unknown type rejected
+    default_ceiling = coding_bridge.default_ceiling(ticket_type)
     ticket_id = new_id(ID_PREFIXES["ticket"])
-    empty_fields = fields_codec.fields_to_json(TicketFields())
-    kickoff_proposal = KickoffProposal(
-        title=title,
-        kickoff_note=kickoff_note,
-        proposed_by=actor,
-        created_at=now,
+    initial_fields = fields_codec.with_slot(
+        TicketFields.empty(coding_bridge.field_ids(defn)),
+        "kickoff",
+        FieldSlot(
+            value=None,
+            proposal=Proposal(body=kickoff_note, proposed_by=actor, created_at=now),
+            user_note=None,
+        ),
     )
+    fields_json = fields_codec.fields_to_json(initial_fields)
     with _txn(conn):
         if sprint_item_id is not None:
             if conn.execute(
@@ -294,27 +310,26 @@ def create_ticket(
                 )
         conn.execute(
             "INSERT INTO tickets ("
-            "id, title, state, priority, deadline, project_id, sprint_item_id, "
-            "sprint_id, recap, kickoff_note, kickoff_proposal, ceiling, at_cap, "
+            "id, title, ticket_type, state, priority, deadline, project_id, sprint_item_id, "
+            "sprint_id, recap, ceiling, at_cap, "
             "ticket_status, implementer, "
             "chat_session_key, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
                 title,
+                ticket_type,
                 TicketState.needs_kickoff.value,
                 priority.value,
                 deadline,
                 project_id,
                 sprint_item_id,
                 sprint_id,
-                kickoff_note,
-                _kickoff_proposal_to_json(kickoff_proposal),
-                TicketState.needs_success.value,
+                default_ceiling,
                 AtCap.propose.value,
                 TicketStatus.awaiting_approval.value,
                 implementer.value if implementer is not None else None,
-                empty_fields,
+                fields_json,
                 now,
                 now,
             ),
@@ -323,8 +338,8 @@ def create_ticket(
         append_event(
             conn,
             ticket_id,
-            EventKind.kickoff_proposal_filed,
-            {"title": title, "kickoff_note": kickoff_note, "proposed_by": actor},
+            EventKind.proposal_filed,
+            {"field": FieldName.kickoff.value, "body": kickoff_note, "proposed_by": actor},
             now,
         )
         append_event(
@@ -342,8 +357,8 @@ def create_ticket_from_external_work(
     conn: sqlite3.Connection,
     *,
     title: str,
-    target_state: TicketState,
-    provided_values: Mapping[FieldName, str],
+    target_state: str,
+    provided_values: Mapping[str, str],
     actor: str,
     now: int,
     title_max_chars: int,
@@ -354,6 +369,7 @@ def create_ticket_from_external_work(
     deadline: str | None = None,
     sprint_id: str | None = None,
     sprint_item_id: str | None = None,
+    ticket_type: str = "coding",
 ) -> Ticket:
     if kickoff_note is None:
         kickoff_note = ""
@@ -362,7 +378,18 @@ def create_ticket_from_external_work(
     admission.validate_deadline(deadline)
     if recap is not None:
         admission.validate_body(recap, "recap")
+    defn = coding_bridge.require(ticket_type)   # creation door: unknown type rejected
+    # External work is "already done elsewhere": seed at the type's FIRST WORKER stage
+    # (needs_success / needs_stages / needs_alpha), NOT the leading needs_kickoff — the
+    # applied decision then jumps it to target_state. first_worker_stage is the concept
+    # here; default_ceiling is now needs_kickoff and would wrongly re-park kickoff.
+    first_worker = coding_bridge.views.first_worker_stage(defn)
     ticket_id = new_id(ID_PREFIXES["ticket"])
+    initial_fields = fields_codec.with_slot(
+        TicketFields.empty(coding_bridge.field_ids(defn)),
+        "kickoff",
+        FieldSlot(value=kickoff_note),
+    )
     with _txn(conn):
         if sprint_item_id is not None:
             if conn.execute(
@@ -390,45 +417,38 @@ def create_ticket_from_external_work(
 
         conn.execute(
             "INSERT INTO tickets ("
-            "id, title, state, priority, deadline, project_id, sprint_item_id, "
-            "sprint_id, recap, kickoff_note, kickoff_proposal, ceiling, at_cap, ticket_status, "
+            "id, title, ticket_type, state, priority, deadline, project_id, sprint_item_id, "
+            "sprint_id, recap, ceiling, at_cap, ticket_status, "
             "chat_session_key, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?, NULL, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
                 title,
-                TicketState.needs_success.value,
+                ticket_type,
+                # Seed at the type's FIRST WORKER stage. The applied external-work
+                # decision then moves it to target_state; the seed only needs to be a
+                # valid non-terminal worker stage so the pre-persist guard passes
+                # (coding: needs_success; probe: needs_alpha). This is NOT default_ceiling,
+                # which is now the leading needs_kickoff.
+                first_worker,
                 priority.value,
                 deadline,
                 project_id,
                 sprint_item_id,
                 sprint_id,
-                kickoff_note,
-                TicketState.needs_success.value,
+                first_worker,
                 AtCap.propose.value,
                 TicketStatus.empty.value,
-                fields_codec.fields_to_json(TicketFields()),
+                fields_codec.fields_to_json(initial_fields),
                 now,
                 now,
             ),
         )
         append_event(conn, ticket_id, EventKind.ticket_created, {}, now)
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.kickoff_accepted,
-            {
-                "title": title,
-                "kickoff_note": kickoff_note,
-                "resolved_by": "external_work",
-                "edited": False,
-            },
-            now,
-        )
         _append_item_children_changed(conn, sprint_item_id, ticket_id, "created", now)
         ticket = _load_ticket(conn, ticket_id)
         values_decision, position_decision = external_work.decide_external_work(
-            ticket, target_state, provided_values
+            ticket, target_state, provided_values, definition=defn
         )
         ticket = _apply_decision(conn, ticket, values_decision, now)
         if recap is not None:
@@ -446,8 +466,8 @@ def reconcile_ticket_from_external_work(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    target_state: TicketState,
-    provided_values: Mapping[FieldName, str],
+    target_state: str,
+    provided_values: Mapping[str, str],
     actor: str,
     now: int,
     kickoff_note: str | None = None,
@@ -477,22 +497,10 @@ def reconcile_ticket_from_external_work(
                 {"ticket_id": ticket_id},
             )
 
+        defn = coding_bridge.require(ticket.ticket_type)
         values_decision, position_decision = external_work.decide_external_work(
-            ticket, target_state, provided_values
+            ticket, target_state, provided_values, definition=defn
         )
-        if kickoff_note != ticket.kickoff_note:
-            conn.execute(
-                "UPDATE tickets SET kickoff_note = ?, updated_at = ? WHERE id = ?",
-                (kickoff_note, now, ticket_id),
-            )
-            append_event(
-                conn,
-                ticket_id,
-                EventKind.ticket_updated,
-                {"field": "kickoff_note", "from": ticket.kickoff_note, "to": kickoff_note},
-                now,
-            )
-            ticket = _load_ticket(conn, ticket_id)
         ticket = _apply_decision(conn, ticket, values_decision, now)
         if recap is not None and recap != ticket.recap:
             conn.execute(
@@ -506,6 +514,47 @@ def reconcile_ticket_from_external_work(
             _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
             ticket = _load_ticket(conn, ticket_id)
         return ticket
+
+
+def audit_ticket_registry_integrity(conn: sqlite3.Connection) -> None:
+    """One linear scan over ``tickets`` at boot: every row's ``(ticket_type, state,
+    ceiling)`` must be registry-valid and its ``fields`` must decode against the type.
+
+    Reuses the exact load-door validator (``ticket_type_guard.resolve_and_validate``)
+    plus the field codec, so "valid" has one definition and the audit inherits the
+    codec's policy verbatim — strict on unknown type / bad state / bad ceiling /
+    missing declared field / malformed slot; lenient on extra top-level keys (a
+    legacy ``result`` key does not fail the audit). Scans ``ORDER BY id`` so the
+    first corrupt row is deterministic, and raises ``RuntimeError`` naming that
+    row's id and the specific reason.
+
+    Invocation is deliberately narrow: this full scan runs once in the ``panels
+    serve`` lifespan, after the registry build and before background loops. Seed and
+    CLI paths do NOT run it — they rely on the create door (validate-before-insert)
+    and the load door (validate-on-read), so a corrupt row cannot be created by a
+    sanctioned writer and any pre-existing corruption surfaces the moment that
+    ticket is loaded; this scan is the belt on top of those braces at the real boot
+    path."""
+    for row in conn.execute(
+        "SELECT id, ticket_type, state, ceiling, fields FROM tickets ORDER BY id"
+    ):
+        try:
+            defn = ticket_type_guard.resolve_and_validate(
+                str(row["ticket_type"]), state=str(row["state"]), ceiling=str(row["ceiling"])
+            )
+            fields_codec.fields_from_json(str(row["fields"]), defn)
+        except PlannerError as exc:
+            raise RuntimeError(
+                f"ticket integrity audit failed: id={row['id']} "
+                f"reason={exc.message} detail={exc.detail}"
+            ) from exc
+        except json.JSONDecodeError as exc:
+            # Syntactically-invalid fields JSON (the codec's json.loads) must name the
+            # offending id too, not abort startup with a raw decode traceback.
+            raise RuntimeError(
+                f"ticket integrity audit failed: id={row['id']} "
+                f"reason=fields JSON is not valid JSON detail={exc}"
+            ) from exc
 
 
 def read_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
@@ -606,18 +655,25 @@ def mark_run_errored_if_still_running_step(
 
 
 def file_proposal(
-    conn: sqlite3.Connection, ticket_id: str, *, field: FieldName, body: str, actor: str, now: int
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    field: FieldName | str,
+    body: str,
+    actor: str,
+    now: int,
 ) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
-        decision = resolution.decide_file_proposal(ticket, field, body, actor, now)
+        defn = coding_bridge.require(ticket.ticket_type)
+        decision = resolution.decide_file_proposal(ticket, field, body, actor, now, definition=defn)
         updated = _apply_decision(conn, ticket, decision, now)
         if any(spec.kind is EventKind.proposal_filed for spec in decision.events):
             _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
             updated = _load_ticket(conn, ticket_id)
         else:
             handoff_status = machine.plan_handoff_status(
-                ticket.implementer, ticket.state, decision.new_state
+                ticket.implementer, ticket.state, decision.new_state, definition=defn
             )
             if handoff_status is not None:
                 _write_ticket_status(conn, ticket_id, handoff_status, now)
@@ -643,14 +699,15 @@ def file_current_proposal_with_recap(
     admission.validate_body(recap, "recap")
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
-        field = machine.gating_field(ticket.state)
+        defn = coding_bridge.require(ticket.ticket_type)
+        field = machine.gating_field(ticket.state, definition=defn)
         if field is None:
             raise PlannerError(
                 ErrorCode.validation,
                 "ticket state has no proposal field",
-                {"state": ticket.state.value},
+                {"state": str(ticket.state)},
             )
-        decision = resolution.decide_file_proposal(ticket, field, body, actor, now)
+        decision = resolution.decide_file_proposal(ticket, field, body, actor, now, definition=defn)
         _apply_decision(conn, ticket, decision, now)
         conn.execute(
             "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?",
@@ -661,7 +718,7 @@ def file_current_proposal_with_recap(
             _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
         else:
             handoff_status = machine.plan_handoff_status(
-                ticket.implementer, ticket.state, decision.new_state
+                ticket.implementer, ticket.state, decision.new_state, definition=defn
             )
             if handoff_status is not None:
                 _write_ticket_status(conn, ticket_id, handoff_status, now)
@@ -672,7 +729,7 @@ def accept_proposal(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    field: FieldName,
+    field: FieldName | str,
     actor: str,
     now: int,
     edited_body: str | None = None,
@@ -681,90 +738,24 @@ def accept_proposal(
 ) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
-        decision = resolution.decide_accept(ticket, field, actor, edited_body, next_ceiling, at_cap)
+        defn = coding_bridge.require(ticket.ticket_type)
+        decision = resolution.decide_accept(
+            ticket, field, actor, edited_body, next_ceiling, at_cap, definition=defn
+        )
         _apply_decision(conn, ticket, decision, now)
         if edited_body is not None:
             ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         handoff_status = machine.plan_handoff_status(
-            ticket.implementer, ticket.state, decision.new_state
+            ticket.implementer, ticket.state, decision.new_state, definition=defn
         )
         _write_ticket_status(conn, ticket_id, handoff_status or TicketStatus.empty, now)
-        return _load_ticket(conn, ticket_id)
-
-
-def accept_kickoff(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    actor: str,
-    now: int,
-    edited_title: str | None = None,
-    edited_kickoff_note: str | None = None,
-) -> Ticket:
-    admission.require_direct_actor(actor, "accept_kickoff")
-    with _txn(conn):
-        ticket = _load_ticket(conn, ticket_id)
-        if ticket.state is not TicketState.needs_kickoff:
-            raise PlannerError(
-                ErrorCode.validation,
-                "ticket is not awaiting kickoff",
-                {"state": ticket.state.value},
-            )
-        if ticket.kickoff_proposal is None:
-            raise PlannerError(
-                ErrorCode.not_found,
-                "no pending kickoff proposal",
-                {"ticket_id": ticket_id},
-            )
-        stored_title = (
-            edited_title if edited_title is not None else ticket.kickoff_proposal.title
-        )
-        stored_note = (
-            edited_kickoff_note
-            if edited_kickoff_note is not None
-            else ticket.kickoff_proposal.kickoff_note
-        )
-        admission.validate_title(stored_title, TITLE_MAX_CHARS)
-        edited = edited_title is not None or edited_kickoff_note is not None
-        conn.execute(
-            "UPDATE tickets SET title = ?, kickoff_note = ?, kickoff_proposal = NULL, "
-            "state = ?, updated_at = ? WHERE id = ?",
-            (stored_title, stored_note, TicketState.needs_success.value, now, ticket_id),
-        )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.kickoff_accepted,
-            {
-                "title": stored_title,
-                "kickoff_note": stored_note,
-                "resolved_by": "direct",
-                "edited": edited,
-            },
-            now,
-        )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.state_changed,
-            {
-                "from": TicketState.needs_kickoff.value,
-                "to": TicketState.needs_success.value,
-                "cause": "kickoff_accept",
-            },
-            now,
-        )
-        _append_item_children_changed(conn, ticket.sprint_item_id, ticket_id, "state", now)
-        _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
-        if edited:
-            ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket(conn, ticket_id)
 
 
 def take_over_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
-        if ticket.state is TicketState.needs_kickoff:
+        if ticket.state == TicketState.needs_kickoff:
             raise PlannerError(
                 ErrorCode.validation,
                 "kickoff must be settled before takeover",
@@ -777,7 +768,7 @@ def take_over_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> T
 def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
-        if ticket.state is TicketState.needs_kickoff:
+        if ticket.state == TicketState.needs_kickoff:
             raise PlannerError(
                 ErrorCode.validation,
                 "kickoff must be settled before release",
@@ -791,14 +782,15 @@ def edit_field_value(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    field: FieldName,
+    field: FieldName | str,
     new_body: str,
     actor: str,
     now: int,
 ) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
-        decision = resolution.decide_edit_value(ticket, field, new_body, actor)
+        defn = coding_bridge.require(ticket.ticket_type)
+        decision = resolution.decide_edit_value(ticket, field, new_body, actor, definition=defn)
         updated = _apply_decision(conn, ticket, decision, now)
         ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return updated
@@ -815,7 +807,8 @@ def return_for_revision(
     admission.validate_body(message, "revision guidance")
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
-        decision = resolution.decide_return_for_revision(ticket, actor)
+        defn = coding_bridge.require(ticket.ticket_type)
+        decision = resolution.decide_return_for_revision(ticket, actor, definition=defn)
         running_turn = conn.execute(
             "SELECT 1 FROM chat_turns WHERE entity_id = ? AND status = 'running' LIMIT 1",
             (ticket_id,),
@@ -832,10 +825,13 @@ def return_for_revision(
 
 
 def set_state(
-    conn: sqlite3.Connection, ticket_id: str, *, new_state: TicketState, actor: str, now: int
+    conn: sqlite3.Connection, ticket_id: str, *, new_state: str, actor: str, now: int
 ) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
+        # decide_state_jump guards only on the universal bookends + the equality check,
+        # so it needs no definition; the ingress validated new_state against the type,
+        # and _apply_decision re-validates the prospective (state, ceiling) per-type.
         decision = resolution.decide_state_jump(ticket, new_state, actor)
         return _apply_decision(conn, ticket, decision, now)
 
@@ -971,14 +967,15 @@ def change_scope(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    ceiling: TicketState,
+    ceiling: str,
     at_cap: AtCap,
     actor: str,
     now: int,
 ) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
-        decision = resolution.decide_scope_change(ticket, ceiling, at_cap, actor)
+        defn = coding_bridge.require(ticket.ticket_type)
+        decision = resolution.decide_scope_change(ticket, ceiling, at_cap, actor, definition=defn)
         updated = _apply_decision(conn, ticket, decision, now)
         ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return updated
@@ -988,21 +985,26 @@ def set_field_user_note(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    field: FieldName,
+    field: FieldName | str,
     user_note: str | None,
     actor: str,
     now: int,
 ) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket(conn, ticket_id)
-        slot = fields_codec.get_slot(ticket.fields, field)
+        defn = coding_bridge.require(ticket.ticket_type)
+        if not coding_bridge.has_field(defn, str(field)):
+            raise PlannerError(
+                ErrorCode.validation, "unknown ticket field", {"field": str(field)}
+            )
+        slot = fields_codec.get_slot(ticket.fields, str(field))
         new_slot = FieldSlot(value=slot.value, proposal=slot.proposal, user_note=user_note)
-        new_fields = fields_codec.with_slot(ticket.fields, field, new_slot)
+        new_fields = fields_codec.with_slot(ticket.fields, str(field), new_slot)
         conn.execute(
             "UPDATE tickets SET fields = ?, updated_at = ? WHERE id = ?",
             (fields_codec.fields_to_json(new_fields), now, ticket_id),
         )
-        append_event(conn, ticket_id, EventKind.note_updated, {"field": field.value}, now)
+        append_event(conn, ticket_id, EventKind.note_updated, {"field": str(field)}, now)
         ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket(conn, ticket_id)
 
@@ -1012,7 +1014,7 @@ def set_note(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    field: FieldName,
+    field: FieldName | str,
     note: str | None,
     actor: str,
     now: int,
@@ -1035,21 +1037,11 @@ def edit_ticket(
         ticket = _load_ticket(conn, ticket_id)
 
         title = edit["title"] if "title" in edit else ticket.title
-        kickoff_note = edit["kickoff_note"] if "kickoff_note" in edit else ticket.kickoff_note
         priority = edit["priority"] if "priority" in edit else ticket.priority
         deadline = edit["deadline"] if "deadline" in edit else ticket.deadline
         implementer = edit["implementer"] if "implementer" in edit else ticket.implementer
         project_id = edit["project_id"] if "project_id" in edit else ticket.project_id
         sprint_id = edit["sprint_id"] if "sprint_id" in edit else ticket.sprint_id
-
-        if ticket.state is TicketState.needs_kickoff and (
-            "title" in edit or "kickoff_note" in edit
-        ):
-            raise PlannerError(
-                ErrorCode.validation,
-                "title and kickoff note edits must be made by approving kickoff",
-                {"ticket_id": ticket_id},
-            )
 
         # Validate the intended final Ticket before its first durable effect. Parent
         # restrictions use request-key presence: explicitly assigning the same/null
@@ -1075,7 +1067,6 @@ def edit_ticket(
 
         candidates: tuple[tuple[str, str, str | None, str | None], ...] = (
             ("title", "title", ticket.title, title),
-            ("kickoff_note", "kickoff_note", ticket.kickoff_note, kickoff_note),
             ("priority", "priority", ticket.priority.value, priority.value),
             ("deadline", "deadline", ticket.deadline, deadline),
             (

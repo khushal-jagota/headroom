@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from datetime import date
 from typing import NamedTuple, cast
 
+from planner.core import links as core_links
 from planner.core.clock import Clock
 from planner.core.contracts import EventKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
@@ -31,6 +32,7 @@ from planner.sprints.logic import (
     derive_sprint_item_status,
     find_overlap,
 )
+from planner.tickets.logic import coding_bridge
 
 
 class ItemRead(NamedTuple):
@@ -415,25 +417,35 @@ def assign_item_sprint(
 # --- reads ----------------------------------------------------------------------
 
 
+def _child_state_in_progress(ticket_type: str, state: str) -> bool:
+    """Per-type "in progress by state": a non-terminal linear stage strictly past the
+    type's first worker stage (its first real-work stage — needs_success for coding,
+    needs_stages for new_worker). Resolves the row's own definition so the pure
+    ``derive_sprint_item_status`` consumes only a precomputed boolean.
+
+    Keyed off first_worker_stage, NOT default_ceiling (which is now the leading
+    needs_kickoff): the in-progress threshold is unchanged from before the ceiling
+    decoupling.
+
+    Terminality is checked FIRST so ``and`` short-circuits: ``dropped`` is outside the
+    linear order and ``state_index`` raises on it, so the index is never computed for a
+    terminal (done/dropped) state."""
+    defn = coding_bridge.require(ticket_type)
+    terminal = coding_bridge.views.is_terminal(defn, state)
+    first_worker_idx = coding_bridge.views.state_index(
+        defn, coding_bridge.views.first_worker_stage(defn)
+    )
+    return (not terminal) and coding_bridge.views.state_index(defn, state) > first_worker_idx
+
+
 def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
     item = _load_item(conn, item_id)
-    blocking_rows = conn.execute(
-        "SELECT links.from_id, tickets.state FROM links "
-        "JOIN tickets ON tickets.id = links.from_id "
-        "WHERE links.to_id = ? AND links.kind = 'blocks' ORDER BY links.from_id",
-        (item_id,),
-    ).fetchall()
-    blocking_ticket_ids = [str(row["from_id"]) for row in blocking_rows]
-    blockers_cleared = bool(blocking_rows) and all(
-        str(row["state"]) == "done" for row in blocking_rows
-    )
+    blocker_summary = core_links.blocker_summary(conn, item_id)
+    blocking_ticket_ids = [row.ticket_id for row in blocker_summary.blocked_by]
+    blockers_cleared = bool(blocking_ticket_ids) and not blocker_summary.blocked
     child_rows = conn.execute(
         """
-        SELECT tickets.state, tickets.ticket_status,
-          EXISTS(
-            SELECT 1 FROM links
-            WHERE links.to_id = tickets.id AND links.kind = 'blocks'
-          ) AS blocked
+        SELECT tickets.id, tickets.state, tickets.ticket_status, tickets.ticket_type
         FROM tickets
         WHERE tickets.sprint_item_id = ?
         ORDER BY tickets.id
@@ -444,12 +456,15 @@ def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
         SprintItemChildStatus(
             state=str(row["state"]),
             ticket_status=str(row["ticket_status"]),
-            blocked=bool(row["blocked"]),
+            blocked=core_links.blocker_summary(conn, str(row["id"])).blocked,
+            state_in_progress=_child_state_in_progress(
+                str(row["ticket_type"]), str(row["state"])
+            ),
         )
         for row in child_rows
     ]
     status = derive_sprint_item_status(
-        directly_blocked=bool(blocking_ticket_ids) and not blockers_cleared,
+        directly_blocked=blocker_summary.blocked,
         children=children,
     )
     return ItemRead(

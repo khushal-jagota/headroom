@@ -61,6 +61,11 @@ def _links(ticket_id: str) -> str:
 
 
 def _set_fields(server, ticket_id: str, fields: dict, state: str = "dropped") -> None:
+    if "kickoff" not in fields:
+        fields = {
+            "kickoff": {"value": "", "proposal": None, "user_note": None},
+            **fields,
+        }
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
             "UPDATE tickets SET state = ?, fields = ?, updated_at = 2 WHERE id = ?",
@@ -89,11 +94,32 @@ def _wait_for_field_text(api, server, ticket_id: str, field: str, expected_fragm
 
 
 def test_preview_hash_route_renders_markdown_and_sandboxes_html(
-    server, context_factory, cli
+    server, context_factory, open_page, cli
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "File preview route")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "File preview route",
+    )["id"]
     _write_ticket_files(server, ticket_id)
-    page = context_factory().new_page()
+    fields = {
+        "success": {
+            "value": f"[HTML](/files/tickets/{ticket_id}/page.html)",
+            "proposal": None,
+            "user_note": None,
+        },
+        "approach": {"value": None, "proposal": None, "user_note": None},
+        "plan": {"value": None, "proposal": None, "user_note": None},
+        "implementation": {"value": None, "proposal": None, "user_note": None},
+        "closeout": {"value": None, "proposal": None, "user_note": None},
+    }
+    _set_fields(server, ticket_id, fields)
+    context = context_factory()
+    page = context.new_page()
 
     page.goto(
         f"{server.base}/#/preview?source=ticket&ticket={ticket_id}&path=notes%2Fspace%20name.md"
@@ -102,6 +128,9 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
         '[data-file-preview-route] [data-file-preview-kind="markdown"] h1', timeout=WAIT_MS
     )
     assert page.inner_text("[data-file-preview-route] h1") == "File Notes"
+    assert page.locator(".shell-content").evaluate(
+        "node => getComputedStyle(node).paddingTop"
+    ) != "0px"
 
     page.evaluate("window.__previewHashNavigationMarker = 'kept'")
     page.evaluate(
@@ -117,27 +146,81 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     assert page.inner_text("[data-file-preview-route] h1") == "Other Notes"
     assert page.evaluate("window.__previewHashNavigationMarker") == "kept"
 
-    page.evaluate(
-        "ticket => { window.location.hash = "
-        "'#/preview?source=ticket&ticket=' + ticket + '&path=page.html'; }",
-        ticket_id,
+    ticket_page = open_page(
+        context,
+        server,
+        f"#/ticket/{ticket_id}",
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+        # settled=True: this half only inspects steady-state ticket DOM (embedded HTML
+        # preview + popup geometry); it does not exercise the un-settled lifecycle.
+        # Draining the since=0 catch-up flush before resolving embedded_preview stops a
+        # pending re-render from detaching that iframe node between resolve and click.
+        settled=True,
     )
-    page.wait_for_selector(
-        "[data-file-preview-route] iframe[data-file-preview-html]", timeout=WAIT_MS
+    _open_ticket_field(ticket_page, "success")
+    embedded_preview = ticket_page.locator('[data-file-preview-kind="html"]').first
+    embedded_preview.locator("iframe").wait_for(state="visible", timeout=WAIT_MS)
+    html_action = embedded_preview.locator("a.button", has_text="Open preview")
+    expected_html_url = f"{server.base}/#/preview?source=ticket&ticket={ticket_id}&path=page.html"
+    with ticket_page.expect_popup() as popup_info:
+        html_action.click()
+    popup = popup_info.value
+    popup.wait_for_load_state("domcontentloaded", timeout=WAIT_MS)
+    assert popup.url == expected_html_url
+
+    full_html_iframe = popup.locator(
+        "[data-file-preview-route] iframe[data-file-preview-html]"
     )
-    html_frame = page.frame_locator("[data-file-preview-route] iframe[data-file-preview-html]")
-    full_html_iframe = page.locator("[data-file-preview-route] iframe[data-file-preview-html]")
+    full_html_iframe.wait_for(state="visible", timeout=WAIT_MS)
+    html_frame = popup.frame_locator("[data-file-preview-route] iframe[data-file-preview-html]")
     assert full_html_iframe.get_attribute("sandbox") == ""
     assert full_html_iframe.get_attribute("allow") is None
     assert html_frame.locator("h1").inner_text(timeout=WAIT_MS) == "HTML File"
-    assert page.evaluate("window.__ticketFileScriptRan === true") is False
+    heading_box = html_frame.locator("h1").bounding_box(timeout=WAIT_MS)
+    assert heading_box is not None
+    assert heading_box["width"] > 0
+    assert heading_box["height"] > 0
+    assert popup.evaluate("window.__ticketFileScriptRan === true") is False
+    assert popup.locator("[data-file-preview-route] .file-preview-meta").count() == 0
+    assert popup.locator("[data-file-preview-route] a.button").count() == 0
+    html_geometry = popup.evaluate(
+        """() => {
+            const shell = document.querySelector('.shell-content').getBoundingClientRect();
+            const route = document.querySelector(
+                '[data-file-preview-route]'
+            ).getBoundingClientRect();
+            const frame = document.querySelector(
+                '[data-file-preview-html]'
+            ).getBoundingClientRect();
+            return {
+                shellWidth: shell.width,
+                routeWidth: route.width,
+                routeHeight: route.height,
+                frameWidth: frame.width,
+                frameHeight: frame.height,
+                frameBottomGap: window.innerHeight - frame.bottom,
+            };
+        }"""
+    )
+    assert html_geometry["frameWidth"] >= html_geometry["shellWidth"] - 2
+    assert html_geometry["frameHeight"] >= 0.75 * html_geometry["routeHeight"]
+    assert html_geometry["frameBottomGap"] <= 24
+    popup.close()
     assert page.evaluate("window.__previewHashNavigationMarker") == "kept"
 
 
 def test_markdown_file_preview_has_component_owned_max_height(
     server, context_factory, open_page, cli
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Bounded Markdown preview")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Bounded Markdown preview",
+    )["id"]
     root = _ticket_files_dir(server, ticket_id) / "notes"
     root.mkdir(parents=True)
     (root / "short.md").write_text("# Short\n\nOne paragraph.", encoding="utf-8")
@@ -165,7 +248,11 @@ def test_markdown_file_preview_has_component_owned_max_height(
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        settled=False,
+        # settled=True: drain the since=0 catch-up flush (and re-anchor) BEFORE resolving
+        # the preview locators, so a pending re-render can't detach the measured node
+        # mid-test (the detached node reports 0x0 -> a load-dependent flake). See sibling
+        # test_loaded_preview_proposal_approves_without_edited_body.
+        settled=True,
     )
     _open_ticket_field(page, "success")
 
@@ -200,7 +287,15 @@ def test_markdown_file_preview_has_component_owned_max_height(
 def test_read_only_ticket_and_chat_surfaces_share_file_preview(
     server, context_factory, open_page, cli
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Read-only file previews")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Read-only file previews",
+    )["id"]
     _write_ticket_files(server, ticket_id)
     body = _links(ticket_id)
     fields = {
@@ -228,7 +323,11 @@ def test_read_only_ticket_and_chat_surfaces_share_file_preview(
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        settled=False,
+        # settled=True: this test seeds chat rows and inspects at-rest previews across
+        # fields + chat; those seeded rows make the since=0 catch-up flush non-trivial,
+        # so draining it before resolving/measuring previews stops a re-render from
+        # detaching the nodes this test reads. No assertion depends on the un-settled state.
+        settled=True,
     )
 
     _open_ticket_field(page, "success")
@@ -309,10 +408,19 @@ def test_read_only_ticket_and_chat_surfaces_share_file_preview(
 def test_normal_editable_ticket_field_renders_file_previews_at_rest(
     server, context_factory, open_page, cli
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Normal field previews")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Normal field previews",
+    )["id"]
     _write_ticket_files(server, ticket_id)
     body = _links(ticket_id)
     fields = {
+        "kickoff": {"value": body, "proposal": None, "user_note": None},
         "success": {"value": body, "proposal": None, "user_note": body},
         "approach": {
             "value": None,
@@ -330,15 +438,18 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
     _set_fields(server, ticket_id, fields, state="needs_approach")
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
-            "UPDATE tickets SET kickoff_note = ?, recap = ? WHERE id = ?",
-            (body, body, ticket_id),
+            "UPDATE tickets SET recap = ? WHERE id = ?",
+            (body, ticket_id),
         )
     page = open_page(
         context_factory(),
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        settled=False,
+        # settled=True: the test name says "at rest" — it only waits for steady-state
+        # previews to render across fields/note/recap/proposal. Draining the since=0
+        # catch-up flush first stops a re-render from detaching those nodes mid-wait.
+        settled=True,
     )
 
     _open_ticket_field(page, "success")
@@ -350,9 +461,11 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
     direct_anchor = f'a[href="/files/tickets/{ticket_id}/notes/space%20name.md"]'
     assert field.locator(direct_anchor).count() == 0
     # The user note is a collapsed stage row by default; open it to render its body.
-    page.click("[data-kickoff] .disclosure-summary")
-    page.wait_for_selector("[data-kickoff][open]", timeout=WAIT_MS)
-    page.locator('[data-kickoff] [data-file-preview-kind="image"]').first.wait_for(
+    page.click('details[data-field="kickoff"] .disclosure-summary')
+    page.wait_for_selector('details[data-field="kickoff"][open]', timeout=WAIT_MS)
+    page.locator(
+        'details[data-field="kickoff"] [data-file-preview-kind="image"]'
+    ).first.wait_for(
         state="visible",
         timeout=WAIT_MS,
     )
@@ -384,7 +497,15 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
 def test_editable_markdown_file_links_round_trip_as_raw_markdown(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Editable file links")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Editable file links",
+    )["id"]
     _write_ticket_files(server, ticket_id)
     body = _links(ticket_id)
     fields = {
@@ -400,7 +521,11 @@ def test_editable_markdown_file_links_round_trip_as_raw_markdown(
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        settled=False,
+        # settled=True: this test edits an at-rest preview and asserts the raw-markdown
+        # round-trip on reload; it does not depend on the un-settled state. Draining the
+        # since=0 catch-up flush before resolving the editable stops a re-render from
+        # detaching the contenteditable node under the caret placement.
+        settled=True,
     )
 
     editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
@@ -458,7 +583,15 @@ def test_editable_markdown_file_links_round_trip_as_raw_markdown(
 def test_editable_markdown_preview_focus_noop_and_actions_do_not_persist_generated_dom(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Editable preview actions")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Editable preview actions",
+    )["id"]
     _write_ticket_files(server, ticket_id)
     body = _links(ticket_id)
     fields = {
@@ -474,7 +607,11 @@ def test_editable_markdown_preview_focus_noop_and_actions_do_not_persist_generat
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        settled=False,
+        # settled=True: this test focuses/clicks at-rest preview actions and asserts no
+        # writes fire; the write-capturing listener is attached AFTER the catch-up flush
+        # would land anyway, so draining it up front only prevents a re-render from
+        # detaching the previews before the actions run. No assertion needs the un-settled state.
+        settled=True,
     )
 
     editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
@@ -527,7 +664,15 @@ def test_editable_markdown_preview_focus_noop_and_actions_do_not_persist_generat
 def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Atomic preview editing")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Atomic preview editing",
+    )["id"]
     _write_ticket_files(server, ticket_id)
     markdown_token = f"[Markdown](/files/tickets/{ticket_id}/notes/space%20name.md)"
     image_token = f"[Image](/files/tickets/{ticket_id}/images/pic.png)"
@@ -554,7 +699,12 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        settled=False,
+        # settled=True: this test edits atomic preview slots and reads back stored raw
+        # markdown; the edits it drives are the only re-renders it reasons about. Draining
+        # the since=0 catch-up flush first removes the unrelated re-render that could
+        # detach a slot mid-caret-placement. The delete steps below already gate on their
+        # own flush deltas, which this leaves intact.
+        settled=True,
     )
 
     editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
@@ -718,7 +868,15 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
 def test_editable_preview_deletion_unmounts_pending_fetch_and_clears_iframe(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Preview cleanup")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Preview cleanup",
+    )["id"]
     _write_ticket_files(server, ticket_id)
     slow_token = f"[Slow](/files/tickets/{ticket_id}/notes/slow.md)"
     html_token = f"[HTML](/files/tickets/{ticket_id}/page.html)"
@@ -750,15 +908,39 @@ def test_editable_preview_deletion_unmounts_pending_fetch_and_clears_iframe(
             };
         })()"""
     )
+    # Kept settled=False for the TICKET screen: this test's coverage IS the un-settled
+    # loading/fetch-abort lifecycle — the intercepted slow.md fetch stays pending as
+    # "Loading preview...", and deleting its slot must abort that in-flight fetch.
+    #
+    # The load flake is that the since=0 catch-up replay of this ticket's create/approve
+    # events triggers a flush -> ticket-resource refetch -> TicketRoute re-render ->
+    # mountFilePreviews REBUILDS every atomic slot. That rebuild unmounts the first slow
+    # FilePreview, which aborts its pending fetch — a phantom abort that lands in
+    # __previewAborts BEFORE the test's own Delete (measured: aborts=1, a second slow fetch
+    # pending, before any interaction). The test's real Delete then makes it 2, so the
+    # `__previewAborts.length === 1` assertion only holds if the Delete wins the race
+    # against that rebuild — which it loses under CPU load. The rebuild likewise detaches
+    # the captured __removedPreviewFrame on its own, poisoning the second deletion's proxy.
+    #
+    # Fix (no assertion touched): drain the catch-up replay on a NEUTRAL route where the
+    # ticket:<id> resource has no entry/subscribers, so the flush's invalidate() cannot
+    # launch a ticket refetch and no rebuild happens. THEN navigate to the ticket by hash;
+    # TicketRoute mounts the slow preview exactly once and it stays pending until Delete.
+    # Now every __previewAborts count is caused solely by the test's own deletions.
     page = open_page(
         context,
         server,
-        f"#/ticket/{ticket_id}",
-        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        settled=False,
+        "#/day",
+        "[data-day-overview]",
+        settled=True,
+    )
+    page.evaluate("id => { window.location.hash = '#/ticket/' + id; }", ticket_id)
+    page.wait_for_selector(
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
     )
     editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
     _open_ticket_field(page, "success")
+
     slow_slot = page.locator(f"{editable} [data-markdown-source-token='{slow_token}']").first
     slow_slot.locator("text=Loading preview...").wait_for(state="visible", timeout=WAIT_MS)
     html_slot = page.locator(f"{editable} [data-markdown-source-token='{html_token}']").first
@@ -768,10 +950,6 @@ def test_editable_preview_deletion_unmounts_pending_fetch_and_clears_iframe(
         "sel => document.querySelector(sel)?.srcdoc.includes('HTML File')",
         arg=f"{editable} [data-file-preview-kind='html'] iframe",
         timeout=WAIT_MS,
-    )
-    page.evaluate(
-        "sel => { window.__removedPreviewFrame = document.querySelector(sel); }",
-        f"{editable} [data-file-preview-kind='html'] iframe",
     )
 
     page.locator(editable).focus()
@@ -786,6 +964,19 @@ def test_editable_preview_deletion_unmounts_pending_fetch_and_clears_iframe(
     )
     page.keyboard.press("Delete")
     page.wait_for_function("() => window.__previewAborts.length === 1", timeout=WAIT_MS)
+
+    # Capture the HTML iframe immediately before deleting it — after the slow-slot deletion
+    # and only now that it is confirmed connected with its loaded srcdoc — so the second
+    # Delete is provably the operation that disconnects and clears this exact frame.
+    page.wait_for_function(
+        "sel => document.querySelector(sel)?.srcdoc.includes('HTML File')",
+        arg=f"{editable} [data-file-preview-kind='html'] iframe",
+        timeout=WAIT_MS,
+    )
+    page.evaluate(
+        "sel => { window.__removedPreviewFrame = document.querySelector(sel); }",
+        f"{editable} [data-file-preview-kind='html'] iframe",
+    )
 
     html_slot.evaluate(
         """slot => {
@@ -810,7 +1001,15 @@ def test_editable_preview_deletion_unmounts_pending_fetch_and_clears_iframe(
 def test_editing_that_moves_atomic_slot_keeps_preview_mounted(
     server, context_factory, open_page, cli
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Moving atomic preview")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Moving atomic preview",
+    )["id"]
     _write_ticket_files(server, ticket_id)
     image_token = f"[Image](/files/tickets/{ticket_id}/images/pic.png)"
     body = f"Before {image_token} after"
@@ -827,7 +1026,11 @@ def test_editing_that_moves_atomic_slot_keeps_preview_mounted(
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        settled=False,
+        # settled=True: this test asserts the SAME preview node survives caret-driven
+        # edits (captures __atomicPreviewBeforeEdit and checks identity). An unrelated
+        # since=0 catch-up re-render would swap that node out and fail the identity check
+        # for reasons the test isn't about, so drain it before capturing the reference.
+        settled=True,
     )
     editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
     _open_ticket_field(page, "success")
@@ -878,7 +1081,15 @@ def test_editing_that_moves_atomic_slot_keeps_preview_mounted(
 def test_loaded_preview_proposal_approves_without_edited_body(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(server, "ticket", "create", "--title", "Preview proposal approval")["id"]
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Preview proposal approval",
+    )["id"]
     _write_ticket_files(server, ticket_id)
     body = _links(ticket_id)
     cli(

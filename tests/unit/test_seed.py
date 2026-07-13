@@ -81,15 +81,15 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert (
         report.sprints, report.sprint_items, report.deferred_items,
         report.tickets, report.ideas, report.links, report.duplicates_skipped,
-    ) == (1, 5, 4, 4, 3, 1, 0)
+    ) == (1, 5, 4, 4, 3, 0, 0)
 
     # (2) DB row counts.
     assert _count(tmp_db, "sprints") == 1
     assert _count(tmp_db, "sprint_items") == 9
     assert _count(tmp_db, "tickets") == 4
     assert _count(tmp_db, "ideas") == 3
-    assert _count(tmp_db, "links") == 1
-    assert _count(tmp_db, "events") == 22
+    assert _count(tmp_db, "links") == 0
+    assert _count(tmp_db, "events") == 17
     default_projects = _rows_by(tmp_db, "SELECT id, name FROM projects", "id")
     assert default_projects["project_vylo"]["name"] == "Vylo"
     assert default_projects["project_tribe"]["name"] == "Tribe"
@@ -153,7 +153,7 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
         "SELECT tickets.id, tickets.alias, tickets.state, tickets.priority, "
         "tickets.chat_session_key, tickets.sprint_item_id, tickets.sprint_id, "
         "tickets.project_id, projects.name AS project, tickets.recap, tickets.ceiling, "
-        "tickets.at_cap, tickets.deadline, tickets.kickoff_note, tickets.fields "
+        "tickets.at_cap, tickets.deadline, tickets.fields "
         "FROM tickets LEFT JOIN projects ON projects.id = tickets.project_id",
         "alias",
     )
@@ -179,7 +179,7 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     # (7) fields JSON.
     onboarding = json.loads(tickets["ticket-20260611-onboarding-survey"]["fields"])
     assert onboarding["success"]["value"] is None
-    assert tickets["ticket-20260611-onboarding-survey"]["kickoff_note"] == (
+    assert onboarding["kickoff"]["value"] == (
         "Work out what the survey must learn before any UI is sketched.\n"
         "- Project: Vylo\n- Current state: nothing exists yet.\n"
         "- Next: list the three decisions the survey feeds."
@@ -189,16 +189,16 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert export["success"]["value"] == (
         "a one-page format note that a second reader can implement from."
     )
-    assert tickets["ticket-20260611-export-format"]["kickoff_note"] == "- Project: Tribe"
+    assert export["kickoff"]["value"] == "- Project: Tribe"
     release = json.loads(tickets["ticket-20260611-release-branch"]["fields"])
     assert release["success"]["value"] == "the branch exists and CI is green on it."
     assert release["approach"]["value"] == (
         "branch from main after the fixture tests pass, then tag."
     )
-    assert tickets["ticket-20260611-release-branch"]["kickoff_note"] == "- Project: Vylo"
+    assert release["kickoff"]["value"] == "- Project: Vylo"
     pipeline = json.loads(tickets["ticket-20260611-import-pipeline"]["fields"])
     assert pipeline["success"]["value"] == "the fixture import passes twice with zero duplicates."
-    assert tickets["ticket-20260611-import-pipeline"]["kickoff_note"] == (
+    assert pipeline["kickoff"]["value"] == (
         "Parse the fixture tree and land rows behind one transaction.\n"
         "- Project: Vylo\n- Boundary: importer only; no CLI wiring yet."
     )
@@ -222,10 +222,7 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert pipeline_row["project_id"] is None
     assert pipeline_row["project"] is None
     assert pipeline_row["sprint_id"] is None
-    link = tmp_db.execute("SELECT from_id, to_id, kind FROM links").fetchone()
-    assert (link["from_id"], link["to_id"], link["kind"]) == (
-        pipeline_row["id"], item_id, "belongs_to",
-    )
+    assert tmp_db.execute("SELECT 1 FROM links").fetchone() is None
     for alias in (
         "ticket-20260611-onboarding-survey",
         "ticket-20260611-export-format",
@@ -298,8 +295,8 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert _count(tmp_db, "sprint_items") == 9
     assert _count(tmp_db, "tickets") == 4
     assert _count(tmp_db, "ideas") == 3
-    assert _count(tmp_db, "links") == 1
-    assert _count(tmp_db, "events") == 22
+    assert _count(tmp_db, "links") == 0
+    assert _count(tmp_db, "events") == 17
 
 
 def test_match_item_title_ambiguity() -> None:

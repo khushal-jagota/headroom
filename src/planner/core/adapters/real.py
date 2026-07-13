@@ -65,7 +65,7 @@ class RealGatewayAdapter:
         text: str,
         mode: str,
         on_session_key: Callable[[str], None] | None = None,
-        image_path: Path | None = None,
+        image_paths: tuple[Path, ...] = (),
     ) -> Iterator[ChatStreamChunk]:
         raise self._offline()
 

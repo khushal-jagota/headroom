@@ -22,11 +22,13 @@ from planner.runtime.readiness_doorbell import LoopReadinessDoorbell
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
+    NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
     FieldName,
     TicketState,
 )
+from planner.tickets.logic import fields_codec
 
 _AGENT = {"X-Plan-Actor": "agent"}
 _CHIEF = {"X-Plan-Actor": "chief"}
@@ -79,7 +81,15 @@ def _create_direct(db_path: Path, *, title: str = "Ready") -> str:
             now=1,
             title_max_chars=TITLE_MAX_CHARS,
         )
-        return tickets_data.accept_kickoff(conn, ticket.id, actor="human", now=1).id
+        return tickets_data.accept_proposal(
+            conn,
+            ticket.id,
+            field=FieldName.kickoff,
+            actor="human",
+            now=1,
+            next_ceiling=NO_FURTHER,
+            at_cap=AtCap.propose,
+        ).id
     finally:
         conn.close()
 
@@ -93,6 +103,19 @@ def _event_kinds(db_path: Path, entity_id: str) -> list[str]:
                 "SELECT kind FROM events WHERE entity_id = ? ORDER BY id", (entity_id,)
             ).fetchall()
         ]
+    finally:
+        conn.close()
+
+
+def _link_rows(db_path: Path) -> tuple[tuple[str, str, str], ...]:
+    conn = connect(str(db_path))
+    try:
+        return tuple(
+            (str(row["from_id"]), str(row["to_id"]), str(row["kind"]))
+            for row in conn.execute(
+                "SELECT from_id, to_id, kind FROM links ORDER BY from_id, to_id, kind"
+            ).fetchall()
+        )
     finally:
         conn.close()
 
@@ -159,25 +182,25 @@ def _external_body(state: str) -> dict[str, str]:
 def test_ticket_create_and_chief_create_ring_after_success_only(tmp_path: Path) -> None:
     app, db_path, _clock, doorbell = _make_app(tmp_path)
     with TestClient(app) as client:
-        invalid = client.post("/api/tickets", json={"title": ""})
+        invalid = client.post("/api/tickets", json={"title": "", "type": "coding"})
         assert invalid.status_code == 400
         assert doorbell.calls == 0
 
-        created = client.post("/api/tickets", json={"title": "Created"})
+        created = client.post("/api/tickets", json={"title": "Created", "type": "coding"})
         assert created.status_code == 200, created.text
         assert doorbell.calls == 1
         assert "ticket_created" in _event_kinds(db_path, created.json()["id"])
 
         unauthorized = client.post(
             "/api/chief/tickets/from-external-work",
-            json={"title": "Denied", **_external_body("needs_success")},
+            json={"title": "Denied", "type": "coding", **_external_body("needs_success")},
         )
         assert unauthorized.status_code == 400
         assert doorbell.calls == 1
 
         imported = client.post(
             "/api/chief/tickets/from-external-work",
-            json={"title": "Imported", **_external_body("needs_success")},
+            json={"title": "Imported", "type": "coding", **_external_body("needs_success")},
             headers=_CHIEF,
         )
         assert imported.status_code == 200, imported.text
@@ -191,7 +214,7 @@ def test_chief_rejections_do_not_ring_or_change_canonical_records(
     with TestClient(app) as client:
         malformed_create = client.post(
             "/api/chief/tickets/from-external-work",
-            json={"title": "Malformed", "state": "needs_success"},
+            json={"title": "Malformed", "type": "coding", "state": "needs_success"},
             headers=_CHIEF,
         )
         assert malformed_create.status_code == 400
@@ -242,7 +265,7 @@ def test_chief_reconcile_rings_for_semantic_change_and_errored_normalization_onl
         tmp_path, fake_now="2099-01-01T12:00:00+00:00"
     )
     assert isinstance(clock, planner_clock.TestClock)
-    body = {"title": "Imported", **_external_body("needs_success")}
+    body = {"title": "Imported", "type": "coding", **_external_body("needs_success")}
     with TestClient(app) as client:
         created = client.post(
             "/api/chief/tickets/from-external-work", json=body, headers=_CHIEF
@@ -515,9 +538,18 @@ def test_ticket_delete_with_day_and_block_link_rings_exactly_once(tmp_path: Path
     app, db_path, _clock, doorbell = _make_app(tmp_path)
     target = _create_direct(db_path, title="Delete")
     other = _create_direct(db_path, title="Other")
+    incoming = _create_direct(db_path, title="Incoming")
     conn = connect(str(db_path))
+    item = sprints_data.create_item(
+        conn,
+        title="Blocked item",
+        project_id="project_vylo",
+        clock=RealClock(),
+    )
     days_data.add_day_ticket(conn, "day_2099-01-01", target, 1)
     core_links.add_link(conn, target, other, LinkKind.blocks, 1)
+    core_links.add_link(conn, incoming, target, LinkKind.blocks, 1)
+    core_links.add_link(conn, target, item.id, LinkKind.blocks, 1)
     conn.close()
 
     with TestClient(app) as client:
@@ -529,6 +561,7 @@ def test_ticket_delete_with_day_and_block_link_rings_exactly_once(tmp_path: Path
         assert doorbell.calls == 0
         deleted = client.delete(f"/api/tickets/{target}")
         assert deleted.status_code == 200, deleted.text
+        assert sorted(deleted.json()["linked_entity_ids"]) == sorted([incoming, item.id, other])
 
     assert doorbell.calls == 1
     conn = connect(str(db_path))
@@ -603,21 +636,13 @@ def test_day_database_failure_rolls_back_and_does_not_ring(tmp_path: Path) -> No
         conn.close()
 
 
-@pytest.mark.parametrize(
-    ("kind", "rings"),
-    [
-        (LinkKind.blocks, True),
-        (LinkKind.belongs_to, False),
-        (LinkKind.parent_child, False),
-        (LinkKind.relates, False),
-    ],
-)
-def test_link_actions_ring_only_for_blocks(
-    tmp_path: Path, kind: LinkKind, rings: bool
+@pytest.mark.parametrize("target_kind", ["ticket", "sprint_item"])
+def test_link_actions_ring_for_blocks_to_ticket_and_sprint_item_targets(
+    tmp_path: Path, target_kind: str
 ) -> None:
     app, db_path, _clock, doorbell = _make_app(tmp_path)
     first = _create_direct(db_path, title="First")
-    if kind is LinkKind.belongs_to:
+    if target_kind == "sprint_item":
         conn = connect(str(db_path))
         second = sprints_data.create_item(
             conn,
@@ -631,29 +656,29 @@ def test_link_actions_ring_only_for_blocks(
     with TestClient(app) as client:
         added = client.post(
             "/api/links",
-            json={"from_id": first, "to_id": second, "kind": kind.value},
+            json={"from_id": first, "to_id": second, "kind": "blocks"},
         )
         assert added.status_code == 200, added.text
-        assert doorbell.calls == int(rings)
+        assert doorbell.calls == 1
 
         duplicate = client.post(
             "/api/links",
-            json={"from_id": first, "to_id": second, "kind": kind.value},
+            json={"from_id": first, "to_id": second, "kind": "blocks"},
         )
         assert duplicate.status_code == 400
-        assert doorbell.calls == int(rings)
+        assert doorbell.calls == 1
 
         removed = client.delete(
-            "/api/links", params={"from_id": first, "to_id": second, "kind": kind.value}
+            "/api/links", params={"from_id": first, "to_id": second, "kind": "blocks"}
         )
         assert removed.status_code == 200, removed.text
-        assert doorbell.calls == int(rings) * 2
+        assert doorbell.calls == 2
 
         missing = client.delete(
-            "/api/links", params={"from_id": first, "to_id": second, "kind": kind.value}
+            "/api/links", params={"from_id": first, "to_id": second, "kind": "blocks"}
         )
         assert missing.status_code == 404
-        assert doorbell.calls == int(rings) * 2
+        assert doorbell.calls == 2
 
 
 def test_blocks_cycle_failure_does_not_ring(tmp_path: Path) -> None:
@@ -675,6 +700,132 @@ def test_blocks_cycle_failure_does_not_ring(tmp_path: Path) -> None:
         assert doorbell.calls == 1
 
 
+def test_agent_link_add_and_remove_are_rejected_without_writes_events_or_rings(
+    tmp_path: Path,
+) -> None:
+    app, db_path, _clock, doorbell = _make_app(tmp_path)
+    first = _create_direct(db_path, title="First")
+    second = _create_direct(db_path, title="Second")
+
+    links_before = _link_rows(db_path)
+    events_before = _event_kinds(db_path, first)
+    with TestClient(app) as client:
+        add_response = client.post(
+            "/api/links",
+            json={"from_id": first, "to_id": second, "kind": "blocks"},
+            headers=_AGENT,
+        )
+
+    assert add_response.status_code == 400
+    assert add_response.json()["error"]["code"] == "agent_forbidden"
+    assert _link_rows(db_path) == links_before
+    assert _event_kinds(db_path, first) == events_before
+    assert doorbell.calls == 0
+
+    with TestClient(app) as client:
+        direct_add = client.post(
+            "/api/links",
+            json={"from_id": first, "to_id": second, "kind": "blocks"},
+        )
+        assert direct_add.status_code == 200, direct_add.text
+    doorbell.reset()
+    links_before_remove = _link_rows(db_path)
+    events_before_remove = _event_kinds(db_path, first)
+
+    with TestClient(app) as client:
+        remove_response = client.delete(
+            "/api/links",
+            params={"from_id": first, "to_id": second, "kind": "blocks"},
+            headers=_AGENT,
+        )
+
+    assert remove_response.status_code == 400
+    assert remove_response.json()["error"]["code"] == "agent_forbidden"
+    assert _link_rows(db_path) == links_before_remove
+    assert _event_kinds(db_path, first) == events_before_remove
+    assert doorbell.calls == 0
+
+
+def test_source_state_deactivation_reports_blocked_targets_and_rings_once(
+    tmp_path: Path,
+) -> None:
+    app, db_path, _clock, doorbell = _make_app(tmp_path)
+    source = _create_direct(db_path, title="Source")
+    target = _create_direct(db_path, title="Target")
+    conn = connect(str(db_path))
+    item = sprints_data.create_item(
+        conn,
+        title="Target item",
+        project_id="project_vylo",
+        clock=RealClock(),
+    )
+    core_links.add_link(conn, source, target, LinkKind.blocks, 1)
+    core_links.add_link(conn, source, item.id, LinkKind.blocks, 1)
+    conn.close()
+    doorbell.reset()
+
+    with TestClient(app) as client:
+        dropped = client.post(f"/api/tickets/{source}/drop")
+        assert dropped.status_code == 200, dropped.text
+
+    assert doorbell.calls == 1
+    conn = connect(str(db_path))
+    try:
+        payload = conn.execute(
+            "SELECT payload FROM events WHERE entity_id = ? AND kind = 'state_changed' "
+            "ORDER BY id DESC LIMIT 1",
+            (source,),
+        ).fetchone()
+        assert payload is not None
+        assert sorted(ast.literal_eval(payload["payload"])["affected_blocked_target_ids"]) == [
+            item.id,
+            target,
+        ]
+    finally:
+        conn.close()
+
+
+def test_ticket_by_session_exposes_resolved_blocker_summary(tmp_path: Path) -> None:
+    app, db_path, _clock, _doorbell = _make_app(tmp_path)
+    blocker = _create_direct(db_path, title="Worker blocker")
+    target = _create_direct(db_path, title="Worker target")
+    conn = connect(str(db_path))
+    conn.execute("UPDATE tickets SET chat_session_key = ? WHERE id = ?", ("sess_worker", target))
+    core_links.add_link(conn, blocker, target, LinkKind.blocks, 1)
+    conn.close()
+
+    with TestClient(app) as client:
+        response = client.get("/api/tickets/by-session/sess_worker")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["id"] == target
+    assert body["blocker_summary"]["blocked"] is True
+    assert body["blocker_summary"]["blocked_by"][0]["ticket_id"] == blocker
+    assert body["blocker_summary"]["blocked_by"][0]["href"] == f"#/ticket/{blocker}"
+
+
+def test_reactivating_source_rejects_active_blocks_cycle_and_does_not_ring(
+    tmp_path: Path,
+) -> None:
+    app, db_path, _clock, doorbell = _make_app(tmp_path)
+    source = _create_direct(db_path, title="Source")
+    target = _create_direct(db_path, title="Target")
+    conn = connect(str(db_path))
+    tickets_data.set_state(conn, source, new_state=TicketState.done, actor="human", now=1)
+    core_links.add_link(conn, source, target, LinkKind.blocks, 1)
+    core_links.add_link(conn, target, source, LinkKind.blocks, 1)
+    conn.close()
+    doorbell.reset()
+
+    with TestClient(app) as client:
+        reopened = client.post(f"/api/tickets/{source}/state", json={"to": "needs_success"})
+
+    assert reopened.status_code == 400
+    assert reopened.json()["error"]["code"] == "link_cycle"
+    assert doorbell.calls == 0
+
+
 def test_link_database_constraint_failure_rolls_back_and_does_not_ring(
     tmp_path: Path,
 ) -> None:
@@ -683,7 +834,7 @@ def test_link_database_constraint_failure_rolls_back_and_does_not_ring(
     second = _create_direct(db_path, title="Second")
     third = _create_direct(db_path, title="Third")
     conn = connect(str(db_path))
-    core_links.add_link(conn, first, second, LinkKind.relates, 1)
+    core_links.add_link(conn, first, second, LinkKind.blocks, 1)
     conn.execute("CREATE UNIQUE INDEX test_links_one_from ON links(from_id)")
     links_before = tuple(
         tuple(row)
@@ -745,11 +896,11 @@ def test_successful_excluded_ticket_and_day_writes_do_not_ring(tmp_path: Path) -
     )
     conn.close()
     with TestClient(app) as client:
-        ordinary = client.patch(
-            f"/api/tickets/{ticket_id}", json={"kickoff_note": "ordinary edit"}
+        ordinary = client.put(
+            f"/api/tickets/{ticket_id}/value/kickoff", json={"body": "ordinary edit"}
         )
         assert ordinary.status_code == 200, ordinary.text
-        assert ordinary.json()["kickoff_note"] == "ordinary edit"
+        assert ordinary.json()["fields"]["kickoff"]["value"] == "ordinary edit"
 
         note = client.put(
             f"/api/tickets/{ticket_id}/notes/success", json={"user_note": "field note"}
@@ -787,14 +938,14 @@ def test_successful_excluded_ticket_and_day_writes_do_not_ring(tmp_path: Path) -
         assert day.status_code == 200, day.text
         assert day.json()["focus"] == "Focus"
 
-    assert doorbell.calls == 0
+    assert doorbell.calls == 1
     conn = connect(str(db_path))
     try:
         persisted = tickets_data.read_ticket(conn, combined_proposal_id)
     finally:
         conn.close()
-    assert persisted.fields.success.proposal is not None
-    assert persisted.fields.success.proposal.body == "combined proposal"
+    assert fields_codec.get_slot(persisted.fields, "success").proposal is not None
+    assert fields_codec.get_slot(persisted.fields, "success").proposal.body == "combined proposal"
     assert persisted.recap == "combined recap"
     assert _event_kinds(db_path, combined_proposal_id)[-3:] == [
         "proposal_filed",
@@ -878,7 +1029,7 @@ def test_best_effort_rings_after_ticket_and_day_commits(
 
     app.state.readiness_doorbell = LoopReadinessDoorbell(ticket_delivery)
     with TestClient(app) as client:
-        created = client.post("/api/tickets", json={"title": "Committed first"})
+        created = client.post("/api/tickets", json={"title": "Committed first", "type": "coding"})
     assert created.status_code == 200, created.text
 
     ticket_id = created.json()["id"]

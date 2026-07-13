@@ -13,7 +13,7 @@ from planner.core import server as server_module
 from planner.core.adapters.registry import build_adapters
 from planner.core.clock import TestClock
 from planner.core.config import load_config
-from planner.core.db import connect
+from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.minds import config as minds_config
 from planner.minds.fake import FakeGateway
@@ -341,6 +341,12 @@ def test_server_lifespan_drains_runtime_before_shutting_down_gateways(
     def conn_factory():
         return connect(config.db_path)
 
+    # Mirror the real boot path (cli/main.py creates the schema before the app
+    # starts) so the lifespan's startup integrity audit finds a tickets table.
+    schema_conn = conn_factory()
+    create_schema(schema_conn)
+    schema_conn.close()
+
     app = create_app(config, fake_clock, build_adapters(config), conn_factory)
     from fastapi.testclient import TestClient
 
@@ -409,6 +415,13 @@ def test_server_lifespan_uses_absolute_database_adjacent_hermes_home_across_cwds
 
     def conn_factory():
         return connect(config.db_path)
+
+    # Mirror the real boot path (schema created before the app starts) so the
+    # lifespan's startup integrity audit finds a tickets table.
+    Path(config.db_path).parent.mkdir(parents=True, exist_ok=True)
+    schema_conn = conn_factory()
+    create_schema(schema_conn)
+    schema_conn.close()
 
     app = create_app(config, fake_clock, build_adapters(config), conn_factory)
     from fastapi.testclient import TestClient

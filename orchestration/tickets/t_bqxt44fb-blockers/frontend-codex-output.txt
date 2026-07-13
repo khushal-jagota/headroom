@@ -1,0 +1,13 @@
+Implemented the frontend/invalidation slice and wrote the required report: [frontend-report.md](/private/tmp/panels-t_bqxt44fb/orchestration/tickets/t_bqxt44fb-blockers/frontend-report.md).
+
+Focused green evidence:
+- `npm --prefix web test -- event-mapping` passed.
+- `npm --prefix web run check` passed with 0 errors and the existing 3 `TicketRoute.svelte` warnings.
+- `npm --prefix web run build` passed and rebuilt `web/dist`.
+- `.venv/bin/python -m py_compile tests/e2e/test_blockers_frontend.py` passed.
+- `git diff --check` passed.
+- Built bundle check passed: `DIST-BUNDLE-CURRENT index-r-Ug3uQu.js`.
+
+Browser GREEN is not available in this sandbox. Chromium fails before app code runs with `MachPortRendezvousServer ... Permission denied (1100)`, and Firefox/WebKit are not installed in the Playwright cache. I recorded the exact browser attempts and failure evidence in the report instead of claiming a pass.
+
+No commit, merge, live database touch, backend shape change, or `./verify` run was performed.

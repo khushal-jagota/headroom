@@ -47,8 +47,9 @@ def _insert_ticket(
     # shortcut for setting child/blocker ticket-states (only NOT-NULL non-defaulted
     # columns are supplied; project may stay NULL under its CHECK).
     conn.execute(
-        "INSERT INTO tickets (id, title, state, sprint_item_id, ticket_status, created_at, "
-        "updated_at) VALUES (?, ?, ?, ?, ?, 0, 0)",
+        "INSERT INTO tickets (id, title, ticket_type, state, sprint_item_id, ceiling, "
+        "ticket_status, created_at, updated_at) "
+        "VALUES (?, ?, 'coding', ?, ?, 'needs_success', ?, 0, 0)",
         (ticket_id, "child", state, sprint_item_id, ticket_status),
     )
 
@@ -172,6 +173,54 @@ def test_x06_current_sprint_selection() -> None:
     assert current_sprint_id("2026-07-14", [a, d]) == "sp_a"  # inclusive end
     assert current_sprint_id("2026-07-15", [a, d]) == "sp_d"
     assert current_sprint_id("2026-06-30", [a, d]) is None
+
+
+def test_x06_sprint_item_blocked_status_uses_active_blocker_summary(tmp_db, fake_clock) -> None:
+    directly_blocked = create_item(
+        tmp_db, title="directly blocked", project_id="project_vylo", clock=fake_clock
+    )
+    _insert_ticket(tmp_db, "t_done_direct", "done")
+    _insert_ticket(tmp_db, "t_dropped_direct", "dropped")
+    core_links.add_link(tmp_db, "t_done_direct", directly_blocked.id, LinkKind.blocks, 1)
+    core_links.add_link(tmp_db, "t_dropped_direct", directly_blocked.id, LinkKind.blocks, 1)
+
+    direct_read = read_item(tmp_db, directly_blocked.id)
+
+    assert direct_read.blocking_ticket_ids == ["t_done_direct", "t_dropped_direct"]
+    assert direct_read.blockers_cleared is True
+    assert direct_read.status is ItemStatus.todo
+
+    child_blocked = create_item(
+        tmp_db, title="child cleared", project_id="project_vylo", clock=fake_clock
+    )
+    _insert_ticket(tmp_db, "t_child_cleared", "needs_success", sprint_item_id=child_blocked.id)
+    _insert_ticket(tmp_db, "t_done_child_blocker", "done")
+    core_links.add_link(tmp_db, "t_done_child_blocker", "t_child_cleared", LinkKind.blocks, 1)
+
+    assert read_item(tmp_db, child_blocked.id).status is ItemStatus.todo
+
+
+def test_x06_child_ticket_blocked_status_uses_canonical_blocker_summary(
+    tmp_db, fake_clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    item = create_item(
+        tmp_db, title="child summary item", project_id="project_vylo", clock=fake_clock
+    )
+    _insert_ticket(tmp_db, "t_child", "needs_success", sprint_item_id=item.id)
+    _insert_ticket(tmp_db, "t_child_blocker", "needs_success")
+    core_links.add_link(tmp_db, "t_child_blocker", "t_child", LinkKind.blocks, 1)
+    original_blocker_summary = core_links.blocker_summary
+    summary_calls: list[str] = []
+
+    def tracked_blocker_summary(conn, entity_id: str):
+        summary_calls.append(entity_id)
+        return original_blocker_summary(conn, entity_id)
+
+    monkeypatch.setattr(core_links, "blocker_summary", tracked_blocker_summary)
+
+    assert read_item(tmp_db, item.id).status is ItemStatus.blocked
+    assert item.id in summary_calls
+    assert "t_child" in summary_calls
 
 
 def test_x06_create_idea_writer_logs_event(tmp_db, fake_clock) -> None:

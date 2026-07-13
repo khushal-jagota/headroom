@@ -3,60 +3,269 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
-## Current work cycle (2026-07-11): stable historical chat file previews
+## Current work cycle (2026-07-13): revalidate chat preview stability on current main
 
 Current build stage:
 
-- Ticket `t_svy3xjxj` has its scoped GREEN production fix in the isolated ticket worktree. Chat
-  transcript rows now use the stable server message/turn identities, and `MarkdownBlock` skips
-  teardown when its normalized source plus rendering context are semantically unchanged. Because
-  every link preview is mounted beneath that block, this preserves the whole shared preview subtree.
-- The Ticket/Chief browser regression establishes one settled historical message containing all seven
-  resolved preview kinds: Markdown, image, video, audio, HTML, download, and external. It then proves
-  live polling/activity/output adds no loading state, remount, or managed request and preserves every
-  exact preview node. Finally it updates the same message id to a second managed Markdown target and
-  proves deliberate subtree replacement.
+- Ticket `t_svy3xjxj` implementation is being merged into committed `main` `0595b94` before owner
+  approval because its original base was 22 commits behind. The main worktree's unrelated in-progress
+  Job B files do not touch chat/preview source or e2e paths and remain untouched.
+- Integrated source preserves current multi-image chat submission and typed ticket contracts while
+  adding stable server message/turn render keys and the shared `MarkdownBlock` semantic-input guard.
+- The all-seven-kind Ticket/Chief regression is ported onto explicit `--type coding` creation. Generated
+  frontend output will be rebuilt from the integrated source rather than choosing either stale bundle.
 
 What just passed:
 
-- RED on untouched production source: both Ticket and Chief cases requested the same unchanged
-  managed Markdown URL twice before deliberate updates.
-- GREEN: the strengthened Ticket/Chief regression passed three consecutive focused runs; the shared
-  preview module passed all 10 tests; the complete e2e suite passed all 67 tests.
-- Frontend checks passed with 0 errors and the same 3 pre-existing `TicketRoute.svelte` warnings;
-  event mapping and `git diff --check` passed.
-- The first canonical `./verify` reached every gate but failed only the new regression under full-suite
-  startup load. The test had counted pre-settlement route startup fetches before installing its
-  stability observer. The test-only integration repair now waits for one connected settled preview,
-  resets that baseline, and measures only the live-update boundary named by the ticket.
-- Independent review requested changed-target preservation coverage; that coverage was added, and the
-  settled production plus generated-bundle diff returned `NO VIOLATIONS`. The later test-only
-  full-suite repair also received a final `NO VIOLATIONS` review.
-- Canonical isolated-worktree verification passed with the ticket source pinned ahead of the shared
-  editable virtualenv: Ruff; Mypy across 106 source files; 454 unit tests; compile/static, CSS,
-  Svelte, frontend build, and event-mapping gates; 67 browser/CLI e2e tests; final `VERIFY: PASS`.
-- After the owner clarified the all-preview scope, the all-seven-kind shared-subtree regression passed
-  in both Ticket and Chief contexts. Independent review found the initial audio-coverage and
-  invalid-media-fixture gaps; both were fixed, and final re-review returned `NO VIOLATIONS`.
-- Final canonical isolated-worktree verification passed again on the all-preview artifact: Ruff, Mypy,
-  454 unit tests, compile/static, CSS, Svelte, frontend build, event mapping, and all 67 e2e tests;
+- Divergence audit confirmed all production overlap is additive: current `main` changed chat image
+  submission, while this ticket changes transcript identity and shared preview-subtree teardown.
+- Merge auto-combined `ChatPanel`, `MarkdownBlock`, and the live-chat regression. Only memory files and
+  generated bundle paths conflicted; memory is reconciled from current main and the bundle is rebuilt.
+
+Current hypothesis:
+
+- The implementation remains correctly layered after the type-driven and chat-image changes: every
+  preview kind still mounts beneath `MarkdownBlock`, and current `ChatPanel` still rebuilds fresh
+  transcript wrappers during polling. Stable row identity plus semantic source/context equality remains
+  the narrow fix; no preview-kind branch or fetch cache is needed.
+
+Next step:
+
+- Rebuild the frontend, run focused integrated regressions, obtain independent diff review against
+  current main, then run one canonical `./verify` before refreshing the Implementation proposal.
+
+Blockers:
+
+- None.
+
+## Current work cycle (2026-07-13): Job B — the `new_worker` production type (verified green, ready to commit)
+
+Current build stage:
+
+- Job B = the create-a-worker worker: a production-shipped `new_worker` type whose worker designs and lands
+  ANOTHER worker. Design produced by the `worker-smith` sub-agent (sense-check, owner-driven); IMPLEMENTING now
+  on the same agent. Full decision set = D115.
+- Owner-designed bespoke lifecycle `needs_kickoff → needs_stages → needs_thinking → needs_drafting →
+  needs_closeout → done` (one thinking stage = the crux). Skill `panels-worker-new-worker` = coding abstracted +
+  owner-lightened; approved draft persisted at scratchpad `panels-worker-new-worker-SKILL.md`, copied verbatim.
+- Bundled in: (A) step-runner fix (`employee_step_runner` threads the ticket's own definition — the lone
+  straggler that would crash a live new_worker step; VERIFIED LIVE); (B) no transition hooks; (C) structural
+  invariant points at the production registry; and the GLOBAL kickoff-ceiling change.
+- The kickoff-ceiling turned out to be a DECOUPLING, not a one-liner (worker-smith surfaced; corroborated):
+  `default_ceiling` was overloaded as both the fresh-ticket start ceiling and the "first worker stage"
+  threshold (recap-writable gate + sprint in-progress). Resolved (my call — Option 1): add `needs_kickoff` to
+  `ceiling_range` so `default_ceiling` derives to it; add a `first_worker_stage` view and re-point recap +
+  sprint at it, PRESERVING their behavior. Coding's default moves `needs_success` → `needs_kickoff`.
+
+Build progress: IMPLEMENTATION COMPLETE + orchestrator-reviewed. Codex diff review clean after fixes; full
+`./verify` PASS twice (68 e2e). Ready to commit — awaiting owner go.
+
+- DONE: the definition, verbatim skill, registration (+facade export), delta-A step-runner fix, the ceiling
+  decoupling (Option 1: `ceiling_range` now leads with `needs_kickoff`; new `first_worker_stage` view;
+  recap gate + sprint in-progress + external-work seed all re-pointed at it), and all test updates.
+- Ceiling decoupling turned up a THIRD hidden `default_ceiling`-as-first-worker consumer during implementation
+  (external-work seed, `data.py` create_ticket_from_external_work) — caught by a failing test, re-pointed at
+  `first_worker_stage`. Recap-writable, sprint-in-progress, and external-work seed behavior all PRESERVED for
+  coding (they key off `first_worker_stage == needs_success`, unchanged); only the fresh-ticket start ceiling
+  moved (→ `needs_kickoff`, global).
+- Gates (worker-smith, NOT full ./verify): ruff clean whole-repo; mypy clean on `src/ tests/typing/` (119 files);
+  654 unit tests pass; 68 e2e tests pass. Nothing committed.
+- New: `src/planner/ticket_types/new_worker.py`, `skills/panels-worker-new-worker/SKILL.md`,
+  `tests/unit/test_new_worker_type.py` (10 tests: golden manifest + drive-to-done + drive-to-dropped).
+- CODEX ROUND (./verify PASSED but Codex found what it can't): fixed P1 — a SECOND coding-default straggler in
+  `runtime/readiness.py::is_runnable` (threaded the ticket's own definition into all four machine predicates;
+  blast radius was the WHOLE readiness poll, not one ticket). Ran a COMPREHENSIVE sweep of every machine/registry
+  call on a non-coding runtime path — is_runnable was the only straggler; all others already thread the
+  definition or are intentionally coding (board column seed). Added 2 readiness regression tests. Also: P2a SKILL
+  item-2 reworded off the unsupported "default implementer" (now transition-hook framing); P2b stale comments
+  fixed (`contracts.py` ManifestDict ceiling_range comment; BRIEF.md ceiling/default).
+
+Next step:
+
+- Commit (awaiting owner go): orchestrator review DONE — Codex diff review (P1 + 2 nits, all fixed), full
+  `./verify` PASS twice, scope/ceiling + board-seed spot-checked clean. After commit, the live self-routing +
+  novel-stage proof is an owner run.
+
+Blockers:
+
+- None. `main` green at `0595b94`; Job B verified green on top, ready to commit.
+
+Parallel loose thread (not Job B): docs-worker parked on its `docs/ticket-types.md` + stale-doc-audit plan,
+awaiting the owner's check/drive.
+
+## Current work cycle (2026-07-13): Phase 5 done — the type machinery is complete
+
+Current build stage:
+
+- `t_tt05` (worker realization) implemented, reviewed, and committed — SKILL-DRIVEN, no wiring (see D105).
+  The inert `WorkerProfile` is now active: the base `panels-worker` skill is split into a type-agnostic base
+  (extract-and-place, owner constraint) + per-type specialists (`panels-worker-coding` verbatim from the base;
+  a `probe-worker` placeholder); `panels worker my-ticket` returns the worker name; the base skill's one new
+  section tells the worker to `skill_view` its specialist. Coding's `specialist_skill` → `panels-worker-coding`
+  (four R14 catalogs updated). Codex plan review (6 fixes incl. two missed tests) + diff review (1 P2 fixed)
+  clean. Full `./verify`: PASS. The end-to-end machinery now works: define a type → the board renders it → a
+  worker self-routes to its specialist.
+- `t_tt04b` implemented, reviewed, and committed. The web app retired the hardcoded coding lifecycle from
+  `ui.ts` and now derives a per-type `Lifecycle` (new `web/src/lib/lifecycle.ts`) from the served manifest
+  (`GET /api/ticket-types`, fetched once via a static `"ticket-types"` resource in `manifest.svelte.ts`),
+  keyed by each ticket's `ticket_type`. Stage sections, the "approved until" leash, and the stage rail read
+  from it; coding renders byte-identically (unit test asserts the coding manifest reproduces the old
+  constants; existing e2e unchanged). Added one display-only worker/type `Pill` to the ticket facts line.
+  Board reuses t_tt04a's card fields (no manifest fetch). Codex plan + diff reviews clean (6 plan fixes + 1
+  diff fix — F6 test now exercises the real `lifecycleFor`, moved into `lifecycle.ts`). Full `./verify`: PASS.
+
+Next step (all owner's call — the machinery effort is code-complete):
+
+- **The live self-routing proof** — the one thing NOT `./verify`-gated: run a real worker against a ticket on
+  a live `panels serve` and observe it `skill_view`-load its specialist. Owner run; capture the transcript.
+- **Wrap-up:** remove the throwaway test type from production paths (production stays coding-only already) and
+  write the "how to add a worker" documentation (the effort's persistent deliverable).
+- **Job B (separate, later):** the real self-service worker-creator — a `new_worker` type worked by a
+  specialist that authors a WorkflowDefinition + profile + skill and registers it. The actual payoff; a
+  distinct build on top of the now-complete, documented machinery.
+
+Blockers:
+
+- None. 4a (`2ff4857`), de-flake (`5c2bd0c`), 4b (`a236fb5`), 5 landing now — all on green `./verify`.
+
+## Current work cycle (2026-07-12): Phase 4a — backend read-models type-driven
+
+Current build stage:
+
+- `t_tt04a` implemented, reviewed, and committed on top of `919e014` (t_tt03). The five backend
+  read-models — `copy_text`, `board_view`, `queues`/`_approval_digest`, `sprints/views.item_tickets`, and
+  the sprint in-progress rollup (`derive_sprint_item_status`) — now resolve each row's own
+  `WorkflowDefinition` via `coding_bridge` instead of assuming coding. Coding output is byte-identical;
+  `probe` projects correctly and no read-model throws on a non-coding state. Board payload SHAPE unchanged
+  (reshape is 4b). Production registry stays coding-only.
+
+What just passed:
+
+- Full unit suite (637), ruff, mypy, build, frontend gates. e2e excluding the preview file: 58/58.
+- Codex plan review (3 fixes folded in: F1 dropped-child short-circuit, F2 keep `TicketState` import,
+  F3 per-module `probe_registry` fixtures) and Codex diff review — both clean.
+- 4a exonerated of the e2e failure via a stash-baseline (the failure reproduces with 4a removed).
+
+Current hypothesis:
+
+- 4a is clean and complete. A full `./verify` is blocked ONLY by a pre-existing, load-triggered flaky
+  family in `tests/e2e/test_ticket_file_previews.py` (≥2 tests — the max-height measurement and the
+  fetch-abort deletion — race under CPU load; independent of 4a; passes in isolation / 68-68 at normal load).
+
+- The preview e2e family (`test_ticket_file_previews.py`) was de-flaked as a separate commit: steady-state
+  tests drain the since=0 catch-up flush (`settled=True`); the deletion test keeps its un-settled
+  loading/abort coverage but drains on a neutral `#/day` route so the ticket-resource rebuild (which
+  detached measured nodes / fired a phantom fetch-abort) never happens. Full `./verify`: **PASS** (68/68 e2e).
+
+Next step:
+
+- Phase 4b — frontend: render variable per-type stages from the served manifest + add the worker pill to
+  the facts line; retire the hardcoded `ui.ts` lifecycle. Brief drafted at
+  `orchestration/tickets/t_tt04b-web-manifest-consumer/BRIEF.md`.
+
+Blockers:
+
+- None. 4a committed (`2ff4857`); the de-flake landed; full `./verify` green.
+
+## Current work cycle (2026-07-11): t_bqxt44fb blockers-only closeout integration
+
+Current build stage:
+
+- Accepted blocker implementation commit `14b0d5c` is being integrated from
+  `ticket/t_bqxt44fb-blockers` into current `main` while preserving the newer Chat image and ordinary
+  Kickoff work plus the unrelated dirty nested frontend worktree.
+- Shared source merged automatically. Memory records and seed expectations are being reconciled
+  explicitly, and the generated frontend bundle will be rebuilt from the combined source.
+- The live database remains at schema 14 with one legacy `belongs_to` row and has not yet been changed.
+
+What just passed:
+
+- Implementation-branch canonical `./verify`: Ruff; Mypy across 106 source files; 466 unit tests;
+  compile/static and frontend gates; 66 browser/CLI e2e tests; final `VERIFY: PASS`.
+- Follow-up independent implementation review: `NO VIOLATIONS`.
+- Live preflight: SQLite integrity is `ok`; 69 Tickets, 18 Sprint items, and the single expected legacy
+  membership row are readable before backup and migration.
+
+Current hypothesis:
+
+- The blocker and newer main contracts are additive. A rebuilt frontend, focused merge checks, safe
+  backup/migration cutover, and one post-merge canonical verifier remain the closeout gates.
+
+Next step:
+
+- Resolve the remaining seed expectation, rebuild the frontend, run focused integration checks, commit
+  the merge, then stop the live server for backup and migration before post-merge `./verify` and readback.
+
+Blockers:
+
+- None. The running server must be stopped for the live database cutover.
+
+## Current work cycle (2026-07-11): ordinary Kickoff closeout integration
+
+Current build stage:
+
+- Ticket `t_hvnv9gyc` accepted Implementation. Verified branch
+  `ticket/t_hvnv9gyc-kickoff-normal-stage` at `e411dd1` is integrated on current `main` by merge commit
+  `304734e`, preserving the newer preview and Chat image commits plus the unrelated dirty nested worktree.
+- Source and tests merged without conflict. Memory-file overlaps were reconciled explicitly, and the
+  generated frontend bundle was rebuilt from the combined source.
+
+What just passed:
+
+- Implementation-branch canonical verification: Ruff; Mypy across 106 source files; 457 unit tests;
+  compile/static and frontend gates; 65 browser/CLI e2e tests; final `VERIFY: PASS`.
+- Independent implementation review found two concrete issues, both fixed under migration, CLI, and
+  browser regressions; final Codex review returned `NO VIOLATIONS`.
+- Post-merge canonical `./verify`: Ruff; Mypy across 106 source files; 458 unit tests; compile/static
+  and frontend gates; 67 browser/CLI e2e tests; final `VERIFY: PASS`.
+
+Current hypothesis:
+
+- Confirmed: the ordinary-stage correction is compatible with the newer preview and Chat work on
+  `main`; both verification totals increased because the combined tree includes their regressions.
+
+Next step:
+
+- Remove the clean implementation worktree and merged branch, then propose Closeout. No deploy,
+  restart, or follow-up Ticket applies.
+
+Blockers:
+
+- None.
+
+## Current work cycle (2026-07-11): full-page managed HTML previews
+
+Current build stage:
+
+- Ticket `t_zkw93h9k` accepted Implementation. Its production, test, documentation, and rebuilt
+  frontend files are integrated directly on `main` in commit `5924b83`; unrelated current changes
+  remain unstaged and untouched.
+- Embedded HTML cards remain unchanged. Their **Open preview** action now leads to a document-only
+  route whose sandboxed HTML frame fills the available page without repeated card chrome or controls.
+
+What just passed:
+
+- RED against the pre-change frontend bundle: the end-to-end popup regression found the old
+  `.file-preview-meta` card in the dedicated route instead of a document-only view.
+- GREEN: the focused popup regression passed with the exact destination, visible heading geometry,
+  empty sandbox, script isolation, no duplicate controls, and near-full-page frame dimensions.
+- Initial Codex implementation review found that the new full-page CSS also affected Markdown routes.
+  An added regression failed on their lost padding; HTML-only route scoping fixed it, and final Codex
+  review returned `NO VIOLATIONS`.
+- Canonical `./verify` passed after fixing two test-only Ruff line-length findings: Ruff; Mypy across
+  106 source files; 454 unit tests; CSS/static/Svelte/build/event gates; 65 browser/CLI e2e tests;
   final `VERIFY: PASS`.
 
 Current hypothesis:
 
-- Confirmed from the render path: polling replaces chat state and rebuilds fresh transcript wrapper
-  objects. The old `MarkdownBlock` effect treated that invalidation as a content change, destroyed
-  the managed preview, and mounted/fetched it again. Stable row keys preserve identity, while the
-  semantic guard makes equivalent prop delivery a no-op; changed live text or preview context still
-  follows the existing renderer.
-- Same-URL external file byte mutation is not a reactive Panels input: there is no managed-file
-  version/event, and adding polling or cache invalidation would contradict the approved one-fetch
-  stability behavior.
+- Confirmed: a dedicated Blob-backed iframe avoids the failing full-route `srcdoc` paint path while
+  `sandbox=""` preserves script and same-origin isolation. Scoping full-page layout to HTML keeps
+  Markdown and every other preview route unchanged.
 
 Next step:
 
-- Commit the all-preview proof follow-up and replace the awaiting Implementation proposal with corrected
-  scope, branch head, and evidence. Integration stays Closeout.
+- Propose Closeout with the integration and existing verification evidence. No merge, deploy,
+  restart, or follow-up Ticket applies.
 
 Blockers:
 
@@ -66,27 +275,61 @@ Blockers:
 
 Current build stage:
 
-- Ticket `t_5m7fmdk3` accepted Implementation. Verified commit `f80c0e7` is being merged from
-  `ticket/t_5m7fmdk3-kickoff` into current `main` while preserving concurrent preview/Chat work and
-  the unrelated dirty nested frontend worktree.
-- Source and tests merge cleanly. Memory-file overlaps are reconciled explicitly, and the generated
-  frontend bundle is rebuilt from the combined source rather than hand-merged.
+- Ticket `t_5m7fmdk3` accepted Implementation. Verified commit `f80c0e7` is integrated into current
+  `main` by merge commit `9ab2111`, preserving concurrent preview/Chat work and the unrelated dirty
+  nested frontend worktree.
+- Memory-file overlaps were reconciled explicitly, the frontend bundle was rebuilt from combined
+  source, and the clean dedicated worktree plus merged ticket branch were removed.
 
 What just passed:
 
 - Implementation-branch `./verify`: Ruff; Mypy across 106 source files; 454 unit tests; frontend
   check/build/event mapping; 63 browser/CLI e2e tests; final `VERIFY: PASS`.
 - Independent implementation review drove all concrete fixes; final Codex verdict: `NO VIOLATIONS`.
+- Canonical post-merge `./verify`: Ruff; Mypy across 106 source files; 454 unit tests; compile/static
+  and frontend gates; 65 browser/CLI e2e tests; final `VERIFY: PASS`.
 
 Current hypothesis:
 
-- The Kickoff feature and current `main` changes are additive. The canonical post-merge verifier is
-  the remaining integration gate.
+- Confirmed: the Kickoff feature and current `main` changes are compatible and fully integrated.
 
 Next step:
 
-- Finish the merge commit, restore unrelated stashed closeout records, run one canonical `./verify`,
-  then propose Closeout with the merged commit and verification evidence.
+- Propose Closeout with the merge, verification, and cleanup evidence. No deploy, restart, or
+  follow-up Ticket applies.
+
+Blockers:
+
+- None.
+
+## Current work cycle (2026-07-11): t_tmfdg79v Chat image attachment closeout
+
+Current build stage:
+
+- Verified ticket commit `7d54fd9` is integrated into `main` by merge commit `5ad4265`, on top of the
+  concurrent full-page preview commit `5924b83`.
+- The frontend bundle was rebuilt from the combined source in `9421e9e`. Merge repair `a6b0fed`
+  restored the preview ticket's full-page layout block that the CSS conflict resolution had dropped.
+- The shared composer, ordered managed references, centralized previews, and ordered native Hermes
+  attachment path are integrated. No deployment or service restart was requested.
+
+What just passed:
+
+- Implementation branch: 129 focused backend tests, 8 focused chat-image browser tests, final independent
+  review `NO VIOLATIONS`, and canonical `./verify` with 455 unit and 67 e2e tests.
+- The first post-merge verifier exposed the missing full-page preview CSS through a 304px-wide iframe.
+  Restoring the exact 30-line block made the failed browser regression pass.
+- Final post-repair `./verify`: Ruff; Mypy across 106 source files; 455 unit tests; compile/static,
+  frontend check/build/tests; 67 browser/CLI e2e tests; final `VERIFY: PASS`.
+
+Current hypothesis:
+
+- Confirmed: the chat attachment and full-page preview changes are compatible and fully integrated.
+
+Next step:
+
+- Remove the clean ticket worktree and merged branch, then propose Closeout. No deploy, restart, or
+  follow-up Ticket applies.
 
 Blockers:
 
@@ -96,7 +339,7 @@ Blockers:
 
 Current build stage:
 
-- Ticket `t_uevrd406` is in Implementation. The approved corrected plan is implemented directly in
+- Ticket `t_uevrd406` accepted Implementation and is in Closeout. The approved corrected plan is implemented directly in
   the shared `FilePreview` root: managed Markdown previews have one tokenized 32rem maximum height,
   long previews scroll vertically, and short previews retain their natural height.
 - The mixed `main` worktree already contained unrelated concurrent Chat, ticket-type planning,
@@ -113,6 +356,10 @@ What just passed:
 - Codex found one standards violation in the first pass: the 32rem limit was inline despite the
   repository token rule. The value moved to `assets/tokens.css`; the focused test passed again and the
   final Codex review returned `NO VIOLATIONS`.
+- Canonical `./verify` passed: Ruff; Mypy across 106 source files; 444 unit tests; compile/static,
+  CSS, Svelte, build, and event-mapping gates; 62 browser tests; final `VERIFY: PASS`.
+- The ticket files are integrated directly on `main` in commit `e4a607d`; no merge, deploy, restart,
+  or follow-up Ticket applies.
 
 Current hypothesis:
 
@@ -122,8 +369,7 @@ Current hypothesis:
 
 Next step:
 
-- Run canonical `./verify` once, then propose Implementation with the RED/GREEN, full-module, review,
-  and verifier evidence.
+- Propose Closeout with the integrated commit and existing verification evidence.
 
 Blockers:
 
@@ -260,8 +506,129 @@ separate responsibility. Prove genericity with a minimal synthetic fixture type 
 only, not shipped); production ships coding-only. Full 6 phases stay (my earlier "defer workers/UI" was
 wrong, reverted). `t_tt02x` = fixture; Phase 5 authors the base skill + placeholder specialist.
 
-Status: reviewed plan delivered; nothing approved, no code changed. Blocked on owner's `needs_kickoff`
-landing before any implementation ticket. Next: owner decision to proceed.
+Kickoff landed (merge `304734e`, "make kickoff a normal ticket stage") — reviewed the diff and
+accommodated PLAN.md. It came in as a real GATED first stage (`FieldName.kickoff`, gate/advance/
+field-slot + `kickoff` in the DB fields-JSON default; advances `needs_kickoff → needs_success`), so the
+universal prefix is now a `(state, field)` pair. One genuinely NEW structural fact: a second ordering
+`WORKER_STATE_ORDER` (= linear order minus `needs_kickoff`) that ceiling validation
+(`validate_ceiling`/`resolve_scope`) keys off — so each workflow now has TWO orderings (full stage order
++ ceiling range) and a per-type default ceiling (first worker stage), all registry-derived (new invariant
+9). Kickoff also dragged in new coding-specific literals to parameterize: recap guard names
+`needs_kickoff`+`needs_success` (admission.py:74), direct-jump guard names `needs_kickoff`
+(resolution.py:275), `SETTLED_PREFIX_INDEX` coding-state→index map (external_work.py:29); the `is`→`==`
+set grew. `_migrate_ticket_kickoff_columns` (db.py:272) is now the closest Phase-2 migration template.
+Plan scope/phases UNCHANGED — the architecture held; kickoff validated it. P0 is now SATISFIED, `t_tt00`
+unblocked.
+
+Status: plan accommodated to landed kickoff; nothing approved, no impl code changed. Only remaining
+pre-`t_tt00` step: one clean baseline `./verify` on current tree. Next: owner decision to proceed.
+
+**BUILD STARTED (2026-07-11).** Owner chose cadence = **run autonomously to the go/no-go gate** (Phases
+0–3, report at the falsifiable `probe`-through-real-gates test). Baseline `./verify`: green modulo ONE
+flaky e2e (`test_editable_markdown_preview_focus_noop…`, a Playwright popup-event 30s timeout under
+CPU load from the live `panels serve` + full suite) — reproduces green 4/4 in isolation; all
+deterministic gates pass. Treated as effectively green.
+
+t_tt00 (registry contracts) pipeline in flight: BRIEF written
+(`orchestration/tickets/t_tt00-registry-contracts/BRIEF.md`); Opus planner produced `plan.md` — new
+`src/planner/ticket_types/` sibling domain (contracts/logic/registry/coding), no-cycle proven (only
+imports leaf `tickets/contracts` + `core/contracts`), ceiling range + default ceiling DERIVED from stage
+order, parity golden tests assert equality vs the LIVE constants, additive-only (ast check that no
+production module imports the registry). Confirmed the planner's 4 inert open decisions (coding profile =
+panels-worker/None/None/"default"; KNOWN_TOOLSET_PROFILES={"default"}; stage labels; reuse
+ErrorCode.validation).
+
+**t_tt00 DONE — verified green + committed to main.** Full pipeline ran: plan → codex plan review
+(DONE_WITH_CONCERNS, 6 findings folded via planner) → Opus implement → codex diff review
+(DONE_WITH_CONCERNS, 5 findings: `dropped` misclassified by gating_field/advance_target [fidelity];
+`Registry.__init__` bypassed validation [invariant]; strict-bool R6/prefix-flag; unsound relative-import
+AST guard; two under-asserted negatives — all fixed) → my spot-check of the two high-sev fixes → full
+`./verify` PASS (ruff/mypy/unit 528/build/frontend/e2e 68 all green, no flake). New package
+`src/planner/ticket_types/` (contracts/logic{validation R0–R20,views,manifest}/registry/coding), 58
+tests, additive-only (0 existing files touched; AST allowlist proves nothing imports it yet). Commit
+cadence (D102): owner delegated → commit each green ticket straight to main.
+
+**t_tt01 DONE — verified green + committed.** Correctness-core parameterization. Pipeline: plan → 2 planner
+self-Codex rounds + my independent plan review (5 rulings: optional-`definition=` param seam not internal
+resolution; honest Tier-1 string-native / Tier-2 coding-bound split; corrected note-path + tests; DROP
+reject-unknown-JSON-key [confirmed live-data risk — dogfood/ui-qa DBs carry a legacy `result` key]; full
+is-sweep) → revise → implement → my independent diff review (coding parity GENUINE; 4 findings: loud
+foreign-field boundary `require_coding_field`; codec decodes declared values; vacuous is-tests made to
+bite; assert_type cases mypy-enforced via `tests/typing/`) → fix → full `./verify` PASS (547 unit, e2e 68,
+mypy src/+tests/typing/). New `tickets/logic/coding_bridge.py` (the one seam, sole `ticket_types`
+importer); engine now definition-driven + string-id-native (Tier-1) with a StrEnum re-wrap preserving the
+3 `is TicketState.done` identities; Tier-2 scope/field-storage stays coding-bound and fails LOUD on a
+foreign def. Only existing test touched: F6 (import-guard narrowed to `{coding_bridge}`).
+
+Owner set /goal "run this end to end now" — driving t_tt02 → t_tt02b → t_tt02x → t_tt03 → gate
+autonomously.
+
+**t_tt02 DONE — verified green + committed.** DB `ticket_type` column + migration. Pipeline: plan → my
+independent plan review (8 findings incl. 5 P1 blocks; my R4 ruling REVERSED by the review — drop the
+ceiling DDL default) → revise → implement → my independent diff review (migration mechanics + lifecycle-
+guard fix sound; 3 findings: F1 High = write lock now spans snapshot→copy→swap [live-data loss window
+closed]; F2 audit names id on JSONDecodeError; F3 fixtures keep needs_success) → fix → `./verify` PASS
+(572 unit, e2e 68). New `_migrate_ticket_type_column` (mirrors kickoff, complete-shape probe, lock-held
+snapshot); shared `tickets/logic/ticket_type_guard.py` door (`resolve_and_validate`, strict-on-missing/
+lenient-on-extra) wired into load/persist/create/external-work/seed/note + startup audit; per-type default
+ceiling; `coding_bridge.set_registry_for_test`. Coding-only; `TicketFields`/`ScopePair` untouched.
+`resolution.decide_*`/`plan_handoff_status`/external-work stay coding-default → **invariant: no 2nd
+production type until t_tt02b threads them** (see D103). Live `planning.db` backed up first
+(`data/backups/planning-pre-tickettype-t_tt02-*`). NOTE: shipped kickoff migration has the same latent
+pre-lock snapshot window — flagged to owner, left unedited.
+
+**t_tt02b DONE — verified green + committed.** Generic field storage + domain-contract widening. Pipeline:
+plan → my independent plan review (P0 BLOCKER caught pre-code: keeping `Ticket.state`/`ceiling` enum-typed
+fails probe at CREATION, `TicketState("needs_alpha")` ValueError; + external-work→t_tt03; + full drive-path
+threading) → revise → implement → my independent diff review (core sound; 6 findings incl. 2 P1: field
+seams type-dishonest [widened to `FieldName|str` + mypy fixture]; `resolve_scope` merged two error branches
+[coding-parity regression verify MISSED — restored + pinned]; T5 didn't hit auto-accept [now does + exact
+events]; `TicketFields.slots` publicly reassignable [MappingProxyType]; +2) → fix → `./verify` PASS (587
+unit, e2e 68). `TicketFields` now a frozen `MappingProxyType`-backed slot map keyed by field id (`.empty()`
+ctor); `Ticket.state`/`ceiling`/`Decision.new_*`/`ScopePair.next_ceiling` → `str`; ~30 write-path +
+read-path `.value`→`str()` (completeness-grep gate = zero ticket-carried domain `.value`); coding
+`fields_to_json` AND stored bytes byte-identical (T1 + F6 goldens); the full propose/accept/scope/drop
+drive path threaded per-row; external-work coding-only-with-explicit-rejection (genericization → t_tt03,
+per D103). The probe DATA-layer drive (T5) proves a non-enum-state type flows create→auto-accept→scope→done.
+
+**t_tt02x DONE — verified green + committed.** Test-only: canonical `tests/support/probe.py` fixture
+(`PROBE_DEFINITION` + install/uninstall helpers) + `tests/unit/test_probe_type.py` (exact manifest, gate
+map, field order, `default_ceiling=="needs_alpha"`, negative codes, compact drive-to-done, production
+coding-only) + refactored t_tt02b's inline probe to the shared fixture (no assertion changed). Only
+non-test change: `pyproject.toml` `pythonpath=["."]` (for `tests.support` imports). Pipeline collapsed
+(implement + self-review + verify) — proportionate for a test-only ticket, no production behavior change.
+602 unit, `./verify` PASS.
+
+**t_tt03 DONE — verified green + committed. GO/NO-GO GATE PASSES.** Type-driven CLI/API ingress + external-
+work genericization + manifest endpoint (`GET /api/ticket-types`). Pipeline: plan → my derivation
+verification (gate-based prefix reproduces coding EXACTLY, no off-by-one) + rulings (single ticket; ?state=
+requires type for non-reserved; probe via in-process TestClient; not-found>invalid-field) → plan review
+killed (background reap) → implement (engine already per-type, so ingress parse-swap: no
+`parse_enum(TicketState/FieldName)`/`TicketState(...)`/`FieldName(...)` coercion left in api.py/cli;
+external-work `_gate_field_order`+`_prefix_count`=state_index, golden coding map + misaligned-type +
+declining-type tests; per-type marshalling; type-seeded external create) → implementer's internal Codex +
+MY independent verification (read the gate test — rigorous; grepped: NO consumer depends on the coding
+error MESSAGE strings, only codes) → `./verify` PASS (624 unit, e2e 68).
+
+**The go/no-go gate (`tests/unit/test_go_no_go_gate.py`) passes:** a `probe` ticket is created and driven
+`needs_kickoff → needs_alpha → needs_beta → done` through the REAL FastAPI TestClient (routes → marshallers
+→ per-type parse → writers → events), asserting exact state/ceiling/at_cap/parked-field/settled-value/
+cleared-proposal/EXACT-event-order at each step, NO worker session (`chat_session_key IS NULL`, 0
+`chat_turns`), exact invalid field/state/ceiling + missing/unknown-type codes, and external-work
+create+reconcile for coding+probe incl. probe prefix reconciliation + the coding golden. A missed ingress
+point would fail here (probe's states/fields aren't enum members).
+
+**Conscious relaxation (documented, D-note):** coding ingress ERROR MESSAGE strings became per-type-aware
+("unknown ticket field"+type_id, "state outside the linear order") — codes/flow/data/events byte-identical,
+no test/frontend asserted the old strings. This is the per-type-envelope feature, not a behavior break.
+
+**MILESTONE REACHED — the owner's "run to the go/no-go gate" scope is complete.** Backend ticket-types
+machinery is N-ary end-to-end and proven: 6 tickets committed (t_tt00 `824aa58`, t_tt01 `eeef51d`, t_tt02
+`ff8dbc9`, t_tt02b `85db3e3`, t_tt02x `0b6a0a4`, t_tt03 next). Production ships coding-only; probe is
+test-only. **Beyond the gate (NEXT, separate — Phases 4-5):** t_tt04 read models + mixed-type board/scope
+UI (web consumes the manifest); t_tt05 worker realization (per-type specialist skills + toolset routing);
+authoring the first real second workflow (e.g. exploration). Also flagged to owner: the shipped kickoff
+migration's latent pre-lock snapshot window (harden as a follow-up).
 
 ## Current work cycle (2026-07-10): Panels sprint-planning workflow
 

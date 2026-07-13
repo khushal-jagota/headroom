@@ -1,10 +1,12 @@
-"""Ticket domain shapes: the state machine order, the five fields, the scope pair,
+"""Ticket domain shapes: the state machine order, the ticket fields, the scope pair,
 and the ticket row."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Final, Literal, NotRequired, TypedDict
 
 from planner.core.contracts import Priority
@@ -40,7 +42,8 @@ WORKER_STATE_ORDER: Final[tuple[TicketState, ...]] = (
 )
 
 
-class FieldName(StrEnum):          # the exactly-five field keys
+class FieldName(StrEnum):          # ordinary gated field keys
+    kickoff = "kickoff"
     success = "success"
     approach = "approach"
     plan = "plan"
@@ -70,6 +73,7 @@ class TicketStatus(StrEnum):       # durable state-of-control, written by data-l
 
 # Gating field per non-terminal linear state: each state gates its same-named field.
 GATING_FIELD: Final[dict[TicketState, FieldName]] = {
+    TicketState.needs_kickoff: FieldName.kickoff,
     TicketState.needs_success: FieldName.success,
     TicketState.needs_approach: FieldName.approach,
     TicketState.needs_plan: FieldName.plan,
@@ -80,6 +84,7 @@ GATING_FIELD: Final[dict[TicketState, FieldName]] = {
 # Accepted proposal advances one linear step. needs_closeout advances to done through
 # the same ordinary machinery; there is no state that skips a gate.
 ADVANCE_TARGET: Final[dict[TicketState, TicketState]] = {
+    TicketState.needs_kickoff: TicketState.needs_success,
     TicketState.needs_success: TicketState.needs_approach,
     TicketState.needs_approach: TicketState.needs_plan,
     TicketState.needs_plan: TicketState.needs_implementation,
@@ -95,38 +100,49 @@ class Proposal:                    # §4.2 proposal slot
     created_at: int
 
 
-@dataclass(frozen=True)
-class KickoffProposal:
-    title: str
-    kickoff_note: str
-    proposed_by: str
-    created_at: int
-
-
 @dataclass
-class FieldSlot:                   # one of the five field objects
+class FieldSlot:                   # one ordinary field object
     value: str | None = None       # canonical; resolution engine is the only writer
     proposal: Proposal | None = None
     user_note: str | None = None   # preserved user guidance for this field / step
 
 
-@dataclass
-class TicketFields:                # tickets.fields JSON column, exactly five keys
-    success: FieldSlot = field(default_factory=FieldSlot)
-    approach: FieldSlot = field(default_factory=FieldSlot)
-    plan: FieldSlot = field(default_factory=FieldSlot)
-    implementation: FieldSlot = field(default_factory=FieldSlot)
-    closeout: FieldSlot = field(default_factory=FieldSlot)
+@dataclass(frozen=True)
+class TicketFields:                # tickets.fields JSON column, generic over the type's fields
+    """An ordered, READ-ONLY map field_id -> FieldSlot. The key order is the definition's
+    declared field order; the codec relies on it for a stable, byte-identical JSON key
+    order.
+
+    ``slots`` is exposed as a ``MappingProxyType`` so the only way to change a slot is
+    through ``fields_codec.with_slot`` (copy-on-write) → the resolution engine — the same
+    value-object boundary the old fixed struct enforced. The constructor accepts any
+    ``Mapping`` and wraps a private copy, so a caller cannot retain a mutable handle to
+    the backing dict. (FieldSlot's own field-level mutability is pre-existing and left
+    as-is; the boundary this enforces is against reassigning or inserting a slot.)"""
+
+    slots: Mapping[str, FieldSlot] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Wrap a fresh private copy in a read-only proxy: reassigning or inserting a slot
+        # on `.slots` raises, and the caller's dict cannot alias the stored mapping.
+        object.__setattr__(self, "slots", MappingProxyType(dict(self.slots)))
+
+    @classmethod
+    def empty(cls, field_ids: tuple[str, ...]) -> TicketFields:
+        """A fresh set of empty slots, one per declared field id, in declared order."""
+        return cls({fid: FieldSlot() for fid in field_ids})
 
 
 # --- the scope pair (§4.4.7) ---
 NO_FURTHER: Final = "none"                     # wire sentinel: ceiling = the newly entered state
-NextCeiling = TicketState | Literal["none"]    # valid TicketState values are STATE_ORDER members
+# A ceiling id is any member of the type's ceiling_range (a str); "none" is the wire
+# sentinel meaning "the newly entered state". For coding these ids are TicketState values.
+NextCeiling = str | Literal["none"]            # was: TicketState | Literal["none"]
 
 
 @dataclass(frozen=True)
 class ScopePair:                   # required on every direct accept/edit-accept
-    next_ceiling: NextCeiling
+    next_ceiling: str              # a resolved ceiling id (resolve_scope concretizes "none")
     at_cap: AtCap
 
 
@@ -137,6 +153,7 @@ class ScopePair:                   # required on every direct accept/edit-accept
 
 
 class CreateTicketBody(TypedDict, total=False):   # POST /tickets
+    ticket_type: str               # required registry type id (no ingress default)
     title: str                     # default ""
     kickoff_note: str              # default ""; proposed intake context / user guidance
     priority: str | None           # Priority value; default P3
@@ -149,7 +166,6 @@ class CreateTicketBody(TypedDict, total=False):   # POST /tickets
 
 class TicketEdit(TypedDict, total=False):         # PATCH /tickets/{id}, parsed values
     title: str
-    kickoff_note: str
     priority: Priority
     deadline: str | None
     implementer: Implementer | None
@@ -193,11 +209,6 @@ class AcceptBody(TypedDict, total=False):         # POST /tickets/{id}/accept/{f
     at_cap: str | None             # AtCap value; scope pair (§4.4.7)
 
 
-class AcceptKickoffBody(TypedDict, total=False):
-    edited_title: str | None
-    edited_kickoff_note: str | None
-
-
 class NoteBody(TypedDict, total=False):           # PUT /tickets/{id}/notes/{field}
     note: str | None               # legacy key; null clears the user note
     user_note: str | None          # preferred key; null clears the user note
@@ -234,7 +245,7 @@ class LinkBody(TypedDict, total=False):           # POST /links (ticket-anchored
 class Ticket:                      # §3.3 — column names match exactly
     id: str
     title: str                     # <= TITLE_MAX_CHARS (200), every write path
-    state: TicketState
+    state: str                     # linear stage id; a TicketState for coding, a bare str otherwise
     priority: Priority             # default P3
     deadline: str | None           # ISO date
     project_id: str | None         # NULL when parented (derived)
@@ -242,9 +253,7 @@ class Ticket:                      # §3.3 — column names match exactly
     sprint_item_id: str | None
     sprint_id: str | None          # writable only when sprint_item_id IS NULL
     recap: str                     # writable only past needs_success
-    kickoff_note: str              # settled intake context / user guidance
-    kickoff_proposal: KickoffProposal | None  # pending ticket-level kickoff proposal
-    ceiling: TicketState           # default needs_success (R2); restricted to WORKER_STATE_ORDER
+    ceiling: str                   # ceiling id; a member of the type's ceiling_range
     at_cap: AtCap                  # default propose (R2)
     ticket_status: TicketStatus    # durable state-of-control; transition functions write it
     implementer: Implementer | None  # human-overridable execution route
@@ -253,6 +262,7 @@ class Ticket:                      # §3.3 — column names match exactly
     fields: TicketFields
     created_at: int
     updated_at: int
+    ticket_type: str = "coding"    # registry type id resolved on load; trailing default
 
 
 @dataclass(frozen=True)

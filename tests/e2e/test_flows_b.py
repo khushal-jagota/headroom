@@ -269,7 +269,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     # means the implementation proposal PARKS pending; approving it via Review defaults
     # the onward scope to the next stage (needs_closeout), where closeout PARKS pending
     # in turn until its own Review approval reaches done.
-    mid = cli(server, "ticket", "create", "--title", E30_TITLE)["id"]
+    mid = cli(server, "ticket", "create", "--type", "coding", "--title", E30_TITLE)["id"]
     _scope_and_advance(
         server,
         api,
@@ -354,7 +354,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     rpage2.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
     assert api.get(server, f"/api/tickets/{mid}")["state"] == "done"
 
-    # Ticket page flips to done, rendering exactly the five ordered sections.
+    # Ticket page flips to done, rendering exactly the six ordered stages.
     page.wait_for_function(
         "() => { const s = document.querySelector('section[data-screen=\"ticket\"]');"
         " return !!s && s.getAttribute('data-state') === 'done'; }",
@@ -363,13 +363,18 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     fields_order = page.eval_on_selector_all(
         ".fields [data-field]", "els => els.map(e => e.getAttribute('data-field'))"
     )
-    assert fields_order == ["success", "approach", "plan", "implementation", "closeout"], (
-        fields_order
-    )
+    assert fields_order == [
+        "kickoff",
+        "success",
+        "approach",
+        "plan",
+        "implementation",
+        "closeout",
+    ], fields_order
 
 
 def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api):
-    mid = cli(server, "ticket", "create", "--title", E31_TITLE)["id"]
+    mid = cli(server, "ticket", "create", "--type", "coding", "--title", E31_TITLE)["id"]
     _scope_and_advance(
         server,
         api,
@@ -473,7 +478,17 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
         "--sprint",
         sid,
     )["id"]
-    ltid = cli(server, "ticket", "create", "--title", E32_LOOSE_TITLE, "--sprint", sid)["id"]
+    ltid = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        E32_LOOSE_TITLE,
+        "--sprint",
+        sid,
+    )["id"]
 
     # Status groups were replaced by project groups; the item's status now lives on
     # the row itself as data-item-status. Assert the item is present exactly once and
@@ -494,7 +509,7 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
     child = cli(
         server,
         "ticket",
-        "create",
+        "create", "--type", "coding",
         "--title",
         f"{E32_ITEM_TITLE} child",
         "--sprint-item",

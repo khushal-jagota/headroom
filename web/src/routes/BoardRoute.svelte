@@ -3,7 +3,7 @@
   import { fetchJson } from "../lib/api";
   import { resource } from "../lib/resources";
   import type { BoardResponse, GatewayStatus } from "../lib/types";
-  import { gatingField, ticketStageVisualState, ticketStatusLabel } from "../lib/ui";
+  import { ticketStatusLabel } from "../lib/ui";
   import type { FieldStageVisualState } from "../lib/ui";
   import Button from "../components/Button.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
@@ -58,15 +58,6 @@
     window.location.hash = "#/workspace";
   }
 
-  function cardStageState(card: Record<string, any>, fieldName: string): FieldStageVisualState {
-    return ticketStageVisualState({
-      ticketState: card.state,
-      ticketStatus: card.ticket_status,
-      fieldName,
-      fieldHasProposal: Boolean(card.has_pending_proposal)
-    });
-  }
-
   function stageMarker(card: Record<string, any>, stageState: FieldStageVisualState): string | null {
     if (stageState === "current-running") return "agent-running-step";
     if (stageState === "errored") return "errored";
@@ -79,13 +70,25 @@
     return null;
   }
 
+  // The board rail marks only the CURRENT stage, driven from the fields t_tt04a now
+  // puts on each card (gating_field, is_done, ticket_status, has_pending_proposal) —
+  // no manifest fetch on the board. The current stage is the card's own gating field
+  // (null for a done/dropped card → the "closeout" cosmetic fallback the e2e pins).
   function currentStageField(card: Record<string, any>): string {
-    if (card.state === "done") return "closeout";
-    return gatingField(card.state) || "closeout";
+    return card.gating_field || "closeout";
   }
 
+  // The current stage's visual state: for the current gating field, ticketStageVisualState
+  // reduces to "completed" when done, else the status/proposal classification — the fieldSlot
+  // is never "passed" at its own gating state, so no manifest lookup is needed here.
   function currentStageState(card: Record<string, any>): FieldStageVisualState {
-    return cardStageState(card, currentStageField(card));
+    if (card.is_done) return "completed";
+    if (card.ticket_status === "agent_running_step") return "current-running";
+    if (card.ticket_status === "errored") return "errored";
+    if (card.has_pending_proposal || card.ticket_status === "awaiting_approval") {
+      return "current-awaiting-approval";
+    }
+    return "current-waiting";
   }
 
   function activitySortValue(card: Record<string, any>): number {

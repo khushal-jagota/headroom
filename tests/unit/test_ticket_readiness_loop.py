@@ -36,6 +36,7 @@ from planner.runtime.readiness_doorbell import LoopReadinessDoorbell, NoOpReadin
 from planner.runtime.ticket_readiness_loop import TicketReadinessLoop
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, FieldName, Ticket, TicketState, TicketStatus
+from planner.tickets.logic import fields_codec
 
 HOME = "/tmp/planner-home"
 HERMES_PY = sys.executable
@@ -70,7 +71,15 @@ def _new_ticket(
         ticket = tickets_data.create_ticket(
             conn, title="T", actor="human", now=0, title_max_chars=200
         )
-        ticket = tickets_data.accept_kickoff(conn, ticket.id, actor="human", now=0)
+        ticket = tickets_data.accept_proposal(
+            conn,
+            ticket.id,
+            field=FieldName.kickoff,
+            actor="human",
+            now=0,
+            next_ceiling="none",
+            at_cap=AtCap.propose,
+        )
         if ceiling is not None or at_cap is not AtCap.propose:
             tickets_data.change_scope(
                 conn,
@@ -314,10 +323,58 @@ def test_is_runnable_kickoff_uses_generic_parked_proposal_predicate(
     conn = connect(db)
     try:
         ticket = tickets_data.read_ticket(conn, tid)
-        assert ticket.state is TicketState.needs_kickoff
-        assert ticket.kickoff_proposal is not None
+        assert ticket.state == TicketState.needs_kickoff
+        assert fields_codec.get_slot(ticket.fields, "kickoff").proposal is not None
         assert readiness.is_runnable(conn, ticket) is False
         assert tickets_data.read_ticket(conn, tid).ticket_status is TicketStatus.awaiting_approval
+    finally:
+        conn.close()
+
+
+def test_is_runnable_new_worker_novel_stage_does_not_raise(tmp_path: Path) -> None:
+    # Regression (Codex P1): is_runnable resolves the ticket's OWN definition, so a
+    # new_worker ticket at the NOVEL needs_stages stage is classified against new_worker's
+    # stages and returns a bool WITHOUT raising "state outside the linear order" (which it
+    # would if the machine predicates defaulted to coding). A raise here aborts the whole
+    # readiness poll (ticket_readiness_loop.poll_once iterates candidates with no per-row
+    # guard), so this predicate must never raise for a foreign-type row.
+    db = _db(tmp_path)
+    conn = connect(db)
+    try:
+        ticket = tickets_data.create_ticket(
+            conn, title="Design a worker", actor="human", now=0, title_max_chars=200,
+            ticket_type="new_worker",
+        )
+        # Accept kickoff, expanding the ceiling so the ticket lands at needs_stages with
+        # room to propose (runnable). Novel stage, non-coding type.
+        ticket = tickets_data.accept_proposal(
+            conn, ticket.id, field=FieldName.kickoff, actor="human", now=0,
+            next_ceiling="needs_stages", at_cap=AtCap.propose,
+        )
+        assert ticket.state == "needs_stages"
+        assert readiness.is_runnable(conn, tickets_data.read_ticket(conn, ticket.id)) is True
+    finally:
+        conn.close()
+
+
+def test_is_runnable_new_worker_at_ceiling_stop_is_false(tmp_path: Path) -> None:
+    # The scope predicate also resolves new_worker's definition: at the needs_stages
+    # ceiling with at_cap=stop the ticket is NOT runnable (mirrors the coding case), again
+    # without raising on the novel stage.
+    db = _db(tmp_path)
+    conn = connect(db)
+    try:
+        ticket = tickets_data.create_ticket(
+            conn, title="Design a worker", actor="human", now=0, title_max_chars=200,
+            ticket_type="new_worker",
+        )
+        ticket = tickets_data.accept_proposal(
+            conn, ticket.id, field=FieldName.kickoff, actor="human", now=0,
+            next_ceiling="none", at_cap=AtCap.stop,
+        )
+        assert ticket.state == "needs_stages"
+        assert ticket.ceiling == "needs_stages"
+        assert readiness.is_runnable(conn, tickets_data.read_ticket(conn, ticket.id)) is False
     finally:
         conn.close()
 
@@ -365,7 +422,7 @@ def test_is_runnable_below_ceiling_after_auto_accept_is_true(tmp_path: Path) -> 
     conn = connect(db)
     try:
         ticket = tickets_data.read_ticket(conn, tid)
-        assert ticket.state is TicketState.needs_approach
+        assert ticket.state == TicketState.needs_approach
         assert readiness.is_runnable(conn, ticket) is True  # next step (approach) is ready
     finally:
         conn.close()
@@ -531,14 +588,19 @@ def test_settlement_doorbell_drives_the_auto_advance_chain(tmp_path: Path) -> No
     loop_box.append(loop)
     loop.start(30)  # the settlement ring, not the timer, advances the chain
     try:
-        assert _wait_until(lambda: _read(db, tid).fields.approach.proposal is not None, 10.0)
+        assert _wait_until(
+            lambda: fields_codec.get_slot(_read(db, tid).fields, "approach").proposal is not None,
+            10.0,
+        )
     finally:
         loop.stop()
 
     ticket = _read(db, tid)
-    assert ticket.state is TicketState.needs_approach       # step 0 auto-accepted + advanced
-    assert ticket.fields.success.value == "s"                # step 0 value settled
-    assert ticket.fields.approach.proposal is not None        # step 1 parked at the ceiling
+    assert ticket.state == TicketState.needs_approach       # step 0 auto-accepted + advanced
+    assert fields_codec.get_slot(ticket.fields, "success").value == "s"  # step 0 value settled
+    assert (
+        fields_codec.get_slot(ticket.fields, "approach").proposal is not None
+    )  # step 1 parked at the ceiling
     assert ticket.ticket_status == TicketStatus.awaiting_approval
     assert fake.sent_methods().count("session.create") == 1
     assert fake.sent_methods().count("session.resume") == 1
@@ -637,7 +699,7 @@ def test_poll_sets_off_today_ticket_after_approval_advance(tmp_path: Path) -> No
     _add_to_day(db, tid)
     _file_proposal(db, tid, "success", "s")               # auto-accepts below ceiling
     _set_key(db, tid, STORED_KEY)
-    assert _read(db, tid).state is TicketState.needs_approach
+    assert _read(db, tid).state == TicketState.needs_approach
 
     fake = _ProposingFake(
         _resume_script(STORED_KEY, _complete_ev()),

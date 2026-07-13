@@ -336,6 +336,36 @@ textarea {
   max-width: 72rem;
 }
 
+.shell:has(.file-preview-route--document) {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.shell:has(.file-preview-route--document) .shell-content {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+}
+
+.shell:has(.file-preview-route--document) .screen {
+  height: 100%;
+  min-height: 0;
+}
+
+.file-preview-route--document {
+  height: 100%;
+  min-height: 0;
+}
+
+.file-preview-document-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--surface-base);
+  border: 0;
+}
+
 /* --- Field editor -------------------------------------------------------- */
 
 .field-editor {
@@ -1003,6 +1033,12 @@ button.list-row:hover .list-row-title {
   padding: var(--space-2) var(--space-2) var(--space-1) var(--space-3);
   transition: border-color var(--motion-base) var(--motion-ease);
 }
+.chat-box.drag {
+  border-color: var(--accent-bright);
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.35),
+    0 0 0 2px color-mix(in srgb, var(--accent-bright) 18%, transparent);
+}
 
 /* the "/" command menu = a raised popover above the composer; a read of the
  * gateway catalog. No dividers, no amber — grouped rows fade into the surface. */
@@ -1058,6 +1094,67 @@ button.list-row:hover .list-row-title {
   text-overflow: ellipsis;
 }
 .chat-box:focus-within { border-color: color-mix(in srgb, var(--accent-bright) 40%, transparent); }
+.chat-image-previews {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  padding: 2px 0 var(--space-2);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-color) transparent;
+}
+.chat-image-preview {
+  position: relative;
+  flex: 0 0 62px;
+  width: 62px;
+  height: 52px;
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--surface-overlay);
+}
+.chat-image-preview img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  border-radius: calc(var(--radius-md) - 1px);
+}
+.chat-image-remove {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: 50%;
+  background: var(--surface-raised);
+  color: var(--text-strong);
+  cursor: pointer;
+  font-size: var(--type-md);
+  line-height: 1;
+}
+.chat-image-remove:hover {
+  border-color: var(--accent-error);
+  background: color-mix(in srgb, var(--accent-error) 18%, var(--surface-raised));
+}
+.chat-image-remove:disabled { opacity: 0.5; cursor: default; }
+.chat-drop-label {
+  position: absolute;
+  inset: var(--space-2);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border: var(--border-hairline) dashed color-mix(in srgb, var(--accent-bright) 72%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-sunken) 88%, transparent);
+  color: var(--text-strong);
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 15;
+}
+.chat-box.drag .chat-drop-label { display: flex; }
 .chat-ta {
   width: 100%;
   background: none;
@@ -1738,6 +1835,7 @@ select {
 
 .ticket-field,
 .ticket-recap,
+.ticket-blockers,
 .ticket-user-note {
   display: flex;
   flex-direction: column;
@@ -2492,6 +2590,58 @@ select {
   line-height: 1.6;
 }
 
+.ticket-blockers {
+  padding: var(--space-4) 0;
+  border-top: var(--border-hairline) solid var(--border-color);
+  border-bottom: var(--border-hairline) solid var(--border-color);
+}
+
+.ticket-blocker-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.ticket-blocker-heading {
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-faintest);
+}
+
+.ticket-blocker-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.ticket-blocker-title {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-default);
+  overflow-wrap: anywhere;
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+.ticket-blocker-row:hover .ticket-blocker-title {
+  color: var(--text-strong);
+}
+
+.ticket-blocker-state {
+  font-size: var(--type-xs);
+  color: var(--accent-bright);
+  white-space: nowrap;
+}
+
+.ticket-blocker-row--cleared .ticket-blocker-title,
+.ticket-blocker-row--cleared .ticket-blocker-state {
+  color: var(--text-faintest);
+}
+
 /* The blank spacer where the user-note row would carry a stage mark — it keeps the
  * row's alignment without drawing a mark. */
 .stage-mark--blank {
@@ -2794,6 +2944,11 @@ select {
 
 [data-screen="sprint"] .disclosure--item > .disclosure-summary:hover .it {
   color: var(--text-strong);
+}
+
+[data-screen="sprint"] .disclosure--item[data-selected="true"] > .disclosure-summary {
+  outline: var(--border-hairline) solid var(--accent-bright);
+  outline-offset: var(--space-1);
 }
 
 /* status word on the item row — faint by default, amber when in progress */
@@ -3282,5 +3437,3 @@ select {
 [data-screen="ideas"] [data-commit].button:hover:not(:disabled) {
   filter: brightness(1.08);
 }
-
-

@@ -74,7 +74,7 @@ class ParsedTicket:                # workspace.md ticket
     priority: Priority
     alias: str | None = None       # "Ticket ID:"
     chat_session_key: str | None = None   # "Chat ID:"
-    body: str = ""                 # -> ticket.kickoff_note intake context
+    body: str = ""                 # -> ticket fields.kickoff intake context
     success: str | None = None
     approach: str | None = None
     item_title: str | None = None  # link target for unambiguous title match
@@ -102,6 +102,6 @@ class MigrationReport:             # printed, and structured under --json
     deferred_items: int = 0        # items imported with sprint_id NULL
     tickets: int = 0
     ideas: int = 0
-    links: int = 0                 # belongs_to links made by title match
+    links: int = 0                 # retained for old reports; seed no longer writes links
     duplicates_skipped: int = 0    # idempotent re-run hits (alias/title match)
     skipped: list[SkippedSection] = field(default_factory=list)

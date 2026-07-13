@@ -17,8 +17,8 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.tickets.contracts import AtCap, FieldName, TicketState
-from planner.tickets.data import accept_kickoff, change_scope, create_ticket, file_proposal
+from planner.tickets.contracts import NO_FURTHER, AtCap, FieldName, TicketState
+from planner.tickets.data import accept_proposal, change_scope, create_ticket, file_proposal
 
 _AGENT = {"X-Plan-Actor": "agent"}  # a plain (non-dispatched) agent context
 
@@ -50,7 +50,15 @@ def _passed_ticket(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
         ticket = create_ticket(conn, title="Edit me.", actor="human", now=0, title_max_chars=200)
-        ticket = accept_kickoff(conn, ticket.id, actor="human", now=0)
+        ticket = accept_proposal(
+            conn,
+            ticket.id,
+            field=FieldName.kickoff,
+            actor="human",
+            now=0,
+            next_ceiling=NO_FURTHER,
+            at_cap=AtCap.propose,
+        )
         change_scope(
             conn, ticket.id, ceiling=TicketState.needs_plan, at_cap=AtCap.propose, actor="human",
             now=0,

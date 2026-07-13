@@ -12,7 +12,10 @@ const FALLBACK_KINDS = [
   "sprint_item_created",
   "idea_created",
   "day_created",
+  "project_created",
   "proposal_filed",
+  "kickoff_proposal_filed",
+  "kickoff_accepted",
   "approval_returned",
   "note_updated",
   "recap_updated",
@@ -26,7 +29,6 @@ const FALLBACK_KINDS = [
   "item_children_changed",
   "day_ticket_added",
   "ticket_status_changed",
-  "project_created",
   "link_added",
   "link_removed",
   "chat_session_created",
@@ -73,7 +75,7 @@ function sampleEvent(kind) {
       id: 1,
       entity_id: "t_demo",
       kind,
-      payload: { from_id: "t_demo", to_id: "si_demo", kind: "relates" },
+      payload: { from_id: "t_demo", to_id: "si_demo", kind: "blocks" },
       created_at: 1
     };
   }
@@ -126,7 +128,7 @@ assert.deepEqual(
     id: 1,
     entity_id: "t_left",
     kind: "link_added",
-    payload: { from_id: "t_left", to_id: "si_right", kind: "relates" },
+    payload: { from_id: "t_left", to_id: "si_right", kind: "blocks" },
     created_at: 1
   }).sort(),
   ["board", "chat:t_left", "item:si_right", "queues", "sprint:current", "ticket:t_left"].sort()
@@ -141,4 +143,25 @@ assert.deepEqual(
     created_at: 2
   }).sort(),
   ["board", "chat:t_deleted", "queues", "sprint:current", "ticket:t_deleted"].sort()
+);
+
+assert.deepEqual(
+  keysForEvent({
+    id: 3,
+    entity_id: "t_source",
+    kind: "state_changed",
+    payload: {
+      affected_blocked_target_ids: ["t_blocked", "si_blocked"]
+    },
+    created_at: 3
+  }).sort(),
+  [
+    "board",
+    "chat:t_source",
+    "item:si_blocked",
+    "queues",
+    "sprint:current",
+    "ticket:t_blocked",
+    "ticket:t_source"
+  ].sort()
 );

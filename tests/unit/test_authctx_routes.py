@@ -20,7 +20,8 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.sprints.data import create_item, create_sprint
-from planner.tickets.data import accept_kickoff, create_ticket
+from planner.tickets.contracts import NO_FURTHER, AtCap, FieldName
+from planner.tickets.data import accept_proposal, create_ticket
 
 _AGENT = {"X-Plan-Actor": "agent"}  # an agent context (X-Plan-Actor set)
 
@@ -53,7 +54,15 @@ def _ticket(db_path: Path) -> str:
         ticket = create_ticket(
             conn, title="Patch me.", actor="unattributed", now=0, title_max_chars=200
         )
-        ticket = accept_kickoff(conn, ticket.id, actor="unattributed", now=0)
+        ticket = accept_proposal(
+            conn,
+            ticket.id,
+            field=FieldName.kickoff,
+            actor="unattributed",
+            now=0,
+            next_ceiling=NO_FURTHER,
+            at_cap=AtCap.propose,
+        )
     finally:
         conn.close()
     return ticket.id
@@ -111,7 +120,7 @@ def _ticket_edit_effects(db_path: Path, ticket_id: str) -> tuple[Any, ...]:
     conn = connect(str(db_path))
     try:
         ticket = conn.execute(
-            "SELECT title, kickoff_note, priority, deadline, project_id, sprint_id, updated_at "
+            "SELECT title, priority, deadline, project_id, sprint_id, updated_at "
             "FROM tickets WHERE id = ?",
             (ticket_id,),
         ).fetchone()

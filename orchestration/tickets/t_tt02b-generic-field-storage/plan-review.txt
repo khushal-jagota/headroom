@@ -1,0 +1,131 @@
+Verdict: **not ready for implementation**. The plan cannot support t_tt02x’s required data-layer probe drive while keeping `Ticket.state` and `Ticket.ceiling` enum-typed.
+
+## Findings
+
+### [P0] (confidence: 10/10) The row model blocks probe at creation, and several later `.value` calls are missed
+
+The plan explicitly keeps both fields as `TicketState` and defers widening ([plan.md:284](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02b-generic-field-storage/plan.md:284>)):
+
+> `Ticket.state`/`Ticket.ceiling` remain `TicketState`-typed
+
+That contradicts t_tt02x, which requires `create_ticket(ticket_type="probe")` followed by real data-layer propose/accept operations ([BRIEF.md:37](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02x-probe-fixture/BRIEF.md:37>)).
+
+Concrete first failure:
+
+1. Probe’s default ceiling is `"needs_alpha"`.
+2. `create_ticket` writes that definition-derived ceiling ([data.py:326](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:326>)).
+3. It immediately reloads the row ([data.py:351](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:351>)).
+4. `_row_to_ticket` executes `ceiling=TicketState(row["ceiling"])` ([data.py:84](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:84>)).
+5. Result: `ValueError: 'needs_alpha' is not a valid TicketState`.
+
+So probe never reaches `file_proposal`.
+
+If that load failure were patched locally, the next transition would still fail. `_state_change` calls `.value` on both states ([resolution.py:36](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/resolution.py:36>)). Accepting kickoff advances to bare string `"needs_alpha"`, producing:
+
+```text
+AttributeError: 'str' object has no attribute 'value'
+```
+
+The plan’s T5 test exposes the type contradiction itself: it proposes a `Ticket` with foreign string state/ceiling despite the contract remaining enum-typed ([plan.md:552](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02b-generic-field-storage/plan.md:552>)). `FieldName("alpha")` in the same test outline is impossible; using bare `"alpha"` then hits unconverted `field.value` calls ([resolution.py:129](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/resolution.py:129>), [resolution.py:135](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/resolution.py:135>)).
+
+Recommendation: widen the honest domain contract in t_tt02b:
+
+- `Ticket.state: str`
+- `Ticket.ceiling: str`
+- `Decision.new_state: str | None`
+- State/ceiling/field parameters on the generic resolution and admission paths to `str`
+- `_state_change(old: str, new: str, ...)`
+- Data-layer proposal/accept field parameters to `str` internally
+- Convert payload and persistence serialization to `str(...)`
+
+Coding callers remain valid because `TicketState` and `FieldName` are `StrEnum` subclasses of `str`.
+
+Keeping enum annotations while placing bare strings in them is untenable under strict mypy. In particular, overload selection would falsely infer that `advance_target(ticket.state)` returns `TicketState`, even when the runtime object is a probe string.
+
+### Write-path `.value` audit
+
+| Site | Probe impact | Plan coverage |
+|---|---|---|
+| `_row_to_ticket`: `TicketState(row["state"])`, `TicketState(row["ceiling"])` ([data.py:76](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:76>), [data.py:84](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:84>)) | Creation/load fails before `.value` | **Missed** |
+| `_state_change`: `old.value`, `new.value` ([resolution.py:36](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/resolution.py:36>)) | First probe advance fails; probe drop can also fail | **Missed** |
+| Proposal/accept event fields: `field.value` ([resolution.py:59](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/resolution.py:59>), [resolution.py:66](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/resolution.py:66>), [resolution.py:129](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/resolution.py:129>), [resolution.py:135](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/resolution.py:135>), [resolution.py:162](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/resolution.py:162>), [resolution.py:183](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/resolution.py:183>)) | Bare `"alpha"`/`"beta"` fails | **Missed** |
+| Admission payloads: `state.value`, `ceiling.value` ([admission.py:48](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/admission.py:48>), [admission.py:55](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/admission.py:55>), [admission.py:68](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/admission.py:68>), [admission.py:69](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/admission.py:69>), [admission.py:80](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/admission.py:80>)) | Error/at-cap branches fail with `AttributeError` | **Missed** except `gating.value` |
+| `_accept_gating_proposal`: `ceiling.value` ([resolution.py:85](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/resolution.py:85>)) | Probe scope event fails | Covered |
+| `_apply_decision` validation and SQL binds ([data.py:131](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:131>), [data.py:151](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:151>)) | Probe persistence fails | Covered correctly with `str()` |
+| Worker proposal error payload ([data.py:686](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:686>)) | Terminal/no-gate probe error fails | **Missed** |
+| External-work state payloads ([external_work.py:52](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/external_work.py:52>), [external_work.py:60](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/external_work.py:60>), [external_work.py:119](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/external_work.py:119>), [external_work.py:131](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/external_work.py:131>)) | Non-coding reconciliation fails | Plan explicitly leaves these enum-bound |
+
+Read-only `.value` calls in `tickets/views.py`, copy text, and the employee runner are not exercised by t_tt02x. They may remain behaviorally genericized later. However, if `Ticket.state`/`ceiling` are honestly widened now, those calls must mechanically become `str(ticket.state)`/`str(ticket.ceiling)` to satisfy strict mypy; this does not require genericizing copy-text structure.
+
+---
+
+### [P1] (confidence: 9/10) Prefix derivation assumes an invariant the registry does not enforce
+
+The plan derives `expected_count` from the target state index, but iterates `field_ids(defn)` as the prefix order ([plan.md:368](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02b-generic-field-storage/plan.md:368>), [plan.md:373](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02b-generic-field-storage/plan.md:373>)).
+
+The registry guarantees every field is gated exactly once ([validation.py:113](</Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/logic/validation.py:113>), [validation.py:126](</Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/logic/validation.py:126>)), but it does **not** require declared field order to equal stage gate order.
+
+Concrete failing definition, valid under current validation:
+
+```text
+stages: needs_kickoff(kickoff) → needs_alpha(alpha) → needs_beta(beta) → done
+fields: kickoff, beta, alpha
+supports_prefix_reconciliation: true
+```
+
+Reconcile to `needs_beta` yields `expected_count == 2`, then requires `kickoff` and `beta`, while forbidding `alpha`. The correct settled stage prefix is `kickoff` and `alpha`. This silently validates the wrong fields.
+
+Recommendation: derive the reconciliation order from non-terminal stages’ `gating_field` values, not from `field_ids(defn)`. That uses the already-enforced one-to-one gate model and introduces no new registry invariant.
+
+The plan does require parity against the old coding map before deleting it ([plan.md:627](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02b-generic-field-storage/plan.md:627>)), so point 2(a) is conceptually covered. But it is absent from named tests T1–T6. Make it a permanent golden test asserting the exact coding mapping:
+
+```text
+needs_success: 1
+needs_approach: 2
+needs_plan: 3
+needs_implementation: 4
+needs_closeout: 5
+done: 6
+```
+
+“Confirm before deletion” is an implementation instruction, not lasting regression protection.
+
+Boundary ruling: threading `definition=` and replacing prefix semantics are separable. The cleaner boundary is:
+
+- t_tt02b: add explicit definition threading and retain an explicit coding-only reconciliation boundary.
+- t_tt03: replace `_FIELD_ORDER`/`_PREFIX_COUNT`, widen external-work ingress, honor `supports_prefix_reconciliation`, and test probe external-work end-to-end.
+
+That matches t_tt02x’s explicit exclusion of external-work ([BRIEF.md:47](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02x-probe-fixture/BRIEF.md:47>)). If external reconciliation remains in t_tt02b, it must be completed fully rather than only replacing the two tables.
+
+---
+
+### [P1] (confidence: 10/10) Definition threading is incomplete for the behavior the plan claims
+
+The plan deliberately leaves direct scope change coding-defaulted ([plan.md:414](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02b-generic-field-storage/plan.md:414>)). The live call confirms it invokes `machine.validate_ceiling` without the ticket definition ([resolution.py:300](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/resolution.py:300>), [resolution.py:304](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/resolution.py:304>)).
+
+Concrete failure: after non-coding scope ingress exists, changing a probe ceiling to `"needs_beta"` validates against coding’s ceiling range and raises `scope_invalid`.
+
+External-work is also only partially planned. `create_ticket_from_external_work` hardcodes the inserted initial state to coding’s `needs_success` ([data.py:418](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:418>)). The plan threads a definition into reconciliation but never replaces that insert.
+
+Concrete failure: external creation of a probe ticket writes state `"needs_success"`, then `_load_ticket` rejects it as outside the probe definition before `decide_external_work` can run.
+
+Recommendation:
+
+- Thread the per-row definition through `decide_scope_change` and `change_scope`, or explicitly document and enforce that direct scope remains coding-only until t_tt03.
+- If external-work genericization stays in t_tt02b, widen its target state and field types, replace the hardcoded initial state, convert every state/field `.value`, and add data-layer tests.
+- Otherwise move the complete external-work semantic change to t_tt03 and retain an explicit non-coding rejection in t_tt02b.
+
+`file_proposal`, `accept_proposal`, `decide_edit_value`, `decide_return_for_revision`, and `plan_handoff_status` are otherwise identified for correct per-row threading.
+
+## Sound points
+
+- TicketFields coding JSON parity is sound if construction always follows the coding definition’s declared order. The coding definition currently derives exactly the old enum order ([coding.py:73](</Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/coding.py:73>)); the exact byte golden is the right test.
+- `get_slot`/`with_slot` unknown-field rejection is a sound replacement for `require_coding_field`.
+- `copy_text` is correctly kept as the same six-field coding rendering; only accessor syntax changes ([plan.md:437](</Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt02b-generic-field-storage/plan.md:437>)).
+- `seed/importer.py` is correctly outside the `TicketFields` shape blast radius because it writes raw JSON.
+- The churn mitigation is adequate if `slot()` is test-only, trivial, and the diff review verifies assertion operators and right-hand expected values did not change. Do not add it to the production codec API.
+- Dropping the `_accept_gating_proposal` `isinstance(TicketState)` assertion is safe once `resolve_scope` validates and concretizes a string ceiling.
+- `str()` at both `_apply_decision` SQL binds is correct and byte-identical for coding `StrEnum` values.
+- `_apply_decision` remains the canonical writer for settled field values/state/ceiling; the existing note writer remains a narrower user-note exception.
+
+**STATUS: DONE_WITH_CONCERNS.** The blocking change is the honest `Ticket.state`/`Ticket.ceiling` widening plus its complete write-path serialization audit.

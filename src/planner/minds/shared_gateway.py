@@ -102,14 +102,14 @@ class EntityRoutingGateway:
         text: str,
         mode: str,
         on_session_key: Callable[[str], None] | None = None,
-        image_path: Path | None = None,
+        image_paths: tuple[Path, ...] = (),
     ) -> Iterator[ChatStreamChunk]:
         gateway = self._gateway_for(entity_id)
-        if image_path is None:
+        if not image_paths:
             yield from gateway.stream(session_key, entity_id, text, mode, on_session_key)
         else:
             yield from gateway.stream(
-                session_key, entity_id, text, mode, on_session_key, image_path
+                session_key, entity_id, text, mode, on_session_key, image_paths
             )
 
     def interrupt(self, session_key: str, entity_id: str) -> None:
@@ -323,7 +323,7 @@ class SharedGateway:
         text: str,
         mode: str,
         on_session_key: Callable[[str], None] | None = None,
-        image_path: Path | None = None,
+        image_paths: tuple[Path, ...] = (),
     ) -> Iterator[ChatStreamChunk]:
         try:
             child = self._child_or_spawn()
@@ -358,7 +358,7 @@ class SharedGateway:
                     entity_id,
                     text,
                     "assistant",
-                    image_path=image_path,
+                    image_paths=image_paths,
                     on_session_key=on_session_key,
                 )
         except SharedGatewayBusy as exc:
@@ -753,14 +753,14 @@ class SharedGateway:
         stored_key: str,
         text: str,
         *,
-        image_path: Path | None = None,
+        image_paths: tuple[Path, ...] = (),
     ) -> tuple[AcceptedSubmission | TransportUnknown, str]:
         live_session = self._live_session_for_human_write(stored_key)
         try:
             accepted = live_session.submit_consequence(
                 text,
                 timeout=self._request_timeout,
-                image_path=image_path,
+                image_paths=image_paths,
             )
         except LiveSessionDormant:
             # The prior consumer released between reuse lookup and write admission.
@@ -769,7 +769,7 @@ class SharedGateway:
             accepted = live_session.submit_consequence(
                 text,
                 timeout=self._request_timeout,
-                image_path=image_path,
+                image_paths=image_paths,
             )
         return accepted, live_session.stored_session_key
 
@@ -930,7 +930,7 @@ class SharedGateway:
         entity_id: str,
         text: str,
         kind: str,
-        image_path: Path | None = None,
+        image_paths: tuple[Path, ...] = (),
         on_session_key: Callable[[str], None] | None = None,
     ) -> Iterator[ChatStreamChunk]:
         prepared = self._worker_context.prepare(entity_id, text)
@@ -938,7 +938,7 @@ class SharedGateway:
             accepted, resolved_stored_key = self._submit_human_consequence(
                 stored_key,
                 prepared.model_text,
-                image_path=image_path,
+                image_paths=image_paths,
             )
         except GatewayRpcError as exc:
             if exc.code == BUSY_CODE:

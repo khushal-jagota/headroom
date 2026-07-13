@@ -1,5 +1,10 @@
 export type AnyRecord = Record<string, any>;
 
+// The served ticket-type manifest response (GET /api/ticket-types). Re-exported here
+// for the resource fetch typing; the derived Lifecycle + per-type manifest shapes are
+// imported directly from lifecycle.ts at call sites.
+export type { TicketTypesResponse } from "./lifecycle";
+
 export type GatewayStatus = {
   available: boolean;
 };
@@ -66,7 +71,7 @@ export type ChatImageUploadResponse = {
 export type StartChatTurnBody = {
   text: string;
   mode: "message" | "command";
-  image_reference?: string;
+  image_references?: string[];
 };
 
 export type SprintSummary = {
@@ -99,6 +104,28 @@ export type TicketField = {
   } | null;
 };
 
+export type BlockedByTicket = {
+  ticket_id: string;
+  title: string;
+  state: string;
+  active: boolean;
+  href: string;
+};
+
+export type BlocksTarget = {
+  target_id: string;
+  target_kind: "ticket" | "sprint_item";
+  title: string;
+  active: boolean;
+  href: string;
+};
+
+export type BlockerSummary = {
+  blocked: boolean;
+  blocked_by: BlockedByTicket[];
+  blocks: BlocksTarget[];
+};
+
 export type Implementer =
   | "khushal"
   | "panels_worker"
@@ -108,6 +135,7 @@ export type Implementer =
 export type TicketDetail = {
   id: string;
   title: string;
+  ticket_type: string;
   state: string;
   ceiling: string;
   at_cap: string;
@@ -123,14 +151,8 @@ export type TicketDetail = {
   chat_session_key?: string | null;
   day_ids?: string[];
   blocked?: boolean;
+  blocker_summary?: BlockerSummary;
   recap?: string | null;
-  kickoff_note: string;
-  kickoff_proposal?: {
-    title: string;
-    kickoff_note: string;
-    proposed_by: string;
-    created_at?: number;
-  } | null;
   fields: Record<string, TicketField>;
 };
 

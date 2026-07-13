@@ -1,12 +1,12 @@
-"""blockers_cleared derivation (§3.2). True iff there are blockers and every one
-reaches ticket-state 'done'. Pure; computed on read, never stored."""
+"""Legacy blockers_cleared helper. Current reads use core.links.blocker_summary;
+this remains for callers that pass already-resolved ticket states."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from typing import Final
 
-_TICKET_STATE_DONE: Final = "done"
+_CLEARED_TICKET_STATES: Final = {"done", "dropped"}
 
 
 def blockers_cleared(
@@ -15,4 +15,4 @@ def blockers_cleared(
 ) -> bool:
     if not blocked_by:
         return False
-    return all(ticket_states.get(tid) == _TICKET_STATE_DONE for tid in blocked_by)
+    return all(ticket_states.get(tid) in _CLEARED_TICKET_STATES for tid in blocked_by)

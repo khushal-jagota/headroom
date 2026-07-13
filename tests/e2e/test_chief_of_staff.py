@@ -49,7 +49,15 @@ def test_chief_of_staff_route_nav_and_chat(server, context_factory, open_page) -
 def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
     server, context_factory, open_page, cli, api
 ) -> None:
-    tid = cli(server, "ticket", "create", "--title", "Workspace selectable ticket")["id"]
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Workspace selectable ticket",
+    )["id"]
     api.direct_post(server, "/api/day/today/tickets", {"ticket_id": tid})
 
     page = open_page(
@@ -95,7 +103,7 @@ def test_workspace_ticket_route_restores_on_load_refresh_and_history(
     first_id = cli(
         server,
         "ticket",
-        "create",
+        "create", "--type", "coding",
         "--title",
         "First routed workspace ticket",
         "--project-id",
@@ -104,13 +112,21 @@ def test_workspace_ticket_route_restores_on_load_refresh_and_history(
     second_id = cli(
         server,
         "ticket",
-        "create",
+        "create", "--type", "coding",
         "--title",
         "Second routed workspace ticket",
         "--project-id",
         "project_vylo",
     )["id"]
-    other_id = cli(server, "ticket", "create", "--title", "Other workspace ticket")["id"]
+    other_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Other workspace ticket",
+    )["id"]
     for ticket_id in (first_id, second_id, other_id):
         api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
     first_ticket = _workspace_ticket(first_id)

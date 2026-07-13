@@ -157,7 +157,7 @@ def test_same_session_image_attach_and_prompt_writes_remain_adjacent() -> None:
             session.submit_consequence(
                 text,
                 timeout=5.0,
-                image_path=Path(image_path),
+                image_paths=(Path(image_path),),
             )
         )
 
@@ -900,7 +900,7 @@ def test_ready_rpc_error_is_removed_before_later_lifecycle_routing(
 
     def submit_rejected() -> None:
         try:
-            session.submit_consequence("A", timeout=5.0, image_path=image_path)
+            session.submit_consequence("A", timeout=5.0, image_paths=(image_path,))
         except GatewayRpcError as exc:
             rejected_errors.append(exc)
 
@@ -946,5 +946,87 @@ def test_ready_rpc_error_is_removed_before_later_lifecycle_routing(
         "prompt.submit",
     ]
     accepted_b.consequence.release()
+    manager.shutdown()
+    child.shutdown()
+
+
+def test_invalid_prompt_disposition_detaches_all_images_before_next_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_prompt_wait_entered = threading.Event()
+    allow_first_prompt_wait = threading.Event()
+    original_wait = GatewayRequestHandle.wait
+    first_prompt_wait_claimed = False
+
+    def gated_wait(
+        handle: GatewayRequestHandle,
+        timeout: float,
+    ) -> dict[str, Any]:
+        nonlocal first_prompt_wait_claimed
+        if handle._method == "prompt.submit" and not first_prompt_wait_claimed:
+            first_prompt_wait_claimed = True
+            first_prompt_wait_entered.set()
+            assert allow_first_prompt_wait.wait(5.0)
+        return original_wait(handle, timeout)
+
+    monkeypatch.setattr(GatewayRequestHandle, "wait", gated_wait)
+    image_paths = (Path("/tmp/first-invalid.png"), Path("/tmp/second-invalid.png"))
+    fake = FakeGateway(
+        {
+            "image.attach": [
+                Reply(result={"attached": True}),
+                Reply(result={"attached": True}),
+            ],
+            "image.detach": [
+                Reply(error=(4020, "first detach failed")),
+                Reply(result={"detached": True}),
+            ],
+            "prompt.submit": [
+                Reply(result={"status": "invalid"}),
+                Reply(result={"status": "streaming"}),
+            ],
+        }
+    )
+    child = _child(fake)
+    manager = LiveSessionManager(child)
+    session = manager.bind(STORED_KEY, LIVE_SID)
+    first_errors: list[GatewayError] = []
+    second_results: list[AcceptedSubmission | TransportUnknown] = []
+
+    def submit_invalid() -> None:
+        try:
+            session.submit_consequence("invalid", timeout=5.0, image_paths=image_paths)
+        except GatewayError as exc:
+            first_errors.append(exc)
+
+    def submit_next() -> None:
+        second_results.append(session.submit_consequence("next", timeout=5.0))
+
+    first_thread = threading.Thread(target=submit_invalid)
+    first_thread.start()
+    assert first_prompt_wait_entered.wait(5.0)
+    second_thread = threading.Thread(target=submit_next)
+    second_thread.start()
+    assert fake.wait_sent(4, 0.05) is False
+
+    allow_first_prompt_wait.set()
+    first_thread.join(5.0)
+    second_thread.join(5.0)
+
+    assert len(first_errors) == 1
+    assert str(first_errors[0]) == "unexpected prompt.submit disposition: 'invalid'"
+    assert len(second_results) == 1
+    assert isinstance(second_results[0], AcceptedSubmission)
+    second_results[0].consequence.release()
+    assert fake.sent_methods() == [
+        "image.attach",
+        "image.attach",
+        "prompt.submit",
+        "image.detach",
+        "image.detach",
+        "prompt.submit",
+    ]
+    assert fake.sent[3]["params"] == {"session_id": LIVE_SID, "path": str(image_paths[0])}
+    assert fake.sent[4]["params"] == {"session_id": LIVE_SID, "path": str(image_paths[1])}
     manager.shutdown()
     child.shutdown()

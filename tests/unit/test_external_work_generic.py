@@ -1,0 +1,154 @@
+"""t_tt03 — the external-work prefix derivation is gate-based and per-type.
+
+The settled-prefix order comes from the NON-TERMINAL stages' ``gating_field`` (in
+stage order), NOT from ``field_ids`` — the registry does not order-align the two,
+so a type could declare them differently (the t_tt02b field-order bug). These
+tests pin:
+
+- T-EW-golden (PERMANENT): coding's derived field order and prefix counts equal the
+  canonical map (needs_success:1 … done:6) — the drift guard.
+- probe's derivation (needs_alpha:1, needs_beta:2, done:3).
+- a SYNTHETIC type whose field-declaration order is DELIBERATELY misaligned with its
+  gating order — proving the derivation follows the GATE, not the field list (the
+  fix isn't a probe-happens-to-align accident).
+- a type declining ``supports_prefix_reconciliation`` is rejected loudly.
+"""
+
+from __future__ import annotations
+
+import pytest
+from tests.support.probe import PROBE_DEFINITION
+
+from planner.core.contracts import ErrorCode, PlannerError, Priority
+from planner.ticket_types.contracts import (
+    FieldDef,
+    Stage,
+    WorkerProfile,
+    WorkflowDefinition,
+)
+from planner.ticket_types.registry import build_registry
+from planner.tickets.contracts import (
+    AtCap,
+    FieldSlot,
+    Proposal,
+    Ticket,
+    TicketFields,
+    TicketStatus,
+)
+from planner.tickets.logic import coding_bridge
+from planner.tickets.logic.external_work import (
+    _gate_field_order,
+    _prefix_count,
+    decide_external_work,
+)
+
+CODING = coding_bridge.coding_definition()
+
+
+def test_coding_gate_field_order_is_golden() -> None:  # T-EW-golden (PERMANENT)
+    assert _gate_field_order(CODING) == (
+        "kickoff", "success", "approach", "plan", "implementation", "closeout",
+    )
+
+
+def test_coding_prefix_counts_are_golden() -> None:  # T-EW-golden (PERMANENT)
+    expected = {
+        "needs_success": 1,
+        "needs_approach": 2,
+        "needs_plan": 3,
+        "needs_implementation": 4,
+        "needs_closeout": 5,
+        "done": 6,
+    }
+    assert {state: _prefix_count(CODING, state) for state in expected} == expected
+
+
+def test_probe_derivation() -> None:
+    assert _gate_field_order(PROBE_DEFINITION) == ("kickoff", "alpha", "beta")
+    assert {
+        state: _prefix_count(PROBE_DEFINITION, state)
+        for state in ("needs_alpha", "needs_beta", "done")
+    } == {"needs_alpha": 1, "needs_beta": 2, "done": 3}
+
+
+# A synthetic type whose DECLARED field order (kickoff, second, first) is deliberately
+# NOT the gating order (kickoff -> first -> second). The derivation must follow the
+# gates, proving it isn't accidentally correct because probe/coding happen to align.
+_MISALIGNED = WorkflowDefinition(
+    type_id="misaligned",
+    label="Misaligned",
+    stages=(
+        Stage(id="needs_kickoff", label="Kickoff", gating_field="kickoff", is_terminal=False),
+        Stage(id="needs_first", label="First", gating_field="first", is_terminal=False),
+        Stage(id="needs_second", label="Second", gating_field="second", is_terminal=False),
+        Stage(id="done", label="Done", gating_field=None, is_terminal=True),
+    ),
+    dropped_stage=Stage(id="dropped", label="Dropped", gating_field=None, is_terminal=True),
+    # Declared field order intentionally scrambled relative to the gate order.
+    fields=(
+        FieldDef(id="kickoff", label="Kickoff"),
+        FieldDef(id="second", label="Second"),
+        FieldDef(id="first", label="First"),
+    ),
+    worker_profile=WorkerProfile(
+        specialist_skill="panels-worker", model=None, reasoning_effort=None,
+        toolset_profile="default",
+    ),
+    transition_hooks=(),
+    supports_prefix_reconciliation=True,
+)
+
+_NO_PREFIX = WorkflowDefinition(
+    type_id="noprefix",
+    label="No prefix",
+    stages=(
+        Stage(id="needs_kickoff", label="Kickoff", gating_field="kickoff", is_terminal=False),
+        Stage(id="needs_one", label="One", gating_field="one", is_terminal=False),
+        Stage(id="done", label="Done", gating_field=None, is_terminal=True),
+    ),
+    dropped_stage=Stage(id="dropped", label="Dropped", gating_field=None, is_terminal=True),
+    fields=(FieldDef(id="kickoff", label="Kickoff"), FieldDef(id="one", label="One")),
+    worker_profile=WorkerProfile(
+        specialist_skill="panels-worker", model=None, reasoning_effort=None,
+        toolset_profile="default",
+    ),
+    transition_hooks=(),
+    supports_prefix_reconciliation=False,
+)
+
+
+def test_derivation_follows_gate_order_not_field_declaration() -> None:
+    # field_ids order is (kickoff, second, first) but the GATE order is
+    # (kickoff, first, second) — the derivation must use the gate order.
+    assert coding_bridge.views.field_ids(_MISALIGNED) == ("kickoff", "second", "first")
+    assert _gate_field_order(_MISALIGNED) == ("kickoff", "first", "second")
+
+
+def _needs_kickoff_ticket(defn: WorkflowDefinition) -> Ticket:
+    slots = {fid: FieldSlot() for fid in coding_bridge.views.field_ids(defn)}
+    slots["kickoff"] = FieldSlot(
+        value=None,
+        proposal=Proposal(body="kickoff note", proposed_by="chief", created_at=1),
+    )
+    return Ticket(
+        id="t_x", title="x", state="needs_kickoff", priority=Priority.P3, deadline=None,
+        project_id=None, project_name=None, sprint_item_id=None, sprint_id=None, recap="",
+        ceiling=coding_bridge.views.default_ceiling(defn), at_cap=AtCap.propose,
+        ticket_status=TicketStatus.empty, implementer=None, chat_session_key=None, alias=None,
+        fields=TicketFields(slots), created_at=1, updated_at=1, ticket_type=defn.type_id,
+    )
+
+
+def test_type_declining_prefix_reconciliation_is_rejected() -> None:
+    # Build a validated registry so the definition is well-formed, then drive it.
+    build_registry(
+        [_NO_PREFIX],
+        known_skills=frozenset({"panels-worker"}),
+        known_toolset_profiles=frozenset({"default"}),
+    )
+    ticket = _needs_kickoff_ticket(_NO_PREFIX)
+    with pytest.raises(PlannerError) as exc:
+        decide_external_work(ticket, "needs_one", {"kickoff": "kn"}, definition=_NO_PREFIX)
+    assert exc.value.code == ErrorCode.validation
+    assert exc.value.message == "type does not support external-work prefix reconciliation"
+    assert exc.value.detail == {"type_id": "noprefix"}

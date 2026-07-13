@@ -26,24 +26,25 @@ state setter.
   data-backed, not enum-backed.
 - **`ticket create / show / list / set / approve / block / unblock / delete`** — manage
   tickets. `ticket create` can take a `--kickoff-note` / `--kickoff-note-file` intake
-  note. `ticket set` names one field (`title`, `kickoff-note`, `priority`, `deadline`,
+  body for the Kickoff field. `ticket set` names one field (`title`, `kickoff-note`, `priority`, `deadline`,
   or `project` / `project-id`). Sprint placement is a sprint command, not a ticket
   setter. `ticket delete` is a permanent direct operation and requires `--yes`.
 - **`ticket copy / events`** — copy one ticket's plain-text packet or inspect its event log.
 - **`sprint create / list / show / set / add-ticket / remove-ticket`** — plan and
   populate sprints. `current` resolves through `/api/sprint/current`; `none` means the
   backlog where a list supports it.
-- **`sprint item create / list / show / set / add-ticket / remove-ticket`**
+- **`sprint item create / list / show / set / add-ticket / remove-ticket / block / unblock`**
   — manage sprint items and their ticket membership. Creating a ticket is still
   `ticket create`; adding an existing ticket to an item is a sprint-item command.
-  Item status is read-only and derived from child tickets and open blocking links.
+  `sprint item block <item-id> --by <ticket-id>` records a Ticket blocking an item.
+  Item status is read-only and derived from child tickets and active blocking links.
 - **`worker propose / recap / note / my-ticket`** — worker actions. `worker propose`
   infers the current gating field from ticket state and requires a short recap
   (`--recap` or `--recap-file`) in the same request. `worker note` preserves
   field-specific user guidance without changing the field's value.
 - **`chief reconcile-ticket-from-external-work / create-ticket-from-external-work`** —
   record reality established outside Panels. Both require an explicit Chief request,
-  a complete kickoff note through `--kickoff-note-file`, preserving the report and
+  a complete Kickoff field value through `--kickoff-note-file`, preserving the report and
   reconciliation reasoning, and the
   exact settled field prefix for the target state. Reconciliation refuses pending or
   active ticket work; both operations leave the ticket stopped at the imported state.

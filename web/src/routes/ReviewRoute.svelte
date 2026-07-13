@@ -2,17 +2,19 @@
   import { onDestroy } from "svelte";
   import { fetchJson } from "../lib/api";
   import { mutateJson, resource, ResourceHandle } from "../lib/resources";
-  import { FIELD_NAMES, fieldStageVisualState, gatingField } from "../lib/ui";
+  import { manifestResource } from "../lib/manifest.svelte";
+  import { fieldStageVisualStateFor, gatingFieldFor, lifecycleFor } from "../lib/lifecycle";
   import type { AnyRecord, QueueEntry, QueuesResponse, TicketDetail } from "../lib/types";
   import Button from "../components/Button.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
-  import KickoffSection from "../components/KickoffSection.svelte";
+  import InlineEdit from "../components/InlineEdit.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
 
   const queues = resource<QueuesResponse>("queues", (signal) =>
     fetchJson("/api/queues", { signal })
   );
+  const manifest = manifestResource();
 
   let skipped = $state<Record<string, boolean>>({});
   let detailResource = $state<ResourceHandle<AnyRecord> | null>(null);
@@ -34,6 +36,23 @@
     const live = entries.filter((entry) => !skipped[entryKey(entry)]);
     return live[0] || null;
   });
+
+  // Per-type lifecycle for the current review entry's detail. Null while the
+  // manifest or the detail is still loading OR when the detail's ticket_type is
+  // absent from a loaded manifest; the markup tells those apart (Codex F3).
+  let detailTicketType = $derived(
+    typeof detailResource?.data?.ticket_type === "string"
+      ? (detailResource.data.ticket_type as string)
+      : null
+  );
+  let lc = $derived(lifecycleFor(manifest.data, detailTicketType));
+  let manifestMissingType = $derived(
+    Boolean(
+      detailTicketType &&
+        manifest.data &&
+        !manifest.data.types.some((t) => t.type_id === detailTicketType)
+    )
+  );
 
   function runningAgentsText(count: number): string {
     return `${count} ${count === 1 ? "agent" : "agents"} in progress`;
@@ -57,15 +76,15 @@
   });
 
   function isStale(entry: QueueEntry, detail: AnyRecord): boolean {
-    if (entry.kind === "kickoff") {
-      return detail.state !== "needs_kickoff" || !detail.kickoff_proposal;
-    }
-    if (!detail.fields?.[entry.kind]?.proposal) return true;
-    return gatingField(String(detail.state)) !== entry.kind;
+    const field = approvalField(entry);
+    if (!field) return true;
+    if (!detail.fields?.[field]?.proposal) return true;
+    return gatingFieldFor(lc, String(detail.state)) !== field;
   }
 
-  function isTicketFieldKind(kind: string): boolean {
-    return FIELD_NAMES.includes(kind as (typeof FIELD_NAMES)[number]);
+  function approvalField(entry: QueueEntry): string | null {
+    if (lc?.fieldIds.includes(entry.kind)) return entry.kind;
+    return null;
   }
 
   $effect(() => {
@@ -152,14 +171,21 @@
   }
 
   function accept(entry: QueueEntry, payload: Record<string, unknown>): Promise<unknown> {
-    const path = entry.kind === "kickoff"
-      ? `/api/tickets/${entry.entity_id}/accept-kickoff`
-      : `/api/tickets/${entry.entity_id}/accept/${entry.kind}`;
+    const field = approvalField(entry);
+    if (!field) return Promise.reject(new Error("review entry is not a ticket field"));
     return refreshQueuesAfter(mutateJson(
-      path,
+      `/api/tickets/${entry.entity_id}/accept/${field}`,
       { method: "POST", body: payload },
       ["queues", `ticket:${entry.entity_id}`, "board", "sprint:current"]
     ));
+  }
+
+  function saveTitle(entry: QueueEntry, title: string): Promise<unknown> {
+    return mutateJson(
+      `/api/tickets/${entry.entity_id}`,
+      { method: "PATCH", body: { title } },
+      ["queues", `ticket:${entry.entity_id}`, "board", "sprint:current"]
+    );
   }
 
 
@@ -185,6 +211,7 @@
   onDestroy(() => {
     queues.dispose();
     detailResource?.dispose();
+    manifest.dispose();
   });
 </script>
 
@@ -211,8 +238,22 @@
       </div>
     {:else if detailResource?.loading && !detailResource.data}
       <div class="quiet-line">Loading approval...</div>
+    {:else if detailResource?.data && (manifest.error || manifestMissingType)}
+      {@const detail = detailResource.data as TicketDetail & AnyRecord}
+      <div data-review-manifest-error>
+        <ErrorLine
+          error={manifest.error ?? { code: "unknown_ticket_type", message: `no manifest for type "${detail.ticket_type}"` }}
+        />
+        <div class="review-card-actions">
+          <Button variant="quiet" data-skip="" onclick={() => skip(entry)}>Skip</Button>
+          {#if entry.entity_type === "ticket"}
+            <a data-open-ticket href={`#/ticket/${entry.entity_id}`}>open ticket</a>
+          {/if}
+        </div>
+      </div>
     {:else if detailResource?.data}
       {@const detail = detailResource.data as TicketDetail & AnyRecord}
+      {@const field = approvalField(entry)}
       {#if isStale(entry, detail)}
         <div class="quiet-line">Loading approval...</div>
       {:else}
@@ -222,7 +263,7 @@
             data-review-card
             data-entity-id={entry.entity_id}
             data-kind={entry.kind}
-            data-field={isTicketFieldKind(entry.kind) ? entry.kind : undefined}
+            data-field={field || undefined}
           >
             <div class="review-queue-line review-arrive review-arrive--1">
               <button data-skip="" onclick={() => skip(entry)}>Skip &rsaquo;</button>
@@ -232,38 +273,35 @@
             </div>
 
             {#if entry.entity_type === "ticket"}
-              <a href={`#/ticket/${entry.entity_id}`} class="review-ticket-title review-arrive review-arrive--2">
-                {entry.title}
-              </a>
+              <div class="review-ticket-title review-arrive review-arrive--2">
+                <InlineEdit
+                  value={detail.title}
+                  placeholder="Untitled"
+                  onSave={(raw) => saveTitle(entry, raw)}
+                />
+              </div>
             {:else}
               <h2 class="review-ticket-title review-arrive review-arrive--2" style="pointer-events: none;">{entry.title}</h2>
             {/if}
 
             <div class="review-arrive review-arrive--3">
-              {#if isTicketFieldKind(entry.kind)}
+              {#if field}
                 <TicketStageSection
                   variant="review"
-                  name={entry.kind}
-                  slot={detail.fields[entry.kind]}
+                  name={field}
+                  slot={detail.fields[field]}
+                  lifecycle={lc}
                   ticketState={detail.state}
                   ceiling={detail.ceiling}
-                  stageState={fieldStageVisualState(detail, entry.kind)}
+                  stageState={fieldStageVisualStateFor(lc, detail, field)}
                   recap={detail.recap}
                   showRecap
-                  onAccept={(payload) => accept(entry, payload)}
-                />
-              {:else if entry.kind === "kickoff"}
-                <KickoffSection
-                  variant="review"
-                  title={detail.title}
-                  kickoffNote={detail.kickoff_note || ""}
-                  proposal={detail.kickoff_proposal || null}
                   onAccept={(payload) => accept(entry, payload)}
                 />
               {/if}
             </div>
 
-            {#if entry.entity_type === "ticket" && entry.kind !== "kickoff"}
+            {#if entry.entity_type === "ticket" && field !== "kickoff"}
               <div class="review-revise review-arrive review-arrive--4" data-review-revision>
                 <div class="review-revision-box">
                   <textarea

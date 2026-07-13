@@ -18,7 +18,7 @@ from planner.core.server import create_app
 from planner.projects import data as projects_data
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import WORKER_STATE_ORDER, FieldName, TicketState
+from planner.tickets.contracts import NO_FURTHER, WORKER_STATE_ORDER, AtCap, FieldName, TicketState
 from planner.tickets.data import (
     create_ticket,
     file_proposal,
@@ -60,7 +60,15 @@ def _ordinary_ticket(db_path: Path) -> str:
             title_max_chars=200,
             kickoff_note="Original report",
         )
-        return tickets_data.accept_kickoff(conn, ticket.id, actor="unattributed", now=1).id
+        return tickets_data.accept_proposal(
+            conn,
+            ticket.id,
+            field=FieldName.kickoff,
+            actor="unattributed",
+            now=1,
+            next_ceiling=NO_FURTHER,
+            at_cap=AtCap.propose,
+        ).id
     finally:
         conn.close()
 
@@ -113,7 +121,11 @@ def test_both_external_work_routes_require_explicit_chief(
         )
         created = client.post(
             "/api/chief/tickets/from-external-work",
-            json={"title": "Imported", **_external_body(TicketState.needs_success)},
+            json={
+                "title": "Imported",
+                "type": "coding",
+                **_external_body(TicketState.needs_success),
+            },
             headers=headers,
         )
     assert reconciled.status_code == 400
@@ -127,7 +139,12 @@ def test_create_external_work_enforces_exact_settled_prefix_and_coherent_control
     tmp_path: Path, state: TicketState
 ) -> None:
     app, _db_path = _make_app(tmp_path)
-    body = {"title": f"Imported {state.value}", "recap": "Imported recap", **_external_body(state)}
+    body = {
+        "title": f"Imported {state.value}",
+        "type": "coding",
+        "recap": "Imported recap",
+        **_external_body(state),
+    }
     with TestClient(app) as client:
         response = client.post(
             "/api/chief/tickets/from-external-work", json=body, headers=_CHIEF
@@ -183,7 +200,11 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
     with TestClient(app) as client:
         made = client.post(
             "/api/chief/tickets/from-external-work",
-            json={"title": "Forward", **_external_body(TicketState.needs_implementation)},
+            json={
+                "title": "Forward",
+                "type": "coding",
+                **_external_body(TicketState.needs_implementation),
+            },
             headers=_CHIEF,
         ).json()
         backward = client.post(
@@ -301,7 +322,7 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
     assert rings.count == 1
     new_events = _events(db_path, ticket_id)[len(before):]
     assert [kind for kind, _ in new_events] == [
-        "ticket_updated",
+        "field_value_edited",
         "field_value_edited",
         "field_value_edited",
         "recap_updated",
@@ -310,6 +331,7 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
         "ticket_status_changed",
     ]
     assert [payload["field"] for kind, payload in new_events if kind == "field_value_edited"] == [
+        "kickoff",
         "success",
         "approach",
     ]
@@ -338,6 +360,7 @@ def test_create_external_work_emits_exact_existing_events_and_rings(tmp_path: Pa
             "/api/chief/tickets/from-external-work",
             json={
                 "title": "Already done",
+                "type": "coding",
                 "recap": "done elsewhere",
                 **_external_body(TicketState.done),
             },
@@ -348,7 +371,6 @@ def test_create_external_work_emits_exact_existing_events_and_rings(tmp_path: Pa
     events = _events(db_path, response.json()["id"])
     assert [kind for kind, _ in events] == [
         "ticket_created",
-        "kickoff_accepted",
         "field_value_edited",
         "field_value_edited",
         "field_value_edited",
@@ -365,12 +387,12 @@ def test_create_external_work_emits_exact_existing_events_and_rings(tmp_path: Pa
         "implementation",
         "closeout",
     ]
-    assert events[8][1] == {
+    assert events[7][1] == {
         "from": "needs_success",
         "to": "done",
         "cause": "external_work",
     }
-    assert events[9][1] == {
+    assert events[8][1] == {
         "ceiling": "done",
         "at_cap": "stop",
         "cause": "external_work",
@@ -428,9 +450,11 @@ def test_reconcile_safety_reads_happen_after_begin_immediate(tmp_path: Path) -> 
     conn = connect(str(db_path))
     try:
         ticket = conn.execute(
-            "SELECT state, kickoff_note, ticket_status FROM tickets WHERE id = ?", (ticket_id,)
+            "SELECT state, fields, ticket_status FROM tickets WHERE id = ?", (ticket_id,)
         ).fetchone()
-        assert tuple(ticket) == ("needs_success", "Original report", "agent_running_step")
+        assert ticket["state"] == "needs_success"
+        assert json.loads(ticket["fields"])["kickoff"]["value"] == "Original report"
+        assert ticket["ticket_status"] == "agent_running_step"
     finally:
         conn.close()
 
@@ -455,6 +479,7 @@ def test_parent_item_events_cover_external_create_state_and_status_changes(tmp_p
             "/api/chief/tickets/from-external-work",
             json={
                 "title": "Parented external work",
+                "type": "coding",
                 "sprint_item_id": item.id,
                 **_external_body(TicketState.needs_success),
             },

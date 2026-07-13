@@ -4,13 +4,13 @@
   import StageMark from "./StageMark.svelte";
   import InlineEdit from "./InlineEdit.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
+  import { labelize, type FieldStageVisualState } from "../lib/ui";
   import {
-    advanceTarget,
-    fieldIsPassed,
-    gatingField,
-    labelize,
-    type FieldStageVisualState
-  } from "../lib/ui";
+    advanceTargetFor,
+    fieldIsPassedFor,
+    gatingFieldFor,
+    type Lifecycle
+  } from "../lib/lifecycle";
   import type { TicketField } from "../lib/types";
 
   let {
@@ -18,6 +18,7 @@
     slot,
     ticketState,
     ceiling,
+    lifecycle = null,
     stageState = "upcoming",
     variant = "ticket",
     recap = null,
@@ -32,6 +33,7 @@
     slot: TicketField;
     ticketState: string;
     ceiling: string;
+    lifecycle?: Lifecycle | null;
     stageState?: FieldStageVisualState;
     variant?: "ticket" | "review";
     recap?: string | null;
@@ -46,12 +48,12 @@
   let reviewVariant = $derived(variant === "review");
   let fieldLabel = $derived(labelize(name));
   let isDropped = $derived(ticketState === "dropped");
-  let isGating = $derived(gatingField(ticketState) === name);
-  let passed = $derived(fieldIsPassed(name, ticketState));
+  let isGating = $derived(gatingFieldFor(lifecycle, ticketState) === name);
+  let passed = $derived(fieldIsPassedFor(lifecycle, name, ticketState));
   let hasValue = $derived(hasText(slot.value));
   let hasNotes = $derived(hasText(slot.user_note));
   let hasProposal = $derived(Boolean(slot.proposal));
-  let nextState = $derived(advanceTarget(ticketState, ceiling));
+  let nextState = $derived(advanceTargetFor(lifecycle, ticketState, ceiling));
   let defaultOpen = $derived(isGating);
 
   function hasText(value: unknown): boolean {
@@ -93,6 +95,7 @@
       proposalBody={slot.proposal?.body || ""}
       proposedBy={slot.proposal?.proposed_by || ""}
       newState={nextState}
+      {lifecycle}
       onApprove={onAccept}
     />
   {:else}
@@ -104,10 +107,11 @@
         proposalBody={slot.proposal?.body || ""}
         proposedBy={slot.proposal?.proposed_by || ""}
         newState={nextState}
+        {lifecycle}
         onApprove={onAccept}
       />
       {#if hasValue}<MarkdownBlock text={slot.value} />{/if}
-    {:else if passed && hasValue && editableValue && onSaveValue}
+    {:else if passed && editableValue && onSaveValue}
       <div class="ticket-field-value">
         <InlineEdit value={slot.value} markdown multiline placeholder="Value..." onSave={onSaveValue} />
       </div>

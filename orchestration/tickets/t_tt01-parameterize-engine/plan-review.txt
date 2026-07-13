@@ -1,0 +1,94 @@
+STATUS: DONE_WITH_CONCERNS
+
+The plan preserves `coding` runtime behavior, but I would not implement it unchanged. Two defects can fail `./verify` or force the correctness core to be refactored again in t_tt02.
+
+## Ranked findings
+
+### 1. P1: the implicit global definition is the wrong engine seam
+
+Confidence: 10/10.
+
+The singleton registry itself is safe enough: construction validates immutable definitions ([registry.py:36](/Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/registry.py:36)), and `require()` only reads the registry table ([registry.py:60](/Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/registry.py:60)). Lazy construction creates no meaningful existing-test state leak, and pytest’s monkeypatch restoration protects §10.C.
+
+The defect is where it is resolved. The plan makes every machine operation call `coding_definition()` internally ([plan.md:230](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt01-parameterize-engine/plan.md:230)), even though the underlying views already have the correct explicit interface, `advance_target(defn, state_id)` and peers ([views.py:111](/Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/logic/views.py:111)).
+
+Concrete break: in t_tt02, process one `coding` ticket and one `probe` ticket concurrently. `machine.advance_target("needs_alpha")` always consults `coding`, so it raises “state outside the linear order.” The synthetic test only works by globally monkeypatching `coding_definition()` ([plan.md:710](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt01-parameterize-engine/plan.md:710)); it does not prove two definitions can flow through the engine simultaneously.
+
+This forces t_tt02 to change the same machine and resolution signatures again. The claim that threading necessarily breaks 130 callers is false: an optional keyword-only `definition=None` preserves every existing fixed-arity call.
+
+Recommendation: keep the singleton registry, but make definition an explicit, defaulted input to machine/resolution/admission operations. Existing callers get `coding`; new callers pass their row’s definition. Do not put it in `Decision`: `Decision` is transition output ([decisions.py:19](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/decisions.py:19)), not execution context.
+
+### 2. P1: the enum/string typing plan is incomplete and can fail strict mypy
+
+Confidence: 10/10.
+
+The `_as_state` and `_as_field` overload approach is sound for `advance_target`, `gating_field`, and `auto_accept_target`. Coding serialization remains safe because `_apply_decision` expects `.value` on `TicketState` ([data.py:127](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:127)).
+
+But two other planned signatures do not type-check honestly:
+
+- `resolve_scope(new_state: str, ...) -> ScopePair` returns `new_state` when `next_ceiling == NO_FURTHER` ([plan.md:225](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt01-parameterize-engine/plan.md:225)). `ScopePair.next_ceiling` only accepts `TicketState | Literal["none"]` ([contracts.py:119](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/contracts.py:119)). A plain `str` is incompatible under the repository’s `strict = true` mypy configuration ([pyproject.toml:40](/Users/khushaljagota/.hermes/planning-v2/pyproject.toml:40)).
+- `has_pending_gating_proposal(state: str, ...)` receives `FieldName | str | None` from `gating_field`, then passes it to `get_slot`, which requires `FieldName` ([fields_codec.py:85](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/fields_codec.py:85)). The overload narrows callers, not the implementation body.
+
+Concrete input: `resolve_scope("needs_alpha", "none", AtCap.propose)` produces a `ScopePair` containing a bare string; if carried into a `Decision`, `_apply_decision` later calls `.value` and fails. Likewise, a synthetic non-enum gating field sent through `has_pending_gating_proposal` is routed into the fixed six-field codec, not a generic field map.
+
+Recommendation: explicitly keep scope and `TicketFields` operations coding-bound in t_tt01, or widen the contracts now. Do not paper over this with casts while claiming the full engine is string-native. Add `mypy`-checked cases for every planned overload, especially `resolve_scope` and `has_pending_gating_proposal`.
+
+Also, the plan’s “one identity assertion” count is wrong: there are three direct `advance_target(...) is TicketState...` assertions at [test_ticket_lifecycle.py:120](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_ticket_lifecycle.py:120), lines 121 and 123 included. Re-wrapping preserves all three.
+
+### 3. P1: the note-path rationale is factually wrong, and the planned tests omit the tightening
+
+Confidence: 10/10.
+
+The plan says an unknown field “silently overwrite[s] `closeout`” ([plan.md:496](/Users/khushaljagota/.hermes/planning-v2/orchestration/tickets/t_tt01-parameterize-engine/plan.md:496)). That is not what the code does:
+
+- `get_slot` falls through and reads `closeout` ([fields_codec.py:85](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/fields_codec.py:85)).
+- `with_slot` changes `closeout` only when identity is exactly `FieldName.closeout`; an unknown enum changes no slot ([fields_codec.py:99](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/fields_codec.py:99)).
+- `set_field_user_note` can then emit a note event despite no field changing ([data.py:893](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:893)).
+
+Concrete input: pass a foreign `StrEnum` member whose value is `"bogus"`. Today the path reads `closeout`, writes unchanged fields, and can append `note_updated {"field": "bogus"}`. A plain string instead reaches `field.value` and rolls the transaction back with `AttributeError`.
+
+The proposed definition guard correctly rejects the foreign ID, but §10 contains no test for it. Existing note coverage only exercises a valid enum ([test_tickets_engine.py:113](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_tickets_engine.py:113); [test_readiness_actions.py:904](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_readiness_actions.py:904)).
+
+Recommendation: add a behavioral test asserting an undeclared note field:
+
+1. raises the specified `PlannerError`;
+2. changes no fields/state/scope;
+3. appends no event.
+
+Also test that a valid note changes only `user_note`, preserving every value and proposal.
+
+### 4. P2: the three tightenings do not break a named existing test, but JSON strictness has persisted-data risk
+
+Confidence: 9/10.
+
+- Unknown machine state: no named existing engine test passes `"ghost"`. Registry-view tests already expect the new error at [test_ticket_type_registry.py:517](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_ticket_type_registry.py:517).
+- Unknown top-level field key: no existing named test relies on it. The legacy test uses exactly six top-level keys and only uses `notes` inside slots ([test_tickets_engine.py:123](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_tickets_engine.py:123)).
+- Undeclared note field: no existing test reaches `data.set_field_user_note` with one.
+
+However, the database places no JSON-shape constraint on `fields`; it is arbitrary `TEXT` with a canonical default ([db.py:82](/Users/khushaljagota/.hermes/planning-v2/src/planner/core/db.py:82)). A persisted row containing the six fields plus `"audit": {...}` was previously readable because `fields_from_json` ignored extras ([fields_codec.py:70](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/fields_codec.py:70)); after this change, every read of that ticket fails.
+
+That is an intentional tightening, not a current test failure, but “unreachable” is stronger than the storage layer proves. Add a pre-implementation data audit or migration test if real `data/` databases matter.
+
+### 5. Sound: the `is` sweep and F6 narrowing are otherwise complete
+
+Confidence: 9/10.
+
+Within the requested files, the plan inventories all state/field identity comparisons:
+
+- resolution: [resolution.py:153](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/resolution.py:153) through line 292;
+- admission: [admission.py:50](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/admission.py:50), line 61;
+- external work: [external_work.py:54](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/external_work.py:54), lines 113 and 125;
+- machine: [machine.py:83](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/machine.py:83), line 147;
+- data: [data.py:663](/Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:663), line 676.
+
+Leaving the fixed codec’s `FieldName` identity dispatch is defensible for coding, though its fallthrough deserves the tests above.
+
+F6’s exact-importer-set replacement is the correct minimal change. The current test forbids every production importer ([test_ticket_type_registry.py:754](/Users/khushaljagota/.hermes/planning-v2/tests/unit/test_ticket_type_registry.py:754)); asserting exactly `{coding_bridge}` is stronger and catches scatter. The import graph is acyclic because `ticket_types` points back only to the contracts leaf, not ticket logic ([coding.py:22](/Users/khushaljagota/.hermes/planning-v2/src/planner/ticket_types/coding.py:22)).
+
+## Changes that most reduce parity risk
+
+1. Add optional explicit definitions to the correctness-core APIs; use the global coding accessor only as the compatibility default.
+2. Resolve the `ScopePair`/`Decision` and `has_pending_gating_proposal` typing contradictions before implementation, with strict-mypy cases.
+3. Correct the note-path model and add transactional behavior tests for unknown and valid note fields.
+
+No files were edited.

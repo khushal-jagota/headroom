@@ -1,0 +1,13 @@
+**Findings**
+
+P1: `/api/links` still permits attributed agents to mutate canonical blocker state. [tickets/api.py](/private/tmp/panels-t_bqxt44fb/src/planner/tickets/api.py:784) and [tickets/api.py](/private/tmp/panels-t_bqxt44fb/src/planner/tickets/api.py:807) inject `ctx` but never call `require_direct_write(ctx)`. An agent/worker can add or remove blockers directly, with committed events and readiness rings. Add the guard and tests for agent rejection on link add/remove.
+
+P1: the new blocker e2e is not runnable once Playwright launches. [test_blockers_frontend.py](/private/tmp/panels-t_bqxt44fb/tests/e2e/test_blockers_frontend.py:46) creates `cleared_blocker` with `ticket create`, leaving it in `needs_kickoff`, then [line 53](/private/tmp/panels-t_bqxt44fb/tests/e2e/test_blockers_frontend.py:53) posts state `done`. The state machine rejects any jump from kickoff at [resolution.py](/private/tmp/panels-t_bqxt44fb/src/planner/tickets/logic/resolution.py:275). This test currently only “passes” by being blocked before app code runs.
+
+P1: Sprint child blocked status bypasses the canonical blocker summary path. Direct item blockers use `core_links.blocker_summary`, but child ticket blockers are recomputed with inline SQL at [sprints/data.py](/private/tmp/panels-t_bqxt44fb/src/planner/sprints/data.py:424). The contract required one active/read-summary path for readiness, Ticket, and Sprint; this duplicates the active-source rule and can drift.
+
+P2: the resolved summary is not owned as a typed backend contract. [core/links.py](/private/tmp/panels-t_bqxt44fb/src/planner/core/links.py:182) returns a raw `JsonDict`, and consumers index dict keys directly. The frontend type is also loose: [types.ts](/private/tmp/panels-t_bqxt44fb/web/src/lib/types.ts:110) allows `target_kind: "ticket" | "sprint_item" | string`, which defeats the stated typed summary contract.
+
+P2: stale obsolete relationship vocabulary remains in non-migration frontend tests. [event-mapping.test.mjs](/private/tmp/panels-t_bqxt44fb/web/tests/event-mapping.test.mjs:71) and [line 124](/private/tmp/panels-t_bqxt44fb/web/tests/event-mapping.test.mjs:124) still use link payload `kind: "relates"`. The same fallback kind list at [line 4](/private/tmp/panels-t_bqxt44fb/web/tests/event-mapping.test.mjs:4) is stale relative to backend `EventKind` and weakens the standalone `npm --prefix web test` evidence.
+
+Not ready for canonical `./verify` and commit.

@@ -2,13 +2,70 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from sqlite3 import Connection
+
+import pytest
+from tests.support.probe import (
+    NEEDS_BETA,
+    install_probe_registry,
+    uninstall_probe_registry,
+)
 
 from planner.core.contracts import Priority
 from planner.days.data import add_day_ticket
 from planner.sprints.data import create_item
-from planner.tickets.data import create_ticket
+from planner.ticket_types.contracts import WorkflowDefinition
+from planner.tickets.contracts import AtCap, FieldName
+from planner.tickets.data import accept_proposal, create_ticket
 from planner.tickets.views import board_view
+
+# The 7 coding columns, in order — a coding-only board reproduces exactly these,
+# even the empty ones, with no appended column.
+_CODING_COLUMN_ORDER = [
+    "needs_kickoff",
+    "needs_success",
+    "needs_approach",
+    "needs_plan",
+    "needs_implementation",
+    "needs_closeout",
+    "done",
+]
+
+# The card keys present before t_tt04a, in order — the enrichment keys are APPENDED
+# after these, so these keep their exact positions (payload superset).
+_PRE_EXISTING_CARD_KEYS = [
+    "id",
+    "title",
+    "priority",
+    "deadline",
+    "project_id",
+    "project",
+    "group_project_id",
+    "group_project",
+    "activity_at",
+    "has_pending_proposal",
+    "ticket_status",
+]
+
+_ENRICHMENT_CARD_KEYS = [
+    "ticket_type",
+    "state",
+    "state_label",
+    "gating_field",
+    "gating_field_label",
+    "is_done",
+    "is_dropped",
+]
+
+
+@pytest.fixture
+def probe_registry() -> Iterator[WorkflowDefinition]:
+    definition = install_probe_registry()
+    try:
+        yield definition
+    finally:
+        uninstall_probe_registry()
 
 
 def _ticket(
@@ -79,3 +136,68 @@ def test_board_view_groups_parented_ticket_by_parent_item_project(
     assert cards["Standalone ticket"]["group_project"] == "Learning"
     assert cards["Unprojected ticket"]["group_project_id"] is None
     assert cards["Unprojected ticket"]["group_project"] is None
+
+
+def test_board_coding_card_keys_superset_and_columns_unchanged(tmp_db: Connection) -> None:
+    ticket_id = _ticket(tmp_db, "Coding board ticket", 1)
+    add_day_ticket(tmp_db, "day_2026-07-04", ticket_id, 10)
+
+    board = board_view(tmp_db, 20, day_id="day_2026-07-04")
+
+    # A coding-only board reproduces the 7 coding columns, in order, no appended column.
+    assert [column["state"] for column in board["columns"]] == _CODING_COLUMN_ORDER
+
+    card = board["columns"][0]["cards"][0]
+    keys = list(card.keys())
+    # Pre-existing keys keep their exact order and positions; enrichment is appended.
+    assert keys[: len(_PRE_EXISTING_CARD_KEYS)] == _PRE_EXISTING_CARD_KEYS
+    assert keys[len(_PRE_EXISTING_CARD_KEYS) :] == _ENRICHMENT_CARD_KEYS
+
+    # The coding enrichment values for a fresh needs_kickoff card.
+    assert card["ticket_type"] == "coding"
+    assert card["state"] == "needs_kickoff"
+    assert card["state_label"] == "Kickoff"
+    assert card["gating_field"] == "kickoff"
+    assert card["gating_field_label"] == "Kickoff"
+    assert card["is_done"] is False
+    assert card["is_dropped"] is False
+
+
+def test_board_mixed_coding_probe_does_not_throw(
+    tmp_db: Connection, probe_registry: WorkflowDefinition
+) -> None:
+    coding_id = _ticket(tmp_db, "Coding board ticket", 1)
+    probe = create_ticket(
+        tmp_db, title="Probe board ticket", actor="human", now=1, title_max_chars=200,
+        ticket_type="probe",
+    )
+    # Advance probe off needs_kickoff into needs_alpha (a state coding never has).
+    accept_proposal(
+        tmp_db, probe.id, field=FieldName.kickoff, actor="human", now=2,
+        next_ceiling=NEEDS_BETA, at_cap=AtCap.propose,
+    )
+    add_day_ticket(tmp_db, "day_2026-07-04", coding_id, 10)
+    add_day_ticket(tmp_db, "day_2026-07-04", probe.id, 10)
+
+    board = board_view(tmp_db, 20, day_id="day_2026-07-04")
+
+    states = [column["state"] for column in board["columns"]]
+    # Coding's 7 columns first, in order; probe's needs_alpha appended after.
+    assert states[: len(_CODING_COLUMN_ORDER)] == _CODING_COLUMN_ORDER
+    assert states[len(_CODING_COLUMN_ORDER) :] == ["needs_alpha"]
+
+    probe_cards = [
+        card
+        for column in board["columns"]
+        for card in column["cards"]
+        if card["ticket_type"] == "probe"
+    ]
+    assert len(probe_cards) == 1
+    probe_card = probe_cards[0]
+    # Probe card decoded against PROBE_DEFINITION — enrichment is probe-correct.
+    assert probe_card["state"] == "needs_alpha"
+    assert probe_card["state_label"] == "Alpha"
+    assert probe_card["gating_field"] == "alpha"
+    assert probe_card["gating_field_label"] == "Alpha"
+    assert probe_card["is_done"] is False
+    assert probe_card["is_dropped"] is False

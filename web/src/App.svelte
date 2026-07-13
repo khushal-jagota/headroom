@@ -45,6 +45,7 @@
     const queryIndex = routeText.indexOf("?");
     const path = queryIndex >= 0 ? routeText.slice(0, queryIndex) : routeText;
     const query = queryIndex >= 0 ? routeText.slice(queryIndex) : "";
+    const search = new URLSearchParams(query.startsWith("?") ? query.slice(1) : query);
     const segments = path.split("/").filter(Boolean);
     const name = segments[0] || "day";
     const params: Record<string, string> = {};
@@ -66,6 +67,9 @@
         return { name: "sprint", params: {}, key: "sprint" };
       }
       params.sub = segments[1];
+    }
+    if (name === "sprint" && search.has("item")) {
+      params.item = search.get("item") || "";
     }
     const screenKey = name === "workspace" || name === "board" ? "workspace" : segments.join("/") || "day";
     return { name, params, key: query ? `${screenKey}${query}` : screenKey };
@@ -140,7 +144,7 @@
           {:else if route.name === "ticket"}
             <TicketRoute id={route.params.id} />
           {:else if route.name === "sprint"}
-            <SprintRoute sub={route.params.sub || "tracking"} />
+            <SprintRoute sub={route.params.sub || "tracking"} selectedItemId={route.params.item || null} />
           {:else if route.name === "backlog"}
             <BacklogRoute />
           {:else if route.name === "ideas"}

@@ -74,13 +74,17 @@ share.
   `/files/tickets/t_123/notes/plan.md` into the shared file preview component.
   Markdown files render inline through the same markdown renderer, including nested
   managed links until a fixed depth or self-link bound turns them back into compact
-  preview cards. HTML files render as cards with a fetched `srcdoc` iframe in an
-  empty sandbox and a new-tab action to the full Panels preview route. Images,
-  video, and audio render inline; unknown files stay as download cards; ordinary
-  external links stay external-link cards with deterministic host text. The full
-  preview route is `#/preview?source=ticket&ticket=<id>&path=<path>`. Chat images
-  under `/files/chats/<entity-id>/...` use this same component and resolver rather
-  than a chat-only renderer.
+  preview cards. Embedded HTML files render as cards with a fetched `srcdoc` iframe
+  in an empty sandbox and a new-tab action to the Panels preview route. On that
+  route, HTML is no longer wrapped in preview-card chrome: the route fetches the
+  document, gives the iframe a short-lived Blob URL, revokes the old URL when the
+  target changes or unmounts, and fills the available page with an empty-sandbox
+  iframe. Images, video, and audio render inline; unknown files stay as download
+  cards; ordinary external links stay external-link cards with deterministic host
+  text. The full preview route is
+  `#/preview?source=ticket&ticket=<id>&path=<path>`. Chat images under
+  `/files/chats/<entity-id>/...` use this same component and resolver rather than a
+  chat-only renderer.
 - **Editable Markdown stays one surface.** Ticket notes, recaps, passed fields,
   approval drafts, and future Markdown surfaces remain directly editable with their
   existing focus, blur/save, keyboard, paste, and Escape behavior. Links stay mounted
@@ -115,7 +119,8 @@ hand-rolling the same shapes per screen. Each does one job:
 - **InlineEdit** — the one editable-markdown surface (notes, recaps, drafts).
 - **MarkdownBlock** — read-only rendering through the hardened markdown renderer.
 - **FilePreview** — the one file preview card/inline renderer (see the file-preview rule).
-- **ChatPanel / ChatComposer** — the ticket and Chief-of-Staff chat rail and its input.
+- **ChatPanel / ChatComposer** — the ticket and Chief-of-Staff chat rail and its input,
+  including ordered pending image previews for picker, paste, and drop intake.
 - **EnumPill** — a pill whose value is chosen from a menu (project, sprint, scope).
 - **SegmentedControl** — a small set of toggle options (backlog project/priority).
 - **ScopePairPicker** — the "approve until … then …" scope control.

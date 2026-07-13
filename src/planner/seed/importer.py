@@ -30,6 +30,7 @@ from planner.seed.logic.kickoff import parse_kickoff, parse_review
 from planner.seed.logic.latest import pick_latest_daily
 from planner.seed.logic.tracking import parse_tracking
 from planner.seed.logic.workspace import parse_workspace
+from planner.tickets.logic import ticket_type_guard
 
 
 def seed_from_source(conn: sqlite3.Connection, source_dir: str | Path,
@@ -229,21 +230,28 @@ def _import_tickets(
             sprint_item_id = None
             row_sprint_id = sprint_id
         fields = {
+            "kickoff": {"value": ticket.body, "proposal": None, "user_note": None},
             "success": {"value": ticket.success, "proposal": None, "user_note": None},
             "approach": {"value": ticket.approach, "proposal": None, "user_note": None},
             "plan": {"value": None, "proposal": None, "user_note": None},
             "implementation": {"value": None, "proposal": None, "user_note": None},
             "closeout": {"value": None, "proposal": None, "user_note": None},
         }
+        # Seed door: the (type, state, ceiling) it is about to write must be
+        # registry-valid, so a malformed seed state fails with the specific error
+        # rather than a bad row. Reaches the registry only through coding_bridge (F6).
+        ticket_type_guard.resolve_and_validate(
+            "coding", state=ticket.state.value, ceiling=ticket.state.value
+        )
         conn.execute(
             "INSERT INTO tickets ("
-            "id, title, state, priority, deadline, project_id, sprint_item_id, "
-            "sprint_id, recap, kickoff_note, kickoff_proposal, ceiling, at_cap, "
+            "id, title, ticket_type, state, priority, deadline, project_id, sprint_item_id, "
+            "sprint_id, recap, ceiling, at_cap, "
             "chat_session_key, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                ticket_id, ticket.title, ticket.state.value, ticket.priority.value, None, None,
-                sprint_item_id, row_sprint_id, "", ticket.body, ticket.state.value, "propose",
+                ticket_id, ticket.title, "coding", ticket.state.value, ticket.priority.value,
+                None, None, sprint_item_id, row_sprint_id, "", ticket.state.value, "propose",
                 ticket.chat_session_key, ticket.alias, json.dumps(fields), now, now,
             ),
         )
@@ -255,30 +263,7 @@ def _import_tickets(
             },
             now,
         )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.kickoff_accepted,
-            {
-                "title": ticket.title,
-                "kickoff_note": ticket.body,
-                "resolved_by": "seed",
-                "edited": False,
-            },
-            now,
-        )
         report.tickets += 1
-        if item_id is not None:
-            conn.execute(
-                "INSERT INTO links (from_id, to_id, kind) VALUES (?, ?, 'belongs_to')",
-                (ticket_id, item_id),
-            )
-            append_event(
-                conn, ticket_id, EventKind.link_added,
-                {"from_id": ticket_id, "to_id": item_id, "kind": "belongs_to", "source": "seed"},
-                now,
-            )
-            report.links += 1
 
 
 def _import_ideas(

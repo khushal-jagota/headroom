@@ -790,7 +790,7 @@ def test_human_input_paths_ack_exact_context_after_native_acceptance(
                     "t_demo",
                     "describe it",
                     "message",
-                    image_path=Path("/tmp/chat-image.png"),
+                    image_paths=(Path("/tmp/chat-image.png"),),
                 )
             )
             expected_visible_model_text = "describe it"
@@ -843,7 +843,7 @@ def test_unknown_human_submit_retains_context_without_retry_or_image_detach(
                     "t_demo",
                     "human text",
                     "message",
-                    image_path=Path("/tmp/chat-image.png") if with_image else None,
+                    image_paths=(Path("/tmp/chat-image.png"),) if with_image else (),
                 )
             )
     finally:
@@ -2048,12 +2048,15 @@ def test_shared_gateway_interrupt_maps_live_session_not_found_to_not_found() -> 
     assert caught.value.code == ErrorCode.not_found
 
 
-def test_shared_gateway_attaches_image_on_live_session_before_prompt_submit() -> None:
-    image_path = Path("/tmp/chat-image.png")
+def test_shared_gateway_attaches_images_on_live_session_before_prompt_submit() -> None:
+    image_paths = (Path("/tmp/first-chat-image.png"), Path("/tmp/second-chat-image.png"))
     fake = FakeGateway(
         {
             "session.resume": [resume_reply(LIVE_SID, STORED_KEY)],
-            "image.attach": [Reply(result={"attached": True})],
+            "image.attach": [
+                Reply(result={"attached": True}),
+                Reply(result={"attached": True}),
+            ],
             "prompt.submit": [submit_reply(complete_ev(LIVE_SID, text="seen"))],
         }
     )
@@ -2066,16 +2069,22 @@ def test_shared_gateway_attaches_image_on_live_session_before_prompt_submit() ->
                 "t_demo",
                 "describe it",
                 "message",
-                image_path=image_path,
+                image_paths=image_paths,
             )
         )
     finally:
         gateway.shutdown()
 
     assert chunks[-1].reply_text == "seen"
-    assert fake.sent_methods() == ["session.resume", "image.attach", "prompt.submit"]
-    assert fake.sent[1]["params"] == {"session_id": LIVE_SID, "path": str(image_path)}
-    assert fake.sent[2]["params"] == {"session_id": LIVE_SID, "text": "describe it"}
+    assert fake.sent_methods() == [
+        "session.resume",
+        "image.attach",
+        "image.attach",
+        "prompt.submit",
+    ]
+    assert fake.sent[1]["params"] == {"session_id": LIVE_SID, "path": str(image_paths[0])}
+    assert fake.sent[2]["params"] == {"session_id": LIVE_SID, "path": str(image_paths[1])}
+    assert fake.sent[3]["params"] == {"session_id": LIVE_SID, "text": "describe it"}
 
 
 def test_shared_gateway_attach_failure_does_not_submit_prompt() -> None:
@@ -2084,7 +2093,11 @@ def test_shared_gateway_attach_failure_does_not_submit_prompt() -> None:
     fake = FakeGateway(
         {
             "session.create": [create_reply(LIVE_SID, STORED_KEY)],
-            "image.attach": [Reply(error=(4000, "bad image"))],
+            "image.attach": [
+                Reply(result={"attached": True}),
+                Reply(error=(4000, "bad image")),
+            ],
+            "image.detach": [Reply(result={"detached": True})],
             "prompt.submit": [submit_reply(complete_ev(LIVE_SID, text="must not run"))],
         }
     )
@@ -2098,28 +2111,39 @@ def test_shared_gateway_attach_failure_does_not_submit_prompt() -> None:
                     "t_demo",
                     "describe it",
                     "message",
-                    image_path=Path("/tmp/chat-image.png"),
+                    image_paths=(Path("/tmp/first-chat-image.png"), Path("/tmp/bad-image.png")),
                 )
             )
     finally:
         gateway.shutdown()
 
     assert caught.value.code == ErrorCode.gateway_offline
-    assert fake.sent_methods() == ["session.create", "image.attach"]
+    assert fake.sent_methods() == [
+        "session.create",
+        "image.attach",
+        "image.attach",
+        "image.detach",
+    ]
     assert context.acknowledgements == []
     assert context.pending["t_demo"]
 
 
 def test_shared_gateway_detaches_image_when_prompt_submit_fails_before_next_turn() -> None:
-    image_path = Path("/tmp/chat-image.png")
+    image_paths = (Path("/tmp/first-chat-image.png"), Path("/tmp/second-chat-image.png"))
     context = RecordingWorkerContext()
     context.set("t_demo", PendingWorkerContext("ticket_changed", "Ticket changed.", 10))
     fake = FakeGateway(
         {
             "session.create": [create_reply(LIVE_SID, STORED_KEY)],
             "session.resume": [resume_reply(LIVE_SID, STORED_KEY)],
-            "image.attach": [Reply(result={"attached": True})],
-            "image.detach": [Reply(result={"detached": True})],
+            "image.attach": [
+                Reply(result={"attached": True}),
+                Reply(result={"attached": True}),
+            ],
+            "image.detach": [
+                Reply(result={"detached": True}),
+                Reply(result={"detached": True}),
+            ],
             "prompt.submit": [
                 Reply(error=(4000, "submit failed")),
                 submit_reply(complete_ev(LIVE_SID, text="clean next turn")),
@@ -2136,7 +2160,7 @@ def test_shared_gateway_detaches_image_when_prompt_submit_fails_before_next_turn
                     "t_demo",
                     "first turn",
                     "message",
-                    image_path=image_path,
+                    image_paths=image_paths,
                 )
             )
         next_chunks = list(gateway.stream(STORED_KEY, "t_demo", "next turn", "message"))
@@ -2148,11 +2172,14 @@ def test_shared_gateway_detaches_image_when_prompt_submit_fails_before_next_turn
     assert fake.sent_methods() == [
         "session.create",
         "image.attach",
+        "image.attach",
         "prompt.submit",
+        "image.detach",
         "image.detach",
         "prompt.submit",
     ]
-    assert fake.sent[3]["params"] == {"session_id": LIVE_SID, "path": str(image_path)}
+    assert fake.sent[4]["params"] == {"session_id": LIVE_SID, "path": str(image_paths[0])}
+    assert fake.sent[5]["params"] == {"session_id": LIVE_SID, "path": str(image_paths[1])}
     submit_texts = [
         frame["params"]["text"]
         for frame in fake.sent
@@ -2301,34 +2328,44 @@ def test_provisioned_skills_encode_implementation_and_closeout_lifecycle(
     skills = tmp_path / "skills"
     panels = (skills / "panels" / "SKILL.md").read_text(encoding="utf-8")
     worker = (skills / "panels-worker" / "SKILL.md").read_text(encoding="utf-8")
+    coding_worker = (skills / "panels-worker-coding" / "SKILL.md").read_text(encoding="utf-8")
     chief = (skills / "panels-chief-of-staff" / "SKILL.md").read_text(encoding="utf-8")
 
     # No provisioned role prompt may still name the retired lifecycle states.
-    for text in (panels, worker, chief):
+    for text in (panels, worker, coding_worker, chief):
         assert "in_progress" not in text
         assert "needs_review" not in text
 
-    # The visible six-stage sequence and its five gated fields are the new model.
+    # t_tt05: the coding stage catalogue moved OUT of the base worker skill INTO the
+    # coding specialist. The visible six-stage sequence, its five gated fields, the
+    # Implementation/Closeout responsibilities, and the closeout duties now live there.
     sequence = "Success → Approach → Plan → Implementation → Closeout → Done"
-    assert sequence in worker
+    assert sequence in coding_worker
     for field in ("success", "approach", "plan", "implementation", "closeout"):
-        assert field in worker
+        assert field in coding_worker
+    assert "needs_implementation" in coding_worker
+    assert "needs_closeout" in coding_worker
+    assert "reviewable" in coding_worker
+    for closeout_duty in ("merge", "deploy", "follow-up", "bookkeeping"):
+        assert closeout_duty in coding_worker
+
+    # The base worker skill is type-agnostic: the extracted coding content is gone,
+    # and the self-routing anchors are present. (Narrowed honestly per Codex F5: the
+    # retained "Keep proposal shapes predictable" bullet still names the coding stages,
+    # so this targets the EXTRACTED ids, not "zero coding words".)
+    assert sequence not in worker
+    assert "needs_implementation" not in worker
+    assert "needs_closeout" not in worker
+    assert "panels worker my-ticket" in worker
+    assert "skill_view" in worker
+    assert "you handle the one current step only." in worker
+    assert "Never invoke " in worker and "panels chief" in worker
 
     # panels lists the five canonical outputs, not the retired `result` field.
     assert "plan, result" not in panels
     assert "implementation" in panels
     assert "closeout" in panels
     assert sequence in panels
-
-    # The worker skill pins Implementation and Closeout as distinct responsibilities.
-    assert "needs_implementation" in worker
-    assert "needs_closeout" in worker
-    assert "reviewable" in worker
-    for closeout_duty in ("merge", "deploy", "follow-up", "bookkeeping"):
-        assert closeout_duty in worker
-    assert "the **result**" not in worker
-    assert "result proposal" not in worker
-    assert "never approve" in worker
 
     # Chief keeps its planning-draft boundary on the new field names only.
     assert "`result`" not in chief

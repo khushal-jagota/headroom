@@ -4,11 +4,14 @@ gate, and ticket body/title/deadline validators. Pure domain rules only."""
 from __future__ import annotations
 
 from datetime import date
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from planner.core.contracts import ErrorCode, PlannerError
-from planner.tickets.contracts import AtCap, FieldName, TicketState
-from planner.tickets.logic import machine
+from planner.tickets.contracts import AtCap, FieldName
+from planner.tickets.logic import coding_bridge, machine
+
+if TYPE_CHECKING:
+    from planner.tickets.logic.coding_bridge import WorkflowDefinition
 
 # Compatibility for direct domain callers and historical fixtures. Request
 # classification never synthesizes this value; live callers are unattributed or Chief.
@@ -32,50 +35,66 @@ def require_direct_actor(actor: str, action: str) -> None:
 
 
 def check_agent_proposal(
-    state: TicketState, ceiling: TicketState, at_cap: AtCap, field: FieldName
+    state: str,
+    ceiling: str,
+    at_cap: AtCap,
+    field: FieldName | str,
+    *,
+    definition: WorkflowDefinition | None = None,
 ) -> None:
-    if machine.is_terminal(state):
+    defn = definition or coding_bridge.coding_definition()
+    if machine.is_terminal(state, definition=defn):
         raise PlannerError(
-            ErrorCode.validation, "no proposals on a terminal ticket", {"state": state.value}
+            ErrorCode.validation, "no proposals on a terminal ticket", {"state": str(state)}
         )
-    gating = machine.gating_field(state)
+    gating = machine.gating_field(state, definition=defn)
     if gating is None:
         raise PlannerError(
             ErrorCode.validation,
             "ticket state has no proposal field",
-            {"state": state.value},
+            {"state": str(state)},
         )
-    if not machine.at_or_beyond_ceiling(state, ceiling):
+    if not machine.at_or_beyond_ceiling(state, ceiling, definition=defn):
         return
-    if at_cap is AtCap.stop:
+    if at_cap == AtCap.stop:
         raise PlannerError(
             ErrorCode.at_cap_stop,
             "ticket is at its ceiling with at_cap=stop",
             {
-                "gating_field": gating.value if gating is not None else None,
-                "state": state.value,
-                "ceiling": ceiling.value,
+                "gating_field": str(gating),
+                "state": str(state),
+                "ceiling": str(ceiling),
                 "at_cap": "stop",
             },
         )
-    if field is not gating:
+    if str(field) != str(gating):
         raise PlannerError(
             ErrorCode.validation,
             "at the ceiling agents may propose only the current gating field",
             {
-                "field": field.value,
-                "gating_field": gating.value if gating is not None else None,
-                "state": state.value,
+                "field": str(field),
+                "gating_field": str(gating),
+                "state": str(state),
             },
         )
 
 
-def check_recap_writable(state: TicketState) -> None:
-    if state in (TicketState.needs_kickoff, TicketState.needs_success, TicketState.dropped):
+def check_recap_writable(
+    state: str, *, definition: WorkflowDefinition | None = None
+) -> None:
+    defn = definition or coding_bridge.coding_definition()
+    # The first real-work stage (needs_success for coding, needs_stages for new_worker) —
+    # NOT default_ceiling, which is now the leading needs_kickoff. Recap stays writable
+    # exactly as before: only strictly past the first worker stage.
+    first_worker = coding_bridge.views.first_worker_stage(defn)
+    if str(state) == defn.dropped_stage.id or not (
+        machine.state_index(state, definition=defn)
+        > machine.state_index(first_worker, definition=defn)
+    ):
         raise PlannerError(
             ErrorCode.recap_too_early,
-            "recap is writable only past needs_success",
-            {"state": state.value},
+            f"recap is writable only past the first worker stage ({first_worker})",
+            {"state": str(state), "first_worker_stage": first_worker},
         )
 
 

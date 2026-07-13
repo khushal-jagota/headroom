@@ -1,0 +1,23 @@
+## Findings
+
+1. **High — migration can silently lose concurrent ticket writes.**  
+   [`db.py:431`](</Users/khushaljagota/.hermes/planning-v2/src/planner/core/db.py:431>) snapshots all rows and [`db.py:462`](</Users/khushaljagota/.hermes/planning-v2/src/planner/core/db.py:462>) copies them before `BEGIN IMMEDIATE` is acquired at [`db.py:487`](</Users/khushaljagota/.hermes/planning-v2/src/planner/core/db.py:487>).  
+   Concrete scenario: an existing Panels process inserts or updates a ticket after the new process snapshots `tickets` but before it begins the swap transaction. The migration then drops the original table and renames its stale copy, silently discarding that committed change. The kickoff migration has the same inherited pattern, but reproducing it here remains unsafe for a live database. The write lock must cover snapshot, copy, and swap—not only drop/rename.
+
+2. **Medium — malformed JSON audit errors omit the corrupt ticket ID.**  
+   [`data.py:524`](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/data.py:524>) catches only `PlannerError`, while [`fields_codec.py:95`](</Users/khushaljagota/.hermes/planning-v2/src/planner/tickets/logic/fields_codec.py:95>) can raise `JSONDecodeError`.  
+   Concrete scenario: live row `id='t_001', fields='{'` aborts startup with a raw JSON parsing exception, not `ticket integrity audit failed: id=t_001 reason=...`. The malformed-slot test at [`test_ticket_type_persistence.py:160`](</Users/khushaljagota/.hermes/planning-v2/tests/unit/test_ticket_type_persistence.py:160>) does not cover syntactically invalid JSON.
+
+3. **Low — three fixture edits change ceiling semantics rather than preserving them.**  
+   [`test_days.py:28`](</Users/khushaljagota/.hermes/planning-v2/tests/unit/test_days.py:28>), [`test_links.py:16`](</Users/khushaljagota/.hermes/planning-v2/tests/unit/test_links.py:16>), and [`test_sprints.py:47`](</Users/khushaljagota/.hermes/planning-v2/tests/unit/test_sprints.py:47>) now explicitly use `ceiling='done'`; previously they inherited `needs_success`.  
+   Concrete scenario: code behaving differently for capped-at-success versus capped-at-done tickets can now evade these suites. Using explicit `needs_success` would make these genuinely mechanical adaptations to the removed default.
+
+## Sound points
+
+- Lifecycle guard is correct for all four known chain shapes. It reads only the `tickets` table DDL at [`db.py:675`](</Users/khushaljagota/.hermes/planning-v2/src/planner/core/db.py:675>): pre-lifecycle contains `in_progress` and runs; post-lifecycle/pre-type, post-type, and fresh current schemas lack it and skip.
+- Apart from the lock window above, migration mechanics are sound: explicit name-based copying, distinct savepoint, FK disabling/restoration, rollback, scratch cleanup, and post-rename `foreign_key_check`.
+- Fidelity coverage includes `day_tickets`, links, a sprint-item-parented ticket, and `foreign_key_check == []` at [`test_db.py:1328`](</Users/khushaljagota/.hermes/planning-v2/tests/unit/test_db.py:1328>).
+- Registry validation replaces the removed state/ceiling checks on load and canonical lifecycle writes. `_apply_decision` remains the sole state/ceiling writer.
+- Startup audit placement, coding-only production registry, F6 second-type boundary, registry-derived default ceiling, and the three frozen historical rebuild templates are sound.
+
+**Verdict:** do not ship against the live database until finding 1 is resolved.

@@ -11,7 +11,7 @@ from typing import Final
 
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 14
+SCHEMA_VERSION: Final = 17
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -59,20 +59,15 @@ CREATE TABLE IF NOT EXISTS sprint_items (
 CREATE TABLE IF NOT EXISTS tickets (
   id                   TEXT PRIMARY KEY,             -- t_<slug>
   title                TEXT NOT NULL CHECK (length(title) <= 200),
-  state                TEXT NOT NULL DEFAULT 'needs_kickoff'
-                       CHECK (state IN ('needs_kickoff','needs_success','needs_approach','needs_plan',
-                                        'needs_implementation','needs_closeout','done','dropped')),
+  ticket_type          TEXT NOT NULL,                -- registry-validated; NO enumerating CHECK (open registry)
+  state                TEXT NOT NULL DEFAULT 'needs_kickoff',  -- CHECK removed; registry validates (type,state); universal bookend default KEPT
   priority             TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
   deadline             TEXT,
   project_id           TEXT REFERENCES projects(id),  -- NULL when parented
   sprint_item_id       TEXT REFERENCES sprint_items(id),
   sprint_id            TEXT REFERENCES sprints(id),  -- writable only when sprint_item_id IS NULL
   recap                TEXT NOT NULL DEFAULT '',
-  kickoff_note         TEXT NOT NULL DEFAULT '',      -- settled intake context / user guidance
-  kickoff_proposal     TEXT,                         -- pending ticket-level kickoff proposal
-  ceiling              TEXT NOT NULL DEFAULT 'needs_success'
-                       CHECK (ceiling IN ('needs_success','needs_approach','needs_plan',
-                                          'needs_implementation','needs_closeout','done')),
+  ceiling              TEXT NOT NULL,                -- CHECK removed AND DEFAULT removed; every writer sets the per-type default
   at_cap               TEXT NOT NULL DEFAULT 'propose' CHECK (at_cap IN ('stop','propose')),
   ticket_status        TEXT NOT NULL DEFAULT 'empty'  -- durable ticket state-of-control
                        CHECK (ticket_status IN ('empty','agent_running_step',
@@ -81,12 +76,16 @@ CREATE TABLE IF NOT EXISTS tickets (
                                                    'hermes_codex','hermes_claude')),
   chat_session_key     TEXT,                         -- the ticket-mind's durable Hermes session_key
   alias                TEXT,                         -- migration "Ticket ID:" (seed importer dedup)
-  fields               TEXT NOT NULL DEFAULT '{"success":{"value":null,"proposal":null,"user_note":null},"approach":{"value":null,"proposal":null,"user_note":null},"plan":{"value":null,"proposal":null,"user_note":null},"implementation":{"value":null,"proposal":null,"user_note":null},"closeout":{"value":null,"proposal":null,"user_note":null}}',
+  fields               TEXT NOT NULL DEFAULT '{"kickoff":{"value":null,"proposal":null,"user_note":null},"success":{"value":null,"proposal":null,"user_note":null},"approach":{"value":null,"proposal":null,"user_note":null},"plan":{"value":null,"proposal":null,"user_note":null},"implementation":{"value":null,"proposal":null,"user_note":null},"closeout":{"value":null,"proposal":null,"user_note":null}}',
   created_at           INTEGER NOT NULL,
   updated_at           INTEGER NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_alias ON tickets(alias) WHERE alias IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_tickets_state ON tickets(state);
+-- idx_tickets_type_state is created in _create_indexes (AFTER the type migration),
+-- never here: this DDL block runs against a possibly-pre-type tickets table (the
+-- IF NOT EXISTS table is skipped when it already exists), so referencing the new
+-- ticket_type column here would fail before the migration adds it.
 
 CREATE TABLE IF NOT EXISTS days (
   id               TEXT PRIMARY KEY,                 -- day_YYYY-MM-DD (planning date, §3.4)
@@ -181,12 +180,10 @@ CREATE TABLE IF NOT EXISTS ideas (
 CREATE TABLE IF NOT EXISTS links (                   -- §3.6, exactly the spec's three columns
   from_id TEXT NOT NULL,
   to_id   TEXT NOT NULL,
-  kind    TEXT NOT NULL CHECK (kind IN ('belongs_to','parent_child','blocks','relates')),
+  kind    TEXT NOT NULL CHECK (kind = 'blocks'),
   PRIMARY KEY (from_id, to_id, kind),
   CHECK (from_id <> to_id)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_links_one_belongs_to
-  ON links(from_id) WHERE kind = 'belongs_to';       -- at most one belongs_to per ticket
 CREATE INDEX IF NOT EXISTS idx_links_to ON links(to_id, kind);
 
 CREATE TABLE IF NOT EXISTS events (                  -- append-only except entity hard-delete audit
@@ -218,8 +215,10 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _migrate_ticket_lifecycle(conn)
     _migrate_ticket_implementer_column(conn)
     _migrate_ticket_kickoff_columns(conn)
+    _migrate_ticket_type_column(conn)
     _migrate_project_summary_column(conn)
     _migrate_derived_sprint_item_status(conn)
+    _migrate_links_blocks_only(conn)
     _migrate_tickets_status_column(conn)
     _create_indexes(conn)
     conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
@@ -255,6 +254,11 @@ def _migrate_ticket_user_note_column(conn: sqlite3.Connection) -> None:
     columns = _table_columns(conn, "tickets")
     if "user_note" in columns or "kickoff_note" in columns:
         return
+    schema_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()
+    if schema_row is not None and schema_row[0] is not None and '"kickoff"' in schema_row[0]:
+        return
     conn.execute("ALTER TABLE tickets ADD COLUMN user_note TEXT NOT NULL DEFAULT ''")
 
 
@@ -274,9 +278,9 @@ def _migrate_ticket_kickoff_columns(conn: sqlite3.Connection) -> None:
     if (
         schema_row is not None
         and schema_row[0] is not None
-        and "kickoff_note" in schema_row[0]
-        and "kickoff_proposal" in schema_row[0]
-        and "needs_kickoff" in schema_row[0]
+        and "kickoff_note" not in schema_row[0]
+        and "kickoff_proposal" not in schema_row[0]
+        and '"kickoff"' in schema_row[0]
     ):
         return
     columns = _table_columns(conn, "tickets")
@@ -297,8 +301,6 @@ def _migrate_ticket_kickoff_columns(conn: sqlite3.Connection) -> None:
           sprint_item_id       TEXT REFERENCES sprint_items(id),
           sprint_id            TEXT REFERENCES sprints(id),
           recap                TEXT NOT NULL DEFAULT '',
-          kickoff_note         TEXT NOT NULL DEFAULT '',
-          kickoff_proposal     TEXT,
           ceiling              TEXT NOT NULL DEFAULT 'needs_success'
                                CHECK (ceiling IN ('needs_success','needs_approach','needs_plan',
                                                   'needs_implementation','needs_closeout','done')),
@@ -310,30 +312,44 @@ def _migrate_ticket_kickoff_columns(conn: sqlite3.Connection) -> None:
                                                            'hermes_codex','hermes_claude')),
           chat_session_key     TEXT,
           alias                TEXT,
-          fields               TEXT NOT NULL DEFAULT '{"success":{"value":null,"proposal":null,"user_note":null},"approach":{"value":null,"proposal":null,"user_note":null},"plan":{"value":null,"proposal":null,"user_note":null},"implementation":{"value":null,"proposal":null,"user_note":null},"closeout":{"value":null,"proposal":null,"user_note":null}}',
+          fields               TEXT NOT NULL DEFAULT '{"kickoff":{"value":null,"proposal":null,"user_note":null},"success":{"value":null,"proposal":null,"user_note":null},"approach":{"value":null,"proposal":null,"user_note":null},"plan":{"value":null,"proposal":null,"user_note":null},"implementation":{"value":null,"proposal":null,"user_note":null},"closeout":{"value":null,"proposal":null,"user_note":null}}',
           created_at           INTEGER NOT NULL,
           updated_at           INTEGER NOT NULL
         )
         """
     )
     for row in rows:
-        kickoff_note = row["kickoff_note"] if "kickoff_note" in columns else row["user_note"]
+        kickoff_note = ""
+        if "kickoff_note" in columns:
+            kickoff_note = str(row["kickoff_note"])
+        elif "user_note" in columns:
+            kickoff_note = str(row["user_note"])
         kickoff_proposal = row["kickoff_proposal"] if "kickoff_proposal" in columns else None
         implementer = row["implementer"] if "implementer" in columns else None
+        new_fields = _migrate_kickoff_fields_json(
+            str(row["fields"]),
+            kickoff_note,
+            kickoff_proposal,
+            str(row["state"]),
+            int(row["updated_at"]),
+        )
+        new_ticket_status = str(row["ticket_status"])
+        if str(row["state"]) == "needs_kickoff":
+            new_ticket_status = "awaiting_approval"
         conn.execute(
             """
             INSERT INTO tickets_new (
               id, title, state, priority, deadline, project_id, sprint_item_id, sprint_id,
-              recap, kickoff_note, kickoff_proposal, ceiling, at_cap, ticket_status,
-              implementer, chat_session_key, alias, fields, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              recap, ceiling, at_cap, ticket_status, implementer, chat_session_key, alias,
+              fields, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row["id"], row["title"], row["state"], row["priority"], row["deadline"],
                 row["project_id"], row["sprint_item_id"], row["sprint_id"], row["recap"],
-                kickoff_note, kickoff_proposal, row["ceiling"], row["at_cap"],
-                row["ticket_status"], implementer, row["chat_session_key"], row["alias"],
-                row["fields"], row["created_at"], row["updated_at"],
+                row["ceiling"], row["at_cap"], new_ticket_status, implementer,
+                row["chat_session_key"], row["alias"], new_fields,
+                row["created_at"], row["updated_at"],
             ),
         )
     foreign_keys_enabled = bool(conn.execute("PRAGMA foreign_keys").fetchone()[0])
@@ -371,6 +387,223 @@ def _migrate_ticket_kickoff_columns(conn: sqlite3.Connection) -> None:
     finally:
         if foreign_keys_enabled:
             conn.execute("PRAGMA foreign_keys=ON")
+
+
+def _ticket_type_column_is_not_null(conn: sqlite3.Connection) -> bool:
+    """Whether the live tickets table has a ``ticket_type`` column carrying NOT NULL.
+
+    Reads the authoritative PRAGMA rather than scanning the DDL text — the
+    ``notnull`` bit on the ``ticket_type`` row is unambiguous."""
+    for row in conn.execute("PRAGMA table_info(tickets)"):
+        if str(row[1]) == "ticket_type":
+            return bool(row[3])   # notnull == 1
+    return False
+
+
+def _migrate_ticket_type_column(conn: sqlite3.Connection) -> None:
+    """Add ``ticket_type`` (backfilled to ``coding``), retire the enumerating
+    ``state`` and ``ceiling`` CHECKs, and drop the ``ceiling`` DEFAULT — moving
+    lifecycle integrity from the DB to the registry validation doors.
+
+    Mirrors ``_migrate_ticket_kickoff_columns``'s safety mechanics (FK toggle,
+    SAVEPOINT-or-BEGIN-IMMEDIATE, ``foreign_key_check``, rollback + drop-scratch
+    envelope) but holds the EXCLUSIVE write lock across the WHOLE data operation:
+    the snapshot of ``tickets``, the copy into ``tickets_new``, and the swap all run
+    inside the same ``BEGIN IMMEDIATE`` (autocommit path) or SAVEPOINT (already-in-
+    transaction path). This closes the race where a concurrent Panels write landing
+    between a pre-lock snapshot and the swap would be silently discarded by the
+    rename. (The landed ``_migrate_ticket_kickoff_columns`` has the same latent
+    pre-lock snapshot window; it is left unedited here and flagged to the owner
+    separately.)
+
+    ``PRAGMA foreign_keys`` cannot be toggled inside a transaction, so FK-off runs
+    BEFORE ``BEGIN IMMEDIATE``. The tiny window between FK-off and BEGIN IMMEDIATE is
+    safe: any write there is included in the later in-lock snapshot.
+
+    The probe recognises the COMPLETE target shape (column present AND NOT NULL AND
+    both enumerating CHECKs gone), so a partial prior migration is rebuilt, not
+    skipped — an unmigrated schema is never reported as success."""
+    schema_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()
+    sql = schema_row[0] if schema_row is not None else None
+    if (
+        sql is not None
+        and "ticket_type" in sql
+        and _ticket_type_column_is_not_null(conn)
+        and "state IN ('needs_kickoff'" not in sql
+        and "ceiling IN ('needs_success'" not in sql
+    ):
+        return
+
+    foreign_keys_enabled = bool(conn.execute("PRAGMA foreign_keys").fetchone()[0])
+    if foreign_keys_enabled and conn.in_transaction:
+        raise RuntimeError("ticket type migration requires an autocommit connection")
+    # FK toggle must precede BEGIN IMMEDIATE (PRAGMA foreign_keys is a no-op inside a
+    # transaction). Autocommit path acquires the write lock with BEGIN IMMEDIATE; an
+    # already-in-transaction caller (tests, FK already off) nests a SAVEPOINT and the
+    # write lock is already held.
+    if foreign_keys_enabled:
+        conn.execute("PRAGMA foreign_keys=OFF")
+    use_savepoint = conn.in_transaction
+    try:
+        if use_savepoint:
+            conn.execute("SAVEPOINT ticket_type_swap")
+        else:
+            conn.execute("BEGIN IMMEDIATE")
+        try:
+            # Snapshot + copy + swap all under the held exclusive write lock, so no
+            # concurrent write can be lost between snapshot and rename.
+            rows = conn.execute("SELECT * FROM tickets").fetchall()
+            conn.execute("DROP TABLE IF EXISTS tickets_new")
+            conn.execute(
+                """
+                CREATE TABLE tickets_new (
+                  id                   TEXT PRIMARY KEY,
+                  title                TEXT NOT NULL CHECK (length(title) <= 200),
+                  ticket_type          TEXT NOT NULL,
+                  state                TEXT NOT NULL DEFAULT 'needs_kickoff',
+                  priority             TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
+                  deadline             TEXT,
+                  project_id           TEXT REFERENCES projects(id),
+                  sprint_item_id       TEXT REFERENCES sprint_items(id),
+                  sprint_id            TEXT REFERENCES sprints(id),
+                  recap                TEXT NOT NULL DEFAULT '',
+                  ceiling              TEXT NOT NULL,
+                  at_cap               TEXT NOT NULL DEFAULT 'propose' CHECK (at_cap IN ('stop','propose')),
+                  ticket_status        TEXT NOT NULL DEFAULT 'empty'
+                                       CHECK (ticket_status IN ('empty','agent_running_step',
+                                                                'awaiting_approval','user_takeover','errored')),
+                  implementer          TEXT CHECK (implementer IN ('khushal','panels_worker',
+                                                                   'hermes_codex','hermes_claude')),
+                  chat_session_key     TEXT,
+                  alias                TEXT,
+                  fields               TEXT NOT NULL DEFAULT '{"kickoff":{"value":null,"proposal":null,"user_note":null},"success":{"value":null,"proposal":null,"user_note":null},"approach":{"value":null,"proposal":null,"user_note":null},"plan":{"value":null,"proposal":null,"user_note":null},"implementation":{"value":null,"proposal":null,"user_note":null},"closeout":{"value":null,"proposal":null,"user_note":null}}',
+                  created_at           INTEGER NOT NULL,
+                  updated_at           INTEGER NOT NULL
+                )
+                """
+            )
+            for row in rows:
+                conn.execute(
+                    "INSERT INTO tickets_new ("
+                    "  id, title, ticket_type, state, priority, deadline, project_id, sprint_item_id,"
+                    "  sprint_id, recap, ceiling, at_cap, ticket_status, implementer, chat_session_key,"
+                    "  alias, fields, created_at, updated_at"
+                    ") VALUES (?, ?, 'coding', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        row["id"], row["title"], row["state"], row["priority"], row["deadline"],
+                        row["project_id"], row["sprint_item_id"], row["sprint_id"], row["recap"],
+                        row["ceiling"], row["at_cap"], row["ticket_status"], row["implementer"],
+                        row["chat_session_key"], row["alias"], row["fields"],
+                        row["created_at"], row["updated_at"],
+                    ),
+                )
+            conn.execute("DROP TABLE tickets")
+            conn.execute("ALTER TABLE tickets_new RENAME TO tickets")
+            violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                raise RuntimeError(
+                    f"foreign key check failed after ticket type migration: {violations!r}"
+                )
+        except BaseException:
+            if use_savepoint:
+                conn.execute("ROLLBACK TO ticket_type_swap")
+                conn.execute("RELEASE ticket_type_swap")
+            else:
+                conn.rollback()
+            conn.execute("DROP TABLE IF EXISTS tickets_new")
+            raise
+        else:
+            if use_savepoint:
+                conn.execute("RELEASE ticket_type_swap")
+            else:
+                conn.commit()
+    finally:
+        if foreign_keys_enabled:
+            conn.execute("PRAGMA foreign_keys=ON")
+
+
+def _empty_ticket_field_slot() -> dict[str, object]:
+    return {"value": None, "proposal": None, "user_note": None}
+
+
+def _normal_ticket_field_slot(payload: dict[str, object], key: str) -> dict[str, object]:
+    slot = payload.get(key)
+    if not isinstance(slot, dict):
+        return _empty_ticket_field_slot()
+    return {
+        "value": slot.get("value") if isinstance(slot.get("value"), str) else None,
+        "proposal": slot.get("proposal") if isinstance(slot.get("proposal"), dict) else None,
+        "user_note": (
+            slot.get("user_note")
+            if isinstance(slot.get("user_note"), str) or slot.get("user_note") is None
+            else None
+        ),
+    }
+
+
+def _migrate_kickoff_fields_json(
+    fields_json: str,
+    kickoff_note: str,
+    kickoff_proposal_json: object,
+    state: str,
+    updated_at: int,
+) -> str:
+    try:
+        payload = json.loads(fields_json)
+    except ValueError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+
+    proposal: dict[str, object] | None = None
+    legacy_compound_note: str | None = None
+    if isinstance(kickoff_proposal_json, str) and kickoff_proposal_json:
+        try:
+            kickoff_proposal = json.loads(kickoff_proposal_json)
+        except ValueError as exc:
+            raise RuntimeError("legacy kickoff proposal is corrupt") from exc
+        if (
+            not isinstance(kickoff_proposal, dict)
+            or not isinstance(kickoff_proposal.get("kickoff_note"), str)
+            or not isinstance(kickoff_proposal.get("proposed_by"), str)
+            or not isinstance(kickoff_proposal.get("created_at"), int)
+            or isinstance(kickoff_proposal.get("created_at"), bool)
+        ):
+            raise RuntimeError("legacy kickoff proposal is corrupt")
+        legacy_compound_note = kickoff_proposal["kickoff_note"]
+        if state == "needs_kickoff":
+            proposal = {
+                "body": legacy_compound_note,
+                "proposed_by": kickoff_proposal["proposed_by"],
+                "created_at": kickoff_proposal["created_at"],
+            }
+    elif state == "needs_kickoff":
+        proposal = {
+            "body": kickoff_note,
+            "proposed_by": "migration",
+            "created_at": updated_at,
+        }
+
+    kickoff_slot = (
+        {"value": None, "proposal": proposal, "user_note": None}
+        if proposal is not None
+        else {
+            "value": legacy_compound_note if legacy_compound_note is not None else kickoff_note,
+            "proposal": None,
+            "user_note": None,
+        }
+    )
+    new_payload = {
+        "kickoff": kickoff_slot,
+        "success": _normal_ticket_field_slot(payload, "success"),
+        "approach": _normal_ticket_field_slot(payload, "approach"),
+        "plan": _normal_ticket_field_slot(payload, "plan"),
+        "implementation": _normal_ticket_field_slot(payload, "implementation"),
+        "closeout": _normal_ticket_field_slot(payload, "closeout"),
+    }
+    return json.dumps(new_payload)
 
 
 _EMPTY_FIELD_SLOT: Final = {"value": None, "proposal": None, "user_note": None}
@@ -453,7 +686,14 @@ def _migrate_ticket_lifecycle(conn: sqlite3.Connection) -> None:
     schema_row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
     ).fetchone()
-    if schema_row is None or schema_row[0] is None or "needs_implementation" in schema_row[0]:
+    # Run only on the PRE-lifecycle shape, uniquely marked by the old 'in_progress'
+    # state in its DDL (its CHECK, since the pre-lifecycle table still carries the
+    # enumerating CHECK). The post-lifecycle shape lacks it; the post-type shape has
+    # dropped the enumerating CHECKs entirely, so probing for the presence of the
+    # NEW marker ('needs_implementation') would false-negative once the type
+    # migration has removed the CHECK — keying off the old marker's absence is stable
+    # across both later shapes.
+    if schema_row is None or schema_row[0] is None or "in_progress" not in schema_row[0]:
         return
     rows = conn.execute("SELECT * FROM tickets").fetchall()
     conn.execute("DROP TABLE IF EXISTS tickets_new")
@@ -591,12 +831,55 @@ def _migrate_derived_sprint_item_status(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE sprint_items DROP COLUMN {column}")
 
 
+def _migrate_links_blocks_only(conn: sqlite3.Connection) -> None:
+    schema_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='links'"
+    ).fetchone()
+    if schema_row is None or schema_row[0] is None:
+        return
+    indexes = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA index_list(links)")
+        if str(row["origin"]) != "pk"
+    }
+    if "kind = 'blocks'" in str(schema_row[0]) and "idx_links_one_belongs_to" not in indexes:
+        return
+
+    rows = conn.execute(
+        "SELECT from_id, to_id, kind FROM links WHERE kind = 'blocks' ORDER BY from_id, to_id"
+    ).fetchall()
+    conn.execute("DROP INDEX IF EXISTS idx_links_one_belongs_to")
+    conn.execute("DROP INDEX IF EXISTS idx_links_to")
+    conn.execute("ALTER TABLE links RENAME TO links_legacy")
+    conn.execute(
+        """
+        CREATE TABLE links (
+          from_id TEXT NOT NULL,
+          to_id   TEXT NOT NULL,
+          kind    TEXT NOT NULL CHECK (kind = 'blocks'),
+          PRIMARY KEY (from_id, to_id, kind),
+          CHECK (from_id <> to_id)
+        )
+        """
+    )
+    for row in rows:
+        conn.execute(
+            "INSERT OR IGNORE INTO links (from_id, to_id, kind) VALUES (?, ?, 'blocks')",
+            (row["from_id"], row["to_id"]),
+        )
+    conn.execute("DROP TABLE links_legacy")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_links_to ON links(to_id, kind)")
+
+
 def _create_indexes(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_alias "
         "ON tickets(alias) WHERE alias IS NOT NULL"
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_state ON tickets(state)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tickets_type_state ON tickets(ticket_type, state)"
+    )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_sprint_items_project_id ON sprint_items(project_id)"
     )

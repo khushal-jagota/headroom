@@ -64,8 +64,8 @@ These are the things the planner is made of:
 - **Tickets** are worker-sized pieces of work.
 - **Days** are daily overview records and ordered lists of tickets.
 - **Ideas** are loose thoughts that are not work yet.
-- **Links** connect records. The most important link is `blocks`, because it can stop
-  a ticket from becoming runnable.
+- **Links** are only blockers. A Ticket can block another Ticket or a Sprint item.
+  A blocker only counts while its source Ticket is not `done` or `dropped`.
 
 The Board is not an inventory. It is today's execution board: tickets attached to
 today's day. TicketReadinessLoop starts from that same today membership, then narrows further
@@ -90,13 +90,13 @@ Tickets are the correctness center. A ticket has two different kinds of state:
 - `ticket_status` is runtime control: `empty`, `agent_running_step`,
   `awaiting_approval`, `user_takeover`, or `errored`.
 
-An ordinary Ticket starts with a parked Kickoff proposal containing its title and
-canonical `kickoff_note`. The user can edit and approve both together. Approval advances
-the Ticket to `needs_success`; until then no worker stage runs. Kickoff is ticket-level,
-not a sixth worker field. The five worker fields remain `success`, `approach`, `plan`,
-`implementation`, and `closeout`. Each field has a settled value, a pending proposal,
-and a field `user_note` for step-specific guidance. Workers write field proposals. The
-resolution engine is the only code that can settle a proposal or advance the Ticket.
+An ordinary Ticket starts with a parked proposal on the `kickoff` field. The title is
+separate editable Ticket metadata; approving Kickoff settles only the Kickoff field and
+advances the Ticket to `needs_success`. Until then no worker stage runs. The Ticket fields
+are `kickoff`, `success`, `approach`, `plan`, `implementation`, and `closeout`. Each field
+has a settled value, a pending proposal, and a field `user_note` for step-specific guidance.
+Workers write field proposals. The resolution engine is the only code that can settle a
+proposal or advance the Ticket.
 
 Scope decides how far a worker may go without another human approval. It is the pair
 `ceiling` plus `at_cap`. Below the ceiling, a proposal can auto-accept. At the cap,
@@ -110,7 +110,7 @@ Chief external-work intake is a second, explicit canonical path for reality alre
 established outside Panels. It creates or reconciles a coherent settled-field prefix,
 sets the ticket to the reported state, and stops there. It refuses pending proposals,
 active control, running turns, backward moves, and malformed field prefixes. The report
-and reconciliation reasoning live in the Ticket's `kickoff_note`; ordinary Ticket and
+and reconciliation reasoning live in the Ticket's `kickoff` field; ordinary Ticket and
 sprint-item events remain the audit and invalidation signals.
 
 Request identity is operational provenance in this local, same-user app, not an
@@ -256,8 +256,8 @@ less clean than the rest.
 
 2. **Sprint item status is a read projection.** Sprint items no longer store their
    own status. They derive `todo`, `in_progress`, `blocked`, or `done` from child
-   tickets and open `links.kind='blocks'` rows. This keeps ticket readiness and item
-   blocking on the same link model.
+   tickets and active `links.kind='blocks'` rows. A `done` or `dropped` source clears
+   its block. This keeps ticket readiness and item blocking on the same read model.
 
 3. **The frontend copies some ticket state-machine constants.** The server owns the
    ticket state machine, but `web/src/lib/ui.ts` repeats `STATE_ORDER`, gating fields,

@@ -31,8 +31,8 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
 from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.shared_gateway import SharedGateway
-from planner.tickets.contracts import TicketStatus
-from planner.tickets.data import accept_kickoff, create_ticket
+from planner.tickets.contracts import NO_FURTHER, AtCap, FieldName, TicketStatus
+from planner.tickets.data import accept_proposal, create_ticket
 
 
 def _make_app(tmp_path: Path, gateway: str = "fake") -> tuple[object, Path]:
@@ -61,7 +61,15 @@ def _ticket(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
         ticket = create_ticket(conn, title="Chat me.", actor="human", now=0, title_max_chars=200)
-        ticket = accept_kickoff(conn, ticket.id, actor="human", now=0)
+        ticket = accept_proposal(
+            conn,
+            ticket.id,
+            field=FieldName.kickoff,
+            actor="human",
+            now=0,
+            next_ceiling=NO_FURTHER,
+            at_cap=AtCap.propose,
+        )
     finally:
         conn.close()
     return ticket.id
