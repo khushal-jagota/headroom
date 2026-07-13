@@ -4,6 +4,36 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 the bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-13): chat preview stability closeout
+
+Current build stage:
+
+- Ticket `t_svy3xjxj` accepted Implementation. Its current-main artifact is integrated by merge commit
+  `4579a6a`, preserving Job B, typed tickets, multi-image chat, preview de-flaking, and the unrelated dirty
+  nested frontend worktree.
+- The implementation keys chat rows by durable message/turn identity and preserves the shared
+  `MarkdownBlock` preview subtree only while source and preview context are unchanged. Browser coverage
+  proves all seven preview kinds in Ticket and Chief chat and still proves real-target replacement.
+- The branch adopted `6fb2fac`'s compact memory format before integration; old per-ticket process logs were
+  not reintroduced.
+
+What just passed:
+
+- Implementation artifact: focused live-chat 10/10, multi-image chat 8/8, shared previews 10/10; independent
+  current-main review `NO VIOLATIONS`; canonical `./verify` with 654 unit and 70 e2e tests.
+- Canonical post-merge `./verify` on `main`: Ruff; Mypy across 119 source/typing files; 654 unit tests;
+  compile/static, CSS, Svelte, frontend build, six frontend test groups, and 70 e2e tests; final
+  `VERIFY: PASS`.
+
+Next step:
+
+- Commit this concise closeout record, remove the merged worktree and branch, then propose Closeout. No
+  deploy, restart, migration, or follow-up Ticket applies.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-13): Job B — the `new_worker` production type (verified green, ready to commit)
 
 Current build stage:
