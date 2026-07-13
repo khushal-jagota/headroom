@@ -14,7 +14,6 @@ import json
 from pathlib import Path
 
 import pytest
-from tests.support.probe import build_probe_registry
 
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.minds import config as minds_config
@@ -38,7 +37,7 @@ from planner.tickets.contracts import (
     TicketState,
     TicketStatus,
 )
-from planner.tickets.logic import machine
+from planner.tickets.logic import coding_bridge, machine
 from planner.tickets.logic.machine import FIELD_GATES
 
 KNOWN_SKILLS = frozenset({"panels-worker", "panels-worker-coding"})  # coding's base + specialist
@@ -477,13 +476,20 @@ def test_coding_field_gates_inverse_equals_field_gates() -> None:  # F4
     }
 
 
-def test_coding_ceiling_range_equals_worker_state_order() -> None:
-    assert views.ceiling_range(CODING_DEFINITION) == tuple(s.value for s in WORKER_STATE_ORDER)
+def test_coding_ceiling_range_leads_with_kickoff_then_worker_state_order() -> None:
+    # The ceiling range is now the FULL linear order: leading needs_kickoff (a fresh
+    # ticket's default/selectable ceiling), then the worker states.
+    assert views.ceiling_range(CODING_DEFINITION) == (
+        "needs_kickoff",
+    ) + tuple(s.value for s in WORKER_STATE_ORDER)
 
 
-def test_coding_default_ceiling_is_needs_success() -> None:
-    assert views.default_ceiling(CODING_DEFINITION) == "needs_success"
-    assert views.default_ceiling(CODING_DEFINITION) == WORKER_STATE_ORDER[0].value
+def test_coding_default_ceiling_is_needs_kickoff() -> None:
+    # Default ceiling is now the leading needs_kickoff (a fresh ticket starts scoped to
+    # kickoff); the FIRST WORKER stage stays needs_success and is a distinct concept.
+    assert views.default_ceiling(CODING_DEFINITION) == "needs_kickoff"
+    assert views.first_worker_stage(CODING_DEFINITION) == "needs_success"
+    assert views.first_worker_stage(CODING_DEFINITION) == WORKER_STATE_ORDER[0].value
 
 
 def test_coding_linear_terminal_stage_id_is_done() -> None:
@@ -663,6 +669,7 @@ EXPECTED = {
         {"id": "closeout", "label": "Closeout"},
     ],
     "ceiling_range": [
+        "needs_kickoff",
         "needs_success",
         "needs_approach",
         "needs_plan",
@@ -670,7 +677,7 @@ EXPECTED = {
         "needs_closeout",
         "done",
     ],
-    "default_ceiling": "needs_success",
+    "default_ceiling": "needs_kickoff",
     "worker_profile_id": "panels-worker-coding",
 }
 
@@ -697,11 +704,14 @@ def test_coding_supports_prefix_reconciliation() -> None:  # F5
 
 
 def test_every_specialist_skill_is_shipped_and_provisioned() -> None:
-    # For every registered type (coding + probe via the fixture registry), its declared
-    # worker specialist must resolve to a shipped, loadable skill: SKILL.md exists under
-    # skills/ (Codex F6 — skill_view needs the file, not just the dir) AND the skill is in
-    # PLANNER_SKILL_NAMES so provisioning symlinks it into the worker home.
-    registry = build_probe_registry()
+    # For every PRODUCTION-registered type (coding + new_worker), its declared worker
+    # specialist must resolve to a shipped, loadable skill: SKILL.md exists under skills/
+    # (Codex F6 — skill_view needs the file, not just the dir) AND the skill is in
+    # PLANNER_SKILL_NAMES so provisioning symlinks it into the worker home. Iterated over
+    # the production registry (not the probe fixture) — the truthful assertion is that
+    # every SHIPPED specialist is shipped + provisioned.
+    registry = coding_bridge.coding_registry()
+    assert registry.type_ids() == ("coding", "new_worker")
     for type_id in registry.type_ids():
         specialist = registry.require(type_id).worker_profile.specialist_skill
         assert (repo_root() / "skills" / specialist / "SKILL.md").is_file(), specialist

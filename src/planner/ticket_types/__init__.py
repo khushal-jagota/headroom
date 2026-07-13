@@ -22,10 +22,12 @@ from planner.ticket_types.contracts import (
     WorkflowDefinition,
 )
 from planner.ticket_types.logic import serialize_definition, validate_definition
+from planner.ticket_types.new_worker import NEW_WORKER_DEFINITION
 from planner.ticket_types.registry import Registry, build_registry
 
 __all__ = [
     "CODING_DEFINITION",
+    "NEW_WORKER_DEFINITION",
     "FieldDef",
     "ManifestDict",
     "ManifestField",

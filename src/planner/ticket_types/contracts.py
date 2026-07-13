@@ -79,6 +79,6 @@ class ManifestDict(TypedDict):
     dropped: ManifestStage             # the exceptional terminal
     advance: dict[str, str]            # non-terminal state -> next state
     fields: list[ManifestField]        # ordered, kickoff first
-    ceiling_range: list[str]           # stage order minus leading needs_kickoff
+    ceiling_range: list[str]           # full linear stage order (now includes needs_kickoff)
     default_ceiling: str               # first entry of ceiling_range
     worker_profile_id: str             # the specialist_skill id (the profile's stable id in v1)

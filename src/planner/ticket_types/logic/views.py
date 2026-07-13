@@ -134,13 +134,25 @@ def advance_map(defn: WorkflowDefinition) -> dict[str, str]:
 
 
 def ceiling_range(defn: WorkflowDefinition) -> tuple[str, ...]:
-    """Stage order minus the leading needs_kickoff bookend (== WORKER_STATE_ORDER)."""
-    return stage_ids(defn)[1:]
+    """The full linear stage order — every stage is a selectable ceiling, INCLUDING
+    the leading needs_kickoff. A fresh ticket's default ceiling is needs_kickoff, so it
+    must be a member of this validity set (validate_ceiling / resolve_scope read this)."""
+    return stage_ids(defn)
 
 
 def default_ceiling(defn: WorkflowDefinition) -> str:
-    """First entry of the ceiling range (== "needs_success" for coding)."""
+    """First entry of the ceiling range — the leading needs_kickoff. A fresh ticket
+    starts scoped exactly to kickoff (needs_kickoff, propose); the human expands it
+    onward at kickoff acceptance."""
     return ceiling_range(defn)[0]
+
+
+def first_worker_stage(defn: WorkflowDefinition) -> str:
+    """The first non-kickoff stage — the first stage that does real work
+    (== "needs_success" for coding, "needs_stages" for new_worker). This is the
+    threshold the recap gate and the sprint-in-progress test key off: distinct from
+    default_ceiling, which is now the leading needs_kickoff."""
+    return stage_ids(defn)[1]
 
 
 def linear_terminal_stage_id(defn: WorkflowDefinition) -> str:

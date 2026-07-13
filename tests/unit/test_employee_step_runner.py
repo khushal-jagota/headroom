@@ -371,6 +371,34 @@ def test_next_step_prompt_includes_implementer_wire_value_or_unassigned(tmp_path
     )
 
 
+def test_next_step_prompt_reads_novel_stage_field_for_new_worker(tmp_path: Path) -> None:
+    # Regression: _next_step_prompt resolves the ticket's OWN type definition, so a
+    # new_worker ticket at the NOVEL needs_stages stage names the 'stages' field instead
+    # of raising 'state outside the linear order' (which it would if the gating field
+    # were resolved against the coding default).
+    db = _db(tmp_path)
+    conn = connect(db)
+    try:
+        ticket = tickets_data.create_ticket(
+            conn, title="Design a worker", actor="human", now=0, title_max_chars=200,
+            ticket_type="new_worker",
+        )
+        # Accept kickoff -> advances to the novel needs_stages stage.
+        ticket = tickets_data.accept_proposal(
+            conn, ticket.id, field=FieldName.kickoff, actor="human", now=0,
+            next_ceiling=NO_FURTHER, at_cap=AtCap.propose,
+        )
+    finally:
+        conn.close()
+
+    assert ticket.state == "needs_stages"
+    assert _next_step_prompt(ticket) == (
+        f"Work ticket {ticket.id} — Design a worker. It is in state 'needs_stages'; "
+        "take the next step and propose the 'stages' field for approval. "
+        "Implementer: unassigned."
+    )
+
+
 def test_worker_step_prompt_and_reply_are_visible_in_chat_history(tmp_path: Path) -> None:
     db = _db(tmp_path)
     tid = _new_ticket(db, implementer=Implementer.hermes_codex)

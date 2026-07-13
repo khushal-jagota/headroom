@@ -50,8 +50,13 @@ def test_approval_digest_coding_kind_unchanged(tmp_db: Connection) -> None:
     ticket = create_ticket(
         tmp_db, title="Coding", actor="human", now=1, title_max_chars=200
     )
-    # Kickoff auto-accepts (ceiling needs_success); a success proposal then parks.
+    # Accept kickoff (default ceiling is now needs_kickoff, so kickoff parks until
+    # accepted), expanding the ceiling to needs_success; a success proposal then parks.
     file_proposal(tmp_db, ticket.id, field=FieldName.kickoff, body="k", actor="agent", now=2)
+    accept_proposal(
+        tmp_db, ticket.id, field=FieldName.kickoff, actor="human", now=2,
+        next_ceiling="needs_success", at_cap=AtCap.propose,
+    )
     file_proposal(tmp_db, ticket.id, field=FieldName.success, body="s", actor="agent", now=3)
 
     approvals = _approvals(tmp_db)

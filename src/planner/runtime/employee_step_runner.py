@@ -21,7 +21,7 @@ from planner.runtime import readiness
 from planner.runtime.readiness_doorbell import ReadinessDoorbell
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import Ticket, TicketStatus
-from planner.tickets.logic import machine
+from planner.tickets.logic import coding_bridge, machine
 
 _log = logging.getLogger(__name__)
 
@@ -37,8 +37,12 @@ class _WorkerSessionClaimLost(Exception):
 def _next_step_prompt(ticket: Ticket) -> str:
     """Describe what to advance; the worker role skill owns how to do the work.
 
-    Route selection/suitability guidance lives in the panels-worker skill, not here."""
-    gating = machine.gating_field(ticket.state)
+    Route selection/suitability guidance lives in the panels-worker skill, not here.
+    The gating field is resolved against the ticket's OWN type definition (not the
+    coding default), so a novel-stage type (e.g. new_worker at needs_stages) reads
+    its real field instead of raising 'state outside the linear order'."""
+    defn = coding_bridge.require(ticket.ticket_type)
+    gating = machine.gating_field(ticket.state, definition=defn)
     field = str(gating) if gating is not None else "the next step"
     implementer_wire = ticket.implementer.value if ticket.implementer is not None else "unassigned"
     return (

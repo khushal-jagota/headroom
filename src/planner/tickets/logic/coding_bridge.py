@@ -22,7 +22,13 @@ No cycle: ``ticket_types`` reaches only ``tickets.contracts`` / ``core.contracts
 
 from __future__ import annotations
 
-from planner.ticket_types import CODING_DEFINITION, Registry, WorkflowDefinition, build_registry
+from planner.ticket_types import (
+    CODING_DEFINITION,
+    NEW_WORKER_DEFINITION,
+    Registry,
+    WorkflowDefinition,
+    build_registry,
+)
 from planner.ticket_types.logic import views as _views
 
 # The engine reaches the derived views exclusively through this re-export, so no
@@ -49,7 +55,9 @@ __all__ = [
 # "panels-worker" stays: it is the base role loaded via HERMES_TUI_SKILLS and a real
 # shipped skill; the catalog is the set of skills the registry may reference.
 # Inlined here — NOT imported from minds/config (D102 no-cycle seam).
-_KNOWN_SKILLS: frozenset[str] = frozenset({"panels-worker", "panels-worker-coding"})
+_KNOWN_SKILLS: frozenset[str] = frozenset(
+    {"panels-worker", "panels-worker-coding", "panels-worker-new-worker"}
+)
 _KNOWN_TOOLSET_PROFILES: frozenset[str] = frozenset({"default"})
 
 _registry: Registry | None = None
@@ -69,7 +77,7 @@ def coding_registry() -> Registry:
     global _registry
     if _registry is None:
         _registry = build_registry(
-            [CODING_DEFINITION],
+            [CODING_DEFINITION, NEW_WORKER_DEFINITION],
             known_skills=_KNOWN_SKILLS,
             known_toolset_profiles=_KNOWN_TOOLSET_PROFILES,
         )

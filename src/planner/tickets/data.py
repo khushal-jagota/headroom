@@ -379,7 +379,11 @@ def create_ticket_from_external_work(
     if recap is not None:
         admission.validate_body(recap, "recap")
     defn = coding_bridge.require(ticket_type)   # creation door: unknown type rejected
-    default_ceiling = coding_bridge.default_ceiling(ticket_type)
+    # External work is "already done elsewhere": seed at the type's FIRST WORKER stage
+    # (needs_success / needs_stages / needs_alpha), NOT the leading needs_kickoff — the
+    # applied decision then jumps it to target_state. first_worker_stage is the concept
+    # here; default_ceiling is now needs_kickoff and would wrongly re-park kickoff.
+    first_worker = coding_bridge.views.first_worker_stage(defn)
     ticket_id = new_id(ID_PREFIXES["ticket"])
     initial_fields = fields_codec.with_slot(
         TicketFields.empty(coding_bridge.field_ids(defn)),
@@ -421,17 +425,18 @@ def create_ticket_from_external_work(
                 ticket_id,
                 title,
                 ticket_type,
-                # Seed at the type's FIRST worker stage (== default_ceiling). The
-                # applied external-work decision then moves it to target_state; the
-                # seed only needs to be a valid non-terminal worker stage so the
-                # pre-persist guard passes (coding: needs_success; probe: needs_alpha).
-                default_ceiling,
+                # Seed at the type's FIRST WORKER stage. The applied external-work
+                # decision then moves it to target_state; the seed only needs to be a
+                # valid non-terminal worker stage so the pre-persist guard passes
+                # (coding: needs_success; probe: needs_alpha). This is NOT default_ceiling,
+                # which is now the leading needs_kickoff.
+                first_worker,
                 priority.value,
                 deadline,
                 project_id,
                 sprint_item_id,
                 sprint_id,
-                default_ceiling,
+                first_worker,
                 AtCap.propose.value,
                 TicketStatus.empty.value,
                 fields_codec.fields_to_json(initial_fields),

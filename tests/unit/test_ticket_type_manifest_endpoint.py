@@ -25,6 +25,7 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.ticket_types.coding import CODING_DEFINITION
 from planner.ticket_types.logic.manifest import serialize_definition
+from planner.ticket_types.new_worker import NEW_WORKER_DEFINITION
 
 
 @pytest.fixture
@@ -53,10 +54,15 @@ def probe_installed() -> Iterator[None]:
         uninstall_probe_registry()
 
 
-def test_production_serves_only_coding(app) -> None:
+def test_production_serves_coding_and_new_worker(app) -> None:
     with TestClient(app) as client:
         served = client.get("/api/ticket-types").json()
-    assert served == {"types": [serialize_definition(CODING_DEFINITION)]}
+    assert served == {
+        "types": [
+            serialize_definition(CODING_DEFINITION),
+            serialize_definition(NEW_WORKER_DEFINITION),
+        ]
+    }
 
 
 def test_coding_entry_json_roundtrips(app) -> None:

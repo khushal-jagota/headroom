@@ -331,6 +331,54 @@ def test_is_runnable_kickoff_uses_generic_parked_proposal_predicate(
         conn.close()
 
 
+def test_is_runnable_new_worker_novel_stage_does_not_raise(tmp_path: Path) -> None:
+    # Regression (Codex P1): is_runnable resolves the ticket's OWN definition, so a
+    # new_worker ticket at the NOVEL needs_stages stage is classified against new_worker's
+    # stages and returns a bool WITHOUT raising "state outside the linear order" (which it
+    # would if the machine predicates defaulted to coding). A raise here aborts the whole
+    # readiness poll (ticket_readiness_loop.poll_once iterates candidates with no per-row
+    # guard), so this predicate must never raise for a foreign-type row.
+    db = _db(tmp_path)
+    conn = connect(db)
+    try:
+        ticket = tickets_data.create_ticket(
+            conn, title="Design a worker", actor="human", now=0, title_max_chars=200,
+            ticket_type="new_worker",
+        )
+        # Accept kickoff, expanding the ceiling so the ticket lands at needs_stages with
+        # room to propose (runnable). Novel stage, non-coding type.
+        ticket = tickets_data.accept_proposal(
+            conn, ticket.id, field=FieldName.kickoff, actor="human", now=0,
+            next_ceiling="needs_stages", at_cap=AtCap.propose,
+        )
+        assert ticket.state == "needs_stages"
+        assert readiness.is_runnable(conn, tickets_data.read_ticket(conn, ticket.id)) is True
+    finally:
+        conn.close()
+
+
+def test_is_runnable_new_worker_at_ceiling_stop_is_false(tmp_path: Path) -> None:
+    # The scope predicate also resolves new_worker's definition: at the needs_stages
+    # ceiling with at_cap=stop the ticket is NOT runnable (mirrors the coding case), again
+    # without raising on the novel stage.
+    db = _db(tmp_path)
+    conn = connect(db)
+    try:
+        ticket = tickets_data.create_ticket(
+            conn, title="Design a worker", actor="human", now=0, title_max_chars=200,
+            ticket_type="new_worker",
+        )
+        ticket = tickets_data.accept_proposal(
+            conn, ticket.id, field=FieldName.kickoff, actor="human", now=0,
+            next_ceiling="none", at_cap=AtCap.stop,
+        )
+        assert ticket.state == "needs_stages"
+        assert ticket.ceiling == "needs_stages"
+        assert readiness.is_runnable(conn, tickets_data.read_ticket(conn, ticket.id)) is False
+    finally:
+        conn.close()
+
+
 def test_is_runnable_needs_closeout_follows_ordinary_gating(tmp_path: Path) -> None:
     # closeout is a field-gated state like every other: no special-cased "no gating
     # field, human must approve" behavior remains in the five-field model.

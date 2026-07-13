@@ -53,8 +53,8 @@ PROBE_MANIFEST = {
         {"id": "alpha", "label": "Alpha"},
         {"id": "beta", "label": "Beta"},
     ],
-    "ceiling_range": ["needs_alpha", "needs_beta", "done"],
-    "default_ceiling": "needs_alpha",
+    "ceiling_range": ["needs_kickoff", "needs_alpha", "needs_beta", "done"],
+    "default_ceiling": "needs_kickoff",
     "worker_profile_id": "probe-worker",
 }
 
@@ -120,7 +120,7 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
         body = created.json()
         tid = body["id"]
         assert body["state"] == "needs_kickoff"
-        assert body["ceiling"] == "needs_alpha"          # probe's first worker stage
+        assert body["ceiling"] == "needs_kickoff"        # leading default ceiling
         assert body["ticket_type"] == "probe"
         assert list(body["fields"].keys()) == ["kickoff", "alpha", "beta"]
         assert body["fields"]["kickoff"]["proposal"] is not None

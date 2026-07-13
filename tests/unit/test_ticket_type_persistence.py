@@ -142,12 +142,13 @@ def test_audit_rejects_state_outside_the_types_stages(tmp_db: Connection) -> Non
 
 
 def test_audit_rejects_ceiling_outside_the_types_range(tmp_db: Connection) -> None:
-    # needs_kickoff is excluded from the ceiling range (leading bookend).
-    _raw_insert_ticket(tmp_db, ticket_id="t_bad", ceiling="needs_kickoff")
+    # needs_ghost is not a coding stage, so it is outside the ceiling range. (needs_kickoff
+    # is now IN the ceiling range — the leading default — so it can no longer serve here.)
+    _raw_insert_ticket(tmp_db, ticket_id="t_bad", ceiling="needs_ghost")
     with pytest.raises(RuntimeError, match="id=t_bad") as exc:
         tickets_data.audit_ticket_registry_integrity(tmp_db)
     assert "ceiling outside the type's range" in str(exc.value)
-    assert "needs_kickoff" in str(exc.value)
+    assert "needs_ghost" in str(exc.value)
 
 
 def test_audit_rejects_missing_declared_field(tmp_db: Connection) -> None:
@@ -210,7 +211,8 @@ def test_load_door_rejects_bad_state(tmp_db: Connection) -> None:
 
 
 def test_load_door_rejects_bad_ceiling(tmp_db: Connection) -> None:
-    _raw_insert_ticket(tmp_db, ticket_id="t_load", ceiling="needs_kickoff")
+    # needs_ghost is outside the ceiling range (needs_kickoff is now a valid ceiling).
+    _raw_insert_ticket(tmp_db, ticket_id="t_load", ceiling="needs_ghost")
     with pytest.raises(PlannerError) as exc:
         tickets_data.read_ticket(tmp_db, "t_load")
     assert exc.value.code == ErrorCode.scope_invalid
@@ -220,8 +222,10 @@ def test_persist_door_rejects_out_of_range_ceiling(
     tmp_db: Connection, fake_clock: TestClock
 ) -> None:
     # The pre-persist door in _apply_decision validates the prospective (state,
-    # ceiling) before any SQL. A Decision carrying needs_kickoff as a ceiling (out of
-    # range) must raise before the UPDATE — assert no mutation via a post-error read.
+    # ceiling) before any SQL. A Decision carrying dropped as a ceiling (outside the
+    # linear ceiling range) must raise before the UPDATE — assert no mutation via a
+    # post-error read. (needs_kickoff is now a valid ceiling, so dropped is the
+    # out-of-range example.)
     from planner.tickets.logic.decisions import Decision
 
     now = fake_clock.now_unix()
@@ -234,7 +238,7 @@ def test_persist_door_rejects_out_of_range_ceiling(
         tickets_data._apply_decision(
             tmp_db,
             before,
-            Decision(events=(), new_ceiling=TicketState.needs_kickoff),
+            Decision(events=(), new_ceiling=TicketState.dropped),
             now,
         )
     assert exc.value.code == ErrorCode.scope_invalid
@@ -300,7 +304,7 @@ def test_created_coding_ticket_ceiling_is_registry_default(
         title_max_chars=TITLE_MAX_CHARS, project_id="project_vylo",
     )
     assert str(ticket.ceiling) == coding_bridge.default_ceiling("coding")
-    assert str(ticket.ceiling) == "needs_success"
+    assert str(ticket.ceiling) == "needs_kickoff"
 
 
 def test_created_second_type_ticket_ceiling_is_its_registry_default(

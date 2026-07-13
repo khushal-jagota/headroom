@@ -234,8 +234,9 @@ def test_views_operate_on_non_enum_synthetic_ids() -> None:
     assert views.gating_field(SYNTHETIC, _A) == _FA
     assert views.is_terminal(SYNTHETIC, "done") is True
     assert views.is_terminal(SYNTHETIC, _A) is False
-    assert views.ceiling_range(SYNTHETIC) == (_A, _B, "done")
-    assert views.default_ceiling(SYNTHETIC) == _A
+    assert views.ceiling_range(SYNTHETIC) == ("needs_kickoff", _A, _B, "done")
+    assert views.default_ceiling(SYNTHETIC) == "needs_kickoff"
+    assert views.first_worker_stage(SYNTHETIC) == _A
 
 
 def test_machine_advance_target_returns_bare_string_for_foreign_id() -> None:

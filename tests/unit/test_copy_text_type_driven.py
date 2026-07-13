@@ -21,8 +21,13 @@ from tests.support.probe import (
 )
 
 from planner.ticket_types.contracts import WorkflowDefinition
-from planner.tickets.contracts import FieldName
-from planner.tickets.data import create_ticket, file_proposal, set_field_user_note
+from planner.tickets.contracts import AtCap, FieldName
+from planner.tickets.data import (
+    accept_proposal,
+    create_ticket,
+    file_proposal,
+    set_field_user_note,
+)
 from planner.tickets.views import copy_text
 
 # The permanent copy_text golden: coding's six field blocks in exact order, with a
@@ -69,8 +74,15 @@ def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
     file_proposal(
         tmp_db, ticket.id, field=FieldName.kickoff, body="kickoff body", actor="agent", now=2
     )
+    # Accept kickoff so its value settles and the ticket advances to needs_success (the
+    # default ceiling is now needs_kickoff, so kickoff parks until accepted — the golden
+    # pins a SETTLED kickoff value, so we accept and expand the ceiling onward).
+    accept_proposal(
+        tmp_db, ticket.id, field=FieldName.kickoff, actor="human", now=3,
+        next_ceiling="needs_success", at_cap=AtCap.propose,
+    )
     set_field_user_note(
-        tmp_db, ticket.id, field=FieldName.success, user_note="success note", actor="human", now=3
+        tmp_db, ticket.id, field=FieldName.success, user_note="success note", actor="human", now=4
     )
     assert copy_text(tmp_db, ticket.id) == _CODING_COPY_TEXT_GOLDEN
 

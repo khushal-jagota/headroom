@@ -228,10 +228,12 @@ def test_tier2_scope_generic(probe_registry: WorkflowDefinition) -> None:
         machine.resolve_scope(_B, _A, AtCap.stop, definition=probe_registry)
     assert exc.value.code == ErrorCode.scope_invalid
 
-    # validate_ceiling operates on probe's ceiling range.
+    # validate_ceiling operates on probe's ceiling range. needs_kickoff is now IN the
+    # range (the leading default); needs_ghost is not a stage, so it is out of range.
     machine.validate_ceiling(_B, definition=probe_registry)  # in range: no raise
+    machine.validate_ceiling("needs_kickoff", definition=probe_registry)  # now in range
     with pytest.raises(PlannerError) as exc:
-        machine.validate_ceiling("needs_kickoff", definition=probe_registry)
+        machine.validate_ceiling("needs_ghost", definition=probe_registry)
     assert exc.value.code == ErrorCode.scope_invalid
 
     # has_pending_gating_proposal reads probe's gate (_FA), not coding's.
@@ -269,11 +271,12 @@ def test_resolve_scope_distinguishes_unknown_from_too_early_coding_payloads() ->
         "next_ceiling": "needs_approach", "new_state": "needs_plan"
     }
 
-    # validate_ceiling's coding payload is unchanged by the str() widening.
+    # validate_ceiling's coding payload is unchanged by the str() widening. needs_kickoff
+    # is now a valid ceiling (the leading default), so needs_ghost is the out-of-range id.
     with pytest.raises(PlannerError) as bad_ceiling:
-        machine.validate_ceiling("needs_kickoff")   # kickoff is not in the ceiling range
+        machine.validate_ceiling("needs_ghost")   # not a linear stage -> out of range
     assert bad_ceiling.value.message == "ceiling must be a linear state"
-    assert bad_ceiling.value.detail == {"ceiling": "needs_kickoff"}
+    assert bad_ceiling.value.detail == {"ceiling": "needs_ghost"}
 
 
 # =====================================================================
@@ -315,10 +318,10 @@ def test_probe_data_layer_drive_to_done_exact_events(
     # implementer=khushal so the probe transition hook (needs_alpha->needs_beta) fires.
     tid = _create_probe(tmp_db, now, implementer=Implementer.khushal)
 
-    # created at needs_kickoff with probe's default ceiling (needs_alpha), kickoff parked.
+    # created at needs_kickoff scoped to the leading needs_kickoff ceiling, kickoff parked.
     t = tickets_data.read_ticket(tmp_db, tid)
     assert t.state == "needs_kickoff"
-    assert t.ceiling == _A
+    assert t.ceiling == "needs_kickoff"
     assert fields_codec.get_slot(t.fields, "kickoff").proposal is not None
 
     # --- accept kickoff, expanding the ceiling onward to needs_beta (beyond needs_alpha).
@@ -523,7 +526,7 @@ def test_probe_survives_create_and_reload(
     # _row_to_ticket must NOT raise (the str(row) fix; TicketState("needs_alpha") would ValueError).
     ticket = tickets_data.read_ticket(tmp_db, tid)
     assert ticket.state == "needs_kickoff"
-    assert ticket.ceiling == _A  # probe's default ceiling, not needs_success
+    assert ticket.ceiling == "needs_kickoff"  # leading default ceiling (still a bare str)
     assert type(ticket.state) is str
     assert type(ticket.ceiling) is str
 

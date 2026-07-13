@@ -42,7 +42,7 @@ from planner.core.clock import TestClock
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect, create_schema
 from planner.ticket_types.contracts import WorkflowDefinition
-from planner.ticket_types.logic import validation
+from planner.ticket_types.logic import validation, views
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     NO_FURTHER,
@@ -124,8 +124,8 @@ PROBE_MANIFEST = {
         {"id": "alpha", "label": "Alpha"},
         {"id": "beta", "label": "Beta"},
     ],
-    "ceiling_range": ["needs_alpha", "needs_beta", "done"],
-    "default_ceiling": "needs_alpha",
+    "ceiling_range": ["needs_kickoff", "needs_alpha", "needs_beta", "done"],
+    "default_ceiling": "needs_kickoff",
     "worker_profile_id": "probe-worker",
 }
 
@@ -150,11 +150,13 @@ def test_probe_field_order_is_golden() -> None:
     assert build_probe_registry().field_ids("probe") == ("kickoff", "alpha", "beta")
 
 
-def test_probe_default_ceiling_is_needs_alpha() -> None:
-    # The single fact that proves per-type default-ceiling derivation: probe's first
-    # worker stage is needs_alpha, NOT coding's needs_success.
-    assert build_probe_registry().default_ceiling("probe") == "needs_alpha"
-    assert build_probe_registry().ceiling_range("probe")[0] == "needs_alpha"
+def test_probe_default_ceiling_is_needs_kickoff() -> None:
+    # Default ceiling is the leading needs_kickoff for every type. Probe's per-type
+    # FIRST WORKER stage is needs_alpha (NOT coding's needs_success) — the distinct
+    # concept that still proves per-type derivation.
+    assert build_probe_registry().default_ceiling("probe") == "needs_kickoff"
+    assert build_probe_registry().ceiling_range("probe")[0] == "needs_kickoff"
+    assert views.first_worker_stage(PROBE_DEFINITION) == "needs_alpha"
 
 
 def test_probe_supports_prefix_reconciliation() -> None:
@@ -168,18 +170,20 @@ def test_probe_supports_prefix_reconciliation() -> None:
 # =====================================================================
 
 
-def test_production_registry_is_coding_only() -> None:
-    # No test registry installed: the production singleton offers only coding.
-    assert coding_bridge.coding_registry().type_ids() == ("coding",)
+def test_production_registry_is_coding_and_new_worker() -> None:
+    # No test registry installed: the production singleton offers the two shipped types.
+    # probe stays test-only.
+    assert coding_bridge.coding_registry().type_ids() == ("coding", "new_worker")
 
 
 def test_installed_probe_does_not_leak_into_production_singleton() -> None:
     # Installing the test registry supersedes require()/default_ceiling(), but the
-    # production ``coding_registry()`` (and thus ``coding_definition()``) is untouched.
+    # production ``coding_registry()`` (and thus ``coding_definition()``) is untouched —
+    # it still offers exactly the shipped types (coding + new_worker), never probe.
     install_probe_registry()
     try:
         assert coding_bridge.require("probe").type_id == "probe"
-        assert coding_bridge.coding_registry().type_ids() == ("coding",)
+        assert coding_bridge.coding_registry().type_ids() == ("coding", "new_worker")
         assert coding_bridge.coding_definition().type_id == "coding"
     finally:
         uninstall_probe_registry()
@@ -218,9 +222,9 @@ def test_probe_drives_to_done_via_real_writers(
     )
     tid = ticket.id
 
-    # Created at needs_kickoff with probe's default ceiling (needs_alpha), kickoff parked.
+    # Created at needs_kickoff scoped to the leading needs_kickoff ceiling, kickoff parked.
     assert ticket.state == "needs_kickoff"
-    assert ticket.ceiling == NEEDS_ALPHA
+    assert ticket.ceiling == "needs_kickoff"
     assert fields_codec.get_slot(ticket.fields, "kickoff").proposal is not None
 
     # accept kickoff, expanding the ceiling onward to needs_beta -> advances to needs_alpha.
@@ -306,17 +310,19 @@ def test_probe_invalid_state_rejected(probe_registry: WorkflowDefinition) -> Non
 
 
 def test_probe_invalid_ceiling_rejected(probe_registry: WorkflowDefinition) -> None:
-    # needs_kickoff is a valid probe STATE but is NOT in probe's ceiling range
-    # (needs_alpha, needs_beta, done): the validator raises scope_invalid.
+    # needs_ghost is not a probe stage at all, so it is not in probe's ceiling range
+    # (needs_kickoff, needs_alpha, needs_beta, done): the validator raises scope_invalid.
+    # (needs_kickoff is now a VALID ceiling — the leading default — so it can no longer
+    # serve as the out-of-range example.)
     from planner.tickets.logic import ticket_type_guard
 
     with pytest.raises(PlannerError) as exc:
         ticket_type_guard.resolve_and_validate(
-            "probe", state=NEEDS_ALPHA, ceiling="needs_kickoff"
+            "probe", state=NEEDS_ALPHA, ceiling="needs_ghost"
         )
     assert exc.value.code == ErrorCode.scope_invalid
     assert exc.value.message == "ceiling outside the type's range"
-    assert exc.value.detail == {"type_id": "probe", "ceiling": "needs_kickoff"}
+    assert exc.value.detail == {"type_id": "probe", "ceiling": "needs_ghost"}
 
 
 def test_probe_invalid_field_rejected(probe_registry: WorkflowDefinition) -> None:

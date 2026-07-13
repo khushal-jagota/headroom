@@ -3,6 +3,61 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-13): Job B — the `new_worker` production type (verified green, ready to commit)
+
+Current build stage:
+
+- Job B = the create-a-worker worker: a production-shipped `new_worker` type whose worker designs and lands
+  ANOTHER worker. Design produced by the `worker-smith` sub-agent (sense-check, owner-driven); IMPLEMENTING now
+  on the same agent. Full decision set = D115.
+- Owner-designed bespoke lifecycle `needs_kickoff → needs_stages → needs_thinking → needs_drafting →
+  needs_closeout → done` (one thinking stage = the crux). Skill `panels-worker-new-worker` = coding abstracted +
+  owner-lightened; approved draft persisted at scratchpad `panels-worker-new-worker-SKILL.md`, copied verbatim.
+- Bundled in: (A) step-runner fix (`employee_step_runner` threads the ticket's own definition — the lone
+  straggler that would crash a live new_worker step; VERIFIED LIVE); (B) no transition hooks; (C) structural
+  invariant points at the production registry; and the GLOBAL kickoff-ceiling change.
+- The kickoff-ceiling turned out to be a DECOUPLING, not a one-liner (worker-smith surfaced; corroborated):
+  `default_ceiling` was overloaded as both the fresh-ticket start ceiling and the "first worker stage"
+  threshold (recap-writable gate + sprint in-progress). Resolved (my call — Option 1): add `needs_kickoff` to
+  `ceiling_range` so `default_ceiling` derives to it; add a `first_worker_stage` view and re-point recap +
+  sprint at it, PRESERVING their behavior. Coding's default moves `needs_success` → `needs_kickoff`.
+
+Build progress: IMPLEMENTATION COMPLETE + orchestrator-reviewed. Codex diff review clean after fixes; full
+`./verify` PASS twice (68 e2e). Ready to commit — awaiting owner go.
+
+- DONE: the definition, verbatim skill, registration (+facade export), delta-A step-runner fix, the ceiling
+  decoupling (Option 1: `ceiling_range` now leads with `needs_kickoff`; new `first_worker_stage` view;
+  recap gate + sprint in-progress + external-work seed all re-pointed at it), and all test updates.
+- Ceiling decoupling turned up a THIRD hidden `default_ceiling`-as-first-worker consumer during implementation
+  (external-work seed, `data.py` create_ticket_from_external_work) — caught by a failing test, re-pointed at
+  `first_worker_stage`. Recap-writable, sprint-in-progress, and external-work seed behavior all PRESERVED for
+  coding (they key off `first_worker_stage == needs_success`, unchanged); only the fresh-ticket start ceiling
+  moved (→ `needs_kickoff`, global).
+- Gates (worker-smith, NOT full ./verify): ruff clean whole-repo; mypy clean on `src/ tests/typing/` (119 files);
+  654 unit tests pass; 68 e2e tests pass. Nothing committed.
+- New: `src/planner/ticket_types/new_worker.py`, `skills/panels-worker-new-worker/SKILL.md`,
+  `tests/unit/test_new_worker_type.py` (10 tests: golden manifest + drive-to-done + drive-to-dropped).
+- CODEX ROUND (./verify PASSED but Codex found what it can't): fixed P1 — a SECOND coding-default straggler in
+  `runtime/readiness.py::is_runnable` (threaded the ticket's own definition into all four machine predicates;
+  blast radius was the WHOLE readiness poll, not one ticket). Ran a COMPREHENSIVE sweep of every machine/registry
+  call on a non-coding runtime path — is_runnable was the only straggler; all others already thread the
+  definition or are intentionally coding (board column seed). Added 2 readiness regression tests. Also: P2a SKILL
+  item-2 reworded off the unsupported "default implementer" (now transition-hook framing); P2b stale comments
+  fixed (`contracts.py` ManifestDict ceiling_range comment; BRIEF.md ceiling/default).
+
+Next step:
+
+- Commit (awaiting owner go): orchestrator review DONE — Codex diff review (P1 + 2 nits, all fixed), full
+  `./verify` PASS twice, scope/ceiling + board-seed spot-checked clean. After commit, the live self-routing +
+  novel-stage proof is an owner run.
+
+Blockers:
+
+- None. `main` green at `0595b94`; Job B verified green on top, ready to commit.
+
+Parallel loose thread (not Job B): docs-worker parked on its `docs/ticket-types.md` + stale-doc-audit plan,
+awaiting the owner's check/drive.
+
 ## Current work cycle (2026-07-13): Phase 5 done — the type machinery is complete
 
 Current build stage:

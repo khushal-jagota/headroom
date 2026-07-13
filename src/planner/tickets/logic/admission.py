@@ -83,15 +83,18 @@ def check_recap_writable(
     state: str, *, definition: WorkflowDefinition | None = None
 ) -> None:
     defn = definition or coding_bridge.coding_definition()
-    first_worker = coding_bridge.views.default_ceiling(defn)  # "needs_success" for coding
+    # The first real-work stage (needs_success for coding, needs_stages for new_worker) —
+    # NOT default_ceiling, which is now the leading needs_kickoff. Recap stays writable
+    # exactly as before: only strictly past the first worker stage.
+    first_worker = coding_bridge.views.first_worker_stage(defn)
     if str(state) == defn.dropped_stage.id or not (
         machine.state_index(state, definition=defn)
         > machine.state_index(first_worker, definition=defn)
     ):
         raise PlannerError(
             ErrorCode.recap_too_early,
-            "recap is writable only past needs_success",
-            {"state": str(state)},
+            f"recap is writable only past the first worker stage ({first_worker})",
+            {"state": str(state), "first_worker_stage": first_worker},
         )
 
 

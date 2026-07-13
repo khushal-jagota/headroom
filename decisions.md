@@ -2112,3 +2112,73 @@ Owner ruling: SKILL-DRIVEN, not code-routed — the old PLAN 5b gateway/session/
 - **`my-ticket` returns just the worker name** (`detail["worker"]`), owner-simplified.
 - **The agentic proof (a live worker self-routing) is OUT-OF-BAND** — an owner run against `panels serve`, not
   a `./verify` gate. Phase 5 lands as "mechanism built + code-verified", not "self-routing observed live".
+
+## D115 — Job B: the `new_worker` production type (the create-a-worker worker)
+
+The payoff of the type machinery: a real, production-shipped type whose worker designs and lands ANOTHER
+worker. Design produced by the `worker-smith` sub-agent as a sense-check, owner-driven; implemented on the
+same agent. Because t_tt02–t_tt05 made the stack type-driven, the type itself needs no engine/UI change — a
+definition + a specialist skill + registration (+ the two seam fixes below).
+
+- **Owner-designed lifecycle (bespoke, NOT coding's):** `needs_kickoff → needs_stages → needs_thinking →
+  needs_drafting → needs_closeout → done`, `dropped` reserved. ONE thinking stage. Novel ids
+  (`needs_stages`/`stages`, `needs_thinking`/`thinking`, `needs_drafting`/`drafting`) are plain strings like
+  probe; shared ids reuse the enum values. Rationale: the value of a worker is the quality of thinking its
+  skill forces, so the lifecycle IS the thinking scaffold — a thin "write me a skill" pass is the failure mode.
+- **Ships to PRODUCTION** — into `coding_registry()` `[CODING_DEFINITION, NEW_WORKER_DEFINITION]`;
+  `panels-worker-new-worker` added to `_KNOWN_SKILLS` + `PLANNER_SKILL_NAMES`. (Contrast probe = test-only.)
+- **Specialist skill `panels-worker-new-worker`** — abstracted from `panels-worker-coding`/`panels-worker`
+  (lifted the general disciplines; dropped git/PR/code-review/implementer-routes). Crux = `needs_thinking`
+  (good-result bar + per-stage implementer + per-stage standard, under a genericity test). Owner drove a
+  lightening pass (clearer, ~30% shorter, same content). Approved draft persisted at scratchpad
+  `panels-worker-new-worker-SKILL.md`, written verbatim.
+- **Kickoff-ceiling change — GLOBAL, owner-decided.** Default start ceiling moves to `needs_kickoff` for
+  EVERY type (coding included): a fresh ticket is leashed at kickoff and nothing advances until the human
+  grants scope = review before any agent work. Coding's default moves `needs_success` → `needs_kickoff`.
+  Stays derived — no per-type ceiling field (owner: skip the knob).
+- **The ceiling change is a DECOUPLING, not a one-liner (worker-smith surfaced; I corroborated).**
+  `default_ceiling` was overloaded: the fresh-ticket start ceiling AND the "first worker stage" threshold read
+  by the recap-writable gate (`admission.py:86`) and sprint in-progress (`sprints/data.py:431`). Moving it
+  naively would make recap writable + sprint in-progress one stage too early. Fix (my call — Option 1): add
+  `needs_kickoff` to `ceiling_range` so `default_ceiling = ceiling_range[0]` derives to it and it becomes a
+  valid/selectable ceiling; ADD a distinct `first_worker_stage(defn)` view (= `stage_ids[1]`; `needs_success`
+  for coding) and re-point recap + sprint at it — PRESERVING their current behavior. The `(needs_kickoff,
+  propose)` valid / `(needs_kickoff, stop)` invalid rule and the fresh-ticket `(needs_kickoff, propose)` start
+  both fall out of existing `admission.py`/`data.py` with no new rule. The recap error string is genericized
+  off "needs_success". Option 2 (leave `ceiling_range`, special-case `default_ceiling`) is a dead end — the
+  default wouldn't pass the validity set `validate_ceiling`/`resolve_scope` enforce.
+- **A — step-runner fix (found by worker-smith's seam check).** `employee_step_runner._next_step_prompt`
+  called `machine.gating_field(ticket.state)` with no definition → defaulted to coding → crashed for a foreign
+  state. The lone straggler still on the coding default (every `data.py` door already threads the ticket's own
+  definition). Fixed by threading `coding_bridge.require(ticket.ticket_type)`. Without it a live new_worker
+  step crashes — the "unproven live" caveat becomes a hard failure.
+- **B — no transition hooks.** new_worker is bounded agent work; no stage hands accepted work to a human to
+  execute (the agent sets everything up at closeout). With the kickoff ceiling, every advance is already gated.
+- **C — structural invariant points at the production registry** (`coding_registry().type_ids()`, now
+  `[coding, new_worker]`) rather than the probe fixture — the truthful "every shipped specialist is shipped +
+  provisioned" assertion.
+- **Third hidden `default_ceiling`-as-first-worker consumer, found during implementation.** The original
+  seam analysis named two threshold consumers of `default_ceiling` (recap gate, sprint in-progress). A THIRD
+  surfaced only when `test_chief_external_work` failed: `create_ticket_from_external_work` seeds a row at
+  `default_ceiling` as its start state/ceiling, with a comment asserting `== FIRST worker stage`. That
+  equivalence broke — a `needs_kickoff` seed would wrongly re-park kickoff for "already done elsewhere" work.
+  Re-pointed the external-work seed at `first_worker_stage` too. All three consumers now key off
+  `first_worker_stage`; only the fresh-ticket START ceiling changed (to `needs_kickoff`, global). Recap-writable,
+  sprint-in-progress, and external-work seed behavior are all preserved for coding.
+- **Codex P1 — second coding-default straggler (`runtime/readiness.py::is_runnable`).** `./verify` passed but
+  Codex caught what it can't: `is_runnable` called four machine predicates (`is_terminal`, `gating_field`,
+  `at_or_beyond_ceiling`, `has_pending_parked_proposal`) with no definition → coding default → a new_worker
+  ticket at needs_stages makes `gating_field` raise "state outside the linear order". Blast radius is the WHOLE
+  poll: `ticket_readiness_loop.poll_once` iterates candidates in a bare `for` with no per-row guard, so the
+  raise aborts discovery for every ticket (and the claim recheck at `employee_step_runner.py:217` calls it too).
+  Fixed by resolving `coding_bridge.require(ticket.ticket_type)` and threading `definition=defn` into all four —
+  no import-cycle (`coding_bridge` is in `tickets.logic`, already the invariant boundary). Added two regression
+  tests (novel-stage runnable / at-ceiling-stop not runnable, both without raising).
+- **Comprehensive coding-default sweep (so we stop finding these one at a time).** Audited EVERY `machine.*` /
+  `coding_bridge.views.*` / registry call on a runtime path a non-coding ticket traverses. Findings: `readiness.is_runnable`
+  was the only straggler. All other bare-looking calls (`data.py` plan_handoff_status x3, `tickets/views.py` +
+  `sprints/views.py` has_pending_gating_proposal) already thread `definition=defn` on the continuation line. The two
+  non-fallback `coding_definition()` uses are intentional and safe: `board_view` uses coding's stage order only as
+  the DEFAULT COLUMN SEED (novel states get appended as new columns, lines 292-294), and `fields_codec.fields_from_json`
+  is the `definition or coding_definition()` fallback every caller overrides. `api.py:496` resolves the caller's
+  ticket_type inline. No other fix needed.

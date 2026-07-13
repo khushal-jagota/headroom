@@ -419,18 +419,23 @@ def assign_item_sprint(
 
 def _child_state_in_progress(ticket_type: str, state: str) -> bool:
     """Per-type "in progress by state": a non-terminal linear stage strictly past the
-    type's default ceiling (its first worker stage). Resolves the row's own definition
-    so the pure ``derive_sprint_item_status`` consumes only a precomputed boolean.
+    type's first worker stage (its first real-work stage — needs_success for coding,
+    needs_stages for new_worker). Resolves the row's own definition so the pure
+    ``derive_sprint_item_status`` consumes only a precomputed boolean.
+
+    Keyed off first_worker_stage, NOT default_ceiling (which is now the leading
+    needs_kickoff): the in-progress threshold is unchanged from before the ceiling
+    decoupling.
 
     Terminality is checked FIRST so ``and`` short-circuits: ``dropped`` is outside the
     linear order and ``state_index`` raises on it, so the index is never computed for a
     terminal (done/dropped) state."""
     defn = coding_bridge.require(ticket_type)
     terminal = coding_bridge.views.is_terminal(defn, state)
-    default_ceiling_idx = coding_bridge.views.state_index(
-        defn, coding_bridge.views.default_ceiling(defn)
+    first_worker_idx = coding_bridge.views.state_index(
+        defn, coding_bridge.views.first_worker_stage(defn)
     )
-    return (not terminal) and coding_bridge.views.state_index(defn, state) > default_ceiling_idx
+    return (not terminal) and coding_bridge.views.state_index(defn, state) > first_worker_idx
 
 
 def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
