@@ -93,9 +93,13 @@ PROBE_DEFINITION: WorkflowDefinition = WorkflowDefinition(
     supports_prefix_reconciliation=True,
 )
 
-# The test catalogs the registry validator needs (R14/R15): coding's real skill
-# plus the probe placeholder, and the shared "default" toolset profile.
-PROBE_KNOWN_SKILLS: frozenset[str] = frozenset({"panels-worker", PROBE_SPECIALIST_SKILL})
+# The test catalogs the registry validator needs (R14/R15): coding's base + specialist
+# skills plus the probe placeholder, and the shared "default" toolset profile. The
+# registry validates coding's specialist too (build_probe_registry builds coding + probe),
+# so "panels-worker-coding" must be present.
+PROBE_KNOWN_SKILLS: frozenset[str] = frozenset(
+    {"panels-worker", "panels-worker-coding", PROBE_SPECIALIST_SKILL}
+)
 PROBE_KNOWN_TOOLSET_PROFILES: frozenset[str] = frozenset({"default"})
 
 

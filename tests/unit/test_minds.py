@@ -2328,34 +2328,44 @@ def test_provisioned_skills_encode_implementation_and_closeout_lifecycle(
     skills = tmp_path / "skills"
     panels = (skills / "panels" / "SKILL.md").read_text(encoding="utf-8")
     worker = (skills / "panels-worker" / "SKILL.md").read_text(encoding="utf-8")
+    coding_worker = (skills / "panels-worker-coding" / "SKILL.md").read_text(encoding="utf-8")
     chief = (skills / "panels-chief-of-staff" / "SKILL.md").read_text(encoding="utf-8")
 
     # No provisioned role prompt may still name the retired lifecycle states.
-    for text in (panels, worker, chief):
+    for text in (panels, worker, coding_worker, chief):
         assert "in_progress" not in text
         assert "needs_review" not in text
 
-    # The visible six-stage sequence and its five gated fields are the new model.
+    # t_tt05: the coding stage catalogue moved OUT of the base worker skill INTO the
+    # coding specialist. The visible six-stage sequence, its five gated fields, the
+    # Implementation/Closeout responsibilities, and the closeout duties now live there.
     sequence = "Success → Approach → Plan → Implementation → Closeout → Done"
-    assert sequence in worker
+    assert sequence in coding_worker
     for field in ("success", "approach", "plan", "implementation", "closeout"):
-        assert field in worker
+        assert field in coding_worker
+    assert "needs_implementation" in coding_worker
+    assert "needs_closeout" in coding_worker
+    assert "reviewable" in coding_worker
+    for closeout_duty in ("merge", "deploy", "follow-up", "bookkeeping"):
+        assert closeout_duty in coding_worker
+
+    # The base worker skill is type-agnostic: the extracted coding content is gone,
+    # and the self-routing anchors are present. (Narrowed honestly per Codex F5: the
+    # retained "Keep proposal shapes predictable" bullet still names the coding stages,
+    # so this targets the EXTRACTED ids, not "zero coding words".)
+    assert sequence not in worker
+    assert "needs_implementation" not in worker
+    assert "needs_closeout" not in worker
+    assert "panels worker my-ticket" in worker
+    assert "skill_view" in worker
+    assert "you handle the one current step only." in worker
+    assert "Never invoke " in worker and "panels chief" in worker
 
     # panels lists the five canonical outputs, not the retired `result` field.
     assert "plan, result" not in panels
     assert "implementation" in panels
     assert "closeout" in panels
     assert sequence in panels
-
-    # The worker skill pins Implementation and Closeout as distinct responsibilities.
-    assert "needs_implementation" in worker
-    assert "needs_closeout" in worker
-    assert "reviewable" in worker
-    for closeout_duty in ("merge", "deploy", "follow-up", "bookkeeping"):
-        assert closeout_duty in worker
-    assert "the **result**" not in worker
-    assert "result proposal" not in worker
-    assert "never approve" in worker
 
     # Chief keeps its planning-draft boundary on the new field names only.
     assert "`result`" not in chief

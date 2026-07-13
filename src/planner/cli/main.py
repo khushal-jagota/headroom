@@ -1246,7 +1246,12 @@ def worker_my_ticket(as_json: bool) -> None:
             "no HERMES_SESSION_KEY in env; not running as a ticket worker", as_json
         )
     data = http.send("GET", f"/api/tickets/by-session/{key}", as_json=as_json)
-    http.emit(data, as_json, f"{data['id']} {data['state']} {data['priority']} {data['title']}")
+    http.emit(
+        data,
+        as_json,
+        f"{data['id']} {data['state']} {data['priority']} {data['title']}\n"
+        f"worker: {data['worker']}",
+    )
 
 
 @worker.command("propose")

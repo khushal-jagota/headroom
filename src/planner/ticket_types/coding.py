@@ -75,7 +75,7 @@ _FIELDS: tuple[FieldDef, ...] = tuple(
 )
 
 _WORKER_PROFILE: WorkerProfile = WorkerProfile(
-    specialist_skill="panels-worker",
+    specialist_skill="panels-worker-coding",
     model=None,
     reasoning_effort=None,
     toolset_profile="default",

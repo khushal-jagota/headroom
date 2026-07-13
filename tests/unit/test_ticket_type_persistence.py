@@ -55,7 +55,9 @@ CODING_PROBE_DEFINITION: WorkflowDefinition = WorkflowDefinition(
 def _two_type_registry():
     return build_registry(
         [CODING_DEFINITION, CODING_PROBE_DEFINITION],
-        known_skills=frozenset({"panels-worker"}),
+        # CODING_PROBE_DEFINITION inherits coding's profile (specialist_skill=
+        # "panels-worker-coding"), so the catalog must carry it or R14 fails.
+        known_skills=frozenset({"panels-worker", "panels-worker-coding"}),
         known_toolset_profiles=frozenset({"default"}),
     )
 

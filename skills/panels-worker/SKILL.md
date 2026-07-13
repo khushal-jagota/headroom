@@ -17,19 +17,15 @@ Panels is a workspace for agents, where the user's work lives. It's organized as
 
 Sprint items and tickets can also stand alone, outside a sprint. A ticket moves through stages, and at each stage it needs one thing from you.
 
-### The stages
+## Your ticket and your specialist
+Which stages a ticket has, and what each needs, depend on its TYPE. Run
+`panels worker my-ticket` — it names your worker skill. Invoke that skill with
+`skill_view("<name>")` and follow it for the stage-by-stage work.
+you handle the one current step only.
 
-Each stage is named for what the ticket needs next; your step is to give it that. The visible sequence is **Success → Approach → Plan → Implementation → Closeout → Done**.
-
-- **needs_success** — needs its **success**: what "done" would mean.
-- **needs_approach** — needs its **approach**: how it will be done.
-- **needs_plan** — needs its **plan**: the concrete steps.
-- **needs_implementation** — needs its **implementation**. Implementation follows the approved plan, performs the work, and proposes a concise, reviewable package with concrete evidence.
-- **needs_closeout** — needs its **closeout**. Closeout begins only after Implementation is approved. It performs only the applicable merge, deploy, follow-up, and bookkeeping, then proposes a concise, verified report.
-- **done** — finished.
-- **dropped** — abandoned.
-
-You still handle one current step only — Implementation does not fold Closeout into itself — and you never approve your own proposal at any stage; approval always comes from the human.
+Worker skills:
+- `panels-worker-coding` — coding tickets.
+- `probe-worker` — the probe fixture type (test genericity proof).
 
 ### The CLI
 
@@ -77,16 +73,3 @@ Follow the assignment; never silently substitute another route. If the route is 
 Ticket-owned artifacts are durable work products that make the work easier to understand; they are not a reason to bloat a gated field. Store them in the ticket's managed file tree and link them from the relevant proposal, note, implementation, or closeout using a served `/files/tickets/...` Markdown link. For example, create `data/files/tickets/<ticket-id>/artifacts/ui-plan.html` and link it as `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`.
 
 For frontend changes, normally include a small HTML planning artifact that shows the intended layout, important states, and interactions before implementation starts. When the ticket's purpose is to experiment in HTML to discover the design, that HTML is the exploration and work product; do not require a second planning artifact first. Apply this as judgment-based guidance, not a mechanical gate: create an artifact when seeing the thing will materially improve planning, approval, or execution.
-
-### How to complete ticket stages effectively
-
-- **needs_success** — a good **success** says plainly what "done" means for this ticket, grounded in the real work. Keep it human-readable and outcome-level; avoid turning it into an implementation checklist.
-- **needs_approach** — a good **approach** names the method and the real routes. Keep it short enough to compare and approve; avoid burying the choice in technical detail.
-- **needs_plan** — a good **plan** is concrete enough that the work can start from it. It should be concise and sequenced, not an exhaustive engineering spec.
-- **needs_implementation** — do the actual work, then package it so the user can review the result rather than read a work log. Make three things clear:
-  - **Intent:** the outcome of the ticket this work fulfills.
-  - **How it was done:** the important work and choices that produced the result. Include diagrams or pictures when they materially improve understanding.
-  - **Evidence of completion:** show or link the final artifact where there is one, plus the relevant verification. For visual or interactive work, show screenshots or PNGs of the real output when appropriate rather than only saying it was checked.
-
-  Keep the package proportionate to the work. These are review principles, not mandatory headings or a mechanical checklist.
-- **needs_closeout** — perform only the merge, deploy, follow-up, and bookkeeping steps that actually apply; a good **closeout** is a concise, verified report of what was closed out and how it was checked.

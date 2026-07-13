@@ -3,10 +3,18 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
-## Current work cycle (2026-07-13): Phase 4b (web) done; Phase 5 (worker realization) next
+## Current work cycle (2026-07-13): Phase 5 done — the type machinery is complete
 
 Current build stage:
 
+- `t_tt05` (worker realization) implemented, reviewed, and committed — SKILL-DRIVEN, no wiring (see D105).
+  The inert `WorkerProfile` is now active: the base `panels-worker` skill is split into a type-agnostic base
+  (extract-and-place, owner constraint) + per-type specialists (`panels-worker-coding` verbatim from the base;
+  a `probe-worker` placeholder); `panels worker my-ticket` returns the worker name; the base skill's one new
+  section tells the worker to `skill_view` its specialist. Coding's `specialist_skill` → `panels-worker-coding`
+  (four R14 catalogs updated). Codex plan review (6 fixes incl. two missed tests) + diff review (1 P2 fixed)
+  clean. Full `./verify`: PASS. The end-to-end machinery now works: define a type → the board renders it → a
+  worker self-routes to its specialist.
 - `t_tt04b` implemented, reviewed, and committed. The web app retired the hardcoded coding lifecycle from
   `ui.ts` and now derives a per-type `Lifecycle` (new `web/src/lib/lifecycle.ts`) from the served manifest
   (`GET /api/ticket-types`, fetched once via a static `"ticket-types"` resource in `manifest.svelte.ts`),
@@ -16,19 +24,19 @@ Current build stage:
   Board reuses t_tt04a's card fields (no manifest fetch). Codex plan + diff reviews clean (6 plan fixes + 1
   diff fix — F6 test now exercises the real `lifecycleFor`, moved into `lifecycle.ts`). Full `./verify`: PASS.
 
-Next step:
+Next step (all owner's call — the machinery effort is code-complete):
 
-- Phase 5 (`t_tt05`) — worker realization, SKILL-DRIVEN (owner ruling: no gateway/session/toolset wiring).
-  Activate the already-declared-but-inert `WorkerProfile`: split the base `panels-worker` skill into a
-  type-agnostic base + per-type specialist skills, `my-ticket` returns the worker name, the base skill's one
-  new section says "invoke your specialist". Base-skill change is EXTRACT-AND-PLACE (no rewriting of existing
-  wording — owner constraint). Plan drafted (`orchestration/tickets/t_tt05-worker-realization/BRIEF.md`);
-  plan.md pending the base-skill refinement. AGENTIC self-routing proof is a live owner run, not a `./verify`
-  gate — Phase 5 lands as "mechanism built + code-verified", not "self-routing observed live".
+- **The live self-routing proof** — the one thing NOT `./verify`-gated: run a real worker against a ticket on
+  a live `panels serve` and observe it `skill_view`-load its specialist. Owner run; capture the transcript.
+- **Wrap-up:** remove the throwaway test type from production paths (production stays coding-only already) and
+  write the "how to add a worker" documentation (the effort's persistent deliverable).
+- **Job B (separate, later):** the real self-service worker-creator — a `new_worker` type worked by a
+  specialist that authors a WorkflowDefinition + profile + skill and registers it. The actual payoff; a
+  distinct build on top of the now-complete, documented machinery.
 
 Blockers:
 
-- None. 4a (`2ff4857`), de-flake (`5c2bd0c`), 4b landing now — all on green `./verify`.
+- None. 4a (`2ff4857`), de-flake (`5c2bd0c`), 4b (`a236fb5`), 5 landing now — all on green `./verify`.
 
 ## Current work cycle (2026-07-12): Phase 4a — backend read-models type-driven
 

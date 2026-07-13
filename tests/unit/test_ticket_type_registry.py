@@ -14,8 +14,11 @@ import json
 from pathlib import Path
 
 import pytest
+from tests.support.probe import build_probe_registry
 
 from planner.core.contracts import ErrorCode, PlannerError
+from planner.minds import config as minds_config
+from planner.minds.config import repo_root
 from planner.ticket_types.coding import CODING_DEFINITION
 from planner.ticket_types.contracts import (
     FieldDef,
@@ -38,7 +41,7 @@ from planner.tickets.contracts import (
 from planner.tickets.logic import machine
 from planner.tickets.logic.machine import FIELD_GATES
 
-KNOWN_SKILLS = frozenset({"panels-worker"})            # the coding specialist skill under test
+KNOWN_SKILLS = frozenset({"panels-worker", "panels-worker-coding"})  # coding's base + specialist
 KNOWN_TOOLSET_PROFILES = frozenset({"default"})        # BRIEF §9.2
 
 
@@ -668,7 +671,7 @@ EXPECTED = {
         "done",
     ],
     "default_ceiling": "needs_success",
-    "worker_profile_id": "panels-worker",
+    "worker_profile_id": "panels-worker-coding",
 }
 
 
@@ -686,6 +689,23 @@ def test_manifest_omits_prefix_reconciliation() -> None:  # F5
 
 def test_coding_supports_prefix_reconciliation() -> None:  # F5
     assert build().require("coding").supports_prefix_reconciliation is True
+
+
+# =====================================================================
+# t_tt05 — every registered type's specialist is shipped + provisioned + loadable
+# =====================================================================
+
+
+def test_every_specialist_skill_is_shipped_and_provisioned() -> None:
+    # For every registered type (coding + probe via the fixture registry), its declared
+    # worker specialist must resolve to a shipped, loadable skill: SKILL.md exists under
+    # skills/ (Codex F6 — skill_view needs the file, not just the dir) AND the skill is in
+    # PLANNER_SKILL_NAMES so provisioning symlinks it into the worker home.
+    registry = build_probe_registry()
+    for type_id in registry.type_ids():
+        specialist = registry.require(type_id).worker_profile.specialist_skill
+        assert (repo_root() / "skills" / specialist / "SKILL.md").is_file(), specialist
+        assert specialist in minds_config.PLANNER_SKILL_NAMES, specialist
 
 
 # =====================================================================

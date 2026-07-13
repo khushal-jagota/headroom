@@ -87,7 +87,7 @@ const codingManifest = {
     "done"
   ],
   default_ceiling: "needs_success",
-  worker_profile_id: "panels-worker"
+  worker_profile_id: "panels-worker-coding"
 };
 
 // --- Part A: coding byte-identity vs a HARDCODED copy of today's ui.ts maps ------

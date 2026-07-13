@@ -2088,3 +2088,27 @@ scope, recorded here:
   yield fixture wrapping `install_probe_registry()`/`uninstall_probe_registry()` rather than sharing one —
   the fixture in `test_probe_type.py` is module-local, not in `conftest.py`. Chose per-module copies over
   adding a shared `conftest` fixture to keep `conftest.py` (orchestrator-owned glue) untouched.
+
+## D105 — t_tt05 worker realization: skill-driven, no wiring
+
+Activating the declared-but-inert `WorkerProfile` so a worker self-routes to its type's specialist skill.
+Owner ruling: SKILL-DRIVEN, not code-routed — the old PLAN 5b gateway/session/toolset wiring is CUT.
+
+- **Mechanism = `skill_view` (a Hermes core tool), not code routing.** `HERMES_TUI_SKILLS` only PRELOADS the
+  base role's text; it does not gate later skill access. `skill_view(name)` loads any home skill on demand
+  and is in `_HERMES_CORE_TOOLS` (present under the default worker toolset). Precondition (Codex F1): don't
+  restrict the worker toolset below one that includes `skill_view` (a `HERMES_TUI_TOOLSETS=safe` would omit
+  it). No relative-path file fallback worded (Codex F4 — relative reads resolve against CWD, not the home).
+- **Base role `panels-worker` / `config.worker_skill` UNCHANGED.** The launched base role stays type-agnostic;
+  only the on-demand specialist is per-type. Coding's `WorkerProfile.specialist_skill` → `panels-worker-coding`;
+  four R14 catalogs updated to accept it (`coding_bridge._KNOWN_SKILLS`, the registry test `KNOWN_SKILLS`,
+  `test_ticket_type_persistence::_two_type_registry`, `PROBE_KNOWN_SKILLS` — Codex F2).
+- **Base skill is EXTRACT-AND-PLACE, no rewriting (owner constraint).** Cut `### The stages` + `### How to
+  complete ticket stages effectively` verbatim into `panels-worker-coding`; blended line 32 → exactly
+  `you handle the one current step only.` (rest dropped — the agent needn't know who/why approval happens);
+  add one section (my-ticket → skill_view → the specialist list). Everything else byte-identical.
+- **Probe placeholder ships as a real `skills/probe-worker/` dir** (not test-only) so the structural invariant
+  (`SKILL.md` `.is_file()` — Codex F6) and provisioning pass.
+- **`my-ticket` returns just the worker name** (`detail["worker"]`), owner-simplified.
+- **The agentic proof (a live worker self-routing) is OUT-OF-BAND** — an owner run against `panels serve`, not
+  a `./verify` gate. Phase 5 lands as "mechanism built + code-verified", not "self-routing observed live".

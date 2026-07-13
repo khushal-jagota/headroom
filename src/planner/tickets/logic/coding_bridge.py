@@ -45,9 +45,11 @@ __all__ = [
 ]
 
 # The reference catalogs the registry validator needs (R14/R15), matching
-# coding's WorkerProfile (specialist_skill="panels-worker", toolset_profile="default").
+# coding's WorkerProfile (specialist_skill="panels-worker-coding", toolset_profile="default").
+# "panels-worker" stays: it is the base role loaded via HERMES_TUI_SKILLS and a real
+# shipped skill; the catalog is the set of skills the registry may reference.
 # Inlined here — NOT imported from minds/config (D102 no-cycle seam).
-_KNOWN_SKILLS: frozenset[str] = frozenset({"panels-worker"})
+_KNOWN_SKILLS: frozenset[str] = frozenset({"panels-worker", "panels-worker-coding"})
 _KNOWN_TOOLSET_PROFILES: frozenset[str] = frozenset({"default"})
 
 _registry: Registry | None = None
