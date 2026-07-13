@@ -603,12 +603,15 @@ def test_claimed_rejection_turn_revises_closeout_in_same_session_without_chat_co
         conn = connect(db)
         try:
             state = chat_service.state(conn, gateway, tid, 2)
+            day_id = "day_2026-07-09"
+            days_data.add_day_ticket(conn, day_id, tid, 4)
             queues = tickets_views.queues_view(
                 conn,
                 now=4,
                 today_iso="2026-07-09",
                 item_approval_rows=[],
                 item_overdue_rows=[],
+                day_id=day_id,
             )
         finally:
             conn.close()

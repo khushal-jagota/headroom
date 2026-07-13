@@ -165,3 +165,16 @@ assert.deepEqual(
     "ticket:t_source"
   ].sort()
 );
+
+for (const kind of ["day_ticket_added", "day_ticket_removed"]) {
+  assert.deepEqual(
+    keysForEvent({
+      id: 4,
+      entity_id: "day_2026-07-04",
+      kind,
+      payload: { ticket_id: "t_demo" },
+      created_at: 4
+    }, { todayId: "day_2026-07-04" }).sort(),
+    ["board", "day:2026-07-04", "day:today", "queues", "ticket:t_demo"].sort()
+  );
+}

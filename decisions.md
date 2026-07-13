@@ -514,6 +514,11 @@ forgets its invalidation) is contained: the `entity_id`-prefix rule is primary a
 about an existing entity are auto-covered), with a completeness test as the backstop so a missed
 mapping fails `./verify`.
 
+When an existing event gains a new aggregate dependency, its mapping and test must gain that resource
+key in the same change. In particular, Review's ticket queue follows current-day membership, so
+`day_ticket_added` and `day_ticket_removed` invalidate `queues` as well as the ticket and board; this
+keeps an already-open Review screen and the shell badge aligned without a reload.
+
 ## D-svelte-canonical — The Svelte app is canonical; the classic JS path is retired
 
 The Svelte/Vite app is the canonical frontend. FastAPI serves the built `web/dist/index.html` at `/`,

@@ -270,6 +270,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     # the onward scope to the next stage (needs_closeout), where closeout PARKS pending
     # in turn until its own Review approval reaches done.
     mid = cli(server, "ticket", "create", "--type", "coding", "--title", E30_TITLE)["id"]
+    api.direct_post(server, "/api/day/today/tickets", {"ticket_id": mid})
     _scope_and_advance(
         server,
         api,

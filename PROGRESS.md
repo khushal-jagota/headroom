@@ -4,6 +4,37 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 the bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-13): today-scoped Review implementation
+
+Current build stage:
+
+- Ticket `t_4ub5h4sw` is implemented on dedicated branch
+  `ticket/t_4ub5h4sw-review-today`, based on main `05c8f99`; the dirty primary tree remains untouched.
+- Review ticket approvals now come only from the current planning day's membership. The shared queue still
+  owns ordering and all non-ticket queue data, and day add/remove events invalidate `queues` so an open
+  Review screen and shell badge refresh without a reload.
+- Implementation is complete, independently reviewed, and verified. No merge, deploy, or live cutover
+  belongs to this stage.
+
+What just passed:
+
+- Focused proof: 655 unit tests; all six frontend test groups; and 18 Review-focused browser tests,
+  including off-day exclusion, different-day exclusion, add/remove/re-add without reload, badge/empty-state
+  transitions, approval, revision, skip, open, keyboard, and file-preview behavior.
+- Independent Codex implementation review raised generated-bundle packaging, different-day coverage, and
+  remove-without-reload coverage; all three were addressed, and the follow-up returned `NO VIOLATIONS`.
+- Canonical `./verify`: Ruff; mypy across 119 source/typing files; 655 unit tests; compile/static, CSS,
+  Svelte check/build, six frontend test groups, and 71 e2e tests; final `VERIFY: PASS`.
+
+Next step:
+
+- Commit the verified ticket branch and propose Implementation. Closeout owns the later merge into main,
+  integration verification, and worktree cleanup.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-13): chat preview stability closeout
 
 Current build stage:

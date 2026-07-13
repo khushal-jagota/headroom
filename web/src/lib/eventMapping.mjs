@@ -112,6 +112,9 @@ export function keysForEvent(event, options = {}) {
 
   if (kind.startsWith("day_") && payload.ticket_id) {
     keys.push(`ticket:${payload.ticket_id}`, "board");
+    if (kind === "day_ticket_added" || kind === "day_ticket_removed") {
+      keys.push("queues");
+    }
   }
 
   return unique(keys);

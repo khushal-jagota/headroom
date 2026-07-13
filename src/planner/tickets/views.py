@@ -371,10 +371,17 @@ def _overdue_digest(
     return result
 
 
-def _approvals(conn: sqlite3.Connection, item_approval_rows: list[JsonDict]) -> list[JsonDict]:
+def _approvals(
+    conn: sqlite3.Connection,
+    item_approval_rows: list[JsonDict],
+    *,
+    day_id: str,
+) -> list[JsonDict]:
     ticket_rows = conn.execute(
         "SELECT id, title, state, ticket_type, ticket_status, fields, updated_at FROM tickets "
-        "WHERE state NOT IN ('done','dropped') ORDER BY id"
+        "WHERE state NOT IN ('done','dropped') "
+        "AND id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?) ORDER BY id",
+        (day_id,),
     ).fetchall()
     ticket_digest: list[dict[str, object]] = []
     ticket_title: dict[str, str] = {}
@@ -461,12 +468,14 @@ def queues_view(
     today_iso: str,
     item_approval_rows: list[JsonDict],
     item_overdue_rows: list[JsonDict],
+    *,
+    day_id: str,
 ) -> JsonDict:
     running_agents = conn.execute(
         "SELECT COUNT(*) AS count FROM tickets WHERE ticket_status = 'agent_running_step'"
     ).fetchone()
     return {
-        "approvals": _approvals(conn, item_approval_rows),
+        "approvals": _approvals(conn, item_approval_rows, day_id=day_id),
         "overdue": _overdue(conn, today_iso, item_overdue_rows),
         "running_agents": int(running_agents["count"] if running_agents is not None else 0),
     }

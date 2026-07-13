@@ -19,11 +19,15 @@ from tests.support.probe import (
     uninstall_probe_registry,
 )
 
+from planner.days import data as days_data
 from planner.sprints import views as sprints_views
 from planner.ticket_types.contracts import WorkflowDefinition
 from planner.tickets.contracts import AtCap, FieldName
 from planner.tickets.data import accept_proposal, create_ticket, file_proposal
 from planner.tickets.views import queues_view
+
+TODAY_DAY_ID = "day_2026-07-04"
+YESTERDAY_DAY_ID = "day_2026-07-03"
 
 
 @pytest.fixture
@@ -42,6 +46,7 @@ def _approvals(conn: Connection) -> list[dict]:
         "2026-07-04",
         sprints_views.approval_item_rows(conn),
         sprints_views.overdue_item_rows(conn),
+        day_id=TODAY_DAY_ID,
     )
     return list(view["approvals"])
 
@@ -58,6 +63,7 @@ def test_approval_digest_coding_kind_unchanged(tmp_db: Connection) -> None:
         next_ceiling="needs_success", at_cap=AtCap.propose,
     )
     file_proposal(tmp_db, ticket.id, field=FieldName.success, body="s", actor="agent", now=3)
+    days_data.add_day_ticket(tmp_db, TODAY_DAY_ID, ticket.id, 3)
 
     approvals = _approvals(tmp_db)
     assert len(approvals) == 1
@@ -80,9 +86,47 @@ def test_approval_digest_probe_surfaces_on_registry_field(
         next_ceiling=NEEDS_ALPHA, at_cap=AtCap.propose,
     )
     file_proposal(tmp_db, probe.id, field=FIELD_ALPHA, body="alpha body", actor="agent", now=3)
+    days_data.add_day_ticket(tmp_db, TODAY_DAY_ID, probe.id, 3)
 
     approvals = _approvals(tmp_db)
     assert len(approvals) == 1
     assert approvals[0]["entity_id"] == probe.id
     assert approvals[0]["kind"] == "alpha"
     assert approvals[0]["waiting_since"] == 3
+
+
+def test_ticket_approvals_are_limited_to_today_and_appear_when_added(
+    tmp_db: Connection,
+) -> None:
+    on_day = create_ticket(
+        tmp_db, title="On today", actor="human", now=1, title_max_chars=200
+    )
+    off_day = create_ticket(
+        tmp_db, title="Off today", actor="human", now=2, title_max_chars=200
+    )
+    for ticket, now in ((on_day, 3), (off_day, 4)):
+        accept_proposal(
+            tmp_db,
+            ticket.id,
+            field=FieldName.kickoff,
+            actor="human",
+            now=now,
+            next_ceiling="needs_success",
+            at_cap=AtCap.propose,
+        )
+        file_proposal(
+            tmp_db,
+            ticket.id,
+            field=FieldName.success,
+            body=f"{ticket.title} proposal",
+            actor="agent",
+            now=now,
+        )
+    days_data.add_day_ticket(tmp_db, TODAY_DAY_ID, on_day.id, 5)
+    days_data.add_day_ticket(tmp_db, YESTERDAY_DAY_ID, off_day.id, 5)
+
+    assert [entry["entity_id"] for entry in _approvals(tmp_db)] == [on_day.id]
+
+    days_data.add_day_ticket(tmp_db, TODAY_DAY_ID, off_day.id, 6)
+
+    assert [entry["entity_id"] for entry in _approvals(tmp_db)] == [on_day.id, off_day.id]
