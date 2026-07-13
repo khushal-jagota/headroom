@@ -8,9 +8,10 @@ the bottom; the blow-by-blow is git's.
 
 Current build stage:
 
-- Ticket `t_7uphhqfj` is implemented on branch `ticket/t_7uphhqfj-safe-html-preview` in an isolated
-  worktree. Both embedded and full HTML previews consume one `allow-scripts`-only sandbox contract;
-  same-origin and every other sandbox privilege remain absent.
+- Ticket `t_7uphhqfj` is integrated into `main` at `6f36d72`; the ticket worktree and branch are
+  removed. No deploy, restart, migration, or follow-up ticket applies. Both embedded and full HTML
+  previews consume one `allow-scripts`-only sandbox contract; same-origin and every other sandbox
+  privilege remain absent.
 - The copied Workspace-row reproduction is now a deterministic browser fixture. Its script-cloned rows
   paint at non-zero geometry and its selector changes the visible variant in both preview surfaces.
 
@@ -20,13 +21,16 @@ What just passed:
   change. The complete ticket-file preview browser file passes 11/11.
 - Independent Codex review reported `NO VIOLATIONS` against the approved sandbox, interaction, paint,
   and regression contract.
-- Canonical `PYTHONPATH="$PWD/src" ./verify` passes Ruff, mypy across 119 source files, 655 unit tests,
-  frontend checks/build/tests, and 75 Playwright e2e tests; final `VERIFY: PASS`.
+- Canonical pre-merge `PYTHONPATH="$PWD/src" ./verify` passed Ruff, mypy across 119 source files,
+  655 unit tests, frontend checks/build/tests, and 75 Playwright e2e tests.
+- Canonical post-integration `PYTHONPATH="$PWD/src" ./verify` on `main` passed the same complete gate;
+  final `VERIFY: PASS`.
+- The unrelated active `CONTEXT.md`, `PROGRESS.md`, `decisions.md`, and nested-worktree edits were
+  restored and remain unstaged.
 
 Next step:
 
-- Commit the isolated branch and propose Implementation for approval. Do not merge or deploy before
-  Closeout.
+- Propose Closeout for approval. No repository or operational work remains.
 
 Blockers:
 
