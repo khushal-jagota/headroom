@@ -26,6 +26,155 @@ textarea {
   outline-offset: var(--border-hairline);
 }
 
+.markdown pre,
+.file-preview[data-file-preview-kind="markdown"],
+.chat-thread,
+.chat-menu,
+.chat-image-previews,
+.board-workspace-left,
+.ticket-doc {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-color) transparent;
+}
+
+.markdown pre::-webkit-scrollbar-track,
+.markdown pre::-webkit-scrollbar-corner,
+.file-preview[data-file-preview-kind="markdown"]::-webkit-scrollbar-track,
+.file-preview[data-file-preview-kind="markdown"]::-webkit-scrollbar-corner,
+.chat-thread::-webkit-scrollbar-track,
+.chat-thread::-webkit-scrollbar-corner,
+.chat-menu::-webkit-scrollbar-track,
+.chat-menu::-webkit-scrollbar-corner,
+.chat-image-previews::-webkit-scrollbar-track,
+.chat-image-previews::-webkit-scrollbar-corner,
+.board-workspace-left::-webkit-scrollbar-track,
+.board-workspace-left::-webkit-scrollbar-corner,
+.ticket-doc::-webkit-scrollbar-track,
+.ticket-doc::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.markdown pre::-webkit-scrollbar-thumb,
+.file-preview[data-file-preview-kind="markdown"]::-webkit-scrollbar-thumb,
+.chat-thread::-webkit-scrollbar-thumb,
+.chat-menu::-webkit-scrollbar-thumb,
+.chat-image-previews::-webkit-scrollbar-thumb,
+.board-workspace-left::-webkit-scrollbar-thumb,
+.ticket-doc::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: var(--radius-pill);
+}
+
+@media (hover: hover) and (pointer: fine) and (forced-colors: none) {
+  .markdown pre,
+  .file-preview[data-file-preview-kind="markdown"],
+  .chat-thread,
+  .chat-menu,
+  .chat-image-previews,
+  .board-workspace-left,
+  .ticket-doc {
+    scrollbar-color: transparent transparent;
+  }
+
+  .markdown pre:hover,
+  .markdown pre:focus-within,
+  .markdown pre:active,
+  .file-preview[data-file-preview-kind="markdown"]:hover,
+  .file-preview[data-file-preview-kind="markdown"]:focus-within,
+  .file-preview[data-file-preview-kind="markdown"]:active,
+  .chat-thread:hover,
+  .chat-thread:focus-within,
+  .chat-thread:active,
+  .chat-menu:hover,
+  .chat-menu:focus-within,
+  .chat-menu:active,
+  .chat-image-previews:hover,
+  .chat-image-previews:focus-within,
+  .chat-image-previews:active,
+  .board-workspace-left:hover,
+  .board-workspace-left:focus-within,
+  .board-workspace-left:active,
+  .ticket-doc:hover,
+  .ticket-doc:focus-within,
+  .ticket-doc:active {
+    scrollbar-color: var(--border-color) transparent;
+  }
+
+  .markdown pre::-webkit-scrollbar-thumb,
+  .file-preview[data-file-preview-kind="markdown"]::-webkit-scrollbar-thumb,
+  .chat-thread::-webkit-scrollbar-thumb,
+  .chat-menu::-webkit-scrollbar-thumb,
+  .chat-image-previews::-webkit-scrollbar-thumb,
+  .board-workspace-left::-webkit-scrollbar-thumb,
+  .ticket-doc::-webkit-scrollbar-thumb {
+    background: transparent;
+  }
+
+  .markdown pre:hover::-webkit-scrollbar-thumb,
+  .markdown pre:focus-within::-webkit-scrollbar-thumb,
+  .markdown pre:active::-webkit-scrollbar-thumb,
+  .file-preview[data-file-preview-kind="markdown"]:hover::-webkit-scrollbar-thumb,
+  .file-preview[data-file-preview-kind="markdown"]:focus-within::-webkit-scrollbar-thumb,
+  .file-preview[data-file-preview-kind="markdown"]:active::-webkit-scrollbar-thumb,
+  .chat-thread:hover::-webkit-scrollbar-thumb,
+  .chat-thread:focus-within::-webkit-scrollbar-thumb,
+  .chat-thread:active::-webkit-scrollbar-thumb,
+  .chat-menu:hover::-webkit-scrollbar-thumb,
+  .chat-menu:focus-within::-webkit-scrollbar-thumb,
+  .chat-menu:active::-webkit-scrollbar-thumb,
+  .chat-image-previews:hover::-webkit-scrollbar-thumb,
+  .chat-image-previews:focus-within::-webkit-scrollbar-thumb,
+  .chat-image-previews:active::-webkit-scrollbar-thumb,
+  .board-workspace-left:hover::-webkit-scrollbar-thumb,
+  .board-workspace-left:focus-within::-webkit-scrollbar-thumb,
+  .board-workspace-left:active::-webkit-scrollbar-thumb,
+  .ticket-doc:hover::-webkit-scrollbar-thumb,
+  .ticket-doc:focus-within::-webkit-scrollbar-thumb,
+  .ticket-doc:active::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+  }
+}
+
+@media (forced-colors: active) {
+  .markdown pre,
+  .file-preview[data-file-preview-kind="markdown"],
+  .chat-thread,
+  .chat-menu,
+  .chat-image-previews,
+  .board-workspace-left,
+  .ticket-doc {
+    scrollbar-color: auto;
+  }
+
+  .markdown pre::-webkit-scrollbar-track,
+  .markdown pre::-webkit-scrollbar-corner,
+  .file-preview[data-file-preview-kind="markdown"]::-webkit-scrollbar-track,
+  .file-preview[data-file-preview-kind="markdown"]::-webkit-scrollbar-corner,
+  .chat-thread::-webkit-scrollbar-track,
+  .chat-thread::-webkit-scrollbar-corner,
+  .chat-menu::-webkit-scrollbar-track,
+  .chat-menu::-webkit-scrollbar-corner,
+  .chat-image-previews::-webkit-scrollbar-track,
+  .chat-image-previews::-webkit-scrollbar-corner,
+  .board-workspace-left::-webkit-scrollbar-track,
+  .board-workspace-left::-webkit-scrollbar-corner,
+  .ticket-doc::-webkit-scrollbar-track,
+  .ticket-doc::-webkit-scrollbar-corner {
+    background: Canvas;
+  }
+
+  .markdown pre::-webkit-scrollbar-thumb,
+  .file-preview[data-file-preview-kind="markdown"]::-webkit-scrollbar-thumb,
+  .chat-thread::-webkit-scrollbar-thumb,
+  .chat-menu::-webkit-scrollbar-thumb,
+  .chat-image-previews::-webkit-scrollbar-thumb,
+  .board-workspace-left::-webkit-scrollbar-thumb,
+  .ticket-doc::-webkit-scrollbar-thumb {
+    background: CanvasText;
+  }
+}
+
 /* --- Shell --------------------------------------------------------------- */
 
 .shell {
@@ -832,13 +981,7 @@ button.list-row:hover .list-row-title {
   padding: var(--space-3) var(--space-1) var(--space-4);
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 16px), transparent 100%);
           mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 16px), transparent 100%);
-  scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
 }
-.chat-thread:hover { scrollbar-color: var(--border-color) transparent; }
-.chat-thread::-webkit-scrollbar { width: 7px; }
-.chat-thread::-webkit-scrollbar-thumb { background: transparent; border-radius: var(--radius-pill); }
-.chat-thread:hover::-webkit-scrollbar-thumb { background: var(--border-color); }
 
 .chat-jump {
   position: absolute;
@@ -1055,8 +1198,6 @@ button.list-row:hover .list-row-title {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   padding: var(--space-1);
   z-index: 20;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-color) transparent;
 }
 .chat-menu-hd {
   font-size: var(--type-xs);
@@ -1099,8 +1240,6 @@ button.list-row:hover .list-row-title {
   gap: var(--space-2);
   overflow-x: auto;
   padding: 2px 0 var(--space-2);
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-color) transparent;
 }
 .chat-image-preview {
   position: relative;

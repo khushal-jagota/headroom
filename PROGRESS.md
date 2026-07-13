@@ -4,6 +4,40 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 the bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-13): shared scrollbar polish
+
+Current build stage:
+
+- Ticket `t_ccpejh0c` Implementation is complete and verified in isolated worktree
+  `/private/tmp/panels-t_ccpejh0c` on `ticket/t_ccpejh0c-scrollbars`; it is ready to propose.
+- The CSS-only shared treatment reserves stable gutters on all seven owned scroll surfaces, keeps
+  visible native behavior for touch and forced colors, and hides/reveals the thumb only for fine
+  pointers outside forced-colors mode.
+- Codex plan review found six concrete constraints; all are implemented in
+  [D-shared-scrollbar-treatment]: unwind the existing unconditional chat hide, cover all seven
+  Panels overflow surfaces, use `:focus-within` rather than assuming focusable containers, test real
+  non-hover and forced-colors contexts, avoid screenshot/pixel assertions, and reuse tokens.
+
+What just passed:
+
+- Focused Playwright coverage passes 3/3 after proving RED against baseline CSS. It covers all seven
+  scroll surfaces, fine-pointer rest/hover/focus/active states, a real touch context, and forced
+  colors both at rest and during interaction.
+- Two Codex implementation-review fix cycles were resolved: add a real forced-colors context, then
+  exclude forced colors from the fine-pointer auto-hide media query. The final review has no code or
+  behavior violations; its only observation was to ensure the new test file is included in the commit.
+- Canonical `./verify` passes: Ruff; Mypy across 119 source files; 654 unit tests; compile/static, CSS,
+  Svelte, frontend build and frontend tests; 73 Playwright e2e tests; final `VERIFY: PASS`.
+
+Next step:
+
+- Commit the isolated branch and propose Implementation for approval. Do not merge or deploy before
+  Closeout.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-13): chat preview stability closeout
 
 Current build stage:

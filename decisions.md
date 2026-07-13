@@ -503,6 +503,26 @@ emits `project_created`, and there is intentionally no rename/delete/archive in 
 
 # Frontend architecture and UI
 
+## D-shared-scrollbar-treatment — Native scrollbars, shared CSS, capability-safe hiding
+
+Panels' seven owned overflow surfaces (`.markdown pre`, Markdown `.file-preview`, `.chat-thread`,
+`.chat-menu`, `.chat-image-previews`, `.board-workspace-left`, and `.ticket-doc`) share one native
+scrollbar treatment in `assets/app.css`. Each reserves a stable gutter. Existing token-backed color
+and radius values carry the visual treatment; no custom scrollbar component, JavaScript scroll-state
+tracker, or new design token is justified.
+
+Visible native scrollbar styling is the baseline. Transparent-at-rest thumbs exist only inside
+`@media (hover: hover) and (pointer: fine) and (forced-colors: none)` and reveal through hover,
+`:focus-within`, or active interaction. Forced-colors and non-hover/touch contexts keep
+platform-visible behavior. This also repairs the old `.chat-thread` rule, which hid its thumb
+unconditionally outside a capability query.
+
+Acceptance coverage uses computed styles and layout invariants on representative vertical and
+horizontal surfaces, plus real touch/non-hover and forced-colors Playwright contexts. Forced-colors
+coverage checks both rest and interaction states. It does not use screenshots or native-scrollbar
+pixel measurements, which vary by OS and headless browser. The plan/implementation agent steps are
+collapsed for this trivial CSS ticket; Codex still reviews both the plan and final diff independently.
+
 ## D-frontend-reactivity — Events → keyed invalidation → targeted refetch (not reactive queries)
 
 For the Svelte app, `events → keyed invalidation → targeted refetch` was chosen over a Convex-style

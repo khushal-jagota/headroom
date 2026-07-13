@@ -64,6 +64,11 @@ share.
 - **The markdown renderer is hardened.** Written text (briefs, notes, ideas) renders
   through a markdown pass built so a crafted link that a browser would quietly treat
   as runnable code is impossible to express.
+- **Shared scroll areas keep their place.** Panels reserves stable scrollbar space on
+  its shared vertical and horizontal scroll areas, so content does not move when a
+  scrollbar appears. On a mouse or trackpad the thumb stays quiet until hover, focus,
+  or active use. Touch and forced-colors modes keep the platform's visible scrollbar
+  behavior.
 - **Ticket files are linked, not stored in fields.** Canonical notes, fields,
   proposals, results, and chat stay as database text. Standalone files for a ticket
   live beside the database under `files/tickets/<ticket_id>/`, so the default local
@@ -165,4 +170,4 @@ hardened renderer), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-13 (serif redesign shipped across all screens)._
+_Last verified: 2026-07-13 (per-type ticket rendering and shared scrollbar behavior verified)._
