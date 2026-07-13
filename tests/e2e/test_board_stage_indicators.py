@@ -39,6 +39,149 @@ def _stage(page, card: str, field: str) -> str:
     return f'{card} [data-stage-field="{field}"]'
 
 
+def test_workspace_row_byline_shows_registered_type_active_stage_and_mark(
+    server, context_factory, open_page, cli, api
+) -> None:
+    active = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "new_worker",
+        "--title",
+        "Board new worker metadata",
+    )["id"]
+    done = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Board done metadata",
+    )["id"]
+    running = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Board running metadata",
+    )["id"]
+    takeover = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Board takeover metadata",
+    )["id"]
+    for ticket_id in (active, done, running, takeover):
+        _add_today(api, server, ticket_id)
+    _set_ticket_state(server, active, "needs_stages")
+    _set_ticket_state(server, done, "done")
+    _set_ticket_state(server, running, "needs_success")
+    _set_ticket_status(server, running, "agent_running_step")
+    _set_ticket_state(server, takeover, "needs_plan")
+    _set_ticket_status(server, takeover, "user_takeover")
+
+    page = open_page(
+        context_factory(),
+        server,
+        "#/workspace",
+        'section[data-screen="workspace"]',
+        settled=True,
+    )
+
+    card = f'[data-card][data-ticket-id="{active}"]'
+    page.wait_for_selector(card, timeout=WAIT_MS)
+    assert (
+        page.text_content(f"{card} .list-row-title").strip()
+        == "Board new worker metadata"
+    )
+    page.wait_for_function(
+        """selector =>
+          document.querySelector(selector)?.textContent.trim() === 'New Worker · Stages'
+        """,
+        arg=f"{card} .board-workspace-row-byline",
+        timeout=WAIT_MS,
+    )
+    assert page.text_content(f"{card} .board-workspace-row-byline").strip() == (
+        "New Worker · Stages"
+    )
+    assert page.eval_on_selector_all(
+        f"{card} .board-workspace-row-byline .board-workspace-stage-mark",
+        "els => els.length",
+    ) == 1
+    assert page.eval_on_selector_all(
+        f"{card} > .board-workspace-stage-rail .board-workspace-stage-mark",
+        "els => els.length",
+    ) == 0
+    assert page.get_attribute(_stage(page, card, "stages"), "data-stage-state") == (
+        "current-waiting"
+    )
+
+    geometry = page.eval_on_selector(
+        card,
+        """card => {
+          const rect = selector => card.querySelector(selector).getBoundingClientRect();
+          const title = rect('.list-row-title');
+          const byline = rect('.board-workspace-row-byline');
+          const metadata = rect('.board-workspace-row-metadata');
+          const rail = rect('.board-workspace-stage-rail');
+          const mark = rect('.board-workspace-stage-mark');
+          return { title, byline, metadata, rail, mark };
+        }""",
+    )
+    assert geometry["title"]["bottom"] <= geometry["byline"]["top"]
+    assert abs(geometry["metadata"]["left"] - geometry["byline"]["left"]) < 1
+    assert abs(geometry["rail"]["right"] - geometry["byline"]["right"]) < 1
+    assert abs(geometry["mark"]["right"] - geometry["rail"]["right"]) < 1
+    assert abs(
+        (geometry["mark"]["top"] + geometry["mark"]["bottom"]) / 2
+        - (geometry["byline"]["top"] + geometry["byline"]["bottom"]) / 2
+    ) < 1
+
+    done_card = f'[data-card][data-ticket-id="{done}"]'
+    page.wait_for_selector(done_card, timeout=WAIT_MS)
+    assert page.text_content(f"{done_card} .board-workspace-row-byline").strip() == (
+        "Coding · Done"
+    )
+    assert page.eval_on_selector_all(
+        f"{done_card} .board-workspace-row-byline .board-workspace-stage-mark",
+        "els => els.length",
+    ) == 1
+    assert page.get_attribute(_stage(page, done_card, "closeout"), "data-stage-state") == (
+        "completed"
+    )
+
+    running_card = f'[data-card][data-ticket-id="{running}"]'
+    page.wait_for_selector(running_card, timeout=WAIT_MS)
+    assert page.text_content(f"{running_card} .board-workspace-row-byline").strip() == (
+        "Coding · Success"
+    )
+    assert page.get_attribute(_stage(page, running_card, "success"), "data-stage-state") == (
+        "current-running"
+    )
+    assert page.eval_on_selector_all(
+        f'{running_card} [data-marker="agent-running-step"]', "els => els.length"
+    ) == 1
+
+    takeover_card = f'[data-card][data-ticket-id="{takeover}"]'
+    page.wait_for_selector(takeover_card, timeout=WAIT_MS)
+    assert page.text_content(f"{takeover_card} .board-workspace-row-byline").strip() == (
+        "Coding · Plan"
+    )
+    assert page.get_attribute(_stage(page, takeover_card, "plan"), "data-stage-state") == (
+        "current-waiting"
+    )
+    assert page.eval_on_selector_all(
+        f'{takeover_card} [data-marker="user-takeover"]', "els => els.length"
+    ) == 1
+
+
 def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
     server, context_factory, open_page, cli, api
 ) -> None:

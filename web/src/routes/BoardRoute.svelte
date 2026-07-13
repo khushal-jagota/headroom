@@ -3,12 +3,13 @@
   import { fetchJson } from "../lib/api";
   import { resource } from "../lib/resources";
   import type { BoardResponse, GatewayStatus } from "../lib/types";
-  import { ticketStatusLabel } from "../lib/ui";
+  import { labelize, ticketStatusLabel } from "../lib/ui";
   import type { FieldStageVisualState } from "../lib/ui";
+  import { manifestResource } from "../lib/manifest.svelte";
+  import { lifecycleFor } from "../lib/lifecycle";
   import Button from "../components/Button.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
   import Disclosure from "../components/Disclosure.svelte";
-  import ListRow from "../components/ListRow.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import SectionHeading from "../components/SectionHeading.svelte";
   import StageMark from "../components/StageMark.svelte";
@@ -30,6 +31,7 @@
   const chiefChatStatus = resource<GatewayStatus>(`chat-status:${chiefOfStaffEntityId}`, (signal) =>
     fetchJson(`/api/chat/${chiefOfStaffEntityId}/status`, { signal })
   );
+  const manifest = manifestResource();
   let columns = $derived(board.data?.columns || []);
   let statusFilter = $state<string>("all");
   // The unfiltered rail reads "All statuses" (the mockup's wording); the select's
@@ -70,10 +72,11 @@
     return null;
   }
 
-  // The board rail marks only the CURRENT stage, driven from the fields t_tt04a now
-  // puts on each card (gating_field, is_done, ticket_status, has_pending_proposal) —
-  // no manifest fetch on the board. The current stage is the card's own gating field
-  // (null for a done/dropped card → the "closeout" cosmetic fallback the e2e pins).
+  // The board rail marks only the CURRENT stage, driven from the fields t_tt04a puts
+  // on each card (gating_field, is_done, ticket_status, has_pending_proposal). The
+  // manifest resource supplies only the registered worker-type label; it never drives
+  // the mark. The current stage is the card's own gating field (null for a done/dropped
+  // card → the "closeout" cosmetic fallback the e2e pins).
   function currentStageField(card: Record<string, any>): string {
     return card.gating_field || "closeout";
   }
@@ -89,6 +92,13 @@
       return "current-awaiting-approval";
     }
     return "current-waiting";
+  }
+
+  function currentStageLabel(card: Record<string, any>): string {
+    if (card.is_done || card.is_dropped) {
+      return card.state_label || labelize(card.state);
+    }
+    return card.gating_field_label || labelize(currentStageField(card));
   }
 
   function activitySortValue(card: Record<string, any>): number {
@@ -136,6 +146,7 @@
   onDestroy(() => {
     board.dispose();
     chiefChatStatus.dispose();
+    manifest.dispose();
   });
 </script>
 
@@ -208,29 +219,40 @@
                   {@const stageField = currentStageField(card)}
                   {@const stageState = currentStageState(card)}
                   {@const marker = stageMarker(card, stageState)}
-                  <ListRow
-                    variant="board"
-                    title={card.title}
-                    active={rightPaneMode === "ticket" && selectedCard?.id === card.id}
+                  {@const cardLifecycle = lifecycleFor(manifest.data, card.ticket_type)}
+                  <button
+                    type="button"
+                    class="list-row list-row--board"
+                    class:active={rightPaneMode === "ticket" && selectedCard?.id === card.id}
                     onclick={() => selectCard(card.id)}
                     data-card=""
                     data-ticket-id={card.id}
                     data-ticket-state={card.state}
                     data-ticket-status={card.ticket_status}
                   >
-                    {#snippet trailing()}
-                      <span class="board-workspace-stage-rail" aria-label="Ticket current stage">
-                        <StageMark
-                          state={stageState}
-                          class="board-workspace-stage-mark"
-                          data-stage-field={stageField}
-                          data-stage-state={stageState}
-                          data-marker={marker || undefined}
-                          aria-label={`${stageField} ${stageState.replace(/-/g, " ")}`}
-                        />
+                    <span class="board-workspace-row-main">
+                      <span class="list-row-title">{card.title}</span>
+                      <span class="board-workspace-row-byline">
+                        <span class="board-workspace-row-metadata">
+                          <span class="board-workspace-row-type">
+                            {cardLifecycle?.typeLabel ?? labelize(card.ticket_type)}
+                          </span>
+                          <span class="board-workspace-row-separator" aria-hidden="true"> · </span>
+                          <span class="board-workspace-row-stage">{currentStageLabel(card)}</span>
+                        </span>
+                        <span class="board-workspace-stage-rail" aria-label="Ticket current stage">
+                          <StageMark
+                            state={stageState}
+                            class="board-workspace-stage-mark"
+                            data-stage-field={stageField}
+                            data-stage-state={stageState}
+                            data-marker={marker || undefined}
+                            aria-label={`${stageField} ${stageState.replace(/-/g, " ")}`}
+                          />
+                        </span>
                       </span>
-                    {/snippet}
-                  </ListRow>
+                    </span>
+                  </button>
                 {/each}
               </div>
             </Disclosure>

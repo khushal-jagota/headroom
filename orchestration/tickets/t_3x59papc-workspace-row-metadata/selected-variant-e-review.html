@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stacked byline refinements</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --base:#1b1917; --raised:#24211b; --overlay:#26221c; --sunken:#141210;
+      --strong:#f4f1ea; --default:#dcd8cf; --muted:#b4b0a6; --faint:#8a867c; --faintest:#66625a;
+      --amber:#e7a742; --amber-surface:#33291a; --green:#7fa564; --red:#d85d5d;
+      --border:rgba(230,210,175,.11); --ui:system-ui,-apple-system,"Segoe UI",sans-serif;
+      --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body { margin:0; min-height:100vh; background:var(--sunken); color:var(--default); font-family:var(--ui); -webkit-font-smoothing:antialiased; }
+    .page { width:min(1160px,calc(100% - 40px)); margin:0 auto; padding:36px 0 60px; }
+    .eyebrow { color:var(--amber); font:600 11px/1 var(--mono); letter-spacing:.12em; text-transform:uppercase; }
+    h1 { margin:10px 0 8px; color:var(--strong); font-size:clamp(24px,3vw,34px); font-weight:600; letter-spacing:-.02em; }
+    .intro { max-width:790px; margin:0; color:var(--muted); font-size:14px; line-height:1.55; }
+    .jump { display:flex; flex-wrap:wrap; gap:8px; margin:24px 0; }
+    .jump a { display:inline-flex; padding:8px 12px; border:1px solid var(--border); border-radius:999px; color:var(--muted); text-decoration:none; font-size:13px; }
+    .jump a:hover { background:var(--overlay); color:var(--strong); }
+    .variant { display:grid; grid-template-columns:minmax(340px,440px) 1fr; gap:20px; margin-bottom:24px; scroll-margin-top:20px; }
+    .workspace { min-height:620px; overflow:hidden; border:1px solid var(--border); border-radius:12px; background:var(--base); box-shadow:0 24px 70px rgba(0,0,0,.22); }
+    .rail { height:100%; padding:16px 24px 28px; }
+    .chief { padding:8px 12px; color:var(--default); font-size:13px; }
+    .filters { display:flex; justify-content:space-between; padding:12px 12px 8px; color:var(--faint); font-size:11px; }
+    .fake-check { display:inline-block; width:13px; height:13px; margin-right:6px; border:1px solid var(--faintest); border-radius:3px; vertical-align:-2px; }
+    .group { margin-top:18px; }
+    .group-head { display:flex; align-items:center; gap:7px; padding:6px 12px; color:var(--faint); font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; }
+    .chev { font-size:10px; transform:rotate(90deg); }
+    .count { margin-left:auto; font:400 11px/1 var(--mono); letter-spacing:0; }
+    .rows { display:grid; gap:1px; }
+    .row { width:100%; min-width:0; border-radius:8px; color:var(--muted); padding:8px 12px; }
+    .row.selected { background:var(--overlay); color:var(--strong); }
+    .row.awaiting { color:var(--default); }
+    .title { min-width:0; font-size:13px; line-height:1.35; overflow-wrap:anywhere; }
+    .byline { margin-top:3px; color:var(--faint); font-size:11px; line-height:1.2; }
+    .stage-text { color:var(--muted); }
+    .sep { padding:0 5px; color:var(--faintest); }
+
+    /* The same five visual states used by the existing StageMark component. */
+    .mark { display:inline-block; width:11px; height:11px; border:2px solid var(--faintest); border-radius:999px; box-sizing:border-box; flex:0 0 11px; }
+    .mark.running { border-color:var(--amber-surface); border-right-color:var(--amber); border-top-color:var(--amber); animation:spin 900ms linear infinite; }
+    .mark.waiting { border-color:var(--amber); }
+    .mark.approval { background:var(--amber); border-color:var(--amber); }
+    .mark.done { background:var(--green); border-color:var(--green); }
+    .mark.error { background:var(--red); border-color:var(--red); }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    @media (prefers-reduced-motion:reduce) { .mark.running { animation:none; } html { scroll-behavior:auto; } }
+
+    .notes { align-self:start; padding:20px; border:1px solid var(--border); border-radius:12px; background:rgba(36,33,27,.72); }
+    .notes h2 { margin:0 0 8px; color:var(--strong); font-size:17px; }
+    .notes p,.notes li { color:var(--muted); font-size:13px; line-height:1.55; }
+    .notes p { margin:0 0 14px; }
+    .notes ul { margin:0; padding-left:18px; }
+    .notes strong { color:var(--default); font-weight:600; }
+
+    /* A: current stacked-byline idea, mark remains in the old trailing rail. */
+    .baseline .row { display:grid; grid-template-columns:minmax(0,1fr) 12px; align-items:center; gap:12px; }
+    .baseline .mark { justify-self:end; }
+
+    /* C: same stacked structure, but the byline becomes a quiet two-ended rail. */
+    .split .row { display:block; }
+    .split .byline { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .split .stage-group { display:inline-flex; align-items:center; gap:5px; color:var(--muted); white-space:nowrap; }
+
+    /* E: type and stage stay together on the left; only the mark owns the right edge. */
+    .byline-trailing .row { display:block; }
+    .byline-trailing .byline { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .byline-trailing .meta-left { min-width:0; }
+
+    .footer { margin-top:8px; color:var(--faint); font-size:11px; }
+    @media (max-width:780px) {
+      .page { width:min(100% - 24px,520px); padding-top:24px; }
+      .variant { grid-template-columns:1fr; }
+      .workspace { min-height:580px; }
+    }
+  </style>
+</head>
+<body>
+<main class="page">
+  <div class="eyebrow">Ticket t_3x59papc · revised planning exploration</div>
+  <h1>Stacked byline refinements</h1>
+  <p class="intro">These three options all keep the title on top and type/stage on a quiet second line. They differ only in whether the existing current-stage mark sits beside the row, beside the stage, or by itself at the byline’s right edge.</p>
+  <nav class="jump" aria-label="Stacked byline variants">
+    <a href="#baseline">A · Trailing mark</a>
+    <a href="#split">C · Split byline, mark right</a>
+    <a href="#byline-trailing">E · Byline left, mark right</a>
+  </nav>
+
+  <section class="variant baseline" id="baseline">
+    <div class="workspace"><div class="rail">
+      <div class="chief">Chief of Staff</div>
+      <div class="filters"><span>All statuses</span><span><i class="fake-check"></i>Hide done</span></div>
+      <div class="group"><div class="group-head"><span class="chev">›</span><span>Panels</span><span class="count">4</span></div><div class="rows">
+        <div class="row awaiting selected"><div><div class="title">Show worker type and current stage in Workspace ticket rows</div><div class="byline">Coding<span class="sep">·</span><span class="stage-text">Plan</span></div></div><span class="mark approval" aria-label="Awaiting approval"></span></div>
+        <div class="row"><div><div class="title">Define a worker for recurring release preparation</div><div class="byline">New worker<span class="sep">·</span><span class="stage-text">Approach</span></div></div><span class="mark running" aria-label="Agent running"></span></div>
+        <div class="row"><div><div class="title">Prove manifest-driven ticket stages remain generic</div><div class="byline">Probe fixture<span class="sep">·</span><span class="stage-text">Success</span></div></div><span class="mark waiting" aria-label="Waiting"></span></div>
+        <div class="row"><div><div class="title">Keep Workspace grouped by project and recent activity</div><div class="byline">Coding<span class="sep">·</span><span class="stage-text">Done</span></div></div><span class="mark done" aria-label="Done"></span></div>
+      </div></div>
+      <div class="group"><div class="group-head"><span class="chev">›</span><span>No project</span><span class="count">2</span></div><div class="rows">
+        <div class="row"><div><div class="title">Add keyboard focus coverage to rail controls</div><div class="byline">Coding<span class="sep">·</span><span class="stage-text">Implementation</span></div></div><span class="mark running" aria-label="Agent running"></span></div>
+        <div class="row"><div><div class="title">Correct stale project labels after reassignment</div><div class="byline">Coding<span class="sep">·</span><span class="stage-text">Closeout</span></div></div><span class="mark error" aria-label="Errored"></span></div>
+      </div></div>
+    </div></div>
+    <aside class="notes"><h2>A · Trailing mark</h2><p>The original stacked byline: type and stage read together under the title, while the existing mark stays in its current far-right rail.</p><ul><li><strong>Strong at:</strong> smallest production change.</li><li><strong>Trade-off:</strong> stage text and its visual state remain physically separate.</li></ul></aside>
+  </section>
+
+  <section class="variant split" id="split">
+    <div class="workspace"><div class="rail">
+      <div class="chief">Chief of Staff</div>
+      <div class="filters"><span>All statuses</span><span><i class="fake-check"></i>Hide done</span></div>
+      <div class="group"><div class="group-head"><span class="chev">›</span><span>Panels</span><span class="count">4</span></div><div class="rows">
+        <div class="row awaiting selected"><div class="title">Show worker type and current stage in Workspace ticket rows</div><div class="byline"><span>Coding</span><span class="stage-group"><span>Plan</span><span class="mark approval"></span></span></div></div>
+        <div class="row"><div class="title">Define a worker for recurring release preparation</div><div class="byline"><span>New worker</span><span class="stage-group"><span>Approach</span><span class="mark running"></span></span></div></div>
+        <div class="row"><div class="title">Prove manifest-driven ticket stages remain generic</div><div class="byline"><span>Probe fixture</span><span class="stage-group"><span>Success</span><span class="mark waiting"></span></span></div></div>
+        <div class="row"><div class="title">Keep Workspace grouped by project and recent activity</div><div class="byline"><span>Coding</span><span class="stage-group"><span>Done</span><span class="mark done"></span></span></div></div>
+      </div></div>
+      <div class="group"><div class="group-head"><span class="chev">›</span><span>No project</span><span class="count">2</span></div><div class="rows">
+        <div class="row"><div class="title">Add keyboard focus coverage to rail controls</div><div class="byline"><span>Coding</span><span class="stage-group"><span>Implementation</span><span class="mark running"></span></span></div></div>
+        <div class="row"><div class="title">Correct stale project labels after reassignment</div><div class="byline"><span>Coding</span><span class="stage-group"><span>Closeout</span><span class="mark error"></span></span></div></div>
+      </div></div>
+    </div></div>
+    <aside class="notes"><h2>C · Split byline, mark right</h2><p>Type anchors the left of the second line. Stage text aligns on the right, with its existing mark/spinner at the far-right edge. The title remains untouched above.</p><ul><li><strong>Strong at:</strong> a stable right edge for status while keeping type and stage readable.</li><li><strong>Trade-off:</strong> long type and stage labels compete for the same line.</li></ul></aside>
+  </section>
+
+  <section class="variant byline-trailing" id="byline-trailing">
+    <div class="workspace"><div class="rail">
+      <div class="chief">Chief of Staff</div>
+      <div class="filters"><span>All statuses</span><span><i class="fake-check"></i>Hide done</span></div>
+      <div class="group"><div class="group-head"><span class="chev">›</span><span>Panels</span><span class="count">4</span></div><div class="rows">
+        <div class="row awaiting selected"><div class="title">Show worker type and current stage in Workspace ticket rows</div><div class="byline"><span class="meta-left">Coding<span class="sep">·</span><span class="stage-text">Plan</span></span><span class="mark approval"></span></div></div>
+        <div class="row"><div class="title">Define a worker for recurring release preparation</div><div class="byline"><span class="meta-left">New worker<span class="sep">·</span><span class="stage-text">Approach</span></span><span class="mark running"></span></div></div>
+        <div class="row"><div class="title">Prove manifest-driven ticket stages remain generic</div><div class="byline"><span class="meta-left">Probe fixture<span class="sep">·</span><span class="stage-text">Success</span></span><span class="mark waiting"></span></div></div>
+        <div class="row"><div class="title">Keep Workspace grouped by project and recent activity</div><div class="byline"><span class="meta-left">Coding<span class="sep">·</span><span class="stage-text">Done</span></span><span class="mark done"></span></div></div>
+      </div></div>
+      <div class="group"><div class="group-head"><span class="chev">›</span><span>No project</span><span class="count">2</span></div><div class="rows">
+        <div class="row"><div class="title">Add keyboard focus coverage to rail controls</div><div class="byline"><span class="meta-left">Coding<span class="sep">·</span><span class="stage-text">Implementation</span></span><span class="mark running"></span></div></div>
+        <div class="row"><div class="title">Correct stale project labels after reassignment</div><div class="byline"><span class="meta-left">Coding<span class="sep">·</span><span class="stage-text">Closeout</span></span><span class="mark error"></span></div></div>
+      </div></div>
+    </div></div>
+    <aside class="notes"><h2>E · Byline left, mark right</h2><p>Worker type and stage stay together on the left of the second line. The existing mark/spinner sits by itself at the far-right edge of that byline.</p><ul><li><strong>Strong at:</strong> keeping the two text labels together while giving status a stable right-edge scan point.</li><li><strong>Trade-off:</strong> the mark still sits apart from the stage text it describes.</li></ul></aside>
+  </section>
+
+  <p class="footer">Exploration only — the production direction remains unselected until the Plan is approved.</p>
+</main>
+</body>
+</html>
