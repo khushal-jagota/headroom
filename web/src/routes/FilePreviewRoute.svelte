@@ -1,7 +1,12 @@
 <script lang="ts">
   import FilePreview from "../components/FilePreview.svelte";
   import type { FilePreviewTarget } from "../lib/filePreview";
-  import { chatFileTarget, resolvePreview, ticketFileTarget } from "../lib/filePreview";
+  import {
+    MANAGED_HTML_PREVIEW_SANDBOX,
+    chatFileTarget,
+    resolvePreview,
+    ticketFileTarget
+  } from "../lib/filePreview";
 
   function parseTarget(): FilePreviewTarget | null {
     const hash = window.location.hash;
@@ -63,7 +68,7 @@
         class="file-preview-document-frame"
         data-file-preview-html
         src={htmlFrameHref}
-        sandbox=""
+        sandbox={MANAGED_HTML_PREVIEW_SANDBOX}
         title={resolved.label}
       ></iframe>
     {:else}

@@ -22,6 +22,8 @@ export type ResolvedPreview = {
   actionLabel?: string;
 };
 
+export const MANAGED_HTML_PREVIEW_SANDBOX = "allow-scripts";
+
 const MARKDOWN_EXTENSIONS = new Set(["md", "markdown"]);
 const HTML_EXTENSIONS = new Set(["html", "htm"]);
 const IMAGE_EXTENSIONS = new Set(["avif", "bmp", "gif", "jpeg", "jpg", "png", "webp"]);

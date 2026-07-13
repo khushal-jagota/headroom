@@ -4,6 +4,34 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 the bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-13): safe interactivity in ticket HTML previews
+
+Current build stage:
+
+- Ticket `t_7uphhqfj` is implemented on branch `ticket/t_7uphhqfj-safe-html-preview` in an isolated
+  worktree. Both embedded and full HTML previews consume one `allow-scripts`-only sandbox contract;
+  same-origin and every other sandbox privilege remain absent.
+- The copied Workspace-row reproduction is now a deterministic browser fixture. Its script-cloned rows
+  paint at non-zero geometry and its selector changes the visible variant in both preview surfaces.
+
+What just passed:
+
+- The new Playwright test failed first against the empty sandbox, then passed after the shared policy
+  change. The complete ticket-file preview browser file passes 11/11.
+- Independent Codex review reported `NO VIOLATIONS` against the approved sandbox, interaction, paint,
+  and regression contract.
+- Canonical `PYTHONPATH="$PWD/src" ./verify` passes Ruff, mypy across 119 source files, 655 unit tests,
+  frontend checks/build/tests, and 75 Playwright e2e tests; final `VERIFY: PASS`.
+
+Next step:
+
+- Commit the isolated branch and propose Implementation for approval. Do not merge or deploy before
+  Closeout.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-13): shared scrollbar polish
 
 Current build stage:

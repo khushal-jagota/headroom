@@ -438,8 +438,9 @@ Markdown links; Panels serves only safely resolved regular files. The public fro
 `FilePreviewTarget` + `FilePreview`, so every surface shares one classifier and renderer instead of
 per-surface file logic — no upload API, artifact rows, file ids, or per-stage attachment slots. Every
 Markdown link routes through `FilePreview`: safe image/video/audio/managed-Markdown render inline; HTML
-is a sandboxed preview card (empty-permission sandbox) whose **Open preview** action leads to a
-dedicated document-only route where the sandboxed HTML fills the page (a Blob-backed iframe, avoiding
+is a sandboxed preview card whose shared policy grants only script execution, keeping the document at an
+opaque origin without same-origin or other host-page privileges. Its **Open preview** action leads to a
+dedicated document-only route where the same sandboxed HTML fills the page (a Blob-backed iframe, avoiding
 the failing full-route `srcdoc` paint path, with full-page layout scoped to HTML so other routes are
 unchanged); unsupported managed files and external URLs are cards with download/open actions. Editable
 Markdown stays one continuous `contenteditable` where each link is an atomic preview island carrying

@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Workspace ticket row variants</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --surface-base: #1b1917;
+      --surface-raised: #24211b;
+      --surface-overlay: #26221c;
+      --surface-sunken: #141210;
+      --text-strong: #f4f1ea;
+      --text-default: #dcd8cf;
+      --text-muted: #b4b0a6;
+      --text-faint: #8a867c;
+      --text-faintest: #66625a;
+      --accent: #e7a742;
+      --done: #7fa564;
+      --error: #d85d5d;
+      --border: rgba(230, 210, 175, 0.11);
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+      --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--surface-sunken);
+      color: var(--text-default);
+      font-family: var(--font-ui);
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input { font: inherit; }
+
+    .page {
+      width: min(1180px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 36px 0 56px;
+    }
+    .eyebrow {
+      color: var(--accent);
+      font: 600 11px/1 var(--font-mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 10px 0 8px;
+      color: var(--text-strong);
+      font-size: clamp(24px, 3vw, 34px);
+      font-weight: 600;
+      letter-spacing: -.02em;
+    }
+    .intro {
+      max-width: 760px;
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 24px 0 18px;
+    }
+    .tab {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--text-muted);
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    .tab:hover { color: var(--text-strong); background: var(--surface-overlay); }
+    .tab[aria-selected="true"] {
+      color: var(--text-strong);
+      border-color: rgba(231, 167, 66, .42);
+      background: #33291a;
+    }
+    .variant { display: none; }
+    .variant.active { display: grid; grid-template-columns: minmax(340px, 440px) 1fr; gap: 20px; }
+
+    .workspace {
+      overflow: hidden;
+      min-height: 630px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface-base);
+      box-shadow: 0 24px 70px rgba(0,0,0,.24);
+    }
+    .rail {
+      height: 100%;
+      padding: 16px 24px 28px;
+    }
+    .chief {
+      width: 100%;
+      border: 0;
+      border-radius: var(--radius-md);
+      background: transparent;
+      color: var(--text-default);
+      padding: 8px 12px;
+      text-align: left;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .chief:hover { background: var(--surface-overlay); color: var(--text-strong); }
+    .filters {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 12px 8px;
+      color: var(--text-faint);
+      font-size: 11px;
+    }
+    .hide-done {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+    .hide-done input { accent-color: var(--accent); }
+    .group { margin-top: 18px; }
+    .group-head {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 12px;
+      color: var(--text-faint);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .group-head .chev { font-size: 10px; transform: rotate(90deg); }
+    .group-head .count { margin-left: auto; font: 400 11px/1 var(--font-mono); letter-spacing: 0; }
+    .rows { display: grid; gap: 1px; }
+    .ticket-row {
+      width: 100%;
+      border: 0;
+      border-radius: var(--radius-md);
+      background: transparent;
+      color: var(--text-muted);
+      padding: 8px 12px;
+      text-align: left;
+      cursor: pointer;
+      transition: background 90ms ease, color 90ms ease;
+    }
+    .ticket-row:hover, .ticket-row.selected { background: var(--surface-overlay); color: var(--text-strong); }
+    .ticket-row.awaiting { color: var(--text-default); }
+    .title {
+      min-width: 0;
+      font-size: 13px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .dot {
+      width: 7px;
+      height: 7px;
+      flex: 0 0 7px;
+      border: 1px solid var(--text-faintest);
+      border-radius: 50%;
+    }
+    .dot.running { border-color: var(--text-default); background: var(--text-default); box-shadow: 0 0 0 3px rgba(220,216,207,.08); }
+    .dot.approval { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 0 3px rgba(231,167,66,.09); }
+    .dot.done { border-color: var(--done); background: var(--done); }
+    .dot.error { border-color: var(--error); background: var(--error); }
+
+    .notes {
+      align-self: start;
+      padding: 20px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: rgba(36,33,27,.72);
+    }
+    .notes h2 { margin: 0 0 8px; color: var(--text-strong); font-size: 17px; }
+    .notes p, .notes li { color: var(--text-muted); font-size: 13px; line-height: 1.55; }
+    .notes p { margin: 0 0 14px; }
+    .notes ul { margin: 0; padding-left: 18px; }
+    .notes strong { color: var(--text-default); font-weight: 600; }
+
+    /* A — content stack */
+    .stacked .ticket-row {
+      display: grid;
+      grid-template-columns: minmax(0,1fr) 12px;
+      align-items: center;
+      gap: 12px;
+    }
+    .stacked .meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 3px;
+      color: var(--text-faint);
+      font-size: 11px;
+      line-height: 1.2;
+    }
+    .stacked .meta .separator { color: var(--text-faintest); }
+    .stacked .stage { color: var(--text-muted); }
+
+    /* B — type anchor */
+    .anchored .ticket-row {
+      display: grid;
+      grid-template-columns: 30px minmax(0,1fr) 12px;
+      align-items: center;
+      gap: 10px;
+    }
+    .type-anchor {
+      display: grid;
+      place-items: center;
+      width: 27px;
+      height: 27px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-faint);
+      font: 600 10px/1 var(--font-mono);
+      letter-spacing: .04em;
+    }
+    .ticket-row:hover .type-anchor, .ticket-row.selected .type-anchor {
+      color: var(--text-default);
+      border-color: rgba(230,210,175,.2);
+    }
+    .anchored .stage {
+      display: block;
+      margin-top: 2px;
+      color: var(--text-faint);
+      font-size: 11px;
+      line-height: 1.2;
+    }
+
+    /* C — metadata rail */
+    .right-meta .ticket-row {
+      display: grid;
+      grid-template-columns: minmax(0,1fr) 74px 12px;
+      align-items: center;
+      gap: 10px;
+    }
+    .meta-rail {
+      min-width: 0;
+      text-align: right;
+      font-size: 10px;
+      line-height: 1.25;
+    }
+    .meta-rail .type { color: var(--text-faint); }
+    .meta-rail .stage { color: var(--text-muted); }
+
+    .done-row[hidden] { display: none; }
+    .footer-note {
+      margin-top: 18px;
+      color: var(--text-faint);
+      font-size: 11px;
+    }
+
+    @media (max-width: 780px) {
+      .page { width: min(100% - 24px, 520px); padding-top: 24px; }
+      .variant.active { grid-template-columns: 1fr; }
+      .workspace { min-height: 580px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="eyebrow">Ticket t_3x59papc · planning exploration</div>
+    <h1>Type and stage in Workspace rows</h1>
+    <p class="intro">Three practical ways to make <strong>ticket type</strong> and <strong>current workflow stage</strong> separately readable without changing Workspace grouping, filtering, ordering, selection, or navigation. Click a row to preview selection; “Hide done” works in every variant.</p>
+
+    <div class="tabs" role="tablist" aria-label="Ticket row variants">
+      <button class="tab" role="tab" aria-selected="true" data-target="stacked">A · Stacked byline</button>
+      <button class="tab" role="tab" aria-selected="false" data-target="anchored">B · Type anchor</button>
+      <button class="tab" role="tab" aria-selected="false" data-target="right-meta">C · Right metadata rail</button>
+    </div>
+
+    <section class="variant stacked active" id="stacked">
+      <div class="workspace"><div class="rail" data-rail></div></div>
+      <aside class="notes">
+        <h2>Stacked byline</h2>
+        <p>The title stays primary. Type and stage become a calm second line, with the existing dot remaining a separate status signal.</p>
+        <ul>
+          <li><strong>Strong at:</strong> immediate comprehension and long labels.</li>
+          <li><strong>Trade-off:</strong> rows become slightly taller.</li>
+          <li><strong>Character:</strong> quiet, readable, closest to the ticket detail hierarchy.</li>
+        </ul>
+      </aside>
+    </section>
+
+    <section class="variant anchored" id="anchored">
+      <div class="workspace"><div class="rail" data-rail></div></div>
+      <aside class="notes">
+        <h2>Type anchor</h2>
+        <p>A compact, stable leading marker makes worker type highly scannable. The current stage remains written beneath the title.</p>
+        <ul>
+          <li><strong>Strong at:</strong> comparing mixed ticket types down a long list.</li>
+          <li><strong>Trade-off:</strong> introduces a stronger visual device than the current rail.</li>
+          <li><strong>Character:</strong> structured and tool-like.</li>
+        </ul>
+      </aside>
+    </section>
+
+    <section class="variant right-meta" id="right-meta">
+      <div class="workspace"><div class="rail" data-rail></div></div>
+      <aside class="notes">
+        <h2>Right metadata rail</h2>
+        <p>Rows keep their current height. Type and stage align as a compact scan column before the existing status dot.</p>
+        <ul>
+          <li><strong>Strong at:</strong> density and vertical comparison of stages.</li>
+          <li><strong>Trade-off:</strong> gives long ticket titles less width.</li>
+          <li><strong>Character:</strong> efficient and roster-like.</li>
+        </ul>
+      </aside>
+    </section>
+
+    <p class="footer-note">Exploration only — no direction is selected until the plan is approved.</p>
+  </main>
+
+  <template id="rail-content">
+    <button class="chief">Chief of Staff</button>
+    <div class="filters">
+      <span>All statuses</span>
+      <label class="hide-done"><input type="checkbox" /> Hide done</label>
+    </div>
+    <section class="group">
+      <div class="group-head"><span class="chev">›</span><span>Panels</span><span class="count">4</span></div>
+      <div class="rows">
+        <button class="ticket-row awaiting selected" data-type="CO" data-type-label="Coding" data-stage="Plan">
+          <span class="title-wrap"><span class="title">Show worker type and current stage in Workspace ticket rows</span></span>
+          <span class="dot approval" aria-label="Awaiting approval"></span>
+        </button>
+        <button class="ticket-row" data-type="NW" data-type-label="New worker" data-stage="Approach">
+          <span class="title-wrap"><span class="title">Define a worker for recurring release preparation</span></span>
+          <span class="dot running" aria-label="Agent running"></span>
+        </button>
+        <button class="ticket-row" data-type="PF" data-type-label="Probe fixture" data-stage="Success">
+          <span class="title-wrap"><span class="title">Prove manifest-driven ticket stages remain generic</span></span>
+          <span class="dot" aria-label="Waiting"></span>
+        </button>
+        <button class="ticket-row done-row" data-type="CO" data-type-label="Coding" data-stage="Done">
+          <span class="title-wrap"><span class="title">Keep Workspace grouped by project and recent activity</span></span>
+          <span class="dot done" aria-label="Done"></span>
+        </button>
+      </div>
+    </section>
+    <section class="group">
+      <div class="group-head"><span class="chev">›</span><span>No project</span><span class="count">2</span></div>
+      <div class="rows">
+        <button class="ticket-row" data-type="CO" data-type-label="Coding" data-stage="Implementation">
+          <span class="title-wrap"><span class="title">Add keyboard focus coverage to rail controls</span></span>
+          <span class="dot running" aria-label="Agent running"></span>
+        </button>
+        <button class="ticket-row" data-type="CO" data-type-label="Coding" data-stage="Closeout">
+          <span class="title-wrap"><span class="title">Correct stale project labels after reassignment</span></span>
+          <span class="dot error" aria-label="Errored"></span>
+        </button>
+      </div>
+    </section>
+  </template>
+
+  <script>
+    const template = document.querySelector('#rail-content');
+
+    function decorateRail(rail, kind) {
+      rail.append(template.content.cloneNode(true));
+      rail.querySelectorAll('.ticket-row').forEach((row) => {
+        const titleWrap = row.querySelector('.title-wrap');
+        const type = row.dataset.typeLabel;
+        const stage = row.dataset.stage;
+        if (kind === 'stacked') {
+          titleWrap.insertAdjacentHTML('beforeend', `<span class="meta"><span>${type}</span><span class="separator">·</span><span class="stage">${stage}</span></span>`);
+        } else if (kind === 'anchored') {
+          row.insertAdjacentHTML('afterbegin', `<span class="type-anchor" title="${type}">${row.dataset.type}</span>`);
+          titleWrap.insertAdjacentHTML('beforeend', `<span class="stage">${stage}</span>`);
+        } else {
+          titleWrap.insertAdjacentHTML('afterend', `<span class="meta-rail"><span class="type">${type}</span><br><span class="stage">${stage}</span></span>`);
+        }
+        row.addEventListener('click', () => {
+          rail.querySelectorAll('.ticket-row').forEach((item) => item.classList.remove('selected'));
+          row.classList.add('selected');
+        });
+      });
+      rail.querySelector('.hide-done input').addEventListener('change', (event) => {
+        rail.querySelectorAll('.done-row').forEach((row) => row.hidden = event.target.checked);
+      });
+    }
+
+    document.querySelectorAll('[data-rail]').forEach((rail) => {
+      const kind = rail.closest('.variant').id;
+      decorateRail(rail, kind);
+    });
+
+    document.querySelectorAll('.tab').forEach((tab) => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach((item) => item.setAttribute('aria-selected', 'false'));
+        document.querySelectorAll('.variant').forEach((item) => item.classList.remove('active'));
+        tab.setAttribute('aria-selected', 'true');
+        document.getElementById(tab.dataset.target).classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>

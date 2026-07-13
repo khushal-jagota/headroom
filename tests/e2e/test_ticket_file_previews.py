@@ -9,6 +9,9 @@ import time
 from pathlib import Path
 
 WAIT_MS = 10_000
+INTERACTIVE_HTML_FIXTURE = (
+    Path(__file__).with_name("fixtures") / "repro_interactive_workspace_ticket_rows.html"
+)
 
 
 def _ticket_files_dir(server, ticket_id: str) -> Path:
@@ -77,6 +80,28 @@ def _open_ticket_field(page, field: str) -> None:
     section = page.locator(f'details[data-field="{field}"]').first
     section.evaluate("(node) => { node.open = true; }")
     page.locator(f'details[data-field="{field}"][open]').wait_for(state="attached", timeout=WAIT_MS)
+
+
+def _assert_painted(locator) -> None:
+    box = locator.bounding_box(timeout=WAIT_MS)
+    assert box is not None
+    assert box["width"] > 0
+    assert box["height"] > 0
+
+
+def _exercise_interactive_workspace_rows(frame) -> None:
+    initial_row = frame.locator("#stacked [data-rail] .ticket-row").first
+    initial_row.wait_for(state="visible", timeout=WAIT_MS)
+    _assert_painted(initial_row)
+
+    anchored_tab = frame.locator('[role="tab"][data-target="anchored"]')
+    anchored_tab.click(timeout=WAIT_MS)
+    assert anchored_tab.get_attribute("aria-selected") == "true"
+    frame.locator("#stacked").wait_for(state="hidden", timeout=WAIT_MS)
+
+    anchored_row = frame.locator("#anchored.variant.active [data-rail] .ticket-row").first
+    anchored_row.wait_for(state="visible", timeout=WAIT_MS)
+    _assert_painted(anchored_row)
 
 
 def _wait_for_field_text(api, server, ticket_id: str, field: str, expected_fragment: str) -> str:
@@ -173,7 +198,7 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     )
     full_html_iframe.wait_for(state="visible", timeout=WAIT_MS)
     html_frame = popup.frame_locator("[data-file-preview-route] iframe[data-file-preview-html]")
-    assert full_html_iframe.get_attribute("sandbox") == ""
+    assert full_html_iframe.get_attribute("sandbox") == "allow-scripts"
     assert full_html_iframe.get_attribute("allow") is None
     assert html_frame.locator("h1").inner_text(timeout=WAIT_MS) == "HTML File"
     heading_box = html_frame.locator("h1").bounding_box(timeout=WAIT_MS)
@@ -207,6 +232,71 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     assert html_geometry["frameBottomGap"] <= 24
     popup.close()
     assert page.evaluate("window.__previewHashNavigationMarker") == "kept"
+
+
+def test_interactive_html_preview_paints_and_switches_variants_in_both_surfaces(
+    server, context_factory, open_page, cli
+) -> None:
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Interactive HTML preview",
+    )["id"]
+    root = _ticket_files_dir(server, ticket_id)
+    root.mkdir(parents=True)
+    (root / "interactive.html").write_text(
+        INTERACTIVE_HTML_FIXTURE.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    fields = {
+        "success": {
+            "value": f"[Interactive HTML](/files/tickets/{ticket_id}/interactive.html)",
+            "proposal": None,
+            "user_note": None,
+        },
+        "approach": {"value": None, "proposal": None, "user_note": None},
+        "plan": {"value": None, "proposal": None, "user_note": None},
+        "implementation": {"value": None, "proposal": None, "user_note": None},
+        "closeout": {"value": None, "proposal": None, "user_note": None},
+    }
+    _set_fields(server, ticket_id, fields)
+    context = context_factory()
+    ticket_page = open_page(
+        context,
+        server,
+        f"#/ticket/{ticket_id}",
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+        settled=True,
+    )
+    _open_ticket_field(ticket_page, "success")
+
+    embedded_preview = ticket_page.locator('[data-file-preview-kind="html"]').first
+    embedded_iframe = embedded_preview.locator("iframe[data-file-preview-html]")
+    embedded_iframe.wait_for(state="visible", timeout=WAIT_MS)
+    assert embedded_iframe.get_attribute("sandbox") == "allow-scripts"
+    assert embedded_iframe.get_attribute("allow") is None
+    _exercise_interactive_workspace_rows(
+        embedded_preview.frame_locator("iframe[data-file-preview-html]")
+    )
+
+    with ticket_page.expect_popup() as popup_info:
+        embedded_preview.locator("a.button", has_text="Open preview").click()
+    popup = popup_info.value
+    popup.wait_for_load_state("domcontentloaded", timeout=WAIT_MS)
+    full_iframe = popup.locator(
+        "[data-file-preview-route] iframe[data-file-preview-html]"
+    )
+    full_iframe.wait_for(state="visible", timeout=WAIT_MS)
+    assert full_iframe.get_attribute("sandbox") == "allow-scripts"
+    assert full_iframe.get_attribute("allow") is None
+    _exercise_interactive_workspace_rows(
+        popup.frame_locator("[data-file-preview-route] iframe[data-file-preview-html]")
+    )
+    popup.close()
 
 
 def test_markdown_file_preview_has_component_owned_max_height(
@@ -355,7 +445,7 @@ def test_read_only_ticket_and_chat_surfaces_share_file_preview(
     assert nested_heading.count() == 1
     assert success.locator('[data-file-preview-kind="html"] iframe').count() == 1
     embedded_html_iframe = success.locator('[data-file-preview-kind="html"] iframe').first
-    assert embedded_html_iframe.get_attribute("sandbox") == ""
+    assert embedded_html_iframe.get_attribute("sandbox") == "allow-scripts"
     assert embedded_html_iframe.get_attribute("allow") is None
     html_action = success.locator('[data-file-preview-kind="html"] a.button').first
     assert html_action.get_attribute("target") == "_blank"

@@ -1,7 +1,11 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import type { FilePreviewTarget } from "../lib/filePreview";
-  import { markdownExpansionFor, resolvePreview } from "../lib/filePreview";
+  import {
+    MANAGED_HTML_PREVIEW_SANDBOX,
+    markdownExpansionFor,
+    resolvePreview
+  } from "../lib/filePreview";
   import Button from "./Button.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
 
@@ -134,7 +138,7 @@
           bind:this={htmlFrame}
           class="file-preview-frame"
           data-file-preview-html
-          sandbox=""
+          sandbox={MANAGED_HTML_PREVIEW_SANDBOX}
           title={resolved.label}
         ></iframe>
       {/if}
