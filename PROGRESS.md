@@ -4,47 +4,6 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 the bottom; the blow-by-blow is git's.
 
-## Current work cycle (2026-07-13): revalidate chat preview stability on current main
-
-Current build stage:
-
-- Ticket `t_svy3xjxj` implementation is merged with current committed `main` `c6cd05f` before owner
-  approval because its original base was more than 22 commits behind. The newly committed Job B type
-  work is included; the unrelated dirty nested worktree remains untouched.
-- Integrated source preserves current multi-image chat submission and typed ticket contracts while
-  adding stable server message/turn render keys and the shared `MarkdownBlock` semantic-input guard.
-- The all-seven-kind Ticket/Chief regression is ported onto explicit `--type coding` creation. Generated
-  frontend output is rebuilt from the integrated source rather than choosing either stale bundle.
-
-What just passed:
-
-- Divergence audit confirmed all production overlap is additive: current `main` changed chat image
-  submission, while this ticket changes transcript identity and shared preview-subtree teardown.
-- Merge auto-combined `ChatPanel`, `MarkdownBlock`, and the live-chat regression. Only memory files and
-  generated bundle paths conflicted; memory is reconciled from current main and the bundle is rebuilt.
-- Focused integrated suites pass: live chat 10/10, multi-image chat 8/8, and shared file previews 10/10.
-- Independent current-main review found no production, test, or generated-bundle violation; its only
-  findings were stale main/Job B wording caused by `main` advancing during review, corrected here.
-- Canonical current-main verification passes: Ruff; Mypy across 119 source/typing files; 654 unit
-  tests; compile/static, CSS, Svelte, frontend build, and six frontend test groups; 70 e2e tests;
-  final `VERIFY: PASS`.
-
-Current hypothesis:
-
-- The implementation remains correctly layered after the type-driven and chat-image changes: every
-  preview kind still mounts beneath `MarkdownBlock`, and current `ChatPanel` still rebuilds fresh
-  transcript wrappers during polling. Stable row identity plus semantic source/context equality remains
-  the narrow fix; no preview-kind branch or fetch cache is needed.
-
-Next step:
-
-- Commit the settled verification record and refresh the Implementation proposal with the integrated
-  branch head and `c6cd05f` evidence. Main integration itself remains Closeout after approval.
-
-Blockers:
-
-- None.
-
 ## Current work cycle (2026-07-13): Job B — the `new_worker` production type (verified green, ready to commit)
 
 Current build stage:
