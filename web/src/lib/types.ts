@@ -1,5 +1,10 @@
 export type AnyRecord = Record<string, any>;
 
+// The served ticket-type manifest response (GET /api/ticket-types). Re-exported here
+// for the resource fetch typing; the derived Lifecycle + per-type manifest shapes are
+// imported directly from lifecycle.ts at call sites.
+export type { TicketTypesResponse } from "./lifecycle";
+
 export type GatewayStatus = {
   available: boolean;
 };
@@ -130,6 +135,7 @@ export type Implementer =
 export type TicketDetail = {
   id: string;
   title: string;
+  ticket_type: string;
   state: string;
   ceiling: string;
   at_cap: string;

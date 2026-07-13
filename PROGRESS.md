@@ -3,6 +3,33 @@
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log.
 
+## Current work cycle (2026-07-13): Phase 4b (web) done; Phase 5 (worker realization) next
+
+Current build stage:
+
+- `t_tt04b` implemented, reviewed, and committed. The web app retired the hardcoded coding lifecycle from
+  `ui.ts` and now derives a per-type `Lifecycle` (new `web/src/lib/lifecycle.ts`) from the served manifest
+  (`GET /api/ticket-types`, fetched once via a static `"ticket-types"` resource in `manifest.svelte.ts`),
+  keyed by each ticket's `ticket_type`. Stage sections, the "approved until" leash, and the stage rail read
+  from it; coding renders byte-identically (unit test asserts the coding manifest reproduces the old
+  constants; existing e2e unchanged). Added one display-only worker/type `Pill` to the ticket facts line.
+  Board reuses t_tt04a's card fields (no manifest fetch). Codex plan + diff reviews clean (6 plan fixes + 1
+  diff fix — F6 test now exercises the real `lifecycleFor`, moved into `lifecycle.ts`). Full `./verify`: PASS.
+
+Next step:
+
+- Phase 5 (`t_tt05`) — worker realization, SKILL-DRIVEN (owner ruling: no gateway/session/toolset wiring).
+  Activate the already-declared-but-inert `WorkerProfile`: split the base `panels-worker` skill into a
+  type-agnostic base + per-type specialist skills, `my-ticket` returns the worker name, the base skill's one
+  new section says "invoke your specialist". Base-skill change is EXTRACT-AND-PLACE (no rewriting of existing
+  wording — owner constraint). Plan drafted (`orchestration/tickets/t_tt05-worker-realization/BRIEF.md`);
+  plan.md pending the base-skill refinement. AGENTIC self-routing proof is a live owner run, not a `./verify`
+  gate — Phase 5 lands as "mechanism built + code-verified", not "self-routing observed live".
+
+Blockers:
+
+- None. 4a (`2ff4857`), de-flake (`5c2bd0c`), 4b landing now — all on green `./verify`.
+
 ## Current work cycle (2026-07-12): Phase 4a — backend read-models type-driven
 
 Current build stage:

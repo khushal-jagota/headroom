@@ -2,14 +2,14 @@
   import { onDestroy } from "svelte";
   import { fetchJson, fetchText } from "../lib/api";
   import { mutateJson, resource } from "../lib/resources";
+  import { PRIORITIES, fieldSlot, labelize } from "../lib/ui";
+  import { manifestResource } from "../lib/manifest.svelte";
   import {
-    FIELD_NAMES,
-    PRIORITIES,
-    STATE_ORDER,
-    ceilingOptions,
-    fieldStageVisualState,
-    fieldSlot,
-  } from "../lib/ui";
+    ceilingOptionsFor,
+    fieldStageVisualStateFor,
+    lifecycleFor,
+    recapVisibleFor
+  } from "../lib/lifecycle";
   import type {
     CurrentSprintResponse,
     GatewayStatus,
@@ -44,6 +44,21 @@
   );
   const currentSprint = resource<CurrentSprintResponse>("sprint:current", (signal) =>
     fetchJson("/api/sprint/current", { signal })
+  );
+  const manifest = manifestResource();
+
+  // Derive the per-type lifecycle from the RESOURCE (ticket.data?.ticket_type), not
+  // the markup-local {@const detail} which is only bound inside {#if ticket.data}
+  // (Codex F2). Null while the manifest is still loading OR when the type is absent
+  // from a loaded manifest; the markup tells those apart via manifest.loading /
+  // manifest.error + a type-present check (Codex F3).
+  let lc = $derived(lifecycleFor(manifest.data, ticket.data?.ticket_type));
+  let manifestMissingType = $derived(
+    Boolean(
+      ticket.data &&
+        manifest.data &&
+        !manifest.data.types.some((t) => t.type_id === ticket.data?.ticket_type)
+    )
   );
 
   const ticketInvalidations = [`ticket:${id}`, "board", "queues", "sprint:current"];
@@ -173,6 +188,7 @@
     projects.dispose();
     chatStatus.dispose();
     currentSprint.dispose();
+    manifest.dispose();
   });
 </script>
 
@@ -183,7 +199,13 @@
   data-state={ticket.data?.state}
 >
   <ResourceState error={ticket.error} loading={ticket.loading} hasData={Boolean(ticket.data)} loadingText="Loading ticket...">
-    {#if ticket.data}
+    {#if ticket.data && (manifest.error || manifestMissingType)}
+      <div class="ticket-page" data-ticket-manifest-error>
+        <ErrorLine
+          error={manifest.error ?? { code: "unknown_ticket_type", message: `no manifest for type "${ticket.data.ticket_type}"` }}
+        />
+      </div>
+    {:else if ticket.data}
       {@const detail = ticket.data}
       <div class="ticket-page">
       <main class="ticket-doc">
@@ -222,6 +244,9 @@
                 }}
               />
             </span>
+            <Pill keyLabel="type" data-ticket-type={detail.ticket_type}>
+              {lc?.typeLabel ?? labelize(detail.ticket_type)}
+            </Pill>
             <Pill keyLabel="due">
               {detail.deadline || ""}
               <input
@@ -268,7 +293,7 @@
               <span class="ticket-leash-sel" data-scope-ceiling>
                 <EnumPill
                   value={detail.ceiling}
-                  options={ceilingOptions(detail.state)}
+                  options={ceilingOptionsFor(lc, detail.state)}
                   onChange={(ceiling) => void saveScope({ ceiling, at_cap: detail.at_cap })}
                 />
               </span>
@@ -288,7 +313,7 @@
         <div class="ticket-col">
           <div class="ticket-recap" data-recap>
             <Disclosure title="Recap" variant="support" defaultOpen={true} data-content-section="recap">
-              {#if STATE_ORDER.indexOf(detail.state) > STATE_ORDER.indexOf("needs_success")}
+              {#if recapVisibleFor(lc, detail.state)}
                 <InlineEdit
                   value={detail.recap}
                   markdown
@@ -340,13 +365,14 @@
           {/if}
 
           <div class="fields">
-            {#each FIELD_NAMES as name}
+            {#each lc?.fieldIds ?? [] as name}
               {@const slot = fieldSlot(detail, name)}
-              {@const stageState = fieldStageVisualState(detail, name)}
+              {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
               <TicketStageSection
                 {name}
                 {slot}
                 {stageState}
+                lifecycle={lc}
                 ticketState={detail.state}
                 ceiling={detail.ceiling}
                 emptyText={emptyTicketFieldText}

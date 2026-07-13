@@ -7,6 +7,7 @@
   import MarkdownBlock from "./MarkdownBlock.svelte";
   import ScopePairPicker from "./ScopePairPicker.svelte";
   import { labelize } from "../lib/ui";
+  import type { Lifecycle } from "../lib/lifecycle";
 
   type ScopePair = { next_ceiling: string; at_cap: string };
 
@@ -18,6 +19,7 @@
     proposedBy = "",
     note = "",
     newState = null,
+    lifecycle = null,
     layout = "default",
     requireScope = false,
     onApprove,
@@ -31,6 +33,7 @@
     proposedBy?: string;
     note?: string | null;
     newState?: string | null;
+    lifecycle?: Lifecycle | null;
     layout?: "default" | "review";
     requireScope?: boolean;
     onApprove?: (payload: Record<string, unknown>) => Promise<unknown>;
@@ -114,7 +117,7 @@
       >
         {actionLabel}
       </Button>
-      {#if showScope}<ScopePairPicker {newState} bind:scope />{/if}
+      {#if showScope}<ScopePairPicker {newState} {lifecycle} bind:scope />{/if}
     </div>
   </div>
 {/snippet}

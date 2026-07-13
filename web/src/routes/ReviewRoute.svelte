@@ -2,7 +2,8 @@
   import { onDestroy } from "svelte";
   import { fetchJson } from "../lib/api";
   import { mutateJson, resource, ResourceHandle } from "../lib/resources";
-  import { FIELD_NAMES, fieldStageVisualState, gatingField } from "../lib/ui";
+  import { manifestResource } from "../lib/manifest.svelte";
+  import { fieldStageVisualStateFor, gatingFieldFor, lifecycleFor } from "../lib/lifecycle";
   import type { AnyRecord, QueueEntry, QueuesResponse, TicketDetail } from "../lib/types";
   import Button from "../components/Button.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
@@ -13,6 +14,7 @@
   const queues = resource<QueuesResponse>("queues", (signal) =>
     fetchJson("/api/queues", { signal })
   );
+  const manifest = manifestResource();
 
   let skipped = $state<Record<string, boolean>>({});
   let detailResource = $state<ResourceHandle<AnyRecord> | null>(null);
@@ -34,6 +36,23 @@
     const live = entries.filter((entry) => !skipped[entryKey(entry)]);
     return live[0] || null;
   });
+
+  // Per-type lifecycle for the current review entry's detail. Null while the
+  // manifest or the detail is still loading OR when the detail's ticket_type is
+  // absent from a loaded manifest; the markup tells those apart (Codex F3).
+  let detailTicketType = $derived(
+    typeof detailResource?.data?.ticket_type === "string"
+      ? (detailResource.data.ticket_type as string)
+      : null
+  );
+  let lc = $derived(lifecycleFor(manifest.data, detailTicketType));
+  let manifestMissingType = $derived(
+    Boolean(
+      detailTicketType &&
+        manifest.data &&
+        !manifest.data.types.some((t) => t.type_id === detailTicketType)
+    )
+  );
 
   function runningAgentsText(count: number): string {
     return `${count} ${count === 1 ? "agent" : "agents"} in progress`;
@@ -60,11 +79,11 @@
     const field = approvalField(entry);
     if (!field) return true;
     if (!detail.fields?.[field]?.proposal) return true;
-    return gatingField(String(detail.state)) !== field;
+    return gatingFieldFor(lc, String(detail.state)) !== field;
   }
 
   function approvalField(entry: QueueEntry): string | null {
-    if (FIELD_NAMES.includes(entry.kind as (typeof FIELD_NAMES)[number])) return entry.kind;
+    if (lc?.fieldIds.includes(entry.kind)) return entry.kind;
     return null;
   }
 
@@ -192,6 +211,7 @@
   onDestroy(() => {
     queues.dispose();
     detailResource?.dispose();
+    manifest.dispose();
   });
 </script>
 
@@ -218,6 +238,19 @@
       </div>
     {:else if detailResource?.loading && !detailResource.data}
       <div class="quiet-line">Loading approval...</div>
+    {:else if detailResource?.data && (manifest.error || manifestMissingType)}
+      {@const detail = detailResource.data as TicketDetail & AnyRecord}
+      <div data-review-manifest-error>
+        <ErrorLine
+          error={manifest.error ?? { code: "unknown_ticket_type", message: `no manifest for type "${detail.ticket_type}"` }}
+        />
+        <div class="review-card-actions">
+          <Button variant="quiet" data-skip="" onclick={() => skip(entry)}>Skip</Button>
+          {#if entry.entity_type === "ticket"}
+            <a data-open-ticket href={`#/ticket/${entry.entity_id}`}>open ticket</a>
+          {/if}
+        </div>
+      </div>
     {:else if detailResource?.data}
       {@const detail = detailResource.data as TicketDetail & AnyRecord}
       {@const field = approvalField(entry)}
@@ -257,9 +290,10 @@
                   variant="review"
                   name={field}
                   slot={detail.fields[field]}
+                  lifecycle={lc}
                   ticketState={detail.state}
                   ceiling={detail.ceiling}
-                  stageState={fieldStageVisualState(detail, field)}
+                  stageState={fieldStageVisualStateFor(lc, detail, field)}
                   recap={detail.recap}
                   showRecap
                   onAccept={(payload) => accept(entry, payload)}

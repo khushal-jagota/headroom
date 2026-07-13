@@ -1,19 +1,24 @@
 <script lang="ts">
-  import { ceilingOptions } from "../lib/ui";
+  import { ceilingOptionsFor, type Lifecycle } from "../lib/lifecycle";
 
   type ScopePair = { next_ceiling: string; at_cap: string };
 
   let {
     newState,
+    lifecycle = null,
     scope = $bindable<ScopePair | null>(null)
-  }: { newState: string | null; scope?: ScopePair | null } = $props();
+  }: {
+    newState: string | null;
+    lifecycle?: Lifecycle | null;
+    scope?: ScopePair | null;
+  } = $props();
 
   let ceiling = $state("");
   let atCap = $state("");
 
   let options = $derived([
     { value: "none", label: "No further" },
-    ...ceilingOptions(newState || "needs_success")
+    ...ceilingOptionsFor(lifecycle, newState || lifecycle?.ceilingRange[0] || "needs_success")
   ]);
 
   $effect(() => {
