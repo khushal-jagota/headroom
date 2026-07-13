@@ -10,7 +10,9 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
+from time import monotonic as _monotonic
 
+from planner.chat import data as chat_data
 from planner.chat import service as chat_service
 from planner.core.clock import Clock
 from planner.core.db import connect
@@ -27,6 +29,14 @@ _log = logging.getLogger(__name__)
 
 _REVISION_GUIDANCE_PREFIX = (
     "The user rejected your proposal and provided the following guidance:"
+)
+_RESTART_RECOVERY_MESSAGE = (
+    "Panels restarted while this ticket worker turn was running. "
+    "Resume the existing Hermes conversation for this ticket. "
+    "First inspect the canonical ticket and the existing conversation. "
+    "Then continue unfinished work and avoid repeating completed actions. "
+    "Then file the currently requested proposal through the normal Panels worker tools. "
+    "And if you already filed that proposal, only say so in chat."
 )
 
 
@@ -104,7 +114,9 @@ class EmployeeStepRunner:
         self._boundary_hour = boundary_hour
         self._busy_timeout_ms = busy_timeout_ms
         self._accepting = True
+        self._stopping = False
         self._active = 0
+        self._active_ticket_ids: set[str] = set()
         self._active_cond = threading.Condition()
 
     def run_ready_step(self, ticket_id: str) -> None:
@@ -112,6 +124,9 @@ class EmployeeStepRunner:
         with self._active_cond:
             if not self._accepting:
                 return
+            if ticket_id in self._active_ticket_ids:
+                return
+            self._active_ticket_ids.add(ticket_id)
             self._active += 1
             thread = threading.Thread(
                 target=self._run_ready_thread,
@@ -122,6 +137,30 @@ class EmployeeStepRunner:
             try:
                 thread.start()
             except BaseException:
+                self._active_ticket_ids.discard(ticket_id)
+                self._active -= 1
+                self._active_cond.notify_all()
+                raise
+
+    def recover_running_step(self, ticket_id: str) -> None:
+        """Resume one durable employee step stranded by a prior process exit."""
+        with self._active_cond:
+            if not self._accepting:
+                return
+            if ticket_id in self._active_ticket_ids:
+                return
+            self._active_ticket_ids.add(ticket_id)
+            self._active += 1
+            thread = threading.Thread(
+                target=self._run_recovery_thread,
+                args=(ticket_id,),
+                name=f"employee-recovery-{ticket_id}",
+                daemon=True,
+            )
+            try:
+                thread.start()
+            except BaseException:
+                self._active_ticket_ids.discard(ticket_id)
                 self._active -= 1
                 self._active_cond.notify_all()
                 raise
@@ -137,7 +176,14 @@ class EmployeeStepRunner:
                     "employee runner is unavailable",
                     {"ticket_id": ticket_id},
                 )
+            if ticket_id in self._active_ticket_ids:
+                raise PlannerError(
+                    ErrorCode.already_running,
+                    "employee runner already owns this ticket",
+                    {"ticket_id": ticket_id},
+                )
             handoff = _EmployeeRevisionHandoff()
+            self._active_ticket_ids.add(ticket_id)
             self._active += 1
             thread = threading.Thread(
                 target=self._run_reserved_revision,
@@ -148,6 +194,7 @@ class EmployeeStepRunner:
             try:
                 thread.start()
             except BaseException:
+                self._active_ticket_ids.discard(ticket_id)
                 self._active -= 1
                 self._active_cond.notify_all()
                 raise
@@ -159,11 +206,22 @@ class EmployeeStepRunner:
         with self._active_cond:
             return self._active_cond.wait_for(lambda: self._active == 0, timeout)
 
-    def stop(self) -> None:
+    def stop(self, *, deadline: float | None = None) -> None:
         """Close admission and drain every accepted run before returning."""
         with self._active_cond:
             self._accepting = False
-            self._active_cond.wait_for(lambda: self._active == 0)
+            self._stopping = True
+            if deadline is None:
+                self._active_cond.wait_for(lambda: self._active == 0)
+                return
+            self._active_cond.wait_for(
+                lambda: self._active == 0,
+                timeout=max(0.0, deadline - _monotonic()),
+            )
+
+    def _is_stopping(self) -> bool:
+        with self._active_cond:
+            return self._stopping
 
     def _gateway_available(self) -> bool:
         try:
@@ -174,9 +232,16 @@ class EmployeeStepRunner:
     def _run_ready_thread(self, ticket_id: str) -> None:
         settled = False
         try:
-            settled = self._run(ticket_id, revision_guidance=None)
+            settled = self._run(ticket_id, revision_guidance=None, restart_recovery=False)
         finally:
-            self._finish_active(settled)
+            self._finish_active(ticket_id, settled)
+
+    def _run_recovery_thread(self, ticket_id: str) -> None:
+        settled = False
+        try:
+            settled = self._run(ticket_id, revision_guidance=None, restart_recovery=True)
+        finally:
+            self._finish_active(ticket_id, settled)
 
     def _run_reserved_revision(
         self,
@@ -188,22 +253,46 @@ class EmployeeStepRunner:
         settled = False
         try:
             if handoff._wait_for_decision():
-                settled = self._run(ticket_id, revision_guidance=guidance)
+                settled = self._run(
+                    ticket_id, revision_guidance=guidance, restart_recovery=False
+                )
         finally:
-            self._finish_active(settled)
+            self._finish_active(ticket_id, settled)
 
-    def _finish_active(self, settled: bool) -> None:
+    def _finish_active(self, ticket_id: str, settled: bool) -> None:
         with self._active_cond:
+            self._active_ticket_ids.discard(ticket_id)
             self._active -= 1
             if settled:
                 self._readiness_doorbell.ring()
             self._active_cond.notify_all()
 
-    def _run(self, ticket_id: str, *, revision_guidance: str | None) -> bool:
+    def _run(
+        self,
+        ticket_id: str,
+        *,
+        revision_guidance: str | None,
+        restart_recovery: bool,
+    ) -> bool:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
             now = self._clock.now_unix()
-            if revision_guidance is None:
+            if restart_recovery:
+                claimed = tickets_data.read_ticket(conn, ticket_id)
+                if claimed.ticket_status is not TicketStatus.agent_running_step:
+                    return False
+                if claimed.chat_session_key is None:
+                    tickets_data.mark_run_errored_if_still_running_step(
+                        conn,
+                        ticket_id,
+                        error="restart recovery has no existing session",
+                        now=now,
+                    )
+                    return True
+                prompt = _RESTART_RECOVERY_MESSAGE
+                show_prompt_in_chat = False
+                require_existing_session = True
+            elif revision_guidance is None:
                 def ready_on_today(
                     _conn: sqlite3.Connection, ticket: Ticket
                 ) -> bool:
@@ -216,18 +305,19 @@ class EmployeeStepRunner:
                     ).fetchone()
                     return on_today is not None and readiness.is_runnable(_conn, ticket)
 
-                claimed = tickets_data.start_run_if_runnable(
+                runnable_claim = tickets_data.start_run_if_runnable(
                     conn,
                     ticket_id,
                     guard=ready_on_today,
                     now=now,
                 )
-                if claimed is None:
+                if runnable_claim is None:
                     _log.info(
                         "employee runner skipped a no-longer-ready Ticket (ticket=%s)",
                         ticket_id,
                     )
                     return False
+                claimed = runnable_claim
                 prompt = _next_step_prompt(claimed)
                 show_prompt_in_chat = True
                 require_existing_session = False
@@ -248,23 +338,50 @@ class EmployeeStepRunner:
                 require_existing_session = True
 
             current_session_key = claimed.chat_session_key
-            try:
-                worker_turn = chat_service.start_worker_turn(
+            if restart_recovery:
+                worker_turn = chat_data.roll_running_turn_for_recovery(
                     conn,
                     ticket_id,
-                    visible_text=prompt if show_prompt_in_chat else "",
+                    origin="worker",
+                    mode="worker_step",
+                    visible_role="system",
+                    visible_text=prompt,
+                    output_role="assistant",
+                    phase="thinking",
+                    activity_label="Restarting worker",
                     now=now,
+                    expected_session_key=claimed.chat_session_key,
                 )
-            except PlannerError as exc:
-                if exc.code is ErrorCode.already_running:
+                if worker_turn is None:
                     tickets_data.mark_run_errored_if_still_running_step(
                         conn,
                         ticket_id,
-                        error="employee worker turn collided with an active chat turn",
-                        now=self._clock.now_unix(),
+                        error=(
+                            "restart recovery stale worker turn session key "
+                            "does not match existing session"
+                        ),
+                        session_key=claimed.chat_session_key,
+                        now=now,
                     )
                     return True
-                raise
+            else:
+                try:
+                    worker_turn = chat_service.start_worker_turn(
+                        conn,
+                        ticket_id,
+                        visible_text=prompt if show_prompt_in_chat else "",
+                        now=now,
+                    )
+                except PlannerError as exc:
+                    if exc.code is ErrorCode.already_running:
+                        tickets_data.mark_run_errored_if_still_running_step(
+                            conn,
+                            ticket_id,
+                            error="employee worker turn collided with an active chat turn",
+                            now=self._clock.now_unix(),
+                        )
+                        return True
+                    raise
 
             def persist_session_key(session_key: str) -> None:
                 nonlocal current_session_key
@@ -373,6 +490,16 @@ class EmployeeStepRunner:
             except Exception as exc:  # never leave the Ticket at agent_running_step
                 _log.exception("employee step crashed (ticket=%s)", ticket_id)
                 error = f"employee step crashed: {exc}"
+                if self._is_stopping():
+                    chat_service.finish_worker_turn(
+                        conn,
+                        ticket_id,
+                        worker_turn.id,
+                        "",
+                        "interrupted",
+                        self._clock.now_unix(),
+                    )
+                    return False
                 chat_service.fail_worker_turn(
                     conn,
                     ticket_id,
@@ -403,9 +530,21 @@ class EmployeeStepRunner:
                     "interrupted",
                     self._clock.now_unix(),
                 )
+                if self._is_stopping():
+                    return False
                 mark_errored("run interrupted", current_session_key)
             else:
                 error = result.error or "gateway run failed"
+                if self._is_stopping():
+                    chat_service.finish_worker_turn(
+                        conn,
+                        ticket_id,
+                        worker_turn.id,
+                        result.text,
+                        "interrupted",
+                        self._clock.now_unix(),
+                    )
+                    return False
                 chat_service.fail_worker_turn(
                     conn,
                     ticket_id,

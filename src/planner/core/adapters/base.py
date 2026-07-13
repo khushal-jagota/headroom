@@ -39,6 +39,8 @@ class GatewayAdapter(Protocol):
         mode: str,
         on_session_key: Callable[[str], None] | None = None,
         image_paths: tuple[Path, ...] = (),
+        *,
+        require_existing_session: bool = False,
     ) -> Iterator[ChatStreamChunk]: ...
     def interrupt(self, session_key: str, entity_id: str) -> None: ...
     # The gateway's own command/skill registry — stateless, gateway-wide, cached above.

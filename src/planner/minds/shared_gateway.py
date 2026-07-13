@@ -11,6 +11,7 @@ import os
 import threading
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
+from time import monotonic as _monotonic
 from typing import Any
 
 from planner.chat.contracts import (
@@ -103,14 +104,37 @@ class EntityRoutingGateway:
         mode: str,
         on_session_key: Callable[[str], None] | None = None,
         image_paths: tuple[Path, ...] = (),
+        *,
+        require_existing_session: bool = False,
     ) -> Iterator[ChatStreamChunk]:
         gateway = self._gateway_for(entity_id)
         if not image_paths:
-            yield from gateway.stream(session_key, entity_id, text, mode, on_session_key)
+            if require_existing_session:
+                yield from gateway.stream(
+                    session_key,
+                    entity_id,
+                    text,
+                    mode,
+                    on_session_key,
+                    require_existing_session=True,
+                )
+            else:
+                yield from gateway.stream(session_key, entity_id, text, mode, on_session_key)
         else:
-            yield from gateway.stream(
-                session_key, entity_id, text, mode, on_session_key, image_paths
-            )
+            if require_existing_session:
+                yield from gateway.stream(
+                    session_key,
+                    entity_id,
+                    text,
+                    mode,
+                    on_session_key,
+                    image_paths,
+                    require_existing_session=True,
+                )
+            else:
+                yield from gateway.stream(
+                    session_key, entity_id, text, mode, on_session_key, image_paths
+                )
 
     def interrupt(self, session_key: str, entity_id: str) -> None:
         self._gateway_for(entity_id).interrupt(session_key, entity_id)
@@ -129,14 +153,14 @@ class EntityRoutingGateway:
             session_key, entity_id, command, on_session_key
         )
 
-    def shutdown(self) -> None:
+    def shutdown(self, *, deadline: float | None = None) -> None:
         seen: set[int] = set()
         for gateway in (self._default_gateway, *self._entity_gateways.values()):
             ident = id(gateway)
             if ident in seen:
                 continue
             seen.add(ident)
-            gateway.shutdown()
+            gateway.shutdown(deadline=deadline)
 
 
 class SharedGateway:
@@ -170,7 +194,7 @@ class SharedGateway:
     def start(self) -> None:
         self._child_or_spawn()
 
-    def shutdown(self) -> None:
+    def shutdown(self, *, deadline: float | None = None) -> None:
         with self._lock:
             child = self._child
             session_manager = self._session_manager
@@ -179,10 +203,13 @@ class SharedGateway:
             self._live_session_ids_by_stored_key.clear()
         try:
             if session_manager is not None:
-                session_manager.shutdown()
+                session_manager.shutdown(deadline=deadline)
         finally:
             if child is not None:
-                child.shutdown()
+                if deadline is None:
+                    child.shutdown()
+                else:
+                    child.shutdown(grace=max(0.0, deadline - _monotonic()))
 
     def live_session(self, session_key: str) -> LiveSession | None:
         """Return the gateway-owned ingress for a currently live stored session."""
@@ -324,10 +351,16 @@ class SharedGateway:
         mode: str,
         on_session_key: Callable[[str], None] | None = None,
         image_paths: tuple[Path, ...] = (),
+        *,
+        require_existing_session: bool = False,
     ) -> Iterator[ChatStreamChunk]:
         try:
             child = self._child_or_spawn()
+            if require_existing_session and session_key is None:
+                raise GatewayError("chat session not found")
             if mode == "command" and text == "/new":
+                if require_existing_session:
+                    raise GatewayError("chat session not found")
                 result = self._start_new_chat_session(child, on_session_key)
                 yield ChatStreamChunk(type="session", session_key=result.session_key)
                 yield from self._stream_done(
@@ -341,6 +374,7 @@ class SharedGateway:
                 session_key,
                 CHAT_SOURCE,
                 reuse_live_session=True,
+                allow_create=not require_existing_session,
             )
             if on_session_key is not None:
                 on_session_key(stored)

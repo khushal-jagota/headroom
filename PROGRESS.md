@@ -4,6 +4,38 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 the bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-13): restart continuation and bounded shutdown
+
+Current build stage:
+
+- Ticket `t_yctn6m7m` is in Implementation on isolated branch
+  `ticket/t_yctn6m7m-restart-recovery`, now synchronized onto main `b7ca44a`.
+- Restart continuation is complete for ticket workers and ordinary chat, including stale-turn preservation,
+  strict same-session recovery, startup-before-readiness ordering, post-proposal stale worker settlement,
+  repeated restart handling, session-mismatch failure, and one bounded runtime/gateway shutdown deadline.
+- Every Codex implementation finding and rereview finding has been resolved. Both the final targeted rereview
+  and the post-main-sync integration review report `NO VIOLATIONS`.
+
+What just passed:
+
+- Focused backend recovery/shutdown suite: 163 passed, 2 existing warnings; the final worker-session mismatch
+  RED/GREEN set then passed 4/4.
+- Ruff and mypy pass on the final worker-recovery patch.
+- The exact Playwright test for visible restart recovery passed from the normal ticket worktree. It proves the
+  original human input appears once, partial output is preserved, the system recovery turn is visible, and the
+  continuation settles.
+- `npm --prefix web run build` passes.
+- Canonical `PYTHONPATH="$PWD/src" ./verify` passes Ruff, mypy across 120 source files, 700 unit tests,
+  compile/static checks, frontend checks/build/tests, and 78 Playwright e2e tests; final `VERIFY: PASS`.
+
+Next step:
+
+- Commit the verified branch and propose Implementation for approval. Do not merge before Closeout.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-13): safe interactivity in ticket HTML previews
 
 Current build stage:

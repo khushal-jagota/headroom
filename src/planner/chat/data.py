@@ -308,6 +308,137 @@ def start_turn(
         return _row_to_turn(row)
 
 
+def roll_running_turn_for_recovery(
+    conn: sqlite3.Connection,
+    entity_id: str,
+    *,
+    origin: str,
+    mode: str,
+    visible_role: str,
+    visible_text: str,
+    output_role: str,
+    phase: str,
+    activity_label: str | None,
+    now: int,
+    expected_session_key: str | None = None,
+) -> ChatTurn | None:
+    """Settle a stale visible turn and create one replacement recovery turn.
+
+    This is a process-lifecycle writer: the old turn's partial output is preserved as
+    an interrupted visible message, transient activity is cleared, and the fresh turn
+    inherits the durable session key so the gateway can resume the same conversation.
+    """
+    turn_id = new_id("run")
+    with _txn(conn):
+        active = conn.execute(
+            "SELECT * FROM chat_turns WHERE entity_id = ? AND status = 'running' "
+            "ORDER BY started_at DESC, id DESC LIMIT 1",
+            (entity_id,),
+        ).fetchone()
+        if active is not None:
+            if expected_session_key is not None:
+                active_session_key = active["session_key"]
+                if active_session_key is None:
+                    error = (
+                        "restart recovery stale turn has no session key "
+                        "for existing session"
+                    )
+                elif active_session_key != expected_session_key:
+                    error = (
+                        "restart recovery stale turn session key does not match "
+                        "existing session"
+                    )
+                else:
+                    error = None
+                if error is not None:
+                    conn.execute(
+                        "DELETE FROM chat_turn_activity_entries WHERE turn_id = ?",
+                        (active["id"],),
+                    )
+                    conn.execute(
+                        "UPDATE chat_turns SET status = 'errored', phase = 'settled', "
+                        "activity_label = NULL, error = ?, updated_at = ?, "
+                        "completed_at = ? WHERE id = ?",
+                        (error, now, now, active["id"]),
+                    )
+                    append_event(
+                        conn,
+                        entity_id,
+                        EventKind.chat_turn_finished,
+                        {"turn_id": active["id"], "status": "errored", "error": error},
+                        now,
+                    )
+                    return None
+            final_text = str(active["output_text"])
+            conn.execute(
+                "DELETE FROM chat_turn_activity_entries WHERE turn_id = ?",
+                (active["id"],),
+            )
+            conn.execute(
+                "UPDATE chat_turns SET status = 'interrupted', phase = 'settled', "
+                "activity_label = NULL, output_text = ?, updated_at = ?, "
+                "completed_at = ? WHERE id = ?",
+                (final_text, now, now, active["id"]),
+            )
+            if final_text:
+                _append_message(
+                    conn,
+                    entity_id,
+                    turn_id=active["id"],
+                    role=str(active["output_role"]),
+                    text=final_text,
+                    now=now,
+                )
+            append_event(
+                conn,
+                entity_id,
+                EventKind.chat_turn_finished,
+                {"turn_id": active["id"], "status": "interrupted"},
+                now,
+            )
+            session_key = active["session_key"]
+        else:
+            session_key = None
+
+        conn.execute(
+            "INSERT INTO chat_turns ("
+            "id, entity_id, origin, mode, status, phase, activity_label, output_role, "
+            "output_text, session_key, error, started_at, updated_at, completed_at"
+            ") VALUES (?, ?, ?, ?, 'running', ?, ?, ?, '', ?, NULL, ?, ?, NULL)",
+            (
+                turn_id,
+                entity_id,
+                origin,
+                mode,
+                phase,
+                activity_label,
+                output_role,
+                session_key,
+                now,
+                now,
+            ),
+        )
+        if visible_text:
+            _append_message(
+                conn,
+                entity_id,
+                turn_id=turn_id,
+                role=visible_role,
+                text=visible_text,
+                now=now,
+            )
+        append_event(
+            conn,
+            entity_id,
+            EventKind.chat_turn_started,
+            {"turn_id": turn_id, "origin": origin, "mode": mode, "phase": phase},
+            now,
+        )
+        row = conn.execute("SELECT * FROM chat_turns WHERE id = ?", (turn_id,)).fetchone()
+        assert row is not None
+        return _row_to_turn(row)
+
+
 def attach_session_key(
     conn: sqlite3.Connection, turn_id: str, *, entity_id: str, session_key: str, now: int
 ) -> None:

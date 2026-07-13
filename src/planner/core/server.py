@@ -17,12 +17,14 @@ import threading
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import monotonic as _monotonic
 from typing import Any
 
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from planner.chat import service as chat_service
 from planner.chat.api import router as chat_router
 from planner.core.adapters.registry import Adapters
 from planner.core.clock import Clock
@@ -100,6 +102,49 @@ def _build_role_gateways(
     return worker_gateway, chief_gateway
 
 
+async def _stop_runtime_with_deadline(runtime: Any, deadline: float) -> None:
+    await runtime.stop(deadline=deadline)
+
+
+def _shutdown_gateway_with_deadline(gateway: Any, deadline: float) -> None:
+    gateway.shutdown(deadline=deadline)
+
+
+def _start_gateway_if_available(gateway: Any) -> None:
+    start = getattr(gateway, "start", None)
+    if start is not None:
+        start()
+
+
+def _recover_running_human_chat_turns(
+    conn_factory: Callable[[], sqlite3.Connection],
+    gateway: Any,
+    clock: Clock,
+) -> None:
+    conn = conn_factory()
+    try:
+        rows = conn.execute(
+            "SELECT chat_turns.entity_id, chat_turns.mode "
+            "FROM chat_turns "
+            "LEFT JOIN tickets ON tickets.id = chat_turns.entity_id "
+            "WHERE chat_turns.status = 'running' "
+            "AND chat_turns.origin = 'human' "
+            "AND (tickets.id IS NULL OR tickets.ticket_status <> 'agent_running_step') "
+            "ORDER BY chat_turns.started_at, chat_turns.id"
+        ).fetchall()
+    finally:
+        conn.close()
+    for row in rows:
+        chat_service.recover_human_turn(
+            conn_factory,
+            gateway,
+            str(row["entity_id"]),
+            str(row["mode"]),
+            clock.now_unix(),
+            clock.now_unix,
+        )
+
+
 def create_app(
     config: Config,
     clock: Clock,
@@ -126,7 +171,9 @@ def create_app(
         loops: Any = None
         shared_gateway: Any = None
         chat_gateway_to_shutdown: Any = None
-        if not config.test_mode:  # D6: background loops never run in test mode
+        if config.test_mode and config.run_startup_recovery_in_test_mode:
+            _recover_running_human_chat_turns(conn_factory, adapters.gateway, clock)
+        elif not config.test_mode:  # D6: background loops never run in test mode
             try:
                 module = importlib.import_module("planner.core.loops")
                 start = module.start_background_loops
@@ -160,6 +207,9 @@ def create_app(
                 chat_gateway_to_shutdown = chat_gateway
                 app_.state.shared_gateway = shared_gateway
                 app_.state.adapters = Adapters(gateway=chat_gateway)
+                _start_gateway_if_available(shared_gateway)
+                _start_gateway_if_available(chief_gateway)
+                _recover_running_human_chat_turns(conn_factory, chat_gateway, clock)
                 try:
                     loops = start(
                         config,
@@ -176,12 +226,13 @@ def create_app(
         try:
             yield
         finally:
+            deadline = _monotonic() + float(config.shutdown_grace_seconds)
             if loops is not None:
-                await loops.stop()
+                await _stop_runtime_with_deadline(loops, deadline)
             if chat_gateway_to_shutdown is not None:
-                chat_gateway_to_shutdown.shutdown()
+                _shutdown_gateway_with_deadline(chat_gateway_to_shutdown, deadline)
             elif shared_gateway is not None:
-                shared_gateway.shutdown()
+                _shutdown_gateway_with_deadline(shared_gateway, deadline)
 
     app = FastAPI(title="planner", version="2.0.0", lifespan=_lifespan)
     app.add_middleware(

@@ -264,6 +264,17 @@ runner must persist a created/resumed `chat_session_key` *before* it submits the
 worker can call `panels worker my-ticket` in that same turn and needs its key already queryable. While
 running, that step owns the session: human sends return `already_running`, not a parallel session.
 
+## D-runtime-restart-continuation — Restart recovery resumes sessions instead of replaying prompts
+
+Restart recovery is a continuation problem, not a retry queue. A ticket left at
+`agent_running_step` resumes its stored Hermes session with a fresh recovery message that tells the
+worker to inspect the canonical ticket and existing conversation, continue unfinished work, avoid
+repeating completed actions, and file the current proposal. Panels never resends the original worker
+prompt, never creates a replacement session for this path, and never parses worker prose into ticket
+state. Ordinary chat recovery uses the same stored-session rule but excludes worker-owned ticket ids.
+Shutdown uses one configured monotonic deadline; unfinished ticket work remains `agent_running_step`
+so the next startup can continue it.
+
 ## D-readiness-ring — Readiness ringing belongs to domain actions and is best effort
 
 The database and periodic scan remain the truth; a one-method doorbell only shortens the wait after

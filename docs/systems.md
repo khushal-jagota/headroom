@@ -173,6 +173,12 @@ status when the turn ends. If the worker parks a proposal, the ticket becomes
 `awaiting_approval`; if the proposal auto-accepted and more work is allowed, it
 returns to `empty` so TicketReadinessLoop can discover the next step.
 
+On startup, worker recovery runs after both role gateways are ready and before
+readiness polling starts, even when this process does not own the polling lock. Tickets
+still at `agent_running_step` resume their stored session with a restart-continuation
+message, not the original prompt. A stale visible worker turn for a ticket that already
+became `awaiting_approval` is only settled as interrupted.
+
 Ticket, Day membership, and blocking-link actions commit first, then ring a
 best-effort `ReadinessDoorbell`. Runner settlement rings the same doorbell to continue
 automatic work. The doorbell carries no Ticket id and owns no state. Delivery failure
@@ -208,6 +214,10 @@ in-process listener for that conversation may detach after Hermes reports idle a
 no Panels consequence remains. A later operation resumes the stored session instead
 of replaying prior input.
 
+Server shutdown uses one configured monotonic deadline across runtime stop, worker and
+Chief gateway shutdown, live-session manager waits, router joins, and child-process
+cleanup. Serial cleanup receives the remaining time from that same deadline.
+
 Panels chat state is not model context. Appending to `chat_messages` or `chat_turns`
 does not make a worker see that text. Anything the worker must read has to go
 through the Hermes gateway/session path or the actual worker prompt; the Panels chat
@@ -229,6 +239,10 @@ activity from ticket status.
 
 Human chat sends are rejected while `ticket_status=agent_running_step`. History
 remains readable. There is no queue behind the active worker step.
+
+After restart, ordinary ticket, day, and Chief chat continuation resumes the entity's
+stored session and creates one visible system recovery turn. Worker-owned ticket
+recovery is excluded from this ordinary chat path.
 
 Because the chat state is product state, backend code must not use a visible chat row
 as a substitute for worker-session delivery. Designs that depend on worker awareness

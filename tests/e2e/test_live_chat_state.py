@@ -10,9 +10,20 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import Page
 
+from planner.chat import data as chat_data
+from planner.core.db import connect
+from planner.tickets import data as tickets_data
+from planner.tickets.contracts import TITLE_MAX_CHARS
+
 WAIT_MS = 10_000
 WORKER_PROMPT_TEXT = "Work this ticket step from the current system prompt."
 HISTORICAL_PREVIEW_MESSAGE_ID = 10_001_001
+RECOVERY_SESSION_KEY = "startup-recovery-session-e2e"
+RECOVERY_ORIGINAL_INPUT = "Please finish the restart-sensitive answer."
+RECOVERY_PARTIAL_OUTPUT = "I started the answer before restart."
+RECOVERY_CONTINUATION_OUTPUT = (
+    "echo: Panels restarted. Continue the interrupted response in this existing session."
+)
 
 
 def _wait_chat_text(page: Page, who: str, text: str) -> None:
@@ -22,6 +33,56 @@ def _wait_chat_text(page: Page, who: str, text: str) -> None:
         arg={"who": who, "text": text},
         timeout=WAIT_MS,
     )
+
+
+def _chat_message_count(page: Page, who: str, text: str) -> int:
+    return page.locator(f'[data-chat-msg="{who}"]', has_text=text).count()
+
+
+def _seed_recoverable_ticket_chat(db_path: Path) -> str:
+    conn = connect(str(db_path))
+    try:
+        ticket = tickets_data.create_ticket(
+            conn,
+            title="Startup recovery browser proof",
+            actor="e2e",
+            now=1,
+            title_max_chars=TITLE_MAX_CHARS,
+            ticket_type="coding",
+        )
+        conn.execute(
+            "UPDATE tickets SET chat_session_key = ?, updated_at = ? WHERE id = ?",
+            (RECOVERY_SESSION_KEY, 2, ticket.id),
+        )
+        turn = chat_data.start_turn(
+            conn,
+            ticket.id,
+            origin="human",
+            mode="message",
+            visible_role="human",
+            visible_text=RECOVERY_ORIGINAL_INPUT,
+            output_role="assistant",
+            phase="responding",
+            activity_label=None,
+            now=3,
+        )
+        chat_data.attach_session_key(
+            conn,
+            turn.id,
+            entity_id=ticket.id,
+            session_key=RECOVERY_SESSION_KEY,
+            now=3,
+        )
+        chat_data.append_turn_output(
+            conn,
+            turn.id,
+            entity_id=ticket.id,
+            delta=RECOVERY_PARTIAL_OUTPUT,
+            now=4,
+        )
+        return ticket.id
+    finally:
+        conn.close()
 
 
 def _seed_running_worker_turn(server, entity_id: str) -> None:
@@ -980,6 +1041,48 @@ def test_ticket_chat_shows_running_worker_turn_after_remount(
     page.fill("[data-chat] [data-chat-input]", "draft after remount")
     assert page.locator("[data-chat] [data-chat-input]").input_value() == "draft after remount"
     assert page.locator("[data-chat] [data-chat-send]").is_enabled()
+
+
+def test_startup_recovery_preserves_partial_chat_and_continues_without_duplicate_input(
+    server_factory, context_factory, open_page, api
+) -> None:
+    seeded: dict[str, str] = {}
+
+    def seed(db_path: Path) -> None:
+        seeded["ticket_id"] = _seed_recoverable_ticket_chat(db_path)
+
+    recovery_server = server_factory(
+        gateway="fake",
+        run_startup_recovery=True,
+        seed_db=seed,
+    )
+    ticket_id = seeded["ticket_id"]
+
+    page = open_page(
+        context_factory(),
+        recovery_server,
+        f"#/ticket/{ticket_id}",
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]',
+        settled=True,
+    )
+
+    _wait_chat_text(page, "you", RECOVERY_ORIGINAL_INPUT)
+    _wait_chat_text(page, "planner", RECOVERY_PARTIAL_OUTPUT)
+    _wait_chat_text(
+        page,
+        "system",
+        "Panels restarted. Continue the interrupted response in this existing session.",
+    )
+    _wait_chat_text(page, "planner", RECOVERY_CONTINUATION_OUTPUT)
+    page.wait_for_function(
+        "() => !document.querySelector('[data-chat] [data-chat-pending]')",
+        timeout=WAIT_MS,
+    )
+    assert _chat_message_count(page, "you", RECOVERY_ORIGINAL_INPUT) == 1
+
+    state = api.get(recovery_server, f"/api/chat/{ticket_id}/state")
+    assert state["active_turn"] is None
+    assert [msg["text"] for msg in state["messages"]].count(RECOVERY_ORIGINAL_INPUT) == 1
 
 
 def test_ticket_chat_pause_settles_visible_active_turn(

@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from planner.chat import data as chat_data
 from planner.chat import service as chat_service
 from planner.core.clock import RealClock
 from planner.core.clock import TestClock as MutableClock
@@ -840,6 +841,179 @@ def test_interrupted_gateway_result_rings_after_errored_settlement(tmp_path: Pat
     assert doorbell.calls == 1
 
 
+def test_service_stop_interruption_leaves_ticket_recoverable(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+    entered = threading.Event()
+    release = threading.Event()
+
+    class InterruptingDuringStopGateway:
+        def status(self):
+            return type("Status", (), {"available": True})()
+
+        def run_ticket_step(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            prompt_text: str,
+            on_event: OnEvent | None = None,
+            on_session_key: Callable[[str], None] | None = None,
+            *,
+            require_existing_session: bool = False,
+        ) -> RunResult:
+            if on_session_key is not None:
+                on_session_key(STORED_KEY)
+            entered.set()
+            assert release.wait(5.0)
+            return RunResult("interrupted", "partial stop text", None, STORED_KEY, None)
+
+    runner = EmployeeStepRunner(
+        db,
+        RealClock(),
+        gateway=InterruptingDuringStopGateway(),  # type: ignore[arg-type]
+        readiness_doorbell=NoOpReadinessDoorbell(),
+        boundary_hour=BOUNDARY_HOUR,
+    )
+
+    runner.run_ready_step(tid)
+    assert entered.wait(5.0)
+    stopper = threading.Thread(target=lambda: runner.stop(deadline=time.monotonic() + 5.0))
+    stopper.start()
+    time.sleep(0.05)
+    release.set()
+    stopper.join(5.0)
+
+    assert not stopper.is_alive()
+    ticket = _read(db, tid)
+    assert ticket.ticket_status is TicketStatus.agent_running_step
+    assert ticket.chat_session_key == STORED_KEY
+    conn = connect(db)
+    try:
+        active = chat_data.read_active_turn(conn, tid)
+        assert active is None
+        row = conn.execute(
+            "SELECT status, output_text FROM chat_turns WHERE entity_id = ?", (tid,)
+        ).fetchone()
+    finally:
+        conn.close()
+    assert (row["status"], row["output_text"]) == ("interrupted", "partial stop text")
+
+
+def test_ordinary_interruption_outside_service_stop_still_errors(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+    doorbell = _RecordingDoorbell()
+
+    class OrdinaryInterruptedGateway:
+        def status(self):
+            return type("Status", (), {"available": True})()
+
+        def run_ticket_step(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            prompt_text: str,
+            on_event: OnEvent | None = None,
+            on_session_key: Callable[[str], None] | None = None,
+            *,
+            require_existing_session: bool = False,
+        ) -> RunResult:
+            if on_session_key is not None:
+                on_session_key(STORED_KEY)
+            return RunResult("interrupted", "ordinary interrupt", None, STORED_KEY, None)
+
+    runner = EmployeeStepRunner(
+        db,
+        RealClock(),
+        gateway=OrdinaryInterruptedGateway(),  # type: ignore[arg-type]
+        readiness_doorbell=doorbell,
+        boundary_hour=BOUNDARY_HOUR,
+    )
+
+    runner.run_ready_step(tid)
+    assert runner.wait_idle(5.0)
+
+    assert _read(db, tid).ticket_status is TicketStatus.errored
+    assert doorbell.calls == 1
+
+
+def test_same_process_recovery_admission_for_ticket_submits_once(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+    conn = connect(db)
+    try:
+        conn.execute(
+            "UPDATE tickets SET ticket_status = 'agent_running_step', chat_session_key = ? "
+            "WHERE id = ?",
+            (STORED_KEY, tid),
+        )
+        stale_turn = chat_data.start_turn(
+            conn,
+            tid,
+            origin="worker",
+            mode="worker_step",
+            visible_role="worker",
+            visible_text="original prompt",
+            output_role="assistant",
+            phase="responding",
+            activity_label=None,
+            now=1,
+        )
+        chat_data.attach_session_key(
+            conn,
+            stale_turn.id,
+            entity_id=tid,
+            session_key=STORED_KEY,
+            now=1,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    entered = threading.Event()
+    release = threading.Event()
+    calls: list[str] = []
+
+    class BlockingRecoveryGateway:
+        def status(self):
+            return type("Status", (), {"available": True})()
+
+        def run_ticket_step(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            prompt_text: str,
+            on_event: OnEvent | None = None,
+            on_session_key: Callable[[str], None] | None = None,
+            *,
+            require_existing_session: bool = False,
+        ) -> RunResult:
+            assert session_key == STORED_KEY
+            assert require_existing_session is True
+            calls.append(entity_id)
+            entered.set()
+            assert release.wait(5.0)
+            return RunResult("complete", "recovered", None, STORED_KEY, None)
+
+    runner = EmployeeStepRunner(
+        db,
+        RealClock(),
+        gateway=BlockingRecoveryGateway(),  # type: ignore[arg-type]
+        readiness_doorbell=NoOpReadinessDoorbell(),
+        boundary_hour=BOUNDARY_HOUR,
+    )
+
+    runner.recover_running_step(tid)
+    assert entered.wait(5.0)
+    runner.recover_running_step(tid)
+    time.sleep(0.05)
+
+    assert calls == [tid]
+
+    release.set()
+    assert runner.wait_idle(5.0)
+    assert _read(db, tid).ticket_status is TicketStatus.empty
+
+
 def test_unknown_employee_submit_fails_once_and_ignores_later_completion(
     tmp_path: Path,
 ) -> None:
@@ -1029,6 +1203,125 @@ def test_existing_key_is_resumed_and_rotated_tip_persisted(tmp_path: Path) -> No
     resume_frame = next(f for f in fake.sent if f.get("method") == "session.resume")
     assert resume_frame["params"]["session_id"] == STORED_KEY
     assert _read(db, tid).chat_session_key == "rotated-key"
+
+
+def test_recovery_resumes_running_ticket_session_with_owner_message(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+    conn = connect(db)
+    try:
+        claimed = tickets_data.start_run_if_runnable(conn, tid, guard=None, now=1)
+        assert claimed is not None
+        tickets_data.claim_running_step_chat_session_key(
+            conn, tid, session_key=STORED_KEY, now=2
+        )
+        stale_turn = chat_service.start_worker_turn(
+            conn, tid, visible_text="original worker prompt", now=2
+        )
+        chat_service.attach_worker_session_key(conn, tid, stale_turn.id, STORED_KEY, 2)
+        chat_data.append_turn_output(
+            conn, stale_turn.id, entity_id=tid, delta="partial draft", now=3
+        )
+    finally:
+        conn.close()
+    monkeypatch.setattr(
+        "planner.runtime.employee_step_runner._next_step_prompt",
+        lambda ticket: (_ for _ in ()).throw(AssertionError("original prompt replayed")),
+    )
+    fake = _ProposingFake(
+        _resume_script(STORED_KEY, _complete_ev()),
+        on_submit=lambda: _file_proposal(db, tid, "success", "recovered success"),
+    )
+    runner = _runner(db, fake)
+
+    runner.recover_running_step(tid)
+    assert runner.wait_idle(10.0)
+
+    submit_frame = next(frame for frame in fake.sent if frame.get("method") == "prompt.submit")
+    recovery_message = submit_frame["params"]["text"]
+    assert fake.sent_methods() == ["session.resume", "prompt.submit"]
+    assert submit_frame["params"]["session_id"] == LIVE_SID
+    assert "Panels restarted" in recovery_message
+    assert "inspect the canonical ticket" in recovery_message
+    assert "existing conversation" in recovery_message
+    assert "continue unfinished work" in recovery_message
+    assert "avoid repeating completed actions" in recovery_message
+    assert "file the currently requested proposal" in recovery_message
+    assert "if you already filed that proposal" in recovery_message
+    assert "only say so in chat" in recovery_message
+    assert "Work ticket" not in recovery_message
+    recovered = _read(db, tid)
+    assert recovered.ticket_status is TicketStatus.awaiting_approval
+    assert recovered.chat_session_key == STORED_KEY
+    assert fields_codec.get_slot(recovered.fields, "success").proposal is not None
+    conn = connect(db)
+    try:
+        active_turn_count = conn.execute(
+            "SELECT COUNT(*) FROM chat_turns WHERE entity_id = ? AND status = 'running'",
+            (tid,),
+        ).fetchone()[0]
+        messages = conn.execute(
+            "SELECT role, text FROM chat_messages WHERE entity_id = ? ORDER BY id",
+            (tid,),
+        ).fetchall()
+    finally:
+        conn.close()
+    assert active_turn_count == 0
+    assert [(message["role"], message["text"]) for message in messages] == [
+        ("worker", "original worker prompt"),
+        ("assistant", "partial draft"),
+        ("system", recovery_message),
+        ("assistant", "ok"),
+    ]
+
+
+def test_recovery_rejects_stale_worker_turn_session_mismatch_without_gateway(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    tid = _new_ticket(db)
+    conn = connect(db)
+    try:
+        claimed = tickets_data.start_run_if_runnable(conn, tid, guard=None, now=1)
+        assert claimed is not None
+        tickets_data.claim_running_step_chat_session_key(
+            conn, tid, session_key=STORED_KEY, now=2
+        )
+        stale_turn = chat_service.start_worker_turn(
+            conn, tid, visible_text="original worker prompt", now=2
+        )
+        chat_service.attach_worker_session_key(
+            conn, tid, stale_turn.id, "wrong-session", 2
+        )
+    finally:
+        conn.close()
+    fake = FakeGateway({})
+    runner = _runner(db, fake)
+
+    runner.recover_running_step(tid)
+    assert runner.wait_idle(10.0)
+
+    recovered = _read(db, tid)
+    assert recovered.ticket_status is TicketStatus.errored
+    assert recovered.chat_session_key == STORED_KEY
+    assert fake.sent_methods() == []
+    conn = connect(db)
+    try:
+        turn = conn.execute(
+            "SELECT status, error FROM chat_turns WHERE id = ?", (stale_turn.id,)
+        ).fetchone()
+        recovery_messages = conn.execute(
+            "SELECT COUNT(*) FROM chat_messages WHERE entity_id = ? AND role = 'system'",
+            (tid,),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert turn is not None and turn["status"] == "errored"
+    assert "session key does not match" in str(turn["error"])
+    assert recovery_messages == 0
 
 
 def test_spawn_crash_errors_never_stuck_running(tmp_path: Path) -> None:

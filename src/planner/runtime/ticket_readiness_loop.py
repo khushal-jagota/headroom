@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from time import monotonic as _monotonic
 
 from planner.core.clock import Clock
 from planner.core.db import connect
@@ -77,13 +78,14 @@ class TicketReadinessLoop:
         )
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, *, deadline: float | None = None) -> None:
         """Stop discovery and join its thread so it cannot submit more ids."""
         self._stop.set()
         self._wake.set()
         thread = self._thread
         if thread is not None:
-            thread.join(timeout=10.0)
+            timeout = 10.0 if deadline is None else max(0.0, deadline - _monotonic())
+            thread.join(timeout=timeout)
             self._thread = None
 
     def _run_loop(self, interval: int) -> None:

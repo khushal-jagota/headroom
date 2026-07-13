@@ -16,4 +16,5 @@ dispatcher_lock_path: data/dispatcher.lock   # advisory single-dispatcher lock (
 logs_dir: data/logs                # per-run log files (§7.4)
 events_read_limit: 500             # max events returned per WS tail batch (§9)
 db_busy_timeout_ms: 5000           # SQLite busy timeout on connect
+shutdown_grace_seconds: 30         # one monotonic budget for runtime/gateway shutdown
 gateway_adapter: auto              # auto | real | fake | offline (§9.4)

@@ -114,7 +114,11 @@ class EchoGatewayAdapter:
         mode: str,
         on_session_key: Callable[[str], None] | None = None,
         image_paths: tuple[Path, ...] = (),
+        *,
+        require_existing_session: bool = False,
     ) -> Iterator[ChatStreamChunk]:
+        if require_existing_session and session_key is None:
+            raise PlannerError(ErrorCode.gateway_offline, "chat session not found")
         if mode == "command":
             result = self.run_command(session_key, entity_id, text, on_session_key)
         else:
@@ -213,6 +217,8 @@ class OfflineGatewayAdapter:
         mode: str,
         on_session_key: Callable[[str], None] | None = None,
         image_paths: tuple[Path, ...] = (),
+        *,
+        require_existing_session: bool = False,
     ) -> Iterator[ChatStreamChunk]:
         raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
 

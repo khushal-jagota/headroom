@@ -43,6 +43,14 @@ then releases that handoff after commit. The revision resumes the stored Hermes 
 strictly. If that session is stale, Panels records an errored employee turn instead of
 silently creating a different conversation.
 
+Startup recovery follows the same continuation rule. Before readiness polling starts,
+Panels finds tickets still marked `agent_running_step`, settles any stale visible worker
+turn with its partial output kept, creates one recovery turn, and resumes the ticket's
+stored Hermes session with a fresh restart-continuation message. It does not rebuild or
+resend the original step prompt. If the ticket already reached `awaiting_approval` but
+the visible worker turn was still running, startup only settles that visible turn; it
+does not send another prompt or change ticket status.
+
 One employee is one ticket session, so Hermes' per-session busy guard keeps one turn
 in flight for that ticket while the shared employee-role child can hold many sessions.
 The Ticket keeps its durable Hermes session key across stages. The lightweight Panels
@@ -147,10 +155,13 @@ today now rings the readiness doorbell without a follow-up scope edit. The ticke
   of commands and skills, over the same gateway.
 - **The command-line tool** (`cli.md`) — the surface the employee acts through.
 
-## Deferred
+Shutdown uses one configured grace budget. The server closes discovery and new runner
+admission, drains accepted work until that same deadline, then passes the remaining
+time to role-gateway cleanup, session-router joins, and child-process shutdown. If an
+employee turn is still unresolved when the budget runs out, the ticket remains
+`agent_running_step` so the next startup can continue it.
 
-- **No recovery from a failed run.** An errored ticket is stuck — there is no retry
-  or clear. Trigger: recovery is designed and built.
+## Deferred
 - **Rollover scheduling stays outside the employee runtime.** The server provisions the
   role skill, which is designed for thin morning and afternoon Hermes jobs. Trigger:
   the product decides that Panels itself should own the schedule. See `days.md`.

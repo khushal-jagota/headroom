@@ -69,6 +69,8 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
         gateway: str | None = None,
         fake_now: str | None = None,
         trusted_ingress_env: Mapping[str, str] | Callable[[str], Mapping[str, str]] | None = None,
+        run_startup_recovery: bool = False,
+        seed_db: Callable[[Path], None] | None = None,
     ) -> ServerHandle:
         nonlocal counter
         srvdir = tmp_path / f"srv{counter}"
@@ -81,6 +83,12 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
         base = f"http://127.0.0.1:{port}"
         db_path = srvdir / "planning.db"
         log_path = srvdir / "server.log"
+        if seed_db is not None:
+            from planner.core.db import connect, create_schema
+
+            with connect(str(db_path)) as bootstrap:
+                create_schema(bootstrap)
+            seed_db(db_path)
 
         env = _scrubbed_env()
         env.update(
@@ -95,6 +103,8 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
                 "PLAN_UI_DEBOUNCE_MS": "50",
             }
         )
+        if run_startup_recovery:
+            env["PLAN_RUN_STARTUP_RECOVERY_IN_TEST_MODE"] = "1"
         if gateway is not None:
             env["PLAN_GATEWAY_ADAPTER"] = gateway
         if trusted_ingress_env is not None:

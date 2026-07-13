@@ -41,6 +41,9 @@ _log = logging.getLogger("planner.chat")
 CHIEF_OF_STAFF_ENTITY_ID = "agent_panels_chief_of_staff"
 TOP_LEVEL_AGENT_ENTITY_IDS = frozenset({CHIEF_OF_STAFF_ENTITY_ID})
 _IMAGE_ONLY_MODEL_CUE = "Please respond to the attached image."
+_HUMAN_RESTART_RECOVERY_MESSAGE = (
+    "Panels restarted. Continue the interrupted response in this existing session."
+)
 
 
 @contextmanager
@@ -462,6 +465,75 @@ def start_human_turn(
     return turn
 
 
+def recover_human_turn(
+    conn_factory: Callable[[], sqlite3.Connection],
+    gateway: GatewayAdapter,
+    entity_id: str,
+    mode: str,
+    now: int,
+    now_fn: Callable[[], int] | None = None,
+) -> ChatTurn | None:
+    """Resume one product-visible human chat turn after process restart."""
+    if mode not in ("message", "command"):
+        raise PlannerError(ErrorCode.validation, "mode must be message or command")
+    conn = conn_factory()
+    try:
+        if entity_id.startswith("t_"):
+            row = conn.execute(
+                "SELECT ticket_status FROM tickets WHERE id = ?", (entity_id,)
+            ).fetchone()
+            if row is not None and row["ticket_status"] == TicketStatus.agent_running_step.value:
+                return None
+        _kind, stored_key = _resolve(conn, entity_id, now)
+        if stored_key is None:
+            active = chat_data.read_active_turn(conn, entity_id)
+            if active is not None:
+                chat_data.fail_turn(
+                    conn,
+                    active.id,
+                    entity_id=entity_id,
+                    error="restart recovery has no existing session",
+                    now=now,
+                )
+            return None
+        turn = chat_data.roll_running_turn_for_recovery(
+            conn,
+            entity_id,
+            origin="human",
+            mode=mode,
+            visible_role="system",
+            visible_text=_HUMAN_RESTART_RECOVERY_MESSAGE,
+            output_role="system" if mode == "command" else "assistant",
+            phase="thinking",
+            activity_label="Restarting chat",
+            now=now,
+            expected_session_key=stored_key,
+        )
+        if turn is None:
+            return None
+    finally:
+        conn.close()
+
+    thread = threading.Thread(
+        target=_run_human_turn,
+        args=(
+            conn_factory,
+            gateway,
+            entity_id,
+            turn.id,
+            _HUMAN_RESTART_RECOVERY_MESSAGE,
+            mode,
+            now_fn or _unix_now,
+            (),
+        ),
+        kwargs={"require_existing_session": True},
+        name=f"chat-recovery-{turn.id}",
+        daemon=True,
+    )
+    thread.start()
+    return turn
+
+
 def _run_human_turn(
     conn_factory: Callable[[], sqlite3.Connection],
     gateway: GatewayAdapter,
@@ -471,6 +543,8 @@ def _run_human_turn(
     mode: str,
     now_fn: Callable[[], int],
     image_paths: tuple[Path, ...] = (),
+    *,
+    require_existing_session: bool = False,
 ) -> None:
     conn = conn_factory()
     try:
@@ -499,18 +573,39 @@ def _run_human_turn(
 
         output_role = "system" if mode == "command" else "assistant"
         if not image_paths:
-            chunks = gateway.stream(
-                stored_key, entity_id, text, mode, persist_session_before_prompt
-            )
+            if require_existing_session:
+                chunks = gateway.stream(
+                    stored_key,
+                    entity_id,
+                    text,
+                    mode,
+                    persist_session_before_prompt,
+                    require_existing_session=True,
+                )
+            else:
+                chunks = gateway.stream(
+                    stored_key, entity_id, text, mode, persist_session_before_prompt
+                )
         else:
-            chunks = gateway.stream(
-                stored_key,
-                entity_id,
-                text,
-                mode,
-                persist_session_before_prompt,
-                image_paths=image_paths,
-            )
+            if require_existing_session:
+                chunks = gateway.stream(
+                    stored_key,
+                    entity_id,
+                    text,
+                    mode,
+                    persist_session_before_prompt,
+                    image_paths=image_paths,
+                    require_existing_session=True,
+                )
+            else:
+                chunks = gateway.stream(
+                    stored_key,
+                    entity_id,
+                    text,
+                    mode,
+                    persist_session_before_prompt,
+                    image_paths=image_paths,
+                )
         for chunk in chunks:
             now = now_fn()
             if chunk.type == "session":

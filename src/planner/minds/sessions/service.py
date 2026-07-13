@@ -7,6 +7,7 @@ import threading
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+from time import monotonic as _monotonic
 from typing import cast
 
 from planner.minds.contracts import (
@@ -347,7 +348,7 @@ class LiveSessionManager:
                 return None
             return LiveSession(self, state)
 
-    def shutdown(self) -> None:
+    def shutdown(self, *, deadline: float | None = None) -> None:
         with self._lock:
             if self._closing:
                 wait_for_other_shutdown = True
@@ -363,7 +364,12 @@ class LiveSessionManager:
                 states = tuple(self._sessions_by_live_id.values())
                 request_handles = tuple(self._request_handles)
         if wait_for_other_shutdown:
-            self._shutdown_complete.wait()
+            timeout = None if deadline is None else max(0.0, deadline - _monotonic())
+            completed = self._shutdown_complete.wait(timeout)
+            if not completed:
+                raise GatewayError(
+                    "Hermes session manager shutdown did not complete before deadline"
+                )
             with self._lock:
                 shutdown_error = self._shutdown_error
             if shutdown_error is not None:
@@ -376,7 +382,16 @@ class LiveSessionManager:
         acquired_command_locks: list[threading.Lock] = []
         try:
             for state in sorted(states, key=lambda item: item.live_session_id):
-                state.command_lock.acquire()
+                if deadline is None:
+                    acquired = state.command_lock.acquire()
+                else:
+                    acquired = state.command_lock.acquire(
+                        timeout=max(0.0, deadline - _monotonic())
+                    )
+                if not acquired:
+                    raise GatewayError(
+                        "Hermes session command lock was not acquired before shutdown deadline"
+                    )
                 acquired_command_locks.append(state.command_lock)
             with self._lock:
                 self._closed = True
@@ -387,6 +402,12 @@ class LiveSessionManager:
                         *state.active_consequences,
                     ):
                         consequence.observations.put(None)
+        except GatewayError as exc:
+            with self._lock:
+                self._closing = False
+                self._shutdown_error = exc
+            self._shutdown_complete.set()
+            raise
         finally:
             for command_lock in reversed(acquired_command_locks):
                 command_lock.release()
@@ -394,10 +415,11 @@ class LiveSessionManager:
         router_shutdown_error: GatewayError | None = None
         try:
             self._ingress.close()
-            self._router.join(timeout=2.0)
+            router_timeout = 2.0 if deadline is None else max(0.0, deadline - _monotonic())
+            self._router.join(timeout=router_timeout)
             if self._router.is_alive():
                 router_shutdown_error = GatewayError(
-                    "Hermes session ingress router did not terminate within 2.0s"
+                    f"Hermes session ingress router did not terminate within {router_timeout}s"
                 )
         finally:
             with self._lock:

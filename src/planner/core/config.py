@@ -40,6 +40,7 @@ class Config:
     logs_dir: str
     events_read_limit: int
     db_busy_timeout_ms: int
+    shutdown_grace_seconds: int
     # adapter selection (registry §9.4)
     gateway_adapter: str
     # optional hosted trusted-ingress boundary
@@ -49,6 +50,7 @@ class Config:
     # test mode — ENV ONLY, never in config.yaml
     test_mode: bool
     fake_now: str | None
+    run_startup_recovery_in_test_mode: bool
 
 
 def _parse_bool(raw: object, key: str) -> bool:
@@ -199,6 +201,10 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
     fake_now: str | None = env.get("PLAN_FAKE_NOW") or None
     if not test_mode:
         fake_now = None  # §13/item 21: PLAN_FAKE_NOW is ignored when test mode is off
+    run_startup_recovery_in_test_mode = test_mode and _parse_bool(
+        env.get("PLAN_RUN_STARTUP_RECOVERY_IN_TEST_MODE", "0"),
+        "run_startup_recovery_in_test_mode",
+    )
 
     trusted_ingress_provider = _optional_str_value(
         cfg, env, "trusted_ingress_provider", "PLAN_TRUSTED_INGRESS_PROVIDER"
@@ -242,10 +248,14 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         db_busy_timeout_ms=_int_value(
             cfg, env, "db_busy_timeout_ms", "PLAN_DB_BUSY_TIMEOUT_MS", 5000
         ),
+        shutdown_grace_seconds=_int_value(
+            cfg, env, "shutdown_grace_seconds", "PLAN_SHUTDOWN_GRACE_SECONDS", 30
+        ),
         gateway_adapter=_str_value(cfg, env, "gateway_adapter", "PLAN_GATEWAY_ADAPTER", "auto"),
         trusted_ingress_provider=trusted_ingress_provider,
         trusted_ingress_allowed_login=trusted_ingress_allowed_login,
         trusted_ingress_canonical_origin=trusted_ingress_canonical_origin,
         test_mode=test_mode,
         fake_now=fake_now,
+        run_startup_recovery_in_test_mode=run_startup_recovery_in_test_mode,
     )

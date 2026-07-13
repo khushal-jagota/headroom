@@ -81,6 +81,13 @@ Panels stores the new key and logs a `chat_session_created` event. If delivery b
 uncertain, Panels reports the gateway outcome honestly and does not guess or retry the
 prompt automatically.
 
+After a process restart, a running human chat turn is settled as interrupted with its
+partial output kept, then Panels creates one visible system recovery turn and resumes
+the same stored Hermes session. That recovery message asks Hermes to continue the
+interrupted response; it does not resend the original human message. Ticket worker
+recovery is separate, so a ticket already owned by `agent_running_step` is not also
+continued through ordinary chat recovery.
+
 The Chief of Staff page uses the same chat state shape with its top-level entity id.
 Only the gateway routing differs: chief messages go to the `panels-chief-of-staff`
 role, while ticket and day chat keep the worker gateway.

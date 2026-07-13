@@ -34,6 +34,7 @@ from planner.minds.contracts import RunResult
 from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.gateway import ChildProcess, GatewayChild, GatewayError
 from planner.minds.runner import run_step
+from planner.minds.sessions import LiveSessionManager
 from planner.minds.shared_gateway import (
     BUSY_CODE,
     CHAT_SOURCE,
@@ -206,7 +207,7 @@ class RecordingChatGateway:
         self.calls.append(("run_command", entity_id))
         return ChatSendResult(reply_text=f"{self.name}: {command}", session_key=f"{self.name}-key")
 
-    def shutdown(self) -> None:
+    def shutdown(self, *, deadline: float | None = None) -> None:
         self.closed = True
 
 
@@ -1655,6 +1656,52 @@ def test_shared_gateway_shutdown_settles_pending_employee_once_without_retry(
     assert len(results) == 1
     assert results[0].status == "errored"
     assert fake.sent_methods().count("prompt.submit") == 1
+
+
+def test_live_session_shutdown_deadline_failure_signals_waiters_and_clears_closing() -> None:
+    fake = FakeGateway({})
+    child = GatewayChild(HERMES_PY, {}, spawn=fake.spawn)
+    child.wait_ready()
+    manager = LiveSessionManager(child)
+    session = manager.bind(STORED_KEY, LIVE_SID)
+    state = session._state
+    state.command_lock.acquire()
+    first_errors: list[GatewayError] = []
+
+    try:
+        def first_shutdown() -> None:
+            try:
+                manager.shutdown(deadline=time.monotonic() + 0.05)
+            except GatewayError as exc:
+                first_errors.append(exc)
+
+        first = threading.Thread(target=first_shutdown)
+        first.start()
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            with manager._lock:
+                closing = manager._closing
+            if closing:
+                break
+            time.sleep(0.01)
+
+        with pytest.raises(GatewayError, match="command lock"):
+            manager.shutdown(deadline=time.monotonic() + 1.0)
+
+        first.join(1.0)
+        assert not first.is_alive()
+        assert len(first_errors) == 1
+        with manager._lock:
+            assert manager._closing is False
+            assert manager._shutdown_error is first_errors[0]
+        assert manager._shutdown_complete.is_set()
+    finally:
+        state.command_lock.release()
+        try:
+            manager.shutdown()
+        except GatewayError:
+            pass
+        child.shutdown()
 
 
 def test_role_gateway_child_death_does_not_stop_sibling_role() -> None:
