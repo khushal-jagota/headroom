@@ -4,13 +4,13 @@ Every delegated or judgment call, briefly justified. Numbered for reference from
 
 ## D116 — Revalidate preview stability by merging committed main before approval
 
-The ticket branch's original base predates 22 committed main changes, including multi-image chat and
-explicit ticket-type creation. Merge committed `main` `0595b94` into the isolated ticket branch now,
-not during Closeout after approval. Preserve main's multi-image payload and typed lifecycle changes,
-then retain this ticket's stable chat row keys and shared `MarkdownBlock` semantic-input guard. Port the
-all-seven-kind regression to `--type coding`, rebuild generated frontend output from integrated source,
-and require independent review plus canonical verification. Do not include or modify the unrelated
-uncommitted Job B work in the main checkout.
+The ticket branch's original base predates more than 22 committed main changes, including multi-image
+chat, explicit ticket-type creation, and Job B's production `new_worker` type. Merge current committed
+`main` `c6cd05f` into the isolated ticket branch now, not during Closeout after approval. Preserve
+main's multi-image payload and typed lifecycle changes, then retain this ticket's stable chat row keys
+and shared `MarkdownBlock` semantic-input guard. Port the all-seven-kind regression to `--type coding`,
+rebuild generated frontend output from integrated source, and require independent review plus canonical
+verification. Leave the unrelated dirty nested worktree untouched.
 
 ## D114 — Blocker closeout rebases semantics by merge, not by choosing one side
 
