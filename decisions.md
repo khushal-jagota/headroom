@@ -228,6 +228,16 @@ radius was the whole poll — a raise aborts discovery for every ticket), and th
 non-coding runtime path confirmed those were the only stragglers; all others already thread the
 definition or are intentionally coding.
 
+## D-ticket-types-front-doors — The agent front doors carry an explicit type list, maintained by closeout
+
+The base worker skill (`panels-worker`) and the Chief-of-Staff skill (`panels-chief-of-staff`) each carry
+an explicit list of the ticket types rather than discovering them from the served manifest. The Chief was
+type-blind before this — it reflexively filed non-coding work as a `coding` ticket and had coding stage/
+field names hardcoded in its external-work and worker-boundary sections. Keeping the lists current is a
+step in a `new_worker` ticket's **closeout** (announce the new type to both front doors), so they don't
+drift as future types ship. Explicit-list-plus-closeout-discipline over dynamic discovery because these
+are agent skills a human reads as prose, not a fetch surface.
+
 ---
 
 # Runtime (readiness loop + employee step runner)

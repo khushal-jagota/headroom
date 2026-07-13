@@ -140,6 +140,9 @@ t_tt02's migration closed.
 A one-line ledger of completed cycles. Dates are when the work landed; git carries the detail. Decision
 references point into `decisions.md`.
 
+- **2026-07-13 — Type-aware front doors** (skill edits): `panels-chief-of-staff` + `panels-worker` now
+  know ticket types and the "new worker → `new_worker` ticket" mapping; `new_worker` closeout keeps the
+  lists current. [D-ticket-types-front-doors]
 - **2026-07-11 — Blockers-only** (`14b0d5c`, merged): one typed blocker read model, `blocks` the only
   explicit relationship; schema-15 blocks-only migration on the live DB. [D-blockers-one-model]
 - **2026-07-11 — Ordinary Kickoff stage** (merge `304734e`): Kickoff became a real gated first field

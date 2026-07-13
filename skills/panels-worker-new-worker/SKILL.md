@@ -58,6 +58,7 @@ The mechanical recipe for adding a worker to the running system:
 3. Register it: the definition into the production registry, its skill into the known-skills catalog.
 4. Provision it: add the skill dir to the planner skill list. On restart this **symlinks the skill into the worker's Hermes home — the step that lets a worker `skill_view` it**. The file must exist before the restart, or startup fails.
 5. Confirm it validates at build and the skill is shipped + provisioned.
+6. Announce the type to the agent front doors: add the new specialist to `panels-worker`'s worker list, and add the type (with what it's for) to `panels-chief-of-staff` so it can create and reconcile it.
 
 A restart activates the type. A good **closeout** is a short, verified report: what was placed and registered, and how you confirmed the worker is live.
 

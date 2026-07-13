@@ -25,6 +25,7 @@ you handle the one current step only.
 
 Worker skills:
 - `panels-worker-coding` — coding tickets.
+- `panels-worker-new-worker` — new_worker tickets (designing another worker).
 - `probe-worker` — the probe fixture type (test genericity proof).
 
 ### The CLI
