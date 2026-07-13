@@ -38,32 +38,27 @@ Blockers:
 
 - None.
 
-## Current work cycle (2026-07-13): today-scoped Review implementation
+## Current work cycle (2026-07-13): today-scoped Review closeout
 
 Current build stage:
 
-- Ticket `t_4ub5h4sw` is implemented on dedicated branch
-  `ticket/t_4ub5h4sw-review-today`, based on main `05c8f99`; the dirty primary tree remains untouched.
-- Review ticket approvals now come only from the current planning day's membership. The shared queue still
-  owns ordering and all non-ticket queue data, and day add/remove events invalidate `queues` so an open
-  Review screen and shell badge refresh without a reload.
-- Implementation is complete, independently reviewed, and verified. No merge, deploy, or live cutover
-  belongs to this stage.
+- Ticket `t_4ub5h4sw` is integrated into `main` by merge commit `879205a`; the reviewed ticket source
+  remained byte-identical through integration alongside the already-landed scrollbar work.
+- Review ticket approvals come only from the current planning day's membership, and day add/remove events
+  invalidate `queues` so the Review screen, shell badge, and empty state refresh without a reload.
+- The ticket worktree and branch are removed. No deploy, migration, restart, or follow-up ticket applies.
 
 What just passed:
 
-- Focused proof: 655 unit tests; all six frontend test groups; and 18 Review-focused browser tests,
-  including off-day exclusion, different-day exclusion, add/remove/re-add without reload, badge/empty-state
-  transitions, approval, revision, skip, open, keyboard, and file-preview behavior.
-- Independent Codex implementation review raised generated-bundle packaging, different-day coverage, and
-  remove-without-reload coverage; all three were addressed, and the follow-up returned `NO VIOLATIONS`.
-- Canonical `./verify`: Ruff; mypy across 119 source/typing files; 655 unit tests; compile/static, CSS,
-  Svelte check/build, six frontend test groups, and 71 e2e tests; final `VERIFY: PASS`.
+- Post-merge `PYTHONPATH="$PWD/src" ./verify` on the primary checkout: Ruff; mypy across 119 source/typing
+  files; 655 unit tests; compile/static, CSS, Svelte check/build, six frontend test groups, and 74 e2e
+  tests; final `VERIFY: PASS`.
+- The tracked generated bundle still matches its HTML pointer. Unrelated active `CONTEXT.md`, `PROGRESS.md`,
+  `decisions.md`, and nested-worktree edits were restored and remain unstaged with their original diff sizes.
 
 Next step:
 
-- Commit the verified ticket branch and propose Implementation. Closeout owns the later merge into main,
-  integration verification, and worktree cleanup.
+- Propose Closeout for approval. No repository or operational work remains.
 
 Blockers:
 
