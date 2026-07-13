@@ -59,6 +59,11 @@ def _wait_present(page: Page, selector: str) -> None:
     )
 
 
+def _add_to_today(api, server, *ticket_ids: str) -> None:
+    for ticket_id in ticket_ids:
+        api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
+
+
 def _wait_chat_text(page: Page, who: str, text: str) -> None:
     page.wait_for_function(
         '({ who, text }) => Array.from(document.querySelectorAll(`[data-chat-msg="${who}"]`))'
@@ -163,6 +168,73 @@ def test_e23_env_pinned_propose(server, context_factory, open_page, cli, api):
     assert api.get(server, f"/api/tickets/{tid}")["fields"]["success"]["value"] is None
 
 
+def test_review_tracks_today_membership_without_reload(
+    server, context_factory, open_page, cli, api
+):
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--type",
+        "coding",
+        "--title",
+        "Today-scoped review",
+        "--kickoff-note",
+        "Review this premise",
+    )["id"]
+    card = f'[data-review-card][data-entity-id="{tid}"]'
+    page = open_page(context_factory(), server, "#/review", "[data-review-empty]", settled=True)
+    badge = page.locator('a[data-screen="review"] .nav-badge')
+
+    assert api.get(server, "/api/queues")["approvals"] == []
+    assert "hidden" in (badge.get_attribute("class") or "").split()
+    flushes = page.evaluate("window.__plannerDebug.flushes")
+    review_url = page.url
+
+    _add_to_today(api, server, tid)
+
+    _wait_present(page, card)
+    page.wait_for_function(
+        "() => { const badge = document.querySelector('a[data-screen=\"review\"] .nav-badge');"
+        " return badge && !badge.classList.contains('hidden')"
+        " && badge.textContent.trim() === '1'; }",
+        timeout=WAIT_MS,
+    )
+    assert page.url == review_url
+    assert page.evaluate("window.__plannerDebug.flushes") > flushes
+
+    cli(server, "day", "remove-ticket", tid, "--date", "today")
+    page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
+    page.wait_for_function(
+        "() => document.querySelector('a[data-screen=\"review\"] .nav-badge')"
+        ".classList.contains('hidden')",
+        timeout=WAIT_MS,
+    )
+    assert api.get(server, "/api/queues")["approvals"] == []
+    assert page.url == review_url
+
+    _add_to_today(api, server, tid)
+    _wait_present(page, card)
+    page.wait_for_function(
+        "() => { const badge = document.querySelector('a[data-screen=\"review\"] .nav-badge');"
+        " return badge && !badge.classList.contains('hidden')"
+        " && badge.textContent.trim() === '1'; }",
+        timeout=WAIT_MS,
+    )
+
+    _wait_enabled(page, f"{card} [data-accept]")
+    page.click(f"{card} [data-accept]")
+    page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
+    page.wait_for_function(
+        "() => document.querySelector('a[data-screen=\"review\"] .nav-badge')"
+        ".classList.contains('hidden')",
+        timeout=WAIT_MS,
+    )
+    ticket = api.get(server, f"/api/tickets/{tid}")
+    assert ticket["state"] == "needs_success"
+    assert ticket["fields"]["kickoff"]["value"] == "Review this premise"
+
+
 def test_kickoff_accepts_from_review_without_worker_revision_control(
     server, context_factory, open_page, cli, api
 ):
@@ -170,6 +242,7 @@ def test_kickoff_accepts_from_review_without_worker_revision_control(
         server, "ticket", "create", "--type", "coding", "--title", "Review kickoff",
         "--kickoff-note", "Review this premise",
     )["id"]
+    _add_to_today(api, server, tid)
     card = f'[data-review-card][data-entity-id="{tid}"]'
     page = open_page(context_factory(), server, "#/review", card, settled=True)
     assert page.get_attribute(card, "data-kind") == "kickoff"
@@ -212,6 +285,7 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
         stdin=E24_BODY,
     )
 
+    _add_to_today(api, server, tid)
     card = f'[data-review-card][data-entity-id="{tid}"]'
     page_a = open_page(context_factory(), server, "#/review", card, settled=True)
     assert page_a.get_attribute(card, "data-kind") == "success"
@@ -279,6 +353,7 @@ def test_review_return_for_revision_starts_agent_without_chat_copy(
             ("existing-worker-session", tid),
         )
 
+    _add_to_today(api, server, tid)
     card = f'[data-review-card][data-entity-id="{tid}"]'
     page = open_page(context_factory(), server, "#/review", card, settled=True)
     page.fill(f"{card} [data-review-revision-input]", "Make it shorter.")
@@ -319,6 +394,7 @@ def test_markdown_approval_focus_noop_keeps_raw_source(
         stdin=NOOP_MARKDOWN_BODY,
     )
 
+    _add_to_today(api, server, tid)
     card = f'[data-review-card][data-entity-id="{tid}"]'
     page = open_page(context_factory(), server, "#/review", card, settled=True)
 
@@ -366,6 +442,7 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
         stdin=E25_ORIG,
     )
 
+    _add_to_today(api, server, tid)
     card = f'[data-review-card][data-entity-id="{tid}"]'
     page = open_page(context_factory(), server, "#/review", card, settled=True)
 
@@ -476,6 +553,7 @@ def test_review_keyboard_shortcuts(server, context_factory, open_page, cli, api)
         stdin="# Proposal two\n\n- b",
     )
 
+    _add_to_today(api, server, first, second)
     card = "[data-review-card]"
     page = open_page(context_factory(), server, "#/review", card, settled=True)
     entity_before = page.get_attribute(card, "data-entity-id")
@@ -888,6 +966,7 @@ def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
     assert d["fields"]["plan"]["value"] is None
     assert d["fields"]["plan"]["proposal"] is not None
 
+    _add_to_today(api, server, tid)
     q = api.get(server, "/api/queues")["approvals"]
     assert len(q) == 1, q
     assert q[0]["entity_id"] == tid, q

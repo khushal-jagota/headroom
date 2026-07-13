@@ -899,7 +899,16 @@ async def board(conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
 @router.get("/queues")
 async def queues(conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
     now = clk.now_unix()
-    today_iso = planning_date(clk.now(), cfg.boundary_hour).isoformat()
+    current = clk.now()
+    today_iso = planning_date(current, cfg.boundary_hour).isoformat()
+    day_id = resolve_day_id("today", current, cfg.boundary_hour)
     item_approval_rows = sprints_views.approval_item_rows(conn)
     item_overdue_rows = sprints_views.overdue_item_rows(conn)
-    return tickets_views.queues_view(conn, now, today_iso, item_approval_rows, item_overdue_rows)
+    return tickets_views.queues_view(
+        conn,
+        now,
+        today_iso,
+        item_approval_rows,
+        item_overdue_rows,
+        day_id=day_id,
+    )

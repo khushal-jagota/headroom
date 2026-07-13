@@ -15,6 +15,7 @@ import pytest
 from planner.core.contracts import EventKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import read_events_since
+from planner.days import data as days_data
 from planner.runtime import readiness
 from planner.tickets import actions, data
 from planner.tickets import views as ticket_views
@@ -180,6 +181,8 @@ def test_review_queue_exposes_kickoff_as_ordinary_field_approval(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     t = _create(tmp_db, cfg, fake_clock, settle_kickoff=False)
+    day_id = "day_2026-07-04"
+    days_data.add_day_ticket(tmp_db, day_id, t.id, fake_clock.now_unix())
 
     queues = ticket_views.queues_view(
         tmp_db,
@@ -187,6 +190,7 @@ def test_review_queue_exposes_kickoff_as_ordinary_field_approval(
         today_iso="2026-07-04",
         item_approval_rows=[],
         item_overdue_rows=[],
+        day_id=day_id,
     )
 
     assert queues["approvals"] == [
