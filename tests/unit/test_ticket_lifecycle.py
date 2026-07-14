@@ -10,18 +10,13 @@ from typing import TYPE_CHECKING, Any
 
 from planner.tickets import data
 from planner.tickets.contracts import (
-    ADVANCE_TARGET,
-    GATING_FIELD,
     NO_FURTHER,
-    STATE_ORDER,
     TITLE_MAX_CHARS,
-    WORKER_STATE_ORDER,
     AtCap,
-    FieldName,
     Implementer,
-    TicketState,
 )
-from planner.tickets.logic import fields_codec, machine
+from planner.tickets.logic import fields_codec
+from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 
 if TYPE_CHECKING:
     from sqlite3 import Connection
@@ -34,6 +29,7 @@ if TYPE_CHECKING:
 def _create(conn: Connection, clock: TestClock, **kw: Any) -> Ticket:
     return data.create_ticket(
         conn,
+        worker_type="coding",
         title=kw.pop("title", "Lifecycle ticket"),
         actor="human",
         now=clock.now_unix(),
@@ -58,7 +54,7 @@ def test_ticket_implementer_contract_and_nullable_create_storage(
 
 
 def test_canonical_states_and_fields_include_kickoff_as_first_ordinary_field() -> None:
-    assert [s.value for s in TicketState] == [
+    assert CODING_WORKER_TYPE_DEFINITION.stage_ids() == (
         "needs_kickoff",
         "needs_success",
         "needs_approach",
@@ -66,62 +62,57 @@ def test_canonical_states_and_fields_include_kickoff_as_first_ordinary_field() -
         "needs_implementation",
         "needs_closeout",
         "done",
-        "dropped",
-    ]
-    assert [f.value for f in FieldName] == [
+    )
+    assert CODING_WORKER_TYPE_DEFINITION.dropped_stage.id == "dropped"
+    assert CODING_WORKER_TYPE_DEFINITION.field_ids() == (
         "kickoff",
         "success",
         "approach",
         "plan",
         "implementation",
         "closeout",
-    ]
-    assert STATE_ORDER == (
-        TicketState.needs_kickoff,
-        TicketState.needs_success,
-        TicketState.needs_approach,
-        TicketState.needs_plan,
-        TicketState.needs_implementation,
-        TicketState.needs_closeout,
-        TicketState.done,
     )
-    assert WORKER_STATE_ORDER == (
-        TicketState.needs_success,
-        TicketState.needs_approach,
-        TicketState.needs_plan,
-        TicketState.needs_implementation,
-        TicketState.needs_closeout,
-        TicketState.done,
+    assert CODING_WORKER_TYPE_DEFINITION.stage_ids()[1:] == (
+        "needs_success",
+        "needs_approach",
+        "needs_plan",
+        "needs_implementation",
+        "needs_closeout",
+        "done",
     )
 
 
 def test_each_non_terminal_state_gates_its_same_named_field() -> None:
-    assert GATING_FIELD == {
-        TicketState.needs_kickoff: FieldName.kickoff,
-        TicketState.needs_success: FieldName.success,
-        TicketState.needs_approach: FieldName.approach,
-        TicketState.needs_plan: FieldName.plan,
-        TicketState.needs_implementation: FieldName.implementation,
-        TicketState.needs_closeout: FieldName.closeout,
+    assert {
+        stage: CODING_WORKER_TYPE_DEFINITION.gating_field(stage)
+        for stage in CODING_WORKER_TYPE_DEFINITION.stage_ids()[:-1]
+    } == {
+        "needs_kickoff": "kickoff",
+        "needs_success": "success",
+        "needs_approach": "approach",
+        "needs_plan": "plan",
+        "needs_implementation": "implementation",
+        "needs_closeout": "closeout",
     }
 
 
 def test_advance_is_one_linear_step_ending_at_done() -> None:
-    assert ADVANCE_TARGET == {
-        TicketState.needs_kickoff: TicketState.needs_success,
-        TicketState.needs_success: TicketState.needs_approach,
-        TicketState.needs_approach: TicketState.needs_plan,
-        TicketState.needs_plan: TicketState.needs_implementation,
-        TicketState.needs_implementation: TicketState.needs_closeout,
-        TicketState.needs_closeout: TicketState.done,
+    assert {
+        stage: CODING_WORKER_TYPE_DEFINITION.advance_target(stage)
+        for stage in CODING_WORKER_TYPE_DEFINITION.stage_ids()[:-1]
+    } == {
+        "needs_kickoff": "needs_success",
+        "needs_success": "needs_approach",
+        "needs_approach": "needs_plan",
+        "needs_plan": "needs_implementation",
+        "needs_implementation": "needs_closeout",
+        "needs_closeout": "done",
     }
     # Closeout advances to Done through ordinary machinery; ceiling does not skip
     # Closeout the way the retired in_progress/done special case skipped review.
-    assert machine.advance_target(TicketState.needs_closeout) is TicketState.done
-    assert machine.advance_target(TicketState.needs_kickoff) is TicketState.needs_success
-    assert (
-        machine.advance_target(TicketState.needs_implementation) is TicketState.needs_closeout
-    )
+    assert CODING_WORKER_TYPE_DEFINITION.advance_target("needs_closeout") == "done"
+    assert CODING_WORKER_TYPE_DEFINITION.advance_target("needs_kickoff") == "needs_success"
+    assert CODING_WORKER_TYPE_DEFINITION.advance_target("needs_implementation") == "needs_closeout"
 
 
 def test_full_linear_chain_auto_accepts_to_done(
@@ -129,22 +120,18 @@ def test_full_linear_chain_auto_accepts_to_done(
 ) -> None:
     now = fake_clock.now_unix()
     t = _create(tmp_db, fake_clock)
-    data.change_scope(
-        tmp_db, t.id, ceiling=TicketState.done, at_cap=AtCap.propose, actor="human", now=now
-    )
+    data.change_scope(tmp_db, t.id, ceiling="done", at_cap=AtCap.propose, actor="human", now=now)
     chain = [
-        (FieldName.kickoff, TicketState.needs_success),
-        (FieldName.success, TicketState.needs_approach),
-        (FieldName.approach, TicketState.needs_plan),
-        (FieldName.plan, TicketState.needs_implementation),
-        (FieldName.implementation, TicketState.needs_closeout),
-        (FieldName.closeout, TicketState.done),
+        ("kickoff", "needs_success"),
+        ("success", "needs_approach"),
+        ("approach", "needs_plan"),
+        ("plan", "needs_implementation"),
+        ("implementation", "needs_closeout"),
+        ("closeout", "done"),
     ]
     for fld, expected_state in chain:
-        t = data.file_proposal(
-            tmp_db, t.id, field=fld, body=f"{fld.value} body", actor="agent", now=now
-        )
-        assert t.state == expected_state
+        t = data.file_proposal(tmp_db, t.id, field=fld, body=f"{fld} body", actor="agent", now=now)
+        assert t.stage == expected_state
     assert fields_codec.get_slot(t.fields, "kickoff").value == "kickoff body"
     assert fields_codec.get_slot(t.fields, "implementation").value == "implementation body"
     assert fields_codec.get_slot(t.fields, "closeout").value == "closeout body"
@@ -158,39 +145,37 @@ def test_closeout_accept_requires_human_and_reaches_done(
     data.change_scope(
         tmp_db,
         t.id,
-        ceiling=TicketState.needs_closeout,
+        ceiling="needs_closeout",
         at_cap=AtCap.propose,
         actor="human",
         now=now,
     )
     for fld in (
-        FieldName.kickoff,
-        FieldName.success,
-        FieldName.approach,
-        FieldName.plan,
-        FieldName.implementation,
+        "kickoff",
+        "success",
+        "approach",
+        "plan",
+        "implementation",
     ):
-        t = data.file_proposal(
-            tmp_db, t.id, field=fld, body=f"{fld.value} body", actor="agent", now=now
-        )
-    assert t.state == TicketState.needs_closeout
+        t = data.file_proposal(tmp_db, t.id, field=fld, body=f"{fld} body", actor="agent", now=now)
+    assert t.stage == "needs_closeout"
 
     # Closeout is capped: the proposal parks for human approval, no auto-accept.
     t = data.file_proposal(
-        tmp_db, t.id, field=FieldName.closeout, body="closeout body", actor="agent", now=now
+        tmp_db, t.id, field="closeout", body="closeout body", actor="agent", now=now
     )
-    assert t.state == TicketState.needs_closeout
+    assert t.stage == "needs_closeout"
     assert fields_codec.get_slot(t.fields, "closeout").proposal is not None
     assert fields_codec.get_slot(t.fields, "closeout").value is None
 
     t = data.accept_proposal(
         tmp_db,
         t.id,
-        field=FieldName.closeout,
+        field="closeout",
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
     )
-    assert t.state == TicketState.done
+    assert t.stage == "done"
     assert fields_codec.get_slot(t.fields, "closeout").value == "closeout body"

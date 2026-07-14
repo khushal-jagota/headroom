@@ -27,7 +27,7 @@ class LinkKind(StrEnum):                     # the one explicit Ticket relations
 
 class EventKind(StrEnum):
     # --- named explicitly in SPEC ---
-    state_changed = "state_changed"                  # §4.4.6 {from, to, cause}
+    stage_changed = "stage_changed"                  # {from_stage, to_stage, cause}
     proposal_accepted = "proposal_accepted"          # §4.4.2/4 {field, body, resolved_by, edited}
     proposal_superseded = "proposal_superseded"      # §4.4.1 {field, replaced_body}
     day_ticket_removed = "day_ticket_removed"        # §3.4 {ticket_id}
@@ -64,6 +64,7 @@ class EventKind(StrEnum):
 
     # --- supplemental: durable ticket runtime/parking status ---
     ticket_status_changed = "ticket_status_changed"  # {ticket_status, optional error}
+    employee_session_changed = "employee_session_changed"  # {employee_session_id}
 
     # --- supplemental: links, chat ---
     link_added = "link_added"                        # {from_id, to_id, kind}
@@ -95,7 +96,7 @@ class Link:                                  # SPEC §3.6 links row
 class BlockedBySummaryRow:
     ticket_id: str
     title: str
-    state: str
+    stage: str
     active: bool
     href: str
 
@@ -125,7 +126,7 @@ class BlockerSummary:
 class ErrorCode(StrEnum):
     at_cap_stop = "at_cap_stop"                    # §4.3 agent proposal at ceiling with stop
     scope_missing = "scope_missing"                # §4.4.7 accept without the full pair
-    scope_invalid = "scope_invalid"                # next_ceiling before the new state / unknown
+    scope_invalid = "scope_invalid"                # next_ceiling before the new Stage / unknown
     stale_claim = "stale_claim"                    # §7.6 stale/foreign claim; detail names it
     recap_too_early = "recap_too_early"            # §3.3 recap write at needs_success
     title_too_long = "title_too_long"              # §3.3 > title_max_chars

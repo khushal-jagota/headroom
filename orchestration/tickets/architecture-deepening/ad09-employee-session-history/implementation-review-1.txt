@@ -1,0 +1,24 @@
+AD09 initial implementation review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5fc2-755e-7b31-866f-8b1e8ae5b9ac
+Result: TWO VIOLATIONS
+
+Exact final reviewer output:
+
+- **High** — `web/src/lib/resourceCatalogue.ts:195`, `web/src/lib/resourceCatalogue.ts:218`, `web/src/lib/resourceCatalogue.ts:279`, `web/src/lib/resourceCatalogue.ts:297`, `web/tests/resource-catalogue.test.mjs:307`
+  Violates AD09 Resource Catalogue lock: Ticket `chat_session_created` is not an allowed AD09 resource dependency, but it is still treated as an ordinary Ticket event and invalidates `ticket:<id>`, `board`, and `sprint:current`. The test also blesses that legacy behavior.
+  Correction: explicitly exclude Ticket-prefix `chat_session_created` from `ordinaryTicketEvent` or route it to no resources; update the test to assert no Ticket/Board/Sprint/Chat invalidation for `t_*` `chat_session_created`; rebuild generated `web/dist` assets.
+
+- **Medium** — `tests/e2e/test_flows_a.py:867`, missing required coverage in `tests/e2e/test_flows_a.py` / `tests/e2e/test_live_chat_state.py`
+  Violates AD09 RED/acceptance coverage and owner ruling that Panels Chat is product-visible SQLite state only, while Hermes Employee history is explicit and authoritative only for Employee activity. The e2e still describes visible Ticket chat as “gateway history” and only proves reload with Panels rows present; there is no required browser proof that deleting Ticket Panels rows while leaving `employee_session_id` and fake Hermes history intact does not repopulate old Employee history into the chat panel.
+  Correction: add the required e2e negative test: send a Ticket message through the fake gateway, delete only that Ticket’s Panels `chat_messages` and settled `chat_turns`, leave `tickets.employee_session_id` and fake Hermes history intact, hard reload the Ticket screen, and assert the old Employee history text is absent. Update the stale comment.
+
+Disposition:
+
+Both findings were accepted and corrected through the delegated implementation path. Ticket-prefix legacy
+session events now map to no catalogue resource, while real Day/agent Chat events remain Chat-only. The new
+browser test retains Employee history/id, deletes only settled Panels rows, proves exact empty state, and
+hard-reloads to prove the Employee trace remains absent from the visible transcript. The stale comment was
+corrected. The review-mandated source correction required one additional build; only the final bounded
+JavaScript asset remains.

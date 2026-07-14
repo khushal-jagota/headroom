@@ -1,5 +1,5 @@
 """Internal decision shapes: a Decision is what a resolution function returns —
-the replacement fields/state/scope plus the ordered events to append. These are
+the replacement fields/stage/scope plus the ordered events to append. These are
 logic-layer only, never exposed over the wire."""
 
 from __future__ import annotations
@@ -20,6 +20,6 @@ class EventSpec:
 class Decision:
     events: tuple[EventSpec, ...]
     new_fields: TicketFields | None = None    # replacement fields object; None = untouched
-    new_state: str | None = None              # stage id; None = no transition
+    new_stage: str | None = None              # Stage id; None = no transition
     new_ceiling: str | None = None            # ceiling id; None = scope untouched
     new_at_cap: AtCap | None = None           # None = scope untouched

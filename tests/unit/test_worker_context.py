@@ -4,8 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from planner.chat import service as chat_service
-from planner.chat.contracts import ChatSendResult, ChatStreamChunk, CommandRunResult
 from planner.core.contracts import Priority
 from planner.core.db import connect
 from planner.tickets import data as tickets_data
@@ -13,9 +11,7 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
-    FieldName,
     TicketEdit,
-    TicketState,
 )
 from planner.tickets.worker_context import TICKET_CHANGED_CONTEXT_KEY, TICKET_CHANGED_TEXT
 from planner.worker_context import data
@@ -84,12 +80,17 @@ def test_sqlite_service_composes_prompt_and_acknowledges_only_prepared_revision(
 
 def _ticket(tmp_db):
     ticket = tickets_data.create_ticket(
-        tmp_db, title="Context ticket", actor="human", now=1, title_max_chars=200
+        tmp_db,
+        worker_type="coding",
+        title="Context ticket",
+        actor="human",
+        now=1,
+        title_max_chars=200,
     )
     return tickets_data.accept_proposal(
         tmp_db,
         ticket.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=1,
         next_ceiling=NO_FURTHER,
@@ -120,13 +121,12 @@ def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(tmp
     tickets_data.set_field_user_note(
         tmp_db,
         ticket.id,
-        field=FieldName.success,
+        field="success",
         user_note="agent note",
         actor="agent",
         now=3,
     )
     assert _pending(tmp_db, ticket.id) == ()
-
     tickets_data.edit_ticket(
         tmp_db,
         ticket.id,
@@ -138,7 +138,7 @@ def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(tmp
     tickets_data.edit_field_value(
         tmp_db,
         ticket.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         new_body="ticket guidance",
         actor="human",
         now=5,
@@ -146,38 +146,33 @@ def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(tmp
     tickets_data.set_field_user_note(
         tmp_db,
         ticket.id,
-        field=FieldName.success,
+        field="success",
         user_note="field guidance",
         actor="human",
         now=6,
     )
 
-    pending = [
-        (item.context_key, item.text, item.revision)
-        for item in _pending(tmp_db, ticket.id)
-    ]
-    assert pending == [
-        (TICKET_CHANGED_CONTEXT_KEY, TICKET_CHANGED_TEXT, 3)
-    ]
+    pending = [(item.context_key, item.text, item.revision) for item in _pending(tmp_db, ticket.id)]
+    assert pending == [(TICKET_CHANGED_CONTEXT_KEY, TICKET_CHANGED_TEXT, 3)]
 
 
 @pytest.mark.parametrize(
     ("field", "prior_fields"),
     [
-        (FieldName.success, ()),
-        (FieldName.approach, (FieldName.success,)),
-        (FieldName.plan, (FieldName.success, FieldName.approach)),
+        ("success", ()),
+        ("approach", ("success",)),
+        ("plan", ("success", "approach")),
     ],
 )
 def test_only_edited_approval_produces_context_at_each_approval_gate(
-    tmp_db, field: FieldName, prior_fields: tuple[FieldName, ...]
+    tmp_db, field: str, prior_fields: tuple[str, ...]
 ) -> None:
     def parked_ticket(edited: bool):
         ticket = _ticket(tmp_db)
         ceiling = {
-            FieldName.success: TicketState.needs_success,
-            FieldName.approach: TicketState.needs_approach,
-            FieldName.plan: TicketState.needs_plan,
+            "success": "needs_success",
+            "approach": "needs_approach",
+            "plan": "needs_plan",
         }[field]
         tickets_data.change_scope(
             tmp_db,
@@ -189,7 +184,7 @@ def test_only_edited_approval_produces_context_at_each_approval_gate(
         )
         for prior in prior_fields:
             tickets_data.file_proposal(
-                tmp_db, ticket.id, field=prior, body=prior.value, actor="agent", now=11
+                tmp_db, ticket.id, field=prior, body=prior, actor="agent", now=11
             )
         tickets_data.file_proposal(
             tmp_db, ticket.id, field=field, body="draft", actor="agent", now=12
@@ -221,21 +216,21 @@ def test_direct_value_and_scope_edits_produce_context_but_plain_accept_does_not(
     tickets_data.change_scope(
         tmp_db,
         ticket.id,
-        ceiling=TicketState.needs_closeout,
+        ceiling="needs_closeout",
         at_cap=AtCap.propose,
         actor="human",
         now=20,
     )
-    for field in (FieldName.success, FieldName.approach, FieldName.plan, FieldName.implementation):
+    for field in ("success", "approach", "plan", "implementation"):
         tickets_data.file_proposal(
-            tmp_db, ticket.id, field=field, body=field.value, actor="agent", now=21
+            tmp_db, ticket.id, field=field, body=field, actor="agent", now=21
         )
     _clear(tmp_db, ticket.id)
 
     tickets_data.edit_field_value(
         tmp_db,
         ticket.id,
-        field=FieldName.success,
+        field="success",
         new_body="edited success",
         actor="human",
         now=22,
@@ -244,13 +239,13 @@ def test_direct_value_and_scope_edits_produce_context_but_plain_accept_does_not(
     _clear(tmp_db, ticket.id)
 
     tickets_data.file_proposal(
-        tmp_db, ticket.id, field=FieldName.closeout, body="closeout draft", actor="agent", now=23
+        tmp_db, ticket.id, field="closeout", body="closeout draft", actor="agent", now=23
     )
     _clear(tmp_db, ticket.id)
     tickets_data.accept_proposal(
         tmp_db,
         ticket.id,
-        field=FieldName.closeout,
+        field="closeout",
         actor="human",
         now=24,
         next_ceiling=NO_FURTHER,
@@ -262,16 +257,16 @@ def test_direct_value_and_scope_edits_produce_context_but_plain_accept_does_not(
 def test_human_recap_marks_context_but_agent_recap_does_not(tmp_db) -> None:
     ticket = _ticket(tmp_db)
     tickets_data.file_proposal(
-        tmp_db, ticket.id, field=FieldName.success, body="success", actor="agent", now=28
+        tmp_db, ticket.id, field="success", body="success", actor="agent", now=28
     )
     tickets_data.accept_proposal(
         tmp_db,
         ticket.id,
-        field=FieldName.success,
+        field="success",
         actor="human",
         now=29,
         edited_body=None,
-        next_ceiling=TicketState.needs_plan,
+        next_ceiling="needs_plan",
         at_cap=AtCap.propose,
     )
 
@@ -299,56 +294,3 @@ def test_deleting_ticket_removes_its_pending_context(tmp_db) -> None:
     tickets_data.delete_ticket(tmp_db, ticket.id, actor="human", now=41)
 
     assert _pending(tmp_db, ticket.id) == ()
-
-
-def test_legacy_chat_paths_persist_original_visible_text_without_gateway_history(tmp_db) -> None:
-    class Gateway:
-        def history(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
-            raise AssertionError("local visible messages should prevent Hermes history fallback")
-
-        def send(self, session_key, entity_id, text, on_session_key=None):  # noqa: ANN001, ANN201
-            return ChatSendResult(reply_text="send reply", session_key=f"session-{entity_id}")
-
-        def run_command(
-            self, session_key, entity_id, command, on_session_key=None  # noqa: ANN001
-        ) -> CommandRunResult:
-            return CommandRunResult(
-                reply_text="command reply", session_key=f"session-{entity_id}", kind="assistant"
-            )
-
-        def stream(
-            self, session_key, entity_id, text, mode, on_session_key=None  # noqa: ANN001
-        ):
-            key = f"session-{entity_id}"
-            yield ChatStreamChunk(type="session", session_key=key)
-            yield ChatStreamChunk(
-                type="done", reply_text="stream reply", session_key=key, kind="assistant"
-            )
-
-    gateway = Gateway()
-    send_ticket = _ticket(tmp_db)
-    command_ticket = _ticket(tmp_db)
-    stream_ticket = _ticket(tmp_db)
-
-    chat_service.send(tmp_db, gateway, send_ticket.id, "original send", 50)  # type: ignore[arg-type]
-    chat_service.run_command(
-        tmp_db, gateway, command_ticket.id, "/model-backed", 51  # type: ignore[arg-type]
-    )
-    list(
-        chat_service.stream(
-            tmp_db, gateway, stream_ticket.id, "original stream", "message", 52  # type: ignore[arg-type]
-        )
-    )
-
-    assert [
-        message.text
-        for message in chat_service.state(tmp_db, gateway, send_ticket.id, 53).messages  # type: ignore[arg-type]
-    ] == ["original send", "send reply"]
-    assert [
-        message.text
-        for message in chat_service.state(tmp_db, gateway, command_ticket.id, 53).messages  # type: ignore[arg-type]
-    ] == ["/model-backed", "command reply"]
-    assert [
-        message.text
-        for message in chat_service.state(tmp_db, gateway, stream_ticket.id, 53).messages  # type: ignore[arg-type]
-    ] == ["original stream", "stream reply"]

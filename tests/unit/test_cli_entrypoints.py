@@ -25,7 +25,7 @@ def test_worker_my_ticket_human_line_surfaces_worker(monkeypatch) -> None:
     def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         return {
             "id": "t_demo",
-            "state": "needs_success",
+            "stage": "needs_success",
             "priority": "P2",
             "title": "Demo",
             "worker": "panels-worker-coding",

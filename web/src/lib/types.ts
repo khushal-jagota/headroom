@@ -1,23 +1,12 @@
 export type AnyRecord = Record<string, any>;
 
-// The served ticket-type manifest response (GET /api/ticket-types). Re-exported here
+// The served Worker-type manifest response (GET /api/worker-types). Re-exported here
 // for the resource fetch typing; the derived Lifecycle + per-type manifest shapes are
 // imported directly from lifecycle.ts at call sites.
-export type { TicketTypesResponse } from "./lifecycle";
+export type { WorkerTypesResponse } from "./lifecycle";
 
 export type GatewayStatus = {
   available: boolean;
-};
-
-export type ChatHistoryMessage = {
-  role: string;
-  text: string;
-  created_at: number;
-};
-
-export type ChatHistoryResponse = {
-  messages: ChatHistoryMessage[];
-  session_key?: string | null;
 };
 
 export type ChatStateMessage = {
@@ -50,7 +39,7 @@ export type ChatTurn = {
   activity_entries: ChatActivityEntry[];
   output_role: "assistant" | "system" | string;
   output_text: string;
-  session_key?: string | null;
+  can_pause: boolean;
   error?: string | null;
   started_at: number;
   updated_at: number;
@@ -59,8 +48,7 @@ export type ChatTurn = {
 
 export type ChatStateResponse = {
   messages: ChatStateMessage[];
-  active_turn?: ChatTurn | null;
-  session_key?: string | null;
+  active_turn: ChatTurn | null;
 };
 
 export type ChatImageUploadResponse = {
@@ -107,7 +95,7 @@ export type TicketField = {
 export type BlockedByTicket = {
   ticket_id: string;
   title: string;
-  state: string;
+  stage: string;
   active: boolean;
   href: string;
 };
@@ -135,8 +123,8 @@ export type Implementer =
 export type TicketDetail = {
   id: string;
   title: string;
-  ticket_type: string;
-  state: string;
+  worker_type: string;
+  stage: string;
   ceiling: string;
   at_cap: string;
   priority: string;
@@ -148,7 +136,7 @@ export type TicketDetail = {
   sprint_item_id?: string | null;
   ticket_status?: string;
   implementer: Implementer | null;
-  chat_session_key?: string | null;
+  employee_session_id: string | null;
   day_ids?: string[];
   blocked?: boolean;
   blocker_summary?: BlockerSummary;
@@ -172,21 +160,21 @@ export type CurrentSprintResponse = {
   loose_tickets: AnyRecord[];
 };
 
-export type QueueEntry = {
-  entity_id: string;
-  entity_type: "ticket" | "item";
-  kind: string;
+export type ReviewTicketDecision = {
+  ticket_id: string;
+  field: string;
   title: string;
+  waiting_since: number;
 };
 
-export type QueuesResponse = {
-  approvals: QueueEntry[];
-  running_agents: number;
+export type ReviewResponse = {
+  ticket_decisions: ReviewTicketDecision[];
+  running_worker_count: number;
 };
 
 export type BoardResponse = {
   columns: Array<{
-    state: string;
+    stage: string;
     cards: AnyRecord[];
   }>;
 };

@@ -1,8 +1,6 @@
 """Sprint / sprint-item / idea read-view assembly: per-entity serializers, item
-rollups, the sprint-current view (§5/§6.1), and the two item-row helpers the queues
-view consumes. Pure read assembly — no FastAPI, no writes. This is the only module
-that imports across the views layer (tickets/views ticket_json + tickets/data
-read_ticket) to render a sprint's loose tickets; tickets/views never imports back."""
+rollups, and the sprint-current view (§5/§6.1). Pure read assembly — no FastAPI or
+writes."""
 
 from __future__ import annotations
 
@@ -13,9 +11,9 @@ from planner.sprints import data as sprints_data
 from planner.sprints.contracts import ItemStatus, Sprint, SprintItem
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TicketState
-from planner.tickets.logic import coding_bridge, fields_codec, machine
+from planner.tickets.logic import fields_codec, machine
 from planner.tickets.views import ticket_json
+from planner.worker_types.configuration import configured_worker_type_registry
 
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
 
@@ -89,40 +87,52 @@ def idea_json(row: sqlite3.Row) -> JsonDict:
 
 
 def item_rollup(conn: sqlite3.Connection, item_id: str) -> dict[str, int]:
-    rollup: dict[str, int] = {s.value: 0 for s in TicketState}
+    coding_worker_type_definition = configured_worker_type_registry().require("coding")
+    rollup: dict[str, int] = {
+        stage: 0
+        for stage in (
+            *coding_worker_type_definition.stage_ids(),
+            coding_worker_type_definition.dropped_stage.id,
+        )
+    }
     rows = conn.execute(
-        "SELECT state, COUNT(*) AS n FROM tickets WHERE sprint_item_id = ? GROUP BY state",
+        "SELECT stage, COUNT(*) AS n FROM tickets WHERE sprint_item_id = ? GROUP BY stage",
         (item_id,),
     ).fetchall()
     for r in rows:
-        rollup[str(r["state"])] = int(r["n"])
+        rollup[str(r["stage"])] = int(r["n"])
     return rollup
 
 
 def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
-    """Per-item ticket rows for the tracking-page disclosure: id/title/state/priority
+    """Per-item ticket rows for the tracking-page disclosure: id/title/stage/priority
     plus the two board-card signals the sprint ticket row colours off —
     has_pending_proposal and ticket_status — ordered created_at, id (matching the
     loose-ticket ordering). A light projection — not full ticket_json — since the
     disclosure only lists rows that link to the ticket."""
     rows = conn.execute(
-        "SELECT id, title, state, priority, ticket_status, fields, ticket_type FROM tickets "
+        "SELECT id, title, stage, priority, ticket_status, fields, worker_type FROM tickets "
         "WHERE sprint_item_id = ? ORDER BY created_at, id",
         (item_id,),
     ).fetchall()
     result: list[JsonDict] = []
+    registry = configured_worker_type_registry()
     for r in rows:
-        state = str(r["state"])
-        defn = coding_bridge.require(str(r["ticket_type"]))
-        fields = fields_codec.fields_from_json(str(r["fields"]), defn)
+        stage = str(r["stage"])
+        worker_type_definition = registry.require(str(r["worker_type"]))
+        fields = fields_codec.declared_fields_from_json(
+            str(r["fields"]), worker_type_definition.field_ids()
+        )
         result.append(
             {
                 "id": str(r["id"]),
                 "title": str(r["title"]),
-                "state": state,
+                "stage": stage,
                 "priority": str(r["priority"]),
                 "has_pending_proposal": machine.has_pending_gating_proposal(
-                    state, fields, definition=defn
+                    stage,
+                    fields,
+                    worker_type_definition=worker_type_definition,
                 ),
                 "ticket_status": str(r["ticket_status"]),
             }
@@ -134,9 +144,7 @@ def blocked_by_titles(conn: sqlite3.Connection, blocked_by: list[str]) -> list[s
     """Resolve active/read blocker ids to titles, preserving order."""
     titles: list[str] = []
     for ticket_id in blocked_by:
-        row = conn.execute(
-            "SELECT title FROM tickets WHERE id = ?", (ticket_id,)
-        ).fetchone()
+        row = conn.execute("SELECT title FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
         if row is not None:
             titles.append(str(row["title"]))
     return titles
@@ -173,14 +181,16 @@ def list_items(
         read = sprints_data.read_item(conn, str(row["id"]))
         if status is not None and read.status is not status:
             continue
-        result.append({
-            **item_json(
-                read.item,
-                status=read.status,
-                blocking_ticket_ids=read.blocking_ticket_ids,
-            ),
-            "blockers_cleared": read.blockers_cleared,
-        })
+        result.append(
+            {
+                **item_json(
+                    read.item,
+                    status=read.status,
+                    blocking_ticket_ids=read.blocking_ticket_ids,
+                ),
+                "blockers_cleared": read.blockers_cleared,
+            }
+        )
     return result
 
 
@@ -213,33 +223,6 @@ def list_ideas(conn: sqlite3.Connection, *, project_id: str | None = None) -> li
     )
     rows = conn.execute(sql, params).fetchall()
     return [idea_json(r) for r in rows]
-
-
-# --- item rows fed to the queues view (tickets/views) --------------------------
-
-
-def approval_item_rows(conn: sqlite3.Connection) -> list[JsonDict]:
-    return []
-
-
-def overdue_item_rows(conn: sqlite3.Connection) -> list[JsonDict]:
-    rows = conn.execute(
-        "SELECT id, title, priority, deadline FROM sprint_items WHERE deadline IS NOT NULL "
-        "ORDER BY deadline ASC, id"
-    ).fetchall()
-    result: list[JsonDict] = []
-    for row in rows:
-        read = sprints_data.read_item(conn, str(row["id"]))
-        result.append(
-            {
-                "id": str(row["id"]),
-                "title": str(row["title"]),
-                "status": read.status.value,
-                "priority": str(row["priority"]),
-                "deadline": str(row["deadline"]) if row["deadline"] is not None else None,
-            }
-        )
-    return result
 
 
 # --- sprint-current view (§5) --------------------------------------------------

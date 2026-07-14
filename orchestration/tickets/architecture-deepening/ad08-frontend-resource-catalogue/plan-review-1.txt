@@ -1,0 +1,25 @@
+AD08 implementation plan review — first pass
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5f78-fe3b-7e12-bd8b-0b81be2a3cf7
+Result: ONE HIGH VIOLATION — accepted and corrected
+
+The reviewer traced the proposed event dependencies against the actual read models and found that the
+first plan mapped Project events only to Projects. A Project-name update also changes every cached
+projection that embeds that name. The exact finding was:
+
+High — plan.md maps project events only to Projects, but a project name is joined into Board, Backlog,
+Ideas, and current Sprint read models. A successful rename would therefore leave those projections stale.
+
+Disposition:
+
+- accepted;
+- the orchestrator additionally traced today's Day and Ticket detail, which also expose Project names;
+- the corrected plan maps a name-bearing `project_updated` to Projects, Board, today's Day, backlog Sprint
+  items, Ideas, and current Sprint;
+- already-opened Ticket details are included conservatively while unloaded and precisely once their direct
+  `project_id` is known;
+- Project creation, summary-only updates, and synthetic ordinary Project events remain Projects-only; and
+- Review, Chat, Sprint summaries, Chat status, Chat commands, and Worker manifests remain excluded.
+
+The corrected plan received a fresh independent review; see `plan-review.txt`.

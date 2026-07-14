@@ -98,7 +98,7 @@ def _scope_and_advance(server, api, cli, tid, ceiling, bodies):
             stdin=bodies[field],
         )
     d = api.get(server, f"/api/tickets/{tid}")
-    assert d["state"] == "needs_implementation", d
+    assert d["stage"] == "needs_implementation", d
     return d
 
 
@@ -120,7 +120,7 @@ def _reload_settle(page: Page, ready_selector):
 
 def _snap_ticket(p: Page):
     return {
-        "state": p.get_attribute('section[data-screen="ticket"]', "data-state"),
+        "stage": p.get_attribute('section[data-screen="ticket"]', "data-stage"),
         "mode": p.get_attribute("[data-approval-block]", "data-mode"),
         "field": p.get_attribute("[data-approval-block]", "data-field"),
         "body": p.inner_text("[data-approval-block] .approval-draft"),
@@ -128,7 +128,7 @@ def _snap_ticket(p: Page):
 
 
 def _snap_board(p: Page, mid):
-    card = f'[data-card][data-ticket-state="needs_implementation"][data-ticket-id="{mid}"]'
+    card = f'[data-card][data-ticket-stage="needs_implementation"][data-ticket-id="{mid}"]'
     return {
         "title": p.inner_text(f"{card} .list-row-title"),
         "pend": p.eval_on_selector_all(f'{card} [data-marker="pending-proposal"]', "e=>e.length"),
@@ -269,7 +269,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     # means the implementation proposal PARKS pending; approving it via Review defaults
     # the onward scope to the next stage (needs_closeout), where closeout PARKS pending
     # in turn until its own Review approval reaches done.
-    mid = cli(server, "ticket", "create", "--type", "coding", "--title", E30_TITLE)["id"]
+    mid = cli(server, "ticket", "create", "--worker-type", "coding", "--title", E30_TITLE)["id"]
     api.direct_post(server, "/api/day/today/tickets", {"ticket_id": mid})
     _scope_and_advance(
         server,
@@ -283,7 +283,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     ready = f'section[data-screen="ticket"][data-ticket-id="{mid}"]'
     page = open_page(context_factory(), server, f"#/ticket/{mid}", ready, settled=True)
     assert (
-        page.get_attribute('section[data-screen="ticket"]', "data-state")
+        page.get_attribute('section[data-screen="ticket"]', "data-stage")
         == "needs_implementation"
     )
     assert page.query_selector('[data-marker="agent-running-step"]') is None
@@ -301,7 +301,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
         ticket_id=mid,
         stdin=E30_IMPLEMENTATION,
     )
-    assert r["state"] == "needs_implementation", r
+    assert r["stage"] == "needs_implementation", r
     assert r["fields"]["implementation"]["proposal"]["body"] == E30_IMPLEMENTATION, r
 
     # Ticket page shows the pending gate without reload.
@@ -310,24 +310,24 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
         timeout=WAIT_MS,
     )
 
-    # Approval queue + approve via the Review card, ordinary field path.
-    card = f'[data-review-card][data-entity-id="{mid}"]'
+    # Review decision + approve via the Review card, ordinary field path.
+    card = f'[data-review-card][data-ticket-id="{mid}"]'
     rpage = open_page(context_factory(), server, "#/review", card, settled=True)
-    assert rpage.get_attribute(card, "data-kind") == "implementation"
-    approvals = api.get(server, "/api/queues")["approvals"]
-    assert len(approvals) == 1, approvals
-    assert approvals[0]["entity_id"] == mid, approvals
-    assert approvals[0]["kind"] == "implementation", approvals
+    assert rpage.get_attribute(card, "data-field") == "implementation"
+    decisions = api.get(server, "/api/review")["ticket_decisions"]
+    assert len(decisions) == 1, decisions
+    assert decisions[0]["ticket_id"] == mid, decisions
+    assert decisions[0]["field"] == "implementation", decisions
 
     assert rpage.locator(f"{card} [data-scope-ceiling]").input_value() == "needs_closeout"
     rpage.click(f"{card} [data-accept]")
     rpage.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
-    assert api.get(server, f"/api/tickets/{mid}")["state"] == "needs_closeout"
+    assert api.get(server, f"/api/tickets/{mid}")["stage"] == "needs_closeout"
 
     # Ticket page flips without reload.
     page.wait_for_function(
         "() => { const s = document.querySelector('section[data-screen=\"ticket\"]');"
-        " return !!s && s.getAttribute('data-state') === 'needs_closeout'; }",
+        " return !!s && s.getAttribute('data-stage') === 'needs_closeout'; }",
         timeout=WAIT_MS,
     )
 
@@ -344,21 +344,21 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
         ticket_id=mid,
         stdin=E30_CLOSEOUT,
     )
-    assert r2["state"] == "needs_closeout", r2
+    assert r2["stage"] == "needs_closeout", r2
     assert r2["fields"]["closeout"]["proposal"]["body"] == E30_CLOSEOUT, r2
 
-    card2 = f'[data-review-card][data-entity-id="{mid}"]'
+    card2 = f'[data-review-card][data-ticket-id="{mid}"]'
     rpage2 = open_page(context_factory(), server, "#/review", card2, settled=True)
-    assert rpage2.get_attribute(card2, "data-kind") == "closeout"
+    assert rpage2.get_attribute(card2, "data-field") == "closeout"
     assert rpage2.locator(f"{card2} [data-scope-ceiling]").input_value() == "done"
     rpage2.click(f"{card2} [data-accept]")
     rpage2.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
-    assert api.get(server, f"/api/tickets/{mid}")["state"] == "done"
+    assert api.get(server, f"/api/tickets/{mid}")["stage"] == "done"
 
     # Ticket page flips to done, rendering exactly the six ordered stages.
     page.wait_for_function(
         "() => { const s = document.querySelector('section[data-screen=\"ticket\"]');"
-        " return !!s && s.getAttribute('data-state') === 'done'; }",
+        " return !!s && s.getAttribute('data-stage') === 'done'; }",
         timeout=WAIT_MS,
     )
     fields_order = page.eval_on_selector_all(
@@ -375,7 +375,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
 
 
 def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api):
-    mid = cli(server, "ticket", "create", "--type", "coding", "--title", E31_TITLE)["id"]
+    mid = cli(server, "ticket", "create", "--worker-type", "coding", "--title", E31_TITLE)["id"]
     _scope_and_advance(
         server,
         api,
@@ -414,7 +414,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
         ticket_id=mid,
         stdin=E31_IMPLEMENTATION,
     )
-    assert r["state"] == "needs_implementation", r
+    assert r["stage"] == "needs_implementation", r
     assert r["fields"]["implementation"]["proposal"]["body"] == E31_IMPLEMENTATION, r
 
     # Ticket surface.
@@ -427,7 +427,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     page_t.wait_for_selector(mid_t, timeout=WAIT_MS)
     after_t = _snap_ticket(page_t)
     expected_t = {
-        "state": "needs_implementation",
+        "stage": "needs_implementation",
         "mode": "gating-pending",
         "field": "implementation",
         "body": E31_IMPLEMENTATION,
@@ -436,7 +436,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
 
     # Board surface.
     ready_b = 'section[data-screen="workspace"]'
-    mid_b = f'[data-card][data-ticket-state="needs_implementation"][data-ticket-id="{mid}"]'
+    mid_b = f'[data-card][data-ticket-stage="needs_implementation"][data-ticket-id="{mid}"]'
     page_b = open_page(context_factory(), server, "#/workspace", ready_b, settled=True)
     page_b.wait_for_selector(mid_b, timeout=WAIT_MS)
     before_b = _snap_board(page_b, mid)
@@ -483,7 +483,7 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         E32_LOOSE_TITLE,
@@ -510,7 +510,7 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
     child = cli(
         server,
         "ticket",
-        "create", "--type", "coding",
+        "create", "--worker-type", "coding",
         "--title",
         f"{E32_ITEM_TITLE} child",
         "--sprint-item",

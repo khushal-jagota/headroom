@@ -99,7 +99,7 @@ def add_day_ticket(
 def remove_day_ticket(
     conn: sqlite3.Connection, day_id: str, ticket_id: str, now_unix: int
 ) -> bool:
-    """§3.4: delete the association only (ticket state untouched). If nothing was
+    """§3.4: delete the association only (Ticket untouched). If nothing was
     deleted (rowcount 0) → no-op, no event, no re-pack. Else re-pack remaining
     positions to 0..n-1 in existing position order, append day_ticket_removed
     {ticket_id}, bump updated_at, and return True. The absent-row no-op returns False."""

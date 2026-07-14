@@ -1,122 +1,117 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { fetchJson } from "../lib/api";
-  import { mutateJson, resource, ResourceHandle } from "../lib/resources";
-  import { manifestResource } from "../lib/manifest.svelte";
+  import {
+    mutateJsonWithResourceEffect,
+    resourceCatalogue,
+    type ResourceHandle
+  } from "../lib/resourceCatalogue";
   import { fieldStageVisualStateFor, gatingFieldFor, lifecycleFor } from "../lib/lifecycle";
-  import type { AnyRecord, QueueEntry, QueuesResponse, TicketDetail } from "../lib/types";
+  import type {
+    ReviewTicketDecision,
+    TicketDetail
+  } from "../lib/types";
   import Button from "../components/Button.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
 
-  const queues = resource<QueuesResponse>("queues", (signal) =>
-    fetchJson("/api/queues", { signal })
-  );
-  const manifest = manifestResource();
+  const review = resourceCatalogue.review();
+  const manifest = resourceCatalogue.workerTypeManifests();
 
   let skipped = $state<Record<string, boolean>>({});
-  let detailResource = $state<ResourceHandle<AnyRecord> | null>(null);
+  let detailResource = $state<ResourceHandle<TicketDetail> | null>(null);
   let detailError = $state<unknown>(null);
   let revisionDraft = $state("");
   let revisionError = $state<unknown>(null);
   let revisionBusy = $state(false);
-  let revisionEntryKey = $state<string | null>(null);
+  let revisionDecisionKey = $state<string | null>(null);
   const staleRefreshRequests = new Set<string>();
 
-  function entryKey(entry: QueueEntry): string {
-    return `${entry.entity_id}:${entry.kind}`;
+  function decisionKey(decision: ReviewTicketDecision): string {
+    return `${decision.ticket_id}:${decision.field}`;
   }
 
-  let entries = $derived(queues.data?.approvals || []);
-  let runningAgentCount = $derived(queues.data?.running_agents ?? 0);
-  let currentEntry = $derived.by<QueueEntry | null>(() => {
-    if (!entries.length) return null;
-    const live = entries.filter((entry) => !skipped[entryKey(entry)]);
+  let decisions = $derived(review.data?.ticket_decisions || []);
+  let runningWorkerCount = $derived(review.data?.running_worker_count ?? 0);
+  let currentDecision = $derived.by<ReviewTicketDecision | null>(() => {
+    if (!decisions.length) return null;
+    const live = decisions.filter((decision) => !skipped[decisionKey(decision)]);
     return live[0] || null;
   });
 
-  // Per-type lifecycle for the current review entry's detail. Null while the
-  // manifest or the detail is still loading OR when the detail's ticket_type is
+  // Per-Worker-type lifecycle for the current Review decision's detail. Null while the
+  // manifest or the detail is still loading OR when the detail's worker_type is
   // absent from a loaded manifest; the markup tells those apart (Codex F3).
-  let detailTicketType = $derived(
-    typeof detailResource?.data?.ticket_type === "string"
-      ? (detailResource.data.ticket_type as string)
+  let detailWorkerType = $derived(
+    typeof detailResource?.data?.worker_type === "string"
+      ? (detailResource.data.worker_type as string)
       : null
   );
-  let lc = $derived(lifecycleFor(manifest.data, detailTicketType));
-  let manifestMissingType = $derived(
+  let lc = $derived(lifecycleFor(manifest.data, detailWorkerType));
+  let manifestMissingWorkerType = $derived(
     Boolean(
-      detailTicketType &&
+      detailWorkerType &&
         manifest.data &&
-        !manifest.data.types.some((t) => t.type_id === detailTicketType)
+        !manifest.data.worker_types.some((item) => item.worker_type === detailWorkerType)
     )
   );
 
-  function runningAgentsText(count: number): string {
+  function runningWorkersText(count: number): string {
     return `${count} ${count === 1 ? "agent" : "agents"} in progress`;
   }
 
   $effect(() => {
-    const entry = currentEntry;
+    const decision = currentDecision;
     detailError = null;
-    const handle = entry
-      ? resource<AnyRecord>(
-          `${entry.entity_type === "ticket" ? "ticket" : "item"}:${entry.entity_id}`,
-          (signal) =>
-            fetchJson(
-              `${entry.entity_type === "ticket" ? "/api/tickets/" : "/api/items/"}${entry.entity_id}`,
-              { signal }
-            )
-        )
+    const handle = decision
+      ? resourceCatalogue.ticket(decision.ticket_id)
       : null;
     detailResource = handle;
     return () => handle?.dispose();
   });
 
-  function isStale(entry: QueueEntry, detail: AnyRecord): boolean {
-    const field = approvalField(entry);
+  function isStale(decision: ReviewTicketDecision, detail: TicketDetail): boolean {
+    const field = decisionField(decision);
     if (!field) return true;
     if (!detail.fields?.[field]?.proposal) return true;
-    return gatingFieldFor(lc, String(detail.state)) !== field;
+    return gatingFieldFor(lc, String(detail.stage)) !== field;
   }
 
-  function approvalField(entry: QueueEntry): string | null {
-    if (lc?.fieldIds.includes(entry.kind)) return entry.kind;
+  function decisionField(decision: ReviewTicketDecision): string | null {
+    if (lc?.fieldIds.includes(decision.field)) return decision.field;
     return null;
   }
 
   $effect(() => {
-    const entry = currentEntry;
+    const decision = currentDecision;
     const detail = detailResource?.data;
-    if (entry && detail && isStale(entry, detail)) {
-      const key = entryKey(entry);
+    if (decision && detail && isStale(decision, detail)) {
+      const key = decisionKey(decision);
       if (!staleRefreshRequests.has(key)) {
         staleRefreshRequests.add(key);
-        void queues.refresh().catch(() => undefined);
+        void review.refresh().catch(() => undefined);
       }
     }
     if (detailResource?.error) detailError = detailResource.error;
   });
 
   $effect(() => {
-    const key = currentEntry ? entryKey(currentEntry) : null;
-    if (key !== revisionEntryKey) {
-      revisionEntryKey = key;
+    const key = currentDecision ? decisionKey(currentDecision) : null;
+    if (key !== revisionDecisionKey) {
+      revisionDecisionKey = key;
       revisionDraft = "";
       revisionError = null;
       revisionBusy = false;
     }
   });
 
-  function skip(entry: QueueEntry): void {
-    skipped = { ...skipped, [entryKey(entry)]: true };
+  function skip(decision: ReviewTicketDecision): void {
+    skipped = { ...skipped, [decisionKey(decision)]: true };
   }
 
-  function openTicket(entry: QueueEntry): void {
-    if (entry.entity_type !== "ticket") return;
-    window.location.hash = `#/ticket/${entry.entity_id}`;
+  function openTicket(decision: ReviewTicketDecision): void {
+    window.location.hash = `#/ticket/${decision.ticket_id}`;
   }
 
   // Global review shortcuts (approved addition): s = skip, o = open ticket,
@@ -132,9 +127,9 @@
   }
 
   function onWindowKeydown(event: KeyboardEvent): void {
-    const entry = currentEntry;
-    if (!entry) return;
-    // Ignore auto-repeat: holding a key must not skip/approve through the queue.
+    const decision = currentDecision;
+    if (!decision) return;
+    // Ignore auto-repeat: holding a key must not skip/approve through the decisions.
     if (event.repeat || event.defaultPrevented || typingTarget(event)) return;
 
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -152,10 +147,10 @@
 
     if (event.key === "s" || event.key === "S") {
       event.preventDefault();
-      skip(entry);
+      skip(decision);
     } else if (event.key === "o" || event.key === "O") {
       event.preventDefault();
-      openTicket(entry);
+      openTicket(decision);
     }
   }
 
@@ -164,44 +159,49 @@
     return () => window.removeEventListener("keydown", onWindowKeydown);
   });
 
-  async function refreshQueuesAfter<T>(operation: Promise<T>): Promise<T> {
-    const result = await operation;
-    await queues.refresh().catch(() => undefined);
-    return result;
-  }
-
-  function accept(entry: QueueEntry, payload: Record<string, unknown>): Promise<unknown> {
-    const field = approvalField(entry);
-    if (!field) return Promise.reject(new Error("review entry is not a ticket field"));
-    return refreshQueuesAfter(mutateJson(
-      `/api/tickets/${entry.entity_id}/accept/${field}`,
+  function accept(
+    decision: ReviewTicketDecision,
+    payload: Record<string, unknown>
+  ): Promise<unknown> {
+    const field = decisionField(decision);
+    if (!field) return Promise.reject(new Error("Review decision is not a Ticket field"));
+    const key = decisionKey(decision);
+    staleRefreshRequests.add(key);
+    return mutateJsonWithResourceEffect(
+      `/api/tickets/${decision.ticket_id}/accept/${field}`,
       { method: "POST", body: payload },
-      ["queues", `ticket:${entry.entity_id}`, "board", "sprint:current"]
-    ));
+      { kind: "reviewTicketAccepted", ticketId: decision.ticket_id }
+    ).catch((error) => {
+      staleRefreshRequests.delete(key);
+      throw error;
+    });
   }
 
-  function saveTitle(entry: QueueEntry, title: string): Promise<unknown> {
-    return mutateJson(
-      `/api/tickets/${entry.entity_id}`,
+  function saveTitle(decision: ReviewTicketDecision, title: string): Promise<unknown> {
+    return mutateJsonWithResourceEffect(
+      `/api/tickets/${decision.ticket_id}`,
       { method: "PATCH", body: { title } },
-      ["queues", `ticket:${entry.entity_id}`, "board", "sprint:current"]
+      { kind: "ticketTitleChanged", ticketId: decision.ticket_id }
     );
   }
 
 
-  async function returnForRevision(entry: QueueEntry): Promise<void> {
+  async function returnForRevision(decision: ReviewTicketDecision): Promise<void> {
     const message = revisionDraft.trim();
     if (!message || revisionBusy) return;
     revisionError = null;
     revisionBusy = true;
+    const key = decisionKey(decision);
+    staleRefreshRequests.add(key);
     try {
-      await refreshQueuesAfter(mutateJson(
-        `/api/tickets/${entry.entity_id}/return-for-revision`,
+      await mutateJsonWithResourceEffect(
+        `/api/tickets/${decision.ticket_id}/return-for-revision`,
         { method: "POST", body: { message } },
-        ["queues", `ticket:${entry.entity_id}`, `chat:${entry.entity_id}`, "board", "sprint:current"]
-      ));
+        { kind: "reviewTicketReturnedForRevision", ticketId: decision.ticket_id }
+      );
       revisionDraft = "";
     } catch (err) {
+      staleRefreshRequests.delete(key);
       revisionError = err;
     } finally {
       revisionBusy = false;
@@ -209,80 +209,69 @@
   }
 
   onDestroy(() => {
-    queues.dispose();
+    review.dispose();
     detailResource?.dispose();
     manifest.dispose();
   });
 </script>
 
 <section class="review-screen" data-screen="review">
-  <ResourceState error={queues.error} loading={queues.loading} hasData={Boolean(queues.data)} loadingText="Loading review...">
-    {#if !entries.length}
+  <ResourceState error={review.error} loading={review.loading} hasData={Boolean(review.data)} loadingText="Loading review...">
+    {#if !decisions.length}
     <div class="review-empty-state" data-review-empty>
       <div class="review-empty-mark" aria-hidden="true"><span></span></div>
       <div class="review-empty-text">There is nothing to review right now.</div>
-      <div class="review-empty-meta">{runningAgentsText(runningAgentCount)}</div>
+      <div class="review-empty-meta">{runningWorkersText(runningWorkerCount)}</div>
     </div>
-  {:else if currentEntry}
-    {@const entry = currentEntry}
+  {:else if currentDecision}
+    {@const decision = currentDecision}
     {#if detailError}
       <div>
         <ErrorLine error={detailError} />
-        <div class="quiet-line">{entry.title}</div>
+        <div class="quiet-line">{decision.title}</div>
         <div class="review-card-actions">
-          <Button variant="quiet" data-skip="" onclick={() => skip(entry)}>Skip</Button>
-          {#if entry.entity_type === "ticket"}
-            <a data-open-ticket href={`#/ticket/${entry.entity_id}`}>open ticket</a>
-          {/if}
+          <Button variant="quiet" data-skip="" onclick={() => skip(decision)}>Skip</Button>
+          <a data-open-ticket href={`#/ticket/${decision.ticket_id}`}>open ticket</a>
         </div>
       </div>
     {:else if detailResource?.loading && !detailResource.data}
       <div class="quiet-line">Loading approval...</div>
-    {:else if detailResource?.data && (manifest.error || manifestMissingType)}
-      {@const detail = detailResource.data as TicketDetail & AnyRecord}
+    {:else if detailResource?.data && (manifest.error || manifestMissingWorkerType)}
+      {@const detail = detailResource.data}
       <div data-review-manifest-error>
         <ErrorLine
-          error={manifest.error ?? { code: "unknown_ticket_type", message: `no manifest for type "${detail.ticket_type}"` }}
+          error={manifest.error ?? { code: "unknown_worker_type", message: `no manifest for Worker type "${detail.worker_type}"` }}
         />
         <div class="review-card-actions">
-          <Button variant="quiet" data-skip="" onclick={() => skip(entry)}>Skip</Button>
-          {#if entry.entity_type === "ticket"}
-            <a data-open-ticket href={`#/ticket/${entry.entity_id}`}>open ticket</a>
-          {/if}
+          <Button variant="quiet" data-skip="" onclick={() => skip(decision)}>Skip</Button>
+          <a data-open-ticket href={`#/ticket/${decision.ticket_id}`}>open ticket</a>
         </div>
       </div>
     {:else if detailResource?.data}
-      {@const detail = detailResource.data as TicketDetail & AnyRecord}
-      {@const field = approvalField(entry)}
-      {#if isStale(entry, detail)}
+      {@const detail = detailResource.data}
+      {@const field = decisionField(decision)}
+      {#if isStale(decision, detail)}
         <div class="quiet-line">Loading approval...</div>
       {:else}
-        {#key entryKey(entry)}
+        {#key decisionKey(decision)}
           <div
             class="modern-review-content"
             data-review-card
-            data-entity-id={entry.entity_id}
-            data-kind={entry.kind}
-            data-field={field || undefined}
+            data-ticket-id={decision.ticket_id}
+            data-field={decision.field}
           >
-            <div class="review-queue-line review-arrive review-arrive--1">
-              <button data-skip="" onclick={() => skip(entry)}>Skip &rsaquo;</button>
-              {#if entry.entity_type === "ticket"}
-                <a data-open-ticket href={`#/ticket/${entry.entity_id}`}>Open ticket &rsaquo;</a>
-              {/if}
+            <div class="review-ticket-decision-line review-arrive review-arrive--1">
+              <button data-skip="" onclick={() => skip(decision)}>Skip &rsaquo;</button>
+              <a data-open-ticket href={`#/ticket/${decision.ticket_id}`}>Open ticket &rsaquo;</a>
             </div>
 
-            {#if entry.entity_type === "ticket"}
-              <div class="review-ticket-title review-arrive review-arrive--2">
-                <InlineEdit
-                  value={detail.title}
-                  placeholder="Untitled"
-                  onSave={(raw) => saveTitle(entry, raw)}
-                />
-              </div>
-            {:else}
-              <h2 class="review-ticket-title review-arrive review-arrive--2" style="pointer-events: none;">{entry.title}</h2>
-            {/if}
+            <div class="review-ticket-title review-arrive review-arrive--2">
+              <InlineEdit
+                value={detail.title}
+                placeholder="Untitled"
+                onSave={(raw) => saveTitle(decision, raw)}
+              />
+            </div>
 
             <div class="review-arrive review-arrive--3">
               {#if field}
@@ -291,17 +280,17 @@
                   name={field}
                   slot={detail.fields[field]}
                   lifecycle={lc}
-                  ticketState={detail.state}
+                  ticketStage={detail.stage}
                   ceiling={detail.ceiling}
                   stageState={fieldStageVisualStateFor(lc, detail, field)}
                   recap={detail.recap}
                   showRecap
-                  onAccept={(payload) => accept(entry, payload)}
+                  onAccept={(payload) => accept(decision, payload)}
                 />
               {/if}
             </div>
 
-            {#if entry.entity_type === "ticket" && field !== "kickoff"}
+            {#if field !== "kickoff"}
               <div class="review-revise review-arrive review-arrive--4" data-review-revision>
                 <div class="review-revision-box">
                   <textarea
@@ -314,7 +303,7 @@
                     onkeydown={(event) => {
                       if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                         event.preventDefault();
-                        void returnForRevision(entry);
+                        void returnForRevision(decision);
                       }
                     }}
                   ></textarea>
@@ -322,7 +311,7 @@
                     variant="quiet"
                     data-review-revision-send=""
                     disabled={revisionBusy || !revisionDraft.trim()}
-                    onclick={() => void returnForRevision(entry)}
+                    onclick={() => void returnForRevision(decision)}
                   >
                     Send back
                   </Button>
@@ -344,7 +333,7 @@
     <div class="review-empty-state" data-review-empty>
       <div class="review-empty-mark" aria-hidden="true"><span></span></div>
       <div class="review-empty-text">There is nothing to review right now.</div>
-      <div class="review-empty-meta">{runningAgentsText(runningAgentCount)}</div>
+      <div class="review-empty-meta">{runningWorkersText(runningWorkerCount)}</div>
     </div>
     {/if}
   </ResourceState>

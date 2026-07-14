@@ -4,15 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
 from fastapi.testclient import TestClient
 
-from planner.chat.contracts import ChatHistory, ChatStreamChunk, GatewayStatus
+from planner.chat.contracts import (
+    GatewayStatus,
+    HumanChatCompletion,
+    HumanChatObservation,
+)
 from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
+from planner.core.adapters.base import HumanSessionKeyBinder
 from planner.core.adapters.registry import Adapters, build_adapters
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -20,11 +25,11 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.files.chat_images import store_chat_image
 from planner.files.logic.paths import resolve_chat_file
+from planner.tickets.contracts import EmployeeSessionHistory
 from planner.tickets.data import create_ticket
 
 PNG = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLv"
-    "AAAAAElFTkSuQmCC"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
 )
 GIF = base64.b64decode("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==")
 WEBP = base64.b64decode("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEAAUAmJaQAA3AA/vuU")
@@ -78,7 +83,12 @@ def _ticket(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
         return create_ticket(
-            conn, title="Image chat", actor="human", now=0, title_max_chars=200
+            conn,
+            worker_type="coding",
+            title="Image chat",
+            actor="human",
+            now=0,
+            title_max_chars=200,
         ).id
     finally:
         conn.close()
@@ -171,9 +181,7 @@ def test_chat_image_publication_cleans_oversize_and_interrupted_temp_files(tmp_p
     db_path = tmp_path / "data" / "planning.db"
 
     with pytest.raises(ValueError, match="too large"):
-        asyncio.run(
-            store_chat_image(db_path, "t_image123", _chunks(PNG), "image.png", max_bytes=8)
-        )
+        asyncio.run(store_chat_image(db_path, "t_image123", _chunks(PNG), "image.png", max_bytes=8))
 
     async def interrupted() -> AsyncIterator[bytes]:
         yield PNG[:8]
@@ -324,28 +332,25 @@ def test_chat_turn_accepts_same_entity_image_and_keeps_transcript_reference(tmp_
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
-            return ChatHistory(messages=(), session_key=session_key)
+        def read_employee_session_history(
+            self, employee_session_id: str, ticket_id: str
+        ) -> EmployeeSessionHistory:
+            return EmployeeSessionHistory(messages=(), employee_session_id=employee_session_id)
 
-        def stream(
+        def run_human_turn(
             self,
             session_key: str | None,
             entity_id: str,
             text: str,
             mode: str,
-            on_session_key: Callable[[str], None] | None = None,
+            bind_session_key: HumanSessionKeyBinder,
             image_paths: tuple[Path, ...] = (),
-        ) -> Iterator[ChatStreamChunk]:
+            *,
+            require_existing_session: bool = False,
+        ) -> Iterator[HumanChatObservation]:
             calls.append((text, image_paths))
-            if on_session_key:
-                on_session_key("image-session")
-            yield ChatStreamChunk(type="session", session_key="image-session")
-            yield ChatStreamChunk(
-                type="done",
-                reply_text="I can see it",
-                session_key="image-session",
-                kind="assistant",
-            )
+            bind_session_key("image-session")
+            yield HumanChatCompletion("I can see it", "assistant")
 
     app.state.adapters = Adapters(gateway=RecordingGateway())
     with TestClient(app) as client:
@@ -373,8 +378,7 @@ def test_chat_turn_accepts_same_entity_image_and_keeps_transcript_reference(tmp_
             raise AssertionError(state)
 
     expected_paths = tuple(
-        (db_path.parent / image["reference"].lstrip("/")).resolve(strict=True)
-        for image in uploaded
+        (db_path.parent / image["reference"].lstrip("/")).resolve(strict=True) for image in uploaded
     )
     assert calls == [("What is shown?", expected_paths)]
     assert state["messages"][0]["text"] == (
@@ -394,25 +398,25 @@ def test_chat_turn_accepts_image_only_with_nonempty_model_cue(tmp_path: Path) ->
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
-            return ChatHistory(messages=(), session_key=session_key)
+        def read_employee_session_history(
+            self, employee_session_id: str, ticket_id: str
+        ) -> EmployeeSessionHistory:
+            return EmployeeSessionHistory(messages=(), employee_session_id=employee_session_id)
 
-        def stream(
+        def run_human_turn(
             self,
             session_key: str | None,
             entity_id: str,
             text: str,
             mode: str,
-            on_session_key: Callable[[str], None] | None = None,
+            bind_session_key: HumanSessionKeyBinder,
             image_paths: tuple[Path, ...] = (),
-        ) -> Iterator[ChatStreamChunk]:
+            *,
+            require_existing_session: bool = False,
+        ) -> Iterator[HumanChatObservation]:
             calls.append((text, image_paths))
-            yield ChatStreamChunk(
-                type="done",
-                reply_text="image received",
-                session_key="image-session",
-                kind="assistant",
-            )
+            bind_session_key("image-session")
+            yield HumanChatCompletion("image received", "assistant")
 
     app.state.adapters = Adapters(gateway=RecordingGateway())
     with TestClient(app) as client:
@@ -481,11 +485,17 @@ def test_chat_turn_rejects_non_owned_or_unsafe_image_before_creating_turn(tmp_pa
 
     conn = connect(str(db_path))
     try:
-        assert conn.execute(
-            "SELECT COUNT(*) FROM chat_turns WHERE entity_id IN (?, ?)", (route_id, owner_id)
-        ).fetchone()[0] == 0
-        assert conn.execute(
-            "SELECT COUNT(*) FROM chat_messages WHERE entity_id IN (?, ?)", (route_id, owner_id)
-        ).fetchone()[0] == 0
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM chat_turns WHERE entity_id IN (?, ?)", (route_id, owner_id)
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM chat_messages WHERE entity_id IN (?, ?)", (route_id, owner_id)
+            ).fetchone()[0]
+            == 0
+        )
     finally:
         conn.close()

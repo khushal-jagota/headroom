@@ -585,8 +585,8 @@
                 <span>keyed UI refetch</span>
               </div>
               <div>
-                <strong>TicketReadinessLoop</strong>
-                <span>today readiness poll</span>
+                <strong>AutomaticEmployeeStepDiscoveryLoop</strong>
+                <span>today membership candidates</span>
               </div>
             </li>
             <li>
@@ -614,11 +614,11 @@
           </li>
           <li>
             <strong>Why did work run?</strong>
-            <span>Employee Runtime. TicketReadinessLoop finds runnable Tickets; EmployeeStepRunner runs one worker step.</span>
+            <span>Employee Runtime. AutomaticEmployeeStepDiscoveryLoop checks Automatic Employee-step eligibility; EmployeeStepRunner runs one worker step.</span>
           </li>
           <li>
             <strong>Where is chat?</strong>
-            <span>Hermes Gateway and Chat. The planner stores session keys, not transcripts.</span>
+            <span>Panels stores visible Chat; Hermes owns explicit Employee session history.</span>
           </li>
           <li>
             <strong>Why did UI update?</strong>
@@ -677,8 +677,9 @@
               </p>
               <p>
                 The Board is today's execution board, not an all-ticket inventory.
-                TicketReadinessLoop starts from the same today membership, then narrows to
-                empty, non-terminal tickets that pass readiness.
+                AutomaticEmployeeStepDiscoveryLoop starts with that same membership-only
+                candidate set, then asks the complete Automatic Employee-step eligibility
+                decision about each Ticket.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/sprints/</code>,
@@ -695,15 +696,16 @@
             </summary>
             <div class="detail-body">
               <p>
-                Tickets have two states. <code>state</code> is the work stage:
-                success, approach, plan, implementation, closeout, done, or dropped.
-                <code>ticket_status</code> is runtime control: empty, running,
+                A Ticket stores <code>stage</code> for its work Stage. Its Worker type
+                declares the available Stages; coding uses kickoff, success, approach,
+                plan, implementation, closeout, done, or dropped.
+                <code>ticket_status</code> is separate runtime control: empty, running,
                 awaiting approval, user takeover, or errored.
               </p>
               <p>
-                Workers write proposals to the five fields: success, approach,
+                Workers write proposals to the six fields: kickoff, success, approach,
                 plan, implementation, and closeout. The resolution engine is the only code that can
-                settle a proposal or advance <code>state</code>. Scope is
+                settle a proposal or advance <code>stage</code>. Scope is
                 <code>ceiling</code> plus <code>at_cap</code>; it decides how far a
                 worker may go before the human must approve again.
               </p>
@@ -719,32 +721,68 @@
           <details>
             <summary>
               <span class="number">04</span>
-              <span><strong>The Employee Runtime</strong><span>Optional readiness discovery and always-available step execution.</span></span>
+              <span><strong>The Employee Runtime</strong><span>Advisory automatic eligibility discovery and separate step execution.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                TicketReadinessLoop polls today's Tickets whose <code>ticket_status</code> is
-                <code>empty</code>, then applies readiness: not terminal, has a
-                next field, no pending proposal there, not blocked, and not stopped
-                at the scope limit.
+                One complete decision owns <strong>Automatic Employee-step eligibility</strong>.
+                It returns yes only when all eight facts hold:
+              </p>
+              <ol>
+                <li>The Ticket belongs to the supplied <code>planning_day_id</code> — today's day during automatic discovery.</li>
+                <li>Its <code>ticket_status</code> is <code>empty</code>.</li>
+                <li>Its Stage is not terminal.</li>
+                <li>Its Stage has a next gated field.</li>
+                <li>That field has no parked proposal.</li>
+                <li>Its <code>ceiling</code> and <code>at_cap</code> allow another proposal; the Ticket is not at or beyond a stopping ceiling.</li>
+                <li>It has no active blocker.</li>
+                <li>It has no running Panels Chat turn, from either a human or an Employee step.</li>
+              </ol>
+              <p>
+                AutomaticEmployeeStepDiscoveryLoop is read-only and advisory. It selects
+                only Tickets that belong to today's day, then calls the complete decision for
+                each membership candidate. It does not claim Tickets, write state, or contact Hermes.
               </p>
               <p>
-                EmployeeStepRunner marks the Ticket running, resumes or creates its Hermes
-                session, submits one prompt, and settles runtime status when the
-                turn ends. A parked proposal becomes <code>awaiting_approval</code>;
-                auto-accepted work can return to <code>empty</code>.
+                EmployeeStepRunner separately owns one worker step. Its final claim starts
+                <code>BEGIN IMMEDIATE</code>, reloads the Ticket and its Worker type definition,
+                resolves the planning day inside the transaction, and calls the same complete
+                decision. A stale discovery result cannot change status, create chat state,
+                call the gateway, or build a prompt. After a successful claim, the runner marks
+                the Ticket running, resumes or creates its durable
+                <code>employee_session_id</code>, submits one prompt through that Hermes
+                conversation, and settles runtime status when the turn ends.
               </p>
               <p>
-                Ticket, Day membership, and blocking-link actions commit first, then ring a
-                best-effort ReadinessDoorbell. Runner settlement rings it too. The doorbell
-                carries no Ticket id and owns no state. A failed delivery is logged and ignored;
-                SQLite and the periodic timer remain canonical. Processes without the polling
-                lock use a no-op doorbell rather than IPC.
+                Human Chat admission and the final Employee claim both use SQLite's
+                write lock and recheck the opposing fact inside the transaction. A human
+                turn that wins makes the Employee claim a no-op. An Employee claim that
+                wins first makes human admission fail without creating a visible message
+                or turn.
+              </p>
+              <p>
+                A direct requested revision bypasses Automatic Employee-step eligibility and
+                planning-day resolution, uses a reserved runner handoff, and strictly resumes
+                the Ticket's stored <code>employee_session_id</code>.
+              </p>
+              <p>
+                Ticket, Day membership, and blocking-link actions commit first, then call
+                <code>AutomaticEmployeeStepEligibilityWake.wake()</code>. Runner settlement does
+                the same. This best-effort same-process wake carries no Ticket id, owns no state,
+                and sends no IPC. Failure is logged and ignored; SQLite and the periodic discovery
+                timer remain canonical. The polling-lock owner uses
+                <code>LoopAutomaticEmployeeStepEligibilityWake</code>; processes without the lock receive
+                <code>NoOpAutomaticEmployeeStepEligibilityWake</code>.
+              </p>
+              <p>
+                Chat completion, Chat error, and Pause do not send an eligibility wake.
+                They only settle the visible Chat turn. The next SQLite-backed periodic
+                scan observes that the eighth factor has cleared.
               </p>
               <p class="code-paths">
-                Code paths: <code>src/planner/runtime/readiness.py</code>,
-                <code>src/planner/runtime/readiness_doorbell.py</code>,
-                <code>src/planner/runtime/ticket_readiness_loop.py</code>,
+                Code paths: <code>src/planner/runtime/automatic_employee_step_eligibility.py</code>,
+                <code>src/planner/runtime/automatic_employee_step_discovery_loop.py</code>,
+                <code>src/planner/runtime/automatic_employee_step_eligibility_wake.py</code>,
                 <code>src/planner/runtime/employee_step_runner.py</code>,
                 <code>src/planner/tickets/actions.py</code>,
                 <code>src/planner/days/actions.py</code>,
@@ -767,9 +805,34 @@
                 real gateway.
               </p>
               <p>
-                Tickets and days store only a <code>chat_session_key</code>. Hermes
-                owns the transcript. When the planner needs history, it resumes the
-                session lazily and normalizes returned messages.
+                Each Ticket stores an <code>employee_session_id</code>. Human Ticket Chat,
+                automatic Employee steps, and revisions all deliver through that durable
+                Hermes conversation. Days and top-level-agent Chat keep their separate,
+                Chat-specific <code>chat_session_key</code>. A later operation or process
+                restart resumes the stored identity instead of replaying input.
+              </p>
+              <p>
+                Panels owns product-visible state in <code>chat_messages</code> and
+                <code>chat_turns</code>. Reading <code>ChatState</code> never contacts
+                Hermes or merges Employee history. The direct Ticket route
+                <code>GET /api/tickets/{ticket_id}/employee-session-history</code>
+                explicitly returns the authoritative Hermes record. It may include
+                internal context, revision guidance, system or tool content, or other
+                material intentionally absent from Panels Chat.
+              </p>
+              <p>
+                Every human Hermes write uses causal session binding. A candidate
+                created or resumed by Hermes reaches the Chat data writer before a
+                command, image attachment, or prompt is sent. The writer atomically
+                updates the entity and running turn and returns the effective key. If
+                another transaction already chose a winner, the gateway writes to that
+                winner's live session. Exact <code>/new</code> is the one forced-fresh
+                case.
+              </p>
+              <p>
+                Panels Chat rows are product-visible state, not model context. Text an
+                Employee must read has to reach the Hermes gateway session or the actual
+                Employee prompt. A Panels row alone is never delivery.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/core/adapters/</code>,
@@ -787,15 +850,39 @@
             </summary>
             <div class="detail-body">
               <p>
-                Ticket chat and automatic worker steps use the same durable ticket
-                session. EmployeeStepRunner stores a new or resumed session key before
-                submitting the worker prompt, so worker tools can resolve their
-                ticket during the turn.
+                Ticket chat, Chief of Staff chat, and automatic worker steps use the
+                same durable chat-state contract. Ordinary messages and commands enter
+                through one <code>POST /api/chat/{entity_id}/turns</code> request. The
+                Chief message endpoint is a narrow shell over that same owner.
               </p>
               <p>
-                Human chat sends are rejected while
-                <code>ticket_status=agent_running_step</code>. History stays
-                readable. There is no queue behind the active worker step.
+                <code>ChatTurnLifecycle</code> is the single human coordinator. It
+                atomically admits one visible turn, invokes the typed human gateway
+                transport, records safe activity and output, and lets the first
+                completion, error, or Pause settle the turn. The browser observes
+                durable <code>ChatState</code> instead of owning a second HTTP stream.
+                The public active turn exposes whether Pause is available, not durable
+                Employee identity.
+              </p>
+              <p>
+                EmployeeStepRunner remains a separate lane. It stores a new or resumed
+                <code>employee_session_id</code> before calling the employee-only
+                <code>run_ticket_step</code>. It does not use
+                <code>ChatTurnLifecycle</code> or the human transport.
+              </p>
+              <p>
+                Human Chat turns are rejected while
+                <code>ticket_status=agent_running_step</code>. Automatic Employee-step
+                eligibility rejects any running Panels Chat turn. The checks run again
+                under the same transaction lock, so concurrent admission has one winner.
+                Explicit Employee session history stays readable. There is no queue
+                behind the active worker step.
+              </p>
+              <p>
+                Panels Chat rows are product-visible state, not model context. An empty
+                visible transcript stays empty even when Hermes has Employee history.
+                Text an Employee must read has to reach the Hermes gateway session or
+                the actual Employee prompt.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/chat/</code>,
@@ -811,21 +898,63 @@
             </summary>
             <div class="detail-body">
               <p>
-                The browser does not keep a canonical client store. Screens
-                subscribe to resources such as <code>ticket:&lt;id&gt;</code>,
-                <code>board</code>, <code>queues</code>, <code>day:today</code>,
-                and <code>sprint:current</code>.
+                The Resource Catalogue names every cached server read, its endpoint
+                and type, and the events that affect it. Screens open resources such
+                as <code>ticket:&lt;id&gt;</code>, <code>board</code>,
+                <code>review</code>, <code>day:today</code>, and
+                <code>sprint:current</code>. The cache engine only manages loaded
+                values, subscribers, and overlapping requests. It knows nothing
+                about Tickets or Projects.
               </p>
               <p>
-                WebSocket event batches map to resource keys. The browser refetches
-                only those keys from the server.
+                Review contains only today’s parked Ticket proposals and the
+                global running-worker count.
+              </p>
+              <p>
+                WebSocket events invalidate resources through catalogue dependencies,
+                and a successful UI write applies one named catalogue effect
+                immediately. Only the affected projections refetch. There is no
+                whole-screen refetch or canonical client store; the server remains
+                the source of truth.
+              </p>
+              <p>
+                A Project rename refreshes Projects, Board, today’s Day, backlog
+                Sprint items, Ideas, current Sprint, and an already-opened Ticket
+                whose direct Project matches. An opened Ticket whose first read has
+                not settled is included conservatively. A loaded Ticket with another
+                Project, no Project, or no direct Project field is excluded. Project
+                creation and summary-only edits refresh Projects only. The catalogue
+                keeps its own private process-lifetime list of opened resources for
+                this check; the cache remains generic.
+              </p>
+              <p>
+                For a Ticket, <code>employee_session_changed</code> refreshes only its
+                Ticket detail. <code>chat_message_recorded</code>,
+                <code>chat_turn_started</code>, <code>chat_turn_updated</code>, and
+                <code>chat_turn_finished</code> refresh only that Ticket's Chat. Neither
+                set refreshes Board, current Sprint, or Review. Day and top-level-agent
+                <code>chat_session_created</code> and those same Chat events refresh only
+                their matching Chat; Day Chat events do not refresh the Day projection.
+                Explicit Employee session history is an ordinary uncached read.
+              </p>
+              <p>
+                Managed Markdown has one browser-DOM owner.
+                <code>managedMarkdown.ts</code> renders through the hardened renderer,
+                mounts file previews, maintains editable atomic blocks, serializes
+                edits, reconciles moved or deleted previews, and tears everything
+                down. <code>MarkdownBlock</code> and <code>InlineEdit</code> only supply
+                product values and coordinate read-only presentation or ordinary
+                editing and save behavior. Plain contenteditable helpers remain
+                separate from Markdown lifecycle work.
               </p>
               <p class="code-paths">
                 Code paths: <code>web/src/App.svelte</code>,
                 <code>web/src/routes/</code>,
+                <code>web/src/lib/resourceCatalogue.ts</code>,
                 <code>web/src/lib/resources.svelte.ts</code>,
                 <code>web/src/lib/ws.ts</code>,
-                <code>web/src/lib/eventMapping.mjs</code>
+                <code>web/src/lib/managedMarkdown.ts</code>,
+                <code>web/src/lib/editableText.ts</code>
               </p>
             </div>
           </details>
@@ -842,7 +971,7 @@
                 <code>sprint</code>, <code>worker</code>, and <code>chief</code>.
                 Ordinary commands preserve an ambient actor or send none; production
                 worker and Chief gateways set their roles explicitly. Chief external-work
-                intake is exceptional and is not a generic state setter.
+                intake is exceptional and is not a generic Stage setter.
               </p>
               <p>
                 A missing <code>X-Plan-Actor</code> means unattributed, not human.
@@ -869,7 +998,7 @@
         <ul class="boundary-list">
           <li>
             <strong>Resolution engine</strong>
-            <span>Owns ticket field values and ticket <code>state</code> transitions.</span>
+            <span>Owns Ticket field values and Ticket <code>stage</code> transitions.</span>
           </li>
           <li>
             <strong>Runtime writers</strong>
@@ -881,11 +1010,11 @@
           </li>
           <li>
             <strong>Hermes</strong>
-            <span>Owns chat transcripts. The planner stores session keys.</span>
+            <span>Owns Employee session history. Panels owns visible Chat messages and live turns.</span>
           </li>
           <li>
             <strong>Frontend</strong>
-            <span>Owns rendering and local drafts only.</span>
+            <span>Owns rendering and local drafts only. Within it, <code>managedMarkdown.ts</code> alone owns rendered Markdown DOM and preview lifetime.</span>
           </li>
           <li>
             <strong>CLI</strong>
@@ -907,14 +1036,15 @@
           <details open>
             <summary>
               <span class="number">01</span>
-              <span><strong>Chat session-key ownership is a special writer exception.</strong><span>Most mutations now live behind domain writers.</span></span>
+              <span><strong>Employee-session ownership is explicit (resolved).</strong><span>The coordinator and canonical writer have separate jobs.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                Chat session-key writes live in <code>src/planner/chat/service.py</code>
-                because they coordinate with the gateway during live conversation setup.
-                The usual rule still holds elsewhere: domain mutations go through
-                canonical writer functions.
+                <code>ChatTurnLifecycle</code> coordinates human admission and delivery.
+                The Ticket data writer alone owns <code>employee_session_id</code>; Chat
+                binding calls it in the transaction that binds the running turn and
+                returns the effective id the gateway must use. Day and top-level-agent
+                Chat keys remain Chat-owned because they are not Employee identity.
               </p>
             </div>
           </details>
@@ -935,13 +1065,13 @@
           <details>
             <summary>
               <span class="number">03</span>
-              <span><strong>The frontend copies ticket state-machine constants.</strong><span>Useful for rendering, but a drift risk.</span></span>
+              <span><strong>The frontend reads the Worker type manifest.</strong><span>The server owns Stage order and gates.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                <code>web/src/lib/ui.ts</code> repeats state order, gating fields,
-                and advance targets. A generated contract or server-provided
-                metadata would make the boundary cleaner.
+                <code>GET /api/worker-types</code> supplies each Worker type's Stage
+                order, gating fields, and advance targets. The frontend renders that
+                served metadata instead of copying the Ticket Stage machine.
               </p>
             </div>
           </details>
@@ -985,7 +1115,7 @@
 
       <footer>
         HTML companion to <a href="systems.md">systems.md</a>. Last verified:
-        2026-07-08.
+        2026-07-14.
       </footer>
     </main>
   </div>

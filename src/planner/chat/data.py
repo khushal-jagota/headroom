@@ -11,19 +11,22 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Final
+from typing import Final, Literal
 
 from planner.chat.contracts import (
     ChatActivityEntry,
     ChatActivityObservation,
     ChatState,
     ChatStateMessage,
+    ChattableEntityKind,
     ChatTurn,
 )
 from planner.core.contracts import EventKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event
 from planner.core.ids import new_id
+from planner.tickets import data as tickets_data
+from planner.tickets.contracts import EmployeeSessionIdTransition
 
 MAX_ACTIVE_TURN_ACTIVITY_ENTRIES: Final = 100
 
@@ -76,7 +79,7 @@ def _row_to_turn(
         activity_label=row["activity_label"],
         output_role=str(row["output_role"]),
         output_text=str(row["output_text"]),
-        session_key=row["session_key"],
+        can_pause=str(row["status"]) == "running" and row["session_key"] is not None,
         error=row["error"],
         started_at=int(row["started_at"]),
         updated_at=int(row["updated_at"]),
@@ -127,9 +130,6 @@ def record_message(
 def read_state(
     conn: sqlite3.Connection,
     entity_id: str,
-    *,
-    session_key: str | None,
-    legacy_messages: tuple[ChatStateMessage, ...] = (),
 ) -> ChatState:
     rows = conn.execute(
         "SELECT id, entity_id, turn_id, role, text, created_at "
@@ -137,10 +137,8 @@ def read_state(
         (entity_id,),
     ).fetchall()
     messages = tuple(_row_to_message(row) for row in rows)
-    if not messages and legacy_messages:
-        messages = legacy_messages
     active_turn = read_active_turn(conn, entity_id)
-    return ChatState(messages=messages, active_turn=active_turn, session_key=session_key)
+    return ChatState(messages=messages, active_turn=active_turn)
 
 
 def read_active_turn(conn: sqlite3.Connection, entity_id: str) -> ChatTurn | None:
@@ -160,6 +158,20 @@ def read_active_turn(conn: sqlite3.Connection, entity_id: str) -> ChatTurn | Non
     return _row_to_turn(
         turn_row, tuple(_row_to_activity_entry(row) for row in activity_rows)
     )
+
+
+def read_running_turn_session_key(
+    conn: sqlite3.Connection,
+    turn_id: str,
+    *,
+    entity_id: str,
+) -> str | None:
+    row = conn.execute(
+        "SELECT session_key FROM chat_turns "
+        "WHERE id = ? AND entity_id = ? AND status = 'running'",
+        (turn_id, entity_id),
+    ).fetchone()
+    return None if row is None else row["session_key"]
 
 
 def record_turn_activity(
@@ -261,51 +273,134 @@ def start_turn(
     activity_label: str | None,
     now: int,
 ) -> ChatTurn:
-    turn_id = new_id("run")
     with _txn(conn):
-        try:
-            conn.execute(
-                "INSERT INTO chat_turns ("
-                "id, entity_id, origin, mode, status, phase, activity_label, output_role, "
-                "output_text, session_key, error, started_at, updated_at, completed_at"
-                ") VALUES (?, ?, ?, ?, 'running', ?, ?, ?, '', NULL, NULL, ?, ?, NULL)",
-                (
-                    turn_id,
-                    entity_id,
-                    origin,
-                    mode,
-                    phase,
-                    activity_label,
-                    output_role,
-                    now,
-                    now,
-                ),
-            )
-        except sqlite3.IntegrityError as exc:
-            raise PlannerError(
-                ErrorCode.already_running,
-                "chat turn is already running",
-                {"entity_id": entity_id},
-            ) from exc
-        if visible_text:
-            _append_message(
-                conn,
-                entity_id,
-                turn_id=turn_id,
-                role=visible_role,
-                text=visible_text,
-                now=now,
-            )
-        append_event(
+        return start_turn_in_transaction(
             conn,
             entity_id,
-            EventKind.chat_turn_started,
-            {"turn_id": turn_id, "origin": origin, "mode": mode, "phase": phase},
-            now,
+            origin=origin,
+            mode=mode,
+            visible_role=visible_role,
+            visible_text=visible_text,
+            output_role=output_role,
+            phase=phase,
+            activity_label=activity_label,
+            now=now,
         )
-        row = conn.execute("SELECT * FROM chat_turns WHERE id = ?", (turn_id,)).fetchone()
-        assert row is not None
+
+
+def start_turn_in_transaction(
+    conn: sqlite3.Connection,
+    entity_id: str,
+    *,
+    origin: str,
+    mode: str,
+    visible_role: str,
+    visible_text: str,
+    output_role: str,
+    phase: str,
+    activity_label: str | None,
+    now: int,
+) -> ChatTurn:
+    """Insert one running turn inside the caller's existing write transaction."""
+    turn_id = new_id("run")
+    try:
+        conn.execute(
+            "INSERT INTO chat_turns ("
+            "id, entity_id, origin, mode, status, phase, activity_label, output_role, "
+            "output_text, session_key, error, started_at, updated_at, completed_at"
+            ") VALUES (?, ?, ?, ?, 'running', ?, ?, ?, '', NULL, NULL, ?, ?, NULL)",
+            (
+                turn_id,
+                entity_id,
+                origin,
+                mode,
+                phase,
+                activity_label,
+                output_role,
+                now,
+                now,
+            ),
+        )
+    except sqlite3.IntegrityError as exc:
+        raise PlannerError(
+            ErrorCode.already_running,
+            "chat turn is already running",
+            {"entity_id": entity_id},
+        ) from exc
+    if visible_text:
+        _append_message(
+            conn,
+            entity_id,
+            turn_id=turn_id,
+            role=visible_role,
+            text=visible_text,
+            now=now,
+        )
+    append_event(
+        conn,
+        entity_id,
+        EventKind.chat_turn_started,
+        {"turn_id": turn_id, "origin": origin, "mode": mode, "phase": phase},
+        now,
+    )
+    row = conn.execute("SELECT * FROM chat_turns WHERE id = ?", (turn_id,)).fetchone()
+    assert row is not None
+    return _row_to_turn(row)
+
+
+def _settle_chat_turn_in_transaction(
+    conn: sqlite3.Connection,
+    turn_id: str,
+    *,
+    entity_id: str,
+    status: Literal["complete", "errored", "interrupted"],
+    reply_text: str,
+    output_role: Literal["assistant", "system"],
+    error: str | None,
+    now: int,
+) -> ChatTurn:
+    """Apply the one first-wins Chat settlement inside an existing transaction."""
+    if status == "errored":
+        if not error:
+            raise PlannerError(ErrorCode.validation, "errored chat settlement requires error")
+    elif error is not None:
+        raise PlannerError(ErrorCode.validation, "successful chat settlement cannot have error")
+
+    row = conn.execute("SELECT * FROM chat_turns WHERE id = ?", (turn_id,)).fetchone()
+    if row is None or str(row["entity_id"]) != entity_id:
+        raise PlannerError(ErrorCode.not_found, "chat turn not found", {"turn_id": turn_id})
+    if row["status"] != "running":
         return _row_to_turn(row)
+
+    conn.execute("DELETE FROM chat_turn_activity_entries WHERE turn_id = ?", (turn_id,))
+    if status == "errored":
+        final_text = str(row["output_text"])
+        final_role = str(row["output_role"])
+    else:
+        final_text = reply_text or str(row["output_text"])
+        final_role = output_role
+    conn.execute(
+        "UPDATE chat_turns SET status = ?, phase = 'settled', activity_label = NULL, "
+        "output_role = ?, output_text = ?, error = ?, updated_at = ?, completed_at = ? "
+        "WHERE id = ?",
+        (status, final_role, final_text, error, now, now, turn_id),
+    )
+    if status != "errored" and final_text:
+        _append_message(
+            conn,
+            entity_id,
+            turn_id=turn_id,
+            role=final_role,
+            text=final_text,
+            now=now,
+        )
+    event_payload: dict[str, object] = {"turn_id": turn_id, "status": status}
+    if error is not None:
+        event_payload["error"] = error
+    append_event(conn, entity_id, EventKind.chat_turn_finished, event_payload, now)
+    updated = conn.execute("SELECT * FROM chat_turns WHERE id = ?", (turn_id,)).fetchone()
+    assert updated is not None
+    return _row_to_turn(updated)
 
 
 def roll_running_turn_for_recovery(
@@ -351,50 +446,30 @@ def roll_running_turn_for_recovery(
                 else:
                     error = None
                 if error is not None:
-                    conn.execute(
-                        "DELETE FROM chat_turn_activity_entries WHERE turn_id = ?",
-                        (active["id"],),
-                    )
-                    conn.execute(
-                        "UPDATE chat_turns SET status = 'errored', phase = 'settled', "
-                        "activity_label = NULL, error = ?, updated_at = ?, "
-                        "completed_at = ? WHERE id = ?",
-                        (error, now, now, active["id"]),
-                    )
-                    append_event(
+                    _settle_chat_turn_in_transaction(
                         conn,
-                        entity_id,
-                        EventKind.chat_turn_finished,
-                        {"turn_id": active["id"], "status": "errored", "error": error},
-                        now,
+                        str(active["id"]),
+                        entity_id=entity_id,
+                        status="errored",
+                        reply_text="",
+                        output_role="system"
+                        if str(active["output_role"]) == "system"
+                        else "assistant",
+                        error=error,
+                        now=now,
                     )
                     return None
-            final_text = str(active["output_text"])
-            conn.execute(
-                "DELETE FROM chat_turn_activity_entries WHERE turn_id = ?",
-                (active["id"],),
-            )
-            conn.execute(
-                "UPDATE chat_turns SET status = 'interrupted', phase = 'settled', "
-                "activity_label = NULL, output_text = ?, updated_at = ?, "
-                "completed_at = ? WHERE id = ?",
-                (final_text, now, now, active["id"]),
-            )
-            if final_text:
-                _append_message(
-                    conn,
-                    entity_id,
-                    turn_id=active["id"],
-                    role=str(active["output_role"]),
-                    text=final_text,
-                    now=now,
-                )
-            append_event(
+            _settle_chat_turn_in_transaction(
                 conn,
-                entity_id,
-                EventKind.chat_turn_finished,
-                {"turn_id": active["id"], "status": "interrupted"},
-                now,
+                str(active["id"]),
+                entity_id=entity_id,
+                status="interrupted",
+                reply_text="",
+                output_role="system"
+                if str(active["output_role"]) == "system"
+                else "assistant",
+                error=None,
+                now=now,
             )
             session_key = active["session_key"]
         else:
@@ -451,35 +526,105 @@ def attach_session_key(
             conn,
             entity_id,
             EventKind.chat_turn_updated,
-            {"turn_id": turn_id, "session_key": session_key},
+            {"turn_id": turn_id, "can_pause": True},
             now,
         )
 
 
-def set_turn_activity(
+def bind_human_turn_session(
     conn: sqlite3.Connection,
     turn_id: str,
     *,
+    entity_kind: ChattableEntityKind,
     entity_id: str,
-    phase: str,
-    activity_label: str | None,
+    expected_session_key: str | None,
+    candidate_session_key: str,
+    force_fresh_session: bool,
     now: int,
-) -> None:
+) -> str:
+    """Causally bind the entity and its still-running human turn to one key."""
+    table_by_kind: dict[ChattableEntityKind, str] = {
+        "day": "days",
+        "agent_chat_session": "agent_chat_sessions",
+    }
     with _txn(conn):
-        cursor = conn.execute(
-            "UPDATE chat_turns SET phase = ?, activity_label = ?, updated_at = ? "
-            "WHERE id = ? AND status = 'running'",
-            (phase, activity_label, now, turn_id),
-        )
-        if cursor.rowcount == 0:
-            return
-        append_event(
-            conn,
-            entity_id,
-            EventKind.chat_turn_updated,
-            {"turn_id": turn_id, "phase": phase, "activity_label": activity_label},
-            now,
-        )
+        turn_row = conn.execute(
+            "SELECT entity_id, origin, status, session_key FROM chat_turns WHERE id = ?",
+            (turn_id,),
+        ).fetchone()
+        if (
+            turn_row is None
+            or str(turn_row["entity_id"]) != entity_id
+            or str(turn_row["origin"]) != "human"
+            or str(turn_row["status"]) != "running"
+        ):
+            raise PlannerError(
+                ErrorCode.already_running,
+                "human chat turn is no longer running",
+                {"entity_id": entity_id, "turn_id": turn_id},
+            )
+        if entity_kind == "ticket":
+            effective_session_key = tickets_data.write_employee_session_id_in_transaction(
+                conn,
+                entity_id,
+                transition=EmployeeSessionIdTransition(
+                    expected_employee_session_id=expected_session_key,
+                    candidate_employee_session_id=candidate_session_key,
+                ),
+                force_fresh_employee_session=force_fresh_session,
+                now=now,
+            )
+        else:
+            table = table_by_kind[entity_kind]
+            entity_row = conn.execute(
+                f"SELECT chat_session_key FROM {table} WHERE id = ?", (entity_id,)
+            ).fetchone()
+            if entity_row is None:
+                raise PlannerError(
+                    ErrorCode.not_found,
+                    "chattable entity not found",
+                    {"entity_id": entity_id},
+                )
+            current_session_key: str | None = entity_row["chat_session_key"]
+            if force_fresh_session:
+                effective_session_key = candidate_session_key
+            elif current_session_key == candidate_session_key:
+                effective_session_key = candidate_session_key
+            elif current_session_key == expected_session_key:
+                effective_session_key = candidate_session_key
+            elif current_session_key is not None:
+                effective_session_key = current_session_key
+            else:
+                raise PlannerError(
+                    ErrorCode.already_running,
+                    "chat session changed during binding",
+                    {"entity_id": entity_id, "turn_id": turn_id},
+                )
+            if current_session_key != effective_session_key:
+                conn.execute(
+                    f"UPDATE {table} SET chat_session_key = ?, updated_at = ? WHERE id = ?",
+                    (effective_session_key, now, entity_id),
+                )
+                append_event(
+                    conn,
+                    entity_id,
+                    EventKind.chat_session_created,
+                    {"session_key": effective_session_key},
+                    now,
+                )
+        if turn_row["session_key"] != effective_session_key:
+            conn.execute(
+                "UPDATE chat_turns SET session_key = ?, updated_at = ? WHERE id = ?",
+                (effective_session_key, now, turn_id),
+            )
+            append_event(
+                conn,
+                entity_id,
+                EventKind.chat_turn_updated,
+                {"turn_id": turn_id, "can_pause": True},
+                now,
+            )
+        return effective_session_key
 
 
 def append_turn_output(
@@ -507,6 +652,31 @@ def append_turn_output(
             EventKind.chat_turn_updated,
             {"turn_id": turn_id, "phase": phase},
             now,
+        )
+
+
+def settle_chat_turn(
+    conn: sqlite3.Connection,
+    turn_id: str,
+    *,
+    entity_id: str,
+    status: Literal["complete", "errored", "interrupted"],
+    reply_text: str,
+    output_role: Literal["assistant", "system"],
+    error: str | None,
+    now: int,
+) -> ChatTurn:
+    """Settle a visible Chat turn once; the first terminal transition wins."""
+    with _txn(conn):
+        return _settle_chat_turn_in_transaction(
+            conn,
+            turn_id,
+            entity_id=entity_id,
+            status=status,
+            reply_text=reply_text,
+            output_role=output_role,
+            error=error,
+            now=now,
         )
 
 

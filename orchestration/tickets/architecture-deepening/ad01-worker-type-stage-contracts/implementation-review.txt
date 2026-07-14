@@ -1,0 +1,19 @@
+Found violations.
+
+**High** — [src/planner/core/db.py](/Users/khushaljagota/.hermes/planning-v2-worktrees/architecture-deepening/src/planner/core/db.py:464): partial `ticket_type + stage` schemas do not preserve stored `stage` exactly.
+Lines 464-469 select `row["stage"]` when present, but still pass it through `_migrate_lifecycle_state`. The reviewed plan says `stage` is authoritative when already present: resolve `stage` from `stage`, else lifecycle-convert legacy `state`. A partial table with `ticket_type` + `stage='needs_review'` would be changed to `needs_closeout`/`needs_implementation`, violating exact stored Stage preservation. The test at [tests/unit/test_db.py](/Users/khushaljagota/.hermes/planning-v2-worktrees/architecture-deepening/tests/unit/test_db.py:1868) only covers `stage="needs_stages"`, so this bad conversion can pass.
+
+**Medium** — [src/planner/core/db.py](/Users/khushaljagota/.hermes/planning-v2-worktrees/architecture-deepening/src/planner/core/db.py:320): legacy nullable `status` no longer maps to `empty`.
+The old migration mapped legacy `status` through `CASE ... ELSE 'empty'`, so NULL or unknown legacy values became `empty`. The AD01 plan repeats that rule: legacy `status` maps known values, “else `empty`”. This implementation raises on `NULL status` at lines 320-321, making a previously recognized legacy shape fail migration. There is no NULL legacy-status test in [tests/unit/test_db.py](/Users/khushaljagota/.hermes/planning-v2-worktrees/architecture-deepening/tests/unit/test_db.py:1086); all legacy `status` fixtures are `NOT NULL`.
+
+**Medium** — changed paths exceed the bounded implementation allowlist.
+The plan explicitly says not to rewrite `CONTEXT.md`, `PROGRESS.md`, or `decisions.md` in the implementation ticket, but the uncommitted diff modifies all three: [CONTEXT.md](/Users/khushaljagota/.hermes/planning-v2-worktrees/architecture-deepening/CONTEXT.md:7), [PROGRESS.md](/Users/khushaljagota/.hermes/planning-v2-worktrees/architecture-deepening/PROGRESS.md:7), and [decisions.md](/Users/khushaljagota/.hermes/planning-v2-worktrees/architecture-deepening/decisions.md:782). If these are orchestrator memory/design updates, they need to be split out from the bounded AD01 implementation diff.
+
+tokens used
+244,803
+
+## Orchestrator disposition
+
+- High: accepted. The implementation must preserve an existing `stage` value exactly and convert only a legacy `state` value. A targeted regression is required.
+- Medium, nullable legacy status: accepted. Legacy `status` uses the reviewed known-value mapping with every other value, including NULL, becoming `empty`; canonical `ticket_status` remains required and NULL-rejecting. A targeted regression is required.
+- Medium, path scope: accepted as a commit-isolation finding, not an implementation-behavior defect. `CONTEXT.md`, `PROGRESS.md`, and `decisions.md` are required orchestrator-owned domain/memory records created during the architecture program, not delegated AD01 implementation changes. They will be isolated from the bounded AD01 implementation commit so its path scope remains reviewable.

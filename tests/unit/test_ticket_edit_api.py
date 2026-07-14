@@ -17,14 +17,14 @@ from planner.core.contracts import Priority
 from planner.core.db import connect, create_schema
 from planner.core.events import read_events_since
 from planner.core.server import create_app
+from planner.days import data as days_data
+from planner.runtime import automatic_employee_step_eligibility
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, AtCap, FieldName
+from planner.tickets.contracts import NO_FURTHER, AtCap
 from planner.worker_context import data as worker_context_data
 
 
-def _make_app(
-    tmp_path: Path, *, trace: list[str] | None = None
-) -> tuple[FastAPI, Path]:
+def _make_app(tmp_path: Path, *, trace: list[str] | None = None) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "planning-test.db"
     boot = connect(str(db_path))
     create_schema(boot)
@@ -64,6 +64,7 @@ def _create_ticket(db_path: Path, **values: Any) -> str:
     try:
         ticket = tickets_data.create_ticket(
             conn,
+            worker_type="coding",
             title=values.pop("title", "Before edit"),
             kickoff_note=values.pop("kickoff_note", "Before note"),
             actor="unattributed",
@@ -74,7 +75,7 @@ def _create_ticket(db_path: Path, **values: Any) -> str:
         ticket = tickets_data.accept_proposal(
             conn,
             ticket.id,
-            field=FieldName.kickoff,
+            field="kickoff",
             actor="unattributed",
             now=1,
             next_ceiling=NO_FURTHER,
@@ -97,7 +98,7 @@ def _snapshot(db_path: Path, ticket_id: str) -> dict[str, Any]:
                 ticket.project_id,
                 ticket.sprint_id,
                 ticket.implementer.value if ticket.implementer is not None else None,
-                str(ticket.state),
+                str(ticket.stage),
                 ticket.ticket_status.value,
             ),
             "updated_at": ticket.updated_at,
@@ -119,9 +120,7 @@ def _new_ticket_events(db_path: Path, ticket_id: str, prior_count: int) -> list[
     conn = connect(str(db_path))
     try:
         return [
-            event
-            for event in read_events_since(conn, 0, 10_000)
-            if event.entity_id == ticket_id
+            event for event in read_events_since(conn, 0, 10_000) if event.entity_id == ticket_id
         ][prior_count:]
     finally:
         conn.close()
@@ -135,12 +134,10 @@ def test_patch_implementer_set_change_clear_noop_and_invalid_are_atomic(
     original = _snapshot(db_path, ticket_id)
 
     with TestClient(app) as client:
-        set_response = client.patch(
-            f"/api/tickets/{ticket_id}", json={"implementer": "khushal"}
-        )
+        set_response = client.patch(f"/api/tickets/{ticket_id}", json={"implementer": "khushal"})
         assert set_response.status_code == 200, set_response.json()
         assert set_response.json()["implementer"] == "khushal"
-        assert set_response.json()["state"] == "needs_success"
+        assert set_response.json()["stage"] == "needs_success"
         assert set_response.json()["ticket_status"] == "empty"
 
         changed_response = client.patch(
@@ -155,16 +152,12 @@ def test_patch_implementer_set_change_clear_noop_and_invalid_are_atomic(
         assert copy_text.status_code == 200
         assert "implementer: hermes_codex\n" in copy_text.text
 
-        cleared_response = client.patch(
-            f"/api/tickets/{ticket_id}", json={"implementer": None}
-        )
+        cleared_response = client.patch(f"/api/tickets/{ticket_id}", json={"implementer": None})
         assert cleared_response.status_code == 200, cleared_response.json()
         assert cleared_response.json()["implementer"] is None
         cleared = _snapshot(db_path, ticket_id)
 
-        noop_response = client.patch(
-            f"/api/tickets/{ticket_id}", json={"implementer": None}
-        )
+        noop_response = client.patch(f"/api/tickets/{ticket_id}", json={"implementer": None})
         assert noop_response.status_code == 200, noop_response.json()
         assert _snapshot(db_path, ticket_id) == cleared
 
@@ -195,7 +188,7 @@ def test_patch_implementer_set_change_clear_noop_and_invalid_are_atomic(
     final = _snapshot(db_path, ticket_id)
     assert final == cleared
     assert final["values"][-2:] == original["values"][-2:]
-    assert [event[1] for event in final["events"][len(original["events"]):]] == [
+    assert [event[1] for event in final["events"][len(original["events"]) :]] == [
         {"field": "implementer", "from": None, "to": "khushal"},
         {"field": "implementer", "from": "khushal", "to": "hermes_codex"},
         {"field": "implementer", "from": "hermes_codex", "to": None},
@@ -307,8 +300,7 @@ def test_compound_patch_changes_all_fields_in_canonical_order_with_one_context_s
         for statement in statements_under_lock
     )
     assert any(
-        "SELECT 1 FROM SPRINTS WHERE ID" in statement.upper()
-        for statement in statements_under_lock
+        "SELECT 1 FROM SPRINTS WHERE ID" in statement.upper() for statement in statements_under_lock
     )
 
 
@@ -397,9 +389,7 @@ def test_project_selectors_keep_their_existing_success_contract(tmp_path: Path) 
         assert name.json()["project_id"] == "project_vylo"
 
         id_id = _create_ticket(db_path)
-        by_id = client.patch(
-            f"/api/tickets/{id_id}", json={"project_id": "project_vylo"}
-        )
+        by_id = client.patch(f"/api/tickets/{id_id}", json={"project_id": "project_vylo"})
         assert by_id.status_code == 200, by_id.json()
         assert by_id.json()["project"] == "Vylo"
 
@@ -562,8 +552,16 @@ def test_active_worker_and_running_chat_do_not_block_an_ordinary_edit(
     ticket_id = _create_ticket(db_path)
     conn = connect(str(db_path))
     try:
-        started = tickets_data.start_run_if_runnable(
-            conn, ticket_id, guard=None, now=2
+        planning_day_id = "day_2026-07-10"
+        days_data.add_day_ticket(conn, planning_day_id, ticket_id, 2)
+        started = tickets_data.claim_automatic_employee_step(
+            conn,
+            ticket_id,
+            planning_day_id_resolver=lambda: planning_day_id,
+            eligibility_check=(
+                automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step
+            ),
+            now=2,
         )
         assert started is not None
         chat_data.start_turn(

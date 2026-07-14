@@ -24,8 +24,8 @@ from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from planner.chat import service as chat_service
 from planner.chat.api import router as chat_router
+from planner.chat.service import ChatTurnLifecycle
 from planner.core.adapters.registry import Adapters
 from planner.core.clock import Clock
 from planner.core.config import Config
@@ -36,11 +36,16 @@ from planner.core.ws import tail_events
 from planner.days.api import router as days_router
 from planner.files.api import router as files_router
 from planner.projects.api import router as projects_router
-from planner.runtime.readiness_doorbell import NoOpReadinessDoorbell
+from planner.runtime.automatic_employee_step_eligibility_wake import (
+    NoOpAutomaticEmployeeStepEligibilityWake,
+)
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
-from planner.tickets.logic import coding_bridge
 from planner.worker_context.contracts import WorkerContextService
+from planner.worker_types.configuration import (
+    PRODUCTION_WORKER_TYPE_REGISTRY,
+    configured_worker_type_registry,
+)
 
 _log = logging.getLogger("planner.server")
 
@@ -62,9 +67,9 @@ def svelte_index_html() -> str:
     if _WEB_INDEX.is_file():
         return _WEB_INDEX.read_text(encoding="utf-8")
     return (
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         "<title>Panels</title></head><body>"
-        "<div id=\"app\" data-svelte-app>"
+        '<div id="app" data-svelte-app>'
         "web/dist is missing; run npm --prefix web run build."
         "</div></body></html>"
     )
@@ -118,8 +123,7 @@ def _start_gateway_if_available(gateway: Any) -> None:
 
 def _recover_running_human_chat_turns(
     conn_factory: Callable[[], sqlite3.Connection],
-    gateway: Any,
-    clock: Clock,
+    chat_turn_lifecycle: ChatTurnLifecycle,
 ) -> None:
     conn = conn_factory()
     try:
@@ -135,13 +139,9 @@ def _recover_running_human_chat_turns(
     finally:
         conn.close()
     for row in rows:
-        chat_service.recover_human_turn(
-            conn_factory,
-            gateway,
+        chat_turn_lifecycle.recover_human_turn(
             str(row["entity_id"]),
             str(row["mode"]),
-            clock.now_unix(),
-            clock.now_unix,
         )
 
 
@@ -155,9 +155,11 @@ def create_app(
     async def _lifespan(app_: FastAPI) -> AsyncIterator[None]:
         Path(config.db_path).parent.mkdir(parents=True, exist_ok=True)
         Path(config.logs_dir).mkdir(parents=True, exist_ok=True)
-        # Build and validate the ticket-type registry once at startup so a malformed
+        # Build and validate the Worker-type registry once at startup so a malformed
         # definition refuses to boot loudly rather than failing on the first ticket op.
-        coding_bridge.coding_registry()
+        # Importing the eagerly composed production registry validates shipped
+        # definitions before the application begins serving.
+        _ = PRODUCTION_WORKER_TYPE_REGISTRY
         # One integrity scan over the migrated tickets table: a corrupt live row
         # (unknown type, bad state/ceiling, malformed fields) fails boot loudly here,
         # after the registry is built and before any background loop touches a ticket.
@@ -172,7 +174,10 @@ def create_app(
         shared_gateway: Any = None
         chat_gateway_to_shutdown: Any = None
         if config.test_mode and config.run_startup_recovery_in_test_mode:
-            _recover_running_human_chat_turns(conn_factory, adapters.gateway, clock)
+            _recover_running_human_chat_turns(
+                conn_factory,
+                app_.state.chat_turn_lifecycle,
+            )
         elif not config.test_mode:  # D6: background loops never run in test mode
             try:
                 module = importlib.import_module("planner.core.loops")
@@ -209,7 +214,10 @@ def create_app(
                 app_.state.adapters = Adapters(gateway=chat_gateway)
                 _start_gateway_if_available(shared_gateway)
                 _start_gateway_if_available(chief_gateway)
-                _recover_running_human_chat_turns(conn_factory, chat_gateway, clock)
+                _recover_running_human_chat_turns(
+                    conn_factory,
+                    app_.state.chat_turn_lifecycle,
+                )
                 try:
                     loops = start(
                         config,
@@ -222,7 +230,9 @@ def create_app(
                     )
                 else:
                     app_.state.employee_step_runner = loops.employee_step_runner
-                    app_.state.readiness_doorbell = loops.readiness_doorbell
+                    app_.state.automatic_employee_step_eligibility_wake = (
+                        loops.automatic_employee_step_eligibility_wake
+                    )
         try:
             yield
         finally:
@@ -243,7 +253,13 @@ def create_app(
     app.state.clock = clock
     app.state.adapters = adapters
     app.state.conn_factory = conn_factory
-    app.state.readiness_doorbell = NoOpReadinessDoorbell()
+    app.state.chat_turn_lifecycle = ChatTurnLifecycle(
+        conn_factory,
+        gateway_provider=lambda: app.state.adapters.gateway,
+        now=clock.now_unix,
+        db_path=config.db_path,
+    )
+    app.state.automatic_employee_step_eligibility_wake = NoOpAutomaticEmployeeStepEligibilityWake()
     app.state.employee_step_runner = (
         TestModeAcceptingEmployeeRevisionRunner() if config.test_mode else None
     )
@@ -276,13 +292,17 @@ def create_app(
             "test_mode": config.test_mode,
         }
 
-    @app.get("/api/ticket-types")
-    async def ticket_types() -> dict[str, Any]:
+    @app.get("/api/worker-types")
+    async def worker_types() -> dict[str, Any]:
         # The single source of stage order / labels / gates / fields / ceiling range
         # per registered type, served from the ACTIVE registry (a test-installed probe
-        # registry in-process; coding-only in production). One entry per type_id.
-        reg = coding_bridge.registry()
-        return {"types": [reg.manifest(tid) for tid in reg.type_ids()]}
+        # registry in-process). One entry per internal definition id.
+        registry = configured_worker_type_registry()
+        return {
+            "worker_types": [
+                registry.manifest(worker_type) for worker_type in registry.registered_worker_types()
+            ]
+        }
 
     @app.websocket("/api/events")
     async def events_ws(websocket: WebSocket, since: int = 0) -> None:

@@ -1,0 +1,19 @@
+AD09 initial implementation plan review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5fa1-d6b6-7d30-83d3-2f053cbc5120
+Result: ONE VIOLATION
+
+Exact final reviewer output:
+
+- `orchestration/tickets/architecture-deepening/ad09-employee-session-history/plan.md:27-30` and `:606-607` incorrectly allow “legacy seed conversion” as a `coding` concession. This violates the owner ruling in `ticket.md:40-42` and exclusion in `ticket.md:242-243`: historical missing Worker type may be rewritten to `coding` only inside migration, with no live Python default/inference.
+
+  Current seed import is live Python and still has no explicit Worker-type input: `src/planner/seed/contracts.py:74-80`, `src/planner/seed/logic/workspace.py:120-125`, and hardcodes `"coding"` on insert in `src/planner/seed/importer.py:254` and `:271`.
+
+  Precise correction: remove the seed-conversion carveout from the plan and tests. AD09 may rename the historical `Chat ID:` session field, but seed import must not be blessed as a Worker-type default path. Either require an explicit Worker type in seed input/import arguments and pass it through, or leave historical missing Worker-type rewriting solely in the terminal DB migration. Static allowlists should permit `coding` only in migration recognition/tests, not seed importer conversion.
+
+Disposition:
+
+Accepted. The corrected plan requires an explicit Worker type on both the standalone seed command and every
+programmatic seed/parser call. It passes that exact id through the parsed Ticket and definition-driven
+insert. The terminal database migration is now the only place allowed to assign `coding` automatically.

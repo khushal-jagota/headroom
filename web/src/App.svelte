@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { fetchJson } from "./lib/api";
-  import { resource } from "./lib/resources";
+  import { resourceCatalogue } from "./lib/resourceCatalogue";
   import { startEventStream, stopEventStream } from "./lib/ws";
   import BacklogRoute from "./routes/BacklogRoute.svelte";
   import BoardRoute from "./routes/BoardRoute.svelte";
@@ -19,10 +19,7 @@
     key: string;
   };
 
-  const queues = resource<{ approvals: unknown[]; running_agents: number }>(
-    "queues",
-    () => fetchJson("/api/queues")
-  );
+  const review = resourceCatalogue.review();
 
   let route = $state<Route>(parseRoute());
   let workspaceHideDone = $state(false);
@@ -99,7 +96,7 @@
     return () => {
       window.removeEventListener("hashchange", onHash);
       stopEventStream();
-      queues.dispose();
+      review.dispose();
     };
   });
 </script>
@@ -110,8 +107,8 @@
       <a class:active={currentNav("day")} class="nav-link" data-screen="day" href="#/day">Day</a>
       <a class:active={currentNav("review")} class="nav-link nav-link--review" data-screen="review" href="#/review">
         Review
-        {#if (queues.data?.approvals || []).length > 0}
-          <span class="nav-badge">{(queues.data?.approvals || []).length}</span>
+        {#if (review.data?.ticket_decisions || []).length > 0}
+          <span class="nav-badge">{(review.data?.ticket_decisions || []).length}</span>
         {:else}
           <span class="nav-badge hidden"></span>
         {/if}
@@ -121,10 +118,10 @@
       <a class:active={currentNav("backlog")} class="nav-link" data-screen="backlog" href="#/backlog">Backlog</a>
       <a class:active={currentNav("ideas")} class="nav-link" data-screen="ideas" href="#/ideas">Ideas</a>
     </nav>
-    {#if (queues.data?.running_agents || 0) > 0}
+    {#if (review.data?.running_worker_count || 0) > 0}
       <span class="shell-presence" data-shell-presence>
         <span class="shell-presence-spin"></span>
-        {queues.data?.running_agents} working
+        {review.data?.running_worker_count} working
       </span>
     {/if}
   </header>

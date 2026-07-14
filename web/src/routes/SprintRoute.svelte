@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import { fetchJson } from "../lib/api";
   import { shortMonthDayLabel } from "../lib/dates";
-  import { mutateJson, resource } from "../lib/resources";
+  import {
+    mutateJsonWithResourceEffect,
+    resourceCatalogue
+  } from "../lib/resourceCatalogue";
   import { labelize } from "../lib/ui";
-  import type { AnyRecord, CurrentSprintResponse } from "../lib/types";
+  import type { AnyRecord } from "../lib/types";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
@@ -15,9 +17,7 @@
     sub = "tracking",
     selectedItemId = null
   }: { sub?: string; selectedItemId?: string | null } = $props();
-  const current = resource<CurrentSprintResponse>("sprint:current", (signal) =>
-    fetchJson("/api/sprint/current", { signal })
-  );
+  const current = resourceCatalogue.currentSprint();
 
   const noProjectKey = "__no_project__";
   const itemStatusWord: Record<string, string> = {
@@ -48,10 +48,10 @@
   let documents = $derived(sub === "documents");
 
   function saveSprint(sprintId: string, field: string, raw: string): Promise<unknown> {
-    return mutateJson(
+    return mutateJsonWithResourceEffect(
       `/api/sprints/${sprintId}`,
       { method: "PATCH", body: { [field]: raw } },
-      [`sprint:${sprintId}`, "sprint:current", "sprints"]
+      { kind: "currentSprintChanged" }
     );
   }
 
@@ -82,14 +82,14 @@
     });
   }
 
-  // Done-fraction from the item's ticket-state rollup: done count over total tickets;
+  // Done-fraction from the item's Ticket-Stage rollup: done count over total tickets;
   // an em dash when the item has no tickets yet. Dropped tickets are excluded from the
   // denominator — item status ignores them, so a fully-done item reads "2/2 done", not
   // "2/3", when one of its tickets was dropped.
   function doneFraction(item: AnyRecord): string {
     const rollup = (item.rollup as Record<string, number>) || {};
     const total = Object.entries(rollup).reduce(
-      (sum, [state, count]) => (state === "dropped" ? sum : sum + count),
+      (sum, [stage, count]) => (stage === "dropped" ? sum : sum + count),
       0
     );
     if (total === 0) return "—";
@@ -129,8 +129,8 @@
     );
   }
 
-  function ticketStateClass(ticket: AnyRecord): string {
-    if (ticket.state === "done") return "tst tst--done";
+  function ticketStageClass(ticket: AnyRecord): string {
+    if (ticket.stage === "done") return "tst tst--done";
     if (ticketNeedsYou(ticket)) return "tst tst--now";
     return "tst";
   }
@@ -265,7 +265,7 @@
                           <a class="trow" href={`#/ticket/${ticket.id}`} data-ticket-id={ticket.id}>
                             <span class="pr">{ticket.priority}</span>
                             <span class="t">{ticket.title}</span>
-                            <span class={ticketStateClass(ticket)}>{labelize(ticket.state, { capitalize: false })}</span>
+                            <span class={ticketStageClass(ticket)}>{labelize(ticket.stage, { capitalize: false })}</span>
                           </a>
                         {/each}
                       {:else}
@@ -290,7 +290,7 @@
                   <a class="trow" href={`#/ticket/${ticket.id}`} data-ticket-id={ticket.id}>
                     <span class="pr">{ticket.priority}</span>
                     <span class="t">{ticket.title}</span>
-                    <span class={ticketStateClass(ticket)}>{labelize(ticket.state, { capitalize: false })}</span>
+                    <span class={ticketStageClass(ticket)}>{labelize(ticket.stage, { capitalize: false })}</span>
                   </a>
                 {/each}
               </div>

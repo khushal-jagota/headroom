@@ -1,0 +1,14 @@
+NO VIOLATIONS
+
+The read-only focused review covered the post-verify repair in:
+
+- `tests/e2e/test_board_stage_indicators.py`
+- `tests/e2e/test_ticket_file_previews.py`
+
+It confirmed helper and parameter call-site completeness, canonical `stage` SQL,
+valid preserved Stage values, unchanged fixture behavior, and no remaining retired
+Ticket lifecycle State or `--type` vocabulary in those files. The focused browser
+run passed 14 tests; Ruff and `git diff --check` were clean.
+
+tokens used
+98,556

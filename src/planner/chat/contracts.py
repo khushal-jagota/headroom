@@ -1,9 +1,13 @@
-"""Chat domain shapes: messages, the gateway send result, and the availability
-signal for the panel (§11). Stdlib only."""
+"""Chat domain contracts for server-owned turns and gateway observations. Stdlib only."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal, TypeAlias
+
+ChattableEntityKind: TypeAlias = Literal[  # noqa: UP040 -- frozen AD06 declaration
+    "ticket", "day", "agent_chat_session"
+]
 
 
 @dataclass(frozen=True)
@@ -57,7 +61,7 @@ class ChatTurn:
     activity_label: str | None
     output_role: str               # "assistant" | "system"
     output_text: str
-    session_key: str | None
+    can_pause: bool
     error: str | None
     started_at: int
     updated_at: int
@@ -69,43 +73,22 @@ class ChatTurn:
 class ChatState:
     messages: tuple[ChatStateMessage, ...]
     active_turn: ChatTurn | None
-    session_key: str | None
 
 
 @dataclass(frozen=True)
-class ChatMessage:
-    role: str                      # gateway role: "user" | "assistant" | "system" | ...
+class HumanChatOutputDelta:
     text: str
-    created_at: int
 
 
 @dataclass(frozen=True)
-class ChatHistory:
-    messages: tuple[ChatMessage, ...]
-    session_key: str | None        # the durable Hermes key whose history was read, if any
+class HumanChatCompletion:
+    text: str
+    role: Literal["assistant", "system"]
 
 
-@dataclass(frozen=True)
-class ChatSendResult:              # what the gateway adapter returns per send
-    reply_text: str
-    session_key: str               # persisted onto the entity's chat_session_key
-
-
-@dataclass(frozen=True)
-class CommandRunResult:            # what the gateway adapter returns per /command run
-    reply_text: str
-    session_key: str               # persisted onto the entity's chat_session_key (first run)
-    kind: str                      # "assistant" (a model turn) | "system" (display output)
-
-
-@dataclass(frozen=True)
-class ChatStreamChunk:             # normalized gateway stream chunk for SSE callers
-    type: str                      # "session" (internal) | "activity" | "token" | "done"
-    text: str = ""                 # token text, or activity label when type == "activity"
-    reply_text: str = ""           # complete reply when type == "done"
-    session_key: str = ""          # minted/resumed key when type == "done"
-    kind: str = "assistant"        # "assistant" | "system" when type == "done"
-    activity: ChatActivityObservation | None = None   # structured activity when type == "activity"
+HumanChatObservation: TypeAlias = (  # noqa: UP040 -- frozen AD06 declaration
+    ChatActivityObservation | HumanChatOutputDelta | HumanChatCompletion
+)
 
 
 @dataclass(frozen=True)

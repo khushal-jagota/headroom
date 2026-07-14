@@ -1,0 +1,28 @@
+Independent plan review
+Date: 2026-07-14
+Session: 019f5fde-bcf1-7032-86e3-cc79768ed501
+Model: gpt-5.5
+Reasoning effort: high
+Sandbox: read-only
+
+Finding 1 — High: passing the absolute deadline into
+`AutomaticEmployeeStepDiscoveryLoop.stop` differs from AD03's original exact no-argument signature.
+
+Disposition: refuted as a regression against the later restart-recovery contract. Current main deliberately
+uses one absolute monotonic shutdown budget across discovery, runner, both role gateways, live sessions,
+routers, and child cleanup. Removing the discovery deadline would let a stuck poll exceed or restart that
+budget. `main-integration.md` now explicitly records this one narrow lifecycle-signature supersession. The
+eligibility factors, candidate query, claim, wake, owner, and normal loop behavior are unchanged.
+
+Finding 2 — Medium: the proposed raw retired-name scan included tests whose deletion assertions intentionally
+contain those old names as string fixtures.
+
+Disposition: accepted. The raw scan now covers live source and current docs. Tests retain their AST/identifier
+and deletion assertions, which distinguish executable vocabulary from rejected-name fixtures.
+
+A fresh independent re-review is required before implementation.
+
+Fresh re-review
+Session: 019f5fe2-49b4-7fe3-b2d0-a0028de4835d
+
+NO VIOLATIONS

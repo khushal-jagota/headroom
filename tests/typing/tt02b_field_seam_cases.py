@@ -1,39 +1,34 @@
-"""t_tt02b strict-mypy field-seam cases.
-
-This module is TYPE-CHECKED, not run: `./verify` runs strict mypy over `tests/typing/`,
-so it enforces that the public data-layer / action / resolution field seams accept a
-BARE `str` field id (a foreign type's field is a plain str, e.g. "alpha"), not only a
-`FieldName`. If any of these seams narrows back to `field: FieldName`, the bare-str
-calls below become incompatible-argument errors and this file fails the mypy gate —
-catching the exact defect T5 could not (unit tests are not type-checked).
-
-Pure typing surface: guarded by `TYPE_CHECKING` so nothing executes.
-"""
+"""Strict-mypy cases for plain-string fields and explicit semantic definitions."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import sqlite3
+from collections.abc import Mapping
+from typing import assert_type
 
-if TYPE_CHECKING:
-    import sqlite3
+from planner.runtime.automatic_employee_step_eligibility_wake import (
+    AutomaticEmployeeStepEligibilityWake,
+)
 
-    from planner.runtime.readiness_doorbell import ReadinessDoorbell
-    from planner.tickets import actions as tickets_actions
-    from planner.tickets import data as tickets_data
-    from planner.tickets.contracts import AtCap, Ticket
-    from planner.tickets.logic import resolution
-    from planner.tickets.logic.decisions import Decision
+from planner.runtime import automatic_employee_step_eligibility
+from planner.tickets import actions as tickets_actions
+from planner.tickets import data as tickets_data
+from planner.tickets.contracts import AtCap, Ticket
+from planner.tickets.logic import admission, external_work, resolution
+from planner.tickets.logic.decisions import Decision
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 
 def _cases(
     conn: sqlite3.Connection,
-    doorbell: ReadinessDoorbell,
+    eligibility_wake: AutomaticEmployeeStepEligibilityWake,
     ticket: Ticket,
     at_cap: AtCap,
+    definition: WorkerTypeDefinition,
+    field_values: Mapping[str, str],
 ) -> None:
-    foreign_field: str = "alpha"   # a non-coding field id is a bare str
+    foreign_field: str = "alpha"
 
-    # data-layer writers accept a bare-str field id.
     _t1: Ticket = tickets_data.file_proposal(
         conn, "t_1", field=foreign_field, body="b", actor="agent", now=0
     )
@@ -50,17 +45,91 @@ def _cases(
         conn, "t_1", field=foreign_field, note="n", actor="human", now=0
     )
 
-    # action-layer wrappers accept a bare-str field id.
     _t6: Ticket = tickets_actions.accept_proposal(
-        conn, "t_1", field=foreign_field, actor="human", now=0, readiness_doorbell=doorbell
+        conn,
+        "t_1",
+        field=foreign_field,
+        actor="human",
+        now=0,
+        automatic_employee_step_eligibility_wake=eligibility_wake,
     )
     _t7: Ticket = tickets_actions.edit_field_value(
-        conn, "t_1", field=foreign_field, new_body="b", actor="human", now=0,
-        readiness_doorbell=doorbell,
+        conn,
+        "t_1",
+        field=foreign_field,
+        new_body="b",
+        actor="human",
+        now=0,
+        automatic_employee_step_eligibility_wake=eligibility_wake,
     )
 
-    # the resolution decision functions accept a bare-str field id.
-    _d1: Decision = resolution.decide_accept(
-        ticket, foreign_field, "human", None, "none", at_cap
+    assert_type(
+        resolution.decide_file_proposal(
+            ticket,
+            foreign_field,
+            "b",
+            "agent",
+            0,
+            worker_type_definition=definition,
+        ),
+        Decision,
     )
-    _d2: Decision = resolution.decide_edit_value(ticket, foreign_field, "b", "human")
+    assert_type(
+        resolution.decide_accept(
+            ticket,
+            foreign_field,
+            "human",
+            None,
+            "none",
+            at_cap,
+            worker_type_definition=definition,
+        ),
+        Decision,
+    )
+    assert_type(
+        resolution.decide_edit_value(
+            ticket,
+            foreign_field,
+            "b",
+            "human",
+            worker_type_definition=definition,
+        ),
+        Decision,
+    )
+    assert_type(
+        external_work.decide_external_work(
+            ticket,
+            "needs_beta",
+            field_values,
+            worker_type_definition=definition,
+        ),
+        tuple[Decision, Decision],
+    )
+    admission.check_agent_proposal(
+        ticket.stage,
+        ticket.ceiling,
+        ticket.at_cap,
+        foreign_field,
+        worker_type_definition=definition,
+    )
+    assert_type(
+        automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step(
+            conn,
+            ticket,
+            planning_day_id="day_2099-01-01",
+            worker_type_definition=definition,
+        ),
+        bool,
+    )
+    assert_type(
+        tickets_data.claim_automatic_employee_step(
+            conn,
+            ticket.id,
+            planning_day_id_resolver=lambda: "day_2099-01-01",
+            eligibility_check=(
+                automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step
+            ),
+            now=0,
+        ),
+        Ticket | None,
+    )

@@ -1,4 +1,4 @@
-"""Link actions that commit before ringing readiness discovery."""
+"""Link actions that commit before waking Automatic Employee-step eligibility."""
 
 from __future__ import annotations
 
@@ -6,7 +6,9 @@ import sqlite3
 
 from planner.core import links
 from planner.core.contracts import LinkKind
-from planner.runtime.readiness_doorbell import ReadinessDoorbell
+from planner.runtime.automatic_employee_step_eligibility_wake import (
+    AutomaticEmployeeStepEligibilityWake,
+)
 
 
 def add_link(
@@ -16,7 +18,7 @@ def add_link(
     kind: LinkKind,
     *,
     now: int,
-    readiness_doorbell: ReadinessDoorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> None:
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -27,7 +29,8 @@ def add_link(
     else:
         conn.execute("COMMIT")
     if kind is LinkKind.blocks:
-        readiness_doorbell.ring()
+        automatic_employee_step_eligibility_wake.wake()
+
 
 def remove_link(
     conn: sqlite3.Connection,
@@ -36,7 +39,7 @@ def remove_link(
     kind: LinkKind,
     *,
     now: int,
-    readiness_doorbell: ReadinessDoorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> None:
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -47,4 +50,4 @@ def remove_link(
     else:
         conn.execute("COMMIT")
     if kind is LinkKind.blocks:
-        readiness_doorbell.ring()
+        automatic_employee_step_eligibility_wake.wake()

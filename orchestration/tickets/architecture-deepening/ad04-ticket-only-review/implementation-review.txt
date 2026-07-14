@@ -1,0 +1,34 @@
+AD04 implementation review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Initial session: 019f5eda-8511-7143-bd66-a7dd34649e66
+
+Findings
+
+Medium: `ReviewRoute.svelte` still typed the Ticket detail resource and stale check as `AnyRecord`, then
+cast the loaded result to `TicketDetail & AnyRecord`. The Ticket-only contract requires the detail path to
+use `TicketDetail` directly rather than preserve the retired generic entity model.
+
+Low: the same component read `running_worker_count` through a helper still named `runningAgentsText`.
+That name contradicted the locked Worker terminology even though the visible text remained unchanged.
+
+Disposition
+
+Both accepted. The delegated correction changed the resource handle, resource fetch, stale check, and
+markup values to `TicketDetail`, removing the `AnyRecord` import and every cast. It renamed the helper to
+`runningWorkersText` while deliberately preserving the visible `agent` / `agents in progress` text.
+Frontend checking, tests, production build, the focused contract scan, and `git diff --check` passed.
+
+Corrected-diff re-review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5ede-7f24-78a2-b59a-4a6c51223672
+
+Result
+
+NO VIOLATIONS
+
+The fresh review re-read the complete locked contract and the full unstaged diff, including the added test
+and generated bundle. It reconfirmed the backend selection and exact payload, global running-worker count,
+deletions, Ticket-only frontend, selective invalidation and cold-start handling, preservation behavior,
+tests, documentation, served bundle, retired-vocabulary guard, and changed-path allowlist.

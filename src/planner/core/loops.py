@@ -1,4 +1,4 @@
-"""Production lifecycle for employee execution and optional readiness polling."""
+"""Production lifecycle for Employee execution and optional automatic discovery."""
 
 from __future__ import annotations
 
@@ -13,14 +13,16 @@ from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.db import connect
 from planner.minds.shared_gateway import SharedGateway
+from planner.runtime.automatic_employee_step_discovery_loop import (
+    AutomaticEmployeeStepDiscoveryLoop,
+)
+from planner.runtime.automatic_employee_step_eligibility_wake import (
+    AutomaticEmployeeStepEligibilityWake,
+    LoopAutomaticEmployeeStepEligibilityWake,
+    NoOpAutomaticEmployeeStepEligibilityWake,
+)
 from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.runtime.lock import ensure_machine_lock, release_machine_lock
-from planner.runtime.readiness_doorbell import (
-    LoopReadinessDoorbell,
-    NoOpReadinessDoorbell,
-    ReadinessDoorbell,
-)
-from planner.runtime.ticket_readiness_loop import TicketReadinessLoop
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -30,15 +32,18 @@ class BackgroundLoops:
         self,
         tasks: list[asyncio.Task[None]],
         employee_step_runner: EmployeeStepRunner,
-        ticket_readiness_loop: TicketReadinessLoop | None = None,
+        automatic_employee_step_discovery_loop: AutomaticEmployeeStepDiscoveryLoop | None = None,
         lock_path: str | None = None,
-        readiness_doorbell: ReadinessDoorbell | None = None,
+        automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake
+        | None = None,
         shutdown_grace_seconds: float = 30.0,
     ) -> None:
         self._tasks = tasks
         self.employee_step_runner = employee_step_runner
-        self.ticket_readiness_loop = ticket_readiness_loop
-        self.readiness_doorbell = readiness_doorbell or NoOpReadinessDoorbell()
+        self.automatic_employee_step_discovery_loop = automatic_employee_step_discovery_loop
+        self.automatic_employee_step_eligibility_wake = (
+            automatic_employee_step_eligibility_wake or NoOpAutomaticEmployeeStepEligibilityWake()
+        )
         self._lock_path = lock_path
         self._shutdown_grace_seconds = shutdown_grace_seconds
         self._stopped = False
@@ -51,8 +56,12 @@ class BackgroundLoops:
         self._stopped = True
         if deadline is None:
             deadline = _monotonic() + self._shutdown_grace_seconds
-        if self.ticket_readiness_loop is not None:
-            await asyncio.to_thread(_stop_with_deadline, self.ticket_readiness_loop, deadline)
+        if self.automatic_employee_step_discovery_loop is not None:
+            await asyncio.to_thread(
+                _stop_with_deadline,
+                self.automatic_employee_step_discovery_loop,
+                deadline,
+            )
         await asyncio.to_thread(_stop_with_deadline, self.employee_step_runner, deadline)
         if self._lock_path is not None:
             release_machine_lock(self._lock_path)
@@ -107,13 +116,16 @@ def _settle_stale_worker_turns_after_ticket_handoff(config: Config, clock: Clock
         ).fetchall()
         now = clock.now_unix()
         for row in rows:
-            chat_data.finish_turn(
+            chat_data.settle_chat_turn(
                 conn,
                 str(row["id"]),
                 entity_id=str(row["entity_id"]),
-                reply_text="",
-                output_role=str(row["output_role"]),
                 status="interrupted",
+                reply_text="",
+                output_role="system"
+                if str(row["output_role"]) == "system"
+                else "assistant",
+                error=None,
                 now=now,
             )
     finally:
@@ -135,52 +147,56 @@ def start_background_loops(
     *,
     shared_gateway: SharedGateway,
 ) -> BackgroundLoops:
-    """Always compose employee execution; optionally own readiness discovery."""
+    """Always compose Employee execution; optionally own automatic discovery."""
     global _active
     if _active is not None:
         raise RuntimeError("background loops already running")
 
-    def build_runner(doorbell: ReadinessDoorbell) -> EmployeeStepRunner:
+    def build_runner(
+        eligibility_wake: AutomaticEmployeeStepEligibilityWake,
+    ) -> EmployeeStepRunner:
         return EmployeeStepRunner(
             config.db_path,
             clock,
             gateway=shared_gateway,
-            readiness_doorbell=doorbell,
+            automatic_employee_step_eligibility_wake=eligibility_wake,
             boundary_hour=config.boundary_hour,
             busy_timeout_ms=config.db_busy_timeout_ms,
         )
 
-    readiness_doorbell: ReadinessDoorbell = NoOpReadinessDoorbell()
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake = (
+        NoOpAutomaticEmployeeStepEligibilityWake()
+    )
     employee_step_runner: EmployeeStepRunner
-    ticket_readiness_loop: TicketReadinessLoop | None = None
+    automatic_employee_step_discovery_loop: AutomaticEmployeeStepDiscoveryLoop | None = None
     lock_path: str | None = None
 
     if not config.dispatch_enabled:
-        _LOGGER.info("Ticket readiness loop disabled (dispatch_enabled=false)")
-        employee_step_runner = build_runner(readiness_doorbell)
+        _LOGGER.info("Automatic Employee-step discovery disabled (dispatch_enabled=false)")
+        employee_step_runner = build_runner(automatic_employee_step_eligibility_wake)
         _settle_stale_worker_turns_after_ticket_handoff(config, clock)
         _recover_running_ticket_steps(config, employee_step_runner)
     elif not ensure_machine_lock(config.dispatcher_lock_path):
         _LOGGER.info(
-            "Ticket readiness loop not started: another process holds the polling lock"
+            "Automatic Employee-step discovery not started: another process holds the polling lock"
         )
-        employee_step_runner = build_runner(readiness_doorbell)
+        employee_step_runner = build_runner(automatic_employee_step_eligibility_wake)
         _settle_stale_worker_turns_after_ticket_handoff(config, clock)
         _recover_running_ticket_steps(config, employee_step_runner)
     else:
         candidate_runner: EmployeeStepRunner | None = None
-        candidate_loop: TicketReadinessLoop | None = None
-        loop_slot: list[TicketReadinessLoop] = []
+        candidate_loop: AutomaticEmployeeStepDiscoveryLoop | None = None
+        loop_slot: list[AutomaticEmployeeStepDiscoveryLoop] = []
 
         def wake_loop() -> None:
             loop_slot[0].wake()
 
-        candidate_doorbell = LoopReadinessDoorbell(wake_loop)
+        candidate_eligibility_wake = LoopAutomaticEmployeeStepEligibilityWake(wake_loop)
         try:
-            candidate_runner = build_runner(candidate_doorbell)
+            candidate_runner = build_runner(candidate_eligibility_wake)
             _settle_stale_worker_turns_after_ticket_handoff(config, clock)
             _recover_running_ticket_steps(config, candidate_runner)
-            candidate_loop = TicketReadinessLoop(
+            candidate_loop = AutomaticEmployeeStepDiscoveryLoop(
                 config.db_path,
                 clock,
                 candidate_runner,
@@ -191,35 +207,38 @@ def start_background_loops(
             candidate_loop.start(config.tick_seconds)
         except Exception:
             _LOGGER.exception(
-                "Ticket readiness loop failed to start; direct employee revisions remain available"
+                "Automatic Employee-step discovery failed to start; "
+                "direct employee revisions remain available"
             )
             if candidate_loop is not None:
                 try:
                     candidate_loop.stop()
                 except Exception:
-                    _LOGGER.exception("partially started Ticket readiness loop failed to stop")
+                    _LOGGER.exception(
+                        "partially started Automatic Employee-step discovery loop failed to stop"
+                    )
             if candidate_runner is not None:
                 try:
                     candidate_runner.stop()
                 except Exception:
                     _LOGGER.exception("discarded employee runner failed to stop")
             release_machine_lock(config.dispatcher_lock_path)
-            readiness_doorbell = NoOpReadinessDoorbell()
-            employee_step_runner = build_runner(readiness_doorbell)
+            automatic_employee_step_eligibility_wake = NoOpAutomaticEmployeeStepEligibilityWake()
+            employee_step_runner = build_runner(automatic_employee_step_eligibility_wake)
         else:
             assert candidate_runner is not None
             assert candidate_loop is not None
-            readiness_doorbell = candidate_doorbell
+            automatic_employee_step_eligibility_wake = candidate_eligibility_wake
             employee_step_runner = candidate_runner
-            ticket_readiness_loop = candidate_loop
+            automatic_employee_step_discovery_loop = candidate_loop
             lock_path = config.dispatcher_lock_path
 
     loops = BackgroundLoops(
         [],
         employee_step_runner,
-        ticket_readiness_loop,
+        automatic_employee_step_discovery_loop,
         lock_path,
-        readiness_doorbell,
+        automatic_employee_step_eligibility_wake,
         shutdown_grace_seconds=float(config.shutdown_grace_seconds),
     )
     _active = loops

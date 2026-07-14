@@ -1,12 +1,11 @@
-"""Job B — the shipped ``new_worker`` ticket type: its contract, its exact manifest,
+"""Job B — the shipped ``new_worker`` Worker type: its contract, its exact manifest,
 and a compact drive-to-done through the real ``data.*`` writers.
 
-``new_worker`` is the SECOND production type (registered in
-``coding_bridge.coding_registry()`` alongside ``coding``). Its worker designs and
+``new_worker`` is the second production type (registered in the production
+Worker-type configuration alongside ``coding``). Its worker designs and
 lands ANOTHER worker; its lifecycle is a bespoke thinking scaffold
 (``needs_kickoff -> needs_stages -> needs_thinking -> needs_drafting ->
-needs_closeout -> done``) whose three middle stages/fields are NOVEL — not
-``TicketState`` / ``FieldName`` members. This module proves:
+needs_closeout -> done``) whose three middle stages/fields are novel. This module proves:
 - the definition validates and serializes to its exact manifest (default_ceiling is
   the leading ``needs_kickoff``; first worker stage is ``needs_stages``);
 - a ``new_worker`` ticket is created and driven stage-by-stage (propose -> approve ->
@@ -28,22 +27,20 @@ import pytest
 
 from planner.core.clock import TestClock
 from planner.core.db import connect, create_schema
-from planner.ticket_types.logic import validation, views
-from planner.ticket_types.new_worker import NEW_WORKER_DEFINITION
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
-    FieldName,
 )
-from planner.tickets.logic import coding_bridge, fields_codec
+from planner.tickets.logic import fields_codec
+from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
+from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
+from planner.worker_types.registry import WorkerTypeRegistry
 
 # The skills the production registry validator needs (R14): the two shipped worker
 # specialists plus the base role.
-_KNOWN_SKILLS = frozenset(
-    {"panels-worker", "panels-worker-coding", "panels-worker-new-worker"}
-)
+_KNOWN_SKILLS = frozenset({"panels-worker", "panels-worker-coding", "panels-worker-new-worker"})
 _KNOWN_TOOLSET_PROFILES = frozenset({"default"})
 
 
@@ -68,8 +65,8 @@ def fake_clock() -> TestClock:
 def test_registry_validates_new_worker() -> None:
     # The full validator accepts the new_worker definition through the same door the
     # production registry uses at build (no raise).
-    validation.validate_definition(
-        NEW_WORKER_DEFINITION,
+    WorkerTypeRegistry(
+        (NEW_WORKER_TYPE_DEFINITION,),
         known_skills=_KNOWN_SKILLS,
         known_toolset_profiles=_KNOWN_TOOLSET_PROFILES,
     )
@@ -77,13 +74,13 @@ def test_registry_validates_new_worker() -> None:
 
 def test_production_registry_carries_new_worker() -> None:
     # new_worker ships in the production singleton alongside coding.
-    assert coding_bridge.coding_registry().type_ids() == ("coding", "new_worker")
-    assert coding_bridge.require("new_worker").type_id == "new_worker"
+    assert PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types() == ("coding", "new_worker")
+    assert PRODUCTION_WORKER_TYPE_REGISTRY.require("new_worker").worker_type == "new_worker"
 
 
 # The exact serialized manifest — the full dict (mirrors the coding manifest test).
 NEW_WORKER_MANIFEST = {
-    "type_id": "new_worker",
+    "worker_type": "new_worker",
     "label": "New Worker",
     "stages": [
         {
@@ -142,17 +139,21 @@ NEW_WORKER_MANIFEST = {
 
 
 def test_new_worker_manifest_exact() -> None:
-    assert coding_bridge.coding_registry().manifest("new_worker") == NEW_WORKER_MANIFEST
+    assert PRODUCTION_WORKER_TYPE_REGISTRY.manifest("new_worker") == NEW_WORKER_MANIFEST
 
 
 def test_new_worker_manifest_json_roundtrips() -> None:
-    assert json.loads(
-        json.dumps(coding_bridge.coding_registry().manifest("new_worker"))
-    ) == NEW_WORKER_MANIFEST
+    assert (
+        json.loads(json.dumps(PRODUCTION_WORKER_TYPE_REGISTRY.manifest("new_worker")))
+        == NEW_WORKER_MANIFEST
+    )
 
 
 def test_new_worker_gate_map_is_golden() -> None:
-    assert views.gate_map(NEW_WORKER_DEFINITION) == {
+    assert {
+        stage: NEW_WORKER_TYPE_DEFINITION.gating_field(stage)
+        for stage in NEW_WORKER_TYPE_DEFINITION.stage_ids()[:-1]
+    } == {
         "needs_kickoff": "kickoff",
         "needs_stages": "stages",
         "needs_thinking": "thinking",
@@ -162,22 +163,26 @@ def test_new_worker_gate_map_is_golden() -> None:
 
 
 def test_new_worker_field_order_is_golden() -> None:
-    assert views.field_ids(NEW_WORKER_DEFINITION) == (
-        "kickoff", "stages", "thinking", "drafting", "closeout",
+    assert NEW_WORKER_TYPE_DEFINITION.field_ids() == (
+        "kickoff",
+        "stages",
+        "thinking",
+        "drafting",
+        "closeout",
     )
 
 
 def test_new_worker_default_ceiling_and_first_worker_stage() -> None:
     # Default ceiling is the leading needs_kickoff (global); the FIRST WORKER stage —
     # the distinct threshold — is needs_stages.
-    assert views.default_ceiling(NEW_WORKER_DEFINITION) == "needs_kickoff"
-    assert views.first_worker_stage(NEW_WORKER_DEFINITION) == "needs_stages"
+    assert NEW_WORKER_TYPE_DEFINITION.default_ceiling() == "needs_kickoff"
+    assert NEW_WORKER_TYPE_DEFINITION.first_worker_stage() == "needs_stages"
 
 
 def test_new_worker_has_no_transition_hooks() -> None:
     # No stage hands accepted work to a human to execute, so there is no plan-handoff
     # analogue — the hook tuple is empty by design.
-    assert NEW_WORKER_DEFINITION.transition_hooks == ()
+    assert NEW_WORKER_TYPE_DEFINITION.transition_hooks == ()
 
 
 # =====================================================================
@@ -186,12 +191,10 @@ def test_new_worker_has_no_transition_hooks() -> None:
 
 
 def _worker_session_exists(conn: Connection, tid: str) -> bool:
-    row = conn.execute("SELECT chat_session_key FROM tickets WHERE id = ?", (tid,)).fetchone()
-    if row["chat_session_key"] is not None:
+    row = conn.execute("SELECT employee_session_id FROM tickets WHERE id = ?", (tid,)).fetchone()
+    if row["employee_session_id"] is not None:
         return True
-    turns = conn.execute(
-        "SELECT 1 FROM chat_turns WHERE entity_id = ? LIMIT 1", (tid,)
-    ).fetchone()
+    turns = conn.execute("SELECT 1 FROM chat_turns WHERE entity_id = ? LIMIT 1", (tid,)).fetchone()
     return turns is not None
 
 
@@ -200,24 +203,33 @@ def test_new_worker_drives_to_done_via_real_writers(
 ) -> None:
     now = fake_clock.now_unix()
     ticket = tickets_data.create_ticket(
-        tmp_db, title="Design a research worker", actor="human", now=now,
-        title_max_chars=TITLE_MAX_CHARS, ticket_type="new_worker",
+        tmp_db,
+        title="Design a research worker",
+        actor="human",
+        now=now,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="new_worker",
     )
     tid = ticket.id
 
     # Created at needs_kickoff scoped to the leading needs_kickoff ceiling, kickoff parked.
-    assert ticket.state == "needs_kickoff"
+    assert ticket.stage == "needs_kickoff"
     assert ticket.ceiling == "needs_kickoff"
-    assert ticket.ticket_type == "new_worker"
+    assert ticket.worker_type == "new_worker"
     assert fields_codec.get_slot(ticket.fields, "kickoff").proposal is not None
 
     # Accept kickoff, expanding the ceiling all the way to needs_closeout -> advances to
     # needs_stages (the first novel stage).
     t = tickets_data.accept_proposal(
-        tmp_db, tid, field=FieldName.kickoff, actor="human", now=now,
-        next_ceiling="needs_closeout", at_cap=AtCap.propose,
+        tmp_db,
+        tid,
+        field="kickoff",
+        actor="human",
+        now=now,
+        next_ceiling="needs_closeout",
+        at_cap=AtCap.propose,
     )
-    assert t.state == "needs_stages"
+    assert t.stage == "needs_stages"
     assert t.ceiling == "needs_closeout"
 
     # Drive the three novel worker stages: the ceiling (needs_closeout) is BEYOND each
@@ -230,7 +242,7 @@ def test_new_worker_drives_to_done_via_real_writers(
         t = tickets_data.file_proposal(
             tmp_db, tid, field=field, body=f"{field} body", actor="agent", now=now
         )
-        assert t.state == next_state
+        assert t.stage == next_state
         assert fields_codec.get_slot(t.fields, field).value == f"{field} body"
         assert fields_codec.get_slot(t.fields, field).proposal is None
 
@@ -239,12 +251,17 @@ def test_new_worker_drives_to_done_via_real_writers(
         tmp_db, tid, field="closeout", body="closeout body", actor="agent", now=now
     )
     t = tickets_data.accept_proposal(
-        tmp_db, tid, field="closeout", actor="human", now=now,
-        next_ceiling=NO_FURTHER, at_cap=AtCap.stop,
+        tmp_db,
+        tid,
+        field="closeout",
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.stop,
     )
 
     # Exact final state: done, every worker field settled to its accepted value.
-    assert t.state == "done"
+    assert t.stage == "done"
     assert fields_codec.get_slot(t.fields, "stages").value == "stages body"
     assert fields_codec.get_slot(t.fields, "thinking").value == "thinking body"
     assert fields_codec.get_slot(t.fields, "drafting").value == "drafting body"
@@ -255,15 +272,17 @@ def test_new_worker_drives_to_done_via_real_writers(
     assert _worker_session_exists(tmp_db, tid) is False
 
 
-def test_new_worker_drives_to_dropped(
-    tmp_db: Connection, fake_clock: TestClock
-) -> None:
+def test_new_worker_drives_to_dropped(tmp_db: Connection, fake_clock: TestClock) -> None:
     now = fake_clock.now_unix()
     ticket = tickets_data.create_ticket(
-        tmp_db, title="Abandon", actor="human", now=now,
-        title_max_chars=TITLE_MAX_CHARS, ticket_type="new_worker",
+        tmp_db,
+        title="Abandon",
+        actor="human",
+        now=now,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="new_worker",
     )
     # drop is the universal reserved bookend; it terminates a new_worker ticket at dropped.
     t = tickets_data.drop_ticket(tmp_db, ticket.id, actor="human", now=now)
-    assert t.state == "dropped"
+    assert t.stage == "dropped"
     assert _worker_session_exists(tmp_db, ticket.id) is False

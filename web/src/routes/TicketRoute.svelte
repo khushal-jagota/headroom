@@ -1,9 +1,11 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
-  import { fetchJson, fetchText } from "../lib/api";
-  import { mutateJson, resource } from "../lib/resources";
+  import { onDestroy, untrack } from "svelte";
+  import { fetchText } from "../lib/api";
+  import {
+    mutateJsonWithResourceEffect,
+    resourceCatalogue
+  } from "../lib/resourceCatalogue";
   import { PRIORITIES, fieldSlot, labelize } from "../lib/ui";
-  import { manifestResource } from "../lib/manifest.svelte";
   import {
     ceilingOptionsFor,
     fieldStageVisualStateFor,
@@ -11,10 +13,6 @@
     recapVisibleFor
   } from "../lib/lifecycle";
   import type {
-    CurrentSprintResponse,
-    GatewayStatus,
-    ProjectsResponse,
-    SprintsResponse,
     TicketDetail
   } from "../lib/types";
   import ChatPanel from "../components/ChatPanel.svelte";
@@ -29,39 +27,29 @@
   import TicketStageSection from "../components/TicketStageSection.svelte";
 
   let { id }: { id: string } = $props();
+  const stableId = untrack(() => id);
 
-  const ticket = resource<TicketDetail>(`ticket:${id}`, (signal) =>
-    fetchJson(`/api/tickets/${id}`, { signal })
-  );
-  const sprints = resource<SprintsResponse>("sprints", (signal) =>
-    fetchJson("/api/sprints", { signal })
-  );
-  const projects = resource<ProjectsResponse>("projects", (signal) =>
-    fetchJson("/api/projects", { signal })
-  );
-  const chatStatus = resource<GatewayStatus>(`chat-status:${id}`, (signal) =>
-    fetchJson(`/api/chat/${id}/status`, { signal })
-  );
-  const currentSprint = resource<CurrentSprintResponse>("sprint:current", (signal) =>
-    fetchJson("/api/sprint/current", { signal })
-  );
-  const manifest = manifestResource();
+  const ticket = resourceCatalogue.ticket(stableId);
+  const sprints = resourceCatalogue.sprintSummaries();
+  const projects = resourceCatalogue.projects();
+  const chatStatus = resourceCatalogue.chatGatewayStatus(stableId);
+  const currentSprint = resourceCatalogue.currentSprint();
+  const manifest = resourceCatalogue.workerTypeManifests();
 
-  // Derive the per-type lifecycle from the RESOURCE (ticket.data?.ticket_type), not
+  // Derive the per-Worker-type lifecycle from the RESOURCE (ticket.data?.worker_type), not
   // the markup-local {@const detail} which is only bound inside {#if ticket.data}
-  // (Codex F2). Null while the manifest is still loading OR when the type is absent
+  // (Codex F2). Null while the manifest is still loading OR when the Worker type is absent
   // from a loaded manifest; the markup tells those apart via manifest.loading /
   // manifest.error + a type-present check (Codex F3).
-  let lc = $derived(lifecycleFor(manifest.data, ticket.data?.ticket_type));
-  let manifestMissingType = $derived(
+  let lc = $derived(lifecycleFor(manifest.data, ticket.data?.worker_type));
+  let manifestMissingWorkerType = $derived(
     Boolean(
       ticket.data &&
         manifest.data &&
-        !manifest.data.types.some((t) => t.type_id === ticket.data?.ticket_type)
+        !manifest.data.worker_types.some((item) => item.worker_type === ticket.data?.worker_type)
     )
   );
 
-  const ticketInvalidations = [`ticket:${id}`, "board", "queues", "sprint:current"];
   const emptyTicketFieldText = "Not written yet.";
   const emptyTicketRecapText = "No recap yet.";
   const implementerOptions = [
@@ -80,38 +68,41 @@
   ]);
 
   function patch(body: Record<string, unknown>): Promise<unknown> {
-    return mutateJson(`/api/tickets/${id}`, { method: "PATCH", body }, ticketInvalidations);
+    const effect = "title" in body
+      ? { kind: "ticketTitleChanged" as const, ticketId: stableId }
+      : { kind: "ticketChanged" as const, ticketId: stableId };
+    return mutateJsonWithResourceEffect(`/api/tickets/${stableId}`, { method: "PATCH", body }, effect);
   }
 
   function saveScope(body: Record<string, unknown>): Promise<unknown> {
-    return mutateJson(
-      `/api/tickets/${id}/scope`,
+    return mutateJsonWithResourceEffect(
+      `/api/tickets/${stableId}/scope`,
       { method: "POST", body },
-      ticketInvalidations
+      { kind: "ticketChanged", ticketId: stableId }
     );
   }
 
   function saveNote(field: string, note: string): Promise<unknown> {
-    return mutateJson(
-      `/api/tickets/${id}/notes/${field}`,
+    return mutateJsonWithResourceEffect(
+      `/api/tickets/${stableId}/notes/${field}`,
       { method: "PUT", body: { user_note: note } },
-      ticketInvalidations
+      { kind: "ticketChanged", ticketId: stableId }
     );
   }
 
   function saveValue(field: string, body: string): Promise<unknown> {
-    return mutateJson(
-      `/api/tickets/${id}/value/${field}`,
+    return mutateJsonWithResourceEffect(
+      `/api/tickets/${stableId}/value/${field}`,
       { method: "PUT", body: { body } },
-      ticketInvalidations
+      { kind: "ticketChanged", ticketId: stableId }
     );
   }
 
   function acceptField(field: string, body: Record<string, unknown>): Promise<unknown> {
-    return mutateJson(
-      `/api/tickets/${id}/accept/${field}`,
+    return mutateJsonWithResourceEffect(
+      `/api/tickets/${stableId}/accept/${field}`,
       { method: "POST", body },
-      ticketInvalidations
+      { kind: "ticketReviewStateChanged", ticketId: stableId }
     );
   }
 
@@ -132,7 +123,7 @@
   async function copyTicket(): Promise<void> {
     headerError = null;
     try {
-      const text = await fetchText(`/api/tickets/${id}/copy-text`);
+      const text = await fetchText(`/api/tickets/${stableId}/copy-text`);
       await writeClipboard(text);
       copied = true;
       window.setTimeout(() => (copied = false), 1500);
@@ -144,7 +135,11 @@
   async function takeover(detail: TicketDetail): Promise<void> {
     const action = detail.ticket_status === "user_takeover" ? "release" : "takeover";
     try {
-      await mutateJson(`/api/tickets/${id}/${action}`, { method: "POST" }, ticketInvalidations);
+      await mutateJsonWithResourceEffect(
+        `/api/tickets/${stableId}/${action}`,
+        { method: "POST" },
+        { kind: "ticketReviewStateChanged", ticketId: stableId }
+      );
     } catch (err) {
       headerError = err;
     }
@@ -195,14 +190,14 @@
 <section
   class="ticket-screen"
   data-screen="ticket"
-  data-ticket-id={id}
-  data-state={ticket.data?.state}
+  data-ticket-id={stableId}
+  data-stage={ticket.data?.stage}
 >
   <ResourceState error={ticket.error} loading={ticket.loading} hasData={Boolean(ticket.data)} loadingText="Loading ticket...">
-    {#if ticket.data && (manifest.error || manifestMissingType)}
+    {#if ticket.data && (manifest.error || manifestMissingWorkerType)}
       <div class="ticket-page" data-ticket-manifest-error>
         <ErrorLine
-          error={manifest.error ?? { code: "unknown_ticket_type", message: `no manifest for type "${ticket.data.ticket_type}"` }}
+          error={manifest.error ?? { code: "unknown_worker_type", message: `no manifest for Worker type "${ticket.data.worker_type}"` }}
         />
       </div>
     {:else if ticket.data}
@@ -244,8 +239,8 @@
                 }}
               />
             </span>
-            <Pill keyLabel="type" data-ticket-type={detail.ticket_type}>
-              {lc?.typeLabel ?? labelize(detail.ticket_type)}
+            <Pill keyLabel="worker type" data-worker-type={detail.worker_type}>
+              {lc?.workerTypeLabel ?? labelize(detail.worker_type)}
             </Pill>
             <Pill keyLabel="due">
               {detail.deadline || ""}
@@ -278,7 +273,7 @@
               <span data-marker={marker}><Chip variant={marker} value={marker} /></span>
             {/each}
             <span class="ticket-facts-gap"></span>
-            {#if detail.state !== "needs_kickoff"}
+            {#if detail.stage !== "needs_kickoff"}
               <button class="ticket-act" data-ticket-takeover-toggle="" onclick={() => void takeover(detail)}>
                 {detail.ticket_status === "user_takeover" ? "Release" : "Take over"}
               </button>
@@ -287,13 +282,13 @@
               {copied ? "Copied" : "Copy"}
             </button>
           </div>
-          {#if detail.state !== "done" && detail.state !== "needs_kickoff"}
+          {#if detail.stage !== "done" && detail.stage !== "needs_kickoff"}
             <div class="ticket-leash">
               approved until
               <span class="ticket-leash-sel" data-scope-ceiling>
                 <EnumPill
                   value={detail.ceiling}
-                  options={ceilingOptionsFor(lc, detail.state)}
+                  options={ceilingOptionsFor(lc, detail.stage)}
                   onChange={(ceiling) => void saveScope({ ceiling, at_cap: detail.at_cap })}
                 />
               </span>
@@ -313,17 +308,17 @@
         <div class="ticket-col">
           <div class="ticket-recap" data-recap>
             <Disclosure title="Recap" variant="support" defaultOpen={true} data-content-section="recap">
-              {#if recapVisibleFor(lc, detail.state)}
+              {#if recapVisibleFor(lc, detail.stage)}
                 <InlineEdit
                   value={detail.recap}
                   markdown
                   multiline
                   placeholder="Short orientation for a cold reader..."
                   onSave={(raw) =>
-                    mutateJson(
-                      `/api/tickets/${id}/recap`,
+                    mutateJsonWithResourceEffect(
+                      `/api/tickets/${stableId}/recap`,
                       { method: "PUT", body: { body: raw } },
-                      ticketInvalidations
+                      { kind: "ticketChanged", ticketId: stableId }
                     )}
                 />
               {:else}
@@ -373,7 +368,7 @@
                 {slot}
                 {stageState}
                 lifecycle={lc}
-                ticketState={detail.state}
+                ticketStage={detail.stage}
                 ceiling={detail.ceiling}
                 emptyText={emptyTicketFieldText}
                 onAccept={(payload) => acceptField(name, payload)}
@@ -386,7 +381,7 @@
       </main>
       <aside class="chat-rail" data-chat>
         <ChatPanel
-          entityId={id}
+          entityId={stableId}
           available={chatStatus.data?.available ?? true}
         />
       </aside>

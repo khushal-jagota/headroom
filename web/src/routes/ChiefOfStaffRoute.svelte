@@ -1,14 +1,10 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
-  import { fetchJson } from "../lib/api";
-  import { resource } from "../lib/resources";
-  import type { GatewayStatus } from "../lib/types";
+  import { resourceCatalogue } from "../lib/resourceCatalogue";
 
   const entityId = "agent_panels_chief_of_staff";
-  const chatStatus = resource<GatewayStatus>(`chat-status:${entityId}`, (signal) =>
-    fetchJson(`/api/chat/${entityId}/status`, { signal })
-  );
+  const chatStatus = resourceCatalogue.chatGatewayStatus(entityId);
 
   onDestroy(() => {
     chatStatus.dispose();

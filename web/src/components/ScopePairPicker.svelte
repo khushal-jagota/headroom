@@ -4,11 +4,11 @@
   type ScopePair = { next_ceiling: string; at_cap: string };
 
   let {
-    newState,
+    newStage,
     lifecycle = null,
     scope = $bindable<ScopePair | null>(null)
   }: {
-    newState: string | null;
+    newStage: string | null;
     lifecycle?: Lifecycle | null;
     scope?: ScopePair | null;
   } = $props();
@@ -18,12 +18,12 @@
 
   let options = $derived([
     { value: "none", label: "No further" },
-    ...ceilingOptionsFor(lifecycle, newState || lifecycle?.ceilingRange[0] || "needs_success")
+    ...ceilingOptionsFor(lifecycle, newStage || lifecycle?.ceilingRange[0] || "needs_success")
   ]);
 
   $effect(() => {
     const externalScope = scope;
-    const nextDefault = newState || options[1]?.value || "none";
+    const nextDefault = newStage || options[1]?.value || "none";
     let nextCeiling = externalScope === null ? nextDefault : ceiling;
     let nextAtCap = externalScope === null ? "propose" : atCap;
     if (externalScope && !nextCeiling) nextCeiling = externalScope.next_ceiling;

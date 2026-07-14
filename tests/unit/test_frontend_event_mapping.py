@@ -14,7 +14,7 @@ def test_frontend_event_mapping_covers_backend_event_kinds() -> None:
     env = os.environ.copy()
     env["PLANNER_EVENT_KINDS"] = json.dumps([kind.value for kind in EventKind])
     result = subprocess.run(
-        ["node", "web/tests/event-mapping.test.mjs"],
+        ["node", "web/tests/resource-catalogue.test.mjs"],
         cwd=ROOT,
         env=env,
         capture_output=True,

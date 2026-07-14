@@ -1,0 +1,35 @@
+AD02 implementation review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5e61-8bd8-7820-9d3a-b62fd796633e
+
+Finding
+
+High: --field-file can override fixed Chief wire keys.
+
+In src/planner/cli/main.py, generic field entries are accepted into field_sources and
+later written into the request body, so --field-file stage=PATH,
+kickoff_note=PATH, or recap=PATH silently replaces the parsed fixed option. On
+create, title and worker_type are read and then silently overwritten. This violates
+the AD02 lock that generic Chief field transport cannot override fixed wire keys.
+
+Smallest correction: before duplicate handling or reading files, reject
+--field-file keys that collide with fixed request keys: the reconcile fixed keys and,
+for create, its additional metadata keys. Add CLI tests beside
+tests/e2e/test_chief_external_work_cli.py proving reserved-key field files fail
+locally before file reads or requests.
+
+Disposition
+
+Accepted. The correction is limited to src/planner/cli/main.py and
+tests/e2e/test_chief_external_work_cli.py. Reconciliation must reject only its own
+fixed wire keys; create must additionally reject its create-only fixed keys. Worker-
+type field validity remains an API decision.
+
+Corrected-diff re-review
+
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5e6a-8cb0-7212-a781-30a0857b73cd
+
+NO VIOLATIONS

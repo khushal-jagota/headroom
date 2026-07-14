@@ -1,9 +1,9 @@
 """Standalone seed entrypoint for the one-time cutover migration.
 
-Run as: python -m planner.seed --source <dir> [--db-path <path>] [--json]
+Run as: python -m planner.seed --source <dir> --worker-type <id> [--db-path <path>] [--json]
 
 Imports a markdown planning directory into a SQLite database. This is the cutover
-script (§12): the /api/seed route and the `plan seed` CLI verb were removed in the
+script (§12): there is no `/api/seed` route or `panels seed` CLI command, but the
 runtime redesign, but the importer (seed_from_source + the parsers) is retained and
 driven here. Self-contained — it does not import planner.cli.main."""
 
@@ -43,6 +43,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--source", required=True, help="Path to a markdown planning directory.")
     parser.add_argument(
+        "--worker-type",
+        required=True,
+        help="Worker type to use for every imported Ticket.",
+    )
+    parser.add_argument(
         "--db-path", default=None, help="Target SQLite path (defaults to the configured db_path)."
     )
     parser.add_argument("--json", action="store_true", help="Emit the report as JSON.")
@@ -54,7 +59,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         create_schema(conn)
         now = build_clock(config).now_unix()
-        report = seed_from_source(conn, args.source, now)
+        report = seed_from_source(
+            conn,
+            args.source,
+            worker_type=args.worker_type,
+            now=now,
+        )
     finally:
         conn.close()
 

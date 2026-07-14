@@ -1,5 +1,5 @@
 """The tickets.fields (de)serializer and slot accessors. Pure: json + contracts.
-The JSON shape mirrors the DDL default — field keys, each a slot of
+The stored JSON shape has field keys, each containing a slot of
 {value, proposal, user_note}, proposal being {body, proposed_by, created_at} or null.
 Legacy rows using {notes} are accepted on read. with_slot is copy-on-write so decision
 functions never mutate their input."""
@@ -7,14 +7,10 @@ functions never mutate their input."""
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import Any, cast
 
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import FieldSlot, Proposal, TicketFields
-from planner.tickets.logic import coding_bridge
-
-if TYPE_CHECKING:
-    from planner.tickets.logic.coding_bridge import WorkflowDefinition
 
 
 def _slot_to_dict(slot: FieldSlot) -> dict[str, Any]:
@@ -64,20 +60,24 @@ def _slot_from_obj(obj: Any) -> FieldSlot:
     )
 
 
-def fields_from_json(
-    raw: str, definition: WorkflowDefinition | None = None
-) -> TicketFields:
-    if definition is None:
-        definition = coding_bridge.coding_definition()
+def _data_from_json(raw: str) -> dict[str, Any]:
     data: Any = json.loads(raw)
     _require(isinstance(data, dict))
-    # Each DECLARED field must be present AND decode via _slot_from_obj; unknown
-    # extra top-level keys are IGNORED (leniency preserved — legacy rows carry a
-    # top-level "result" key). The slot map is keyed by the definition's declared
-    # field ids in declared order, so a registered non-coding field set decodes into
-    # its own slots.
+    return cast(dict[str, Any], data)
+
+
+def fields_from_json(raw: str) -> TicketFields:
+    """Decode the exact stored top-level field map without Worker-type resolution."""
+    data = _data_from_json(raw)
+    slots = {str(field_id): _slot_from_obj(obj) for field_id, obj in data.items()}
+    return TicketFields(slots)
+
+
+def declared_fields_from_json(raw: str, field_ids: tuple[str, ...]) -> TicketFields:
+    """Validate every declared field while ignoring unknown legacy top-level keys."""
+    data = _data_from_json(raw)
     slots: dict[str, FieldSlot] = {}
-    for field_id in coding_bridge.field_ids(definition):
+    for field_id in field_ids:
         _require(field_id in data)
         slots[field_id] = _slot_from_obj(data[field_id])
     return TicketFields(slots)
@@ -86,17 +86,13 @@ def fields_from_json(
 def get_slot(fields: TicketFields, field_id: str) -> FieldSlot:
     slot = fields.slots.get(field_id)
     if slot is None:
-        raise PlannerError(
-            ErrorCode.validation, "unknown ticket field", {"field": field_id}
-        )
+        raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": field_id})
     return slot
 
 
 def with_slot(fields: TicketFields, field_id: str, slot: FieldSlot) -> TicketFields:
     if field_id not in fields.slots:
-        raise PlannerError(
-            ErrorCode.validation, "unknown ticket field", {"field": field_id}
-        )
-    new = dict(fields.slots)          # copy-on-write; declared order preserved
+        raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": field_id})
+    new = dict(fields.slots)  # copy-on-write; declared order preserved
     new[field_id] = slot
     return TicketFields(new)

@@ -1,0 +1,50 @@
+AD06 implementation plan review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Initial session: 019f5f1e-1d9c-7833-992f-f6a1cd5ea9cd
+
+Findings
+
+High: the plan added a running-Chat check inside `claim_automatic_employee_step` after the complete
+eligibility callback. That directly violated AD03's frozen rule that the complete eligibility function is
+the sole production decision and that the claim writer contains no partial pre-status condition.
+
+High: `HumanChatTurnLifecycle` was described as human-only while also owning Pause and
+`settle_human_turn`. Current required behavior pauses a worker-origin visible Chat turn without changing
+Ticket runtime status, so the name and settlement ownership would either lie or regress that behavior.
+
+High: ordinary compare-and-set binding adopted a database winner whenever the current key differed from
+the expected key. Literal `/new` must create, persist, and use its fresh session; under that rule a concurrent
+old/current winner could incorrectly defeat the new session.
+
+Medium: the plan said `_execute_turn` received one private admitted-execution value but did not declare its
+exact fields, leaving the gateway snapshot, entity kind, expected key, model text, image paths, turn identity,
+mode, and `/new` intent under-specified.
+
+Disposition
+
+All accepted. The corrected plan must:
+
+1. add “no active Panels Chat turn” to the sole shared Automatic Employee-step eligibility function, update
+   discovery/claim/docs/tests together, and keep the claim writer free of a second check; Chat settlement
+   retains the existing no-wake behavior, including Pause, so the canonical timer observes later eligibility;
+2. use `ChatTurnLifecycle.start_human_turn` and `pause_active_turn`, explicitly making Pause cross-origin
+   visible session control while Employee delivery and Ticket settlement remain separate;
+3. carry one owner-side force-fresh binding intent for exact `/new`, consumed by its first binding so the
+   fresh candidate replaces any current key and becomes the actual live session used; and
+4. freeze one exact private admitted-execution dataclass and make `_execute_turn` accept only it.
+
+A fresh corrected-plan re-review is required before contracts are generated or implementation begins.
+
+Corrected-plan re-review
+
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5f2a-63c2-7231-bd29-038e29ca4159
+Result: NO VIOLATIONS
+
+The fresh reviewer read the corrected plan, amended ticket, AD03 and AD05 locks, standing rules, and the
+named production/test paths. It explicitly rechecked the shared eighth eligibility factor, the unchanged
+claim writer, cross-origin Pause, Employee separation, force-fresh `/new`, the exact admitted dataclass,
+SQLite transaction ordering, dormant-session recovery before Hermes writes, HTTP/image/command preservation,
+static deletion coverage, documentation, and the bounded changed-path allowlist. It found the plan
+implementable and internally consistent without widening the reviewed boundary.

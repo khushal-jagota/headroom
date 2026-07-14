@@ -32,7 +32,8 @@ from planner.sprints.logic import (
     derive_sprint_item_status,
     find_overlap,
 )
-from planner.tickets.logic import coding_bridge
+from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 
 class ItemRead(NamedTuple):
@@ -229,9 +230,7 @@ def set_sprint_dates(
         try:
             date.fromisoformat(value)
         except ValueError as exc:
-            raise PlannerError(
-                ErrorCode.validation, f"invalid {label}", {label: value}
-            ) from exc
+            raise PlannerError(ErrorCode.validation, f"invalid {label}", {label: value}) from exc
     if new_start > new_end:
         raise PlannerError(
             ErrorCode.validation,
@@ -342,12 +341,12 @@ def create_idea(
         append_event(conn, idea_id, EventKind.idea_created, {"title": title, "source": "api"}, now)
     row = cast(
         sqlite3.Row | None,
-            conn.execute(
-                "SELECT ideas.*, projects.name AS project_name "
-                "FROM ideas LEFT JOIN projects ON projects.id = ideas.project_id "
-                "WHERE ideas.id = ?",
-                (idea_id,),
-            ).fetchone(),
+        conn.execute(
+            "SELECT ideas.*, projects.name AS project_name "
+            "FROM ideas LEFT JOIN projects ON projects.id = ideas.project_id "
+            "WHERE ideas.id = ?",
+            (idea_id,),
+        ).fetchone(),
     )
     assert row is not None
     return row
@@ -417,8 +416,8 @@ def assign_item_sprint(
 # --- reads ----------------------------------------------------------------------
 
 
-def _child_state_in_progress(ticket_type: str, state: str) -> bool:
-    """Per-type "in progress by state": a non-terminal linear stage strictly past the
+def _child_stage_in_progress(worker_type_definition: WorkerTypeDefinition, stage: str) -> bool:
+    """Per-type "in progress by stage": a non-terminal linear stage strictly past the
     type's first worker stage (its first real-work stage — needs_success for coding,
     needs_stages for new_worker). Resolves the row's own definition so the pure
     ``derive_sprint_item_status`` consumes only a precomputed boolean.
@@ -428,14 +427,13 @@ def _child_state_in_progress(ticket_type: str, state: str) -> bool:
     decoupling.
 
     Terminality is checked FIRST so ``and`` short-circuits: ``dropped`` is outside the
-    linear order and ``state_index`` raises on it, so the index is never computed for a
-    terminal (done/dropped) state."""
-    defn = coding_bridge.require(ticket_type)
-    terminal = coding_bridge.views.is_terminal(defn, state)
-    first_worker_idx = coding_bridge.views.state_index(
-        defn, coding_bridge.views.first_worker_stage(defn)
+    linear order and ``stage_index`` raises on it, so the index is never computed for a
+    terminal (done/dropped) stage."""
+    terminal = worker_type_definition.is_terminal(stage)
+    first_worker_idx = worker_type_definition.stage_index(
+        worker_type_definition.first_worker_stage()
     )
-    return (not terminal) and coding_bridge.views.state_index(defn, state) > first_worker_idx
+    return (not terminal) and worker_type_definition.stage_index(stage) > first_worker_idx
 
 
 def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
@@ -445,20 +443,21 @@ def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
     blockers_cleared = bool(blocking_ticket_ids) and not blocker_summary.blocked
     child_rows = conn.execute(
         """
-        SELECT tickets.id, tickets.state, tickets.ticket_status, tickets.ticket_type
+        SELECT tickets.id, tickets.stage, tickets.ticket_status, tickets.worker_type
         FROM tickets
         WHERE tickets.sprint_item_id = ?
         ORDER BY tickets.id
         """,
         (item_id,),
     ).fetchall()
+    registry = configured_worker_type_registry()
     children = [
         SprintItemChildStatus(
-            state=str(row["state"]),
+            stage=str(row["stage"]),
             ticket_status=str(row["ticket_status"]),
             blocked=core_links.blocker_summary(conn, str(row["id"])).blocked,
-            state_in_progress=_child_state_in_progress(
-                str(row["ticket_type"]), str(row["state"])
+            stage_in_progress=_child_stage_in_progress(
+                registry.require(str(row["worker_type"])), str(row["stage"])
             ),
         )
         for row in child_rows

@@ -18,7 +18,7 @@ Panels is a workspace for agents, where the user's work lives. It's organized as
 Sprint items and tickets can also stand alone, outside a sprint. A ticket moves through stages, and at each stage it needs one thing from you.
 
 ## Your ticket and your specialist
-Which stages a ticket has, and what each needs, depend on its TYPE. Run
+Which Stages a Ticket has, and what each needs, depend on its Worker type. Run
 `panels worker my-ticket` — it names your worker skill. Invoke that skill with
 `skill_view("<name>")` and follow it for the stage-by-stage work.
 you handle the one current step only.
@@ -26,18 +26,19 @@ you handle the one current step only.
 Worker skills:
 - `panels-worker-coding` — coding tickets.
 - `panels-worker-new-worker` — new_worker tickets (designing another worker).
-- `probe-worker` — the probe fixture type (test genericity proof).
+- `probe-worker` — the probe fixture Worker type (test genericity proof).
 
 ### The CLI
 
 Everything runs through the `panels` command — `panels --help` for full usage. The tools you use:
 
-- **`panels worker my-ticket`** — the ticket you're on: who you are, and its current state.
+- **`panels worker my-ticket`** — the Ticket you're on: who you are, and its current Stage.
 - **`panels ticket show <id>`** — read any ticket.
 - **`panels worker propose <id> --body-file - --recap "…"`** — propose the ticket's current gated field; body arrives on stdin or via `--body-file`, and every proposal must also set a recap.
 - **`panels worker recap <id> --body-file -`** — update the running recap outside a proposal.
 - **`panels worker note <id> <field> --body-file -`** — preserve user guidance next to a field without touching its value.
-- **`panels ticket create --title "…"`** — create a ticket, when a step spins off a new one.
+- **`panels ticket create --worker-type <id> --title "…"`** — create a Ticket, when a
+  step spins off a new one. Worker type is required; choose it for the work being created.
 
 Never invoke `panels chief`.
 

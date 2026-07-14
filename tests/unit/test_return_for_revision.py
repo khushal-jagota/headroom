@@ -22,10 +22,13 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.shared_gateway import SharedGateway
+from planner.runtime import automatic_employee_step_eligibility
+from planner.runtime.automatic_employee_step_eligibility_wake import (
+    NoOpAutomaticEmployeeStepEligibilityWake,
+)
 from planner.runtime.employee_step_runner import EmployeeStepRunner
-from planner.runtime.readiness_doorbell import NoOpReadinessDoorbell
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, AtCap, FieldName, TicketState
+from planner.tickets.contracts import NO_FURTHER, AtCap, EmployeeSessionIdTransition
 from planner.tickets.data import (
     change_scope,
     create_ticket,
@@ -39,11 +42,11 @@ from planner.worker_context.service import SqliteWorkerContextService
 _AGENT = {"X-Plan-Actor": "agent"}
 
 
-class _RecordingDoorbell:
+class _RecordingEligibilityWake:
     def __init__(self) -> None:
         self.calls = 0
 
-    def ring(self) -> None:
+    def wake(self) -> None:
         self.calls += 1
 
 
@@ -63,7 +66,7 @@ def _install_real_runner(
     *,
     hermes_python: str = sys.executable,
     worker_context: SqliteWorkerContextService | None = None,
-    doorbell: _RecordingDoorbell | None = None,
+    eligibility_wake: _RecordingEligibilityWake | None = None,
 ) -> tuple[EmployeeStepRunner, SharedGateway]:
     gateway = SharedGateway(
         hermes_python=hermes_python,
@@ -77,7 +80,8 @@ def _install_real_runner(
         str(db_path),
         app.state.clock,
         gateway=gateway,
-        readiness_doorbell=doorbell or NoOpReadinessDoorbell(),
+        automatic_employee_step_eligibility_wake=eligibility_wake
+        or NoOpAutomaticEmployeeStepEligibilityWake(),
         boundary_hour=app.state.config.boundary_hour,
     )
     app.state.employee_step_runner = runner
@@ -131,11 +135,18 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
 def _ticket_with_pending_plan(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
-        ticket = create_ticket(conn, title="Revise plan", actor="human", now=0, title_max_chars=200)
+        ticket = create_ticket(
+            conn,
+            worker_type="coding",
+            title="Revise plan",
+            actor="human",
+            now=0,
+            title_max_chars=200,
+        )
         ticket = tickets_data.accept_proposal(
             conn,
             ticket.id,
-            field=FieldName.kickoff,
+            field="kickoff",
             actor="human",
             now=0,
             next_ceiling=NO_FURTHER,
@@ -144,22 +155,21 @@ def _ticket_with_pending_plan(db_path: Path) -> str:
         change_scope(
             conn,
             ticket.id,
-            ceiling=TicketState.needs_plan,
+            ceiling="needs_plan",
             at_cap=AtCap.propose,
             actor="human",
             now=0,
         )
-        file_proposal(
-            conn, ticket.id, field=FieldName.success, body="success", actor="agent", now=0
-        )
-        file_proposal(
-            conn, ticket.id, field=FieldName.approach, body="approach", actor="agent", now=0
-        )
-        file_proposal(
-            conn, ticket.id, field=FieldName.plan, body="bad plan", actor="agent", now=0
-        )
+        file_proposal(conn, ticket.id, field="success", body="success", actor="agent", now=0)
+        file_proposal(conn, ticket.id, field="approach", body="approach", actor="agent", now=0)
+        file_proposal(conn, ticket.id, field="plan", body="bad plan", actor="agent", now=0)
         finish_run_if_still_running_step(
-            conn, ticket.id, session_key=f"session-{ticket.id}", now=0
+            conn,
+            ticket.id,
+            employee_session_transition=EmployeeSessionIdTransition(
+                None, f"session-{ticket.id}"
+            ),
+            now=0,
         )
     finally:
         conn.close()
@@ -170,12 +180,17 @@ def _ticket_with_pending_closeout(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
         ticket = create_ticket(
-            conn, title="Revise closeout", actor="human", now=0, title_max_chars=200
+            conn,
+            worker_type="coding",
+            title="Revise closeout",
+            actor="human",
+            now=0,
+            title_max_chars=200,
         )
         ticket = tickets_data.accept_proposal(
             conn,
             ticket.id,
-            field=FieldName.kickoff,
+            field="kickoff",
             actor="human",
             now=0,
             next_ceiling=NO_FURTHER,
@@ -184,22 +199,18 @@ def _ticket_with_pending_closeout(db_path: Path) -> str:
         change_scope(
             conn,
             ticket.id,
-            ceiling=TicketState.needs_closeout,
+            ceiling="needs_closeout",
             at_cap=AtCap.propose,
             actor="human",
             now=0,
         )
-        file_proposal(
-            conn, ticket.id, field=FieldName.success, body="success", actor="agent", now=0
-        )
-        file_proposal(
-            conn, ticket.id, field=FieldName.approach, body="approach", actor="agent", now=0
-        )
-        file_proposal(conn, ticket.id, field=FieldName.plan, body="plan", actor="agent", now=0)
+        file_proposal(conn, ticket.id, field="success", body="success", actor="agent", now=0)
+        file_proposal(conn, ticket.id, field="approach", body="approach", actor="agent", now=0)
+        file_proposal(conn, ticket.id, field="plan", body="plan", actor="agent", now=0)
         file_proposal(
             conn,
             ticket.id,
-            field=FieldName.implementation,
+            field="implementation",
             body="implementation",
             actor="agent",
             now=0,
@@ -207,21 +218,27 @@ def _ticket_with_pending_closeout(db_path: Path) -> str:
         file_proposal(
             conn,
             ticket.id,
-            field=FieldName.closeout,
+            field="closeout",
             body="bad closeout",
             actor="agent",
             now=0,
         )
         finish_run_if_still_running_step(
-            conn, ticket.id, session_key=f"session-{ticket.id}", now=0
+            conn,
+            ticket.id,
+            employee_session_transition=EmployeeSessionIdTransition(
+                None, f"session-{ticket.id}"
+            ),
+            now=0,
         )
     finally:
         conn.close()
     return ticket.id
 
 
-def test_http_revision_uses_real_runner_without_readiness_loop_and_returns_before_completion(
+def test_http_revision_bypasses_automatic_eligibility_and_returns_before_completion(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket_with_pending_plan(db_path)
@@ -240,7 +257,7 @@ def test_http_revision_uses_real_runner_without_readiness_loop_and_returns_befor
                     tickets_data.file_proposal(
                         conn,
                         tid,
-                        field=FieldName.plan,
+                        field="plan",
                         body="revised plan",
                         actor="agent",
                         now=3,
@@ -251,9 +268,7 @@ def test_http_revision_uses_real_runner_without_readiness_loop_and_returns_befor
 
     fake = BlockingRevisionGateway(
         {
-            "session.resume": [
-                Reply(result={"session_id": "live-session", "resumed": stored_key})
-            ],
+            "session.resume": [Reply(result={"session_id": "live-session", "resumed": stored_key})],
             "prompt.submit": [
                 Reply(
                     result={"status": "streaming"},
@@ -272,8 +287,17 @@ def test_http_revision_uses_real_runner_without_readiness_loop_and_returns_befor
             ],
         }
     )
-    doorbell = _RecordingDoorbell()
-    runner, gateway = _install_real_runner(app, db_path, fake, doorbell=doorbell)
+    eligibility_wake = _RecordingEligibilityWake()
+    runner, gateway = _install_real_runner(app, db_path, fake, eligibility_wake=eligibility_wake)
+
+    def fail_if_automatic_eligibility_is_called(*_args: Any, **_kwargs: Any) -> bool:
+        raise AssertionError("direct revision must bypass automatic eligibility")
+
+    monkeypatch.setattr(
+        automatic_employee_step_eligibility,
+        "is_eligible_for_automatic_employee_step",
+        fail_if_automatic_eligibility_is_called,
+    )
     try:
         with TestClient(app) as client:
             response = client.post(
@@ -285,12 +309,12 @@ def test_http_revision_uses_real_runner_without_readiness_loop_and_returns_befor
 
             before_completion = client.get(f"/api/tickets/{tid}").json()
             events = client.get(f"/api/tickets/{tid}/events").json()["events"]
-            approvals = client.get("/api/queues").json()["approvals"]
+            ticket_decisions = client.get("/api/review").json()["ticket_decisions"]
 
             assert before_completion["ticket_status"] == "agent_running_step"
             assert before_completion["fields"]["plan"]["proposal"] is None
-            assert approvals == []
-            assert doorbell.calls == 0
+            assert ticket_decisions == []
+            assert eligibility_wake.calls == 0
             claimed = [
                 event
                 for event in events
@@ -300,10 +324,13 @@ def test_http_revision_uses_real_runner_without_readiness_loop_and_returns_befor
             assert len(claimed) == 1
             conn = connect(str(db_path))
             try:
-                assert conn.execute(
-                    "SELECT role, text FROM chat_messages WHERE entity_id = ? ORDER BY id",
-                    (tid,),
-                ).fetchall() == []
+                assert (
+                    conn.execute(
+                        "SELECT role, text FROM chat_messages WHERE entity_id = ? ORDER BY id",
+                        (tid,),
+                    ).fetchall()
+                    == []
+                )
             finally:
                 conn.close()
 
@@ -311,10 +338,10 @@ def test_http_revision_uses_real_runner_without_readiness_loop_and_returns_befor
             assert runner.wait_idle(10.0)
             settled = client.get(f"/api/tickets/{tid}").json()
 
-        assert settled["state"] == "needs_plan"
+        assert settled["stage"] == "needs_plan"
         assert settled["ticket_status"] == "awaiting_approval"
         assert settled["fields"]["plan"]["proposal"]["body"] == "revised plan"
-        assert doorbell.calls == 1
+        assert eligibility_wake.calls == 1
         assert fake.sent_methods() == ["session.resume", "prompt.submit"]
         resume = next(frame for frame in fake.sent if frame["method"] == "session.resume")
         submit = next(frame for frame in fake.sent if frame["method"] == "prompt.submit")
@@ -361,13 +388,13 @@ def test_return_for_revision_clears_proposal_after_accepting_employee_handoff(
         ticket = response.json()
         chat = client.get(f"/api/chat/{tid}/state").json()
         events = client.get(f"/api/tickets/{tid}/events").json()["events"]
-        approvals = client.get("/api/queues").json()["approvals"]
+        ticket_decisions = client.get("/api/review").json()["ticket_decisions"]
         duplicate = client.post(
             f"/api/tickets/{tid}/return-for-revision",
             json={"message": "Duplicate send."},
         )
 
-    assert ticket["state"] == "needs_plan"
+    assert ticket["stage"] == "needs_plan"
     assert ticket["ticket_status"] == "agent_running_step"
     assert ticket["fields"]["plan"]["value"] is None
     assert ticket["fields"]["plan"]["proposal"] is None
@@ -378,7 +405,7 @@ def test_return_for_revision_clears_proposal_after_accepting_employee_handoff(
         (tid, "Make it shorter.", "released"),
         (tid, "Duplicate send.", "cancelled"),
     ]
-    assert approvals == []
+    assert ticket_decisions == []
     assert duplicate.status_code == 409
     assert duplicate.json()["error"]["code"] == "already_running"
 
@@ -399,7 +426,7 @@ def test_return_for_revision_keeps_closeout_gate_after_accepted_handoff(
         ticket = response.json()
         events = client.get(f"/api/tickets/{tid}/events").json()["events"]
 
-    assert ticket["state"] == "needs_closeout"
+    assert ticket["stage"] == "needs_closeout"
     assert ticket["ticket_status"] == "agent_running_step"
     assert ticket["fields"]["closeout"]["value"] is None
     assert ticket["fields"]["closeout"]["proposal"] is None
@@ -407,14 +434,12 @@ def test_return_for_revision_keeps_closeout_gate_after_accepted_handoff(
     assert all(
         event["payload"].get("cause") != "return_for_revision"
         for event in events
-        if event["kind"] == "state_changed"
+        if event["kind"] == "stage_changed"
     )
     assert _wait_until(lambda: len(employee_runner.decisions) == 1)
-    assert employee_runner.decisions == [
-        (tid, "The closeout needs evidence.", "released")
-    ]
+    assert employee_runner.decisions == [(tid, "The closeout needs evidence.", "released")]
     with TestClient(app) as client:
-        assert client.get("/api/queues").json()["approvals"] == []
+        assert client.get("/api/review").json()["ticket_decisions"] == []
 
 
 def test_return_for_revision_requires_existing_worker_session(tmp_path: Path) -> None:
@@ -422,7 +447,7 @@ def test_return_for_revision_requires_existing_worker_session(tmp_path: Path) ->
     tid = _ticket_with_pending_plan(db_path)
     conn = connect(str(db_path))
     try:
-        conn.execute("UPDATE tickets SET chat_session_key = NULL WHERE id = ?", (tid,))
+        conn.execute("UPDATE tickets SET employee_session_id = NULL WHERE id = ?", (tid,))
         conn.commit()
     finally:
         conn.close()
@@ -444,12 +469,12 @@ def test_db_validation_after_real_reservation_cancels_without_prompt(
     tid = _ticket_with_pending_plan(db_path)
     conn = connect(str(db_path))
     try:
-        conn.execute("UPDATE tickets SET chat_session_key = NULL WHERE id = ?", (tid,))
+        conn.execute("UPDATE tickets SET employee_session_id = NULL WHERE id = ?", (tid,))
     finally:
         conn.close()
     fake = FakeGateway({})
-    doorbell = _RecordingDoorbell()
-    runner, gateway = _install_real_runner(app, db_path, fake, doorbell=doorbell)
+    eligibility_wake = _RecordingEligibilityWake()
+    runner, gateway = _install_real_runner(app, db_path, fake, eligibility_wake=eligibility_wake)
     before = _durable_snapshot(db_path, tid)
     try:
         with TestClient(app) as client:
@@ -462,7 +487,7 @@ def test_db_validation_after_real_reservation_cancels_without_prompt(
         assert runner.wait_idle(10.0)
         assert fake.sent_methods() == []
         assert _durable_snapshot(db_path, tid) == before
-        assert doorbell.calls == 0
+        assert eligibility_wake.calls == 0
     finally:
         gateway.shutdown()
 
@@ -489,8 +514,8 @@ def test_running_human_chat_turn_rejects_revision_before_ticket_mutation(
     finally:
         conn.close()
     fake = FakeGateway({})
-    doorbell = _RecordingDoorbell()
-    runner, gateway = _install_real_runner(app, db_path, fake, doorbell=doorbell)
+    eligibility_wake = _RecordingEligibilityWake()
+    runner, gateway = _install_real_runner(app, db_path, fake, eligibility_wake=eligibility_wake)
     before = _durable_snapshot(db_path, tid)
     try:
         with TestClient(app) as client:
@@ -503,7 +528,7 @@ def test_running_human_chat_turn_rejects_revision_before_ticket_mutation(
         assert runner.wait_idle(10.0)
         assert fake.sent_methods() == []
         assert _durable_snapshot(db_path, tid) == before
-        assert doorbell.calls == 0
+        assert eligibility_wake.calls == 0
     finally:
         gateway.shutdown()
 
@@ -515,13 +540,11 @@ def test_post_commit_worker_turn_collision_errors_claim_without_submitting(
     app, db_path = _make_app(tmp_path)
     tid = _ticket_with_pending_plan(db_path)
     fake = FakeGateway({})
-    doorbell = _RecordingDoorbell()
-    runner, gateway = _install_real_runner(app, db_path, fake, doorbell=doorbell)
+    eligibility_wake = _RecordingEligibilityWake()
+    runner, gateway = _install_real_runner(app, db_path, fake, eligibility_wake=eligibility_wake)
     original_start = chat_service.start_worker_turn
 
-    def collide_with_human_turn(
-        conn: Connection, entity_id: str, *, visible_text: str, now: int
-    ):
+    def collide_with_human_turn(conn: Connection, entity_id: str, *, visible_text: str, now: int):
         chat_data.start_turn(
             conn,
             entity_id,
@@ -561,7 +584,7 @@ def test_post_commit_worker_turn_collision_errors_claim_without_submitting(
         assert [(row["role"], row["text"]) for row in messages] == [
             ("human", "Human turn won the race.")
         ]
-        assert doorbell.calls == 1
+        assert eligibility_wake.calls == 1
     finally:
         gateway.shutdown()
 
@@ -591,7 +614,7 @@ def test_stale_revision_session_never_remints_and_settles_ticket_errored(
         session_events_before = int(
             conn.execute(
                 "SELECT COUNT(*) AS n FROM events WHERE entity_id = ? AND kind = ?",
-                (tid, EventKind.chat_session_created.value),
+                (tid, EventKind.employee_session_changed.value),
             ).fetchone()["n"]
         )
     finally:
@@ -611,13 +634,13 @@ def test_stale_revision_session_never_remints_and_settles_ticket_errored(
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    doorbell = _RecordingDoorbell()
+    eligibility_wake = _RecordingEligibilityWake()
     runner, gateway = _install_real_runner(
         app,
         db_path,
         fake,
         worker_context=SqliteWorkerContextService(conn_factory),
-        doorbell=doorbell,
+        eligibility_wake=eligibility_wake,
     )
     try:
         with TestClient(app) as client:
@@ -642,18 +665,18 @@ def test_stale_revision_session_never_remints_and_settles_ticket_errored(
             session_events_after = int(
                 conn.execute(
                     "SELECT COUNT(*) AS n FROM events WHERE entity_id = ? AND kind = ?",
-                    (tid, EventKind.chat_session_created.value),
+                    (tid, EventKind.employee_session_changed.value),
                 ).fetchone()["n"]
             )
         finally:
             conn.close()
         assert ticket.ticket_status.value == "errored"
-        assert ticket.chat_session_key == stale_key
+        assert ticket.employee_session_id == stale_key
         assert fields_codec.get_slot(ticket.fields, "plan").proposal is None
         assert turn is not None and turn["status"] == "errored"
         assert [(row["context_key"], row["revision"]) for row in pending] == pending_before
         assert session_events_after == session_events_before
-        assert doorbell.calls == 1
+        assert eligibility_wake.calls == 1
     finally:
         gateway.shutdown()
 

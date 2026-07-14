@@ -7,19 +7,18 @@ placeholder and never owns a GatewayChild.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from planner.chat.contracts import (
-    ChatHistory,
-    ChatSendResult,
-    ChatStreamChunk,
     CommandCatalog,
-    CommandRunResult,
     GatewayStatus,
+    HumanChatObservation,
 )
+from planner.core.adapters.base import HumanSessionKeyBinder
 from planner.core.errors import ErrorCode, PlannerError
+from planner.tickets.contracts import EmployeeSessionHistory
 
 if TYPE_CHECKING:
     from planner.core.config import Config
@@ -46,42 +45,28 @@ class RealGatewayAdapter:
             return GatewayStatus(available=False, detail=f"hermes interpreter not found: {python}")
         return GatewayStatus(available=False, detail="shared gateway is not attached")
 
-    def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
-        raise self._offline()
-
-    def send(
+    def read_employee_session_history(
         self,
-        session_key: str | None,
-        entity_id: str,
-        text: str,
-        on_session_key: Callable[[str], None] | None = None,
-    ) -> ChatSendResult:
+        employee_session_id: str,
+        ticket_id: str,
+    ) -> EmployeeSessionHistory:
         raise self._offline()
 
-    def stream(
+    def run_human_turn(
         self,
         session_key: str | None,
         entity_id: str,
         text: str,
         mode: str,
-        on_session_key: Callable[[str], None] | None = None,
+        bind_session_key: HumanSessionKeyBinder,
         image_paths: tuple[Path, ...] = (),
         *,
         require_existing_session: bool = False,
-    ) -> Iterator[ChatStreamChunk]:
+    ) -> Iterator[HumanChatObservation]:
         raise self._offline()
 
     def interrupt(self, session_key: str, entity_id: str) -> None:
         raise self._offline()
 
     def catalog(self) -> CommandCatalog:
-        raise self._offline()
-
-    def run_command(
-        self,
-        session_key: str | None,
-        entity_id: str,
-        command: str,
-        on_session_key: Callable[[str], None] | None = None,
-    ) -> CommandRunResult:
         raise self._offline()

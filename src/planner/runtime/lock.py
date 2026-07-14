@@ -1,4 +1,4 @@
-"""Machine-wide advisory lock for the singleton Ticket readiness poller.
+"""Machine-wide advisory lock for the automatic Employee-step discovery poller.
 
 The lock is acquired once per path and then held by the process (released only on
 process exit or an explicit release). One cached OS fd per lock path."""

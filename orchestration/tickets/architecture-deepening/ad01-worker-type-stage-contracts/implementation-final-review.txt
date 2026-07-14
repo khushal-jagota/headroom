@@ -1,0 +1,15 @@
+NO VIOLATIONS
+
+The final read-only review checked the complete corrected AD01 diff against the locked
+contract and implementation allowlist. It explicitly confirmed:
+
+- the two accepted migration findings remain fixed;
+- Worker type is required at creation and has no mutation surface;
+- Ticket reads and Stage filters return/compare the stored Stage directly;
+- old public Ticket-type/State routes, keys, event vocabulary, and compatibility aliases are absent;
+- `web/dist/index.html` points at the regenerated bundle, the regenerated bundle contains
+  the Worker-type/Stage contract, and the retired bundle is absent; and
+- every changed or added implementation path is within the reviewed allowlist.
+
+tokens used
+165,886

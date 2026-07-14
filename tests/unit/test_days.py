@@ -14,13 +14,18 @@ from planner.days.data import (
     remove_day_ticket,
 )
 from planner.days.logic.dates import planning_date
+from planner.tickets.contracts import TicketFields
+from planner.tickets.logic.fields_codec import fields_to_json
+from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
+
+_EMPTY_CODING_FIELDS = fields_to_json(TicketFields.empty(CODING_WORKER_TYPE_DEFINITION.field_ids()))
 
 
 def _mk_ticket(
     conn: Connection,
     ticket_id: str,
     *,
-    state: str,
+    stage: str,
     title: str,
     priority: str = "P3",
     deadline: str | None = None,
@@ -28,10 +33,10 @@ def _mk_ticket(
     """Insert the minimal NOT-NULL columns of a ticket; other columns use their
     schema defaults."""
     conn.execute(
-        "INSERT INTO tickets (id, title, ticket_type, state, priority, deadline, project_id, "
-        "ceiling, created_at, updated_at) "
-        "VALUES (?, ?, 'coding', ?, ?, ?, 'project_vylo', 'needs_success', 0, 0)",
-        (ticket_id, title, state, priority, deadline),
+        "INSERT INTO tickets (id, title, worker_type, stage, priority, deadline, project_id, "
+        "ceiling, fields, created_at, updated_at) "
+        "VALUES (?, ?, 'coding', ?, ?, ?, 'project_vylo', 'needs_success', ?, 0, 0)",
+        (ticket_id, title, stage, priority, deadline, _EMPTY_CODING_FIELDS),
     )
 
 
@@ -48,10 +53,10 @@ def test_a01_planning_date(cfg: Config) -> None:
 
 def test_a12_day_ticket_removal(tmp_db: Connection) -> None:
     conn = tmp_db
-    _mk_ticket(conn, "t0", state="needs_success", title="T0")
-    _mk_ticket(conn, "t1", state="needs_implementation", title="T1")
-    _mk_ticket(conn, "t2", state="needs_success", title="T2")
-    _mk_ticket(conn, "t3", state="needs_success", title="T3")
+    _mk_ticket(conn, "t0", stage="needs_success", title="T0")
+    _mk_ticket(conn, "t1", stage="needs_implementation", title="T1")
+    _mk_ticket(conn, "t2", stage="needs_success", title="T2")
+    _mk_ticket(conn, "t3", stage="needs_success", title="T3")
     now = 1000
     for tid in ("t0", "t1", "t2", "t3"):
         add_day_ticket(conn, "day_2026-07-04", tid, now)
@@ -71,9 +76,9 @@ def test_a12_day_ticket_removal(tmp_db: Connection) -> None:
         ("t2", 1),
         ("t3", 2),
     ]
-    # Ticket state is untouched (this is "deferring").
-    state = conn.execute("SELECT state FROM tickets WHERE id = 't1'").fetchone()["state"]
-    assert state == "needs_implementation"
+    # Ticket Stage is untouched (this is "deferring").
+    stage = conn.execute("SELECT stage FROM tickets WHERE id = 't1'").fetchone()["stage"]
+    assert stage == "needs_implementation"
     # Exactly one day_ticket_removed event, payload {ticket_id: t1}.
     removed = [
         e

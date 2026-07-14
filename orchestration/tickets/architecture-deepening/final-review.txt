@@ -1,0 +1,26 @@
+Independent whole-program implementation review
+Date: 2026-07-14
+Base: b7ca44a76375021a365a3c07afdb5a0e3cfd21d4
+Reviewed head: 191f14ace5c58bc8ae40b4fc954d6bdf6a054134
+Codex session: 019f5fcf-cfa9-73d0-8741-27e7f687900a
+Model: gpt-5.5
+Reasoning effort: high
+Sandbox: read-only
+
+The review covered the complete AD01–AD09 diff and the locked contracts, with explicit checks for:
+
+- required immutable Worker type and no implicit live `coding` default;
+- migration-only historical Worker-type classification;
+- direct stored Stage reads and definition-owned workflow interpretation;
+- one complete Automatic Employee-step eligibility rule and atomic claim;
+- Ticket-only Review and exact running-worker count;
+- canonical human Chat-turn ownership and session binding;
+- Managed Markdown ownership and exact visible/edit behavior;
+- Resource Catalogue dependencies and refresh precision;
+- Panels Chat versus authoritative Employee-session history;
+- v18–v20 migrations, event rewrites, rollback, concurrency, routes, seed/import, docs, tests,
+  generated assets, and repository hygiene.
+
+Final reviewer output:
+
+NO VIOLATIONS

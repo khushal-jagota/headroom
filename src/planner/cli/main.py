@@ -25,7 +25,6 @@ from planner.cli import http
 from planner.tickets.contracts import AtCap
 
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
-_FIELDS = ["success", "approach", "plan", "implementation", "closeout"]
 _TICKET_ID_ENV = "PLAN_TICKET_ID"
 
 _DAY_FIELDS = {
@@ -182,30 +181,31 @@ def _current_sprint_id(as_json: bool) -> str:
 
 
 # The manifest arrives as a plain JSON body across the HTTP boundary, so the CLI holds
-# it as a plain dict — importing the ticket_types ManifestDict contract here would
-# breach the F6 import seam (only coding_bridge may import planner.ticket_types).
-def _ticket_types(as_json: bool) -> dict[str, dict[str, Any]]:
-    """The served manifests keyed by type_id — the single source for stage order /
+# it as a plain dict. Keeping the transport shape local leaves CLI request construction
+# independent of Worker-type interpretation.
+def _worker_types(as_json: bool) -> dict[str, dict[str, Any]]:
+    """The served manifests keyed by Worker type — the single source for Stage order /
     gates / fields / ceiling range per type (no parallel lifecycle encoding in the CLI)."""
-    data = http.send("GET", "/api/ticket-types", as_json=as_json, request_actor="ordinary")
-    return {m["type_id"]: m for m in data["types"]}
+    data = http.send("GET", "/api/worker-types", as_json=as_json, request_actor="ordinary")
+    return {m["worker_type"]: m for m in data["worker_types"]}
 
 
-def _ticket_type(type_id: str, as_json: bool) -> dict[str, Any]:
-    types = _ticket_types(as_json)
-    if type_id not in types:
+def _worker_type(worker_type: str, as_json: bool) -> dict[str, Any]:
+    worker_types = _worker_types(as_json)
+    if worker_type not in worker_types:
         http.fail_validation(
-            f"unknown ticket type: {type_id} (known: {', '.join(sorted(types))})", as_json
+            f"unknown worker type: {worker_type} (known: {', '.join(sorted(worker_types))})",
+            as_json,
         )
-    return types[type_id]
+    return worker_types[worker_type]
 
 
-def _gating_field_for_state(manifest: dict[str, Any], state: str) -> str | None:
+def _gating_field_for_stage(manifest: dict[str, Any], stage: str) -> str | None:
     """The field the type's stage gates (None for a terminal). Driven off the ticket's
-    own type manifest, not a global gate map."""
-    for stage in manifest["stages"]:
-        if stage["id"] == state:
-            gating = stage["gating_field"]
+    own Worker type manifest, not a global gate map."""
+    for candidate in manifest["stages"]:
+        if candidate["id"] == stage:
+            gating = candidate["gating_field"]
             return str(gating) if gating is not None else None
     return None
 
@@ -233,7 +233,7 @@ def sprint_value_for_filter(raw: str | None, as_json: bool) -> str | None:
 def _format_tickets(tickets: list[dict[str, Any]]) -> str:
     return _lines(
         tickets,
-        lambda t: f"{t['id']} {t['state']} {t['priority']} {t['title']}",
+        lambda t: f"{t['id']} {t['stage']} {t['priority']} {t['title']}",
     )
 
 
@@ -465,7 +465,7 @@ def ticket() -> None:
 
 @ticket.command("create")
 @click.option("--title", required=True, help="Ticket title.")
-@click.option("--type", "ticket_type", required=True, help="Ticket type id (e.g. coding).")
+@click.option("--worker-type", "worker_type", required=True, help="Worker type id (e.g. coding).")
 @click.option("--priority", type=click.Choice(_PRIORITIES), default=None, help="Priority label.")
 @click.option("--deadline", default=None, help="Due date in YYYY-MM-DD form.")
 @click.option("--project", default=None, help="Project name.")
@@ -481,7 +481,7 @@ def ticket() -> None:
 @json_option
 def ticket_create(
     title: str,
-    ticket_type: str,
+    worker_type: str,
     priority: str | None,
     deadline: str | None,
     project: str | None,
@@ -492,7 +492,7 @@ def ticket_create(
     kickoff_note_file: str | None,
     as_json: bool,
 ) -> None:
-    body: dict[str, Any] = {"title": title, "type": ticket_type}
+    body: dict[str, Any] = {"title": title, "worker_type": worker_type}
     if kickoff_note is not None and kickoff_note_file is not None:
         http.fail_validation("kickoff note accepts only one note option", as_json)
     if kickoff_note_file is not None:
@@ -513,7 +513,7 @@ def ticket_create(
     data = http.send(
         "POST", "/api/tickets", as_json=as_json, json_body=body, request_actor="ordinary"
     )
-    http.emit(data, as_json, f"{data['id']} {data['state']}")
+    http.emit(data, as_json, f"{data['id']} {data['stage']}")
 
 
 @ticket.command("show")
@@ -522,7 +522,7 @@ def ticket_create(
 def ticket_show(ticket_id: str | None, as_json: bool) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
     data = http.send("GET", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary")
-    http.emit(data, as_json, f"{data['id']} {data['state']} {data['priority']} {data['title']}")
+    http.emit(data, as_json, f"{data['id']} {data['stage']} {data['priority']} {data['title']}")
 
 
 @ticket.command("delete")
@@ -538,16 +538,12 @@ def ticket_delete(ticket_id: str | None, yes: bool, as_json: bool) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
     if not yes:
         http.fail_validation("permanent deletion requires --yes", as_json)
-    data = http.send(
-        "DELETE", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary"
-    )
+    data = http.send("DELETE", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary")
     http.emit(data, as_json, f"{tid} permanently deleted")
 
 
 @ticket.command("list")
-@click.option("--state", default=None, help="Only show tickets in this state.")
-@click.option("--type", "ticket_type", default=None,
-              help="Type to disambiguate a non-reserved --state.")
+@click.option("--stage", default=None, help="Only show tickets in this stage.")
 @click.option("--project", default=None, help="Only show project name.")
 @click.option("--project-id", default=None, help="Only show project id.")
 @click.option("--sprint", default=None, help="Sprint id, current, or none.")
@@ -555,8 +551,7 @@ def ticket_delete(ticket_id: str | None, yes: bool, as_json: bool) -> None:
 @click.option("--day", default=None, help="today or YYYY-MM-DD.")
 @json_option
 def ticket_list(
-    state: str | None,
-    ticket_type: str | None,
+    stage: str | None,
     project: str | None,
     project_id: str | None,
     sprint: str | None,
@@ -566,8 +561,7 @@ def ticket_list(
 ) -> None:
     params = _drop_none(
         {
-            "state": state,
-            "ticket_type": ticket_type,
+            "stage": stage,
             "project": project,
             "project_id": project_id,
             "sprint_id": sprint_value_for_filter(sprint, as_json),
@@ -625,7 +619,7 @@ def ticket_set(
 
 @ticket.command("approve")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@click.option("--ceiling", default=None, help="Next ceiling state or none.")
+@click.option("--ceiling", default=None, help="Next ceiling stage or none.")
 @click.option(
     "--at-cap",
     default=None,
@@ -647,11 +641,11 @@ def ticket_approve(
 ) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
     detail = http.send("GET", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary")
-    state = detail["state"]
-    manifest = _ticket_type(detail["ticket_type"], as_json)
-    field = _gating_field_for_state(manifest, state)
+    stage = detail["stage"]
+    manifest = _worker_type(detail["worker_type"], as_json)
+    field = _gating_field_for_stage(manifest, stage)
     if field is None:
-        http.fail_validation(f"ticket in {state} has nothing to approve", as_json)
+        http.fail_validation(f"ticket in {stage} has nothing to approve", as_json)
     proposal = detail["fields"][field]["proposal"]
     if proposal is None:
         http.fail_validation(f"no pending {field} proposal", as_json)
@@ -734,9 +728,7 @@ def ticket_copy(ticket_id: str | None, as_json: bool) -> None:
 @json_option
 def ticket_events(ticket_id: str | None, as_json: bool) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
-    data = http.send(
-        "GET", f"/api/tickets/{tid}/events", as_json=as_json, request_actor="ordinary"
-    )
+    data = http.send("GET", f"/api/tickets/{tid}/events", as_json=as_json, request_actor="ordinary")
     http.emit(
         data,
         as_json,
@@ -813,9 +805,7 @@ def sprint_show(sprint_id: str | None, as_json: bool) -> None:
             else f"{current['id']} {current['date_start']}..{current['date_end']} {current['name']}"
         )
         http.emit(data, as_json, human)
-    data = http.send(
-        "GET", f"/api/sprints/{sprint_id}", as_json=as_json, request_actor="ordinary"
-    )
+    data = http.send("GET", f"/api/sprints/{sprint_id}", as_json=as_json, request_actor="ordinary")
     human = f"{data['id']} {data['date_start']}..{data['date_end']} {data['name']}"
     http.emit(data, as_json, human)
 
@@ -951,12 +941,14 @@ def sprint_item_list(
     sprint: str | None,
     as_json: bool,
 ) -> None:
-    params = _drop_none({
-        "status": status,
-        "project": project,
-        "project_id": project_id,
-        "sprint_id": sprint_value_for_filter(sprint, as_json),
-    })
+    params = _drop_none(
+        {
+            "status": status,
+            "project": project,
+            "project_id": project_id,
+            "sprint_id": sprint_value_for_filter(sprint, as_json),
+        }
+    )
     data = http.send("GET", "/api/items", as_json=as_json, params=params, request_actor="ordinary")
     http.emit(
         data,
@@ -1067,10 +1059,24 @@ def sprint_item_unblock(item_id: str, blocker_id: str, as_json: bool) -> None:
 
 # --- chief --------------------------------------------------------------------
 
+_EXTERNAL_WORK_RECONCILE_FIXED_KEYS = frozenset({"stage", "kickoff_note", "recap"})
+_EXTERNAL_WORK_CREATE_FIXED_KEYS = _EXTERNAL_WORK_RECONCILE_FIXED_KEYS | frozenset(
+    {
+        "title",
+        "worker_type",
+        "priority",
+        "deadline",
+        "project",
+        "project_id",
+        "sprint_id",
+        "sprint_item_id",
+    }
+)
+
 
 def _external_work_body(
     *,
-    state: str,
+    stage: str,
     kickoff_note_file: str,
     recap_file: str | None,
     success_file: str | None,
@@ -1078,14 +1084,12 @@ def _external_work_body(
     plan_file: str | None,
     implementation_file: str | None,
     closeout_file: str | None,
+    field_files: tuple[str, ...],
+    reserved_fixed_keys: frozenset[str],
     as_json: bool,
 ) -> dict[str, Any]:
-    body: dict[str, Any] = {
-        "state": state,
-        "kickoff_note": read_required_option_body(kickoff_note_file, as_json, "kickoff-note"),
-    }
-    for key, source in (
-        ("recap", recap_file),
+    field_sources: dict[str, str] = {}
+    for field, source in (
         ("success", success_file),
         ("approach", approach_file),
         ("plan", plan_file),
@@ -1093,7 +1097,27 @@ def _external_work_body(
         ("closeout", closeout_file),
     ):
         if source is not None:
-            body[key] = _read_source(source, as_json)
+            field_sources[field] = source
+    for occurrence in field_files:
+        if "=" not in occurrence:
+            http.fail_validation(f"field file must be FIELD=PATH: {occurrence}", as_json)
+        field, source = occurrence.split("=", 1)
+        if not field or not source:
+            http.fail_validation(f"field file must be FIELD=PATH: {occurrence}", as_json)
+        if field in reserved_fixed_keys:
+            http.fail_validation(f"field file conflicts with fixed request key: {field}", as_json)
+        if field in field_sources:
+            http.fail_validation(f"field file provided more than once: {field}", as_json)
+        field_sources[field] = source
+
+    body: dict[str, Any] = {
+        "stage": stage,
+        "kickoff_note": read_required_option_body(kickoff_note_file, as_json, "kickoff-note"),
+    }
+    if recap_file is not None:
+        body["recap"] = _read_source(recap_file, as_json)
+    for field, source in field_sources.items():
+        body[field] = _read_source(source, as_json)
     return body
 
 
@@ -1104,7 +1128,7 @@ def chief() -> None:
 
 @chief.command("reconcile-ticket-from-external-work")
 @click.argument("ticket_id")
-@click.option("--state", required=True, help="Target worker state (validated per type).")
+@click.option("--stage", required=True, help="Target worker stage (validated per type).")
 @click.option(
     "--kickoff-note-file", required=True, help="Complete resulting ticket note file, or -."
 )
@@ -1116,10 +1140,16 @@ def chief() -> None:
     "--implementation-file", default=None, help="Read settled implementation from this file, or -."
 )
 @click.option("--closeout-file", default=None, help="Read settled closeout from this file, or -.")
+@click.option(
+    "--field-file",
+    "field_files",
+    multiple=True,
+    help="Read a definition-specific settled field from FIELD=PATH (repeatable).",
+)
 @json_option
 def chief_reconcile_ticket_from_external_work(
     ticket_id: str,
-    state: str,
+    stage: str,
     kickoff_note_file: str,
     recap_file: str | None,
     success_file: str | None,
@@ -1127,10 +1157,11 @@ def chief_reconcile_ticket_from_external_work(
     plan_file: str | None,
     implementation_file: str | None,
     closeout_file: str | None,
+    field_files: tuple[str, ...],
     as_json: bool,
 ) -> None:
     body = _external_work_body(
-        state=state,
+        stage=stage,
         kickoff_note_file=kickoff_note_file,
         recap_file=recap_file,
         success_file=success_file,
@@ -1138,6 +1169,8 @@ def chief_reconcile_ticket_from_external_work(
         plan_file=plan_file,
         implementation_file=implementation_file,
         closeout_file=closeout_file,
+        field_files=field_files,
+        reserved_fixed_keys=_EXTERNAL_WORK_RECONCILE_FIXED_KEYS,
         as_json=as_json,
     )
     data = http.send(
@@ -1150,14 +1183,14 @@ def chief_reconcile_ticket_from_external_work(
     http.emit(
         data,
         as_json,
-        f"{data['id']} external work reconciled {data['state']}",
+        f"{data['id']} external work reconciled {data['stage']}",
     )
 
 
 @chief.command("create-ticket-from-external-work")
 @click.option("--title", required=True, help="Ticket title.")
-@click.option("--type", "ticket_type", required=True, help="Ticket type id (e.g. coding).")
-@click.option("--state", required=True, help="Target worker state (validated per type).")
+@click.option("--worker-type", "worker_type", required=True, help="Worker type id (e.g. coding).")
+@click.option("--stage", required=True, help="Target worker stage (validated per type).")
 @click.option(
     "--kickoff-note-file", required=True, help="Complete resulting ticket note file, or -."
 )
@@ -1169,6 +1202,12 @@ def chief_reconcile_ticket_from_external_work(
     "--implementation-file", default=None, help="Read settled implementation from this file, or -."
 )
 @click.option("--closeout-file", default=None, help="Read settled closeout from this file, or -.")
+@click.option(
+    "--field-file",
+    "field_files",
+    multiple=True,
+    help="Read a definition-specific settled field from FIELD=PATH (repeatable).",
+)
 @click.option("--priority", type=click.Choice(_PRIORITIES), default=None, help="Priority label.")
 @click.option("--deadline", default=None, help="Due date in YYYY-MM-DD form.")
 @click.option("--project", default=None, help="Project name.")
@@ -1178,8 +1217,8 @@ def chief_reconcile_ticket_from_external_work(
 @json_option
 def chief_create_ticket_from_external_work(
     title: str,
-    ticket_type: str,
-    state: str,
+    worker_type: str,
+    stage: str,
     kickoff_note_file: str,
     recap_file: str | None,
     success_file: str | None,
@@ -1187,6 +1226,7 @@ def chief_create_ticket_from_external_work(
     plan_file: str | None,
     implementation_file: str | None,
     closeout_file: str | None,
+    field_files: tuple[str, ...],
     priority: str | None,
     deadline: str | None,
     project: str | None,
@@ -1196,7 +1236,7 @@ def chief_create_ticket_from_external_work(
     as_json: bool,
 ) -> None:
     body = _external_work_body(
-        state=state,
+        stage=stage,
         kickoff_note_file=kickoff_note_file,
         recap_file=recap_file,
         success_file=success_file,
@@ -1204,10 +1244,12 @@ def chief_create_ticket_from_external_work(
         plan_file=plan_file,
         implementation_file=implementation_file,
         closeout_file=closeout_file,
+        field_files=field_files,
+        reserved_fixed_keys=_EXTERNAL_WORK_CREATE_FIXED_KEYS,
         as_json=as_json,
     )
     body["title"] = title
-    body["type"] = ticket_type
+    body["worker_type"] = worker_type
     if priority is not None:
         body["priority"] = priority
     if deadline is not None:
@@ -1226,7 +1268,7 @@ def chief_create_ticket_from_external_work(
         json_body=body,
         request_actor="chief",
     )
-    http.emit(data, as_json, f"{data['id']} external work created {data['state']}")
+    http.emit(data, as_json, f"{data['id']} external work created {data['stage']}")
 
 
 # --- worker -------------------------------------------------------------------
@@ -1240,16 +1282,20 @@ def worker() -> None:
 @worker.command("my-ticket")
 @json_option
 def worker_my_ticket(as_json: bool) -> None:
-    key = os.environ.get("HERMES_SESSION_KEY", "").strip()
-    if not key:
+    employee_session_id = os.environ.get("HERMES_SESSION_KEY", "").strip()
+    if not employee_session_id:
         http.fail_validation(
             "no HERMES_SESSION_KEY in env; not running as a ticket worker", as_json
         )
-    data = http.send("GET", f"/api/tickets/by-session/{key}", as_json=as_json)
+    data = http.send(
+        "GET",
+        f"/api/tickets/by-employee-session/{employee_session_id}",
+        as_json=as_json,
+    )
     http.emit(
         data,
         as_json,
-        f"{data['id']} {data['state']} {data['priority']} {data['title']}\n"
+        f"{data['id']} {data['stage']} {data['priority']} {data['title']}\n"
         f"worker: {data['worker']}",
     )
 
@@ -1305,12 +1351,34 @@ def worker_note(args: tuple[str, ...], body_file: str | None, as_json: bool) -> 
         field = args[1]
     else:
         http.fail_validation("usage: worker note [ticket-id] <field>", as_json)
-    if field not in _FIELDS:
+    tid = resolve_ticket_id(ticket_id, as_json)
+    detail = http.send("GET", f"/api/tickets/{tid}", as_json=as_json)
+    manifests = http.send("GET", "/api/worker-types", as_json=as_json)
+    worker_type = detail.get("worker_type")
+    manifest = next(
+        (
+            candidate
+            for candidate in manifests.get("worker_types", [])
+            if candidate.get("worker_type") == worker_type
+        ),
+        None,
+    )
+    fields = (
+        [
+            candidate.get("id")
+            for candidate in manifest.get("fields", [])
+            if candidate.get("id") != "kickoff"
+        ]
+        if isinstance(manifest, dict)
+        else []
+    )
+    if field not in fields:
         http.fail_validation(
-            "field must be success, approach, plan, implementation, or closeout", as_json
+            f"field must be {', '.join(str(candidate) for candidate in fields[:-1])}"
+            f"{', or ' if len(fields) > 1 else ''}{fields[-1] if fields else ''}",
+            as_json,
         )
     body = read_body(ticket_id, body_file, as_json)
-    tid = resolve_ticket_id(ticket_id, as_json)
     data = http.send(
         "PUT", f"/api/tickets/{tid}/notes/{field}", as_json=as_json, json_body={"user_note": body}
     )

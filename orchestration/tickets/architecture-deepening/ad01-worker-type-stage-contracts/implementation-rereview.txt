@@ -1,0 +1,11 @@
+High — [web/dist/index.html](/Users/khushaljagota/.hermes/planning-v2-worktrees/architecture-deepening/web/dist/index.html:12) still serves the old built bundle, and [web/dist/assets/index-bN4wEyZB.js](/Users/khushaljagota/.hermes/planning-v2-worktrees/architecture-deepening/web/dist/assets/index-bN4wEyZB.js:2) still contains the pre-AD01 frontend contract: `/api/ticket-types`, `ticket_type`, `type_id`, `data-ticket-state`, `data-state`, and `detail.state` usage. FastAPI serves `web/dist/index.html` at `/` and mounts `web/dist` at `/_app`, so the live app shell still calls deleted routes and reads old response keys despite the source Svelte files being corrected. This violates the “no old wire key/route/compatibility alias remains” acceptance and the frontend/public surface rename.
+
+The two accepted migration findings are fixed in the source: stored `stage` is preserved without lifecycle conversion when the source column is `stage`, and `_legacy_ticket_status` maps legacy nullable/unknown `status` to `empty` while still rejecting NULL canonical `ticket_status`.
+
+tokens used
+207,407
+
+## Orchestrator disposition
+
+- High: accepted. `web/dist` is the frontend FastAPI actually serves, so the AD01 frontend replacement is incomplete until the checked-in production bundle is regenerated from the reviewed Svelte source and the old bundle is removed. The generated output paths are added to the implementation allowlist as build artifacts only; no hand edits are permitted.
+- Migration confirmation: accepted as clean closure of the two initial findings.

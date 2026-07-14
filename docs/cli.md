@@ -14,8 +14,8 @@ The command tree matches the system model:
 
 Ordinary command groups do not expose internal runtime controls. Ticket `ticket_status`,
 run claiming, takeover, and release remain code-owned. The exceptional `chief` group can
-establish a coherent ticket state from externally completed work; it is not a generic
-state setter.
+establish a coherent Ticket Stage from externally completed work; it is not a generic
+Stage setter.
 
 ## The verbs
 
@@ -25,8 +25,9 @@ state setter.
 - **`project list / create`** — inspect and add projects. Project availability is
   data-backed, not enum-backed.
 - **`ticket create / show / list / set / approve / block / unblock / delete`** — manage
-  tickets. `ticket create` can take a `--kickoff-note` / `--kickoff-note-file` intake
-  body for the Kickoff field. `ticket set` names one field (`title`, `kickoff-note`, `priority`, `deadline`,
+  tickets. `ticket create` requires `--worker-type` and can take a `--kickoff-note` /
+  `--kickoff-note-file` intake body for the Kickoff field. `ticket list --stage`
+  compares the stored Stage directly. `ticket set` names one field (`title`, `kickoff-note`, `priority`, `deadline`,
   or `project` / `project-id`). Sprint placement is a sprint command, not a ticket
   setter. `ticket delete` is a permanent direct operation and requires `--yes`.
 - **`ticket copy / events`** — copy one ticket's plain-text packet or inspect its event log.
@@ -39,17 +40,19 @@ state setter.
   `sprint item block <item-id> --by <ticket-id>` records a Ticket blocking an item.
   Item status is read-only and derived from child tickets and active blocking links.
 - **`worker propose / recap / note / my-ticket`** — worker actions. `worker propose`
-  infers the current gating field from ticket state and requires a short recap
+  infers the current gating field from the Ticket Stage and requires a short recap
   (`--recap` or `--recap-file`) in the same request. `worker note` preserves
   field-specific user guidance without changing the field's value. `worker my-ticket`
-  reports the current ticket, and names the **specialist skill** for its type — the one
-  the base worker loads to learn that type's stages (see `ticket-types.md`).
+  reports the current Ticket, and names the **specialist skill** for its Worker type —
+  the one the base worker loads to learn that Worker type's Stages (see
+  `worker-types.md`).
 - **`chief reconcile-ticket-from-external-work / create-ticket-from-external-work`** —
   record reality established outside Panels. Both require an explicit Chief request,
   a complete Kickoff field value through `--kickoff-note-file`, preserving the report and
   reconciliation reasoning, and the
-  exact settled field prefix for the target state. Reconciliation refuses pending or
-  active ticket work; both operations leave the ticket stopped at the imported state.
+  exact settled field prefix for the target `--stage`. Creation also requires
+  `--worker-type`. Reconciliation refuses pending or active Ticket work; both
+  operations leave the Ticket stopped at the imported Stage.
 - **`serve`** — run the server and background worker runtime in the foreground.
   It may be launched from outside the repository; the app shell, static assets, and
   checked-in config are resolved from the repository root.
@@ -60,6 +63,22 @@ _Code paths:_ `src/planner/cli/main.py` (the verbs), `src/planner/cli/http.py`
 Project-aware commands accept `--project-id` as the preferred selector and keep
 `--project` as legacy name compatibility. Passing both is allowed only when they
 resolve to the same project.
+
+## One-time legacy import
+
+There is one retained cutover command outside the `panels` command tree:
+
+```text
+python -m planner.seed --source <dir> --worker-type <id>
+```
+
+`--worker-type` is required. The importer resolves that exact configured Worker type once
+and uses its Stages and fields to validate every imported Ticket. It never chooses a
+default or infers a Worker type from the Markdown. An incompatible legacy Stage rejects
+and rolls back the import.
+
+This is not a product import surface. There is no `/api/seed` route and no `panels seed`
+command.
 
 ## What used to be here and isn't
 
@@ -75,12 +94,13 @@ lease; the employee runtime runs one step at a time and writes status itself (se
 - **Tickets & the gates** (`tickets-and-gates.md`) — the proposals, recaps, and notes
   this tool files, and the scope the server enforces on them.
 - **The employee runtime** (`employee-runtime.md`) — the worker that drives this tool.
-- **Ticket types** (`ticket-types.md`) — the registry `worker my-ticket` reads the
+- **Worker types** (`worker-types.md`) — the registry `worker my-ticket` reads the
   ticket's specialist skill from.
 
 ## Deferred
 
-- **No general importer verb.** The old `plan seed` markdown importer is gone. Chief
+- **No general importer verb.** The old `plan seed` command is gone. The standalone
+  one-time cutover command above is the only retained Markdown importer. Chief
   external-work intake reconciles a reported outcome; it does not ingest old planner
   documents. Trigger: a decision to support document import again.
 

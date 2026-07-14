@@ -12,7 +12,7 @@ One screen per part of the system:
 
 - **Day** — the day overview: focus, brief take, watchout, and what makes the day
   land. Read top to bottom in the serif voice, flat, with no boxes.
-- **Review** — the one-at-a-time approval chamber: one centred decision with Skip and
+- **Review** — the one-at-a-time chamber for parked Ticket proposals: one centred decision with Skip and
   Open-ticket top-right, a labelled recap, the ask surface, and a send-back row.
   Keyboard shortcuts drive it (skip, open, approve) when the cursor is not in a text
   field, and each decision fades in as it arrives. The approve button physically
@@ -30,10 +30,10 @@ One screen per part of the system:
   That address can be loaded, refreshed, shared, or revisited with browser history;
   a missing ticket safely leaves the Chief of Staff view open.
 - **Ticket** — the whole story of one piece of work: a serif title, a single facts
-  line (status, priority, its **type** pill, due, project, sprint, take-over/copy), the
+  line (status, priority, its **Worker type** pill, due, project, sprint, take-over/copy), the
   leash written as one sentence, the recap, then the spine of stages — which stages that
-  spine shows is the ticket's type's, derived from the served manifest (see below and
-  `ticket-types.md`); the kickoff user note sits first in that spine, collapsed. The one raised ask surface, live status markers, the
+  spine shows is the Ticket's Worker type's, derived from the served manifest (see below and
+  `worker-types.md`); the kickoff user note sits first in that spine, collapsed. The one raised ask surface, live status markers, the
   employee chat in serif alongside, and a copy button that produces a plain-text block
   for pasting anywhere. Its project picker is backed by the shared `projects` resource.
 - **Sprint** — one tracking page that scrolls (name, a meta line, the bet, then the
@@ -43,7 +43,7 @@ One screen per part of the system:
   unboxed serif idiom (see `backlog-and-ideas.md`).
 
 The shell itself carries a presence readout — a small spinner and "N working" — from
-the running-agent count, alongside the amber Review badge.
+the global running-worker count, alongside the amber Review badge.
 
 Each screen is a projection of a backend; the behaviour behind it is documented with
 that backend, not here. This doc owns the shell and the rendering rules the screens
@@ -51,16 +51,34 @@ share.
 
 ## The two rules that shape it
 
-- **Keyed invalidation, no canonical client store.** The event log is a doorbell.
-  Each event maps to resource keys such as `ticket:<id>`, `board`, `queues`, and
-  `sprint:current`; ticket events also map to `chat:<id>` so the ticket chat rail
-  can reload the worker's full Hermes trace. Project events map to `projects`, which
-  refreshes project selectors. Only those resources refetch. There
-  is no client-side store mirroring the server — the server is always the source
-  of truth. The ticket chat rail refreshes while a worker is running and performs
-  a short settled-state retry only while the transcript is empty, because Hermes
-  history can become readable a moment after the DB status/proposal event that
-  triggered the first refetch.
+- **One Resource Catalogue, no canonical client store.** The catalogue names every
+  cached server read, its endpoint and type, and the events that affect it. The cache
+  engine only manages loaded values, subscribers, and overlapping requests; it knows
+  nothing about Tickets or Projects. The event log is a doorbell. Events invalidate
+  catalogue resources such as `ticket:<id>`, `board`, `review`, and `sprint:current`,
+  and successful UI writes apply one named catalogue effect immediately. Only those
+  resources refetch. There is no whole-screen refetch or client-side copy of canonical
+  state — the server remains the source of truth.
+
+  A Project rename refreshes Projects, Board, today's Day, backlog Sprint items,
+  Ideas, current Sprint, and an already-opened Ticket when its loaded direct Project
+  matches. An opened Ticket whose first load has not settled is refreshed
+  conservatively. A loaded Ticket with another Project, no Project, or no direct
+  Project field is excluded. Project creation and summary-only edits refresh Projects
+  only. The catalogue keeps its own private process-lifetime list of opened
+  parameterized resources to make this check; the cache remains generic.
+
+  Panels Chat has a narrower rule. The four message and turn events for a Ticket
+  refresh only `chat:<id>`. Ticket `employee_session_changed` refreshes only the
+  matching `ticket:<id>`; it never refreshes Chat, Board, Review, current Sprint, or
+  any other projection. Day and top-level-agent `chat_session_created` and Chat events
+  refresh only their matching Chat. Day Chat events do not refresh the Day projection.
+  Employee session history is an explicit ordinary Ticket read, not a cached Panels
+  Chat resource.
+
+  An empty Panels Chat stays empty. `ChatState` reads only durable Panels messages and
+  the live turn; it never retries with or merges Hermes history. The browser has no
+  Employee-history pane or transcript-merging control.
 - **The markdown renderer is hardened.** Written text (briefs, notes, ideas) renders
   through a markdown pass built so a crafted link that a browser would quietly treat
   as runnable code is impossible to express.
@@ -101,6 +119,13 @@ share.
   separate source mode and no Edit/Save/Cancel control set. Browser edits may move an
   atomic block within the editable DOM; that move keeps its mounted component alive,
   while actual deletion still unmounts it and cancels pending work.
+- **Managed Markdown has one DOM owner.** `managedMarkdown.ts` alone renders Markdown,
+  mounts and unmounts file previews, turns editable preview links into atomic blocks,
+  reads edited Markdown, maintains empty state, and cleans up observers and components.
+  `MarkdownBlock` only supplies read-only content and presentation values.
+  `InlineEdit` only coordinates focus, save, retry, keyboard, paste, Escape, and the
+  choice between Markdown and plain text. A failed Markdown save keeps the exact
+  attempted source so a later blur can retry without another edit.
 
 ## The shared component set
 
@@ -123,8 +148,8 @@ hand-rolling the same shapes per screen. Each does one job:
   picker, and the approve/accept action, plus a read-only mode for dropped tickets.
 - **ResourceState** — the shared error / loading scaffold; shows an error line, a
   loading line, or the content. Data-empty states ("No ideas yet.") stay in the screens.
-- **InlineEdit** — the one editable-markdown surface (notes, recaps, drafts).
-- **MarkdownBlock** — read-only rendering through the hardened markdown renderer.
+- **InlineEdit** — product editing and save behavior for Markdown and plain text.
+- **MarkdownBlock** — the read-only product wrapper for managed Markdown.
 - **FilePreview** — the one file preview card/inline renderer (see the file-preview rule).
 - **ChatPanel / ChatComposer** — the ticket and Chief-of-Staff chat rail and its input,
   including ordered pending image previews for picker, paste, and drop intake.
@@ -134,9 +159,9 @@ hand-rolling the same shapes per screen. Each does one job:
 - **ErrorLine** — a single error message line.
 
 A ticket's stage labels and order are not baked into the frontend: they come from the
-server's per-type manifest through `web/src/lib/lifecycle.ts`, keyed by each ticket's
-own type (see `ticket-types.md`). `labelize` in `web/src/lib/ui.ts` remains only as the
-fallback that turns a raw field/state or type id into a readable label before a manifest
+server's per-Worker-type manifest through `web/src/lib/lifecycle.ts`, keyed by each
+Ticket's own Worker type (see `worker-types.md`). `labelize` in `web/src/lib/ui.ts`
+remains only as the fallback that turns a raw field, Stage, or Worker type id into a readable label before a manifest
 has loaded. `web/src/lib/dates.ts` holds the date formatting the Day and Sprint screens
 share — the short-month day label the redesign speaks in, plus the weekday name. (The two visible native selects were left un-unified on purpose —
 they share almost nothing real; see `decisions.md`, D77.)
@@ -148,8 +173,11 @@ derived from the browser's own clock against the sprint dates, so it follows the
 local day, not the server's planning-day boundary.
 
 _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
-(one route per screen), `web/src/components/` (shared pieces), `web/src/lib/`
-(API, resources, event mapping, WebSocket, `labelize`, dates), `assets/tokens.css`
+(one route per screen), `web/src/components/` (shared pieces),
+`web/src/lib/resourceCatalogue.ts` (cached reads, event dependencies, and mutation effects),
+`web/src/lib/resources.svelte.ts` (the generic cache engine), `web/src/lib/ws.ts`
+(the WebSocket doorbell), and the remaining `web/src/lib/` helpers (API, Managed Markdown,
+`labelize`, dates), `assets/tokens.css`
 (design tokens), `assets/app.css` (shared styling), `assets/markdown.js` (the
 hardened renderer), `web/dist/` (built app served by FastAPI).
 
@@ -158,8 +186,8 @@ hardened renderer), `web/dist/` (built app served by FastAPI).
 - Every backend doc owns the behaviour its screen projects — **Tickets & the gates**
   (`tickets-and-gates.md`), **Days** (`days.md`), **Sprints** (`sprints.md`),
   **Backlog & Ideas** (`backlog-and-ideas.md`), **Chat** (`chat.md`).
-- **Ticket types** (`ticket-types.md`) — the served manifest the ticket screen turns
-  into a per-type lifecycle to render each ticket's stages and type pill.
+- **Worker types** (`worker-types.md`) — the served manifest the Ticket screen turns
+  into a per-Worker-type lifecycle to render each Ticket's Stages and Worker type pill.
 - **Projects** (`projects.md`) — the shared project selector resource.
 - **`DESIGN.md`** (repo root) — the visual language the tokens implement.
 
@@ -171,4 +199,4 @@ hardened renderer), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-13 (per-type ticket rendering and shared scrollbar behavior verified)._
+_Last verified: 2026-07-14 (Resource Catalogue ownership, Managed Markdown ownership, per-type ticket rendering, and shared scrollbar behavior verified)._

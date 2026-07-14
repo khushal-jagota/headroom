@@ -1,0 +1,20 @@
+Architecture deepening × restart recovery implementation review
+
+Reviewer: Codex CLI, gpt-5.5, read-only sandbox, high reasoning effort
+Session: 019f5ff5-dbec-7643-97c4-edbfd65eb9e2
+Result: ONE HIGH VIOLATION — accepted; correction delegated before merge
+
+Full reviewer output:
+
+High — [employee_step_runner.py:296](/Users/khushaljagota/.hermes/planning-v2-worktrees/architecture-merge/src/planner/runtime/employee_step_runner.py:296)
+
+`recover_running_step` handles missing `employee_session_id` by marking the Ticket errored and returning before settling the stale worker-origin `chat_turn`. Startup stale-turn cleanup only runs before Employee recovery and only for tickets already out of `agent_running_step`, so this path leaves the worker turn running after the Ticket is errored. That violates the integration contract: no stored identity must settle the visible turn as errored, mark the still-running Ticket errored through the canonical writer, and call no gateway.
+
+Correction: in the missing-identity branch, settle the current running worker turn through the canonical Chat settlement path with `status="errored"` and error `"restart recovery has no existing Employee session"` before or with the canonical Ticket error transition. Do not create a replacement turn and do not call the gateway. Add a regression test seeding `agent_running_step` + no `employee_session_id` + stale worker turn, then asserting the Ticket is errored, no gateway call occurred, and no active worker turn remains.
+
+Disposition:
+
+Accepted. The correction is required by the integration contract and remains inside the
+restart-recovery seam. It must use the canonical Chat terminal settlement and canonical
+Ticket error transition, create no replacement turn, and make no Hermes gateway call.
+A focused regression test is required before a fresh independent review.

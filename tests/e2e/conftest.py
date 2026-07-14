@@ -6,7 +6,8 @@ fresh temp SQLite DB in ``PLAN_TEST_MODE`` with the boundaries faked (echo gatew
 default; ``server_factory(gateway="offline")`` boots a second instance for the offline
 notice). Browser contexts come from pytest-playwright's session ``browser``; the
 ``open_page`` / ``cli`` / ``api`` helpers drive the surfaces. Every Playwright wait
-carries an explicit ``timeout``; the only sleep is the readiness poll's 0.1s interval,
+carries an explicit ``timeout``; the only sleep is the Automatic Employee-step discovery
+poll's 0.1s interval,
 which polls a condition inside a boot budget.
 """
 

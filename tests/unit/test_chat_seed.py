@@ -1,13 +1,10 @@
-"""T13 acceptance: the chat send/status routes, driven through a TestClient over
-create_app with fake adapters. Covers echo persistence + one event, key reuse, day
-materialization, not_found/validation/offline error codes, and the guarded
-first-reply race."""
+"""Canonical server-owned Chat turn, history, state, pause, and status coverage."""
 
 from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -15,15 +12,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from planner.chat import data as chat_data
-from planner.chat import service
 from planner.chat.contracts import (
-    ChatHistory,
-    ChatMessage,
-    ChatSendResult,
-    ChatStreamChunk,
+    ChatActivityObservation,
     GatewayStatus,
+    HumanChatCompletion,
+    HumanChatObservation,
+    HumanChatOutputDelta,
 )
 from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
+from planner.core.adapters.base import HumanSessionKeyBinder
 from planner.core.adapters.registry import Adapters, build_adapters
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -32,7 +29,13 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
 from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.shared_gateway import SharedGateway
-from planner.tickets.contracts import NO_FURTHER, AtCap, FieldName, TicketStatus
+from planner.tickets.contracts import (
+    NO_FURTHER,
+    AtCap,
+    EmployeeSessionHistory,
+    EmployeeSessionHistoryMessage,
+    TicketStatus,
+)
 from planner.tickets.data import accept_proposal, create_ticket
 
 
@@ -61,11 +64,13 @@ def _make_app(tmp_path: Path, gateway: str = "fake") -> tuple[object, Path]:
 def _ticket(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
-        ticket = create_ticket(conn, title="Chat me.", actor="human", now=0, title_max_chars=200)
+        ticket = create_ticket(
+            conn, worker_type="coding", title="Chat me.", actor="human", now=0, title_max_chars=200
+        )
         ticket = accept_proposal(
             conn,
             ticket.id,
-            field=FieldName.kickoff,
+            field="kickoff",
             actor="human",
             now=0,
             next_ceiling=NO_FURTHER,
@@ -94,9 +99,7 @@ def _ticket_status(db_path: Path, ticket_id: str) -> str:
 def _set_ticket_status(db_path: Path, ticket_id: str, status: TicketStatus) -> None:
     conn = connect(str(db_path))
     try:
-        conn.execute(
-            "UPDATE tickets SET ticket_status = ? WHERE id = ?", (status.value, ticket_id)
-        )
+        conn.execute("UPDATE tickets SET ticket_status = ? WHERE id = ?", (status.value, ticket_id))
     finally:
         conn.close()
 
@@ -116,57 +119,77 @@ def _events(db_path: Path, entity_id: str, kind: str) -> list[dict[str, object]]
 def _stored_key(db_path: Path, table: str, entity_id: str) -> object:
     conn = connect(str(db_path))
     try:
-        row = conn.execute(
-            f"SELECT chat_session_key FROM {table} WHERE id = ?", (entity_id,)
-        ).fetchone()
+        column = "employee_session_id" if table == "tickets" else "chat_session_key"
+        row = conn.execute(f"SELECT {column} FROM {table} WHERE id = ?", (entity_id,)).fetchone()
     finally:
         conn.close()
-    return None if row is None else row["chat_session_key"]
+    return None if row is None else row[column]
 
 
 def _set_stored_key(db_path: Path, table: str, entity_id: str, key: str) -> None:
     conn = connect(str(db_path))
     try:
-        conn.execute(f"UPDATE {table} SET chat_session_key = ? WHERE id = ?", (key, entity_id))
+        column = "employee_session_id" if table == "tickets" else "chat_session_key"
+        conn.execute(f"UPDATE {table} SET {column} = ? WHERE id = ?", (key, entity_id))
     finally:
         conn.close()
 
 
-def test_chat_send_echo_persists_key_and_event(tmp_path: Path) -> None:
+def _wait_for_settled(client: TestClient, entity_id: str) -> dict[str, object]:
+    for _ in range(40):
+        response = client.get(f"/api/chat/{entity_id}/state")
+        assert response.status_code == 200
+        state = response.json()
+        if state["active_turn"] is None:
+            return state
+        threading.Event().wait(0.05)
+    raise AssertionError(state)
+
+
+def _latest_turn(db_path: Path, entity_id: str) -> dict[str, object]:
+    conn = connect(str(db_path))
+    try:
+        row = conn.execute(
+            "SELECT id, status, session_key, error FROM chat_turns "
+            "WHERE entity_id = ? ORDER BY started_at DESC, rowid DESC LIMIT 1",
+            (entity_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    return dict(row)
+
+
+def test_employee_session_history_empty_without_session(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)
-    with TestClient(app) as client:
-        response = client.post(f"/api/chat/{tid}/send", json={"text": "hello"})
-    assert response.status_code == 200
-    assert response.json() == {"reply_text": "echo: hello", "session_key": "fake-sess-1"}
-    assert _stored_key(db_path, "tickets", tid) == "fake-sess-1"
-    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fake-sess-1"}]
-
-
-def test_chat_history_empty_without_session(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    tid = _ticket(db_path)
 
     with TestClient(app) as client:
-        response = client.get(f"/api/chat/{tid}/history")
+        response = client.get(f"/api/tickets/{tid}/employee-session-history")
 
     assert response.status_code == 200
-    assert response.json() == {"messages": [], "session_key": None}
+    assert response.json() == {"messages": [], "employee_session_id": None}
     assert _stored_key(db_path, "tickets", tid) is None
-    assert _events(db_path, tid, "chat_session_created") == []
+    assert _events(db_path, tid, "employee_session_changed") == []
 
 
-def test_chat_history_reads_full_fake_trace(tmp_path: Path) -> None:
+def test_employee_session_history_reads_full_fake_trace(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)
 
     with TestClient(app) as client:
-        first = client.post(f"/api/chat/{tid}/send", json={"text": "hello"})
-        second = client.post(f"/api/chat/{tid}/send", json={"text": "again"})
-        history = client.get(f"/api/chat/{tid}/history")
+        first = client.post(
+            f"/api/chat/{tid}/turns", json={"text": "hello", "mode": "message"}
+        )
+        assert first.status_code == 200
+        _wait_for_settled(client, tid)
+        second = client.post(
+            f"/api/chat/{tid}/turns", json={"text": "again", "mode": "message"}
+        )
+        assert second.status_code == 200
+        _wait_for_settled(client, tid)
+        history = client.get(f"/api/tickets/{tid}/employee-session-history")
 
-    assert first.status_code == 200
-    assert second.status_code == 200
     assert history.status_code == 200
     assert history.json() == {
         "messages": [
@@ -175,8 +198,49 @@ def test_chat_history_reads_full_fake_trace(tmp_path: Path) -> None:
             {"role": "user", "text": "again", "created_at": 3},
             {"role": "assistant", "text": "echo: again", "created_at": 4},
         ],
-        "session_key": "fake-sess-1",
+        "employee_session_id": "fake-sess-1",
     }
+
+
+def test_panels_state_is_database_only_and_does_not_materialize_empty_entities(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ticket(db_path)
+
+    class NoGatewayCalls:
+        def __getattr__(self, name: str) -> object:
+            raise AssertionError(f"state called gateway method {name}")
+
+    _replace_gateway(app, NoGatewayCalls())
+    conn = connect(str(db_path))
+    try:
+        before_events = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        for entity_id in (
+            ticket_id,
+            "day_2099-01-01",
+            CHIEF_OF_STAFF_ENTITY_ID,
+        ):
+            response = client.get(f"/api/chat/{entity_id}/state")
+            assert response.status_code == 200
+            assert response.json() == {"messages": [], "active_turn": None}
+
+    conn = connect(str(db_path))
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == before_events
+        assert conn.execute(
+            "SELECT 1 FROM days WHERE id = 'day_2099-01-01'"
+        ).fetchone() is None
+        assert conn.execute(
+            "SELECT 1 FROM agent_chat_sessions WHERE id = ?",
+            (CHIEF_OF_STAFF_ENTITY_ID,),
+        ).fetchone() is None
+    finally:
+        conn.close()
 
 
 def test_chat_state_records_server_owned_human_turn(tmp_path: Path) -> None:
@@ -213,6 +277,10 @@ def test_chat_state_records_server_owned_human_turn(tmp_path: Path) -> None:
         },
     ]
     assert body["messages"][0]["turn_id"] == body["messages"][1]["turn_id"]
+    assert _stored_key(db_path, "tickets", tid) == "fake-sess-1"
+    assert _events(db_path, tid, "employee_session_changed") == [
+        {"employee_session_id": "fake-sess-1"}
+    ]
     assert _events(db_path, tid, "chat_turn_started")
     assert _events(db_path, tid, "chat_turn_finished") == [
         {"turn_id": body["messages"][0]["turn_id"], "status": "complete"}
@@ -300,36 +368,28 @@ def test_chat_state_shows_active_turn_while_gateway_is_running(tmp_path: Path) -
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
-            return ChatHistory(messages=(), session_key=session_key)
+        def read_employee_session_history(
+            self, employee_session_id: str, ticket_id: str
+        ) -> EmployeeSessionHistory:
+            return EmployeeSessionHistory(messages=(), employee_session_id=employee_session_id)
 
-        def stream(
+        def run_human_turn(
             self,
             session_key: str | None,
             entity_id: str,
             text: str,
             mode: str,
-            on_session_key: Callable[[str], None] | None = None,
-        ) -> Iterator[ChatStreamChunk]:
-            if on_session_key is not None:
-                on_session_key("blocked-session")
-            yield ChatStreamChunk(type="session", session_key="blocked-session")
-            yield ChatStreamChunk(type="token", text="partial")
+            bind_session_key: HumanSessionKeyBinder,
+            image_paths: tuple[Path, ...] = (),
+            *,
+            require_existing_session: bool = False,
+        ) -> Iterator[HumanChatObservation]:
+            bind_session_key("blocked-session")
+            yield HumanChatOutputDelta("partial")
             release.wait(2.0)
-            yield ChatStreamChunk(
-                type="done",
-                reply_text="partial done",
-                session_key="blocked-session",
-                kind="assistant",
-            )
+            yield HumanChatCompletion("partial done", "assistant")
 
         def catalog(self):  # noqa: ANN201
-            raise AssertionError("unused")
-
-        def send(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
-            raise AssertionError("unused")
-
-        def run_command(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
             raise AssertionError("unused")
 
     _replace_gateway(app, BlockingGateway())
@@ -347,6 +407,9 @@ def test_chat_state_shows_active_turn_while_gateway_is_running(tmp_path: Path) -
         assert state["messages"][0]["role"] == "human"
         assert active["status"] == "running"
         assert active["phase"] == "responding"
+        assert active["can_pause"] is True
+        assert "session_key" not in active
+        assert _stored_key(db_path, "tickets", tid) == "blocked-session"
         release.set()
         for _ in range(20):
             final = client.get(f"/api/chat/{tid}/state").json()
@@ -367,36 +430,32 @@ def test_chat_state_shows_active_turn_activity_label(tmp_path: Path) -> None:
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
-            return ChatHistory(messages=(), session_key=session_key)
+        def read_employee_session_history(
+            self, employee_session_id: str, ticket_id: str
+        ) -> EmployeeSessionHistory:
+            return EmployeeSessionHistory(messages=(), employee_session_id=employee_session_id)
 
-        def stream(
+        def run_human_turn(
             self,
             session_key: str | None,
             entity_id: str,
             text: str,
             mode: str,
-            on_session_key: Callable[[str], None] | None = None,
-        ) -> Iterator[ChatStreamChunk]:
-            if on_session_key is not None:
-                on_session_key("activity-session")
-            yield ChatStreamChunk(type="session", session_key="activity-session")
-            yield ChatStreamChunk(type="activity", text="Checking workspace tools")
-            release.wait(2.0)
-            yield ChatStreamChunk(
-                type="done",
-                reply_text="done",
-                session_key="activity-session",
-                kind="assistant",
+            bind_session_key: HumanSessionKeyBinder,
+            image_paths: tuple[Path, ...] = (),
+            *,
+            require_existing_session: bool = False,
+        ) -> Iterator[HumanChatObservation]:
+            bind_session_key("activity-session")
+            yield ChatActivityObservation(
+                category="tool",
+                label="Checking workspace tools",
+                lifecycle_state="running",
             )
+            release.wait(2.0)
+            yield HumanChatCompletion("done", "assistant")
 
         def catalog(self):  # noqa: ANN201
-            raise AssertionError("unused")
-
-        def send(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
-            raise AssertionError("unused")
-
-        def run_command(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
             raise AssertionError("unused")
 
     _replace_gateway(app, ActivityGateway())
@@ -442,8 +501,10 @@ def test_pause_active_turn_interrupts_chat_without_touching_ticket_status(tmp_pa
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
-            return ChatHistory(messages=(), session_key=session_key)
+        def read_employee_session_history(
+            self, employee_session_id: str, ticket_id: str
+        ) -> EmployeeSessionHistory:
+            return EmployeeSessionHistory(messages=(), employee_session_id=employee_session_id)
 
         def interrupt(self, session_key: str, entity_id: str) -> None:
             self.interrupt_calls.append((session_key, entity_id))
@@ -566,31 +627,34 @@ def test_pause_then_immediate_human_turn_keeps_late_old_completion_out_of_new_tu
     ]
 
 
-def test_chat_history_rejects_agents(tmp_path: Path) -> None:
+def test_employee_session_history_rejects_agents(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)
 
     with TestClient(app) as client:
-        response = client.get(f"/api/chat/{tid}/history", headers={"X-Plan-Actor": "agent"})
+        response = client.get(
+            f"/api/tickets/{tid}/employee-session-history",
+            headers={"X-Plan-Actor": "agent"},
+        )
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "agent_forbidden"
 
 
-def test_chat_history_offline_is_503_when_session_exists(tmp_path: Path) -> None:
+def test_employee_session_history_offline_is_503_when_session_exists(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path, gateway="offline")
     tid = _ticket(db_path)
     _set_stored_key(db_path, "tickets", tid, "stored-key")
 
     with TestClient(app) as client:
-        response = client.get(f"/api/chat/{tid}/history")
+        response = client.get(f"/api/tickets/{tid}/employee-session-history")
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "gateway_offline"
     assert _stored_key(db_path, "tickets", tid) == "stored-key"
 
 
-def test_chat_history_rotated_key_repersists(tmp_path: Path) -> None:
+def test_employee_session_history_rotated_id_repersists(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)
     _set_stored_key(db_path, "tickets", tid, "old-key")
@@ -599,212 +663,128 @@ def test_chat_history_rotated_key_repersists(tmp_path: Path) -> None:
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
-            assert session_key == "old-key"
-            assert entity_id == tid
-            return ChatHistory(
-                messages=(ChatMessage(role="system", text="worker prompt", created_at=7),),
-                session_key="fresh-key",
+        def read_employee_session_history(
+            self, employee_session_id: str, ticket_id: str
+        ) -> EmployeeSessionHistory:
+            assert employee_session_id == "old-key"
+            assert ticket_id == tid
+            return EmployeeSessionHistory(
+                messages=(
+                    EmployeeSessionHistoryMessage(
+                        role="system", text="worker prompt", created_at=7
+                    ),
+                ),
+                employee_session_id="fresh-key",
             )
 
     _replace_gateway(app, RotatingHistoryGateway())
     with TestClient(app) as client:
-        response = client.get(f"/api/chat/{tid}/history")
+        response = client.get(f"/api/tickets/{tid}/employee-session-history")
 
     assert response.status_code == 200
     assert response.json() == {
         "messages": [{"role": "system", "text": "worker prompt", "created_at": 7}],
-        "session_key": "fresh-key",
+        "employee_session_id": "fresh-key",
     }
     assert _stored_key(db_path, "tickets", tid) == "fresh-key"
-    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fresh-key"}]
-
-
-def test_chat_stream_echo_persists_key_and_event(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    tid = _ticket(db_path)
-    with TestClient(app) as client:
-        with client.stream(
-            "POST", f"/api/chat/{tid}/stream", json={"text": "hello", "mode": "message"}
-        ) as response:
-            body = "".join(response.iter_text())
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/event-stream")
-    assert 'event: message_start\ndata: {"entity_id":"' + tid + '","mode":"message"}' in body
-    assert 'event: token\ndata: {"text":"echo' in body
-    assert (
-        'event: message_done\ndata: {"reply_text":"echo: hello",'
-        '"session_key":"fake-sess-1","kind":"assistant"}'
-    ) in body
-    assert _stored_key(db_path, "tickets", tid) == "fake-sess-1"
-    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fake-sess-1"}]
-
-
-def test_chat_stream_persists_session_before_first_token(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    tid = _ticket(db_path)
-
-    class InspectingGateway:
-        def stream(
-            self,
-            session_key: str | None,
-            entity_id: str,
-            text: str,
-            mode: str,
-            on_session_key: Callable[[str], None] | None = None,
-        ) -> Iterator[ChatStreamChunk]:
-            assert session_key is None
-            if on_session_key is not None:
-                on_session_key("early-key")
-            yield ChatStreamChunk(type="session", session_key="early-key")
-            assert _stored_key(db_path, "tickets", entity_id) == "early-key"
-            yield ChatStreamChunk(type="token", text="ready")
-            yield ChatStreamChunk(
-                type="done",
-                reply_text="ready",
-                session_key="early-key",
-                kind="assistant",
-            )
-
-        def status(self) -> GatewayStatus:
-            return GatewayStatus(available=True)
-
-    _replace_gateway(app, InspectingGateway())
-    with TestClient(app) as client:
-        with client.stream(
-            "POST", f"/api/chat/{tid}/stream", json={"text": "hello", "mode": "message"}
-        ) as response:
-            body = "".join(response.iter_text())
-
-    assert response.status_code == 200
-    assert 'event: token\ndata: {"text":"ready"}' in body
-    assert 'event: message_done\ndata: {"reply_text":"ready","session_key":"early-key"' in body
-    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "early-key"}]
-
-
-def test_chat_stream_command_uses_system_kind(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    tid = _ticket(db_path)
-    with TestClient(app) as client:
-        with client.stream(
-            "POST", f"/api/chat/{tid}/stream", json={"text": "/status", "mode": "command"}
-        ) as response:
-            body = "".join(response.iter_text())
-    assert response.status_code == 200
-    assert (
-        'event: message_done\ndata: {"reply_text":"exec: /status",'
-        '"session_key":"fake-sess-1","kind":"system"}'
-    ) in body
-    assert _stored_key(db_path, "tickets", tid) == "fake-sess-1"
-    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fake-sess-1"}]
-
-
-def test_chat_stream_offline_is_error_event_and_no_persist(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path, gateway="offline")
-    tid = _ticket(db_path)
-    with TestClient(app) as client:
-        with client.stream(
-            "POST", f"/api/chat/{tid}/stream", json={"text": "hello", "mode": "message"}
-        ) as response:
-            body = "".join(response.iter_text())
-    assert response.status_code == 200
-    assert 'event: error\ndata: {"code":"gateway_offline","message":"gateway offline"' in body
-    assert _stored_key(db_path, "tickets", tid) is None
-    assert _events(db_path, tid, "chat_session_created") == []
-
-
-def test_chat_send_second_send_reuses_key_no_new_event(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    tid = _ticket(db_path)
-    with TestClient(app) as client:
-        first = client.post(f"/api/chat/{tid}/send", json={"text": "hello"})
-        assert first.json()["session_key"] == "fake-sess-1"
-        second = client.post(f"/api/chat/{tid}/send", json={"text": "again"})
-    assert second.status_code == 200
-    assert second.json() == {"reply_text": "echo: again", "session_key": "fake-sess-1"}
-    assert _stored_key(db_path, "tickets", tid) == "fake-sess-1"
-    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fake-sess-1"}]
-
-
-def test_chat_send_day_materializes_and_persists(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    day = "day_2026-07-04"
-    with TestClient(app) as client:
-        response = client.post(f"/api/chat/{day}/send", json={"text": "plan check"})
-    assert response.status_code == 200
-    assert response.json() == {"reply_text": "echo: plan check", "session_key": "fake-sess-1"}
-    assert _stored_key(db_path, "days", day) == "fake-sess-1"
-    assert _events(db_path, day, "day_created") == [{}]
-    assert _events(db_path, day, "chat_session_created") == [{"session_key": "fake-sess-1"}]
-
-
-def test_chat_send_chief_of_staff_uses_top_level_agent_session(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-
-    with TestClient(app) as client:
-        response = client.post(
-            f"/api/chat/{CHIEF_OF_STAFF_ENTITY_ID}/send",
-            json={"text": "what should I look at?"},
-        )
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "reply_text": "echo: what should I look at?",
-        "session_key": "fake-sess-1",
-    }
-    assert _stored_key(db_path, "agent_chat_sessions", CHIEF_OF_STAFF_ENTITY_ID) == "fake-sess-1"
-    assert _events(db_path, CHIEF_OF_STAFF_ENTITY_ID, "chat_session_created") == [
-        {"session_key": "fake-sess-1"}
+    assert _events(db_path, tid, "employee_session_changed") == [
+        {"employee_session_id": "fresh-key"}
     ]
 
 
-def test_chat_history_chief_of_staff_empty_without_ticket_or_day(tmp_path: Path) -> None:
+def test_second_human_turn_reuses_key_without_new_event(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
-
+    tid = _ticket(db_path)
     with TestClient(app) as client:
-        response = client.get(f"/api/chat/{CHIEF_OF_STAFF_ENTITY_ID}/history")
+        first = client.post(
+            f"/api/chat/{tid}/turns", json={"text": "hello", "mode": "message"}
+        )
+        assert first.status_code == 200
+        _wait_for_settled(client, tid)
+        second = client.post(
+            f"/api/chat/{tid}/turns", json={"text": "again", "mode": "message"}
+        )
+        assert second.status_code == 200
+        state = _wait_for_settled(client, tid)
 
-    assert response.status_code == 200
-    assert response.json() == {"messages": [], "session_key": None}
-    assert _stored_key(db_path, "agent_chat_sessions", CHIEF_OF_STAFF_ENTITY_ID) is None
-    assert _events(db_path, CHIEF_OF_STAFF_ENTITY_ID, "chat_session_created") == []
-
-
-def test_chat_send_unknown_agent_entity_not_found(tmp_path: Path) -> None:
-    app, _ = _make_app(tmp_path)
-
-    with TestClient(app) as client:
-        response = client.post("/api/chat/agent_other/send", json={"text": "x"})
-
-    assert response.status_code == 404
-    assert response.json()["error"]["code"] == "not_found"
-
-
-def test_chat_send_ticket_not_found(tmp_path: Path) -> None:
-    app, _ = _make_app(tmp_path)
-    with TestClient(app) as client:
-        response = client.post("/api/chat/t_missing/send", json={"text": "x"})
-    assert response.status_code == 404
-    assert response.json()["error"]["code"] == "not_found"
+    assert [(message["role"], message["text"]) for message in state["messages"]] == [
+        ("human", "hello"),
+        ("assistant", "echo: hello"),
+        ("human", "again"),
+        ("assistant", "echo: again"),
+    ]
+    assert _stored_key(db_path, "tickets", tid) == "fake-sess-1"
+    assert _events(db_path, tid, "employee_session_changed") == [
+        {"employee_session_id": "fake-sess-1"}
+    ]
 
 
-def test_chat_send_unknown_prefix_not_found(tmp_path: Path) -> None:
-    app, _ = _make_app(tmp_path)
-    with TestClient(app) as client:
-        response = client.post("/api/chat/xyz/send", json={"text": "x"})
-    assert response.status_code == 404
-    assert response.json()["error"]["code"] == "not_found"
-
-
-def test_chat_send_offline_is_503_and_no_persist(tmp_path: Path) -> None:
+def test_human_turn_offline_settles_failed_without_key(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path, gateway="offline")
     tid = _ticket(db_path)
     with TestClient(app) as client:
-        response = client.post(f"/api/chat/{tid}/send", json={"text": "hello"})
-    assert response.status_code == 503
-    assert response.json()["error"]["code"] == "gateway_offline"
+        response = client.post(
+            f"/api/chat/{tid}/turns", json={"text": "hello", "mode": "message"}
+        )
+        assert response.status_code == 200
+        _wait_for_settled(client, tid)
+
+    assert response.status_code == 200
+    assert _latest_turn(db_path, tid)["status"] == "errored"
+    assert _latest_turn(db_path, tid)["error"] == "gateway offline"
     assert _stored_key(db_path, "tickets", tid) is None
-    assert _events(db_path, tid, "chat_session_created") == []
+    assert _events(db_path, tid, "employee_session_changed") == []
+
+
+@pytest.mark.parametrize("entity_kind", ["ticket", "day", "chief"])
+def test_human_turn_supports_each_chattable_entity(tmp_path: Path, entity_kind: str) -> None:
+    app, db_path = _make_app(tmp_path)
+    if entity_kind == "ticket":
+        entity_id = _ticket(db_path)
+        table = "tickets"
+    elif entity_kind == "day":
+        entity_id = "day_2026-07-04"
+        table = "days"
+    else:
+        entity_id = CHIEF_OF_STAFF_ENTITY_ID
+        table = "agent_chat_sessions"
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/chat/{entity_id}/turns",
+            json={"text": "plan check", "mode": "message"},
+        )
+        assert response.status_code == 200
+        _wait_for_settled(client, entity_id)
+
+    assert response.status_code == 200
+    assert _stored_key(db_path, table, entity_id) == "fake-sess-1"
+    if entity_kind == "day":
+        assert _events(db_path, entity_id, "day_created") == [{}]
+    expected_kind = (
+        "employee_session_changed" if entity_kind == "ticket" else "chat_session_created"
+    )
+    expected_payload = (
+        {"employee_session_id": "fake-sess-1"}
+        if entity_kind == "ticket"
+        else {"session_key": "fake-sess-1"}
+    )
+    assert _events(db_path, entity_id, expected_kind) == [expected_payload]
+
+
+@pytest.mark.parametrize("entity_id", ["agent_other", "t_missing", "xyz", "day_bogus"])
+def test_human_turn_rejects_missing_or_invalid_entity(
+    tmp_path: Path, entity_id: str
+) -> None:
+    app, _ = _make_app(tmp_path)
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/chat/{entity_id}/turns", json={"text": "x", "mode": "message"}
+        )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"
 
 
 def test_chat_status_offline_false(tmp_path: Path) -> None:
@@ -823,125 +803,62 @@ def test_chat_status_echo_true(tmp_path: Path) -> None:
     assert response.json() == {"available": True}
 
 
-def test_chat_send_malformed_day_id_rejected_no_materialization(tmp_path: Path) -> None:
+def test_human_turn_lost_first_write_race_adopts_winner_key(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
-    with TestClient(app) as client:
-        response = client.post("/api/chat/day_bogus/send", json={"text": "x"})
-    assert response.status_code == 404
-    assert response.json()["error"]["code"] == "not_found"
-    conn = connect(str(db_path))
-    try:
-        assert conn.execute("SELECT COUNT(*) FROM days").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
-    finally:
-        conn.close()
-
-
-def test_chat_send_lost_race_adopts_winner_key_no_event(tmp_path: Path) -> None:
-    db_path = tmp_path / "planning-test.db"
-    boot = connect(str(db_path))
-    create_schema(boot)
-    boot.close()
     tid = _ticket(db_path)
 
     class RacingGateway:
-        """First send writes the winning key through its own connection before
-        returning a different (losing) key, mimicking a concurrent first send."""
-
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def send(
+        def run_human_turn(
             self,
             session_key: str | None,
             entity_id: str,
             text: str,
-            on_session_key: Callable[[str], None] | None = None,
-        ) -> ChatSendResult:
+            mode: str,
+            bind_session_key: HumanSessionKeyBinder,
+            image_paths: tuple[Path, ...] = (),
+            *,
+            require_existing_session: bool = False,
+        ) -> Iterator[HumanChatObservation]:
             other = connect(str(db_path))
             try:
                 other.execute("BEGIN IMMEDIATE")
                 other.execute(
-                    "UPDATE tickets SET chat_session_key = ? WHERE id = ?",
+                    "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
                     ("winner-key", entity_id),
                 )
                 other.execute("COMMIT")
             finally:
                 other.close()
-            return ChatSendResult(reply_text="echo: x", session_key="loser-key")
+            bind_session_key("loser-key")
+            yield HumanChatCompletion("echo: x", "assistant")
 
-    conn = connect(str(db_path))
-    try:
-        result = service.send(conn, RacingGateway(), tid, "x", 0)
-    finally:
-        conn.close()
+    _replace_gateway(app, RacingGateway())
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/chat/{tid}/turns", json={"text": "x", "mode": "message"}
+        )
+        assert response.status_code == 200
+        _wait_for_settled(client, tid)
 
-    assert result.session_key == "winner-key"
     assert _stored_key(db_path, "tickets", tid) == "winner-key"
-    assert _events(db_path, tid, "chat_session_created") == []
+    assert _latest_turn(db_path, tid)["session_key"] == "winner-key"
+    assert _events(db_path, tid, "employee_session_changed") == []
 
 
-def test_chat_send_rejects_if_worker_claims_before_first_prompt(tmp_path: Path) -> None:
-    db_path = tmp_path / "planning-test.db"
-    boot = connect(str(db_path))
-    create_schema(boot)
-    boot.close()
-    tid = _ticket(db_path)
-
-    class WorkerClaimsGateway:
-        prompted = False
-
-        def status(self) -> GatewayStatus:
-            return GatewayStatus(available=True)
-
-        def send(
-            self,
-            session_key: str | None,
-            entity_id: str,
-            text: str,
-            on_session_key: Callable[[str], None] | None = None,
-        ) -> ChatSendResult:
-            other = connect(str(db_path))
-            try:
-                other.execute(
-                    "UPDATE tickets SET ticket_status = ? WHERE id = ?",
-                    (TicketStatus.agent_running_step.value, entity_id),
-                )
-            finally:
-                other.close()
-            if on_session_key is not None:
-                on_session_key("human-key")
-            self.prompted = True
-            return ChatSendResult(reply_text="echo: x", session_key="human-key")
-
-    gateway = WorkerClaimsGateway()
-    conn = connect(str(db_path))
-    try:
-        with pytest.raises(PlannerError) as exc_info:
-            service.send(conn, gateway, tid, "x", 0)
-    finally:
-        conn.close()
-
-    assert exc_info.value.code == ErrorCode.already_running
-    assert gateway.prompted is False
-    assert _stored_key(db_path, "tickets", tid) is None
-    assert _events(db_path, tid, "chat_session_created") == []
-
-
-def test_chat_send_stale_session_remints_and_repersists(tmp_path: Path) -> None:
+def test_human_turn_stale_session_remints_and_repersists(tmp_path: Path) -> None:
     """A stored key the gateway no longer has: the real adapter mints a fresh session
     (4007 -> create) and returns a new key. The service must replace the stale key and
     log the new one, so the dead key is never resumed again (the 'Gateway Offline' bug)."""
-    db_path = tmp_path / "planning-test.db"
-    boot = connect(str(db_path))
-    create_schema(boot)
-    boot.close()
+    app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)
 
     seed = connect(str(db_path))  # a prior session the gateway has since forgotten
     try:
         seed.execute("BEGIN IMMEDIATE")
-        seed.execute("UPDATE tickets SET chat_session_key = ? WHERE id = ?", ("stale-key", tid))
+        seed.execute("UPDATE tickets SET employee_session_id = ? WHERE id = ?", ("stale-key", tid))
         seed.execute("COMMIT")
     finally:
         seed.close()
@@ -952,27 +869,34 @@ def test_chat_send_stale_session_remints_and_repersists(tmp_path: Path) -> None:
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def send(
+        def run_human_turn(
             self,
             session_key: str | None,
             entity_id: str,
             text: str,
-            on_session_key: Callable[[str], None] | None = None,
-        ) -> ChatSendResult:
+            mode: str,
+            bind_session_key: HumanSessionKeyBinder,
+            image_paths: tuple[Path, ...] = (),
+            *,
+            require_existing_session: bool = False,
+        ) -> Iterator[HumanChatObservation]:
             assert session_key == "stale-key"  # the stale key is passed through
-            if on_session_key is not None:
-                on_session_key("fresh-key")
-            return ChatSendResult(reply_text="echo: x", session_key="fresh-key")
+            bind_session_key("fresh-key")
+            yield HumanChatCompletion("echo: x", "assistant")
 
-    conn = connect(str(db_path))
-    try:
-        result = service.send(conn, ReMintGateway(), tid, "x", 0)
-    finally:
-        conn.close()
+    _replace_gateway(app, ReMintGateway())
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/chat/{tid}/turns", json={"text": "x", "mode": "message"}
+        )
+        assert response.status_code == 200
+        _wait_for_settled(client, tid)
 
-    assert result.session_key == "fresh-key"
     assert _stored_key(db_path, "tickets", tid) == "fresh-key"
-    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fresh-key"}]
+    assert _latest_turn(db_path, tid)["session_key"] == "fresh-key"
+    assert _events(db_path, tid, "employee_session_changed") == [
+        {"employee_session_id": "fresh-key"}
+    ]
 
 
 def test_ticket_chat_does_not_change_ticket_status(tmp_path: Path) -> None:
@@ -990,46 +914,31 @@ def test_ticket_chat_does_not_change_ticket_status(tmp_path: Path) -> None:
 
     with TestClient(app) as client:
         for tid, status in zip(tids, statuses, strict=True):
-            response = client.post(f"/api/chat/{tid}/send", json={"text": "hello"})
+            response = client.post(
+                f"/api/chat/{tid}/turns", json={"text": "hello", "mode": "message"}
+            )
             assert response.status_code == 200
+            _wait_for_settled(client, tid)
             assert _ticket_status(db_path, tid) == status.value
 
 
-def test_ticket_chat_send_rejects_while_worker_step_running(tmp_path: Path) -> None:
+def test_human_turn_rejects_while_worker_step_running(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)
     _set_ticket_status(db_path, tid, TicketStatus.agent_running_step)
 
     with TestClient(app) as client:
-        response = client.post(f"/api/chat/{tid}/send", json={"text": "hello"})
+        response = client.post(
+            f"/api/chat/{tid}/turns", json={"text": "hello", "mode": "message"}
+        )
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "already_running"
     assert _stored_key(db_path, "tickets", tid) is None
-    assert _events(db_path, tid, "chat_session_created") == []
+    assert _events(db_path, tid, "employee_session_changed") == []
 
 
-def test_ticket_chat_stream_rejects_while_worker_step_running(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    tid = _ticket(db_path)
-    _set_ticket_status(db_path, tid, TicketStatus.agent_running_step)
-
-    with TestClient(app) as client:
-        with client.stream(
-            "POST", f"/api/chat/{tid}/stream", json={"text": "hello", "mode": "message"}
-        ) as response:
-            body = "".join(response.iter_text())
-
-    assert response.status_code == 200
-    assert (
-        'event: error\ndata: {"code":"already_running",'
-        '"message":"ticket worker is already running"'
-    ) in body
-    assert _stored_key(db_path, "tickets", tid) is None
-    assert _events(db_path, tid, "chat_session_created") == []
-
-
-def test_chat_send_busy_is_409_already_running(tmp_path: Path) -> None:
+def test_human_turn_gateway_busy_settles_failed(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)
 
@@ -1037,13 +946,17 @@ def test_chat_send_busy_is_409_already_running(tmp_path: Path) -> None:
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def send(
+        def run_human_turn(
             self,
             session_key: str | None,
             entity_id: str,
             text: str,
-            on_session_key: Callable[[str], None] | None = None,
-        ) -> ChatSendResult:
+            mode: str,
+            bind_session_key: HumanSessionKeyBinder,
+            image_paths: tuple[Path, ...] = (),
+            *,
+            require_existing_session: bool = False,
+        ) -> Iterator[HumanChatObservation]:
             raise PlannerError(
                 ErrorCode.already_running,
                 "an agent is already running on this ticket",
@@ -1052,8 +965,126 @@ def test_chat_send_busy_is_409_already_running(tmp_path: Path) -> None:
 
     _replace_gateway(app, BusyGateway())
     with TestClient(app) as client:
-        response = client.post(f"/api/chat/{tid}/send", json={"text": "hello"})
+        response = client.post(
+            f"/api/chat/{tid}/turns", json={"text": "hello", "mode": "message"}
+        )
+        assert response.status_code == 200
+        _wait_for_settled(client, tid)
 
-    assert response.status_code == 409
-    assert response.json()["error"]["code"] == "already_running"
+    assert _latest_turn(db_path, tid)["status"] == "errored"
+    assert _latest_turn(db_path, tid)["error"] == "an agent is already running on this ticket"
     assert _ticket_status(db_path, tid) == TicketStatus.empty.value
+
+
+def test_literal_new_turn_starts_fresh_session_reused_by_next_message(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    live_session_id = "new-live-session"
+    stored_key = "20260714_120000_new"
+    fake = FakeGateway(
+        {
+            "session.create": [
+                Reply(
+                    result={
+                        "session_id": live_session_id,
+                        "stored_session_id": stored_key,
+                    }
+                )
+            ],
+            "prompt.submit": [
+                Reply(
+                    result={"status": "streaming"},
+                    events_after=(
+                        ev("message.start", live_session_id),
+                        ev("message.delta", live_session_id, {"text": "hello reply"}),
+                        ev(
+                            "message.complete",
+                            live_session_id,
+                            {"status": "complete", "text": "hello reply"},
+                        ),
+                    ),
+                )
+            ],
+        }
+    )
+    gateway = SharedGateway(
+        hermes_python="/x/hermes-agent/venv/bin/python",
+        home="/tmp/planner-home",
+        worker_role="planner-worker",
+        spawn=fake.spawn,
+        base_env={},
+    )
+    _replace_gateway(app, gateway)
+
+    try:
+        with TestClient(app) as client:
+            command = client.post(
+                f"/api/chat/{tid}/turns",
+                json={"text": "/new", "mode": "command"},
+            )
+            assert command.status_code == 200
+            command_state = _wait_for_settled(client, tid)
+            assert command_state["messages"][-1]["role"] == "system"
+            assert command_state["messages"][-1]["text"] == "New session started."
+            assert _stored_key(db_path, "tickets", tid) == stored_key
+
+            message = client.post(
+                f"/api/chat/{tid}/turns",
+                json={"text": "hello new session", "mode": "message"},
+            )
+            assert message.status_code == 200
+            message_state = _wait_for_settled(client, tid)
+    finally:
+        gateway.shutdown()
+
+    assert message_state["messages"][-1]["text"] == "hello reply"
+    assert _stored_key(db_path, "tickets", tid) == stored_key
+    assert fake.sent_methods() == ["session.create", "prompt.submit"]
+    assert fake.sent[1]["params"] == {
+        "session_id": live_session_id,
+        "text": "hello new session",
+    }
+
+
+def test_new_with_arguments_uses_ordinary_command_dispatch(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    live_session_id = "generic-live-session"
+    stored_key = "20260714_120000_generic"
+    fake = FakeGateway(
+        {
+            "session.create": [
+                Reply(
+                    result={
+                        "session_id": live_session_id,
+                        "stored_session_id": stored_key,
+                    }
+                )
+            ],
+            "slash.exec": [Reply(result={"type": "exec", "output": "generic output"})],
+        }
+    )
+    gateway = SharedGateway(
+        hermes_python="/x/hermes-agent/venv/bin/python",
+        home="/tmp/planner-home",
+        worker_role="planner-worker",
+        spawn=fake.spawn,
+        base_env={},
+    )
+    _replace_gateway(app, gateway)
+
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                f"/api/chat/{tid}/turns",
+                json={"text": "/new title", "mode": "command"},
+            )
+            assert response.status_code == 200
+            state = _wait_for_settled(client, tid)
+    finally:
+        gateway.shutdown()
+
+    assert state["messages"][-1]["role"] == "system"
+    assert state["messages"][-1]["text"] == "generic output"
+    assert _stored_key(db_path, "tickets", tid) == stored_key
+    assert fake.sent_methods() == ["session.create", "slash.exec"]

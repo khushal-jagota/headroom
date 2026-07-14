@@ -1,0 +1,28 @@
+AD07 implementation review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5f6d-4892-7273-8343-51122fe517b4
+Reviewed state: complete uncommitted product diff later committed as 30edca4
+Result: NO VIOLATIONS
+
+The reviewer read every changed and untracked path plus the ticket, plan, contract lock, plan review,
+standing rules, decisions, unchanged renderer/FilePreview boundaries, preview tests, and generated assets.
+It explicitly checked the exact owner API; complete read-only identity; first empty editable paint; pristine
+and dirty same-source behavior; failed-save retry; input listener and observer ownership; final-DOM move
+versus deletion; once-only unmount, abort, and iframe teardown; exact serializer preservation; wrapper
+shallowness; all seven preview kinds; recursive bounds; deleted public shapes; docs; bundle; and allowlist.
+
+Exact final reviewer output:
+
+NO VIOLATIONS
+
+Pre-review focused evidence supplied by the delegated implementation:
+
+- `npm test`: passed.
+- `npm run check`: zero errors and the three existing TicketRoute warnings.
+- both new focused browser cases: 2 passed.
+- complete `tests/e2e/test_ticket_file_previews.py`: 13 passed.
+- `git diff --check`: clean.
+
+No finding required correction or scope widening. Full `./verify` remained intentionally unrun until the
+reviewed product commit existed.

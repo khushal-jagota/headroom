@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { fetchJson } from "../lib/api";
-  import { mutateJson, resource } from "../lib/resources";
+  import {
+    mutateJsonWithResourceEffect,
+    resourceCatalogue
+  } from "../lib/resourceCatalogue";
   import { PRIORITY_ORDER } from "../lib/ui";
-  import type { BacklogResponse, ProjectsResponse } from "../lib/types";
   import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
@@ -15,12 +16,8 @@
   import SectionHeading from "../components/SectionHeading.svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
 
-  const backlog = resource<BacklogResponse>("items:backlog", (signal) =>
-    fetchJson("/api/items?sprint_id=null", { signal })
-  );
-  const projects = resource<ProjectsResponse>("projects", (signal) =>
-    fetchJson("/api/projects", { signal })
-  );
+  const backlog = resourceCatalogue.backlogSprintItems();
+  const projects = resourceCatalogue.projects();
 
   const priorityOptions = PRIORITY_ORDER.map((value) => ({ value, label: value }));
 
@@ -63,12 +60,11 @@
     };
     if (deadline.trim()) payload.deadline = deadline.trim();
     try {
-      await mutateJson("/api/items", { method: "POST", body: payload }, [
-        "items:backlog",
-        "sprint:current",
-        "board",
-        "queues"
-      ]);
+      await mutateJsonWithResourceEffect(
+        "/api/items",
+        { method: "POST", body: payload },
+        { kind: "backlogSprintItemCreated" }
+      );
       title = "";
       deadline = "";
       body = "";

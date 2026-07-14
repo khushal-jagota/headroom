@@ -1,20 +1,20 @@
-// The per-type lifecycle: a derived, memoized view over one ticket type's served
-// manifest. This is the framework-free mirror of the backend's ticket_types views.
+// The per-Worker-type lifecycle: a derived, memoized view over one served manifest.
+// This is frontend behavior derived from the served worker_types manifest.
 // The retired ui.ts lifecycle constants/functions live here as Lifecycle-first-arg
 // variants so stage rendering + the scope leash are driven by the served manifest,
-// keyed by each ticket's own ticket_type, instead of a hardcoded coding table.
+// keyed by each Ticket's own worker_type, instead of a hardcoded coding table.
 //
-// stateLabel/fieldSlot and the FieldStageVisualState type are imported FROM ui.ts;
+// stageLabel/fieldSlot and the FieldStageVisualState type are imported FROM ui.ts;
 // ui.ts must NOT import from here (no cycle).
 import {
   fieldSlot,
-  stateLabel,
+  stageLabel,
   type FieldStageVisualState,
   type TicketStageVisualInput
 } from "./ui";
 import type { TicketDetail } from "./types";
 
-// --- served manifest shapes (mirror ticket_types/contracts ManifestDict) --------
+// --- served worker_types manifest shapes ----------------------------------------
 
 export type ManifestStage = {
   id: string;
@@ -28,8 +28,8 @@ export type ManifestField = {
   label: string;
 };
 
-export type TicketTypeManifest = {
-  type_id: string;
+export type WorkerTypeManifest = {
+  worker_type: string;
   label: string;
   stages: ManifestStage[];
   dropped: ManifestStage;
@@ -40,34 +40,34 @@ export type TicketTypeManifest = {
   worker_profile_id: string;
 };
 
-export type TicketTypesResponse = {
-  types: TicketTypeManifest[];
+export type WorkerTypesResponse = {
+  worker_types: WorkerTypeManifest[];
 };
 
 // --- the derived per-type lifecycle --------------------------------------------
 
 export type Lifecycle = {
-  typeId: string;
-  typeLabel: string; // == m.label — the worker pill text
+  workerType: string;
+  workerTypeLabel: string; // == m.label — the worker pill text
   fieldIds: string[]; // == FIELD_NAMES
-  stateOrder: string[]; // == STATE_ORDER (includes done)
-  gatingField: Record<string, string>; // == GATING_FIELD
-  gatedState: Record<string, string>; // == GATED_STATE
+  stageOrder: string[]; // includes done
+  gatingField: Record<string, string>; // Stage id -> gated field id
+  gatedStage: Record<string, string>;
   advance: Record<string, string>; // == ADVANCE
   ceilingRange: string[]; // == m.ceiling_range
   fieldLabel: Record<string, string>;
   stageLabel: Record<string, string>;
 };
 
-export function buildLifecycle(m: TicketTypeManifest): Lifecycle {
+export function buildLifecycle(m: WorkerTypeManifest): Lifecycle {
   const gatingField: Record<string, string> = {};
-  const gatedState: Record<string, string> = {};
+  const gatedStage: Record<string, string> = {};
   const stageLabel: Record<string, string> = {};
   for (const stage of m.stages) {
     stageLabel[stage.id] = stage.label;
     if (!stage.is_terminal && stage.gating_field) {
       gatingField[stage.id] = stage.gating_field;
-      gatedState[stage.gating_field] = stage.id;
+      gatedStage[stage.gating_field] = stage.id;
     }
   }
   const fieldLabel: Record<string, string> = {};
@@ -75,12 +75,12 @@ export function buildLifecycle(m: TicketTypeManifest): Lifecycle {
     fieldLabel[field.id] = field.label;
   }
   return {
-    typeId: m.type_id,
-    typeLabel: m.label,
+    workerType: m.worker_type,
+    workerTypeLabel: m.label,
     fieldIds: m.fields.map((f) => f.id),
-    stateOrder: m.stages.map((s) => s.id),
+    stageOrder: m.stages.map((s) => s.id),
     gatingField,
-    gatedState,
+    gatedStage,
     advance: { ...m.advance },
     ceilingRange: [...m.ceiling_range],
     fieldLabel,
@@ -92,56 +92,56 @@ export function buildLifecycle(m: TicketTypeManifest): Lifecycle {
 // Every one takes `lc: Lifecycle | null` and returns its pre-load default when null
 // so callers can pass `lc` directly WITHOUT a per-site guard (Codex F1).
 
-export function gatingFieldFor(lc: Lifecycle | null, state: string): string | null {
+export function gatingFieldFor(lc: Lifecycle | null, stage: string): string | null {
   if (!lc) return null;
-  return lc.gatingField[state] || null;
+  return lc.gatingField[stage] || null;
 }
 
 export function advanceTargetFor(
   lc: Lifecycle | null,
-  state: string,
+  stage: string,
   ceiling: string
 ): string | null {
   if (!lc) return null;
-  return lc.advance[state] || null;
+  return lc.advance[stage] || null;
 }
 
 export function ceilingOptionsFor(
   lc: Lifecycle | null,
-  floorState: string
+  floorStage: string
 ): Array<{ value: string; label: string }> {
   if (!lc) return [];
-  let start = lc.stateOrder.indexOf(floorState);
+  let start = lc.stageOrder.indexOf(floorStage);
   if (start < 0) start = 0;
-  // Leash option labels stay the lowercase stateLabel(id) ("needs success"), NOT
+  // Leash option labels stay the lowercase stageLabel(id) ("needs success"), NOT
   // the manifest's capitalized stage.label — preserving today's mockup wording.
-  return lc.stateOrder.slice(start).map((state) => ({ value: state, label: stateLabel(state) }));
+  return lc.stageOrder.slice(start).map((stage) => ({ value: stage, label: stageLabel(stage) }));
 }
 
 export function fieldIsPassedFor(
   lc: Lifecycle | null,
   field: string,
-  state: string
+  stage: string
 ): boolean {
   if (!lc) return false;
-  return lc.stateOrder.indexOf(state) > lc.stateOrder.indexOf(lc.gatedState[field]);
+  return lc.stageOrder.indexOf(stage) > lc.stageOrder.indexOf(lc.gatedStage[field]);
 }
 
 export function ticketStageVisualStateFor(
   lc: Lifecycle | null,
   {
-    ticketState,
+    ticketStage,
     ticketStatus,
     fieldName,
     fieldHasProposal = false
   }: TicketStageVisualInput
 ): FieldStageVisualState {
   if (!lc) return "upcoming";
-  if (ticketState === "done") return "completed";
+  if (ticketStage === "done") return "completed";
 
-  if (fieldIsPassedFor(lc, fieldName, ticketState)) return "completed";
+  if (fieldIsPassedFor(lc, fieldName, ticketStage)) return "completed";
 
-  if (gatingFieldFor(lc, ticketState) === fieldName) {
+  if (gatingFieldFor(lc, ticketStage) === fieldName) {
     if (ticketStatus === "agent_running_step") return "current-running";
     if (ticketStatus === "errored") return "errored";
     if (fieldHasProposal || ticketStatus === "awaiting_approval") {
@@ -159,40 +159,40 @@ export function fieldStageVisualStateFor(
   fieldName: string
 ): FieldStageVisualState {
   return ticketStageVisualStateFor(lc, {
-    ticketState: detail.state,
+    ticketStage: detail.stage,
     ticketStatus: detail.ticket_status,
     fieldName,
     fieldHasProposal: Boolean(fieldSlot(detail, fieldName).proposal)
   });
 }
 
-export function recapVisibleFor(lc: Lifecycle | null, state: string): boolean {
+export function recapVisibleFor(lc: Lifecycle | null, stage: string): boolean {
   if (!lc) return false;
-  return lc.stateOrder.indexOf(state) > 1;
+  return lc.stageOrder.indexOf(stage) > 1;
 }
 
 // --- per-type lifecycle lookup over a fetched manifest response -----------------
 // Pure: lives here (not in the Svelte-runes manifest.svelte.ts) so the unit test
 // exercises the REAL selector, not a copy (Codex F6). Memoizes the built Lifecycle
-// by typeId, keyed on the response OBJECT so a fresh fetched response rebuilds.
+// by Worker type, keyed on the response OBJECT so a fresh fetched response rebuilds.
 // Returns null while the manifest is still loading (no response yet) OR when the
 // type is absent from a loaded manifest — the ROUTE tells those apart via
 // manifest.loading / manifest.error + a type-present check (Codex F3).
-const lifecycleMemo = new WeakMap<TicketTypesResponse, Map<string, Lifecycle | null>>();
+const lifecycleMemo = new WeakMap<WorkerTypesResponse, Map<string, Lifecycle | null>>();
 
 export function lifecycleFor(
-  response: TicketTypesResponse | undefined,
-  typeId: string | undefined | null
+  response: WorkerTypesResponse | undefined,
+  workerType: string | undefined | null
 ): Lifecycle | null {
-  if (!response || !typeId) return null;
+  if (!response || !workerType) return null;
   let byType = lifecycleMemo.get(response);
   if (!byType) {
     byType = new Map<string, Lifecycle | null>();
     lifecycleMemo.set(response, byType);
   }
-  if (byType.has(typeId)) return byType.get(typeId) ?? null;
-  const entry = response.types.find((t) => t.type_id === typeId);
+  if (byType.has(workerType)) return byType.get(workerType) ?? null;
+  const entry = response.worker_types.find((item) => item.worker_type === workerType);
   const lc = entry ? buildLifecycle(entry) : null;
-  byType.set(typeId, lc);
+  byType.set(workerType, lc);
   return lc;
 }

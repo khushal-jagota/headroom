@@ -19,11 +19,11 @@ def _set_ticket_status(server, ticket_id: str, status: str) -> None:
         )
 
 
-def _set_ticket_state(server, ticket_id: str, state: str) -> None:
+def _set_ticket_stage(server, ticket_id: str, stage: str) -> None:
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
-            "UPDATE tickets SET state = ? WHERE id = ?",
-            (state, ticket_id),
+            "UPDATE tickets SET stage = ? WHERE id = ?",
+            (stage, ticket_id),
         )
 
 
@@ -46,7 +46,7 @@ def test_workspace_row_byline_shows_registered_type_active_stage_and_mark(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "new_worker",
         "--title",
         "Board new worker metadata",
@@ -55,7 +55,7 @@ def test_workspace_row_byline_shows_registered_type_active_stage_and_mark(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Board done metadata",
@@ -64,7 +64,7 @@ def test_workspace_row_byline_shows_registered_type_active_stage_and_mark(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Board running metadata",
@@ -73,18 +73,18 @@ def test_workspace_row_byline_shows_registered_type_active_stage_and_mark(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Board takeover metadata",
     )["id"]
     for ticket_id in (active, done, running, takeover):
         _add_today(api, server, ticket_id)
-    _set_ticket_state(server, active, "needs_stages")
-    _set_ticket_state(server, done, "done")
-    _set_ticket_state(server, running, "needs_success")
+    _set_ticket_stage(server, active, "needs_stages")
+    _set_ticket_stage(server, done, "done")
+    _set_ticket_stage(server, running, "needs_success")
     _set_ticket_status(server, running, "agent_running_step")
-    _set_ticket_state(server, takeover, "needs_plan")
+    _set_ticket_stage(server, takeover, "needs_plan")
     _set_ticket_status(server, takeover, "user_takeover")
 
     page = open_page(
@@ -97,10 +97,7 @@ def test_workspace_row_byline_shows_registered_type_active_stage_and_mark(
 
     card = f'[data-card][data-ticket-id="{active}"]'
     page.wait_for_selector(card, timeout=WAIT_MS)
-    assert (
-        page.text_content(f"{card} .list-row-title").strip()
-        == "Board new worker metadata"
-    )
+    assert page.text_content(f"{card} .list-row-title").strip() == "Board new worker metadata"
     page.wait_for_function(
         """selector =>
           document.querySelector(selector)?.textContent.trim() === 'New Worker · Stages'
@@ -111,14 +108,20 @@ def test_workspace_row_byline_shows_registered_type_active_stage_and_mark(
     assert page.text_content(f"{card} .board-workspace-row-byline").strip() == (
         "New Worker · Stages"
     )
-    assert page.eval_on_selector_all(
-        f"{card} .board-workspace-row-byline .board-workspace-stage-mark",
-        "els => els.length",
-    ) == 1
-    assert page.eval_on_selector_all(
-        f"{card} > .board-workspace-stage-rail .board-workspace-stage-mark",
-        "els => els.length",
-    ) == 0
+    assert (
+        page.eval_on_selector_all(
+            f"{card} .board-workspace-row-byline .board-workspace-stage-mark",
+            "els => els.length",
+        )
+        == 1
+    )
+    assert (
+        page.eval_on_selector_all(
+            f"{card} > .board-workspace-stage-rail .board-workspace-stage-mark",
+            "els => els.length",
+        )
+        == 0
+    )
     assert page.get_attribute(_stage(page, card, "stages"), "data-stage-state") == (
         "current-waiting"
     )
@@ -139,20 +142,26 @@ def test_workspace_row_byline_shows_registered_type_active_stage_and_mark(
     assert abs(geometry["metadata"]["left"] - geometry["byline"]["left"]) < 1
     assert abs(geometry["rail"]["right"] - geometry["byline"]["right"]) < 1
     assert abs(geometry["mark"]["right"] - geometry["rail"]["right"]) < 1
-    assert abs(
-        (geometry["mark"]["top"] + geometry["mark"]["bottom"]) / 2
-        - (geometry["byline"]["top"] + geometry["byline"]["bottom"]) / 2
-    ) < 1
+    assert (
+        abs(
+            (geometry["mark"]["top"] + geometry["mark"]["bottom"]) / 2
+            - (geometry["byline"]["top"] + geometry["byline"]["bottom"]) / 2
+        )
+        < 1
+    )
 
     done_card = f'[data-card][data-ticket-id="{done}"]'
     page.wait_for_selector(done_card, timeout=WAIT_MS)
     assert page.text_content(f"{done_card} .board-workspace-row-byline").strip() == (
         "Coding · Done"
     )
-    assert page.eval_on_selector_all(
-        f"{done_card} .board-workspace-row-byline .board-workspace-stage-mark",
-        "els => els.length",
-    ) == 1
+    assert (
+        page.eval_on_selector_all(
+            f"{done_card} .board-workspace-row-byline .board-workspace-stage-mark",
+            "els => els.length",
+        )
+        == 1
+    )
     assert page.get_attribute(_stage(page, done_card, "closeout"), "data-stage-state") == (
         "completed"
     )
@@ -165,9 +174,12 @@ def test_workspace_row_byline_shows_registered_type_active_stage_and_mark(
     assert page.get_attribute(_stage(page, running_card, "success"), "data-stage-state") == (
         "current-running"
     )
-    assert page.eval_on_selector_all(
-        f'{running_card} [data-marker="agent-running-step"]', "els => els.length"
-    ) == 1
+    assert (
+        page.eval_on_selector_all(
+            f'{running_card} [data-marker="agent-running-step"]', "els => els.length"
+        )
+        == 1
+    )
 
     takeover_card = f'[data-card][data-ticket-id="{takeover}"]'
     page.wait_for_selector(takeover_card, timeout=WAIT_MS)
@@ -177,9 +189,12 @@ def test_workspace_row_byline_shows_registered_type_active_stage_and_mark(
     assert page.get_attribute(_stage(page, takeover_card, "plan"), "data-stage-state") == (
         "current-waiting"
     )
-    assert page.eval_on_selector_all(
-        f'{takeover_card} [data-marker="user-takeover"]', "els => els.length"
-    ) == 1
+    assert (
+        page.eval_on_selector_all(
+            f'{takeover_card} [data-marker="user-takeover"]', "els => els.length"
+        )
+        == 1
+    )
 
 
 def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
@@ -189,7 +204,7 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Board waiting indicator",
@@ -198,7 +213,7 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Board pending indicator",
@@ -207,19 +222,25 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Board errored indicator",
     )["id"]
     implementation = cli(
-        server, "ticket", "create", "--type", "coding", "--title", "Board implementation indicator"
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Board implementation indicator",
     )["id"]
     closeout = cli(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Board closeout indicator",
@@ -228,7 +249,7 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Board done indicator",
@@ -248,9 +269,9 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
         stdin="Pending success body.",
     )
     _set_ticket_status(server, errored, "errored")
-    _set_ticket_state(server, implementation, "needs_implementation")
-    _set_ticket_state(server, closeout, "needs_closeout")
-    _set_ticket_state(server, done, "done")
+    _set_ticket_stage(server, implementation, "needs_implementation")
+    _set_ticket_stage(server, closeout, "needs_closeout")
+    _set_ticket_stage(server, done, "done")
 
     page = open_page(
         context_factory(),
@@ -275,40 +296,50 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
         done_card,
     ):
         page.wait_for_selector(card, timeout=WAIT_MS)
-        assert page.eval_on_selector_all(
-            f"{card} .board-workspace-stage-mark", "els => els.length"
-        ) == 1
+        assert (
+            page.eval_on_selector_all(f"{card} .board-workspace-stage-mark", "els => els.length")
+            == 1
+        )
 
     assert page.get_attribute(_stage(page, waiting_card, "success"), "data-stage-state") == (
         "current-waiting"
     )
-    assert page.eval_on_selector_all(
-        f'{waiting_card} [data-marker="pending-proposal"], '
-        f'{waiting_card} [data-marker="agent-running-step"], '
-        f'{waiting_card} [data-marker="errored"]',
-        "els => els.length",
-    ) == 0
+    assert (
+        page.eval_on_selector_all(
+            f'{waiting_card} [data-marker="pending-proposal"], '
+            f'{waiting_card} [data-marker="agent-running-step"], '
+            f'{waiting_card} [data-marker="errored"]',
+            "els => els.length",
+        )
+        == 0
+    )
 
     assert page.get_attribute(_stage(page, pending_card, "success"), "data-stage-state") == (
         "current-awaiting-approval"
     )
-    assert page.eval_on_selector_all(
-        f'{pending_card} [data-marker="pending-proposal"]', "els => els.length"
-    ) == 1
+    assert (
+        page.eval_on_selector_all(
+            f'{pending_card} [data-marker="pending-proposal"]', "els => els.length"
+        )
+        == 1
+    )
 
     assert page.get_attribute(_stage(page, errored_card, "success"), "data-stage-state") == (
         "errored"
     )
-    assert page.eval_on_selector_all(
-        f'{errored_card} [data-marker="errored"]', "els => els.length"
-    ) == 1
+    assert (
+        page.eval_on_selector_all(f'{errored_card} [data-marker="errored"]', "els => els.length")
+        == 1
+    )
 
-    assert page.get_attribute(
-        _stage(page, implementation_card, "implementation"), "data-stage-state"
-    ) == "current-waiting"
-    assert page.get_attribute(
-        _stage(page, closeout_card, "closeout"), "data-stage-state"
-    ) == "current-waiting"
+    assert (
+        page.get_attribute(_stage(page, implementation_card, "implementation"), "data-stage-state")
+        == "current-waiting"
+    )
+    assert (
+        page.get_attribute(_stage(page, closeout_card, "closeout"), "data-stage-state")
+        == "current-waiting"
+    )
     assert page.get_attribute(_stage(page, done_card, "closeout"), "data-stage-state") == (
         "completed"
     )
@@ -320,7 +351,9 @@ def test_workspace_groups_by_project_orders_by_activity_and_filters_status(
     older_activity = cli(
         server,
         "ticket",
-        "create", "--type", "coding",
+        "create",
+        "--worker-type",
+        "coding",
         "--title",
         "Vylo older activity",
         "--project-id",
@@ -329,7 +362,9 @@ def test_workspace_groups_by_project_orders_by_activity_and_filters_status(
     newer_activity = cli(
         server,
         "ticket",
-        "create", "--type", "coding",
+        "create",
+        "--worker-type",
+        "coding",
         "--title",
         "Vylo newer activity",
         "--project-id",
@@ -338,7 +373,9 @@ def test_workspace_groups_by_project_orders_by_activity_and_filters_status(
     done_activity = cli(
         server,
         "ticket",
-        "create", "--type", "coding",
+        "create",
+        "--worker-type",
+        "coding",
         "--title",
         "Vylo done activity",
         "--project-id",
@@ -347,7 +384,9 @@ def test_workspace_groups_by_project_orders_by_activity_and_filters_status(
     learning = cli(
         server,
         "ticket",
-        "create", "--type", "coding",
+        "create",
+        "--worker-type",
+        "coding",
         "--title",
         "Learning errored ticket",
         "--project-id",
@@ -357,7 +396,7 @@ def test_workspace_groups_by_project_orders_by_activity_and_filters_status(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "No project ticket",
@@ -365,8 +404,8 @@ def test_workspace_groups_by_project_orders_by_activity_and_filters_status(
     for ticket_id in (older_activity, newer_activity, done_activity, learning, no_project):
         _add_today(api, server, ticket_id)
 
-    _set_ticket_state(server, older_activity, "needs_plan")
-    _set_ticket_state(server, done_activity, "done")
+    _set_ticket_stage(server, older_activity, "needs_plan")
+    _set_ticket_stage(server, done_activity, "done")
     _set_ticket_status(server, learning, "errored")
     _set_ticket_updated_at(server, older_activity, 10)
     _set_ticket_updated_at(server, newer_activity, 30)

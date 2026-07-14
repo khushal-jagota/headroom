@@ -13,7 +13,7 @@ from playwright.sync_api import Page
 from planner.chat import data as chat_data
 from planner.core.db import connect
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TITLE_MAX_CHARS
+from planner.tickets.contracts import TITLE_MAX_CHARS, EmployeeSessionIdTransition
 
 WAIT_MS = 10_000
 WORKER_PROMPT_TEXT = "Work this ticket step from the current system prompt."
@@ -44,15 +44,20 @@ def _seed_recoverable_ticket_chat(db_path: Path) -> str:
     try:
         ticket = tickets_data.create_ticket(
             conn,
+            worker_type="coding",
             title="Startup recovery browser proof",
             actor="e2e",
             now=1,
             title_max_chars=TITLE_MAX_CHARS,
-            ticket_type="coding",
         )
-        conn.execute(
-            "UPDATE tickets SET chat_session_key = ?, updated_at = ? WHERE id = ?",
-            (RECOVERY_SESSION_KEY, 2, ticket.id),
+        tickets_data.finish_run_if_still_running_step(
+            conn,
+            ticket.id,
+            employee_session_transition=EmployeeSessionIdTransition(
+                None,
+                RECOVERY_SESSION_KEY,
+            ),
+            now=2,
         )
         turn = chat_data.start_turn(
             conn,
@@ -476,7 +481,7 @@ def test_running_chat_preserves_unchanged_preview_subtree_and_replaces_changed_t
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Stable chat preview",
@@ -692,7 +697,7 @@ def test_ticket_chat_send_survives_navigation_from_server_state(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Live chat remount ticket",
@@ -734,6 +739,92 @@ def test_ticket_chat_send_survives_navigation_from_server_state(
     )
     _wait_chat_text(fresh_page, "you", "persist this ticket message")
     _wait_chat_text(fresh_page, "planner", "echo: persist this ticket message")
+
+
+def test_ticket_panels_rows_do_not_fall_back_to_employee_session_history(
+    server, context_factory, open_page, cli, api
+) -> None:
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Panels history separation ticket",
+    )["id"]
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{tid}",
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]',
+        settled=True,
+    )
+    sent_text = "employee history must not repopulate Panels Chat"
+    reply_text = f"echo: {sent_text}"
+
+    page.fill("[data-chat] [data-chat-input]", sent_text)
+    page.click("[data-chat] [data-chat-send]")
+    _wait_chat_text(page, "you", sent_text)
+    _wait_chat_text(page, "planner", reply_text)
+    page.wait_for_function(
+        "() => document.querySelector('[data-chat] [data-chat-pending]') === null",
+        timeout=WAIT_MS,
+    )
+
+    employee_history = api.get(
+        server, f"/api/tickets/{tid}/employee-session-history"
+    )
+    assert [message["text"] for message in employee_history["messages"]] == [
+        sent_text,
+        reply_text,
+    ]
+    employee_session_id = employee_history["employee_session_id"]
+    assert employee_session_id
+
+    with sqlite3.connect(server.db_path) as conn:
+        stored = conn.execute(
+            "SELECT employee_session_id FROM tickets WHERE id = ?", (tid,)
+        ).fetchone()
+        assert stored == (employee_session_id,)
+        assert conn.execute(
+            "SELECT COUNT(*) FROM chat_turns "
+            "WHERE entity_id = ? AND status = 'running'",
+            (tid,),
+        ).fetchone() == (0,)
+        conn.execute("DELETE FROM chat_messages WHERE entity_id = ?", (tid,))
+        conn.execute(
+            "DELETE FROM chat_turn_activity_entries WHERE turn_id IN ("
+            "SELECT id FROM chat_turns WHERE entity_id = ? AND status != 'running')",
+            (tid,),
+        )
+        conn.execute(
+            "DELETE FROM chat_turns WHERE entity_id = ? AND status != 'running'",
+            (tid,),
+        )
+        retained = conn.execute(
+            "SELECT employee_session_id FROM tickets WHERE id = ?", (tid,)
+        ).fetchone()
+        assert retained == (employee_session_id,)
+
+    panels_state = api.get(server, f"/api/chat/{tid}/state")
+    assert panels_state == {"messages": [], "active_turn": None}
+    retained_history = api.get(
+        server, f"/api/tickets/{tid}/employee-session-history"
+    )
+    assert retained_history == employee_history
+
+    page.reload()
+    page.wait_for_selector(
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]', timeout=WAIT_MS
+    )
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-chat] [data-chat-msg]').length === 0",
+        timeout=WAIT_MS,
+    )
+    visible_chat = page.locator("[data-chat] [data-chat-messages]").inner_text()
+    assert sent_text not in visible_chat
+    assert reply_text not in visible_chat
 
 
 def test_chief_chat_send_survives_navigation_from_server_state(
@@ -851,7 +942,7 @@ def test_activity_growth_respects_existing_chat_follow_mode(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Activity scroll ticket",
@@ -902,7 +993,7 @@ def test_expanded_activity_live_updates_preserve_real_wheel_scrollback(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Wheel activity scroll ticket",
@@ -977,7 +1068,7 @@ def test_ticket_chat_shows_running_worker_turn_after_remount(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Live worker state ticket",
@@ -1092,7 +1183,7 @@ def test_ticket_chat_pause_settles_visible_active_turn(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Pause visible chat turn",
@@ -1126,7 +1217,7 @@ def test_ticket_chat_pause_then_immediate_send_keeps_one_new_reply_after_remount
         slow_server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Pause then send ticket",

@@ -63,7 +63,7 @@ def _links(ticket_id: str) -> str:
     return "\n".join(f"[{label}]({href})" for label, href in _expected_hrefs(ticket_id).items())
 
 
-def _set_fields(server, ticket_id: str, fields: dict, state: str = "dropped") -> None:
+def _set_fields(server, ticket_id: str, fields: dict, stage: str = "dropped") -> None:
     if "kickoff" not in fields:
         fields = {
             "kickoff": {"value": "", "proposal": None, "user_note": None},
@@ -71,8 +71,8 @@ def _set_fields(server, ticket_id: str, fields: dict, state: str = "dropped") ->
         }
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
-            "UPDATE tickets SET state = ?, fields = ?, updated_at = 2 WHERE id = ?",
-            (state, json.dumps(fields), ticket_id),
+            "UPDATE tickets SET stage = ?, fields = ?, updated_at = 2 WHERE id = ?",
+            (stage, json.dumps(fields), ticket_id),
         )
 
 
@@ -125,7 +125,7 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "File preview route",
@@ -241,7 +241,7 @@ def test_interactive_html_preview_paints_and_switches_variants_in_both_surfaces(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Interactive HTML preview",
@@ -306,7 +306,7 @@ def test_markdown_file_preview_has_component_owned_max_height(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Bounded Markdown preview",
@@ -381,7 +381,7 @@ def test_read_only_ticket_and_chat_surfaces_share_file_preview(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Read-only file previews",
@@ -502,7 +502,7 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Normal field previews",
@@ -525,7 +525,7 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
         },
         "closeout": {"value": None, "proposal": None, "user_note": None},
     }
-    _set_fields(server, ticket_id, fields, state="needs_approach")
+    _set_fields(server, ticket_id, fields, stage="needs_approach")
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
             "UPDATE tickets SET recap = ? WHERE id = ?",
@@ -591,7 +591,7 @@ def test_editable_markdown_file_links_round_trip_as_raw_markdown(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Editable file links",
@@ -605,7 +605,7 @@ def test_editable_markdown_file_links_round_trip_as_raw_markdown(
         "implementation": {"value": None, "proposal": None, "user_note": None},
         "closeout": {"value": None, "proposal": None, "user_note": None},
     }
-    _set_fields(server, ticket_id, fields, state="needs_approach")
+    _set_fields(server, ticket_id, fields, stage="needs_approach")
     page = open_page(
         context_factory(),
         server,
@@ -677,7 +677,7 @@ def test_editable_markdown_preview_focus_noop_and_actions_do_not_persist_generat
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Editable preview actions",
@@ -691,7 +691,7 @@ def test_editable_markdown_preview_focus_noop_and_actions_do_not_persist_generat
         "implementation": {"value": None, "proposal": None, "user_note": None},
         "closeout": {"value": None, "proposal": None, "user_note": None},
     }
-    _set_fields(server, ticket_id, fields, state="needs_approach")
+    _set_fields(server, ticket_id, fields, stage="needs_approach")
     page = open_page(
         context_factory(),
         server,
@@ -758,7 +758,7 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Atomic preview editing",
@@ -783,7 +783,7 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
         "implementation": {"value": None, "proposal": None, "user_note": None},
         "closeout": {"value": None, "proposal": None, "user_note": None},
     }
-    _set_fields(server, ticket_id, fields, state="needs_approach")
+    _set_fields(server, ticket_id, fields, stage="needs_approach")
     page = open_page(
         context_factory(),
         server,
@@ -962,7 +962,7 @@ def test_editable_preview_deletion_unmounts_pending_fetch_and_clears_iframe(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Preview cleanup",
@@ -978,7 +978,7 @@ def test_editable_preview_deletion_unmounts_pending_fetch_and_clears_iframe(
         "implementation": {"value": None, "proposal": None, "user_note": None},
         "closeout": {"value": None, "proposal": None, "user_note": None},
     }
-    _set_fields(server, ticket_id, fields, state="needs_approach")
+    _set_fields(server, ticket_id, fields, stage="needs_approach")
     context = context_factory()
     context.add_init_script(
         """(() => {
@@ -1095,7 +1095,7 @@ def test_editing_that_moves_atomic_slot_keeps_preview_mounted(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Moving atomic preview",
@@ -1110,7 +1110,7 @@ def test_editing_that_moves_atomic_slot_keeps_preview_mounted(
         "implementation": {"value": None, "proposal": None, "user_note": None},
         "closeout": {"value": None, "proposal": None, "user_note": None},
     }
-    _set_fields(server, ticket_id, fields, state="needs_approach")
+    _set_fields(server, ticket_id, fields, stage="needs_approach")
     page = open_page(
         context_factory(),
         server,
@@ -1168,6 +1168,168 @@ def test_editing_that_moves_atomic_slot_keeps_preview_mounted(
     assert image.is_visible()
 
 
+def test_editable_same_source_owner_update_preserves_pristine_preview_and_resets_dirty_dom(
+    server, context_factory, open_page, cli
+) -> None:
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Managed Markdown same-source reset",
+    )["id"]
+    _write_ticket_files(server, ticket_id)
+    image_token = f"[Image](/files/tickets/{ticket_id}/images/pic.png)"
+    fields = {
+        "success": {"value": image_token, "proposal": None, "user_note": None},
+        "approach": {"value": None, "proposal": None, "user_note": None},
+        "plan": {"value": None, "proposal": None, "user_note": None},
+        "implementation": {"value": None, "proposal": None, "user_note": None},
+        "closeout": {"value": None, "proposal": None, "user_note": None},
+    }
+    _set_fields(server, ticket_id, fields, stage="needs_approach")
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{ticket_id}",
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+        settled=True,
+    )
+    editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
+    slot_selector = f"{editable} [data-markdown-source-token='{image_token}']"
+    _open_ticket_field(page, "success")
+    page.locator(f"{slot_selector} img").wait_for(state="visible", timeout=WAIT_MS)
+    page.evaluate(
+        "sel => { window.__managedMarkdownStableSlot = document.querySelector(sel); }",
+        slot_selector,
+    )
+
+    # Escape asks the owner to update from the same source. With no input, that is an
+    # identity-preserving no-op.
+    page.locator(editable).focus()
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(50)
+    assert page.evaluate(
+        "sel => document.querySelector(sel) === window.__managedMarkdownStableSlot",
+        slot_selector,
+    )
+
+    # A browser edit that is then restored to source-equivalent DOM is still dirty.
+    # The next explicit owner update must repaint canonical generated DOM.
+    page.locator(editable).focus()
+    page.locator(editable).evaluate(
+        """node => {
+            const temporary = document.createTextNode("temporary");
+            node.appendChild(temporary);
+            node.dispatchEvent(new InputEvent("input", { bubbles: true }));
+            temporary.remove();
+            node.dispatchEvent(new InputEvent("input", { bubbles: true }));
+        }"""
+    )
+    page.keyboard.press("Escape")
+    page.locator(f"{slot_selector} img").wait_for(state="visible", timeout=WAIT_MS)
+    assert page.evaluate(
+        "sel => document.querySelector(sel) !== window.__managedMarkdownStableSlot "
+        "&& !window.__managedMarkdownStableSlot.isConnected",
+        slot_selector,
+    )
+
+
+def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
+    server, context_factory, open_page, cli, api
+) -> None:
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Managed Markdown failed-save retry",
+    )["id"]
+    _write_ticket_files(server, ticket_id)
+    image_token = f"[Image](/files/tickets/{ticket_id}/images/pic.png)"
+    body = f"Before\n\n{image_token}"
+    fields = {
+        "success": {"value": body, "proposal": None, "user_note": None},
+        "approach": {"value": None, "proposal": None, "user_note": None},
+        "plan": {"value": None, "proposal": None, "user_note": None},
+        "implementation": {"value": None, "proposal": None, "user_note": None},
+        "closeout": {"value": None, "proposal": None, "user_note": None},
+    }
+    _set_fields(server, ticket_id, fields, stage="needs_approach")
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{ticket_id}",
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+        settled=True,
+    )
+    editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
+    _open_ticket_field(page, "success")
+    page.locator(f"{editable} [data-file-preview-kind='image'] img").wait_for(
+        state="visible", timeout=WAIT_MS
+    )
+
+    attempts: list[str] = []
+
+    def fail_first_save(route) -> None:
+        attempts.append(route.request.post_data_json["body"])
+        if len(attempts) == 1:
+            route.fulfill(
+                status=500,
+                content_type="application/json",
+                body=json.dumps({"error": {"code": "test", "message": "save failed"}}),
+            )
+            return
+        route.continue_()
+
+    page.route(f"**/api/tickets/{ticket_id}/value/success", fail_first_save)
+    page.locator(editable).focus()
+    page.locator(f"{editable} [data-markdown-caret-guard='after']").last.evaluate(
+        """guard => {
+            const range = document.createRange();
+            range.selectNodeContents(guard);
+            range.collapse(false);
+            const selection = getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }"""
+    )
+    page.keyboard.press("Enter")
+    page.keyboard.press("Enter")
+    page.keyboard.type("Retry me exactly.")
+    page.locator(editable).blur()
+    page.locator(".error-line", has_text="save failed").wait_for(
+        state="visible", timeout=WAIT_MS
+    )
+    assert len(attempts) == 1
+    attempted_source = attempts[0]
+    assert attempted_source.endswith("Retry me exactly.")
+    assert image_token in attempted_source
+
+    # The failed-save repaint clears surface dirtiness. Focus and blur again without
+    # another input; product retry state must resubmit the exact attempted source.
+    page.locator(editable).focus()
+    page.locator(editable).blur()
+    _wait_for_field_text(api, server, ticket_id, "success", "Retry me exactly.")
+    assert attempts == [attempted_source, attempted_source]
+
+    page.reload()
+    page.wait_for_selector(
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
+    )
+    _open_ticket_field(page, "success")
+    page.locator(f"{editable} [data-file-preview-kind='image'] img").wait_for(
+        state="visible", timeout=WAIT_MS
+    )
+    assert api.get(server, f"/api/tickets/{ticket_id}")["fields"]["success"][
+        "value"
+    ] == attempted_source
+
+
 def test_loaded_preview_proposal_approves_without_edited_body(
     server, context_factory, open_page, cli, api
 ) -> None:
@@ -1175,7 +1337,7 @@ def test_loaded_preview_proposal_approves_without_edited_body(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Preview proposal approval",
@@ -1194,7 +1356,7 @@ def test_loaded_preview_proposal_approves_without_edited_body(
         ticket_id=ticket_id,
         stdin=body,
     )
-    card = f'[data-review-card][data-entity-id="{ticket_id}"]'
+    card = f'[data-review-card][data-ticket-id="{ticket_id}"]'
     page = open_page(context_factory(), server, "#/review", card, settled=True)
     page.locator(f"{card} [data-file-preview-kind='markdown'] h1").first.wait_for(
         state="visible", timeout=WAIT_MS

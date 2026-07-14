@@ -19,8 +19,9 @@ from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
 from planner.days import data as days_data
+from planner.runtime import automatic_employee_step_eligibility
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, TITLE_MAX_CHARS, AtCap, FieldName
+from planner.tickets.contracts import NO_FURTHER, TITLE_MAX_CHARS, AtCap
 
 
 def _create(
@@ -33,6 +34,7 @@ def _create(
 ):
     ticket = tickets_data.create_ticket(
         conn,
+        worker_type="coding",
         title=title,
         actor="human",
         now=clock.now_unix(),
@@ -42,7 +44,7 @@ def _create(
     return tickets_data.accept_proposal(
         conn,
         ticket.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=clock.now_unix(),
         next_ceiling=NO_FURTHER,
@@ -115,19 +117,27 @@ def test_delete_ticket_removes_full_footprint_and_keeps_one_minimal_audit(
     with pytest.raises(PlannerError) as exc:
         tickets_data.read_ticket(tmp_db, target.id)
     assert exc.value.code is ErrorCode.not_found
-    assert [tuple(row) for row in tmp_db.execute(
-        "SELECT ticket_id, position FROM day_tickets WHERE day_id = ? ORDER BY position",
-        (day_id,),
-    )] == [(before.id, 0), (after.id, 1)]
-    assert tmp_db.execute(
-        "SELECT 1 FROM links WHERE from_id = ? OR to_id = ?", (target.id, target.id)
-    ).fetchone() is None
-    assert tmp_db.execute(
-        "SELECT 1 FROM chat_messages WHERE entity_id = ?", (target.id,)
-    ).fetchone() is None
-    assert tmp_db.execute(
-        "SELECT 1 FROM chat_turns WHERE entity_id = ?", (target.id,)
-    ).fetchone() is None
+    assert [
+        tuple(row)
+        for row in tmp_db.execute(
+            "SELECT ticket_id, position FROM day_tickets WHERE day_id = ? ORDER BY position",
+            (day_id,),
+        )
+    ] == [(before.id, 0), (after.id, 1)]
+    assert (
+        tmp_db.execute(
+            "SELECT 1 FROM links WHERE from_id = ? OR to_id = ?", (target.id, target.id)
+        ).fetchone()
+        is None
+    )
+    assert (
+        tmp_db.execute("SELECT 1 FROM chat_messages WHERE entity_id = ?", (target.id,)).fetchone()
+        is None
+    )
+    assert (
+        tmp_db.execute("SELECT 1 FROM chat_turns WHERE entity_id = ?", (target.id,)).fetchone()
+        is None
+    )
 
     target_events = tmp_db.execute(
         "SELECT kind, payload, created_at FROM events WHERE entity_id = ? ORDER BY id",
@@ -179,7 +189,17 @@ def test_delete_ticket_rejects_agent_and_each_active_worker_invariant(
     assert agent_exc.value.code is ErrorCode.agent_forbidden
 
     controlled = _create(tmp_db, cfg, fake_clock, "Controlled running")
-    assert tickets_data.start_run_if_runnable(tmp_db, controlled.id, guard=None, now=now)
+    planning_day_id = "day_2099-01-01"
+    days_data.add_day_ticket(tmp_db, planning_day_id, controlled.id, now)
+    assert tickets_data.claim_automatic_employee_step(
+        tmp_db,
+        controlled.id,
+        planning_day_id_resolver=lambda: planning_day_id,
+        eligibility_check=(
+            automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step
+        ),
+        now=now,
+    )
     with pytest.raises(PlannerError) as controlled_exc:
         tickets_data.delete_ticket(tmp_db, controlled.id, actor="human", now=now)
     assert controlled_exc.value.code is ErrorCode.already_running
@@ -226,11 +246,11 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     return create_app(config, clock, adapters, conn_factory), db_path
 
 
-class _DoorbellSpy:
+class _EligibilityWakeSpy:
     def __init__(self) -> None:
         self.calls = 0
 
-    def ring(self) -> None:
+    def wake(self) -> None:
         self.calls += 1
 
 
@@ -239,6 +259,7 @@ def test_delete_ticket_api_is_human_only_and_returns_affected_resources(tmp_path
     conn = connect(str(db_path))
     target = tickets_data.create_ticket(
         conn,
+        worker_type="coding",
         title="Delete through API",
         actor="human",
         now=1,
@@ -248,11 +269,9 @@ def test_delete_ticket_api_is_human_only_and_returns_affected_resources(tmp_path
     conn.close()
 
     with TestClient(app) as client:
-        doorbell_spy = _DoorbellSpy()
-        app.state.readiness_doorbell = doorbell_spy
-        forbidden = client.delete(
-            f"/api/tickets/{target.id}", headers={"X-Plan-Actor": "agent"}
-        )
+        eligibility_wake_spy = _EligibilityWakeSpy()
+        app.state.automatic_employee_step_eligibility_wake = eligibility_wake_spy
+        forbidden = client.delete(f"/api/tickets/{target.id}", headers={"X-Plan-Actor": "agent"})
         assert forbidden.status_code == 400
         assert forbidden.json()["error"]["code"] == "agent_forbidden"
 
@@ -268,4 +287,4 @@ def test_delete_ticket_api_is_human_only_and_returns_affected_resources(tmp_path
             "linked_entity_ids": [],
         }
         assert client.get(f"/api/tickets/{target.id}").status_code == 404
-        assert doorbell_spy.calls == 1
+        assert eligibility_wake_spy.calls == 1

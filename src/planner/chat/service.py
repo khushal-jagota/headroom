@@ -1,8 +1,9 @@
-"""The chat passthrough (§11). Resolves the chat entity (ticket or day), sends
-through the gateway adapter, and — on the first reply only — persists the minted
-session key onto the entity and logs one chat_session_created event in a single
-transaction. Framework-free: no FastAPI/pydantic (SPEC §14 / server.py docstring).
-Times arrive as unix-second ints from the caller's clock."""
+"""Server-owned Chat turns and durable Chat state.
+
+Human ingress resolves a chattable entity, records one turn, and consumes the
+gateway stream in the background. The first announced session key is persisted
+before prompt delivery. Framework-free: no FastAPI or Pydantic.
+"""
 
 from __future__ import annotations
 
@@ -11,27 +12,27 @@ import sqlite3
 import threading
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import Literal, cast
 from urllib.parse import quote, unquote, urlsplit
 
 from planner.chat import data as chat_data
 from planner.chat.contracts import (
-    ChatHistory,
-    ChatSendResult,
+    ChatActivityObservation,
     ChatState,
-    ChatStateMessage,
-    ChatStreamChunk,
+    ChattableEntityKind,
     ChatTurn,
+    ChatTurnRequest,
     CommandCatalog,
-    CommandRunResult,
     GatewayStatus,
+    HumanChatCompletion,
+    HumanChatOutputDelta,
 )
 from planner.chat.logic.activity import normalize_gateway_activity
 from planner.core.adapters.base import GatewayAdapter
-from planner.core.contracts import EventKind
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.events import append_event
 from planner.days.data import read_day
 from planner.files.logic.paths import resolve_chat_file
 from planner.tickets.contracts import TicketStatus
@@ -58,14 +59,16 @@ def _txn(conn: sqlite3.Connection) -> Iterator[None]:
         conn.execute("COMMIT")
 
 
-def _resolve(conn: sqlite3.Connection, entity_id: str, now: int) -> tuple[str, str | None]:
+def _resolve(
+    conn: sqlite3.Connection, entity_id: str, now: int
+) -> tuple[ChattableEntityKind, str | None]:
     if entity_id.startswith("t_"):
         row = conn.execute(
-            "SELECT chat_session_key FROM tickets WHERE id = ?", (entity_id,)
+            "SELECT employee_session_id FROM tickets WHERE id = ?", (entity_id,)
         ).fetchone()
         if row is None:
             raise PlannerError(ErrorCode.not_found, "ticket not found", {"entity_id": entity_id})
-        key: str | None = row["chat_session_key"]
+        key: str | None = row["employee_session_id"]
         return "ticket", key
     if entity_id.startswith("day_"):
         # A day id is a canonical YYYY-MM-DD; round-trip the suffix because
@@ -98,239 +101,39 @@ def _resolve(conn: sqlite3.Connection, entity_id: str, now: int) -> tuple[str, s
 
 def resolve_chattable_entity(
     conn: sqlite3.Connection, entity_id: str, now: int
-) -> tuple[str, str | None]:
+) -> tuple[ChattableEntityKind, str | None]:
     """Validate or materialize the same entity boundary used by chat turns."""
     return _resolve(conn, entity_id, now)
 
 
-def _reject_if_ticket_worker_running(conn: sqlite3.Connection, entity_id: str) -> None:
-    if not entity_id.startswith("t_"):
-        return
-    row = conn.execute(
-        "SELECT ticket_status FROM tickets WHERE id = ?", (entity_id,)
-    ).fetchone()
-    if row is None:
-        return
-    if row["ticket_status"] == TicketStatus.agent_running_step.value:
-        raise PlannerError(
-            ErrorCode.already_running,
-            "ticket worker is already running",
-            {"entity_id": entity_id},
-        )
-
-
-def _persist_key(
+def _validate_chattable_entity_for_state(
     conn: sqlite3.Connection,
-    kind: str,
     entity_id: str,
-    stored_key: str | None,
-    minted_key: str,
-    now: int,
-    *,
-    reject_running_ticket: bool = False,
-) -> str:
-    """Persist a (re)minted session key onto the entity and log one chat_session_created
-    event, in a single transaction. Two cases: the first reply (stored_key is None), and a
-    re-mint — the adapter created a fresh session because the stored key was stale (gateway
-    restarted) or rotated, so stored_key is set but the returned key differs. Persisting the
-    re-mint is what stops the dead key being resumed forever. On a lost first-write race no
-    event is logged and the winner's key is adopted. Returns the effective key."""
-    table_by_kind = {
-        "ticket": "tickets",
-        "day": "days",
-        "agent_chat_session": "agent_chat_sessions",
-    }
-    table = table_by_kind[kind]  # fixed map, never request input
-    with _txn(conn):
-        if kind == "ticket" and reject_running_ticket:
-            row = conn.execute(
-                "SELECT ticket_status FROM tickets WHERE id = ?", (entity_id,)
-            ).fetchone()
-            if row is not None and row["ticket_status"] == TicketStatus.agent_running_step.value:
-                raise PlannerError(
-                    ErrorCode.already_running,
-                    "ticket worker is already running",
-                    {"entity_id": entity_id},
-                )
-        if stored_key is None:
-            cursor = conn.execute(
-                f"UPDATE {table} SET chat_session_key = ?, updated_at = ? "
-                "WHERE id = ? AND chat_session_key IS NULL",
-                (minted_key, now, entity_id),
-            )
-            if cursor.rowcount == 1:
-                append_event(
-                    conn, entity_id, EventKind.chat_session_created,
-                    {"session_key": minted_key}, now,
-                )
-                return minted_key
-            row = conn.execute(
-                f"SELECT chat_session_key FROM {table} WHERE id = ?", (entity_id,)
-            ).fetchone()
-            winner: str = row["chat_session_key"]
-            return winner
-        # re-mint: replace the known-stale key with the fresh one (the old session is gone).
-        conn.execute(
-            f"UPDATE {table} SET chat_session_key = ?, updated_at = ? WHERE id = ?",
-            (minted_key, now, entity_id),
-        )
-        append_event(
-            conn, entity_id, EventKind.chat_session_created,
-            {"session_key": minted_key}, now,
-        )
-        return minted_key
-
-
-def send(
-    conn: sqlite3.Connection,
-    gateway: GatewayAdapter,
-    entity_id: str,
-    text: str,
-    now: int,
-) -> ChatSendResult:
-    _reject_if_ticket_worker_running(conn, entity_id)
-    kind, stored_key = _resolve(conn, entity_id, now)
-    effective_key = stored_key
-
-    def persist_session_before_prompt(session_key: str) -> None:
-        nonlocal effective_key
-        if session_key == effective_key:
-            _reject_if_ticket_worker_running(conn, entity_id)
+) -> None:
+    if entity_id.startswith("t_"):
+        if conn.execute("SELECT 1 FROM tickets WHERE id = ?", (entity_id,)).fetchone() is None:
+            raise PlannerError(ErrorCode.not_found, "ticket not found", {"entity_id": entity_id})
+        return
+    if entity_id.startswith("day_"):
+        raw = entity_id[len("day_") :]
+        try:
+            canonical = date.fromisoformat(raw).isoformat() == raw
+        except ValueError:
+            canonical = False
+        if canonical:
             return
-        effective_key = _persist_key(
-            conn,
-            kind,
-            entity_id,
-            effective_key,
-            session_key,
-            now,
-            reject_running_ticket=True,
-        )
-
-    # The gateway call is IO; it runs outside any transaction.
-    try:
-        result = gateway.send(stored_key, entity_id, text, persist_session_before_prompt)
-    except PlannerError:
-        raise  # already structured (offline adapter raises gateway_offline)
-    except Exception as exc:  # noqa: BLE001
-        raise PlannerError(
-            ErrorCode.gateway_offline, "gateway unavailable", {"cause": str(exc)}
-        ) from exc
-    if result.session_key != effective_key:  # callback-free adapters still persist here
-        effective_key = _persist_key(conn, kind, entity_id, effective_key, result.session_key, now)
-    if effective_key != result.session_key:  # lost the first-write race; adopt the winner
-        result = ChatSendResult(reply_text=result.reply_text, session_key=effective_key)
-    chat_data.record_message(conn, entity_id, role="human", text=text, now=now)
-    if result.reply_text:
-        chat_data.record_message(
-            conn, entity_id, role="assistant", text=result.reply_text, now=now
-        )
-    return result
-
-
-def history(
-    conn: sqlite3.Connection,
-    gateway: GatewayAdapter,
-    entity_id: str,
-    now: int,
-) -> ChatHistory:
-    kind, stored_key = _resolve(conn, entity_id, now)
-    if stored_key is None:
-        return ChatHistory(messages=(), session_key=None)
-    try:
-        result = gateway.history(stored_key, entity_id)
-    except PlannerError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        raise PlannerError(
-            ErrorCode.gateway_offline, "gateway unavailable", {"cause": str(exc)}
-        ) from exc
-    if result.session_key is not None and result.session_key != stored_key:
-        effective = _persist_key(conn, kind, entity_id, stored_key, result.session_key, now)
-        if effective != result.session_key:
-            result = ChatHistory(messages=result.messages, session_key=effective)
-    return result
-
-
-def _legacy_state_messages(history_result: ChatHistory) -> tuple[ChatStateMessage, ...]:
-    out: list[ChatStateMessage] = []
-    for index, message in enumerate(history_result.messages, start=1):
-        role = message.role.lower()
-        if role in ("user", "human"):
-            product_role = "human"
-        elif role in ("system", "tool"):
-            product_role = "system"
-        else:
-            product_role = "assistant"
-        out.append(
-            ChatStateMessage(
-                id=-index,
-                role=product_role,
-                text=message.text,
-                created_at=message.created_at,
-                turn_id=None,
-            )
-        )
-    return tuple(out)
-
-
-def state(
-    conn: sqlite3.Connection,
-    gateway: GatewayAdapter,
-    entity_id: str,
-    now: int,
-) -> ChatState:
-    kind, stored_key = _resolve(conn, entity_id, now)
-    legacy_messages: tuple[ChatStateMessage, ...] = ()
-    if stored_key is not None:
-        row = conn.execute(
-            "SELECT 1 FROM chat_messages WHERE entity_id = ? LIMIT 1", (entity_id,)
-        ).fetchone()
-        if row is None:
-            result = history(conn, gateway, entity_id, now)
-            stored_key = result.session_key
-            legacy_messages = _legacy_state_messages(result)
-    return chat_data.read_state(
-        conn, entity_id, session_key=stored_key, legacy_messages=legacy_messages
+    if entity_id in TOP_LEVEL_AGENT_ENTITY_IDS:
+        return
+    raise PlannerError(
+        ErrorCode.not_found,
+        "no chattable entity for id",
+        {"entity_id": entity_id},
     )
 
 
-def pause_turn(
-    conn: sqlite3.Connection,
-    gateway: GatewayAdapter,
-    entity_id: str,
-    now: int,
-) -> ChatTurn:
-    """Interrupt the visible active chat turn without touching ticket runtime status."""
-    _resolve(conn, entity_id, now)
-    active = chat_data.read_active_turn(conn, entity_id)
-    if active is None:
-        raise PlannerError(ErrorCode.not_found, "no active chat turn", {"entity_id": entity_id})
-    session_key = active.session_key
-    if not session_key:
-        raise PlannerError(
-            ErrorCode.validation,
-            "active chat turn has no session key yet",
-            {"entity_id": entity_id, "turn_id": active.id},
-        )
-    try:
-        gateway.interrupt(session_key, entity_id)
-    except PlannerError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        raise PlannerError(
-            ErrorCode.gateway_offline, "gateway unavailable", {"cause": str(exc)}
-        ) from exc
-    settled = chat_data.finish_turn(
-        conn,
-        active.id,
-        entity_id=entity_id,
-        reply_text="",
-        output_role=active.output_role,
-        status="interrupted",
-        now=now,
-    )
-    return settled or active
+def state(conn: sqlite3.Connection, entity_id: str) -> ChatState:
+    _validate_chattable_entity_for_state(conn, entity_id)
+    return chat_data.read_state(conn, entity_id)
 
 
 def catalog(gateway: GatewayAdapter) -> CommandCatalog:
@@ -338,342 +141,334 @@ def catalog(gateway: GatewayAdapter) -> CommandCatalog:
     return gateway.catalog()
 
 
-def stream(
-    conn: sqlite3.Connection,
-    gateway: GatewayAdapter,
-    entity_id: str,
-    text: str,
-    mode: str,
-    now: int,
-) -> Iterator[ChatStreamChunk]:
-    """Stream a chat message or command and persist the completed session key.
+@dataclass(frozen=True)
+class _AdmittedHumanChatTurn:
+    entity_id: str
+    entity_kind: ChattableEntityKind
+    turn_id: str
+    expected_session_key: str | None
+    model_text: str
+    mode: Literal["message", "command"]
+    image_paths: tuple[Path, ...]
+    gateway: GatewayAdapter
+    force_fresh_session: bool
+    require_existing_session: bool
 
-    The gateway owns live token production; this service owns the same session-key
-    persistence rule used by send()/run_command(). A streaming gateway yields an
-    internal ``session`` chunk before the prompt starts so worker tools can resolve
-    their ticket while the turn is still running.
-    """
-    _reject_if_ticket_worker_running(conn, entity_id)
-    entity_kind, stored_key = _resolve(conn, entity_id, now)
-    effective_key = stored_key
-    chat_data.record_message(conn, entity_id, role="human", text=text, now=now)
 
-    def persist_session_before_prompt(session_key: str) -> None:
-        nonlocal effective_key
-        if session_key == effective_key:
-            _reject_if_ticket_worker_running(conn, entity_id)
+class ChatTurnLifecycle:
+    """The one deep module for human Chat admission, execution, and visible Pause."""
+
+    def __init__(
+        self,
+        conn_factory: Callable[[], sqlite3.Connection],
+        gateway_provider: Callable[[], GatewayAdapter],
+        now: Callable[[], int],
+        db_path: str | Path,
+    ) -> None:
+        self._conn_factory = conn_factory
+        self._gateway_provider = gateway_provider
+        self._now = now
+        self._db_path = db_path
+
+    @staticmethod
+    def _ensure_ticket_worker_not_running(
+        conn: sqlite3.Connection, entity_id: str
+    ) -> None:
+        if not entity_id.startswith("t_"):
             return
-        effective_key = _persist_key(
-            conn,
-            entity_kind,
-            entity_id,
-            effective_key,
-            session_key,
-            now,
-            reject_running_ticket=True,
-        )
+        row = conn.execute(
+            "SELECT ticket_status FROM tickets WHERE id = ?", (entity_id,)
+        ).fetchone()
+        if row is not None and row["ticket_status"] == TicketStatus.agent_running_step.value:
+            raise PlannerError(
+                ErrorCode.already_running,
+                "ticket worker is already running",
+                {"entity_id": entity_id},
+            )
 
-    try:
-        chunks = gateway.stream(stored_key, entity_id, text, mode, persist_session_before_prompt)
-        for chunk in chunks:
-            if chunk.type == "session":
-                if chunk.session_key and chunk.session_key != effective_key:
-                    persist_session_before_prompt(chunk.session_key)
-                continue
-            if chunk.type != "done":
-                yield chunk
-                continue
-            session_key = chunk.session_key
-            if session_key != effective_key:
-                session_key = _persist_key(
-                    conn, entity_kind, entity_id, effective_key, session_key, now
-                )
-            if chunk.reply_text:
-                chat_data.record_message(
+    @staticmethod
+    def _validate_request(request: ChatTurnRequest) -> Literal["message", "command"]:
+        if request.mode not in ("message", "command"):
+            raise PlannerError(ErrorCode.validation, "mode must be message or command")
+        if not request.text and not request.image_references:
+            raise PlannerError(ErrorCode.validation, "text is required")
+        if request.image_references and request.mode != "message":
+            raise PlannerError(ErrorCode.validation, "images are supported only for messages")
+        return cast(Literal["message", "command"], request.mode)
+
+    def start_human_turn(self, entity_id: str, request: ChatTurnRequest) -> ChatTurn:
+        mode = self._validate_request(request)
+        admission_now = self._now()
+        conn = self._conn_factory()
+        try:
+            self._ensure_ticket_worker_not_running(conn, entity_id)
+            _resolve(conn, entity_id, admission_now)
+            image_paths = _resolve_turn_images(
+                self._db_path, entity_id, request.image_references
+            )
+            visible_text = _visible_human_text(request.text, request.image_references)
+            model_text = request.text or (_IMAGE_ONLY_MODEL_CUE if image_paths else "")
+            gateway = self._gateway_provider()
+            with _txn(conn):
+                entity_kind, expected_session_key = _resolve(conn, entity_id, admission_now)
+                self._ensure_ticket_worker_not_running(conn, entity_id)
+                turn = chat_data.start_turn_in_transaction(
                     conn,
                     entity_id,
-                    role="system" if chunk.kind == "system" else "assistant",
-                    text=chunk.reply_text,
-                    now=now,
+                    origin="human",
+                    mode=mode,
+                    visible_role="human",
+                    visible_text=visible_text,
+                    output_role="system" if mode == "command" else "assistant",
+                    phase="thinking",
+                    activity_label="Thinking",
+                    now=admission_now,
                 )
-            yield ChatStreamChunk(
-                type="done",
-                reply_text=chunk.reply_text,
-                session_key=session_key,
-                kind=chunk.kind,
-            )
-    except PlannerError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        raise PlannerError(
-            ErrorCode.gateway_offline, "gateway unavailable", {"cause": str(exc)}
-        ) from exc
+        finally:
+            conn.close()
 
-
-def start_human_turn(
-    conn_factory: Callable[[], sqlite3.Connection],
-    gateway: GatewayAdapter,
-    entity_id: str,
-    text: str,
-    mode: str,
-    now: int,
-    now_fn: Callable[[], int] | None = None,
-    *,
-    image_references: Sequence[str] = (),
-    db_path: str | Path | None = None,
-) -> ChatTurn:
-    if mode not in ("message", "command"):
-        raise PlannerError(ErrorCode.validation, "mode must be message or command")
-    conn = conn_factory()
-    try:
-        _reject_if_ticket_worker_running(conn, entity_id)
-        _resolve(conn, entity_id, now)
-        image_paths = _resolve_turn_images(db_path, entity_id, image_references)
-        visible_text = _visible_human_text(text, image_references)
-        model_text = text or (_IMAGE_ONLY_MODEL_CUE if image_paths else "")
-        turn = chat_data.start_turn(
-            conn,
-            entity_id,
-            origin="human",
+        admitted = _AdmittedHumanChatTurn(
+            entity_id=entity_id,
+            entity_kind=entity_kind,
+            turn_id=turn.id,
+            expected_session_key=expected_session_key,
+            model_text=model_text,
             mode=mode,
-            visible_role="human",
-            visible_text=visible_text,
-            output_role="system" if mode == "command" else "assistant",
-            phase="thinking",
-            activity_label="Thinking",
-            now=now,
+            image_paths=image_paths,
+            gateway=gateway,
+            force_fresh_session=mode == "command" and request.text == "/new",
+            require_existing_session=False,
         )
-    finally:
-        conn.close()
+        self._launch_execution(admitted)
+        return turn
 
-    thread = threading.Thread(
-        target=_run_human_turn,
-        args=(
-            conn_factory,
-            gateway,
-            entity_id,
-            turn.id,
-            model_text,
-            mode,
-            now_fn or _unix_now,
-            image_paths,
-        ),
-        name=f"chat-turn-{turn.id}",
-        daemon=True,
-    )
-    thread.start()
-    return turn
-
-
-def recover_human_turn(
-    conn_factory: Callable[[], sqlite3.Connection],
-    gateway: GatewayAdapter,
-    entity_id: str,
-    mode: str,
-    now: int,
-    now_fn: Callable[[], int] | None = None,
-) -> ChatTurn | None:
-    """Resume one product-visible human chat turn after process restart."""
-    if mode not in ("message", "command"):
-        raise PlannerError(ErrorCode.validation, "mode must be message or command")
-    conn = conn_factory()
-    try:
-        if entity_id.startswith("t_"):
-            row = conn.execute(
-                "SELECT ticket_status FROM tickets WHERE id = ?", (entity_id,)
-            ).fetchone()
-            if row is not None and row["ticket_status"] == TicketStatus.agent_running_step.value:
-                return None
-        _kind, stored_key = _resolve(conn, entity_id, now)
-        if stored_key is None:
+    def recover_human_turn(
+        self,
+        entity_id: str,
+        mode: str,
+    ) -> ChatTurn | None:
+        """Strictly resume one stale product-visible human turn after restart."""
+        if mode not in ("message", "command"):
+            raise PlannerError(ErrorCode.validation, "mode must be message or command")
+        recovery_mode = cast(Literal["message", "command"], mode)
+        now = self._now()
+        conn = self._conn_factory()
+        try:
+            if entity_id.startswith("t_"):
+                row = conn.execute(
+                    "SELECT ticket_status FROM tickets WHERE id = ?", (entity_id,)
+                ).fetchone()
+                if (
+                    row is not None
+                    and row["ticket_status"] == TicketStatus.agent_running_step.value
+                ):
+                    return None
+            entity_kind, stored_session_key = _resolve(conn, entity_id, now)
             active = chat_data.read_active_turn(conn, entity_id)
-            if active is not None:
-                chat_data.fail_turn(
+            if active is None:
+                return None
+            if stored_session_key is None:
+                chat_data.settle_chat_turn(
                     conn,
                     active.id,
                     entity_id=entity_id,
+                    status="errored",
+                    reply_text="",
+                    output_role="system"
+                    if active.output_role == "system"
+                    else "assistant",
                     error="restart recovery has no existing session",
                     now=now,
                 )
-            return None
-        turn = chat_data.roll_running_turn_for_recovery(
-            conn,
-            entity_id,
-            origin="human",
-            mode=mode,
-            visible_role="system",
-            visible_text=_HUMAN_RESTART_RECOVERY_MESSAGE,
-            output_role="system" if mode == "command" else "assistant",
-            phase="thinking",
-            activity_label="Restarting chat",
-            now=now,
-            expected_session_key=stored_key,
-        )
-        if turn is None:
-            return None
-    finally:
-        conn.close()
-
-    thread = threading.Thread(
-        target=_run_human_turn,
-        args=(
-            conn_factory,
-            gateway,
-            entity_id,
-            turn.id,
-            _HUMAN_RESTART_RECOVERY_MESSAGE,
-            mode,
-            now_fn or _unix_now,
-            (),
-        ),
-        kwargs={"require_existing_session": True},
-        name=f"chat-recovery-{turn.id}",
-        daemon=True,
-    )
-    thread.start()
-    return turn
-
-
-def _run_human_turn(
-    conn_factory: Callable[[], sqlite3.Connection],
-    gateway: GatewayAdapter,
-    entity_id: str,
-    turn_id: str,
-    text: str,
-    mode: str,
-    now_fn: Callable[[], int],
-    image_paths: tuple[Path, ...] = (),
-    *,
-    require_existing_session: bool = False,
-) -> None:
-    conn = conn_factory()
-    try:
-        now = now_fn()
-        _reject_if_ticket_worker_running(conn, entity_id)
-        entity_kind, stored_key = _resolve(conn, entity_id, now)
-        effective_key = stored_key
-
-        def persist_session_before_prompt(session_key: str) -> None:
-            nonlocal effective_key
-            if session_key == effective_key:
-                _reject_if_ticket_worker_running(conn, entity_id)
-            else:
-                effective_key = _persist_key(
-                    conn,
-                    entity_kind,
-                    entity_id,
-                    effective_key,
-                    session_key,
-                    now_fn(),
-                    reject_running_ticket=True,
-                )
-            chat_data.attach_session_key(
-                conn, turn_id, entity_id=entity_id, session_key=session_key, now=now_fn()
+                return None
+            gateway = self._gateway_provider()
+            turn = chat_data.roll_running_turn_for_recovery(
+                conn,
+                entity_id,
+                origin="human",
+                mode=recovery_mode,
+                visible_role="system",
+                visible_text=_HUMAN_RESTART_RECOVERY_MESSAGE,
+                output_role="system" if recovery_mode == "command" else "assistant",
+                phase="thinking",
+                activity_label="Restarting chat",
+                now=now,
+                expected_session_key=stored_session_key,
             )
+            if turn is None:
+                return None
+        finally:
+            conn.close()
 
-        output_role = "system" if mode == "command" else "assistant"
-        if not image_paths:
-            if require_existing_session:
-                chunks = gateway.stream(
-                    stored_key,
-                    entity_id,
-                    text,
-                    mode,
-                    persist_session_before_prompt,
-                    require_existing_session=True,
+        admitted = _AdmittedHumanChatTurn(
+            entity_id=entity_id,
+            entity_kind=entity_kind,
+            turn_id=turn.id,
+            expected_session_key=stored_session_key,
+            model_text=_HUMAN_RESTART_RECOVERY_MESSAGE,
+            mode=recovery_mode,
+            image_paths=(),
+            gateway=gateway,
+            force_fresh_session=False,
+            require_existing_session=True,
+        )
+        self._launch_execution(admitted)
+        return turn
+
+    def pause_active_turn(self, entity_id: str) -> ChatTurn:
+        conn = self._conn_factory()
+        try:
+            now = self._now()
+            _resolve(conn, entity_id, now)
+            active = chat_data.read_active_turn(conn, entity_id)
+            if active is None:
+                raise PlannerError(
+                    ErrorCode.not_found, "no active chat turn", {"entity_id": entity_id}
                 )
-            else:
-                chunks = gateway.stream(
-                    stored_key, entity_id, text, mode, persist_session_before_prompt
+            session_key = chat_data.read_running_turn_session_key(
+                conn,
+                active.id,
+                entity_id=entity_id,
+            )
+            if not session_key:
+                raise PlannerError(
+                    ErrorCode.validation,
+                    "active chat turn has no session key yet",
+                    {"entity_id": entity_id, "turn_id": active.id},
                 )
-        else:
-            if require_existing_session:
-                chunks = gateway.stream(
-                    stored_key,
-                    entity_id,
-                    text,
-                    mode,
-                    persist_session_before_prompt,
-                    image_paths=image_paths,
-                    require_existing_session=True,
-                )
-            else:
-                chunks = gateway.stream(
-                    stored_key,
-                    entity_id,
-                    text,
-                    mode,
-                    persist_session_before_prompt,
-                    image_paths=image_paths,
-                )
-        for chunk in chunks:
-            now = now_fn()
-            if chunk.type == "session":
-                if chunk.session_key:
-                    persist_session_before_prompt(chunk.session_key)
-                continue
-            if chunk.type == "activity":
-                if chunk.activity is not None:
+            try:
+                self._gateway_provider().interrupt(session_key, entity_id)
+            except PlannerError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise PlannerError(
+                    ErrorCode.gateway_offline, "gateway unavailable", {"cause": str(exc)}
+                ) from exc
+            return chat_data.settle_chat_turn(
+                conn,
+                active.id,
+                entity_id=entity_id,
+                status="interrupted",
+                reply_text="",
+                output_role="system" if active.output_role == "system" else "assistant",
+                error=None,
+                now=now,
+            )
+        finally:
+            conn.close()
+
+    def _launch_execution(self, admitted: _AdmittedHumanChatTurn) -> None:
+        thread = threading.Thread(
+            target=self._execute_turn,
+            args=(admitted,),
+            name=f"chat-turn-{admitted.turn_id}",
+            daemon=True,
+        )
+        thread.start()
+
+    def _execute_turn(self, admitted: _AdmittedHumanChatTurn) -> None:
+        conn = self._conn_factory()
+        effective_session_key = admitted.expected_session_key
+        force_fresh_pending = admitted.force_fresh_session
+
+        def bind_session_key(candidate_session_key: str) -> str:
+            nonlocal effective_session_key, force_fresh_pending
+            effective_session_key = chat_data.bind_human_turn_session(
+                conn,
+                admitted.turn_id,
+                entity_kind=admitted.entity_kind,
+                entity_id=admitted.entity_id,
+                expected_session_key=effective_session_key,
+                candidate_session_key=candidate_session_key,
+                force_fresh_session=force_fresh_pending,
+                now=self._now(),
+            )
+            force_fresh_pending = False
+            return effective_session_key
+
+        try:
+            observations = admitted.gateway.run_human_turn(
+                admitted.expected_session_key,
+                admitted.entity_id,
+                admitted.model_text,
+                admitted.mode,
+                bind_session_key,
+                admitted.image_paths,
+                require_existing_session=admitted.require_existing_session,
+            )
+            for observation in observations:
+                now = self._now()
+                if isinstance(observation, ChatActivityObservation):
                     chat_data.record_turn_activity(
                         conn,
-                        turn_id,
-                        entity_id=entity_id,
-                        observation=chunk.activity,
+                        admitted.turn_id,
+                        entity_id=admitted.entity_id,
+                        observation=observation,
                         now=now,
                     )
-                else:
-                    label = chunk.text.strip() or "Working"
-                    chat_data.set_turn_activity(
+                elif isinstance(observation, HumanChatOutputDelta):
+                    chat_data.append_turn_output(
                         conn,
-                        turn_id,
-                        entity_id=entity_id,
-                        phase="doing",
-                        activity_label=label,
+                        admitted.turn_id,
+                        entity_id=admitted.entity_id,
+                        delta=observation.text,
                         now=now,
                     )
-                continue
-            if chunk.type == "token":
-                chat_data.append_turn_output(
-                    conn, turn_id, entity_id=entity_id, delta=chunk.text, now=now
-                )
-                continue
-            if chunk.type == "done":
-                session_key = chunk.session_key
-                if session_key and session_key != effective_key:
-                    session_key = _persist_key(
-                        conn, entity_kind, entity_id, effective_key, session_key, now
+                elif isinstance(observation, HumanChatCompletion):
+                    chat_data.settle_chat_turn(
+                        conn,
+                        admitted.turn_id,
+                        entity_id=admitted.entity_id,
+                        status="complete",
+                        reply_text=observation.text,
+                        output_role=observation.role,
+                        error=None,
+                        now=now,
                     )
-                    chat_data.attach_session_key(
-                        conn, turn_id, entity_id=entity_id, session_key=session_key, now=now
+                    return
+                else:
+                    raise PlannerError(
+                        ErrorCode.validation, "unsupported human chat observation"
                     )
-                output_role = "system" if chunk.kind == "system" else "assistant"
-                chat_data.finish_turn(
-                    conn,
-                    turn_id,
-                    entity_id=entity_id,
-                    reply_text=chunk.reply_text,
-                    output_role=output_role,
-                    now=now,
-                )
-                return
-        chat_data.fail_turn(
-            conn,
-            turn_id,
-            entity_id=entity_id,
-            error="chat turn ended without completion",
-            now=now_fn(),
-        )
-    except PlannerError as exc:
-        chat_data.fail_turn(
-            conn, turn_id, entity_id=entity_id, error=exc.message, now=now_fn()
-        )
-    except Exception as exc:  # noqa: BLE001
-        _log.exception("chat turn crashed (entity=%s turn=%s)", entity_id, turn_id)
-        chat_data.fail_turn(
-            conn, turn_id, entity_id=entity_id, error=f"chat turn crashed: {exc}", now=now_fn()
-        )
-    finally:
-        conn.close()
+            chat_data.settle_chat_turn(
+                conn,
+                admitted.turn_id,
+                entity_id=admitted.entity_id,
+                status="errored",
+                reply_text="",
+                output_role="system" if admitted.mode == "command" else "assistant",
+                error="chat turn ended without completion",
+                now=self._now(),
+            )
+        except PlannerError as exc:
+            chat_data.settle_chat_turn(
+                conn,
+                admitted.turn_id,
+                entity_id=admitted.entity_id,
+                status="errored",
+                reply_text="",
+                output_role="system" if admitted.mode == "command" else "assistant",
+                error=exc.message,
+                now=self._now(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            _log.exception(
+                "chat turn crashed (entity=%s turn=%s)",
+                admitted.entity_id,
+                admitted.turn_id,
+            )
+            chat_data.settle_chat_turn(
+                conn,
+                admitted.turn_id,
+                entity_id=admitted.entity_id,
+                status="errored",
+                reply_text="",
+                output_role="system" if admitted.mode == "command" else "assistant",
+                error=f"chat turn crashed: {exc}",
+                now=self._now(),
+            )
+        finally:
+            conn.close()
 
 
 def _resolve_turn_images(
@@ -721,12 +516,6 @@ def _visible_human_text(text: str, image_references: Sequence[str]) -> str:
         f"![Attached image]({image_reference})" for image_reference in image_references
     )
     return f"{text}\n\n{markdown}" if text else markdown
-
-
-def _unix_now() -> int:
-    import time
-
-    return int(time.time())
 
 
 def start_worker_turn(
@@ -794,62 +583,6 @@ def fail_worker_turn(
     conn: sqlite3.Connection, entity_id: str, turn_id: str, error: str, now: int
 ) -> None:
     chat_data.fail_turn(conn, turn_id, entity_id=entity_id, error=error, now=now)
-
-
-def run_command(
-    conn: sqlite3.Connection,
-    gateway: GatewayAdapter,
-    entity_id: str,
-    command: str,
-    now: int,
-) -> CommandRunResult:
-    """Run a /command on the entity's own mind. Same first-reply key-persist + one
-    chat_session_created event as send (a command can be the very first message)."""
-    _reject_if_ticket_worker_running(conn, entity_id)
-    kind, stored_key = _resolve(conn, entity_id, now)
-    effective_key = stored_key
-
-    def persist_session_before_prompt(session_key: str) -> None:
-        nonlocal effective_key
-        if session_key == effective_key:
-            _reject_if_ticket_worker_running(conn, entity_id)
-            return
-        effective_key = _persist_key(
-            conn,
-            kind,
-            entity_id,
-            effective_key,
-            session_key,
-            now,
-            reject_running_ticket=True,
-        )
-
-    try:
-        result = gateway.run_command(
-            stored_key, entity_id, command, persist_session_before_prompt
-        )
-    except PlannerError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        raise PlannerError(
-            ErrorCode.gateway_offline, "gateway unavailable", {"cause": str(exc)}
-        ) from exc
-    if result.session_key != effective_key:
-        effective_key = _persist_key(conn, kind, entity_id, effective_key, result.session_key, now)
-    if effective_key != result.session_key:
-        result = CommandRunResult(
-            reply_text=result.reply_text, session_key=effective_key, kind=result.kind
-        )
-    chat_data.record_message(conn, entity_id, role="human", text=command, now=now)
-    if result.reply_text:
-        chat_data.record_message(
-            conn,
-            entity_id,
-            role="system" if result.kind == "system" else "assistant",
-            text=result.reply_text,
-            now=now,
-        )
-    return result
 
 
 def status(gateway: GatewayAdapter) -> GatewayStatus:

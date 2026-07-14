@@ -5,7 +5,9 @@ description: Stage-by-stage guidance for a new-worker ticket — designing and l
 
 # Designing a new worker
 
-This ticket's deliverable is **another worker**: a new ticket type and the specialist skill that guides it. A worker is a short lifecycle — ordered stages, each needing one thing a human approves — plus the skill that teaches an agent to do each stage well.
+This Ticket's deliverable is **another worker**: a new Worker type and the specialist
+skill that guides it. A worker is a short lifecycle — ordered Stages, each needing one
+thing a human approves — plus the skill that teaches an agent to do each Stage well.
 
 The hard part isn't writing files; it's the **thinking** — what the worker is for, what shape its lifecycle takes, what "good" means at each stage, and who does the work. Each stage below is a thinking beat the human reviews before you move on.
 
@@ -15,7 +17,7 @@ The hard part isn't writing files; it's the **thinking** — what the worker is 
 
 - **needs_stages** — the new worker's lifecycle: its ordered stages and what each one needs.
 - **needs_thinking** — the design substance: what a good result looks like, who does the work, the standard each stage holds.
-- **needs_drafting** — the artifacts: the new worker's `SKILL.md` and its type definition.
+- **needs_drafting** — the artifacts: the new worker's `SKILL.md` and its Worker type definition.
 - **needs_closeout** — landing it: files placed, registered, provisioned; a restart makes it live.
 
 (`needs_kickoff`, `done`, and `dropped` are the universal bookends every worker shares.)
@@ -45,7 +47,9 @@ Genericity test: any sentence equally true of a different worker isn't done — 
 From the approved thinking, write the two files:
 
 - The new worker's **`SKILL.md`** — front matter plus one guidance section per stage, mirroring this skill and `panels-worker-coding`.
-- Its **type definition** — the `WorkflowDefinition`: stages, ordered fields, ceiling range, worker profile, any handoff. Novel ids are plain strings; reuse the shared `needs_kickoff`/`kickoff`, `needs_closeout`/`closeout`, `done`, `dropped`.
+- Its **Worker type definition** — the `WorkerTypeDefinition`: Stages, ordered fields,
+  ceiling range, worker profile, any handoff. Novel ids are plain strings; reuse the
+  shared `needs_kickoff`/`kickoff`, `needs_closeout`/`closeout`, `done`, `dropped`.
 
 Point the reviewer at both files and note briefly how they realize the thinking.
 
@@ -54,13 +58,17 @@ Point the reviewer at both files and note briefly how they realize the thinking.
 The mechanical recipe for adding a worker to the running system:
 
 1. Place the `SKILL.md` under `skills/<name>/`.
-2. Add the definition module under `src/planner/ticket_types/`.
-3. Register it: the definition into the production registry, its skill into the known-skills catalog.
+2. Add the `WorkerTypeDefinition` module under `src/planner/worker_types/`.
+3. Register it once in `src/planner/worker_types/configuration.py`: add its skill to the
+   known-skills catalog and its definition to the production configuration tuple.
 4. Provision it: add the skill dir to the planner skill list. On restart this **symlinks the skill into the worker's Hermes home — the step that lets a worker `skill_view` it**. The file must exist before the restart, or startup fails.
 5. Confirm it validates at build and the skill is shipped + provisioned.
-6. Announce the type to the agent front doors: add the new specialist to `panels-worker`'s worker list, and add the type (with what it's for) to `panels-chief-of-staff` so it can create and reconcile it.
+6. Announce the Worker type to the agent front doors: add the new specialist to
+   `panels-worker`'s worker list, and add the Worker type (with what it's for) to
+   `panels-chief-of-staff` so it can create and reconcile it.
 
-A restart activates the type. A good **closeout** is a short, verified report: what was placed and registered, and how you confirmed the worker is live.
+A restart activates the Worker type. A good **closeout** is a short, verified report:
+what was placed and registered, and how you confirmed the worker is live.
 
 ### Working disciplines
 

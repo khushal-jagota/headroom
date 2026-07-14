@@ -32,7 +32,7 @@ def test_ticket_delete_cli_requires_yes_and_deletes(server, cli) -> None:
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "CLI hard delete",
@@ -62,7 +62,7 @@ def test_ticket_ui_has_no_delete_control(
     ticket_id = cli(
         server,
         "ticket",
-        "create", "--type", "coding",
+        "create", "--worker-type", "coding",
         "--title",
         TITLE,
     )["id"]

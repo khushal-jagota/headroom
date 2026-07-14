@@ -1,0 +1,9 @@
+NO VIOLATIONS
+
+The read-only focused review checked the one-line synchronization in
+`tests/e2e/test_flows_a.py`. It confirmed the explicit `scroll` dispatch closes
+the diagnosed race, matches the stronger neighboring cases, preserves the
+`D-chat-follow` behavior assertion, and changes no product or unrelated scope.
+
+tokens used
+27,884

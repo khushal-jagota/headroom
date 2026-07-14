@@ -4,33 +4,373 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 the bottom; the blow-by-blow is git's.
 
-## Current work cycle (2026-07-13): restart continuation and bounded shutdown
+## Current work cycle (2026-07-14): architecture deepening integration
 
 Current build stage:
 
-- Ticket `t_yctn6m7m` is in Implementation on isolated branch
-  `ticket/t_yctn6m7m-restart-recovery`, now synchronized onto main `b7ca44a`.
-- Restart continuation is complete for ticket workers and ordinary chat, including stale-turn preservation,
-  strict same-session recovery, startup-before-readiness ordering, post-proposal stale worker settlement,
-  repeated restart handling, session-mismatch failure, and one bounded runtime/gateway shutdown deadline.
-- Every Codex implementation finding and rereview finding has been resolved. Both the final targeted rereview
-  and the post-main-sync integration review report `NO VIOLATIONS`.
+- Integration is in progress on branch `codex/architecture-merge` in
+  `/Users/khushaljagota/.hermes/planning-v2-worktrees/architecture-merge`. It merges reviewed architecture
+  head `9e51df2` into current main `49660f5` while retaining main's restart-recovery and bounded-shutdown
+  behavior.
+- The public and domain shape follows the architecture branch: required immutable Worker type, direct
+  stored Stage reads, Automatic Employee-step eligibility, Ticket-focused Review, canonical Panels Chat,
+  and explicit Employee session history. Retired readiness names, Ticket Chat identity, generic Chat
+  transport bags, old routes, and live `coding` defaults remain deleted.
+- The source integration is complete enough for focused validation. Restart recovery now uses the same
+  architecture owners: canonical first-wins Chat settlement, strict typed gateway resume, Employee session
+  id transitions, and the renamed discovery/eligibility runtime. Startup recovers ordinary human Chat and
+  running Employee steps before automatic discovery; post-handoff worker turns settle without re-prompting;
+  one absolute deadline is shared through runtime and gateway shutdown.
+- Focused backend tests for Chat, Employee recovery, loop composition, gateways, session history,
+  discovery, eligibility wake, config, the closed Chat ingress, and Worker-type/migration boundaries are
+  green. Both named Playwright cases pass; compile, Ruff, mypy across 113 source files, the retired-surface
+  scans, conflict-marker scan, and diff check pass. Conflict resolutions are staged with no unmerged paths.
+  Independent integration review and the post-commit canonical gate still remain; no canonical `./verify`
+  has been run for the uncommitted merge.
+- The first fresh merge-diff review found one High omission: no-session Employee restart recovery errored
+  the Ticket but left its stale visible worker turn running. The accepted repair now settles that worker turn
+  through canonical Chat settlement with the same exact error before the canonical Ticket transition, with
+  no replacement turn or gateway call. Its focused regression and the complete Employee-runner/core-loop
+  pair pass; Ruff, focused mypy, compileall, and diff check pass. Fresh corrected-diff review session
+  `019f5ffb-6b3b-7310-9f2f-c8e95b908436` reports `NO VIOLATIONS`. The merge commit and canonical gate remain.
+
+- Shared understanding is confirmed for all six architecture candidates. Implementation is isolated on
+  branch `codex/architecture-deepening` in
+  `/Users/khushaljagota/.hermes/planning-v2-worktrees/architecture-deepening`, based on current `main` at
+  `b7ca44a`.
+- The resolved domain model is Worker type, stored Stage, Review, Panels Chat, Employee session history,
+  and Automatic Employee-step eligibility. Worker type is required and immutable; reading Stage is direct.
+- Landing order is Worker workflow → Automatic Employee-step eligibility → Review → canonical Chat turn →
+  managed Markdown → resource catalogue → Employee session history. The last item is an isolated final
+  commit because its restart/session behavior is the most finicky.
+- AD01 is complete on the branch at `f9246d5`. The independently reviewed Worker-type/stored-Stage
+  replacement follows the program-memory commit `aa1f29d` and the separately isolated test stabilization
+  `afa57fd`.
+- AD02 is complete on the branch at `05e2fda`. Its delegated implementation and corrected diff passed
+  independent review with `NO VIOLATIONS`, and the committed checkpoint passes the canonical gate.
+- AD03 is complete on the branch at `d3dcc29`. Membership-only discovery and the final
+  `BEGIN IMMEDIATE` claim call the same complete seven-factor function; direct revision stays separate;
+  wake, lock, and shutdown ownership follow the frozen contract. The accepted missing no-gated-field stale
+  regression is fixed, the qualifying read-only corrected-diff review reports `NO VIOLATIONS`, and the
+  committed checkpoint passes the canonical gate.
+- AD04's Ticket-only Review implementation plan is complete and contract-locked. Three review rounds found
+  and corrected the file-preview selector omission, overbroad event and mutation invalidation, missing
+  current-day/cold-start handling, and the Ticket-creation companion-event contradiction. The final fresh
+  read-only re-review, session `019f5eca-4772-7771-8727-515fd60e285e`, reports `NO VIOLATIONS`.
+- AD04 is complete on the branch at `0037933`. The initial independent diff review found two
+  frontend naming/type violations: the Ticket detail still used `AnyRecord`, and a Worker-count helper still
+  said Agent. Both are corrected through the delegated path. The fresh corrected-diff review, session
+  `019f5ede-7f24-78a2-b59a-4a6c51223672`, reports `NO VIOLATIONS`, and the committed checkpoint passes the
+  canonical gate.
+- AD05's canonical human Chat-ingress ticket is defined. It deletes the three retired HTTP routes, their
+  parallel service functions, synchronous adapter methods/result shapes, and the unused browser SSE client.
+  The gateway `stream` method remains because it is the one transport consumed by the canonical server-owned
+  turn for both messages and commands; exact `/new` remains on that path.
+- AD05's delegated implementation plan is corrected and contract-locked. The first independent review found
+  one omission: its focused commands did not run the existing unit and browser image suites. Both are now
+  explicit unchanged preservation contracts outside the edit allowlist and run in full. Fresh re-review,
+  session `019f5eed-a837-7601-820e-f0ca50188e40`, reports `NO VIOLATIONS`.
+- AD05 is complete on the branch at `754ff27`. The product diff removes every retired Chat
+  ingress/result/method shape, keeps the single server-owned turn, and preserves images, live turn state,
+  commands, `/new`, Employee-step separation, and session-key rules. Review session
+  `019f5f04-3ebd-7a50-a26c-c0a072b8738f` reports `NO VIOLATIONS`, and the committed checkpoint passes the
+  canonical gate.
+- AD06's deep canonical Chat-turn ticket is defined. It gives one human-turn owner the request, atomic
+  admission, causal session-key binding, typed observations, transcript projection, Pause, and idempotent
+  settlement. It explicitly leaves Employee delivery and AD09 history separation outside the boundary.
+- AD06's first independent plan review found four accepted violations: a claim-local Chat rule would split
+  AD03 eligibility; a human-only owner cannot honestly own worker-origin Pause; ordinary CAS could defeat
+  literal `/new`; and the private execution value was not declared. The ticket and decisions now require one
+  eight-factor eligibility rule, cross-origin visible Pause control, one-use force-fresh `/new` binding, and
+  an exact private execution dataclass. A corrected delegated plan and fresh re-review are required.
+- A read-only audit of the owner's explicit Worker-type invariant found no executable violation: all live
+  creation paths require a stored Worker type and reads return it without fallback. Two stale docs still
+  called `coding` the default; those sentences were corrected as a small integration repair. Historical
+  migration/cutover classification remains the only allowed implicit coding assignment.
+- AD06's corrected delegated plan passed a fresh independent Codex review with `NO VIOLATIONS` (session
+  `019f5f2a-63c2-7231-bd29-038e29ca4159`). The four original findings are fully resolved, and the exact
+  owner, transport, transaction, session-binding, settlement, test, deletion, and changed-path contracts
+  are ready to lock before implementation dispatch.
+- AD06's delegated implementation is committed at `e32dd47`. `ChatTurnLifecycle` now owns human admission
+  and execution plus cross-origin visible Pause; human admission and the final Employee claim exclude one
+  another under SQLite's write lock; the sole automatic decision has eight factors; causal binding makes
+  Panels and the actual Hermes write use the same session; exact `/new` forces only its first fresh bind;
+  and generic first-wins Chat settlement is idempotent across completion, failure, and Pause. Employee
+  delivery and Ticket settlement remain separate. Independent implementation review session
+  `019f5f48-af76-7030-b9d5-1939bf6ba749` reports `NO VIOLATIONS`.
+- AD06 is complete. Its committed checkpoint at `70d4291` passes the canonical gate with 714 unit tests and
+  80 Playwright tests; the full transcript is retained at `data/verify/ad06-pass.log`.
+- AD07's Managed Markdown ticket is defined. It preserves the current continuous `contenteditable` with
+  atomic previews and exact source-token serialization; one new frontend owner will concentrate hardened
+  rendering, preview reconciliation, serialization, and teardown while `FilePreview` keeps target-specific
+  behavior. No visual, parser, backend, resource-cache, AD08, or AD09 change is in scope.
+- AD07's delegated implementation plan is complete and contract-locked. Independent review session
+  `019f5f5e-5233-7741-8777-cee8b0322dda` reports `NO VIOLATIONS` after checking same-source dirty reset,
+  failed-save retry, final-DOM move/deletion reconciliation, read-only preview identity, exact serialization,
+  teardown, docs/assets, and the bounded allowlist. Delegated implementation is the next step.
+- AD07's delegated implementation is committed at `30edca4`. One `managedMarkdown.ts` owner now holds
+  hardened rendering, atomic preview islands, exact serialization, reconciliation, and teardown; the two
+  wrappers keep product presentation/edit-save state; `FilePreview` keeps target-specific behavior; and the
+  two old lifecycle modules are deleted. Independent implementation review session
+  `019f5f6d-4892-7273-8343-51122fe517b4` reports `NO VIOLATIONS`. The canonical gate is next.
+- AD07 is complete. Its committed reviewed checkpoint at `05e62a0` passes the canonical gate with 714 unit
+  tests and 82 Playwright tests; the full transcript is retained at `data/verify/ad07-pass.log`.
+- AD08's corrected delegated Resource Catalogue plan is complete and contract-locked. The first independent
+  review found one High omission: Project-name updates were mapped only to Projects even though six cached
+  aggregates embed the name. The accepted correction covers Projects, Board, today's Day, backlog Sprint
+  items, Ideas, and current Sprint, plus conservatively selected opened Ticket details through a private
+  catalogue-owned index. The plan also freezes the temporary Ticket-plus-Chat `chat_session_created`
+  dependency. Fresh review session `019f5f81-89a3-7ba2-883b-bb68ce4022b1` reports `NO VIOLATIONS`.
+- The AD08 lock retains exactly 13 cached projections, nine named mutation effects, entity-first ordinary
+  invalidation, narrow Review inputs, and a semantic-free cache engine. It explicitly forbids live
+  Worker-type inference/defaults; only the existing migration may rewrite a historical pre-Worker-type row
+  to `coding`.
+- AD08's delegated implementation is committed at `d2cc125`. One catalogue now owns all 13 cached reads,
+  nine immediate mutation effects, and event dependencies; the generic cache remains semantic-free; phantom
+  identities and forwarding modules are deleted; and the served bundle is current. The focused type, Node,
+  unit, and 68-test browser evidence is green. Independent implementation review session
+  `019f5f98-5fd1-7610-9cd5-92d2cf2a32a8` reports `NO VIOLATIONS`.
+- AD08 is complete. Its committed reviewed checkpoint at `4e267c6` passes the canonical gate with 714 unit
+  tests and 86 Playwright tests; the full transcript is retained at `data/verify/ad08-pass.log`.
+- AD09's delegated Employee-session-history plan is corrected and contract-locked. The first independent
+  review found that the plan still blessed the retained live seed importer as a `coding` default. The
+  correction makes Worker type a required seed command/programmatic argument and passes it through exactly;
+  only the terminal v20 migration may classify a genuinely old row with no stored Worker type as `coding`.
+  Fresh review session `019f5fa7-9f49-7322-b33d-a91ccee643f1` reports `NO VIOLATIONS`.
+- AD09's isolated product implementation is committed at `0e0bf06`. The first implementation review found
+  two real violations: legacy Ticket `chat_session_created` still reached Ticket aggregates, and the
+  required browser proof against silently repopulating deleted Panels rows from retained Employee history
+  was missing. Both were corrected through delegation. Fresh review session
+  `019f5fc8-c093-7163-8bee-2b15db5d19ea` reports `NO VIOLATIONS`; the canonical gate is next.
+- AD09 is complete. Its committed reviewed checkpoint at `acf93cd` passes the canonical gate with 738 unit
+  tests and 87 Playwright tests; the full transcript is retained at `data/verify/ad09-pass.log`. All nine
+  architecture-deepening stages are now complete on the branch.
+- The independent whole-program review of `b7ca44a..191f14a` is complete. It inspected the AD01–AD09
+  contracts and full branch diff, including live Worker-type ingress, migration-only historical rewrites,
+  resource dependencies, generated assets, API deletion seams, Markdown ownership, and Employee-history
+  separation. Session `019f5fcf-cfa9-73d0-8741-27e7f687900a` reports `NO VIOLATIONS`; the exact record is
+  `orchestration/tickets/architecture-deepening/final-review.txt`.
+- The complete reviewed branch passes its final canonical gate at `2982197`: Ruff; mypy across 115 source
+  files; 738 unit tests; compile/static and CSS/Markdown checks; Svelte check with zero errors and zero
+  warnings; production build; frontend tests; 87 Playwright tests; final `VERIFY: PASS`. The full transcript
+  is retained at `data/verify/architecture-deepening-final-pass.log`.
 
 What just passed:
 
-- Focused backend recovery/shutdown suite: 163 passed, 2 existing warnings; the final worker-session mismatch
-  RED/GREEN set then passed 4/4.
-- Ruff and mypy pass on the final worker-recovery patch.
-- The exact Playwright test for visible restart recovery passed from the normal ticket worktree. It proves the
-  original human input appears once, partial output is preserved, the system recovery turn is visible, and the
-  continuation settles.
-- `npm --prefix web run build` passes.
-- Canonical `PYTHONPATH="$PWD/src" ./verify` passes Ruff, mypy across 120 source files, 700 unit tests,
-  compile/static checks, frontend checks/build/tests, and 78 Playwright e2e tests; final `VERIFY: PASS`.
+- The architecture report passed the prior canonical `./verify` with 654 unit and 70 e2e tests. The design
+  interview resolved deletion posture, domain language, behavior-preservation constraints, refresh policy,
+  catalogue scope, and the explicit separation between Panels Chat and Employee session history.
+- The new branch and worktree were created without carrying unrelated dirty files from the original
+  worktree.
+- AD01 now has a delegated implementation plan covering the exact public vocabulary, a v18 all-shape
+  migration, historical event rewriting, RED/static tests, and a bounded implementation allowlist. The
+  worktree was moved outside the source tree before implementation so it does not appear as an untracked
+  child of `main`.
+- Independent read-only plan review found two violations: the plan still passed ancient schemas through
+  pre-lock lifecycle/kickoff rebuilds, and it omitted the live coding-worker skill from its allowlist. Both
+  findings are accepted. The delegated revision is consolidating every recognized Ticket schema into one
+  lock-held terminal rebuild and adding the missing skill as a vocabulary-only edit.
+- The corrected plan passed the independent read-only re-review with `NO VIOLATIONS`. Its exact naming map,
+  consolidated migration, behavior-preservation tests, and implementation allowlist are now the locked AD01
+  contract.
+- The orchestrator generated the AD01 contract skeleton in the five Python/TypeScript contract files plus
+  the canonical v18 SQLite DDL and indexes. `contract-lock.md` records the exact declarations; consumer and
+  migration implementation is now ready for delegated work. The tree is intentionally RED until consumers
+  are rewired, so no canonical `./verify` has been run.
+- The delegated implementation has made the new Worker-type/Stage contract test green (3 tests) and wired
+  the core Ticket data, API, view, resolution, machine, manifest, event, and v18 migration paths. A bounded
+  allowlist gap was found in two direct-creation test fixtures; those two test paths are now explicitly in
+  scope for only `worker_type="coding"` fixture arguments. No production boundary or locked contract changed.
+- A broad unit pass found two further legacy HTTP-create fixtures in the project and worker-command tests.
+  Their paths are added for only the old create key → `worker_type` update; no tested behaviour changes.
+- Orchestrator spot-checking found the Ticket-list boundary still planned a Worker-type parameter solely to
+  interpret a Stage filter. This conflicts with the owner ruling that Stage reads use the stored value
+  directly. The plan is corrected: list filtering accepts only `stage`; the list query/CLI Worker-type
+  disambiguation surface is deleted. Creation remains the Worker-type choice point.
+- A frontend boundary scan found `ApprovalBlock.newState` feeding only Ticket lifecycle scope. The
+  component is added to the bounded allowlist for the exact `newState` → `newStage` prop rename; no alias
+  remains and its rendering/approval behaviour is unchanged.
+- Focused implementation evidence is now green: the Worker-type/Stage contract, manifest, ingress, and
+  persistence set passes 37 tests; `tests/unit/test_db.py` passes 37 migration tests; mypy passes across
+  120 files; and the frontend passes `svelte-check`, its Node tests, and a production build (three existing
+  Svelte warnings only). The canonical `./verify` remains intentionally unrun until independent diff review.
+- Migration spot-checking added byte-preservation for corrupt post-kickoff field JSON, explicit rollback on
+  NULL required inputs, both one-column partial shapes, real `new_worker` values, historical event recovery,
+  event rollback, repeated-open idempotence, and an assertion that no Ticket row is read before the v18 lock.
+- A final direct-read audit found `_row_to_ticket` still resolving Worker type to decode fields. The codec is
+  now explicitly in scope: generic no-definition decoding reads stored slots as stored, so plain Ticket reads
+  need no Registry lookup. Definition-supplied audit/interpretation and every write door stay validated.
+- The live-vocabulary scan found one unused exported sprint blocker helper whose interface still spoke in
+  Ticket States. It duplicates the canonical link summary and has no callers, so it is deleted rather than
+  renamed; one day-membership comment is corrected to say the Ticket itself is untouched.
+- The delegated AD01 implementation is complete. Pre-review checks pass: 699 unit tests, Ruff, mypy over
+  119 source files, frontend `svelte-check` (three existing warnings), frontend tests, production build,
+  documentation rename assertion, and `git diff --check`. Generated `web/dist` output is clean. These are
+  focused/pre-review checks, not the canonical completeness claim.
+- Independent implementation review found two migration violations: an existing `stage` in a partial
+  schema was still passed through the legacy `state` conversion, and nullable legacy `status` was rejected
+  instead of taking the reviewed `else empty` path. Both are accepted and delegated for focused regression
+  fixes. The review's path-scope finding is also accepted: orchestrator-owned domain and memory files will
+  be committed separately from the bounded AD01 implementation diff.
+- Both migration findings are fixed. Lifecycle Stage, ceiling, and field conversion now runs only from a
+  legacy `state` source; an existing `stage` and ceiling are copied exactly. Legacy NULL and unknown
+  `status` values map to `empty`, while canonical NULL `ticket_status` remains rejected. The expanded
+  migration suite passes 38 tests, Ruff passes on both touched files, and `git diff --check` is clean.
+- The domain and current-cycle memory files are isolated in an architecture-program commit, removing
+  them from the bounded AD01 implementation diff. The independent corrected-diff re-review is running from
+  that base.
+- Corrected-diff re-review confirmed both migration fixes, then found one High shipping violation: FastAPI
+  serves checked-in `web/dist`, but the delegated frontend build had reverted its generated output, leaving
+  the old route and response contract live. The finding is accepted. Generated `web/dist/index.html` and
+  its hashed JavaScript add/delete are now explicitly build-only paths in the bounded allowlist and are
+  regenerated from the reviewed Svelte source.
+- The final corrected-diff review reports `NO VIOLATIONS`: the migration fixes, immutable Worker type
+  boundary, direct stored-Stage reads/filtering, retired public vocabulary removal, served bundle, and
+  changed-path allowlist are clean.
+- The first canonical `./verify` execution passed Ruff, mypy over 119 source files, 700 unit tests, compile
+  and static checks, Svelte check/build/tests, then failed 13 of 77 e2e tests. Every failure is the same
+  missed fixture rename in two already-allowed files: direct test setup still executes `UPDATE tickets SET
+  state = ?` after the canonical column became `stage`. No product assertion ran or failed in those cases.
+  A fixture-only repair is delegated; the gate must be rerun after focused review.
+- The two stale-Stage e2e helpers are repaired and independently reviewed with `NO VIOLATIONS`; their
+  focused browser set passes 14/14. The next full gate passed every prior layer and those 13 cases, then
+  exposed one unrelated chat-follow fixture race (`scrollTop` returned to 1436 instead of staying 0).
+- Bug-diagnosis proved the chat failure is test synchronization, not AD01 product behavior: the unchanged
+  exact test passed 10/10 naturally; delaying native scroll delivery reproduced the exact failure 3/3;
+  synchronously dispatching the scroll event passed 3/3 target-reaching controls. `ChatPanel.svelte` is
+  unchanged. The one-line fixture fix passes the focused test, Ruff, diff-check, and independent review
+  with `NO VIOLATIONS`; it is committed separately as trivial test stabilization at `afa57fd`.
+- The post-fix canonical `PYTHONPATH="$PWD/src" ./verify` is clean: Ruff; mypy across 119 source files;
+  700 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three existing
+  warnings), production build, frontend tests; 77 Playwright e2e tests; final `VERIFY: PASS`. The full
+  transcript is retained at `data/verify/ad01-pass.log`.
+- AD02's delegated plan mapped the behavior-bearing definition, narrow registry, complete call-site
+  threading, deletion set, schema-v19 rebuild, tests, and bounded allowlist. A separate read-only runtime
+  audit found the hidden seed, CLI, field-codec, creation, read-model, and import-graph edges before work.
+- Independent plan review found two High violations: seed still duplicated coding's complete field set,
+  and Chief's CLI could not carry novel Worker-type fields. Both are accepted and corrected. Seed now
+  derives its complete slot map from the resolved definition; Chief gains generic repeated field input.
+- The corrected AD02 plan also deletes the shallow guard instead of renaming it and puts Ticket-position
+  validation on `WorkerTypeDefinition`. Independent re-review reports `NO VIOLATIONS`; the review record
+  and exact contract lock are in the AD02 ticket directory.
+- Implementation found one bounded allowlist omission: the required extra-definition-field seed proof
+  belongs in `tests/unit/test_seed.py`. That test-only path is added; no product boundary or locked shape
+  changes.
+- A final static wording scan found `tests/support/__init__.py` still used “ticket type” and claimed
+  production was coding-only. It is added for that docstring-only correction; executable support stays
+  unchanged.
+- The delegated AD02 implementation replaces the forwarding stack with one immutable
+  `WorkerTypeDefinition`, a narrow registry, and explicit production/test configuration. All semantic
+  rules require a resolved definition; direct stored Stage and field reads remain registry-free. The old
+  `ticket_types` package, coding bridge, guard, coding enums/tables, and optional-definition paths are
+  deleted.
+- Schema v19 rebuilds recognized historical Ticket tables under the existing lock-held migration envelope,
+  preserves stored field JSON, and removes SQLite's coding-shaped `fields` default. Sanctioned live creation
+  must supply Worker type and derives every slot from that definition. A migration may classify an old row
+  without a stored Worker type as `coding`; that is historical data conversion, never a live default.
+- Focused implementation evidence is green: Ruff and diff-check pass; mypy passes across 114 source files;
+  650 unit tests pass; the focused database suite passes 60 tests; the affected browser suite passes; and
+  the production frontend build is byte-identical. These are pre-gate checks, not the completeness claim.
+- Independent implementation review found one High transport violation: generic Chief `--field-file`
+  entries could overwrite fixed request keys. The accepted correction rejects command-specific reserved
+  keys before reading a file or sending a request, while leaving Worker-type field validity with the API.
+  Focused CLI browser tests pass 6/6, including every reserved key and a create-only name reaching the
+  reconcile API. Corrected-diff re-review reports `NO VIOLATIONS`.
+- The committed AD02 checkpoint passes canonical `PYTHONPATH="$PWD/src" ./verify`: Ruff; mypy across 114
+  source files; 650 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three
+  existing warnings), production build, frontend tests; 80 Playwright e2e tests; final `VERIFY: PASS`.
+  The complete transcript is retained at `data/verify/ad02-pass.log`. An initial invocation exited before
+  all gates because the external worktree's `.venv` link was absent; its separate startup transcript is
+  `data/verify/ad02-startup-failure.log`, and restoring/removing the local link changed no tracked file.
+- AD03's delegated plan inventories the complete eligibility, discovery, wake, runner, transactional claim,
+  runtime composition, action, test, typing, instruction, and documentation surfaces. Independent review
+  found one Medium allowlist omission: `config.yaml` still used “Ticket readiness” in a live line-9
+  comment. The correction adds only that comment, includes it in the static vocabulary guard, and makes
+  wake-specific test-double naming explicit. Corrected-plan re-review reports `NO VIOLATIONS`; the exact
+  interfaces are frozen in the AD03 contract lock.
+- AD03 implementation pre-review evidence is green: the affected integrated unit set passes 232 tests;
+  Ruff, strict mypy over 114 source files, compile checks, docs consistency, the exact changed-path audit,
+  `git diff --check`, and the empty-index check all pass. These are focused checks, not the canonical
+  completeness claim. Independent reviewer session `019f5ea0-46f2-76e1-a78f-cae334227de9` found only the
+  missing stale no-gated-field downstream-side-effect regression; no production-path violation was found.
+- The accepted AD03 test gap is corrected without production changes. The stale-claim matrix now supplies a
+  test-only ungated non-terminal definition at the final claim seam while leaving the exact shared function
+  untouched, and proves no status/event, Panels Chat message/turn, gateway/prompt, or wake. The focused
+  correction plus function-identity proof passes 2 tests; Ruff and diff checks pass.
+- The qualifying fresh read-only corrected-diff review, session
+  `019f5ea6-d03f-7bc1-b527-f334a3f594d5`, reports `NO VIOLATIONS`. It reconfirmed all seven factors,
+  transaction timing, direct revision, wake/composition/shutdown ownership, deleted compatibility names,
+  bounded paths, timer backstop, and docs parity.
+- The committed AD03 checkpoint passes canonical `PYTHONPATH="$PWD/src" ./verify`: Ruff; mypy across 114
+  source files; 687 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three
+  existing warnings), production build, frontend tests; 80 Playwright e2e tests; final `VERIFY: PASS`.
+  The complete transcript is retained at `data/verify/ad03-pass.log`.
+- AD04 now has an exact backend/TypeScript response, Ticket-only UI, event/mutation invalidation, deletion,
+  preservation, test, and changed-path contract in `ad04-ticket-only-review/contract-lock.md`. Its final
+  correction explicitly allows only migration-time historical Worker-type classification: live Ticket
+  creation and all canonical storage continue to require an explicit Worker type with no coding default.
+- AD04 focused implementation evidence is green: the affected Python set passes 90 tests; frontend checks,
+  tests, and production build pass with zero errors and the three existing Ticket-route warnings; the
+  affected browser set passes after its stale selector was corrected; Ruff, mypy over 114 source files,
+  CSS syntax, and `git diff --check` pass. These remain pre-gate checks, not the completeness claim.
+- The independent AD04 implementation review's accepted `AnyRecord` and Agent-helper findings are fixed.
+  The regenerated served bundle points to `index-DzbUvGPe.js`, and the corrected full diff has no review
+  violations.
+- The committed AD04 checkpoint passes canonical `PYTHONPATH="$PWD/src" ./verify`: Ruff; mypy across 114
+  source files; 692 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three
+  existing warnings), production build, frontend tests; 80 Playwright e2e tests; final `VERIFY: PASS`.
+  The complete transcript is retained at `data/verify/ad04-pass.log`.
+- AD05's inventory covers every legacy route, service, result type, protocol method, production/test adapter,
+  browser helper, and affected test. The reviewed replacement preserves the exact `/turns ->
+  start_human_turn -> GatewayAdapter.stream` path, session-key rules, Panels state, command behavior, and
+  literal `/new` transition without retaining a synchronous compatibility shape. The orchestrator generated
+  the two contract declarations and exact lock; consumer code is intentionally RED until delegated rewiring.
+- AD05 focused implementation evidence is green: its static contract passes 4 tests; the affected unit
+  bundles pass 212 and 131 tests; Ruff and mypy over 114 source files pass; frontend checking, tests, and
+  production build pass with the three existing Ticket-route warnings; the complete unit/browser image
+  preservation suites, live Chat-state suite, and affected message/command browser flows pass. The
+  independent review also accepted the narrow lost-first-write winner correction as required preservation,
+  not AD06 scope.
+- The committed AD05 checkpoint passes canonical `PYTHONPATH="$PWD/src" ./verify`: Ruff; mypy across 114
+  source files; 687 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three
+  existing warnings), production build, frontend tests; 80 Playwright e2e tests; final `VERIFY: PASS`.
+  The complete transcript is retained at `data/verify/ad05-pass.log`.
+- AD06 focused evidence is green: 284 affected unit tests, Ruff over every changed production/test path,
+  targeted mypy over all ten changed production modules, compileall, and `git diff --check`. The focused
+  contract tests include real two-connection settlement races in both orders, both human-admission /
+  Employee-claim lock orders, and actual Hermes session-id assertions for initial and dormant message,
+  image, command, and alias writes. These are pre-gate checks, not the completeness claim.
+- The independent AD06 implementation review inspected the complete changed path set plus the new untracked
+  test before commit and returned exactly `NO VIOLATIONS`. Its transcript and disposition are recorded in
+  `orchestration/tickets/architecture-deepening/ad06-deep-canonical-chat-turn/implementation-review.txt`.
+- The committed AD06 checkpoint passes canonical `PYTHONPATH="$PWD/src" ./verify`: Ruff; mypy across 114
+  source files; 714 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three
+  existing warnings), production build, frontend tests; 80 Playwright e2e tests; final `VERIFY: PASS`.
+  The complete transcript is retained at `data/verify/ad06-pass.log`.
+- AD07's exact owner API, lifecycle state, wrapper boundary, failed-save retry, serializer preservation,
+  preview reconciliation, deletion set, test sequence, docs/bundle work, and changed-path allowlist passed
+  independent plan review. The lock is recorded in
+  `orchestration/tickets/architecture-deepening/ad07-managed-markdown/contract-lock.md`.
+- AD07 focused implementation evidence is green: frontend tests pass; Svelte check has zero errors and the
+  three existing Ticket-route warnings; both new browser regressions pass; all 13 file-preview browser tests
+  pass; and `git diff --check` is clean. The independent reviewer inspected the complete source, test, docs,
+  and served-bundle diff and returned exactly `NO VIOLATIONS`. These are pre-gate checks, not the canonical
+  completeness claim.
+- The committed AD07 checkpoint passes canonical `PYTHONPATH="$PWD/src" ./verify`: Ruff; mypy across 114
+  source files; 714 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three
+  existing warnings), production build, frontend tests; 82 Playwright e2e tests; final `VERIFY: PASS`.
+  The complete transcript is retained at `data/verify/ad07-pass.log`.
 
 Next step:
 
-- Commit the verified branch and propose Implementation for approval. Do not merge before Closeout.
+- Merge the clean, reviewed, canonically verified branch serially to `main`, then verify the integrated
+  checkout.
+- The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
+  verification; no partial program merge or push is authorized.
+- The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`
+  default is removed by the lock-held v19 forward migration. Migrations may rewrite old tables and assign
+  `coding` only when converting a historical row that predates stored Worker type; existing field JSON and
+  related data remain preserved.
 
 Blockers:
 

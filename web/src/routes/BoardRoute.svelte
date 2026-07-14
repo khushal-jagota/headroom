@@ -1,11 +1,8 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { fetchJson } from "../lib/api";
-  import { resource } from "../lib/resources";
-  import type { BoardResponse, GatewayStatus } from "../lib/types";
+  import { resourceCatalogue } from "../lib/resourceCatalogue";
   import { labelize, ticketStatusLabel } from "../lib/ui";
   import type { FieldStageVisualState } from "../lib/ui";
-  import { manifestResource } from "../lib/manifest.svelte";
   import { lifecycleFor } from "../lib/lifecycle";
   import Button from "../components/Button.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
@@ -27,11 +24,9 @@
     { value: "user_takeover", label: "User takeover" },
     { value: "errored", label: "Errored" }
   ];
-  const board = resource<BoardResponse>("board", (signal) => fetchJson("/api/board", { signal }));
-  const chiefChatStatus = resource<GatewayStatus>(`chat-status:${chiefOfStaffEntityId}`, (signal) =>
-    fetchJson(`/api/chat/${chiefOfStaffEntityId}/status`, { signal })
-  );
-  const manifest = manifestResource();
+  const board = resourceCatalogue.board();
+  const chiefChatStatus = resourceCatalogue.chatGatewayStatus(chiefOfStaffEntityId);
+  const manifest = resourceCatalogue.workerTypeManifests();
   let columns = $derived(board.data?.columns || []);
   let statusFilter = $state<string>("all");
   // The unfiltered rail reads "All statuses" (the mockup's wording); the select's
@@ -96,7 +91,7 @@
 
   function currentStageLabel(card: Record<string, any>): string {
     if (card.is_done || card.is_dropped) {
-      return card.state_label || labelize(card.state);
+      return card.stage_label || labelize(card.stage);
     }
     return card.gating_field_label || labelize(currentStageField(card));
   }
@@ -106,7 +101,7 @@
   }
 
   function buildProjectSections(
-    sourceColumns: Array<{ state: string; cards: Record<string, any>[] }>,
+    sourceColumns: Array<{ stage: string; cards: Record<string, any>[] }>,
     activeStatusFilter: string,
     shouldHideDone: boolean
   ): Array<{ key: string; label: string; cards: Record<string, any>[] }> {
@@ -115,14 +110,14 @@
 
     for (const column of sourceColumns) {
       for (const card of column.cards) {
-        if (shouldHideDone && column.state === "done") continue;
+        if (shouldHideDone && column.stage === "done") continue;
         if (activeStatusFilter !== "all" && card.ticket_status !== activeStatusFilter) continue;
         const key = card.group_project_id || noProjectKey;
         const label = card.group_project || "No project";
         if (!groups.has(key)) groups.set(key, { key, label, cards: [] });
         groups.get(key)?.cards.push({
           ...card,
-          state: column.state,
+          stage: column.stage,
           boardSequence: sequence
         });
         sequence += 1;
@@ -219,7 +214,7 @@
                   {@const stageField = currentStageField(card)}
                   {@const stageState = currentStageState(card)}
                   {@const marker = stageMarker(card, stageState)}
-                  {@const cardLifecycle = lifecycleFor(manifest.data, card.ticket_type)}
+                  {@const cardLifecycle = lifecycleFor(manifest.data, card.worker_type)}
                   <button
                     type="button"
                     class="list-row list-row--board"
@@ -227,7 +222,7 @@
                     onclick={() => selectCard(card.id)}
                     data-card=""
                     data-ticket-id={card.id}
-                    data-ticket-state={card.state}
+                    data-ticket-stage={card.stage}
                     data-ticket-status={card.ticket_status}
                   >
                     <span class="board-workspace-row-main">
@@ -235,7 +230,7 @@
                       <span class="board-workspace-row-byline">
                         <span class="board-workspace-row-metadata">
                           <span class="board-workspace-row-type">
-                            {cardLifecycle?.typeLabel ?? labelize(card.ticket_type)}
+                            {cardLifecycle?.workerTypeLabel ?? labelize(card.worker_type)}
                           </span>
                           <span class="board-workspace-row-separator" aria-hidden="true"> · </span>
                           <span class="board-workspace-row-stage">{currentStageLabel(card)}</span>
