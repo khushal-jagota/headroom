@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { fetchJson } from "../lib/api";
-  import { mutateJson, resource, ResourceHandle } from "../lib/resources";
-  import { manifestResource } from "../lib/manifest.svelte";
+  import {
+    mutateJsonWithResourceEffect,
+    resourceCatalogue,
+    type ResourceHandle
+  } from "../lib/resourceCatalogue";
   import { fieldStageVisualStateFor, gatingFieldFor, lifecycleFor } from "../lib/lifecycle";
   import type {
-    ReviewResponse,
     ReviewTicketDecision,
     TicketDetail
   } from "../lib/types";
@@ -15,10 +16,8 @@
   import ResourceState from "../components/ResourceState.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
 
-  const review = resource<ReviewResponse>("review", (signal) =>
-    fetchJson("/api/review", { signal })
-  );
-  const manifest = manifestResource();
+  const review = resourceCatalogue.review();
+  const manifest = resourceCatalogue.workerTypeManifests();
 
   let skipped = $state<Record<string, boolean>>({});
   let detailResource = $state<ResourceHandle<TicketDetail> | null>(null);
@@ -66,10 +65,7 @@
     const decision = currentDecision;
     detailError = null;
     const handle = decision
-      ? resource<TicketDetail>(
-          `ticket:${decision.ticket_id}`,
-          (signal) => fetchJson(`/api/tickets/${decision.ticket_id}`, { signal })
-        )
+      ? resourceCatalogue.ticket(decision.ticket_id)
       : null;
     detailResource = handle;
     return () => handle?.dispose();
@@ -163,30 +159,29 @@
     return () => window.removeEventListener("keydown", onWindowKeydown);
   });
 
-  async function refreshReviewAfter<T>(operation: Promise<T>): Promise<T> {
-    const result = await operation;
-    await review.refresh().catch(() => undefined);
-    return result;
-  }
-
   function accept(
     decision: ReviewTicketDecision,
     payload: Record<string, unknown>
   ): Promise<unknown> {
     const field = decisionField(decision);
     if (!field) return Promise.reject(new Error("Review decision is not a Ticket field"));
-    return refreshReviewAfter(mutateJson(
+    const key = decisionKey(decision);
+    staleRefreshRequests.add(key);
+    return mutateJsonWithResourceEffect(
       `/api/tickets/${decision.ticket_id}/accept/${field}`,
       { method: "POST", body: payload },
-      [`ticket:${decision.ticket_id}`, "board", "sprint:current"]
-    ));
+      { kind: "reviewTicketAccepted", ticketId: decision.ticket_id }
+    ).catch((error) => {
+      staleRefreshRequests.delete(key);
+      throw error;
+    });
   }
 
   function saveTitle(decision: ReviewTicketDecision, title: string): Promise<unknown> {
-    return mutateJson(
+    return mutateJsonWithResourceEffect(
       `/api/tickets/${decision.ticket_id}`,
       { method: "PATCH", body: { title } },
-      ["review", `ticket:${decision.ticket_id}`, "board", "sprint:current"]
+      { kind: "ticketTitleChanged", ticketId: decision.ticket_id }
     );
   }
 
@@ -196,14 +191,17 @@
     if (!message || revisionBusy) return;
     revisionError = null;
     revisionBusy = true;
+    const key = decisionKey(decision);
+    staleRefreshRequests.add(key);
     try {
-      await refreshReviewAfter(mutateJson(
+      await mutateJsonWithResourceEffect(
         `/api/tickets/${decision.ticket_id}/return-for-revision`,
         { method: "POST", body: { message } },
-        [`ticket:${decision.ticket_id}`, `chat:${decision.ticket_id}`, "board", "sprint:current"]
-      ));
+        { kind: "reviewTicketReturnedForRevision", ticketId: decision.ticket_id }
+      );
       revisionDraft = "";
     } catch (err) {
+      staleRefreshRequests.delete(key);
       revisionError = err;
     } finally {
       revisionBusy = false;

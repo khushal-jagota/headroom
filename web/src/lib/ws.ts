@@ -1,14 +1,10 @@
 import { ensureDebug } from "./debug";
-import { keysForEvent } from "./eventMapping.mjs";
-import { invalidateMany, peek } from "./resources";
-
-export type PlannerEvent = {
-  id: number;
-  entity_id: string;
-  kind: string;
-  payload: Record<string, unknown>;
-  created_at: number;
-};
+import {
+  invalidateCatalogueResources,
+  keysForEvent,
+  type CatalogueResourceIdentity,
+  type PlannerEvent
+} from "./resourceCatalogue";
 
 type EventBatch = {
   events: PlannerEvent[];
@@ -25,13 +21,8 @@ let retryMs = 500;
 let flushTimer: number | null = null;
 let started = false;
 let stopped = false;
-let pendingKeys = new Set<string>();
+let pendingKeys = new Set<CatalogueResourceIdentity>();
 let debounceMs = 250;
-
-function todayId(): string | null {
-  const today = peek<{ id?: string }>("day:today");
-  return today?.id || null;
-}
 
 function wsUrl(): string {
   const scheme = window.location.protocol === "https:" ? "wss://" : "ws://";
@@ -47,12 +38,12 @@ function flush(): void {
   pendingKeys = new Set();
   ensureDebug().flushes += 1;
   if (keys.length) {
-    invalidateMany(keys, "event stream");
+    invalidateCatalogueResources(keys, "event stream");
   }
   console.debug(`[planner] flush ${ensureDebug().flushes}`);
 }
 
-function schedule(keys: string[]): void {
+function schedule(keys: readonly CatalogueResourceIdentity[]): void {
   for (const key of keys) pendingKeys.add(key);
   if (flushTimer !== null) window.clearTimeout(flushTimer);
   flushTimer = window.setTimeout(flush, debounceMs);
@@ -80,14 +71,10 @@ function connect(): void {
     }
     const events = Array.isArray(msg.events) ? msg.events : [];
     ensureDebug().events += events.length;
-    const keys: string[] = [];
+    const keys: CatalogueResourceIdentity[] = [];
     for (const plannerEvent of events) {
       try {
-        const cachedTodayId = todayId();
-        keys.push(...keysForEvent(plannerEvent, {
-          todayId: cachedTodayId,
-          includeTodayAlias: cachedTodayId === null
-        }));
+        keys.push(...keysForEvent(plannerEvent));
       } catch (err) {
         console.debug("[planner] event mapping failed", err);
       }
@@ -117,7 +104,7 @@ export function stopEventStream(): void {
     window.clearTimeout(flushTimer);
     flushTimer = null;
   }
-  pendingKeys = new Set();
+  pendingKeys = new Set<CatalogueResourceIdentity>();
   socket?.close();
   socket = null;
 }

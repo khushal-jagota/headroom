@@ -1,11 +1,8 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { fetchJson } from "../lib/api";
-  import { resource } from "../lib/resources";
-  import type { BoardResponse, GatewayStatus } from "../lib/types";
+  import { resourceCatalogue } from "../lib/resourceCatalogue";
   import { labelize, ticketStatusLabel } from "../lib/ui";
   import type { FieldStageVisualState } from "../lib/ui";
-  import { manifestResource } from "../lib/manifest.svelte";
   import { lifecycleFor } from "../lib/lifecycle";
   import Button from "../components/Button.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
@@ -27,11 +24,9 @@
     { value: "user_takeover", label: "User takeover" },
     { value: "errored", label: "Errored" }
   ];
-  const board = resource<BoardResponse>("board", (signal) => fetchJson("/api/board", { signal }));
-  const chiefChatStatus = resource<GatewayStatus>(`chat-status:${chiefOfStaffEntityId}`, (signal) =>
-    fetchJson(`/api/chat/${chiefOfStaffEntityId}/status`, { signal })
-  );
-  const manifest = manifestResource();
+  const board = resourceCatalogue.board();
+  const chiefChatStatus = resourceCatalogue.chatGatewayStatus(chiefOfStaffEntityId);
+  const manifest = resourceCatalogue.workerTypeManifests();
   let columns = $derived(board.data?.columns || []);
   let statusFilter = $state<string>("all");
   // The unfiltered rail reads "All statuses" (the mockup's wording); the select's

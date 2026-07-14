@@ -883,18 +883,42 @@
             </summary>
             <div class="detail-body">
               <p>
-                The browser does not keep a canonical client store. Screens
-                subscribe to resources such as <code>ticket:&lt;id&gt;</code>,
-                <code>board</code>, <code>review</code>, <code>day:today</code>,
-                and <code>sprint:current</code>.
+                The Resource Catalogue names every cached server read, its endpoint
+                and type, and the events that affect it. Screens open resources such
+                as <code>ticket:&lt;id&gt;</code>, <code>board</code>,
+                <code>review</code>, <code>day:today</code>, and
+                <code>sprint:current</code>. The cache engine only manages loaded
+                values, subscribers, and overlapping requests. It knows nothing
+                about Tickets or Projects.
               </p>
               <p>
                 Review contains only today’s parked Ticket proposals and the
                 global running-worker count.
               </p>
               <p>
-                WebSocket event batches map to resource keys. The browser refetches
-                only those keys from the server.
+                WebSocket events invalidate resources through catalogue dependencies,
+                and a successful UI write applies one named catalogue effect
+                immediately. Only the affected projections refetch. There is no
+                whole-screen refetch or canonical client store; the server remains
+                the source of truth.
+              </p>
+              <p>
+                A Project rename refreshes Projects, Board, today’s Day, backlog
+                Sprint items, Ideas, current Sprint, and an already-opened Ticket
+                whose direct Project matches. An opened Ticket whose first read has
+                not settled is included conservatively. A loaded Ticket with another
+                Project, no Project, or no direct Project field is excluded. Project
+                creation and summary-only edits refresh Projects only. The catalogue
+                keeps its own private process-lifetime list of opened resources for
+                this check; the cache remains generic.
+              </p>
+              <p>
+                Matching Panels Chat message and turn events refresh only that Chat.
+                Ticket <code>chat_session_created</code> refreshes exactly the Ticket
+                and its Chat because both currently read session state from the
+                Ticket row. It does not refresh Board, current Sprint, or Review.
+                Ordinary non-Chat Ticket events do not refresh Chat. Separating
+                Employee/Hermes history from Panels Chat remains future AD09 work.
               </p>
               <p>
                 Managed Markdown has one browser-DOM owner.
@@ -909,9 +933,9 @@
               <p class="code-paths">
                 Code paths: <code>web/src/App.svelte</code>,
                 <code>web/src/routes/</code>,
+                <code>web/src/lib/resourceCatalogue.ts</code>,
                 <code>web/src/lib/resources.svelte.ts</code>,
                 <code>web/src/lib/ws.ts</code>,
-                <code>web/src/lib/eventMapping.mjs</code>,
                 <code>web/src/lib/managedMarkdown.ts</code>,
                 <code>web/src/lib/editableText.ts</code>
               </p>

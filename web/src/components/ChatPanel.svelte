@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
-  import { fetchJson, pauseChatTurn, startChatTurn, uploadChatImage } from "../lib/api";
-  import { resource } from "../lib/resources";
-  import type { ChatStateMessage, ChatStateResponse, ChatTurn, CommandCatalog } from "../lib/types";
+  import { pauseChatTurn, startChatTurn, uploadChatImage } from "../lib/api";
+  import { resourceCatalogue } from "../lib/resourceCatalogue";
+  import type { ChatStateMessage, ChatTurn } from "../lib/types";
   import ChatComposer from "./ChatComposer.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
@@ -27,15 +27,8 @@
   } = $props();
   const stableEntityId = untrack(() => entityId);
 
-  const commands = resource<CommandCatalog>("chat-commands", (signal) =>
-    fetchJson("/api/chat/commands", { signal })
-  );
-  const chatState = resource<ChatStateResponse>(`chat:${stableEntityId}`, (signal) =>
-    fetchJson(`/api/chat/${stableEntityId}/state`, { signal })
-  );
-  if (chatState.data !== undefined && !chatState.stale) {
-    void chatState.refresh().catch(() => undefined);
-  }
+  const commands = resourceCatalogue.chatCommands();
+  const chatState = resourceCatalogue.panelsChat(stableEntityId);
 
   let draft = $state("");
   let error = $state<unknown>(null);

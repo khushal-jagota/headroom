@@ -1,4 +1,3 @@
-import { fetchJson, type FetchOptions } from "./api";
 import { countInvalidation } from "./debug";
 
 type Fetcher<T> = (signal: AbortSignal) => Promise<T>;
@@ -118,10 +117,6 @@ export class ResourceHandle<T> {
     return runFetch(this.#entry, true);
   }
 
-  invalidate(reason?: string): void {
-    invalidate(this.#entry.key, reason);
-  }
-
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
@@ -137,7 +132,7 @@ export function peek<T>(key: string): T | undefined {
   return (entries.get(key) as Entry<T> | undefined)?.state.data;
 }
 
-export function invalidate(key: string, reason?: string): void {
+function invalidate(key: string, reason?: string): void {
   const entry = entries.get(key);
   countInvalidation(key);
   if (!entry) return;
@@ -147,7 +142,7 @@ export function invalidate(key: string, reason?: string): void {
   }
 }
 
-export function invalidateMany(keys: string[], reason?: string): void {
+export function invalidateMany(keys: readonly string[], reason?: string): void {
   for (const key of Array.from(new Set(keys))) {
     invalidate(key, reason);
   }
@@ -156,18 +151,6 @@ export function invalidateMany(keys: string[], reason?: string): void {
 export function refresh<T>(key: string): Promise<T> | undefined {
   const entry = entries.get(key) as Entry<T> | undefined;
   return entry ? runFetch(entry, true) : undefined;
-}
-
-export async function mutateJson<T = unknown>(
-  path: string,
-  options: FetchOptions,
-  expectedInvalidations: string[] = []
-): Promise<T> {
-  const result = await fetchJson<T>(path, options);
-  if (expectedInvalidations.length) {
-    invalidateMany(expectedInvalidations, "expected mutation invalidation");
-  }
-  return result;
 }
 
 export function __resourceStats() {

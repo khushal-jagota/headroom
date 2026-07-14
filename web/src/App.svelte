@@ -1,9 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { fetchJson } from "./lib/api";
-  import { resource } from "./lib/resources";
+  import { resourceCatalogue } from "./lib/resourceCatalogue";
   import { startEventStream, stopEventStream } from "./lib/ws";
-  import type { ReviewResponse } from "./lib/types";
   import BacklogRoute from "./routes/BacklogRoute.svelte";
   import BoardRoute from "./routes/BoardRoute.svelte";
   import ChiefOfStaffRoute from "./routes/ChiefOfStaffRoute.svelte";
@@ -20,10 +19,7 @@
     key: string;
   };
 
-  const review = resource<ReviewResponse>(
-    "review",
-    () => fetchJson("/api/review")
-  );
+  const review = resourceCatalogue.review();
 
   let route = $state<Route>(parseRoute());
   let workspaceHideDone = $state(false);

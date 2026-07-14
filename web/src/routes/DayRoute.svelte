@@ -1,15 +1,15 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { fetchJson } from "../lib/api";
   import { shortMonthDayLabel, weekdayLabel } from "../lib/dates";
-  import { mutateJson, resource } from "../lib/resources";
+  import {
+    mutateJsonWithResourceEffect,
+    resourceCatalogue
+  } from "../lib/resourceCatalogue";
   import type { DayResponse } from "../lib/types";
   import InlineEdit from "../components/InlineEdit.svelte";
   import ResourceState from "../components/ResourceState.svelte";
 
-  const day = resource<DayResponse>("day:today", (signal) =>
-    fetchJson("/api/day/today", { signal })
-  );
+  const day = resourceCatalogue.todayDay();
 
   type DayBodyField = "brief_take" | "watchout" | "if_today_lands";
   type DayBodyAttr = "day-take-body" | "day-watch-body" | "day-lands-body";
@@ -42,10 +42,10 @@
 
   function saveField(field: string, raw: string): Promise<unknown> {
     const date = dateSegment();
-    return mutateJson(
+    return mutateJsonWithResourceEffect(
       `/api/day/${date}`,
       { method: "PATCH", body: { [field]: raw } },
-      [`day:${date}`, "day:today"]
+      { kind: "todayDayChanged" }
     );
   }
 

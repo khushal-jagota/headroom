@@ -51,16 +51,30 @@ share.
 
 ## The two rules that shape it
 
-- **Keyed invalidation, no canonical client store.** The event log is a doorbell.
-  Each event maps to resource keys such as `ticket:<id>`, `board`, `review`, and
-  `sprint:current`; ticket events also map to `chat:<id>` so the ticket chat rail
-  can reload the worker's full Hermes trace. Project events map to `projects`, which
-  refreshes project selectors. Only those resources refetch. There
-  is no client-side store mirroring the server — the server is always the source
-  of truth. The ticket chat rail refreshes while a worker is running and performs
-  a short settled-state retry only while the transcript is empty, because Hermes
-  history can become readable a moment after the DB status/proposal event that
-  triggered the first refetch.
+- **One Resource Catalogue, no canonical client store.** The catalogue names every
+  cached server read, its endpoint and type, and the events that affect it. The cache
+  engine only manages loaded values, subscribers, and overlapping requests; it knows
+  nothing about Tickets or Projects. The event log is a doorbell. Events invalidate
+  catalogue resources such as `ticket:<id>`, `board`, `review`, and `sprint:current`,
+  and successful UI writes apply one named catalogue effect immediately. Only those
+  resources refetch. There is no whole-screen refetch or client-side copy of canonical
+  state — the server remains the source of truth.
+
+  A Project rename refreshes Projects, Board, today's Day, backlog Sprint items,
+  Ideas, current Sprint, and an already-opened Ticket when its loaded direct Project
+  matches. An opened Ticket whose first load has not settled is refreshed
+  conservatively. A loaded Ticket with another Project, no Project, or no direct
+  Project field is excluded. Project creation and summary-only edits refresh Projects
+  only. The catalogue keeps its own private process-lifetime list of opened
+  parameterized resources to make this check; the cache remains generic.
+
+  Panels Chat has a narrower rule. Matching message and turn events refresh only
+  `chat:<id>`. Ticket `chat_session_created` refreshes exactly the Ticket and its Chat
+  because both projections currently read session state from the Ticket row. Ordinary
+  Ticket events do not refresh Chat, and Chat events do not refresh Board, Review, or
+  current Sprint. The ticket chat rail also refreshes while a worker is running and
+  briefly retries an empty settled transcript. Separating future Employee/Hermes
+  history from Panels Chat belongs to AD09; it is not the current read model.
 - **The markdown renderer is hardened.** Written text (briefs, notes, ideas) renders
   through a markdown pass built so a crafted link that a browser would quietly treat
   as runnable code is impossible to express.
@@ -155,8 +169,11 @@ derived from the browser's own clock against the sprint dates, so it follows the
 local day, not the server's planning-day boundary.
 
 _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
-(one route per screen), `web/src/components/` (shared pieces), `web/src/lib/`
-(API, resources, event mapping, WebSocket, Managed Markdown, `labelize`, dates), `assets/tokens.css`
+(one route per screen), `web/src/components/` (shared pieces),
+`web/src/lib/resourceCatalogue.ts` (cached reads, event dependencies, and mutation effects),
+`web/src/lib/resources.svelte.ts` (the generic cache engine), `web/src/lib/ws.ts`
+(the WebSocket doorbell), and the remaining `web/src/lib/` helpers (API, Managed Markdown,
+`labelize`, dates), `assets/tokens.css`
 (design tokens), `assets/app.css` (shared styling), `assets/markdown.js` (the
 hardened renderer), `web/dist/` (built app served by FastAPI).
 
@@ -178,4 +195,4 @@ hardened renderer), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-14 (Managed Markdown ownership, per-type ticket rendering, and shared scrollbar behavior verified)._
+_Last verified: 2026-07-14 (Resource Catalogue ownership, Managed Markdown ownership, per-type ticket rendering, and shared scrollbar behavior verified)._

@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { fetchJson } from "../lib/api";
-  import { mutateJson, resource } from "../lib/resources";
-  import type { IdeasResponse, ProjectsResponse } from "../lib/types";
+  import {
+    mutateJsonWithResourceEffect,
+    resourceCatalogue
+  } from "../lib/resourceCatalogue";
   import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
@@ -15,12 +16,8 @@
   import SectionHeading from "../components/SectionHeading.svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
 
-  const ideas = resource<IdeasResponse>("ideas", (signal) =>
-    fetchJson("/api/ideas", { signal })
-  );
-  const projects = resource<ProjectsResponse>("projects", (signal) =>
-    fetchJson("/api/projects", { signal })
-  );
+  const ideas = resourceCatalogue.ideas();
+  const projects = resourceCatalogue.projects();
 
   let projectOptions = $derived([
     { value: null, label: "None" },
@@ -40,7 +37,11 @@
     if (detail.trim()) payload.body = detail;
     if (project) payload.project_id = project;
     try {
-      await mutateJson("/api/ideas", { method: "POST", body: payload }, ["ideas"]);
+      await mutateJsonWithResourceEffect(
+        "/api/ideas",
+        { method: "POST", body: payload },
+        { kind: "ideaCreated" }
+      );
       title = "";
       detail = "";
       project = null;

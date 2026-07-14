@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
-  import { fetchJson } from "../lib/api";
   import { shortMonthDayLabel } from "../lib/dates";
-  import { mutateJson, resource } from "../lib/resources";
+  import {
+    mutateJsonWithResourceEffect,
+    resourceCatalogue
+  } from "../lib/resourceCatalogue";
   import { labelize } from "../lib/ui";
-  import type { AnyRecord, CurrentSprintResponse } from "../lib/types";
+  import type { AnyRecord } from "../lib/types";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
@@ -15,9 +17,7 @@
     sub = "tracking",
     selectedItemId = null
   }: { sub?: string; selectedItemId?: string | null } = $props();
-  const current = resource<CurrentSprintResponse>("sprint:current", (signal) =>
-    fetchJson("/api/sprint/current", { signal })
-  );
+  const current = resourceCatalogue.currentSprint();
 
   const noProjectKey = "__no_project__";
   const itemStatusWord: Record<string, string> = {
@@ -48,10 +48,10 @@
   let documents = $derived(sub === "documents");
 
   function saveSprint(sprintId: string, field: string, raw: string): Promise<unknown> {
-    return mutateJson(
+    return mutateJsonWithResourceEffect(
       `/api/sprints/${sprintId}`,
       { method: "PATCH", body: { [field]: raw } },
-      [`sprint:${sprintId}`, "sprint:current", "sprints"]
+      { kind: "currentSprintChanged" }
     );
   }
 

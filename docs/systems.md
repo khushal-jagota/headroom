@@ -287,14 +287,32 @@ Code paths: `src/planner/chat/`, `web/src/components/ChatPanel.svelte`.
 
 ### 7. The Human UI System
 
-The Svelte app is a set of resource projections. It does not keep a canonical client
-store. Each screen subscribes to named resources such as `ticket:<id>`, `board`,
-`review`, `day:today`, and `sprint:current`. Review contains only today's parked
-Ticket proposals and the global running-worker count.
+The Svelte app is a set of server projections. The Resource Catalogue names every
+cached read, its endpoint and type, and the events that affect it. Screens open named
+resources such as `ticket:<id>`, `board`, `review`, `day:today`, and
+`sprint:current`. The cache engine only manages loaded values, subscribers, and
+overlapping requests. It does not know what a Ticket or Project is. Review contains
+only today's parked Ticket proposals and the global running-worker count.
 
-The WebSocket sends event batches. The browser maps each event to resource keys and
-refetches only those keys. This is why adding a backend event kind must be covered by
-the event-mapping test.
+The WebSocket sends event batches. Events invalidate resources through catalogue
+dependencies, and successful UI writes apply one named catalogue effect immediately.
+Only the affected projections refetch. There is no whole-screen refetch and no
+canonical client store; the server remains the source of truth.
+
+A Project rename refreshes Projects, Board, today's Day, backlog Sprint items, Ideas,
+current Sprint, and an already-opened Ticket whose direct Project matches. An opened
+Ticket whose first read has not settled is included conservatively. A loaded Ticket
+with another Project, no Project, or no direct Project field is excluded. Project
+creation and summary-only edits refresh Projects only. The catalogue keeps a private
+process-lifetime list of resources opened through its own methods so it can inspect
+those Ticket details. The cache remains generic.
+
+Matching Panels Chat message and turn events refresh only that Chat projection.
+Ticket `chat_session_created` refreshes exactly the Ticket and its Chat because both
+currently read session state from the Ticket row. It does not refresh Board, current
+Sprint, or Review. Ordinary non-Chat Ticket events do not refresh Chat. A future AD09
+change will separate Employee/Hermes history from Panels Chat; that separation does
+not exist yet.
 
 Managed Markdown has one browser-DOM owner. `managedMarkdown.ts` renders through the
 hardened renderer, mounts file previews, maintains editable atomic blocks, serializes
@@ -303,8 +321,9 @@ edits, reconciles moved or deleted previews, and tears everything down. The
 read-only presentation or ordinary editing and save behavior. Plain contenteditable
 helpers remain separate from Markdown lifecycle work.
 
-Code paths: `web/src/App.svelte`, `web/src/routes/`, `web/src/lib/resources.svelte.ts`,
-`web/src/lib/ws.ts`, `web/src/lib/eventMapping.mjs`,
+Code paths: `web/src/App.svelte`, `web/src/routes/`,
+`web/src/lib/resourceCatalogue.ts`, `web/src/lib/resources.svelte.ts`,
+`web/src/lib/ws.ts`,
 `web/src/lib/managedMarkdown.ts`, `web/src/lib/editableText.ts`.
 
 ### 8. The CLI And Authority System
@@ -384,4 +403,4 @@ less clean than the rest.
 
 ---
 
-_Last verified: 2026-07-14._
+_Last verified: 2026-07-14 (Resource Catalogue ownership and targeted refresh verified)._

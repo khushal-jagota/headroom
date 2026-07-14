@@ -1,9 +1,11 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
-  import { fetchJson, fetchText } from "../lib/api";
-  import { mutateJson, resource } from "../lib/resources";
+  import { onDestroy, untrack } from "svelte";
+  import { fetchText } from "../lib/api";
+  import {
+    mutateJsonWithResourceEffect,
+    resourceCatalogue
+  } from "../lib/resourceCatalogue";
   import { PRIORITIES, fieldSlot, labelize } from "../lib/ui";
-  import { manifestResource } from "../lib/manifest.svelte";
   import {
     ceilingOptionsFor,
     fieldStageVisualStateFor,
@@ -11,10 +13,6 @@
     recapVisibleFor
   } from "../lib/lifecycle";
   import type {
-    CurrentSprintResponse,
-    GatewayStatus,
-    ProjectsResponse,
-    SprintsResponse,
     TicketDetail
   } from "../lib/types";
   import ChatPanel from "../components/ChatPanel.svelte";
@@ -29,23 +27,14 @@
   import TicketStageSection from "../components/TicketStageSection.svelte";
 
   let { id }: { id: string } = $props();
+  const stableId = untrack(() => id);
 
-  const ticket = resource<TicketDetail>(`ticket:${id}`, (signal) =>
-    fetchJson(`/api/tickets/${id}`, { signal })
-  );
-  const sprints = resource<SprintsResponse>("sprints", (signal) =>
-    fetchJson("/api/sprints", { signal })
-  );
-  const projects = resource<ProjectsResponse>("projects", (signal) =>
-    fetchJson("/api/projects", { signal })
-  );
-  const chatStatus = resource<GatewayStatus>(`chat-status:${id}`, (signal) =>
-    fetchJson(`/api/chat/${id}/status`, { signal })
-  );
-  const currentSprint = resource<CurrentSprintResponse>("sprint:current", (signal) =>
-    fetchJson("/api/sprint/current", { signal })
-  );
-  const manifest = manifestResource();
+  const ticket = resourceCatalogue.ticket(stableId);
+  const sprints = resourceCatalogue.sprintSummaries();
+  const projects = resourceCatalogue.projects();
+  const chatStatus = resourceCatalogue.chatGatewayStatus(stableId);
+  const currentSprint = resourceCatalogue.currentSprint();
+  const manifest = resourceCatalogue.workerTypeManifests();
 
   // Derive the per-Worker-type lifecycle from the RESOURCE (ticket.data?.worker_type), not
   // the markup-local {@const detail} which is only bound inside {#if ticket.data}
@@ -61,8 +50,6 @@
     )
   );
 
-  const baseTicketInvalidations = [`ticket:${id}`, "board", "sprint:current"];
-  const reviewTicketInvalidations = [...baseTicketInvalidations, "review"];
   const emptyTicketFieldText = "Not written yet.";
   const emptyTicketRecapText = "No recap yet.";
   const implementerOptions = [
@@ -81,39 +68,41 @@
   ]);
 
   function patch(body: Record<string, unknown>): Promise<unknown> {
-    const invalidations = "title" in body ? reviewTicketInvalidations : baseTicketInvalidations;
-    return mutateJson(`/api/tickets/${id}`, { method: "PATCH", body }, invalidations);
+    const effect = "title" in body
+      ? { kind: "ticketTitleChanged" as const, ticketId: stableId }
+      : { kind: "ticketChanged" as const, ticketId: stableId };
+    return mutateJsonWithResourceEffect(`/api/tickets/${stableId}`, { method: "PATCH", body }, effect);
   }
 
   function saveScope(body: Record<string, unknown>): Promise<unknown> {
-    return mutateJson(
-      `/api/tickets/${id}/scope`,
+    return mutateJsonWithResourceEffect(
+      `/api/tickets/${stableId}/scope`,
       { method: "POST", body },
-      baseTicketInvalidations
+      { kind: "ticketChanged", ticketId: stableId }
     );
   }
 
   function saveNote(field: string, note: string): Promise<unknown> {
-    return mutateJson(
-      `/api/tickets/${id}/notes/${field}`,
+    return mutateJsonWithResourceEffect(
+      `/api/tickets/${stableId}/notes/${field}`,
       { method: "PUT", body: { user_note: note } },
-      baseTicketInvalidations
+      { kind: "ticketChanged", ticketId: stableId }
     );
   }
 
   function saveValue(field: string, body: string): Promise<unknown> {
-    return mutateJson(
-      `/api/tickets/${id}/value/${field}`,
+    return mutateJsonWithResourceEffect(
+      `/api/tickets/${stableId}/value/${field}`,
       { method: "PUT", body: { body } },
-      baseTicketInvalidations
+      { kind: "ticketChanged", ticketId: stableId }
     );
   }
 
   function acceptField(field: string, body: Record<string, unknown>): Promise<unknown> {
-    return mutateJson(
-      `/api/tickets/${id}/accept/${field}`,
+    return mutateJsonWithResourceEffect(
+      `/api/tickets/${stableId}/accept/${field}`,
       { method: "POST", body },
-      reviewTicketInvalidations
+      { kind: "ticketReviewStateChanged", ticketId: stableId }
     );
   }
 
@@ -134,7 +123,7 @@
   async function copyTicket(): Promise<void> {
     headerError = null;
     try {
-      const text = await fetchText(`/api/tickets/${id}/copy-text`);
+      const text = await fetchText(`/api/tickets/${stableId}/copy-text`);
       await writeClipboard(text);
       copied = true;
       window.setTimeout(() => (copied = false), 1500);
@@ -146,10 +135,10 @@
   async function takeover(detail: TicketDetail): Promise<void> {
     const action = detail.ticket_status === "user_takeover" ? "release" : "takeover";
     try {
-      await mutateJson(
-        `/api/tickets/${id}/${action}`,
+      await mutateJsonWithResourceEffect(
+        `/api/tickets/${stableId}/${action}`,
         { method: "POST" },
-        reviewTicketInvalidations
+        { kind: "ticketReviewStateChanged", ticketId: stableId }
       );
     } catch (err) {
       headerError = err;
@@ -201,7 +190,7 @@
 <section
   class="ticket-screen"
   data-screen="ticket"
-  data-ticket-id={id}
+  data-ticket-id={stableId}
   data-stage={ticket.data?.stage}
 >
   <ResourceState error={ticket.error} loading={ticket.loading} hasData={Boolean(ticket.data)} loadingText="Loading ticket...">
@@ -326,10 +315,10 @@
                   multiline
                   placeholder="Short orientation for a cold reader..."
                   onSave={(raw) =>
-                    mutateJson(
-                      `/api/tickets/${id}/recap`,
+                    mutateJsonWithResourceEffect(
+                      `/api/tickets/${stableId}/recap`,
                       { method: "PUT", body: { body: raw } },
-                      baseTicketInvalidations
+                      { kind: "ticketChanged", ticketId: stableId }
                     )}
                 />
               {:else}
@@ -392,7 +381,7 @@
       </main>
       <aside class="chat-rail" data-chat>
         <ChatPanel
-          entityId={id}
+          entityId={stableId}
           available={chatStatus.data?.available ?? true}
         />
       </aside>

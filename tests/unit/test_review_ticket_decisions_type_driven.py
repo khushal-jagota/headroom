@@ -331,9 +331,9 @@ def test_review_component_has_only_ticket_specific_entry_contract() -> None:
     revision_source = source.split("async function returnForRevision", 1)[1].split(
         "onDestroy", 1
     )[0]
-    assert source.count("await review.refresh()") == 1
-    assert "refreshReviewAfter(mutateJson(" in accept_source
-    assert '"review"' not in accept_source
-    assert '"review"' in title_source
-    assert "refreshReviewAfter(mutateJson(" in revision_source
-    assert '"review"' not in revision_source
+    assert source.count("review.refresh()") == 1
+    assert 'kind: "reviewTicketAccepted"' in accept_source
+    assert 'kind: "ticketTitleChanged"' in title_source
+    assert 'kind: "reviewTicketReturnedForRevision"' in revision_source
+    assert "refreshReviewAfter" not in source
+    assert "mutateJson(" not in source
