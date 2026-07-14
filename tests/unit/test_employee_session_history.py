@@ -85,9 +85,7 @@ def _set_employee_session(
     conn.execute("COMMIT")
 
 
-def _employee_events(
-    conn: sqlite3.Connection, ticket_id: str
-) -> list[dict[str, object]]:
+def _employee_events(conn: sqlite3.Connection, ticket_id: str) -> list[dict[str, object]]:
     return [
         json.loads(row["payload"])
         for row in conn.execute(
@@ -139,10 +137,48 @@ def test_rotated_history_id_is_persisted_once_and_repeat_is_idempotent(
     second = read_employee_session_history(conn, gateway, ticket_id, 4)  # type: ignore[arg-type]
     assert first == second == EmployeeSessionHistory((message,), "new")
     assert gateway.calls == ["old", "new"]
-    assert after_first == _employee_events(conn, ticket_id) == [
-        {"employee_session_id": "old"},
-        {"employee_session_id": "new"},
-    ]
+    assert (
+        after_first
+        == _employee_events(conn, ticket_id)
+        == [
+            {"employee_session_id": "old"},
+            {"employee_session_id": "new"},
+        ]
+    )
+    conn.close()
+
+
+def test_history_redacts_only_the_retired_generated_execution_route_segment(
+    tmp_path: Path,
+) -> None:
+    conn, ticket_id = _ticket_db(tmp_path)
+    _set_employee_session(conn, ticket_id, "session")
+    generated = EmployeeSessionHistoryMessage(
+        "user",
+        f"Work ticket {ticket_id} — History ticket. It is at Stage 'needs_success'; "
+        "take the next step and propose the 'success' field for approval. "
+        "Execution route: hermes_claude. Stage owner: worker.",
+        7,
+    )
+    ordinary = EmployeeSessionHistoryMessage(
+        "assistant", "Execution route is ordinary prose here.", 8
+    )
+
+    class Gateway:
+        def read_employee_session_history(
+            self, employee_session_id: str, requested_ticket_id: str
+        ) -> EmployeeSessionHistory:
+            assert employee_session_id == "session"
+            assert requested_ticket_id == ticket_id
+            return EmployeeSessionHistory((generated, ordinary), "session")
+
+    result = read_employee_session_history(conn, Gateway(), ticket_id, 9)  # type: ignore[arg-type]
+
+    assert "execution route" not in result.messages[0].text.lower()
+    assert result.messages[0].text.endswith("Stage owner: worker.")
+    assert result.messages[0].role == "user"
+    assert result.messages[0].created_at == 7
+    assert result.messages[1] == ordinary
     conn.close()
 
 

@@ -491,7 +491,7 @@ def test_create_schema_removes_execution_route_after_lifecycle_migration_idempot
     columns = [str(row["name"]) for row in conn.execute("PRAGMA table_info(tickets)")]
     assert "implementer" not in columns
     assert "execution_route" not in columns
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 22
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 23
     conn.close()
 
 
@@ -554,9 +554,7 @@ def test_v22_migration_maps_legacy_human_owner_and_drops_agent_routes(tmp_path):
 def test_v22_migration_drops_execution_route_and_preserves_ticket_state(tmp_path):
     conn = connect(str(tmp_path / "v22-no-execution-route.db"))
     create_schema(conn)
-    conn.execute("PRAGMA foreign_keys=OFF")
-    conn.execute("DROP TABLE tickets")
-    conn.execute(db_module._V21_TICKETS_TABLE_SQL.replace("tickets_new", "tickets"))
+    conn.execute("ALTER TABLE tickets ADD COLUMN execution_route TEXT")
     conn.execute(
         "INSERT INTO tickets ("
         "id, title, worker_type, stage, priority, deadline, project_id, sprint_item_id, "
@@ -586,10 +584,77 @@ def test_v22_migration_drops_execution_route_and_preserves_ticket_state(tmp_path
             2,
         ),
     )
+    conn.executemany(
+        "INSERT INTO events (entity_id, kind, payload, created_at) VALUES (?, ?, ?, ?)",
+        [
+            (
+                "t_v21",
+                "ticket_updated",
+                json.dumps(
+                    {
+                        "field": "execution_route",
+                        "from": None,
+                        "to": "hermes_codex",
+                    }
+                ),
+                3,
+            ),
+            (
+                "t_v21",
+                "ticket_updated",
+                json.dumps({"field": "title", "from": "Old", "to": "Legacy route"}),
+                4,
+            ),
+            (
+                "t_v21",
+                "ticket_updated",
+                json.dumps({"field": "implementer", "from": "khushal", "to": "panels_worker"}),
+                5,
+            ),
+            ("t_v21", "ticket_updated", '{"execution_route":', 6),
+        ],
+    )
+    conn.execute(
+        "INSERT INTO chat_turns ("
+        "id, entity_id, origin, mode, status, phase, output_role, output_text, "
+        "started_at, updated_at, completed_at"
+        ") VALUES (?, ?, 'worker', 'worker_step', 'complete', 'settled', "
+        "'assistant', '', 5, 5, 5)",
+        ("turn_legacy_route", "t_v21"),
+    )
+    conn.execute(
+        "INSERT INTO chat_messages (entity_id, turn_id, role, text, created_at) "
+        "VALUES (?, ?, 'worker', ?, 5)",
+        (
+            "t_v21",
+            "turn_legacy_route",
+            "Work ticket t_v21 — Legacy route. It is at Stage 'needs_success'; "
+            "take the next step and propose the 'success' field for approval. "
+            "Execution route: hermes_codex. Stage owner: worker.",
+        ),
+    )
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA user_version=21")
 
     create_schema(conn)
+    conn.execute(
+        "INSERT INTO events (entity_id, kind, payload, created_at) VALUES (?, ?, ?, ?)",
+        (
+            "t_v21",
+            "ticket_updated",
+            json.dumps({"field": "execution_route", "from": "hermes_codex", "to": "panels_worker"}),
+            6,
+        ),
+    )
+    conn.execute(
+        "UPDATE chat_messages SET text = ? WHERE turn_id = 'turn_legacy_route'",
+        (
+            "Work ticket t_v21 — Legacy route. It is at Stage 'needs_success'; "
+            "take the next step and propose the 'success' field for approval. "
+            "Execution route: panels_worker. Stage owner: worker.",
+        ),
+    )
+    conn.execute("PRAGMA user_version=22")
     create_schema(conn)
 
     columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(tickets)")}
@@ -613,8 +678,23 @@ def test_v22_migration_drops_execution_route_and_preserves_ticket_state(tmp_path
         1,
         2,
     )
+    event_payloads = [
+        str(event["payload"])
+        for event in conn.execute(
+            "SELECT payload FROM events WHERE entity_id = 't_v21' ORDER BY id"
+        )
+    ]
+    assert event_payloads == [
+        json.dumps({"field": "title", "from": "Old", "to": "Legacy route"}),
+        '{"execution_route":',
+    ]
+    legacy_prompt = conn.execute(
+        "SELECT text FROM chat_messages WHERE turn_id = 'turn_legacy_route'"
+    ).fetchone()["text"]
+    assert "execution route" not in legacy_prompt.lower()
+    assert legacy_prompt.endswith("Stage owner: worker.")
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 22
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 23
     conn.close()
 
 
@@ -1926,7 +2006,7 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(tm
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     create_schema(conn)
-    assert SCHEMA_VERSION == 22
+    assert SCHEMA_VERSION == 23
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     info = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(tickets)")}

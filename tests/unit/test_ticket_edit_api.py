@@ -150,6 +150,42 @@ def test_execution_route_is_absent_and_patch_rejects_it_as_unknown(tmp_path: Pat
     assert _snapshot(db_path, ticket_id) == before
 
 
+def test_events_api_does_not_expose_retired_route_audit_rows_from_v22(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _create_ticket(db_path)
+    conn = connect(str(db_path))
+    try:
+        conn.executemany(
+            "INSERT INTO events (entity_id, kind, payload, created_at) VALUES (?, ?, ?, ?)",
+            [
+                (
+                    ticket_id,
+                    "ticket_updated",
+                    '{"field":"execution_route","from":null,"to":"hermes_codex"}',
+                    10,
+                ),
+                (
+                    ticket_id,
+                    "ticket_updated",
+                    '{"field":"title","from":"Old","to":"History ticket"}',
+                    11,
+                ),
+            ],
+        )
+        conn.execute("PRAGMA user_version=22")
+        create_schema(conn)
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        response = client.get(f"/api/tickets/{ticket_id}/events")
+
+    assert response.status_code == 200
+    payloads = [event["payload"] for event in response.json()["events"]]
+    assert {"field": "execution_route", "from": None, "to": "hermes_codex"} not in payloads
+    assert {"field": "title", "from": "Old", "to": "History ticket"} in payloads
+
+
 def test_compound_patch_rolls_back_when_late_sprint_validation_fails(
     tmp_path: Path,
 ) -> None:

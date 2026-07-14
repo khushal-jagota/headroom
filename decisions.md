@@ -118,6 +118,12 @@ registry-free read assertion was retired. Chief reconciliation is allowed from i
 worker/proposal/chat states still block it. Run settlement derives the resting owner state only when it
 actually changes, so no-op status events are not emitted.
 
+A delayed post-removal review found that old route-change audit events and generated worker prompts could
+still expose retired route values. Schema v23 deletes legacy `ticket_updated` rows for `execution_route`
+or `implementer`, redacts the generated route clause from stored worker-step prompts, and filters the same
+generated clause when reading authoritative Hermes history. The obsolete private v21 route-writing
+migration was removed; v20 and existing v21/v22 databases now migrate directly to the route-free shape.
+
 ## D-field-circles-derived — Field/stage visual state is lifecycle-derived, not value-derived
 
 A ticket field's circle (completed / current / upcoming) is a pure frontend derivation over the

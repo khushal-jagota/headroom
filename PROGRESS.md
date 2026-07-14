@@ -122,23 +122,28 @@ Current build stage:
   on `main` without touching unrelated owner edits in the checkout.
 - Stage ownership and scope remain separate. Worker type now selects the specialist skill; Tickets no
   longer persist, serialize, edit, prompt with, or display a separate execution route.
-- Schema v22 removes the retired column while preserving Ticket state and the legacy `khushal` coding
-  ownership mapping. The UI retains only Owner and Continue/Stop controls.
+- Schema v23 removes the retired column and legacy audit/history exposure while preserving Ticket state and
+  the legacy `khushal` coding ownership mapping. The UI retains only Owner and Continue/Stop controls.
 
 What just passed:
 
 - Focused RED/GREEN coverage passed for schema creation and migration, Ticket contracts and API rejection,
   worker prompts, and the Owner-only Ticket facts UI.
-- Canonical `./verify` passes Ruff; mypy across 115 source files; 797 unit tests; compile/static and CSS
+- Canonical `./verify` passes Ruff; mypy across 116 source files; 799 unit tests; compile/static and CSS
   checks; Svelte check with zero errors and warnings; production build; frontend tests; and 96 Playwright
   tests, ending `VERIFY: PASS`.
 - Independent read-only review found no blocking logic or security issues. Its two suggestions were resolved:
   the worker-prompt docstring now names Worker-type skill selection, and legacy `khushal` mapping is covered
   through the full `create_schema` migration path.
+- A delayed second review then found that legacy route audit events remained externally readable. The v23
+  follow-up now removes those events, redacts old generated worker-step prompts in stored chat and Hermes
+  history views, and removes the obsolete private v21 route-writing migration. Independent follow-up review
+  found no blocking logic or security issue; its coverage suggestion for `implementer` and corrupt payloads
+  was added before the final canonical pass.
 
 Next step:
 
-- Commit only the scoped removal, then replace the pending Closeout proposal.
+- Commit only the scoped v23 follow-up and refresh Closeout evidence.
 
 Blockers:
 

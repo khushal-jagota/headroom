@@ -6,8 +6,13 @@ import sqlite3
 
 from planner.core.adapters.base import GatewayAdapter
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.legacy_execution_route import redact_generated_execution_route_segment
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import EmployeeSessionHistory, EmployeeSessionIdTransition
+from planner.tickets.contracts import (
+    EmployeeSessionHistory,
+    EmployeeSessionHistoryMessage,
+    EmployeeSessionIdTransition,
+)
 
 
 def read_employee_session_history(
@@ -53,6 +58,13 @@ def read_employee_session_history(
             conn.execute("COMMIT")
         if winner == history_id:
             return EmployeeSessionHistory(
-                messages=result.messages,
+                messages=tuple(
+                    EmployeeSessionHistoryMessage(
+                        role=message.role,
+                        text=redact_generated_execution_route_segment(message.text),
+                        created_at=message.created_at,
+                    )
+                    for message in result.messages
+                ),
                 employee_session_id=history_id,
             )
