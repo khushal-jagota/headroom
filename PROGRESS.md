@@ -72,6 +72,8 @@ Current build stage:
   and generic first-wins Chat settlement is idempotent across completion, failure, and Pause. Employee
   delivery and Ticket settlement remain separate. Independent implementation review session
   `019f5f48-af76-7030-b9d5-1939bf6ba749` reports `NO VIOLATIONS`.
+- AD06 is complete. Its committed checkpoint at `70d4291` passes the canonical gate with 714 unit tests and
+  80 Playwright tests; the full transcript is retained at `data/verify/ad06-pass.log`.
 
 What just passed:
 
@@ -261,11 +263,16 @@ What just passed:
 - The independent AD06 implementation review inspected the complete changed path set plus the new untracked
   test before commit and returned exactly `NO VIOLATIONS`. Its transcript and disposition are recorded in
   `orchestration/tickets/architecture-deepening/ad06-deep-canonical-chat-turn/implementation-review.txt`.
+- The committed AD06 checkpoint passes canonical `PYTHONPATH="$PWD/src" ./verify`: Ruff; mypy across 114
+  source files; 714 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three
+  existing warnings), production build, frontend tests; 80 Playwright e2e tests; final `VERIFY: PASS`.
+  The complete transcript is retained at `data/verify/ad06-pass.log`.
 
 Next step:
 
-- Run the one canonical `./verify` against committed AD06 and retain its full output. Only after that gate
-  is green, close AD06 and define/delegate AD07 Managed Markdown against its own reviewed contract.
+- Define AD07 Managed Markdown as a contract-scoped ticket, delegate its implementation plan, review and
+  lock that plan independently, then delegate implementation. AD08 resource catalogue and isolated-final
+  AD09 Employee session history remain after it.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`
