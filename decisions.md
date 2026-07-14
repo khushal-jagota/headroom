@@ -577,11 +577,12 @@ Markdown links; Panels serves only safely resolved regular files. The public fro
 per-surface file logic — no upload API, artifact rows, file ids, or per-stage attachment slots. Every
 Markdown link routes through `FilePreview`: safe image/video/audio/managed-Markdown render inline; HTML
 is a sandboxed preview card whose shared policy grants only script execution, keeping the document at an
-opaque origin without same-origin or other host-page privileges. Its **Open preview** action leads to a
-dedicated document-only route where the same sandboxed HTML fills the page (a Blob-backed iframe, avoiding
-the failing full-route `srcdoc` paint path, with full-page layout scoped to HTML so other routes are
-unchanged); unsupported managed files and external URLs are cards with download/open actions. Editable
-Markdown stays one continuous `contenteditable` where each link is an atomic preview island carrying
+opaque origin without same-origin or other host-page privileges. The dedicated preview route treats HTML
+and Markdown as document kinds: HTML fills the page in the same Blob-backed sandboxed iframe, while
+Markdown fills the page through the shared `MarkdownBlock` renderer with its managed links, nested-preview
+bounds, and security behavior intact. Embedded Markdown keeps its bounded inline presentation; unsupported
+managed files and external URLs remain cards with download/open actions. Editable Markdown stays one
+continuous `contenteditable` where each link is an atomic preview island carrying
 its exact Markdown token; serialization emits that token and skips generated preview descendants.
 Managed Markdown expansion uses a fixed depth and visited bound, and a tokenized max height (in
 `tokens.css`) so long previews scroll and short ones keep natural height — a component-level visual

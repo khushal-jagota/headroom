@@ -4,6 +4,39 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-14): full-page managed Markdown previews
+
+Current build stage:
+
+- Ticket `t_9fqnvpbc` is integrated into `main` by merge commit `cf0ea3f`; verified implementation
+  commit `9c90622` is its second parent. The ticket branch and isolated worktree are removed.
+- The centralized preview route fetches managed Markdown and renders it directly through the shared
+  `MarkdownBlock` surface in a full-page document layout. Ticket and chat targets share that branch;
+  bounded embedded Markdown, HTML sandboxing, and other file kinds are unchanged.
+- The merge combined current main's managed-HTML base preparation with the Markdown route: HTML still
+  resolves relative and root-relative sibling assets before Blob rendering, while Markdown keeps its
+  canonical source and shared renderer contract.
+
+What just passed:
+
+- The two conflict-sensitive browser cases and the complete file-preview browser file pass 14/14. They
+  prove the real Markdown popup URL and geometry, nested Markdown/image previews, self-link bounds,
+  hash target switching, chat targets, absent duplicate top-level controls, retained HTML sandboxing,
+  and managed HTML sibling stylesheets/images in both surfaces.
+- Independent merge review found one low documentation gap for the chat full-preview hash. The live
+  frontend doc now names both ticket and chat routes; corrected-diff review reports `NO VIOLATIONS`.
+- Post-merge canonical `./verify` on `main` passes Ruff; mypy across 116 source files; 799 unit tests;
+  compile/static, CSS, frontend check/build/tests; 96 Playwright tests; final `VERIFY: PASS`. The full
+  transcript is [verify closeout](/files/tickets/t_9fqnvpbc/artifacts/verify-closeout.txt).
+
+Next step:
+
+- Propose Closeout for approval. No deployment, restart, migration, or follow-up ticket applies.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-14): shutdown `0.0s` repair
 
 Current build stage:
