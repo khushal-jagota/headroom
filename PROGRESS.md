@@ -119,6 +119,11 @@ Current build stage:
 - AD09 is complete. Its committed reviewed checkpoint at `acf93cd` passes the canonical gate with 738 unit
   tests and 87 Playwright tests; the full transcript is retained at `data/verify/ad09-pass.log`. All nine
   architecture-deepening stages are now complete on the branch.
+- The independent whole-program review of `b7ca44a..191f14a` is complete. It inspected the AD01–AD09
+  contracts and full branch diff, including live Worker-type ingress, migration-only historical rewrites,
+  resource dependencies, generated assets, API deletion seams, Markdown ownership, and Employee-history
+  separation. Session `019f5fcf-cfa9-73d0-8741-27e7f687900a` reports `NO VIOLATIONS`; the exact record is
+  `orchestration/tickets/architecture-deepening/final-review.txt`.
 
 What just passed:
 
@@ -328,8 +333,7 @@ What just passed:
 
 Next step:
 
-- Run the independent whole-program branch review and one final branch `./verify`, then merge serially to
-  `main` and verify the integrated checkout.
+- Run one final branch `./verify`, then merge serially to `main` and verify the integrated checkout.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`

@@ -825,6 +825,15 @@ No partial stage is merged: AD01 through AD09 each land as reviewed branch check
 receives the final canonical verification, and only then is it merged serially into `main` and verified in
 the integrated checkout. This authorization does not include pushing or opening a pull request.
 
+## D-architecture-final-review-boundary — Review the complete program as one integrated diff
+
+The final independent review covers `b7ca44a..191f14a`, all nine contract locks, migrations v18–v20,
+generated assets, API and cache deletion seams, and the cross-stage Worker/Chat/Employee boundaries. The
+generated Svelte bundle contains an intentional whitespace-character table that makes `git diff --check`
+report trailing whitespace inside generated output; this is not hand-edited or treated as a product
+violation. Source hygiene and the served bundle remain part of `./verify`. The read-only review session
+`019f5fcf-cfa9-73d0-8741-27e7f687900a` reports `NO VIOLATIONS`.
+
 ## D-ad09-explicit-employee-history — Hermes history is explicit and Panels state stays Panels-owned
 
 AD09 gives the Ticket's durable Hermes identity the exact name `employee_session_id`. Panels Chat reads only
