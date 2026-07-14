@@ -116,6 +116,9 @@ Current build stage:
   required browser proof against silently repopulating deleted Panels rows from retained Employee history
   was missing. Both were corrected through delegation. Fresh review session
   `019f5fc8-c093-7163-8bee-2b15db5d19ea` reports `NO VIOLATIONS`; the canonical gate is next.
+- AD09 is complete. Its committed reviewed checkpoint at `acf93cd` passes the canonical gate with 738 unit
+  tests and 87 Playwright tests; the full transcript is retained at `data/verify/ad09-pass.log`. All nine
+  architecture-deepening stages are now complete on the branch.
 
 What just passed:
 
@@ -325,8 +328,8 @@ What just passed:
 
 Next step:
 
-- Run AD09's single canonical `./verify` against committed product plus review memory. If green, close AD09,
-  review and verify the complete branch, then merge it serially to `main` and verify the integrated checkout.
+- Run the independent whole-program branch review and one final branch `./verify`, then merge serially to
+  `main` and verify the integrated checkout.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`
