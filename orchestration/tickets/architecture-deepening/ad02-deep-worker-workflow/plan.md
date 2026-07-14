@@ -639,6 +639,7 @@ their direct universal stored-Stage comparisons are correct.
 - `tests/unit/test_sprint_item_status_buckets.py`
 - `tests/unit/test_sprint_views_type_driven.py`
 - `tests/unit/test_sprints.py`
+- `tests/unit/test_seed.py`
 - `tests/unit/test_ticket_delete.py`
 - `tests/unit/test_ticket_edit_api.py`
 - `tests/unit/test_ticket_lifecycle.py`

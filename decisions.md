@@ -819,6 +819,14 @@ migration are locked in `ad02-deep-worker-workflow/contract-lock.md`. Implementa
 rewire these declarations but may not add compatibility aliases, implicit definitions, parallel tables,
 or a broader registry surface.
 
+## D-ad02-seed-test-allowlist — The seed authority proof lives with seed behavior
+
+The reviewed AD02 plan requires a behavior test that installs a coding definition with one extra field
+and proves the legacy importer derives the complete slot map from that definition. The natural canonical
+owner is `tests/unit/test_seed.py`, which the initial bounded allowlist omitted. That single test path is
+added rather than hiding seed behavior in an unrelated allowed module. No production scope or contract
+changes.
+
 ## D-ad01-one-locked-ticket-migration — One terminal rebuild migrates every old Ticket schema
 
 AD01 replaces the sequential Ticket lifecycle, kickoff, type, and vocabulary rebuild path with one

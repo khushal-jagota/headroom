@@ -121,6 +121,9 @@ What just passed:
 - The corrected AD02 plan also deletes the shallow guard instead of renaming it and puts Ticket-position
   validation on `WorkerTypeDefinition`. Independent re-review reports `NO VIOLATIONS`; the review record
   and exact contract lock are in the AD02 ticket directory.
+- Implementation found one bounded allowlist omission: the required extra-definition-field seed proof
+  belongs in `tests/unit/test_seed.py`. That test-only path is added; no product boundary or locked shape
+  changes.
 
 Next step:
 
