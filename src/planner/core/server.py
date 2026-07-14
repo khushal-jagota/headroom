@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from planner.chat.api import router as chat_router
+from planner.chat.service import ChatTurnLifecycle
 from planner.core.adapters.registry import Adapters
 from planner.core.clock import Clock
 from planner.core.config import Config
@@ -201,6 +202,12 @@ def create_app(
     app.state.clock = clock
     app.state.adapters = adapters
     app.state.conn_factory = conn_factory
+    app.state.chat_turn_lifecycle = ChatTurnLifecycle(
+        conn_factory,
+        gateway_provider=lambda: app.state.adapters.gateway,
+        now=clock.now_unix,
+        db_path=config.db_path,
+    )
     app.state.automatic_employee_step_eligibility_wake = NoOpAutomaticEmployeeStepEligibilityWake()
     app.state.employee_step_runner = (
         TestModeAcceptingEmployeeRevisionRunner() if config.test_mode else None

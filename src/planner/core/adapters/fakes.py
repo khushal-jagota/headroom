@@ -4,18 +4,22 @@ OS or the network. Each records its calls and behaves deterministically."""
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from planner.chat.contracts import (
     ChatHistory,
     ChatMessage,
-    ChatStreamChunk,
     CommandCatalog,
     CommandCategory,
     GatewayStatus,
+    HumanChatCompletion,
+    HumanChatObservation,
+    HumanChatOutputDelta,
 )
+from planner.core.adapters.base import HumanSessionKeyBinder
 from planner.core.errors import ErrorCode, PlannerError
 
 # One canned catalog for the whole test suite — two grouped categories plus a
@@ -81,61 +85,60 @@ class EchoGatewayAdapter:
             messages=tuple(self.histories.get(session_key, ())), session_key=session_key
         )
 
-    def stream(
+    def run_human_turn(
         self,
         session_key: str | None,
         entity_id: str,
         text: str,
         mode: str,
-        on_session_key: Callable[[str], None] | None = None,
+        bind_session_key: HumanSessionKeyBinder,
         image_paths: tuple[Path, ...] = (),
-    ) -> Iterator[ChatStreamChunk]:
-        if mode == "command":
-            self.command_calls.append((session_key, entity_id, text))
-        else:
-            self.calls.append((session_key, entity_id, text))
+    ) -> Iterator[HumanChatObservation]:
         if self.busy:
             raise PlannerError(
                 ErrorCode.already_running,
                 "an agent is already running on this ticket",
                 {"entity_id": entity_id, "session_key": session_key},
             )
-        if session_key is None:
-            session_key = f"fake-sess-{self.next_session}"
+        if session_key is None or (mode == "command" and text == "/new"):
+            candidate_session_key = f"fake-sess-{self.next_session}"
             self.next_session += 1
-        if on_session_key is not None:
-            on_session_key(session_key)
+        else:
+            candidate_session_key = session_key
+        session_key = bind_session_key(candidate_session_key)
+        if mode == "command":
+            self.command_calls.append((session_key, entity_id, text))
+        else:
+            self.calls.append((session_key, entity_id, text))
 
-        kind = "assistant"
+        kind: Literal["assistant", "system"] = "assistant"
         reply_text = f"echo: {text}"
         if mode == "command":
-            parts = text.strip().split(maxsplit=1)
-            token = parts[0].lower() if parts else ""
-            name = CANNED_CATALOG.canon.get(token, token)
-            if name in _CANNED_SKILL_NAMES:
-                reply_text = f"skill {name} loaded"
-            elif name == "/compress":
-                reply_text = "(no output)\ncompressed 40 → 8 messages"
+            if text == "/new":
+                reply_text = "New session started."
                 kind = "system"
             else:
-                reply_text = f"exec: {text.strip()}"
-                kind = "system"
+                parts = text.strip().split(maxsplit=1)
+                token = parts[0].lower() if parts else ""
+                name = CANNED_CATALOG.canon.get(token, token)
+                if name in _CANNED_SKILL_NAMES:
+                    reply_text = f"skill {name} loaded"
+                elif name == "/compress":
+                    reply_text = "(no output)\ncompressed 40 → 8 messages"
+                    kind = "system"
+                else:
+                    reply_text = f"exec: {text.strip()}"
+                    kind = "system"
         visible_text = text.strip() if mode == "command" else text
         self._append_turn(session_key, visible_text, reply_text, kind)
 
-        yield ChatStreamChunk(type="session", session_key=session_key)
         midpoint = max(1, len(reply_text) // 2)
         for token in (reply_text[:midpoint], reply_text[midpoint:]):
             if token:
-                yield ChatStreamChunk(type="token", text=token)
+                yield HumanChatOutputDelta(token)
         if self.stream_delay_seconds > 0:
             time.sleep(self.stream_delay_seconds)
-        yield ChatStreamChunk(
-            type="done",
-            reply_text=reply_text,
-            session_key=session_key,
-            kind=kind,
-        )
+        yield HumanChatCompletion(reply_text, kind)
 
     def interrupt(self, session_key: str, entity_id: str) -> None:
         self.interrupt_calls.append((session_key, entity_id))
@@ -152,15 +155,15 @@ class OfflineGatewayAdapter:
     def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
         raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
 
-    def stream(
+    def run_human_turn(
         self,
         session_key: str | None,
         entity_id: str,
         text: str,
         mode: str,
-        on_session_key: Callable[[str], None] | None = None,
+        bind_session_key: HumanSessionKeyBinder,
         image_paths: tuple[Path, ...] = (),
-    ) -> Iterator[ChatStreamChunk]:
+    ) -> Iterator[HumanChatObservation]:
         raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
 
     def interrupt(self, session_key: str, entity_id: str) -> None:

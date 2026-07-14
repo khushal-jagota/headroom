@@ -26,6 +26,12 @@ def is_eligible_for_automatic_employee_step(
         return False
     if ticket.ticket_status is not TicketStatus.empty:
         return False
+    active_chat_turn = conn.execute(
+        "SELECT 1 FROM chat_turns WHERE entity_id = ? AND status = 'running'",
+        (ticket.id,),
+    ).fetchone()
+    if active_chat_turn is not None:
+        return False
     if worker_type_definition.is_terminal(ticket.stage):
         return False
     if worker_type_definition.gating_field(ticket.stage) is None:

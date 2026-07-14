@@ -165,7 +165,7 @@ routes.
 The runtime keeps advisory discovery separate from step execution.
 
 One complete decision owns **Automatic Employee-step eligibility**. It returns yes
-only when all seven facts hold:
+only when all eight facts hold:
 
 1. The Ticket belongs to the supplied `planning_day_id` — today's day during
    automatic discovery.
@@ -176,6 +176,7 @@ only when all seven facts hold:
 6. Its `ceiling` and `at_cap` allow another proposal; the Ticket is not at or beyond
    a stopping ceiling.
 7. It has no active blocker.
+8. It has no running Panels Chat turn, from either a human or an Employee step.
 
 **AutomaticEmployeeStepDiscoveryLoop** is read-only and advisory. It selects only
 Tickets that belong to today's day, then calls the complete eligibility decision for
@@ -191,6 +192,11 @@ settles runtime status when the turn ends. A parked proposal becomes
 `awaiting_approval`; auto-accepted work can return to `empty` for another discovery
 pass.
 
+Human Chat admission and the final Employee claim both use SQLite's write lock and
+recheck the opposing fact inside the transaction. A human turn that wins admission
+makes the final Employee claim a no-op. An Employee claim that wins first makes human
+admission fail without creating a visible message or turn.
+
 A direct requested revision is different. It bypasses Automatic Employee-step
 eligibility and planning-day resolution, uses a reserved runner handoff, and strictly
 resumes the Ticket's stored Hermes session.
@@ -202,6 +208,10 @@ Failure is logged and ignored; SQLite and the periodic discovery timer remain
 canonical. The polling-lock owner uses
 `LoopAutomaticEmployeeStepEligibilityWake`; a process without the lock receives
 `NoOpAutomaticEmployeeStepEligibilityWake`.
+
+Chat completion, Chat error, and Pause do not send an eligibility wake. They only
+settle the visible Chat turn. The next SQLite-backed periodic scan observes that the
+eighth factor has cleared.
 
 Code paths: `src/planner/runtime/automatic_employee_step_eligibility.py`,
 `src/planner/runtime/automatic_employee_step_discovery_loop.py`,
@@ -231,6 +241,12 @@ in-process listener for that conversation may detach after Hermes reports idle a
 no Panels consequence remains. A later operation resumes the stored session instead
 of replaying prior input.
 
+Every human Hermes write uses causal session binding. A candidate created or resumed
+by Hermes is passed to the Chat data writer before a command, image attachment, or
+prompt is sent. That writer atomically updates the entity and running turn and returns
+the effective key. If another transaction already chose a winner, the gateway resumes
+and writes to that winner's live session. Exact `/new` is the one forced-fresh case.
+
 Panels chat state is not model context. Appending to `chat_messages` or `chat_turns`
 does not make a worker see that text. Anything the worker must read has to go
 through the Hermes gateway/session path or the actual worker prompt; the Panels chat
@@ -247,16 +263,21 @@ turn carries the phase, activity label, partial output, session key, and error.
 
 Ordinary human messages and commands have one ingress:
 `POST /api/chat/{entity_id}/turns`. The Chief message endpoint is a narrow shell over
-the same service. After admission, the server-owned turn consumes the gateway stream;
-the browser observes durable `ChatState` instead of owning a second HTTP stream.
+the same owner. `ChatTurnLifecycle` is the single coordinator: it atomically admits
+one visible human turn, invokes the typed human gateway transport, records safe
+activity and output, and lets the first completion, error, or Pause settle the turn.
+The browser observes durable `ChatState` instead of owning a second HTTP stream.
 
-EmployeeStepRunner stores a newly created or resumed session key before submitting the worker
-prompt, so tools inside the worker can resolve their ticket while the turn is still
-active. It also records the worker turn in chat state, so the UI does not infer
-activity from ticket status.
+EmployeeStepRunner remains a separate lane. It stores a newly created or resumed
+session key before calling the employee-only `run_ticket_step`, so tools inside the
+worker can resolve their ticket while the turn is still active. It does not use
+`ChatTurnLifecycle` or the human transport. It also records the worker turn in chat
+state, so the UI does not infer activity from ticket status.
 
-Human Chat turns are rejected while `ticket_status=agent_running_step`. History
-remains readable. There is no queue behind the active worker step.
+Human Chat turns are rejected while `ticket_status=agent_running_step`. Automatic
+Employee-step eligibility rejects any running Panels Chat turn. The two checks happen
+again under the same transaction lock, so concurrent admission has one winner.
+History remains readable. There is no queue behind the active worker step.
 
 Because the chat state is product state, backend code must not use a visible chat row
 as a substitute for worker-session delivery. Designs that depend on worker awareness
@@ -318,11 +339,10 @@ few places where truth can change.
 These are not local style issues. They are places where the system boundaries are
 less clean than the rest.
 
-1. **Chat session-key ownership is a special writer exception.** Most mutations now
-   live behind domain `data.py` writers. Chat session-key writes still live in
-   `src/planner/chat/service.py` because they coordinate with the gateway during
-   live conversation setup. That is intentional, but it is still an exception a
-   cold reader has to know.
+1. **Chat session-key ownership is explicit (resolved).** `ChatTurnLifecycle`
+   coordinates human admission and delivery, but `src/planner/chat/data.py` is the
+   canonical writer. Its binding transaction updates the entity and running turn
+   together and returns the effective key that the gateway must actually use.
 
 2. **Sprint item status is a read projection.** Sprint items no longer store their
    own status. They derive `todo`, `in_progress`, `blocked`, or `done` from child

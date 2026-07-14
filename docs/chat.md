@@ -9,8 +9,10 @@ a real conversation with that ticket's employee.
 The chat panel on a ticket is a real conversation with that ticket's employee.
 Ordinary messages and commands both enter through one request:
 `POST /api/chat/{entity_id}/turns`. That request starts a server-owned chat turn,
-then the gateway stream delivers it to Hermes and reports its progress back to the
-turn. There is no separate send, command, or browser streaming route. The browser
+then one `ChatTurnLifecycle` owns the rest of that human turn. It atomically creates
+the visible turn, delivers it to Hermes, records typed activity and output, and lets
+the first completion, error, or Pause settle it. There is no separate send, command,
+or browser streaming route. The browser
 reads one `ChatState` resource: durable visible messages plus the active turn, if
 one is running. The same resource survives navigation, remounts, reloads, WebSocket
 misses, and simple polling.
@@ -38,9 +40,13 @@ separate: Panels attaches each saved image to the live Hermes session in order,
 then submits one prompt for that turn. A transcript preview by itself is not proof
 that the AI received the image.
 
-Hermes is still the transport. The planner stores the durable `chat_session_key`
-before submitting a prompt, so tools inside a worker turn can resolve their ticket
-immediately. The visible transcript and live activity indicator belong to Panels:
+Hermes is still the transport. Before any human command, image attachment, or prompt
+is written, the lifecycle binds the candidate Hermes session to the still-running
+turn. The database writer compares the candidate with the entity's current key,
+updates the entity and turn together, and returns the effective key. The gateway uses
+the live Hermes session for that returned key. This means a concurrent winner is the
+session that actually receives the input, not merely the value Panels records later.
+The visible transcript and live activity indicator belong to Panels:
 `chat_messages` records the product-facing lines, and `chat_turns` records the
 current phase, partial output, session key, error, and completion.
 
@@ -58,19 +64,26 @@ goes through the gateway/session path and is then mirrored into Panels chat. Dir
 `chat_messages` or `chat_turns` writes are only UI/audit state unless the same text
 is also delivered through Hermes.
 
-The EmployeeStepRunner uses the same chat state. When it starts an automatic worker step, it writes
-a worker line and an active turn. Gateway deltas and future tool/activity events
-update that turn. When the worker settles, the assistant reply is recorded as a
-message and the active turn disappears.
+The EmployeeStepRunner uses the same chat-state projection but a separate delivery
+path. It claims a Ticket and calls the employee-only `run_ticket_step`; it does not
+enter `ChatTurnLifecycle` or the human gateway method. When it starts a worker step,
+it writes a worker line and an active turn. Gateway deltas and future tool/activity
+events update that turn. When the worker settles, the assistant reply is recorded as
+a message and the active turn disappears.
 
-Human sends and commands follow the same pre-prompt session-key rule. If the ticket
-is already at `agent_running_step`, the send or command returns `already_running`
-instead of creating a competing turn. The chat state remains readable.
+Human admission and the Employee's final claim use the same SQLite write lock. Human
+admission rechecks `ticket_status` inside that transaction, while Automatic
+Employee-step eligibility rechecks that there is no running Panels Chat turn. If the
+ticket is already at `agent_running_step`, the send or command returns
+`already_running` instead of creating a competing turn. If a human turn wins first,
+the Employee claim does nothing. The chat state remains readable in both cases.
 
 The visible active turn can be paused from the chat panel. While a turn is active,
 the composer's send button becomes the pause button; pressing it interrupts that
 chat session and settles the `chat_turns` row as interrupted with any partial output
-kept. Pause does not change the ticket's runtime status or dispatch ownership.
+kept. The same Pause action controls a visible human-origin or worker-origin turn.
+Pause does not change the ticket's runtime status or dispatch ownership, and Chat
+settlement does not wake Automatic Employee-step discovery.
 
 Stop changes the visible Panels turn immediately. It does not guess that Hermes has
 finished unwinding the interrupted work. A following send goes straight to Hermes
@@ -80,9 +93,11 @@ completion events cannot finish the wrong visible turn.
 
 The stored chat session key names the durable Hermes conversation. A gateway restart
 resumes that key and does not replay prior input. If Hermes rotates the durable key,
-Panels stores the new key and logs a `chat_session_created` event. If delivery becomes
-uncertain, Panels reports the gateway outcome honestly and does not guess or retry the
-prompt automatically.
+Panels binds the rotated candidate before using it and logs a
+`chat_session_created` event when the entity key changes. Typing exactly `/new` is the
+one forced-fresh case: its newly created candidate replaces the prior key before the
+command completes. If delivery becomes uncertain, Panels reports the gateway outcome
+honestly and does not guess or retry the prompt automatically.
 
 The Chief of Staff page uses the same chat state shape with its top-level entity id.
 Only the gateway routing differs: chief messages go to the `panels-chief-of-staff`

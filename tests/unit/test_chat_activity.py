@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from dataclasses import asdict
 from pathlib import Path
 
 from planner.chat import data as chat_data
 from planner.chat import service as chat_service
-from planner.chat.contracts import ChatActivityObservation, ChatStreamChunk
+from planner.chat.contracts import (
+    ChatActivityObservation,
+    ChatTurnRequest,
+    HumanChatCompletion,
+)
 from planner.chat.data import MAX_ACTIVE_TURN_ACTIVITY_ENTRIES
 from planner.chat.logic.activity import normalize_gateway_activity
 from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
@@ -419,23 +424,10 @@ def test_worker_gateway_producer_uses_normalizer_and_updates_one_action(tmp_path
     conn.close()
 
 
-def test_human_stream_producer_persists_typed_activity_chunk(tmp_path: Path) -> None:
+def test_human_turn_persists_typed_activity_observation(tmp_path: Path) -> None:
     db_path = tmp_path / "human-producer.db"
     boot = connect(str(db_path))
     create_schema(boot)
-    chat_service.resolve_chattable_entity(boot, CHIEF_OF_STAFF_ENTITY_ID, 1)
-    turn = chat_data.start_turn(
-        boot,
-        CHIEF_OF_STAFF_ENTITY_ID,
-        origin="human",
-        mode="message",
-        visible_role="human",
-        visible_text="hello",
-        output_role="assistant",
-        phase="thinking",
-        activity_label="Thinking",
-        now=1,
-    )
     boot.close()
     observed_entries: list[tuple[str, str, str]] = []
 
@@ -443,9 +435,10 @@ def test_human_stream_producer_persists_typed_activity_chunk(tmp_path: Path) -> 
         return connect(str(db_path))
 
     class HumanActivityGateway:
-        def stream(self, session_key, entity_id, text, mode, on_session_key=None):  # noqa: ANN001, ANN201
-            if on_session_key is not None:
-                on_session_key("human-session")
+        def run_human_turn(  # noqa: ANN201
+            self, session_key, entity_id, text, mode, bind_session_key, image_paths=()
+        ):  # noqa: ANN001
+            bind_session_key("human-session")
             observation = normalize_gateway_activity(
                 "tool.start",
                 {
@@ -455,9 +448,7 @@ def test_human_stream_producer_persists_typed_activity_chunk(tmp_path: Path) -> 
                 },
             )
             assert observation is not None
-            yield ChatStreamChunk(
-                type="activity", text=observation.label, activity=observation
-            )
+            yield observation
             inspect = conn_factory()
             try:
                 active = chat_data.read_active_turn(inspect, entity_id)
@@ -468,22 +459,31 @@ def test_human_stream_producer_persists_typed_activity_chunk(tmp_path: Path) -> 
                 )
             finally:
                 inspect.close()
-            yield ChatStreamChunk(
-                type="done",
-                reply_text="done",
-                session_key="human-session",
-                kind="assistant",
-            )
+            yield HumanChatCompletion("done", "assistant")
 
-    chat_service._run_human_turn(
+    lifecycle = chat_service.ChatTurnLifecycle(
         conn_factory,
-        HumanActivityGateway(),  # type: ignore[arg-type]
-        CHIEF_OF_STAFF_ENTITY_ID,
-        turn.id,
-        "hello",
-        "message",
+        lambda: HumanActivityGateway(),  # type: ignore[arg-type,return-value]
         lambda: 2,
+        db_path,
     )
+    turn = lifecycle.start_human_turn(
+        CHIEF_OF_STAFF_ENTITY_ID, ChatTurnRequest(text="hello")
+    )
+
+    for _ in range(40):
+        settled = conn_factory()
+        try:
+            status = settled.execute(
+                "SELECT status FROM chat_turns WHERE id = ?", (turn.id,)
+            ).fetchone()[0]
+        finally:
+            settled.close()
+        if status == "complete":
+            break
+        threading.Event().wait(0.05)
+    else:
+        raise AssertionError("human Chat turn did not settle")
 
     assert observed_entries == [("tool", "Using read_file", "running")]
     final_conn = conn_factory()

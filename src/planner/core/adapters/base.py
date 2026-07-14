@@ -9,28 +9,30 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, TypeAlias
 
 from planner.chat.contracts import (
     ChatHistory,
-    ChatStreamChunk,
     CommandCatalog,
     GatewayStatus,
+    HumanChatObservation,
 )
+
+HumanSessionKeyBinder: TypeAlias = Callable[[str], str]  # noqa: UP040 -- frozen AD06 declaration
 
 
 class GatewayAdapter(Protocol):
     def status(self) -> GatewayStatus: ...
     def history(self, session_key: str | None, entity_id: str) -> ChatHistory: ...
-    def stream(
+    def run_human_turn(
         self,
         session_key: str | None,
         entity_id: str,
         text: str,
         mode: str,
-        on_session_key: Callable[[str], None] | None = None,
+        bind_session_key: HumanSessionKeyBinder,
         image_paths: tuple[Path, ...] = (),
-    ) -> Iterator[ChatStreamChunk]: ...
+    ) -> Iterator[HumanChatObservation]: ...
     def interrupt(self, session_key: str, entity_id: str) -> None: ...
     # The gateway's own command/skill registry — stateless, gateway-wide, cached above.
     def catalog(self) -> CommandCatalog: ...

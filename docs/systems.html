@@ -726,7 +726,7 @@
             <div class="detail-body">
               <p>
                 One complete decision owns <strong>Automatic Employee-step eligibility</strong>.
-                It returns yes only when all seven facts hold:
+                It returns yes only when all eight facts hold:
               </p>
               <ol>
                 <li>The Ticket belongs to the supplied <code>planning_day_id</code> — today's day during automatic discovery.</li>
@@ -736,6 +736,7 @@
                 <li>That field has no parked proposal.</li>
                 <li>Its <code>ceiling</code> and <code>at_cap</code> allow another proposal; the Ticket is not at or beyond a stopping ceiling.</li>
                 <li>It has no active blocker.</li>
+                <li>It has no running Panels Chat turn, from either a human or an Employee step.</li>
               </ol>
               <p>
                 AutomaticEmployeeStepDiscoveryLoop is read-only and advisory. It selects
@@ -752,6 +753,13 @@
                 and settles runtime status when the turn ends.
               </p>
               <p>
+                Human Chat admission and the final Employee claim both use SQLite's
+                write lock and recheck the opposing fact inside the transaction. A human
+                turn that wins makes the Employee claim a no-op. An Employee claim that
+                wins first makes human admission fail without creating a visible message
+                or turn.
+              </p>
+              <p>
                 A direct requested revision bypasses Automatic Employee-step eligibility and
                 planning-day resolution, uses a reserved runner handoff, and strictly resumes
                 the Ticket's stored Hermes session.
@@ -764,6 +772,11 @@
                 timer remain canonical. The polling-lock owner uses
                 <code>LoopAutomaticEmployeeStepEligibilityWake</code>; processes without the lock receive
                 <code>NoOpAutomaticEmployeeStepEligibilityWake</code>.
+              </p>
+              <p>
+                Chat completion, Chat error, and Pause do not send an eligibility wake.
+                They only settle the visible Chat turn. The next SQLite-backed periodic
+                scan observes that the eighth factor has cleared.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/runtime/automatic_employee_step_eligibility.py</code>,
@@ -791,9 +804,24 @@
                 real gateway.
               </p>
               <p>
-                Tickets and days store only a <code>chat_session_key</code>. Hermes
-                owns the transcript. When the planner needs history, it resumes the
-                session lazily and normalizes returned messages.
+                Tickets, days, and top-level agent chats store a
+                <code>chat_session_key</code>. Hermes history remains readable, while
+                Panels owns the product-visible state in <code>chat_messages</code> and
+                <code>chat_turns</code>.
+              </p>
+              <p>
+                Every human Hermes write uses causal session binding. A candidate
+                created or resumed by Hermes reaches the Chat data writer before a
+                command, image attachment, or prompt is sent. The writer atomically
+                updates the entity and running turn and returns the effective key. If
+                another transaction already chose a winner, the gateway writes to that
+                winner's live session. Exact <code>/new</code> is the one forced-fresh
+                case.
+              </p>
+              <p>
+                Panels chat rows are product-visible state, not model context. Text a
+                worker must read has to reach the Hermes gateway session or the actual
+                worker prompt.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/core/adapters/</code>,
@@ -814,19 +842,27 @@
                 Ticket chat, Chief of Staff chat, and automatic worker steps use the
                 same durable chat-state contract. Ordinary messages and commands enter
                 through one <code>POST /api/chat/{entity_id}/turns</code> request. The
-                Chief message endpoint is a narrow shell over that same service.
+                Chief message endpoint is a narrow shell over that same owner.
               </p>
               <p>
-                After admission, the server-owned turn consumes the gateway stream.
-                The browser observes durable <code>ChatState</code> instead of owning a
-                second HTTP stream. EmployeeStepRunner separately stores a new or
-                resumed session key before submitting the worker prompt, so worker
-                tools can resolve their ticket during the turn.
+                <code>ChatTurnLifecycle</code> is the single human coordinator. It
+                atomically admits one visible turn, invokes the typed human gateway
+                transport, records safe activity and output, and lets the first
+                completion, error, or Pause settle the turn. The browser observes
+                durable <code>ChatState</code> instead of owning a second HTTP stream.
+              </p>
+              <p>
+                EmployeeStepRunner remains a separate lane. It stores a new or resumed
+                session key before calling the employee-only
+                <code>run_ticket_step</code>. It does not use
+                <code>ChatTurnLifecycle</code> or the human transport.
               </p>
               <p>
                 Human Chat turns are rejected while
-                <code>ticket_status=agent_running_step</code>. History stays
-                readable. There is no queue behind the active worker step.
+                <code>ticket_status=agent_running_step</code>. Automatic Employee-step
+                eligibility rejects any running Panels Chat turn. The checks run again
+                under the same transaction lock, so concurrent admission has one winner.
+                History stays readable. There is no queue behind the active worker step.
               </p>
               <p>
                 Panels chat rows are product-visible state, not model context. Text a
@@ -947,14 +983,14 @@
           <details open>
             <summary>
               <span class="number">01</span>
-              <span><strong>Chat session-key ownership is a special writer exception.</strong><span>Most mutations now live behind domain writers.</span></span>
+              <span><strong>Chat session-key ownership is explicit (resolved).</strong><span>The coordinator and canonical writer now have separate jobs.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                Chat session-key writes live in <code>src/planner/chat/service.py</code>
-                because they coordinate with the gateway during live conversation setup.
-                The usual rule still holds elsewhere: domain mutations go through
-                canonical writer functions.
+                <code>ChatTurnLifecycle</code> coordinates human admission and delivery,
+                while <code>src/planner/chat/data.py</code> is the canonical writer. Its
+                binding transaction updates the entity and running turn together and
+                returns the effective key that the gateway must actually use.
               </p>
             </div>
           </details>

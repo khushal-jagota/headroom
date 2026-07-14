@@ -16,12 +16,15 @@ from typing import Any
 from planner.chat.contracts import (
     ChatHistory,
     ChatMessage,
-    ChatStreamChunk,
     CommandCatalog,
     CommandCategory,
     GatewayStatus,
+    HumanChatCompletion,
+    HumanChatObservation,
+    HumanChatOutputDelta,
 )
 from planner.chat.logic.activity import normalize_gateway_activity
+from planner.core.adapters.base import HumanSessionKeyBinder
 from planner.core.errors import ErrorCode, PlannerError
 from planner.minds.config import hermes_src_root
 from planner.minds.contracts import OnEvent, RunResult, TransportUnknown
@@ -84,21 +87,23 @@ class EntityRoutingGateway:
     def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
         return self._gateway_for(entity_id).history(session_key, entity_id)
 
-    def stream(
+    def run_human_turn(
         self,
         session_key: str | None,
         entity_id: str,
         text: str,
         mode: str,
-        on_session_key: Callable[[str], None] | None = None,
+        bind_session_key: HumanSessionKeyBinder,
         image_paths: tuple[Path, ...] = (),
-    ) -> Iterator[ChatStreamChunk]:
+    ) -> Iterator[HumanChatObservation]:
         gateway = self._gateway_for(entity_id)
         if not image_paths:
-            yield from gateway.stream(session_key, entity_id, text, mode, on_session_key)
+            yield from gateway.run_human_turn(
+                session_key, entity_id, text, mode, bind_session_key
+            )
         else:
-            yield from gateway.stream(
-                session_key, entity_id, text, mode, on_session_key, image_paths
+            yield from gateway.run_human_turn(
+                session_key, entity_id, text, mode, bind_session_key, image_paths
             )
 
     def interrupt(self, session_key: str, entity_id: str) -> None:
@@ -257,50 +262,51 @@ class SharedGateway:
         except GatewayError as exc:
             return RunResult("errored", "", None, resolved_key, str(exc))
 
-    def stream(
+    def run_human_turn(
         self,
         session_key: str | None,
         entity_id: str,
         text: str,
         mode: str,
-        on_session_key: Callable[[str], None] | None = None,
+        bind_session_key: HumanSessionKeyBinder,
         image_paths: tuple[Path, ...] = (),
-    ) -> Iterator[ChatStreamChunk]:
+    ) -> Iterator[HumanChatObservation]:
         try:
             child = self._child_or_spawn()
             if mode == "command" and text == "/new":
-                stored = self._start_new_chat_session(child, on_session_key)
-                yield ChatStreamChunk(type="session", session_key=stored)
-                yield from self._stream_done(
-                    "New session started.",
-                    stored,
-                    "system",
+                _, candidate = self._resume_or_create(child, None, CHAT_SOURCE)
+                live_session = self._bind_human_live_session(
+                    self._required_live_session(candidate), bind_session_key
                 )
+                if live_session.stored_session_key != candidate:
+                    raise GatewayError("fresh Chat session binding did not retain its candidate")
+                yield from self._human_command_completion("New session started.", "system")
                 return
-            _, stored = self._resume_or_create(
+            _, candidate = self._resume_or_create(
                 child,
                 session_key,
                 CHAT_SOURCE,
                 reuse_live_session=True,
             )
-            if on_session_key is not None:
-                on_session_key(stored)
-            yield ChatStreamChunk(type="session", session_key=stored)
+            live_session = self._bind_human_live_session(
+                self._required_live_session(candidate), bind_session_key
+            )
+            stored = live_session.stored_session_key
             if mode == "command":
-                yield from self._stream_command(
+                yield from self._observe_human_command(
                     stored,
                     entity_id,
                     text,
-                    on_session_key=on_session_key,
+                    bind_session_key=bind_session_key,
                 )
             else:
-                yield from self._stream_human_consequence(
+                yield from self._observe_human_consequence(
                     stored,
                     entity_id,
                     text,
                     "assistant",
                     image_paths=image_paths,
-                    on_session_key=on_session_key,
+                    bind_session_key=bind_session_key,
                 )
         except SharedGatewayBusy as exc:
             raise PlannerError(
@@ -354,42 +360,34 @@ class SharedGateway:
                 ErrorCode.gateway_offline, "chat gateway catalog failed", {"detail": str(exc)}
             ) from exc
 
-    def _start_new_chat_session(
-        self,
-        child: GatewayChild,
-        on_session_key: Callable[[str], None] | None,
-    ) -> str:
-        _, stored_session_key = self._resume_or_create(child, None, CHAT_SOURCE)
-        if on_session_key is not None:
-            on_session_key(stored_session_key)
-        return stored_session_key
-
-    def _stream_done(self, reply: str, stored: str, kind: str) -> Iterator[ChatStreamChunk]:
+    def _human_command_completion(
+        self, reply: str, role: str
+    ) -> Iterator[HumanChatObservation]:
         if reply:
-            yield ChatStreamChunk(type="token", text=reply)
-        yield ChatStreamChunk(
-            type="done", reply_text=reply, session_key=stored, kind=kind
+            yield HumanChatOutputDelta(reply)
+        yield HumanChatCompletion(
+            reply,
+            "system" if role == "system" else "assistant",
         )
 
-    def _stream_command(
+    def _observe_human_command(
         self,
         stored: str,
         entity_id: str,
         command: str,
         *,
-        on_session_key: Callable[[str], None] | None,
-    ) -> Iterator[ChatStreamChunk]:
+        bind_session_key: HumanSessionKeyBinder,
+    ) -> Iterator[HumanChatObservation]:
         pending, prepared, reply, kind, resolved_stored = (
             self._begin_human_command_operation(
                 stored,
                 entity_id,
                 command,
+                bind_session_key,
             )
         )
-        if on_session_key is not None and resolved_stored != stored:
-            on_session_key(resolved_stored)
         if pending is None or prepared is None:
-            yield from self._stream_done(reply, resolved_stored, kind)
+            yield from self._human_command_completion(reply, kind)
             return
         accepted = self._accept_pending_submission(
             pending,
@@ -397,27 +395,34 @@ class SharedGateway:
             resolved_stored,
             entity_id,
         )
-        yield from self._stream_accepted_submission(accepted, resolved_stored, kind)
+        yield from self._observe_accepted_human_submission(accepted, kind)
 
     def _begin_human_command_operation(
         self,
         stored: str,
         entity_id: str,
         command: str,
+        bind_session_key: HumanSessionKeyBinder,
     ) -> tuple[PendingSubmission | None, PreparedWorkerPrompt | None, str, str, str]:
-        live_session = self._live_session_for_human_write(stored)
+        live_session = self._bind_human_live_session(
+            self._live_session_for_human_write(stored), bind_session_key
+        )
+        effective_stored = live_session.stored_session_key
         try:
             result = self._begin_command_operation(
                 live_session,
-                stored,
+                effective_stored,
                 entity_id,
                 command,
             )
         except LiveSessionDormant:
-            live_session = self._resume_live_session_for_human_write(stored)
+            live_session = self._bind_human_live_session(
+                self._resume_live_session_for_human_write(effective_stored), bind_session_key
+            )
+            effective_stored = live_session.stored_session_key
             result = self._begin_command_operation(
                 live_session,
-                stored,
+                effective_stored,
                 entity_id,
                 command,
             )
@@ -633,14 +638,38 @@ class SharedGateway:
             return live_session
         return self._resume_live_session_for_human_write(stored_key)
 
+    def _bind_human_live_session(
+        self,
+        candidate: LiveSession,
+        bind_session_key: HumanSessionKeyBinder,
+    ) -> LiveSession:
+        """Return the live Hermes handle for the durable key chosen by Panels."""
+        seen: set[str] = set()
+        while True:
+            candidate_key = candidate.stored_session_key
+            if candidate_key in seen:
+                raise GatewayError("human Chat session binding did not converge")
+            seen.add(candidate_key)
+            effective_key = bind_session_key(candidate_key)
+            if effective_key == candidate_key:
+                return candidate
+            effective_live = self.live_session(effective_key)
+            if effective_live is not None:
+                candidate = effective_live
+                continue
+            candidate = self._resume_live_session_for_human_write(effective_key)
+
     def _submit_human_consequence(
         self,
         stored_key: str,
         text: str,
         *,
+        bind_session_key: HumanSessionKeyBinder,
         image_paths: tuple[Path, ...] = (),
     ) -> tuple[AcceptedSubmission | TransportUnknown, str]:
-        live_session = self._live_session_for_human_write(stored_key)
+        live_session = self._bind_human_live_session(
+            self._live_session_for_human_write(stored_key), bind_session_key
+        )
         try:
             accepted = live_session.submit_consequence(
                 text,
@@ -650,7 +679,10 @@ class SharedGateway:
         except LiveSessionDormant:
             # The prior consumer released between reuse lookup and write admission.
             # No prompt was written, so one resume is safe; prompt outcomes are never retried.
-            live_session = self._resume_live_session_for_human_write(stored_key)
+            live_session = self._bind_human_live_session(
+                self._resume_live_session_for_human_write(live_session.stored_session_key),
+                bind_session_key,
+            )
             accepted = live_session.submit_consequence(
                 text,
                 timeout=self._request_timeout,
@@ -749,20 +781,22 @@ class SharedGateway:
         finally:
             accepted.consequence.release()
 
-    def _stream_human_consequence(
+    def _observe_human_consequence(
         self,
         stored_key: str,
         entity_id: str,
         text: str,
-        kind: str,
+        role: str,
+        *,
+        bind_session_key: HumanSessionKeyBinder,
         image_paths: tuple[Path, ...] = (),
-        on_session_key: Callable[[str], None] | None = None,
-    ) -> Iterator[ChatStreamChunk]:
+    ) -> Iterator[HumanChatObservation]:
         prepared = self._worker_context.prepare(entity_id, text)
         try:
-            accepted, resolved_stored_key = self._submit_human_consequence(
+            accepted, _resolved_stored_key = self._submit_human_consequence(
                 stored_key,
                 prepared.model_text,
+                bind_session_key=bind_session_key,
                 image_paths=image_paths,
             )
         except GatewayRpcError as exc:
@@ -771,18 +805,15 @@ class SharedGateway:
             raise
         if isinstance(accepted, TransportUnknown):
             raise GatewayError(accepted.detail)
-        if on_session_key is not None and resolved_stored_key != stored_key:
-            on_session_key(resolved_stored_key)
         if prepared.receipts:
             self._worker_context.acknowledge(entity_id, prepared.receipts)
-        yield from self._stream_accepted_submission(accepted, resolved_stored_key, kind)
+        yield from self._observe_accepted_human_submission(accepted, role)
 
-    def _stream_accepted_submission(
+    def _observe_accepted_human_submission(
         self,
         accepted: AcceptedSubmission,
-        stored_key: str,
-        kind: str,
-    ) -> Iterator[ChatStreamChunk]:
+        role: str,
+    ) -> Iterator[HumanChatObservation]:
         seen_delta = False
         try:
             while True:
@@ -793,25 +824,21 @@ class SharedGateway:
                     raise GatewayError(str(payload.get("message") or "gateway error event"))
                 activity = normalize_gateway_activity(etype, payload)
                 if activity is not None:
-                    yield ChatStreamChunk(
-                        type="activity", text=activity.label, activity=activity
-                    )
+                    yield activity
                 if etype == "message.delta":
                     delta = str(payload.get("text") or payload.get("delta") or "")
                     if delta:
                         seen_delta = True
-                        yield ChatStreamChunk(type="token", text=delta)
+                        yield HumanChatOutputDelta(delta)
                 if etype == "message.complete":
                     text_out = str(payload.get("text") or "")
                     gw_status = str(payload.get("status") or "complete")
                     if gw_status in ("complete", "interrupted"):
                         if text_out and not seen_delta:
-                            yield ChatStreamChunk(type="token", text=text_out)
-                        yield ChatStreamChunk(
-                            type="done",
-                            reply_text=text_out,
-                            session_key=stored_key,
-                            kind=kind,
+                            yield HumanChatOutputDelta(text_out)
+                        yield HumanChatCompletion(
+                            text_out,
+                            "system" if role == "system" else "assistant",
                         )
                         return
                     raise GatewayError(text_out or "run ended with status=error")

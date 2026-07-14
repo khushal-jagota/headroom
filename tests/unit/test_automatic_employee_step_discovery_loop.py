@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from planner.chat import data as chat_data
 from planner.core import links as core_links
 from planner.core.adapters.registry import build_adapters
 from planner.core.clock import TestClock
@@ -730,6 +731,81 @@ def test_periodic_timer_is_the_backstop_when_no_wake_is_delivered(tmp_path: Path
         _add_to_day(db, ticket_id)
         assert submitted.wait(3.0)
         assert submitted_ids == [ticket_id]
+    finally:
+        loop.stop()
+
+
+def test_periodic_timer_observes_chat_settlement_without_a_wake(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    ticket_id = _new_ticket(db)
+    _add_to_day(db, ticket_id)
+    conn = connect(db)
+    try:
+        turn = chat_data.start_turn(
+            conn,
+            ticket_id,
+            origin="human",
+            mode="message",
+            visible_role="human",
+            visible_text="still chatting",
+            output_role="assistant",
+            phase="thinking",
+            activity_label="Thinking",
+            now=1,
+        )
+    finally:
+        conn.close()
+
+    two_blocked_scans = threading.Event()
+    submitted = threading.Event()
+    submitted_ids: list[str] = []
+    scan_count = 0
+    scan_lock = threading.Lock()
+
+    class RecordingRunner:
+        def try_run_automatic_step(self, submitted_ticket_id: str) -> None:
+            submitted_ids.append(submitted_ticket_id)
+            submitted.set()
+
+    class ObservableLoop(AutomaticEmployeeStepDiscoveryLoop):
+        def poll_once(self) -> list[str]:
+            nonlocal scan_count
+            result = super().poll_once()
+            with scan_lock:
+                scan_count += 1
+                if scan_count >= 2:
+                    two_blocked_scans.set()
+            return result
+
+    loop = ObservableLoop(
+        db,
+        TestClock(FIXED_NOW),
+        RecordingRunner(),  # type: ignore[arg-type]
+        boundary_hour=BOUNDARY_HOUR,
+    )
+    loop.start(0.05)  # type: ignore[arg-type]
+    try:
+        assert two_blocked_scans.wait(3.0)
+        assert submitted_ids == []
+
+        conn = connect(db)
+        try:
+            # This low-level settlement deliberately delivers no eligibility wake.
+            chat_data.settle_chat_turn(
+                conn,
+                turn.id,
+                entity_id=ticket_id,
+                status="complete",
+                reply_text="done",
+                output_role="assistant",
+                error=None,
+                now=2,
+            )
+        finally:
+            conn.close()
+
+        assert submitted.wait(3.0)
+        assert submitted_ids[0] == ticket_id
     finally:
         loop.stop()
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -13,12 +13,16 @@ from fastapi.testclient import TestClient
 
 from planner.chat import data as chat_data
 from planner.chat.contracts import (
+    ChatActivityObservation,
     ChatHistory,
     ChatMessage,
-    ChatStreamChunk,
     GatewayStatus,
+    HumanChatCompletion,
+    HumanChatObservation,
+    HumanChatOutputDelta,
 )
 from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
+from planner.core.adapters.base import HumanSessionKeyBinder
 from planner.core.adapters.registry import Adapters, build_adapters
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -320,26 +324,19 @@ def test_chat_state_shows_active_turn_while_gateway_is_running(tmp_path: Path) -
         def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
             return ChatHistory(messages=(), session_key=session_key)
 
-        def stream(
+        def run_human_turn(
             self,
             session_key: str | None,
             entity_id: str,
             text: str,
             mode: str,
-            on_session_key: Callable[[str], None] | None = None,
+            bind_session_key: HumanSessionKeyBinder,
             image_paths: tuple[Path, ...] = (),
-        ) -> Iterator[ChatStreamChunk]:
-            if on_session_key is not None:
-                on_session_key("blocked-session")
-            yield ChatStreamChunk(type="session", session_key="blocked-session")
-            yield ChatStreamChunk(type="token", text="partial")
+        ) -> Iterator[HumanChatObservation]:
+            bind_session_key("blocked-session")
+            yield HumanChatOutputDelta("partial")
             release.wait(2.0)
-            yield ChatStreamChunk(
-                type="done",
-                reply_text="partial done",
-                session_key="blocked-session",
-                kind="assistant",
-            )
+            yield HumanChatCompletion("partial done", "assistant")
 
         def catalog(self):  # noqa: ANN201
             raise AssertionError("unused")
@@ -384,26 +381,23 @@ def test_chat_state_shows_active_turn_activity_label(tmp_path: Path) -> None:
         def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
             return ChatHistory(messages=(), session_key=session_key)
 
-        def stream(
+        def run_human_turn(
             self,
             session_key: str | None,
             entity_id: str,
             text: str,
             mode: str,
-            on_session_key: Callable[[str], None] | None = None,
+            bind_session_key: HumanSessionKeyBinder,
             image_paths: tuple[Path, ...] = (),
-        ) -> Iterator[ChatStreamChunk]:
-            if on_session_key is not None:
-                on_session_key("activity-session")
-            yield ChatStreamChunk(type="session", session_key="activity-session")
-            yield ChatStreamChunk(type="activity", text="Checking workspace tools")
-            release.wait(2.0)
-            yield ChatStreamChunk(
-                type="done",
-                reply_text="done",
-                session_key="activity-session",
-                kind="assistant",
+        ) -> Iterator[HumanChatObservation]:
+            bind_session_key("activity-session")
+            yield ChatActivityObservation(
+                category="tool",
+                label="Checking workspace tools",
+                lifecycle_state="running",
             )
+            release.wait(2.0)
+            yield HumanChatCompletion("done", "assistant")
 
         def catalog(self):  # noqa: ANN201
             raise AssertionError("unused")
@@ -752,15 +746,15 @@ def test_human_turn_lost_first_write_race_adopts_winner_key(tmp_path: Path) -> N
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def stream(
+        def run_human_turn(
             self,
             session_key: str | None,
             entity_id: str,
             text: str,
             mode: str,
-            on_session_key: Callable[[str], None] | None = None,
+            bind_session_key: HumanSessionKeyBinder,
             image_paths: tuple[Path, ...] = (),
-        ) -> Iterator[ChatStreamChunk]:
+        ) -> Iterator[HumanChatObservation]:
             other = connect(str(db_path))
             try:
                 other.execute("BEGIN IMMEDIATE")
@@ -771,15 +765,8 @@ def test_human_turn_lost_first_write_race_adopts_winner_key(tmp_path: Path) -> N
                 other.execute("COMMIT")
             finally:
                 other.close()
-            if on_session_key is not None:
-                on_session_key("loser-key")
-            yield ChatStreamChunk(type="session", session_key="loser-key")
-            yield ChatStreamChunk(
-                type="done",
-                reply_text="echo: x",
-                session_key="loser-key",
-                kind="assistant",
-            )
+            bind_session_key("loser-key")
+            yield HumanChatCompletion("echo: x", "assistant")
 
     _replace_gateway(app, RacingGateway())
     with TestClient(app) as client:
@@ -791,59 +778,6 @@ def test_human_turn_lost_first_write_race_adopts_winner_key(tmp_path: Path) -> N
 
     assert _stored_key(db_path, "tickets", tid) == "winner-key"
     assert _latest_turn(db_path, tid)["session_key"] == "winner-key"
-    assert _events(db_path, tid, "chat_session_created") == []
-
-
-def test_human_turn_rejects_if_worker_claims_before_first_prompt(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-    tid = _ticket(db_path)
-
-    class WorkerClaimsGateway:
-        prompted = False
-
-        def status(self) -> GatewayStatus:
-            return GatewayStatus(available=True)
-
-        def stream(
-            self,
-            session_key: str | None,
-            entity_id: str,
-            text: str,
-            mode: str,
-            on_session_key: Callable[[str], None] | None = None,
-            image_paths: tuple[Path, ...] = (),
-        ) -> Iterator[ChatStreamChunk]:
-            other = connect(str(db_path))
-            try:
-                other.execute(
-                    "UPDATE tickets SET ticket_status = ? WHERE id = ?",
-                    (TicketStatus.agent_running_step.value, entity_id),
-                )
-            finally:
-                other.close()
-            if on_session_key is not None:
-                on_session_key("human-key")
-            self.prompted = True
-            yield ChatStreamChunk(type="session", session_key="human-key")
-            yield ChatStreamChunk(
-                type="done",
-                reply_text="echo: x",
-                session_key="human-key",
-                kind="assistant",
-            )
-
-    gateway = WorkerClaimsGateway()
-    _replace_gateway(app, gateway)
-    with TestClient(app) as client:
-        response = client.post(
-            f"/api/chat/{tid}/turns", json={"text": "x", "mode": "message"}
-        )
-        assert response.status_code == 200
-        _wait_for_settled(client, tid)
-
-    assert _latest_turn(db_path, tid)["status"] == "errored"
-    assert gateway.prompted is False
-    assert _stored_key(db_path, "tickets", tid) is None
     assert _events(db_path, tid, "chat_session_created") == []
 
 
@@ -868,25 +802,18 @@ def test_human_turn_stale_session_remints_and_repersists(tmp_path: Path) -> None
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def stream(
+        def run_human_turn(
             self,
             session_key: str | None,
             entity_id: str,
             text: str,
             mode: str,
-            on_session_key: Callable[[str], None] | None = None,
+            bind_session_key: HumanSessionKeyBinder,
             image_paths: tuple[Path, ...] = (),
-        ) -> Iterator[ChatStreamChunk]:
+        ) -> Iterator[HumanChatObservation]:
             assert session_key == "stale-key"  # the stale key is passed through
-            if on_session_key is not None:
-                on_session_key("fresh-key")
-            yield ChatStreamChunk(type="session", session_key="fresh-key")
-            yield ChatStreamChunk(
-                type="done",
-                reply_text="echo: x",
-                session_key="fresh-key",
-                kind="assistant",
-            )
+            bind_session_key("fresh-key")
+            yield HumanChatCompletion("echo: x", "assistant")
 
     _replace_gateway(app, ReMintGateway())
     with TestClient(app) as client:
@@ -948,15 +875,15 @@ def test_human_turn_gateway_busy_settles_failed(tmp_path: Path) -> None:
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def stream(
+        def run_human_turn(
             self,
             session_key: str | None,
             entity_id: str,
             text: str,
             mode: str,
-            on_session_key: Callable[[str], None] | None = None,
+            bind_session_key: HumanSessionKeyBinder,
             image_paths: tuple[Path, ...] = (),
-        ) -> Iterator[ChatStreamChunk]:
+        ) -> Iterator[HumanChatObservation]:
             raise PlannerError(
                 ErrorCode.already_running,
                 "an agent is already running on this ticket",

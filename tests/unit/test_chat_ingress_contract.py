@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from planner.chat.contracts import ChatStreamChunk
+from planner.chat.contracts import HumanChatCompletion, HumanChatOutputDelta
 from planner.core.adapters.base import GatewayAdapter
 from planner.core.adapters.registry import build_adapters
 from planner.core.clock import build_clock
@@ -110,27 +110,24 @@ def test_retired_chat_services_results_and_adapter_methods_are_absent() -> None:
         ("src/planner/minds/shared_gateway.py", "SharedGateway"),
     )
     for path, class_name in implementations:
-        assert {"send", "run_command"}.isdisjoint(_class_methods(path, class_name))
+        assert {"send", "stream", "run_command"}.isdisjoint(
+            _class_methods(path, class_name)
+        )
+        assert "run_human_turn" in _class_methods(path, class_name)
 
 
 def test_surviving_gateway_observation_contract_is_exact() -> None:
-    assert list(inspect.signature(GatewayAdapter.stream).parameters) == [
+    assert list(inspect.signature(GatewayAdapter.run_human_turn).parameters) == [
         "self",
         "session_key",
         "entity_id",
         "text",
         "mode",
-        "on_session_key",
+        "bind_session_key",
         "image_paths",
     ]
-    assert [field.name for field in fields(ChatStreamChunk)] == [
-        "type",
-        "text",
-        "reply_text",
-        "session_key",
-        "kind",
-        "activity",
-    ]
+    assert [field.name for field in fields(HumanChatOutputDelta)] == ["text"]
+    assert [field.name for field in fields(HumanChatCompletion)] == ["text", "role"]
 
 
 def test_http_sse_browser_helper_and_live_documentation_are_absent() -> None:

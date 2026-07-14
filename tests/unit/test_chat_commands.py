@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import asdict
 from pathlib import Path
 from sqlite3 import Connection
 
 from fastapi.testclient import TestClient
 
-from planner.chat.contracts import ChatStreamChunk, GatewayStatus
+from planner.chat.contracts import (
+    GatewayStatus,
+    HumanChatCompletion,
+    HumanChatObservation,
+)
+from planner.core.adapters.base import HumanSessionKeyBinder
 from planner.core.adapters.fakes import CANNED_CATALOG, EchoGatewayAdapter
 from planner.core.adapters.registry import Adapters, build_adapters
 from planner.core.clock import build_clock
@@ -288,15 +293,15 @@ def test_command_lost_race_adopts_winner_key_no_event(tmp_path: Path) -> None:
     tid = _ticket(db_path)
 
     class RacingGateway:
-        def stream(
+        def run_human_turn(
             self,
             session_key: str | None,
             entity_id: str,
             text: str,
             mode: str,
-            on_session_key: Callable[[str], None] | None = None,
+            bind_session_key: HumanSessionKeyBinder,
             image_paths: tuple[Path, ...] = (),
-        ) -> Iterator[ChatStreamChunk]:
+        ) -> Iterator[HumanChatObservation]:
             other = connect(str(db_path))
             try:
                 other.execute("BEGIN IMMEDIATE")
@@ -307,15 +312,8 @@ def test_command_lost_race_adopts_winner_key_no_event(tmp_path: Path) -> None:
                 other.execute("COMMIT")
             finally:
                 other.close()
-            if on_session_key is not None:
-                on_session_key("loser-key")
-            yield ChatStreamChunk(type="session", session_key="loser-key")
-            yield ChatStreamChunk(
-                type="done",
-                reply_text="skill loaded",
-                session_key="loser-key",
-                kind="assistant",
-            )
+            bind_session_key("loser-key")
+            yield HumanChatCompletion("skill loaded", "assistant")
 
     app.state.adapters = Adapters(gateway=RacingGateway())  # type: ignore[arg-type]
     with TestClient(app) as client:
@@ -385,25 +383,18 @@ def test_command_rotated_key_remints_and_repersists(tmp_path: Path) -> None:
         """Resumes the stored key and returns the rotated continuation tip — as the real
         adapter does on the message after a /compress (session.resume follows the chain)."""
 
-        def stream(
+        def run_human_turn(
             self,
             session_key: str | None,
             entity_id: str,
             text: str,
             mode: str,
-            on_session_key: Callable[[str], None] | None = None,
+            bind_session_key: HumanSessionKeyBinder,
             image_paths: tuple[Path, ...] = (),
-        ) -> Iterator[ChatStreamChunk]:
+        ) -> Iterator[HumanChatObservation]:
             assert session_key == "pre-compress"  # the stale key is passed through
-            if on_session_key is not None:
-                on_session_key("post-compress")
-            yield ChatStreamChunk(type="session", session_key="post-compress")
-            yield ChatStreamChunk(
-                type="done",
-                reply_text="exec: /status",
-                session_key="post-compress",
-                kind="system",
-            )
+            bind_session_key("post-compress")
+            yield HumanChatCompletion("exec: /status", "system")
 
     app.state.adapters = Adapters(gateway=RotatedKeyGateway())  # type: ignore[arg-type]
     with TestClient(app) as client:
@@ -427,15 +418,15 @@ def test_command_busy_is_409_already_running(tmp_path: Path) -> None:
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def stream(
+        def run_human_turn(
             self,
             session_key: str | None,
             entity_id: str,
             text: str,
             mode: str,
-            on_session_key: Callable[[str], None] | None = None,
+            bind_session_key: HumanSessionKeyBinder,
             image_paths: tuple[Path, ...] = (),
-        ) -> Iterator[ChatStreamChunk]:
+        ) -> Iterator[HumanChatObservation]:
             raise PlannerError(
                 ErrorCode.already_running,
                 "an agent is already running on this ticket",

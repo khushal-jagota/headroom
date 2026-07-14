@@ -15,9 +15,11 @@ import planner.minds as minds
 from planner.chat.contracts import (
     ChatActivityObservation,
     ChatHistory,
-    ChatStreamChunk,
     CommandCatalog,
     GatewayStatus,
+    HumanChatCompletion,
+    HumanChatObservation,
+    HumanChatOutputDelta,
 )
 from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
 from planner.core.errors import ErrorCode, PlannerError
@@ -49,9 +51,34 @@ from planner.worker_context.contracts import (
 
 LIVE_SID = "ab12cd34"
 OTHER_SID = "ff00ff00"
+WINNER_SID = "ee11ee11"
 STORED_KEY = "20260706_120000_abcdef"
 OTHER_KEY = "20260706_120000_999999"
+WINNER_KEY = "20260706_120000_winner"
 HERMES_PY = "/x/hermes-agent/venv/bin/python"
+
+
+def _identity_binder(session_key: str) -> str:
+    return session_key
+
+
+def human_observations(
+    gateway: Any,
+    session_key: str | None,
+    entity_id: str,
+    text: str,
+    mode: str,
+    bind_session_key=_identity_binder,
+    image_paths: tuple[Path, ...] = (),
+):
+    return gateway.run_human_turn(
+        session_key,
+        entity_id,
+        text,
+        mode,
+        bind_session_key,
+        image_paths,
+    )
 
 
 def create_reply(sid: str = LIVE_SID, key: str = STORED_KEY) -> Reply:
@@ -175,23 +202,18 @@ class RecordingChatGateway:
         self.calls.append(("history", entity_id))
         return ChatHistory(messages=(), session_key=session_key)
 
-    def stream(
+    def run_human_turn(
         self,
         session_key: str | None,
         entity_id: str,
         text: str,
         mode: str,
-        on_session_key=None,
+        bind_session_key=_identity_binder,
         image_paths: tuple[Path, ...] = (),
     ):
-        self.calls.append(("stream", entity_id))
-        yield ChatStreamChunk(type="session", session_key=f"{self.name}-key")
-        yield ChatStreamChunk(
-            type="done",
-            reply_text=f"{self.name}: {text}",
-            session_key=f"{self.name}-key",
-            kind="assistant",
-        )
+        self.calls.append(("run_human_turn", entity_id))
+        bind_session_key(f"{self.name}-key")
+        yield HumanChatCompletion(f"{self.name}: {text}", "assistant")
 
     def catalog(self) -> CommandCatalog:
         self.calls.append(("catalog", ""))
@@ -209,14 +231,18 @@ def test_entity_routing_gateway_streams_each_entity_through_its_role_gateway() -
         {CHIEF_OF_STAFF_ENTITY_ID: chief},  # type: ignore[dict-item]
     )
 
-    chief_chunks = list(gateway.stream(None, CHIEF_OF_STAFF_ENTITY_ID, "hello", "message"))
-    ticket_chunks = list(gateway.stream(None, "t_demo", "hello", "message"))
+    chief_chunks = list(
+        human_observations(
+            gateway, None, CHIEF_OF_STAFF_ENTITY_ID, "hello", "message"
+        )
+    )
+    ticket_chunks = list(human_observations(gateway, None, "t_demo", "hello", "message"))
     gateway.status_for_entity(CHIEF_OF_STAFF_ENTITY_ID)
 
-    assert chief_chunks[-1].reply_text == "chief: hello"
-    assert ticket_chunks[-1].reply_text == "worker: hello"
-    assert chief.calls == [("stream", CHIEF_OF_STAFF_ENTITY_ID), ("status", "")]
-    assert worker.calls == [("stream", "t_demo")]
+    assert chief_chunks[-1] == HumanChatCompletion("chief: hello", "assistant")
+    assert ticket_chunks[-1] == HumanChatCompletion("worker: hello", "assistant")
+    assert chief.calls == [("run_human_turn", CHIEF_OF_STAFF_ENTITY_ID), ("status", "")]
+    assert worker.calls == [("run_human_turn", "t_demo")]
 
 
 def test_shared_gateway_streams_structured_display_safe_activity() -> None:
@@ -256,11 +282,11 @@ def test_shared_gateway_streams_structured_display_safe_activity() -> None:
     )
     gateway = shared(fake)
     try:
-        chunks = list(gateway.stream(None, "t_demo", "hello", "message"))
+        chunks = list(human_observations(gateway, None, "t_demo", "hello", "message"))
     finally:
         gateway.shutdown()
 
-    activities = [chunk.activity for chunk in chunks if chunk.type == "activity"]
+    activities = [chunk for chunk in chunks if isinstance(chunk, ChatActivityObservation)]
     assert activities == [
         ChatActivityObservation(
             category="thinking",
@@ -311,9 +337,9 @@ def test_shared_gateway_routes_tool_complete_alias_as_first_activity() -> None:
     gateway = shared(fake)
     try:
         activities = [
-            chunk.activity
-            for chunk in gateway.stream(None, "t_demo", "hello", "message")
-            if chunk.type == "activity"
+            chunk
+            for chunk in human_observations(gateway, None, "t_demo", "hello", "message")
+            if isinstance(chunk, ChatActivityObservation)
         ]
     finally:
         gateway.shutdown()
@@ -708,8 +734,8 @@ def test_shared_gateway_delivers_and_acknowledges_context_for_human_message_stre
     )
     gateway = shared(fake, context)
     try:
-        first = list(gateway.stream(None, "t_sync", "original sync", "message"))
-        streamed = list(gateway.stream(None, "t_stream", "original stream", "message"))
+        first = list(human_observations(gateway, None, "t_sync", "original sync", "message"))
+        streamed = list(human_observations(gateway, None, "t_stream", "original stream", "message"))
     finally:
         gateway.shutdown()
 
@@ -724,8 +750,8 @@ def test_shared_gateway_delivers_and_acknowledges_context_for_human_message_stre
         "original stream\n\n[Pending worker context]\n- Ticket changed."
         "\n[/Pending worker context]",
     ]
-    assert first[-1].reply_text == "sync reply"
-    assert streamed[-1].reply_text == "stream reply"
+    assert first[-1].text == "sync reply"
+    assert streamed[-1].text == "stream reply"
     assert context.prepare_calls == [
         ("t_sync", "original sync"),
         ("t_stream", "original stream"),
@@ -764,11 +790,11 @@ def test_human_input_paths_ack_exact_context_after_native_acceptance(
 
     try:
         if input_path == "command":
-            chunks = list(gateway.stream(None, "t_demo", "/skill", "command"))
+            chunks = list(human_observations(gateway, None, "t_demo", "/skill", "command"))
             expected_visible_model_text = "command model text"
         elif input_path == "image":
             chunks = list(
-                gateway.stream(
+                human_observations(gateway,
                     None,
                     "t_demo",
                     "describe it",
@@ -778,12 +804,12 @@ def test_human_input_paths_ack_exact_context_after_native_acceptance(
             )
             expected_visible_model_text = "describe it"
         else:
-            chunks = list(gateway.stream(None, "t_demo", "human text", "message"))
+            chunks = list(human_observations(gateway, None, "t_demo", "human text", "message"))
             expected_visible_model_text = "human text"
     finally:
         gateway.shutdown()
 
-    assert chunks[-1].reply_text == "reply"
+    assert chunks[-1].text == "reply"
     submit = next(frame for frame in fake.sent if frame["method"] == "prompt.submit")
     assert submit["params"]["text"] == (
         f"{expected_visible_model_text}\n\n[Pending worker context]\n"
@@ -821,7 +847,7 @@ def test_unknown_human_submit_retains_context_without_retry_or_image_detach(
     try:
         with pytest.raises(PlannerError) as caught:
             list(
-                gateway.stream(
+                human_observations(gateway,
                     None,
                     "t_demo",
                     "human text",
@@ -863,9 +889,9 @@ def test_shared_gateway_delivers_context_for_model_backed_command_streams_only()
     )
     gateway = shared(fake, context)
     try:
-        first = list(gateway.stream(None, "t_sync_command", "/skill", "command"))
-        streamed = list(gateway.stream(None, "t_stream_command", "/skill", "command"))
-        pure = list(gateway.stream(None, "t_pure_command", "/status", "command"))
+        first = list(human_observations(gateway, None, "t_sync_command", "/skill", "command"))
+        streamed = list(human_observations(gateway, None, "t_stream_command", "/skill", "command"))
+        pure = list(human_observations(gateway, None, "t_pure_command", "/status", "command"))
     finally:
         gateway.shutdown()
 
@@ -880,9 +906,9 @@ def test_shared_gateway_delivers_context_for_model_backed_command_streams_only()
         "stream command prompt\n\n[Pending worker context]\n- Ticket changed."
         "\n[/Pending worker context]",
     ]
-    assert first[-1].kind == "assistant"
-    assert streamed[-1].kind == "assistant"
-    assert pure[-1].reply_text == "pure output"
+    assert first[-1].role == "assistant"
+    assert streamed[-1].role == "assistant"
+    assert pure[-1].text == "pure output"
     assert context.prepare_calls == [
         ("t_sync_command", "sync command prompt"),
         ("t_stream_command", "stream command prompt"),
@@ -905,40 +931,35 @@ def test_literal_new_stream_starts_one_bound_fresh_session_reused_by_next_messag
     gateway = shared(fake)
     callback_keys: list[str] = []
 
-    def record_bound_key(session_key: str) -> None:
+    def record_bound_key(session_key: str) -> str:
         live_session = gateway.live_session(session_key)
         assert live_session is not None
         assert live_session.live_session_id == OTHER_SID
         callback_keys.append(session_key)
+        return session_key
 
     try:
         chunks = list(
-            gateway.stream(
+            human_observations(gateway,
                 prior_session_key,
                 "t_demo",
                 "/new",
                 "command",
-                on_session_key=record_bound_key,
+                bind_session_key=record_bound_key,
             )
         )
         next_chunks = list(
-            gateway.stream(OTHER_KEY, "t_demo", "hello new session", "message")
+            human_observations(gateway, OTHER_KEY, "t_demo", "hello new session", "message")
         )
     finally:
         gateway.shutdown()
 
     assert chunks == [
-        ChatStreamChunk(type="session", session_key=OTHER_KEY),
-        ChatStreamChunk(type="token", text="New session started."),
-        ChatStreamChunk(
-            type="done",
-            reply_text="New session started.",
-            session_key=OTHER_KEY,
-            kind="system",
-        ),
+        HumanChatOutputDelta("New session started."),
+        HumanChatCompletion("New session started.", "system"),
     ]
     assert callback_keys == [OTHER_KEY]
-    assert next_chunks[-1].reply_text == "reply from new session"
+    assert next_chunks[-1].text == "reply from new session"
     assert fake.sent_methods() == ["session.create", "prompt.submit"]
     assert fake.sent[0]["params"] == {"source": CHAT_SOURCE, "cols": SESSION_COLS}
     assert fake.sent[1]["params"] == {
@@ -957,13 +978,8 @@ def test_new_with_arguments_keeps_generic_command_stream_path() -> None:
     gateway = shared(fake)
 
     try:
-        chunks = list(gateway.stream(None, "t_demo", "/new title", "command"))
-        assert chunks[-1] == ChatStreamChunk(
-            type="done",
-            reply_text="generic output",
-            session_key=STORED_KEY,
-            kind="system",
-        )
+        chunks = list(human_observations(gateway, None, "t_demo", "/new title", "command"))
+        assert chunks[-1] == HumanChatCompletion("generic output", "system")
     finally:
         gateway.shutdown()
 
@@ -1504,7 +1520,7 @@ def test_human_stop_then_immediate_send_ignores_old_interrupted_completion(
     first_chunks: list[Any] = []
     first = threading.Thread(
         target=lambda: first_chunks.extend(
-            gateway.stream(None, "t_demo", "first", "message")
+            human_observations(gateway, None, "t_demo", "first", "message")
         )
     )
 
@@ -1513,18 +1529,20 @@ def test_human_stop_then_immediate_send_ignores_old_interrupted_completion(
         assert fake.wait_sent(2, 5.0)
         gateway.interrupt(STORED_KEY, "t_demo")
         second_chunks = list(
-            gateway.stream(STORED_KEY, "t_demo", "second", "message")
+            human_observations(gateway, STORED_KEY, "t_demo", "second", "message")
         )
         first.join(5.0)
     finally:
         gateway.shutdown()
 
     assert not first.is_alive()
-    assert first_chunks[-1].type == "done"
-    assert first_chunks[-1].reply_text == "old partial"
-    assert second_chunks[-1].type == "done"
-    assert second_chunks[-1].reply_text == "new reply"
-    assert [chunk.text for chunk in second_chunks if chunk.type == "token"] == ["new"]
+    assert isinstance(first_chunks[-1], HumanChatCompletion)
+    assert first_chunks[-1].text == "old partial"
+    assert isinstance(second_chunks[-1], HumanChatCompletion)
+    assert second_chunks[-1].text == "new reply"
+    assert [
+        chunk.text for chunk in second_chunks if isinstance(chunk, HumanChatOutputDelta)
+    ] == ["new"]
     assert fake.sent_methods() == [
         "session.create",
         "prompt.submit",
@@ -1547,14 +1565,13 @@ def test_completed_released_human_session_reopens_through_resume() -> None:
     gateway = shared(fake)
 
     try:
-        first = list(gateway.stream(None, "t_demo", "first", "message"))
-        second = list(gateway.stream(STORED_KEY, "t_demo", "second", "message"))
+        first = list(human_observations(gateway, None, "t_demo", "first", "message"))
+        second = list(human_observations(gateway, STORED_KEY, "t_demo", "second", "message"))
     finally:
         gateway.shutdown()
 
-    assert first[-1].reply_text == "first reply"
-    assert second[-1].reply_text == "second reply"
-    assert second[-1].session_key == STORED_KEY
+    assert first[-1].text == "first reply"
+    assert second[-1].text == "second reply"
     assert fake.sent_methods() == [
         "session.create",
         "prompt.submit",
@@ -1635,7 +1652,7 @@ def test_role_gateway_child_death_does_not_stop_sibling_role() -> None:
         worker_fake.kill()
         worker_call.join(5.0)
         chief_result = list(
-            chief.stream(None, "chief-of-staff", "still there?", "message")
+            human_observations(chief, None, "chief-of-staff", "still there?", "message")
         )
     finally:
         worker.shutdown()
@@ -1645,7 +1662,7 @@ def test_role_gateway_child_death_does_not_stop_sibling_role() -> None:
     assert len(worker_results) == 1
     assert worker_results[0].status == "errored"
     assert worker_fake.sent_methods().count("prompt.submit") == 1
-    assert chief_result[-1].reply_text == "chief reply"
+    assert chief_result[-1].text == "chief reply"
     assert chief_fake.sent_methods() == ["session.create", "prompt.submit"]
 
 
@@ -1657,7 +1674,7 @@ def test_new_gateway_resumes_stored_session_without_replaying_prior_input() -> N
         }
     )
     first_gateway = shared(first_fake)
-    first_result = list(first_gateway.stream(None, "t_demo", "first input", "message"))
+    list(human_observations(first_gateway, None, "t_demo", "first input", "message"))
     first_gateway.shutdown()
 
     second_fake = FakeGateway(
@@ -1668,8 +1685,8 @@ def test_new_gateway_resumes_stored_session_without_replaying_prior_input() -> N
     )
     second_gateway = shared(second_fake)
     try:
-        second_result = list(second_gateway.stream(
-            first_result[-1].session_key,
+        second_result = list(human_observations(second_gateway,
+            STORED_KEY,
             "t_demo",
             "second input",
             "message",
@@ -1677,7 +1694,7 @@ def test_new_gateway_resumes_stored_session_without_replaying_prior_input() -> N
     finally:
         second_gateway.shutdown()
 
-    assert second_result[-1].reply_text == "second reply"
+    assert second_result[-1].text == "second reply"
     assert second_fake.sent_methods() == ["session.resume", "prompt.submit"]
     assert [
         frame["params"]["text"]
@@ -1742,19 +1759,74 @@ def test_two_employee_sessions_share_one_child_without_cross_settlement() -> Non
     assert fake.sent_methods().count("prompt.submit") == 2
 
 
-@pytest.mark.parametrize("mode", ["message", "command"])
-def test_stream_retry_persists_rotated_key_after_reused_session_detaches(
-    mode: str,
+def test_initial_binding_winner_is_the_actual_hermes_session() -> None:
+    image_path = Path("/tmp/winner-chat-image.png")
+    fake = FakeGateway(
+        {
+            "session.create": [create_reply(LIVE_SID, STORED_KEY)],
+            "session.resume": [resume_reply(WINNER_SID, WINNER_KEY)],
+            "image.attach": [Reply(result={"attached": True})],
+            "prompt.submit": [
+                submit_reply(complete_ev(WINNER_SID, text="winner reply"))
+            ],
+        }
+    )
+    gateway = shared(fake)
+    callback_keys: list[str] = []
+
+    def choose_database_winner(candidate: str) -> str:
+        callback_keys.append(candidate)
+        return WINNER_KEY if candidate == STORED_KEY else candidate
+
+    try:
+        observations = list(
+            human_observations(
+                gateway,
+                None,
+                "t_demo",
+                "describe",
+                "message",
+                bind_session_key=choose_database_winner,
+                image_paths=(image_path,),
+            )
+        )
+    finally:
+        gateway.shutdown()
+
+    assert observations[-1] == HumanChatCompletion("winner reply", "assistant")
+    assert callback_keys == [STORED_KEY, WINNER_KEY, WINNER_KEY]
+    assert fake.sent_methods() == [
+        "session.create",
+        "session.resume",
+        "image.attach",
+        "prompt.submit",
+    ]
+    assert fake.sent[2]["params"] == {
+        "session_id": WINNER_SID,
+        "path": str(image_path),
+    }
+    assert fake.sent[3]["params"] == {
+        "session_id": WINNER_SID,
+        "text": "describe",
+    }
+
+
+@pytest.mark.parametrize("operation", ["message", "image", "command", "alias"])
+def test_dormant_retry_uses_database_winner_as_actual_hermes_session(
+    operation: str,
 ) -> None:
     script: dict[str, list[Reply]] = {
         "session.create": [create_reply(LIVE_SID, STORED_KEY)],
-        "session.resume": [resume_reply(OTHER_SID, OTHER_KEY)],
+        "session.resume": [
+            resume_reply(OTHER_SID, OTHER_KEY),
+            resume_reply(WINNER_SID, WINNER_KEY),
+        ],
         "prompt.submit": [
             Reply(
                 result={"status": "streaming"},
                 events_after=(ev("message.start", LIVE_SID),),
             ),
-            submit_reply(complete_ev(OTHER_SID, text="second reply")),
+            submit_reply(complete_ev(WINNER_SID, text="second reply")),
         ],
         "session.interrupt": [
             Reply(
@@ -1765,56 +1837,105 @@ def test_stream_retry_persists_rotated_key_after_reused_session_detaches(
             )
         ],
     }
-    if mode == "command":
+    if operation == "command":
         script["slash.exec"] = [
             Reply(result={"type": "skill", "message": "second command"})
         ]
+    elif operation == "alias":
+        script["slash.exec"] = [
+            Reply(result={"type": "alias", "target": "/skill base"})
+        ]
+        script["command.dispatch"] = [
+            Reply(result={"type": "skill", "message": "second alias command"})
+        ]
+    elif operation == "image":
+        script["image.attach"] = [Reply(result={"attached": True})]
     fake = FakeGateway(script)
     gateway = shared(fake)
     first_chunks: list[Any] = []
     second_session_keys: list[str] = []
+    initial_binding_seen = threading.Event()
+    allow_second_operation = threading.Event()
+
+    def bind_second_session(candidate: str) -> str:
+        second_session_keys.append(candidate)
+        if candidate == STORED_KEY and len(second_session_keys) == 1:
+            initial_binding_seen.set()
+            assert allow_second_operation.wait(5.0)
+        return WINNER_KEY if candidate == OTHER_KEY else candidate
+
     first = threading.Thread(
         target=lambda: first_chunks.extend(
-            gateway.stream(None, "t_demo", "first", "message")
+            human_observations(gateway, None, "t_demo", "first", "message")
+        )
+    )
+    second_chunks: list[HumanChatObservation] = []
+    second = threading.Thread(
+        target=lambda: second_chunks.extend(
+            human_observations(
+                gateway,
+                STORED_KEY,
+                "t_demo",
+                (
+                    "/skill"
+                    if operation == "command"
+                    else "/alias arg"
+                    if operation == "alias"
+                    else "second"
+                ),
+                "command" if operation in ("command", "alias") else "message",
+                bind_session_key=bind_second_session,
+                image_paths=(Path("/tmp/dormant-winner.png"),)
+                if operation == "image"
+                else (),
+            )
         )
     )
 
     try:
         first.start()
         assert fake.wait_sent(2, 5.0)
-        second = gateway.stream(
-            STORED_KEY,
-            "t_demo",
-            "/skill" if mode == "command" else "second",
-            mode,
-            on_session_key=second_session_keys.append,
-        )
-        session_chunk = next(second)
-        assert session_chunk.type == "session"
-
+        second.start()
+        assert initial_binding_seen.wait(5.0)
         gateway.interrupt(STORED_KEY, "t_demo")
         first.join(5.0)
         assert not first.is_alive()
         assert gateway.live_session(STORED_KEY) is None
-        second_chunks = list(second)
+        allow_second_operation.set()
+        second.join(5.0)
     finally:
+        allow_second_operation.set()
         gateway.shutdown()
 
-    assert first_chunks[-1].reply_text == "first partial"
-    assert second_chunks[-1].reply_text == "second reply"
-    assert second_chunks[-1].session_key == OTHER_KEY
-    assert second_session_keys == [STORED_KEY, OTHER_KEY]
+    assert first_chunks[-1].text == "first partial"
+    assert not second.is_alive()
+    assert second_chunks[-1].text == "second reply"
+    assert second_session_keys == [STORED_KEY, OTHER_KEY, WINNER_KEY]
     expected_methods = [
         "session.create",
         "prompt.submit",
         "session.interrupt",
         "session.resume",
+        "session.resume",
     ]
-    if mode == "command":
+    if operation in ("command", "alias"):
         expected_methods.append("slash.exec")
+    if operation == "alias":
+        expected_methods.append("command.dispatch")
+    if operation == "image":
+        expected_methods.append("image.attach")
     expected_methods.append("prompt.submit")
     assert fake.sent_methods() == expected_methods
-    assert fake.sent[-1]["params"]["session_id"] == OTHER_SID
+    human_write_methods = {"slash.exec", "command.dispatch", "image.attach", "prompt.submit"}
+    second_write_frames = [
+        frame
+        for frame in fake.sent[5:]
+        if frame["method"] in human_write_methods
+    ]
+    assert second_write_frames
+    assert {frame["params"]["session_id"] for frame in second_write_frames} == {
+        WINNER_SID
+    }
 
 
 def test_stream_retry_persists_rotated_key_after_prepare_time_detach() -> None:
@@ -1851,21 +1972,25 @@ def test_stream_retry_persists_rotated_key_after_prepare_time_detach() -> None:
     )
     gateway = shared(fake, BlockingSecondPrepareContext())
     first_chunks: list[Any] = []
-    second_results: list[ChatStreamChunk] = []
+    second_results: list[HumanChatObservation] = []
     second_session_keys: list[str] = []
+
+    def bind_second_session(candidate: str) -> str:
+        second_session_keys.append(candidate)
+        return candidate
     first = threading.Thread(
         target=lambda: first_chunks.extend(
-            gateway.stream(None, "t_demo", "first", "message")
+            human_observations(gateway, None, "t_demo", "first", "message")
         )
     )
     second = threading.Thread(
         target=lambda: second_results.extend(
-            gateway.stream(
+            human_observations(gateway,
                 STORED_KEY,
                 "t_demo",
                 "second",
                 "message",
-                on_session_key=second_session_keys.append,
+                bind_session_key=bind_second_session,
             )
         )
     )
@@ -1886,12 +2011,7 @@ def test_stream_retry_persists_rotated_key_after_prepare_time_detach() -> None:
         gateway.shutdown()
 
     assert not second.is_alive()
-    assert second_results[-1] == ChatStreamChunk(
-        type="done",
-        reply_text="second reply",
-        session_key=OTHER_KEY,
-        kind="assistant",
-    )
+    assert second_results[-1] == HumanChatCompletion("second reply", "assistant")
     assert second_session_keys == [STORED_KEY, OTHER_KEY]
     assert fake.sent_methods() == [
         "session.create",
@@ -1941,13 +2061,13 @@ def test_model_command_to_derived_prompt_write_is_one_ordered_operation(
 
     def run_command_call() -> None:
         command_results.extend(
-            gateway.stream(None, "t_demo", "/alias arg", "command")
+            human_observations(gateway, None, "t_demo", "/alias arg", "command")
         )
 
     command_thread = threading.Thread(target=run_command_call)
     message_thread = threading.Thread(
         target=lambda: message_results.extend(
-            gateway.stream(STORED_KEY, "t_demo", "human B", "message")
+            human_observations(gateway, STORED_KEY, "t_demo", "human B", "message")
         )
     )
     try:
@@ -1978,7 +2098,7 @@ def test_model_command_to_derived_prompt_write_is_one_ordered_operation(
     ]
     assert prompt_texts == ["command model text", "human B"]
     assert command_results
-    assert message_results[-1].reply_text == "message reply"
+    assert message_results[-1].text == "message reply"
 
 
 def test_shared_gateway_interrupt_maps_live_session_not_found_to_not_found() -> None:
@@ -2010,7 +2130,7 @@ def test_shared_gateway_attaches_images_on_live_session_before_prompt_submit() -
 
     try:
         chunks = list(
-            gateway.stream(
+            human_observations(gateway,
                 STORED_KEY,
                 "t_demo",
                 "describe it",
@@ -2021,7 +2141,7 @@ def test_shared_gateway_attaches_images_on_live_session_before_prompt_submit() -
     finally:
         gateway.shutdown()
 
-    assert chunks[-1].reply_text == "seen"
+    assert chunks[-1].text == "seen"
     assert fake.sent_methods() == [
         "session.resume",
         "image.attach",
@@ -2052,7 +2172,7 @@ def test_shared_gateway_attach_failure_does_not_submit_prompt() -> None:
     try:
         with pytest.raises(PlannerError) as caught:
             list(
-                gateway.stream(
+                human_observations(gateway,
                     None,
                     "t_demo",
                     "describe it",
@@ -2101,7 +2221,7 @@ def test_shared_gateway_detaches_image_when_prompt_submit_fails_before_next_turn
     try:
         with pytest.raises(PlannerError) as caught:
             list(
-                gateway.stream(
+                human_observations(gateway,
                     None,
                     "t_demo",
                     "first turn",
@@ -2109,12 +2229,16 @@ def test_shared_gateway_detaches_image_when_prompt_submit_fails_before_next_turn
                     image_paths=image_paths,
                 )
             )
-        next_chunks = list(gateway.stream(STORED_KEY, "t_demo", "next turn", "message"))
+        next_chunks = list(
+            human_observations(
+                gateway, STORED_KEY, "t_demo", "next turn", "message"
+            )
+        )
     finally:
         gateway.shutdown()
 
     assert caught.value.code == ErrorCode.gateway_offline
-    assert next_chunks[-1].reply_text == "clean next turn"
+    assert next_chunks[-1].text == "clean next turn"
     assert fake.sent_methods() == [
         "session.create",
         "image.attach",

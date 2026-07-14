@@ -25,7 +25,7 @@ separate runner owns the step itself.
 ## Discovery and execution
 
 One function answers **Automatic Employee-step eligibility**. It returns yes only
-when all seven facts hold:
+when all eight facts hold:
 
 1. The Ticket belongs to the supplied `planning_day_id` — today's day during
    automatic discovery.
@@ -36,6 +36,8 @@ when all seven facts hold:
 6. Its `ceiling` and `at_cap` allow another proposal; the Ticket is not at or beyond
    a stopping ceiling.
 7. It has no active blocker.
+8. It has no running Panels Chat turn, whether that visible turn came from a human or
+   an Employee step.
 
 **AutomaticEmployeeStepDiscoveryLoop** is read-only and advisory. Its database scan
 selects only Tickets that belong to today's day, then it asks the complete eligibility
@@ -52,6 +54,12 @@ durable session, submits one turn, watches the run end, and settles runtime stat
 through the Ticket data writers. Proposals, approvals, takeover, release, and runtime
 start/finish/error use those same writers, so "the code owns the Stage, the worker
 only proposes" holds here too.
+
+Human Chat admission and the final Employee claim both take SQLite's write lock and
+recheck their opposing fact inside the transaction. Therefore only one side can win:
+a running Chat turn makes the Employee claim a no-op, while
+`agent_running_step` makes human admission fail before it creates a visible message or
+turn.
 
 The runner exists whenever the worker gateway exists. Automatic discovery is
 optional: it may be disabled or another process may own the polling lock. Returning
@@ -77,6 +85,11 @@ SQLite and the periodic discovery timer remain canonical. The polling-lock owner
 the automatic run set even
 when its status is `empty`; it does not appear on the Board, and the ticket page
 shows this as `auto not on today`.
+
+Chat completion, Chat error, and Pause deliberately send no eligibility wake. They
+only settle the visible Chat turn. The SQLite-backed periodic discovery timer is the
+canonical backstop: its next scan observes that the eighth factor has cleared and may
+submit the Ticket to the runner.
 
 _Code paths:_ `src/planner/runtime/automatic_employee_step_eligibility.py`,
 `src/planner/runtime/automatic_employee_step_discovery_loop.py`,

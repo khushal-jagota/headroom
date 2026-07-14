@@ -7,16 +7,17 @@ placeholder and never owns a GatewayChild.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from planner.chat.contracts import (
     ChatHistory,
-    ChatStreamChunk,
     CommandCatalog,
     GatewayStatus,
+    HumanChatObservation,
 )
+from planner.core.adapters.base import HumanSessionKeyBinder
 from planner.core.errors import ErrorCode, PlannerError
 
 if TYPE_CHECKING:
@@ -47,15 +48,15 @@ class RealGatewayAdapter:
     def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
         raise self._offline()
 
-    def stream(
+    def run_human_turn(
         self,
         session_key: str | None,
         entity_id: str,
         text: str,
         mode: str,
-        on_session_key: Callable[[str], None] | None = None,
+        bind_session_key: HumanSessionKeyBinder,
         image_paths: tuple[Path, ...] = (),
-    ) -> Iterator[ChatStreamChunk]:
+    ) -> Iterator[HumanChatObservation]:
         raise self._offline()
 
     def interrupt(self, session_key: str, entity_id: str) -> None:

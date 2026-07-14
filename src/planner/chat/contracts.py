@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal, TypeAlias
+
+ChattableEntityKind: TypeAlias = Literal[  # noqa: UP040 -- frozen AD06 declaration
+    "ticket", "day", "agent_chat_session"
+]
 
 
 @dataclass(frozen=True)
@@ -85,15 +90,19 @@ class ChatHistory:
 
 
 @dataclass(frozen=True)
-class ChatStreamChunk:
-    """One normalized gateway observation consumed by the server-owned human turn."""
+class HumanChatOutputDelta:
+    text: str
 
-    type: str                      # "session" | "activity" | "token" | "done"
-    text: str = ""                 # token text, or activity label when type == "activity"
-    reply_text: str = ""           # complete reply when type == "done"
-    session_key: str = ""          # minted/resumed key when type == "session" or "done"
-    kind: str = "assistant"        # "assistant" | "system" when type == "done"
-    activity: ChatActivityObservation | None = None   # structured activity when type == "activity"
+
+@dataclass(frozen=True)
+class HumanChatCompletion:
+    text: str
+    role: Literal["assistant", "system"]
+
+
+HumanChatObservation: TypeAlias = (  # noqa: UP040 -- frozen AD06 declaration
+    ChatActivityObservation | HumanChatOutputDelta | HumanChatCompletion
+)
 
 
 @dataclass(frozen=True)

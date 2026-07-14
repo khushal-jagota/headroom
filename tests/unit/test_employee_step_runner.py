@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from planner.chat import data as chat_data
 from planner.chat import service as chat_service
 from planner.core import links as core_links
 from planner.core.clock import RealClock
@@ -1126,6 +1127,7 @@ def test_spawn_crash_errors_never_stuck_running(tmp_path: Path) -> None:
         "parked_proposal",
         "scope_stop_at_cap",
         "active_blocker",
+        "active_chat_turn",
     ],
 )
 def test_stale_discovery_rechecks_every_eligibility_conjunct_before_side_effects(
@@ -1191,9 +1193,22 @@ def test_stale_discovery_rechecks_every_eligibility_conjunct_before_side_effects
                 actor="human",
                 now=1,
             )
-        else:
+        elif stale_mutation == "active_blocker":
             blocker_id = _new_ticket(db)
             core_links.add_link(conn, blocker_id, tid, LinkKind.blocks, 1)
+        else:
+            chat_data.start_turn(
+                conn,
+                tid,
+                origin="human",
+                mode="message",
+                visible_role="human",
+                visible_text="still chatting",
+                output_role="assistant",
+                phase="thinking",
+                activity_label="Thinking",
+                now=1,
+            )
 
         baseline_ticket = tickets_data.read_ticket(conn, tid)
         baseline_status_events = _status_events(db, tid)

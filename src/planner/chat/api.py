@@ -88,20 +88,7 @@ async def start_chat_turn(
         raise PlannerError(ErrorCode.validation, "text is required")
     if turn_request.image_references and turn_request.mode != "message":
         raise PlannerError(ErrorCode.validation, "images are supported only for messages")
-    clock: Clock = request.app.state.clock
-    adapters: Adapters = request.app.state.adapters
-    conn_factory: Callable[[], sqlite3.Connection] = request.app.state.conn_factory
-    result = service.start_human_turn(
-        conn_factory,
-        adapters.gateway,
-        entity_id,
-        turn_request.text,
-        turn_request.mode,
-        clock.now_unix(),
-        clock.now_unix,
-        image_references=turn_request.image_references,
-        db_path=request.app.state.config.db_path,
-    )
+    result = request.app.state.chat_turn_lifecycle.start_human_turn(entity_id, turn_request)
     return asdict(result)
 
 
@@ -113,18 +100,9 @@ async def start_chief_message(body: dict[str, Any], request: Request) -> dict[st
     text = body["text"]
     if not isinstance(text, str) or not text.strip():
         raise PlannerError(ErrorCode.validation, "text is required")
-    clock: Clock = request.app.state.clock
-    adapters: Adapters = request.app.state.adapters
-    conn_factory: Callable[[], sqlite3.Connection] = request.app.state.conn_factory
-    result = service.start_human_turn(
-        conn_factory,
-        adapters.gateway,
+    result = request.app.state.chat_turn_lifecycle.start_human_turn(
         service.CHIEF_OF_STAFF_ENTITY_ID,
-        text,
-        "message",
-        clock.now_unix(),
-        clock.now_unix,
-        db_path=request.app.state.config.db_path,
+        ChatTurnRequest(text=text),
     )
     return asdict(result)
 
@@ -132,14 +110,7 @@ async def start_chief_message(body: dict[str, Any], request: Request) -> dict[st
 @router.post("/chat/{entity_id}/pause")
 async def pause_chat_turn(entity_id: str, request: Request) -> dict[str, Any]:
     authctx.require_direct_write(authctx.request_context(request))  # chat pause is direct-only.
-    clock: Clock = request.app.state.clock
-    adapters: Adapters = request.app.state.adapters
-    conn_factory: Callable[[], sqlite3.Connection] = request.app.state.conn_factory
-    conn = conn_factory()
-    try:
-        result = service.pause_turn(conn, adapters.gateway, entity_id, clock.now_unix())
-    finally:
-        conn.close()
+    result = request.app.state.chat_turn_lifecycle.pause_active_turn(entity_id)
     return asdict(result)
 
 

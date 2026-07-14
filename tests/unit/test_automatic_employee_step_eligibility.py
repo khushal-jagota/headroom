@@ -8,14 +8,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from planner.runtime.automatic_employee_step_eligibility import (
-    is_eligible_for_automatic_employee_step,
-)
 
+from planner.chat import data as chat_data
 from planner.core import links as core_links
 from planner.core.contracts import LinkKind
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
+from planner.runtime.automatic_employee_step_eligibility import (
+    is_eligible_for_automatic_employee_step,
+)
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, Ticket, TicketStatus
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
@@ -235,6 +236,54 @@ def test_only_an_active_blocking_source_blocks(tmp_path: Path, settled_stage: st
         conn.close()
 
 
+@pytest.mark.parametrize("origin", ["human", "worker"])
+@pytest.mark.parametrize(
+    ("turn_status", "expected"),
+    [
+        ("running", False),
+        ("complete", True),
+        ("errored", True),
+        ("interrupted", True),
+    ],
+)
+def test_only_a_running_chat_turn_blocks_automatic_employee_step(
+    tmp_path: Path,
+    origin: str,
+    turn_status: str,
+    expected: bool,
+) -> None:
+    conn = _db(tmp_path)
+    try:
+        ticket = _ticket(conn)
+        turn = chat_data.start_turn(
+            conn,
+            ticket.id,
+            origin=origin,
+            mode="message" if origin == "human" else "worker_step",
+            visible_role="human" if origin == "human" else "worker",
+            visible_text="hello" if origin == "human" else "",
+            output_role="assistant",
+            phase="thinking",
+            activity_label="Thinking",
+            now=4,
+        )
+        if turn_status != "running":
+            chat_data.settle_chat_turn(
+                conn,
+                turn.id,
+                entity_id=ticket.id,
+                status=turn_status,  # type: ignore[arg-type]
+                reply_text="finished",
+                output_role="assistant",
+                error="failed" if turn_status == "errored" else None,
+                now=5,
+            )
+
+        assert _eligible(conn, ticket) is expected
+    finally:
+        conn.close()
+
+
 @pytest.mark.parametrize(
     "break_one_conjunct",
     [
@@ -245,6 +294,7 @@ def test_only_an_active_blocking_source_blocks(tmp_path: Path, settled_stage: st
         "proposal",
         "scope",
         "blocker",
+        "active_chat_turn",
     ],
 )
 def test_all_conjuncts_true_then_one_factor_at_a_time_false(
@@ -293,9 +343,22 @@ def test_all_conjuncts_true_then_one_factor_at_a_time_false(
                 actor="human",
                 now=5,
             )
-        else:
+        elif break_one_conjunct == "blocker":
             blocker = _ticket(conn, planning_day_id=None)
             core_links.add_link(conn, blocker.id, ticket.id, LinkKind.blocks, 5)
+        else:
+            chat_data.start_turn(
+                conn,
+                ticket.id,
+                origin="human",
+                mode="message",
+                visible_role="human",
+                visible_text="hello",
+                output_role="assistant",
+                phase="thinking",
+                activity_label="Thinking",
+                now=5,
+            )
 
         assert not _eligible(conn, ticket, definition=definition)
     finally:
@@ -347,3 +410,9 @@ def test_claim_writer_has_only_the_required_complete_eligibility_seam() -> None:
     assert "eligibility_check" in source
     assert "planning_day_id=planning_day_id" in source
     assert "worker_type_definition=worker_type_definition" in source
+    assert "chat_turns" not in source
+
+    eligibility_path = root / "src/planner/runtime/automatic_employee_step_eligibility.py"
+    eligibility_source = eligibility_path.read_text(encoding="utf-8")
+    assert "chat_turns" in eligibility_source
+    assert "status = 'running'" in eligibility_source

@@ -4,15 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
 from fastapi.testclient import TestClient
 
-from planner.chat.contracts import ChatHistory, ChatStreamChunk, GatewayStatus
+from planner.chat.contracts import (
+    ChatHistory,
+    GatewayStatus,
+    HumanChatCompletion,
+    HumanChatObservation,
+)
 from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
+from planner.core.adapters.base import HumanSessionKeyBinder
 from planner.core.adapters.registry import Adapters, build_adapters
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -329,25 +335,18 @@ def test_chat_turn_accepts_same_entity_image_and_keeps_transcript_reference(tmp_
         def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
             return ChatHistory(messages=(), session_key=session_key)
 
-        def stream(
+        def run_human_turn(
             self,
             session_key: str | None,
             entity_id: str,
             text: str,
             mode: str,
-            on_session_key: Callable[[str], None] | None = None,
+            bind_session_key: HumanSessionKeyBinder,
             image_paths: tuple[Path, ...] = (),
-        ) -> Iterator[ChatStreamChunk]:
+        ) -> Iterator[HumanChatObservation]:
             calls.append((text, image_paths))
-            if on_session_key:
-                on_session_key("image-session")
-            yield ChatStreamChunk(type="session", session_key="image-session")
-            yield ChatStreamChunk(
-                type="done",
-                reply_text="I can see it",
-                session_key="image-session",
-                kind="assistant",
-            )
+            bind_session_key("image-session")
+            yield HumanChatCompletion("I can see it", "assistant")
 
     app.state.adapters = Adapters(gateway=RecordingGateway())
     with TestClient(app) as client:
@@ -398,22 +397,18 @@ def test_chat_turn_accepts_image_only_with_nonempty_model_cue(tmp_path: Path) ->
         def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
             return ChatHistory(messages=(), session_key=session_key)
 
-        def stream(
+        def run_human_turn(
             self,
             session_key: str | None,
             entity_id: str,
             text: str,
             mode: str,
-            on_session_key: Callable[[str], None] | None = None,
+            bind_session_key: HumanSessionKeyBinder,
             image_paths: tuple[Path, ...] = (),
-        ) -> Iterator[ChatStreamChunk]:
+        ) -> Iterator[HumanChatObservation]:
             calls.append((text, image_paths))
-            yield ChatStreamChunk(
-                type="done",
-                reply_text="image received",
-                session_key="image-session",
-                kind="assistant",
-            )
+            bind_session_key("image-session")
+            yield HumanChatCompletion("image received", "assistant")
 
     app.state.adapters = Adapters(gateway=RecordingGateway())
     with TestClient(app) as client:
