@@ -74,6 +74,10 @@ Current build stage:
   `019f5f48-af76-7030-b9d5-1939bf6ba749` reports `NO VIOLATIONS`.
 - AD06 is complete. Its committed checkpoint at `70d4291` passes the canonical gate with 714 unit tests and
   80 Playwright tests; the full transcript is retained at `data/verify/ad06-pass.log`.
+- AD07's Managed Markdown ticket is defined. It preserves the current continuous `contenteditable` with
+  atomic previews and exact source-token serialization; one new frontend owner will concentrate hardened
+  rendering, preview reconciliation, serialization, and teardown while `FilePreview` keeps target-specific
+  behavior. No visual, parser, backend, resource-cache, AD08, or AD09 change is in scope.
 
 What just passed:
 
