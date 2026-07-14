@@ -261,7 +261,15 @@ class LiveSession:
         return LiveSessionOperation(self._manager, self._state)
 
     def interrupt(self, *, timeout: float) -> InterruptReceipt | TransportUnknown:
-        return self._manager._interrupt(self._state, timeout)
+        deadline = _monotonic() + max(0.0, timeout)
+        return self._manager._interrupt(self._state, deadline)
+
+    def _interrupt_before_absolute_deadline(
+        self,
+        *,
+        deadline: float,
+    ) -> InterruptReceipt | TransportUnknown:
+        return self._manager._interrupt(self._state, deadline)
 
     def detach_if_dormant(self) -> bool:
         """Detach lightweight state only after observed idle and no local consequence."""
@@ -417,7 +425,7 @@ class LiveSessionManager:
             self._ingress.close()
             router_timeout = 2.0 if deadline is None else max(0.0, deadline - _monotonic())
             self._router.join(timeout=router_timeout)
-            if self._router.is_alive():
+            if router_timeout > 0.0 and self._router.is_alive():
                 router_shutdown_error = GatewayError(
                     f"Hermes session ingress router did not terminate within {router_timeout}s"
                 )
@@ -652,9 +660,18 @@ class LiveSessionManager:
     def _interrupt(
         self,
         state: _SessionState,
-        timeout: float,
+        deadline: float,
     ) -> InterruptReceipt | TransportUnknown:
-        with state.command_lock:
+        acquired = state.command_lock.acquire(
+            timeout=max(0.0, deadline - _monotonic())
+        )
+        if not acquired:
+            return TransportUnknown(
+                method="session.interrupt",
+                detail="Hermes session command lock was not acquired before interrupt deadline",
+                child_offline=not self._child.alive,
+            )
+        try:
             with self._lock:
                 self._require_live(state)
             try:
@@ -669,9 +686,11 @@ class LiveSessionManager:
                     child_offline=not self._child.alive,
                 )
             self._track_request_handle(handle)
+        finally:
+            state.command_lock.release()
         try:
             try:
-                result = handle.wait(timeout)
+                result = handle.wait(max(0.0, deadline - _monotonic()))
             finally:
                 self._untrack_request_handle(handle)
         except GatewayRpcError:

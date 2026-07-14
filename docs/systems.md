@@ -226,10 +226,8 @@ Chat completion, Chat error, and Pause do not send an eligibility wake. They onl
 settle the visible Chat turn. The next SQLite-backed periodic scan observes that the
 eighth factor has cleared.
 
-One absolute shutdown deadline covers discovery, accepted Employee work, and both
-Hermes gateways. Each later owner receives only the time left. An Employee operation
-cut off by shutdown leaves the Ticket running with its stored session id, while its
-visible turn is interrupted, so startup can resume the same conversation.
+Employee shutdown and restart recovery are owned by the Employee runtime. See
+[`employee-runtime.md`](employee-runtime.md).
 
 Code paths: `src/planner/runtime/automatic_employee_step_eligibility.py`,
 `src/planner/runtime/automatic_employee_step_discovery_loop.py`,

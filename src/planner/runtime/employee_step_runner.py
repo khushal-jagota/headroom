@@ -9,7 +9,10 @@ separate responsibility in
 from __future__ import annotations
 
 import logging
+import sqlite3
 import threading
+from contextlib import closing
+from dataclasses import dataclass
 from time import monotonic as _monotonic
 
 from planner.chat import data as chat_data
@@ -43,6 +46,13 @@ _RESTART_RECOVERY_MESSAGE = (
 
 class _WorkerSessionClaimLost(Exception):
     """The Ticket stopped owning the worker session before prompt submission."""
+
+
+@dataclass(frozen=True)
+class _MatchedEmployeeSessionTurnSnapshot:
+    employee_session_id: str
+    ticket_id: str
+    turn_id: str
 
 
 def _next_step_prompt(
@@ -208,18 +218,127 @@ class EmployeeStepRunner:
         with self._active_cond:
             return self._active_cond.wait_for(lambda: self._active == 0, timeout)
 
+    def _remaining_shutdown_busy_timeout_ms(self, deadline: float | None) -> int:
+        if deadline is None:
+            return self._busy_timeout_ms
+        remaining_ms = int(max(0.0, deadline - _monotonic()) * 1000)
+        return min(self._busy_timeout_ms, remaining_ms)
+
+    def _apply_remaining_shutdown_busy_timeout(
+        self,
+        conn: sqlite3.Connection,
+        deadline: float | None,
+    ) -> None:
+        busy_timeout_ms = self._remaining_shutdown_busy_timeout_ms(deadline)
+        conn.execute(f"PRAGMA busy_timeout={busy_timeout_ms}")
+
     def stop(self, *, deadline: float | None = None) -> None:
-        """Close admission and drain every accepted run before returning."""
+        """Close admission, interrupt bound runs, then drain until the deadline."""
         with self._active_cond:
             self._accepting = False
+            first_stop = not self._stopping
             self._stopping = True
+            active_ticket_ids = (
+                tuple(sorted(self._active_ticket_ids)) if first_stop else ()
+            )
+
+        matched_session_turns: list[_MatchedEmployeeSessionTurnSnapshot] = []
+        for ticket_id in active_ticket_ids:
+            try:
+                with closing(
+                    connect(
+                        self._db_path,
+                        self._remaining_shutdown_busy_timeout_ms(deadline),
+                    )
+                ) as conn:
+                    self._apply_remaining_shutdown_busy_timeout(conn, deadline)
+                    conn.execute("BEGIN")
+                    try:
+                        ticket = tickets_data.read_ticket(conn, ticket_id)
+                        employee_session_id = ticket.employee_session_id
+                        if not employee_session_id:
+                            continue
+                        active_turn = chat_data.read_active_turn(conn, ticket_id)
+                        if (
+                            active_turn is None
+                            or active_turn.origin != "worker"
+                            or active_turn.mode != "worker_step"
+                        ):
+                            continue
+                        turn_session_id = chat_data.read_running_turn_session_key(
+                            conn,
+                            active_turn.id,
+                            entity_id=ticket_id,
+                        )
+                        if turn_session_id == employee_session_id:
+                            matched_session_turns.append(
+                                _MatchedEmployeeSessionTurnSnapshot(
+                                    employee_session_id=employee_session_id,
+                                    ticket_id=ticket_id,
+                                    turn_id=active_turn.id,
+                                )
+                            )
+                    finally:
+                        conn.rollback()
+            except sqlite3.OperationalError:
+                _log.exception(
+                    "employee shutdown snapshot could not acquire SQLite (ticket=%s)",
+                    ticket_id,
+                )
+        matched_session_turn_snapshot = tuple(matched_session_turns)
+
+        for matched_session_turn in matched_session_turn_snapshot:
+            try:
+                self._gateway.interrupt(
+                    matched_session_turn.employee_session_id,
+                    matched_session_turn.ticket_id,
+                    deadline=deadline,
+                )
+            except Exception:
+                _log.exception(
+                    "employee session interrupt failed during shutdown (ticket=%s)",
+                    matched_session_turn.ticket_id,
+                )
+
+        with self._active_cond:
             if deadline is None:
                 self._active_cond.wait_for(lambda: self._active == 0)
-                return
-            self._active_cond.wait_for(
-                lambda: self._active == 0,
-                timeout=max(0.0, deadline - _monotonic()),
-            )
+            else:
+                self._active_cond.wait_for(
+                    lambda: self._active == 0,
+                    timeout=max(0.0, deadline - _monotonic()),
+                )
+            active_ticket_ids_after_drain = frozenset(self._active_ticket_ids)
+
+        turns_to_settle = tuple(
+            (matched_session_turn.ticket_id, matched_session_turn.turn_id)
+            for matched_session_turn in matched_session_turn_snapshot
+            if matched_session_turn.ticket_id in active_ticket_ids_after_drain
+        )
+        for ticket_id, turn_id in turns_to_settle:
+            try:
+                with closing(
+                    connect(
+                        self._db_path,
+                        self._remaining_shutdown_busy_timeout_ms(deadline),
+                    )
+                ) as conn:
+                    self._apply_remaining_shutdown_busy_timeout(conn, deadline)
+                    chat_data.settle_chat_turn(
+                        conn,
+                        turn_id,
+                        entity_id=ticket_id,
+                        status="interrupted",
+                        reply_text="",
+                        output_role="assistant",
+                        error=None,
+                        now=self._clock.now_unix(),
+                    )
+            except sqlite3.OperationalError:
+                _log.exception(
+                    "employee shutdown settlement could not acquire SQLite (ticket=%s)",
+                    ticket_id,
+                )
 
     def _is_stopping(self) -> bool:
         with self._active_cond:
@@ -550,14 +669,28 @@ class EmployeeStepRunner:
 
             result_employee_session_id = result.session_key or current_employee_session_id
             if result.status == "complete":
-                chat_service.finish_worker_turn(
+                settled_worker_turn = chat_data.finish_turn(
                     conn,
-                    ticket_id,
                     worker_turn.id,
-                    result.text,
-                    "complete",
-                    self._clock.now_unix(),
+                    entity_id=ticket_id,
+                    reply_text=result.text,
+                    output_role="assistant",
+                    status="complete",
+                    now=self._clock.now_unix(),
                 )
+                if settled_worker_turn is None or settled_worker_turn.status != "complete":
+                    if self._is_stopping():
+                        return False
+                    mark_errored(
+                        (
+                            settled_worker_turn.error
+                            if settled_worker_turn is not None
+                            else None
+                        )
+                        or "run interrupted",
+                        result_employee_session_id,
+                    )
+                    return True
                 finish_running_step(result_employee_session_id)
             elif result.status == "interrupted":
                 chat_service.finish_worker_turn(

@@ -738,16 +738,21 @@ def test_background_stop_propagates_internal_type_error_without_retry() -> None:
     assert calls == [123.0]
 
 
-def test_entity_routing_gateway_passes_same_deadline_to_each_unique_gateway() -> None:
+def test_entity_routing_gateway_attempts_every_unique_gateway_before_reraising_the_first_failure(
+) -> None:
     class RecordingGateway:
-        def __init__(self) -> None:
+        def __init__(self, failure: Exception) -> None:
             self.deadlines: list[float | None] = []
+            self.failure = failure
 
         def shutdown(self, *, deadline: float | None = None) -> None:
             self.deadlines.append(deadline)
+            raise self.failure
 
-    default = RecordingGateway()
-    chief = RecordingGateway()
+    first_failure = RuntimeError("worker cleanup failed")
+    second_failure = ValueError("chief cleanup failed")
+    default = RecordingGateway(first_failure)
+    chief = RecordingGateway(second_failure)
     router = EntityRoutingGateway(
         cast(SharedGateway, default),
         {
@@ -756,8 +761,10 @@ def test_entity_routing_gateway_passes_same_deadline_to_each_unique_gateway() ->
         },
     )
 
-    router.shutdown(deadline=456.0)
+    with pytest.raises(RuntimeError) as caught:
+        router.shutdown(deadline=456.0)
 
+    assert caught.value is first_failure
     assert default.deadlines == [456.0]
     assert chief.deadlines == [456.0]
 

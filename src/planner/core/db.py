@@ -195,7 +195,11 @@ CREATE INDEX IF NOT EXISTS idx_events_entity ON events(entity_id, id);
 
 
 def connect(db_path: str, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path, isolation_level=None)
+    conn = sqlite3.connect(
+        db_path,
+        isolation_level=None,
+        timeout=busy_timeout_ms / 1000,
+    )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")

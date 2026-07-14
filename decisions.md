@@ -1290,6 +1290,97 @@ decomposes, integrates serially, runs `./verify`, and spot-checks load-bearing c
 orchestrators and load-bearing-groundwork planners; Opus for implementers everywhere. Retained because
 it's the standing operating model, still in force.
 
+## D-shutdown-zero-budget-diagnosis — Treat the reported router timeout as a repairable shutdown bug
+
+The reported `Hermes session ingress router did not terminate within 0.0s` is not evidence that the
+router is stuck. A production-lifespan reproduction and a healthy-router differential prove that an
+already-expired absolute deadline causes the router thread to be checked before it can consume its close
+sentinel; 0.0001 seconds is sufficient for clean shutdown in the same harness. The active Employee turn's
+durable timestamps show the configured 30-second budget was consumed before gateway cleanup, while the
+Ticket and visible turn retained the intended restart-recoverable state.
+
+This is still a product bug, not a message to suppress without restoring the lifecycle contract. The
+restart-recovery plan requires bounded drain, interruption of remaining owned sessions, then shutdown of
+both gateways with the remaining shared-deadline budget. Current `EmployeeStepRunner.stop` only waits to
+the deadline, and `EntityRoutingGateway.shutdown` stops iterating after the first gateway raises. Any fix
+must preserve one total bound, distinguish a zero-budget healthy router from a genuinely stuck router,
+perform the missing interruption step, continue cleanup across both role gateways, and add an exact
+production-lifespan regression. This diagnostic cycle does not authorize or include that runtime change.
+
+The owner subsequently authorized the repair. Ticket `t_s0q8d2ln` owns the exact production-lifespan,
+Employee-runner, routed-gateway, and session-manager seams. It adds no new lifecycle type or config: the
+existing Employee-session interrupt door, one absolute deadline, and current restart-recoverable Ticket
+state are sufficient. Planning and implementation remain separate sub-agent turns because deadline math
+and canonical shutdown settlement are load-bearing rather than trivial.
+
+The first Codex plan review found that the ordinary Chat interrupt signature's fixed request timeout
+could outlive the shutdown deadline. The repair therefore adds an optional keyword-only absolute deadline
+only to the concrete `SharedGateway.interrupt`; `GatewayAdapter` and existing callers do not change. The
+shutdown path uses only an already-live owned session and never spawns or resumes. The same review required
+an explicit concurrent-stop regression; the existing `_stopping` transition elects the sole interrupt
+snapshot owner, so no second lifecycle flag is needed.
+
+The corrected-plan review found that runner activity also includes a parked revision reservation. Shutdown
+therefore interrupts only an active running worker turn whose bound id matches the Ticket's durable
+`employee_session_id`; a parked reservation has no such turn. This is session-control identity, not worker
+context. Direct concrete-gateway tests prove the deadline path neither spawns nor resumes, and the routed
+cleanup test makes both gateways fail so preserving the first error is observable rather than assumed.
+The final fresh Codex plan review reports `NO VIOLATIONS`; implementation may now proceed within the
+ticket's fixed file boundary.
+
+Implementation review exposed two first-wins races and both findings were accepted. When no drain
+time remains, the runner must settle the matched visible worker turn synchronously because its daemon
+thread can lose the race to process exit. That settlement alone is insufficient: a later gateway
+`complete` result may advance canonical Ticket state. Ticket completion is therefore conditional on
+that worker actually winning the visible turn as `complete`; a shutdown-winning `interrupted` turn
+keeps the Ticket and Employee session recoverable. Both failures were reproduced before correction,
+and the final fresh Codex implementation review reports `NO VIOLATIONS`.
+
+The two-axis review found that the one-deadline contract also applies inside interrupt lock admission
+and every child-process cleanup wait. Both are accepted as contract gaps, not follow-up hardening.
+The ticket file boundary is expanded only to `minds/gateway.py` so `GatewayChild` can consume the
+existing absolute deadline across process wait, forced-kill wait, and reader joins. The concrete
+deadline-aware interrupt will likewise include command-lock acquisition in its one budget. Ordinary
+Pause remains distinct from shutdown: if an externally interrupted visible turn races with a late
+gateway completion, its Ticket is marked errored; only service shutdown preserves it for recovery.
+
+The review's baseline-GREEN note for missing-id and parked-reservation tests is not a TDD violation.
+Those are preservation guards for behavior that existed before this ticket, while every new positive
+shutdown behavior was observed RED. Inventing a temporary defect solely to make preservation guards
+fail would add no evidence. Documentation cleanup is accepted: `employee-runtime.md` owns the plain-
+language shutdown explanation and `systems.md` keeps only a handoff.
+
+The final spec re-review correctly rejected exposing the absolute deadline on the publicly re-exported
+`LiveSession.interrupt` method. Only the ticket-authorized concrete `SharedGateway.interrupt` gains the
+optional deadline; it reaches the manager through a private Live-session seam. The public timeout-only
+signature stays exact, while both timeout and shutdown paths still bound command-lock admission and
+reply wait. The Employee runtime doc now correctly names the worker and Chief-of-Staff connections.
+
+The closing spec review found the remaining shared-deadline leak in shutdown's SQLite work. The
+runner's normal five-second busy timeout cannot apply after the absolute deadline expires. Shutdown
+connections and individual DB operations will use at most the remaining time and become non-blocking
+at zero. A lock failure logs and leaves the canonical running Ticket/session for startup recovery;
+it must not skip gateway cleanup or extend shutdown. `core/db.py` joins the ticket only so its existing
+`busy_timeout_ms` parameter also bounds initial SQLite connection and journal-mode setup.
+
+The first full gate invocation used the shared `.venv`'s editable install and therefore imported the
+other worktree's older `/Users/khushaljagota/.hermes/planning-v2/src`. The tracebacks and missing
+contract fields prove the 39 unit and five e2e failures were an invalid mixed-source run, not failures
+of this branch. The failed transcript is retained. The material correction is to run the same
+canonical `./verify` with `PYTHONPATH` explicitly pinned to this worktree's `src`; an import probe
+confirms that resolves `/private/tmp/panels-t_f9ue37gz-closeout/src/planner/__init__.py`.
+
+The corrected-source canonical gate then exposed an acceptance-fixture contention contradiction.
+The real-process fake emitted 5,000 `message.delta` frames; by shutdown, Panels had written 2,241
+update events and accumulated 51,520 output characters, and the server log reported `database is
+locked` during shutdown settlement. That fixture was meant to prove one active partial reply settles
+as interrupted, not to manufacture SQLite writer contention at the zero-budget boundary. The
+separate locked-database regression already proves that deliberate contention returns within the
+deadline and preserves durable recovery state, and it remains unchanged. The minimal correction is
+therefore one nonempty `message.delta`, the same terminal `interrupted` assertion, and an explicit
+assertion that no shutdown-settlement SQLite lock error was logged. No production change follows
+from this fixture correction; the final canonical `./verify` still remains.
+
 ---
 
 # Superseded / merged IDs map

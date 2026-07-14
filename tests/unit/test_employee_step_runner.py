@@ -17,6 +17,7 @@ import pytest
 
 from planner.chat import data as chat_data
 from planner.chat import service as chat_service
+from planner.chat.contracts import GatewayStatus
 from planner.core import links as core_links
 from planner.core.clock import RealClock
 from planner.core.clock import TestClock as MutableClock
@@ -56,6 +57,7 @@ LIVE_SID = "live-sid"
 STORED_KEY = "stored-key-1"
 ROLE = "planning-worker"
 BOUNDARY_HOUR = 5
+AVAILABLE_GATEWAY_STATUS = GatewayStatus(available=True)
 
 
 def _delete_kickoff_setup_events(conn: sqlite3.Connection, ticket_id: str) -> None:
@@ -926,13 +928,14 @@ def test_interrupted_gateway_result_wakes_after_errored_settlement(tmp_path: Pat
 
 def test_service_stop_interruption_leaves_ticket_recoverable(tmp_path: Path) -> None:
     db = _db(tmp_path)
-    tid = _new_ticket(db)
+    ticket_id = _new_ticket(db)
     entered = threading.Event()
     release = threading.Event()
+    interrupt_calls: list[tuple[str, str, float | None]] = []
 
     class InterruptingDuringStopGateway:
         def status(self):
-            return type("Status", (), {"available": True})()
+            return AVAILABLE_GATEWAY_STATUS
 
         def run_ticket_step(
             self,
@@ -950,6 +953,16 @@ def test_service_stop_interruption_leaves_ticket_recoverable(tmp_path: Path) -> 
             assert release.wait(5.0)
             return RunResult("interrupted", "partial stop text", None, STORED_KEY, None)
 
+        def interrupt(
+            self,
+            session_key: str,
+            entity_id: str,
+            *,
+            deadline: float | None = None,
+        ) -> None:
+            interrupt_calls.append((session_key, entity_id, deadline))
+            release.set()
+
     runner = EmployeeStepRunner(
         db,
         RealClock(),
@@ -958,28 +971,546 @@ def test_service_stop_interruption_leaves_ticket_recoverable(tmp_path: Path) -> 
         boundary_hour=BOUNDARY_HOUR,
     )
 
-    runner.try_run_automatic_step(tid)
+    runner.try_run_automatic_step(ticket_id)
     assert entered.wait(5.0)
-    stopper = threading.Thread(target=lambda: runner.stop(deadline=time.monotonic() + 5.0))
-    stopper.start()
-    time.sleep(0.05)
-    release.set()
-    stopper.join(5.0)
+    deadline = time.monotonic() + 5.0
+    runner.stop(deadline=deadline)
 
-    assert not stopper.is_alive()
-    ticket = _read(db, tid)
+    assert interrupt_calls == [(STORED_KEY, ticket_id, deadline)]
+    ticket = _read(db, ticket_id)
     assert ticket.ticket_status is TicketStatus.agent_running_step
     assert ticket.employee_session_id == STORED_KEY
     conn = connect(db)
     try:
-        active = chat_data.read_active_turn(conn, tid)
+        active = chat_data.read_active_turn(conn, ticket_id)
         assert active is None
         row = conn.execute(
-            "SELECT status, output_text FROM chat_turns WHERE entity_id = ?", (tid,)
+            "SELECT status, output_text FROM chat_turns WHERE entity_id = ?", (ticket_id,)
         ).fetchone()
     finally:
         conn.close()
     assert (row["status"], row["output_text"]) == ("interrupted", "partial stop text")
+
+
+def test_stop_does_not_invent_missing_employee_session_id(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    ticket_id = _new_ticket(db)
+    entered = threading.Event()
+    release = threading.Event()
+    interrupt_calls: list[tuple[str, str]] = []
+
+    class NotYetBoundGateway:
+        def status(self):
+            return AVAILABLE_GATEWAY_STATUS
+
+        def run_ticket_step(self, *_args, **_kwargs) -> RunResult:
+            entered.set()
+            assert release.wait(5.0)
+            return RunResult("interrupted", "", None, None, None)
+
+        def interrupt(self, session_key: str, entity_id: str, **_kwargs) -> None:
+            interrupt_calls.append((session_key, entity_id))
+
+    runner = EmployeeStepRunner(
+        db,
+        RealClock(),
+        gateway=NotYetBoundGateway(),  # type: ignore[arg-type]
+        automatic_employee_step_eligibility_wake=NoOpAutomaticEmployeeStepEligibilityWake(),
+        boundary_hour=BOUNDARY_HOUR,
+    )
+    runner.try_run_automatic_step(ticket_id)
+    assert entered.wait(5.0)
+
+    runner.stop(deadline=time.monotonic() + 0.05)
+    assert interrupt_calls == []
+    release.set()
+    assert runner.wait_idle(5.0)
+
+
+def test_stop_does_not_interrupt_parked_revision_reservation(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    ticket_id = _needs_closeout_ticket(db)
+    interrupt_calls: list[tuple[str, str]] = []
+
+    class ParkedGateway:
+        def status(self):
+            return AVAILABLE_GATEWAY_STATUS
+
+        def interrupt(self, session_key: str, entity_id: str, **_kwargs) -> None:
+            interrupt_calls.append((session_key, entity_id))
+
+    runner = EmployeeStepRunner(
+        db,
+        RealClock(),
+        gateway=ParkedGateway(),  # type: ignore[arg-type]
+        automatic_employee_step_eligibility_wake=NoOpAutomaticEmployeeStepEligibilityWake(),
+        boundary_hour=BOUNDARY_HOUR,
+    )
+    handoff = runner.reserve_revision(ticket_id, "revise")
+
+    runner.stop(deadline=time.monotonic() + 0.05)
+    assert interrupt_calls == []
+    handoff.cancel()
+    assert runner.wait_idle(5.0)
+
+
+def test_stop_attempts_each_bound_session_when_one_interrupt_fails(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    ticket_ids = [_new_ticket(db), _new_ticket(db)]
+    entered: set[str] = set()
+    entered_cond = threading.Condition()
+    releases = {ticket_id: threading.Event() for ticket_id in ticket_ids}
+    interrupt_calls: list[str] = []
+
+    class PartlyFailingGateway:
+        def status(self):
+            return AVAILABLE_GATEWAY_STATUS
+
+        def run_ticket_step(
+            self, _session_key, entity_id, _prompt, _on_event=None, on_session_key=None, **_kwargs
+        ) -> RunResult:
+            session_key = f"session-{entity_id}"
+            assert on_session_key is not None
+            on_session_key(session_key)
+            with entered_cond:
+                entered.add(entity_id)
+                entered_cond.notify_all()
+            assert releases[entity_id].wait(5.0)
+            return RunResult("interrupted", "", None, session_key, None)
+
+        def interrupt(self, _session_key: str, entity_id: str, **_kwargs) -> None:
+            interrupt_calls.append(entity_id)
+            releases[entity_id].set()
+            if entity_id == sorted(ticket_ids)[0]:
+                raise RuntimeError("first interrupt failed")
+
+    runner = EmployeeStepRunner(
+        db,
+        RealClock(),
+        gateway=PartlyFailingGateway(),  # type: ignore[arg-type]
+        automatic_employee_step_eligibility_wake=NoOpAutomaticEmployeeStepEligibilityWake(),
+        boundary_hour=BOUNDARY_HOUR,
+    )
+    for ticket_id in ticket_ids:
+        runner.try_run_automatic_step(ticket_id)
+    with entered_cond:
+        assert entered_cond.wait_for(lambda: len(entered) == 2, timeout=5.0)
+
+    runner.stop(deadline=time.monotonic() + 5.0)
+    assert interrupt_calls == sorted(ticket_ids)
+
+
+def test_concurrent_stop_interrupts_each_bound_session_once(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    ticket_id = _new_ticket(db)
+    entered = threading.Event()
+    interrupt_entered = threading.Event()
+    release_interrupt = threading.Event()
+    interrupt_calls: list[str] = []
+
+    class BlockingInterruptGateway:
+        def status(self):
+            return AVAILABLE_GATEWAY_STATUS
+
+        def run_ticket_step(
+            self,
+            _session_key,
+            entity_id,
+            _prompt,
+            _on_event=None,
+            on_session_key=None,
+            **_kwargs,
+        ):
+            assert on_session_key is not None
+            on_session_key(STORED_KEY)
+            entered.set()
+            assert release_interrupt.wait(5.0)
+            return RunResult("interrupted", "", None, STORED_KEY, None)
+
+        def interrupt(self, _session_key: str, entity_id: str, **_kwargs) -> None:
+            interrupt_calls.append(entity_id)
+            interrupt_entered.set()
+            assert release_interrupt.wait(5.0)
+
+    runner = EmployeeStepRunner(
+        db,
+        RealClock(),
+        gateway=BlockingInterruptGateway(),  # type: ignore[arg-type]
+        automatic_employee_step_eligibility_wake=NoOpAutomaticEmployeeStepEligibilityWake(),
+        boundary_hour=BOUNDARY_HOUR,
+    )
+    runner.try_run_automatic_step(ticket_id)
+    assert entered.wait(5.0)
+    deadline = time.monotonic() + 5.0
+    stoppers = [threading.Thread(target=lambda: runner.stop(deadline=deadline)) for _ in range(2)]
+    stoppers[0].start()
+    assert interrupt_entered.wait(5.0)
+    stoppers[1].start()
+    time.sleep(0.05)
+    release_interrupt.set()
+    for stopper in stoppers:
+        stopper.join(5.0)
+
+    assert all(not stopper.is_alive() for stopper in stoppers)
+    assert interrupt_calls == [ticket_id]
+
+
+def test_stop_interrupt_wait_uses_shared_deadline(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    ticket_id = _new_ticket(db)
+    entered = threading.Event()
+    release = threading.Event()
+    received_deadlines: list[float | None] = []
+
+    class DeadlineGateway:
+        def status(self):
+            return AVAILABLE_GATEWAY_STATUS
+
+        def run_ticket_step(
+            self,
+            _session_key,
+            _entity_id,
+            _prompt,
+            _on_event=None,
+            on_session_key=None,
+            **_kwargs,
+        ):
+            assert on_session_key is not None
+            on_session_key(STORED_KEY)
+            entered.set()
+            assert release.wait(5.0)
+            return RunResult("interrupted", "", None, STORED_KEY, None)
+
+        def interrupt(self, _session_key: str, _entity_id: str, *, deadline=None) -> None:
+            received_deadlines.append(deadline)
+            assert deadline is not None
+            release.wait(max(0.0, deadline - time.monotonic()))
+            raise RuntimeError("interrupt timed out")
+
+    runner = EmployeeStepRunner(
+        db,
+        RealClock(),
+        gateway=DeadlineGateway(),  # type: ignore[arg-type]
+        automatic_employee_step_eligibility_wake=NoOpAutomaticEmployeeStepEligibilityWake(),
+        boundary_hour=BOUNDARY_HOUR,
+    )
+    runner.try_run_automatic_step(ticket_id)
+    assert entered.wait(5.0)
+    deadline = time.monotonic() + 0.1
+    started = time.monotonic()
+    runner.stop(deadline=deadline)
+    elapsed = time.monotonic() - started
+
+    assert received_deadlines == [deadline]
+    assert elapsed < 0.25
+    release.set()
+    assert runner.wait_idle(5.0)
+
+
+def test_expired_stop_does_not_wait_for_locked_shutdown_settlement(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    ticket_id = _new_ticket(db)
+    entered = threading.Event()
+    release = threading.Event()
+    interrupt_calls: list[tuple[str, str, float | None]] = []
+
+    class LockedSettlementGateway:
+        def status(self):
+            return AVAILABLE_GATEWAY_STATUS
+
+        def run_ticket_step(
+            self,
+            _session_key,
+            entity_id,
+            _prompt,
+            on_event=None,
+            on_session_key=None,
+            **_kwargs,
+        ):
+            assert on_session_key is not None
+            assert on_event is not None
+            on_session_key(STORED_KEY)
+            on_event(ev("message.delta", LIVE_SID, {"text": "partial"})["params"])
+            entered.set()
+            assert release.wait(5.0)
+            return RunResult("interrupted", "late output", None, STORED_KEY, None)
+
+        def interrupt(
+            self,
+            session_key: str,
+            entity_id: str,
+            *,
+            deadline: float | None = None,
+        ) -> None:
+            interrupt_calls.append((session_key, entity_id, deadline))
+
+    runner = EmployeeStepRunner(
+        db,
+        RealClock(),
+        gateway=LockedSettlementGateway(),  # type: ignore[arg-type]
+        automatic_employee_step_eligibility_wake=NoOpAutomaticEmployeeStepEligibilityWake(),
+        boundary_hour=BOUNDARY_HOUR,
+        busy_timeout_ms=200,
+    )
+    runner.try_run_automatic_step(ticket_id)
+    assert entered.wait(5.0)
+
+    writer = connect(db)
+    stop_finished = threading.Event()
+    stop_errors: list[BaseException] = []
+    stop_elapsed: list[float] = []
+    deadline = time.monotonic() - 1.0
+
+    def stop_runner() -> None:
+        started = time.monotonic()
+        try:
+            runner.stop(deadline=deadline)
+        except BaseException as exc:  # noqa: BLE001 - assertion surface
+            stop_errors.append(exc)
+        finally:
+            stop_elapsed.append(time.monotonic() - started)
+            stop_finished.set()
+
+    stopper = threading.Thread(target=stop_runner)
+    try:
+        writer.execute("BEGIN IMMEDIATE")
+        writer.execute("UPDATE tickets SET title = title WHERE id = ?", (ticket_id,))
+        stopper.start()
+
+        assert stop_finished.wait(0.1) is True
+        assert stop_errors == []
+        assert stop_elapsed[0] < 0.1
+        assert interrupt_calls == [(STORED_KEY, ticket_id, deadline)]
+        ticket_row = writer.execute(
+            "SELECT ticket_status, employee_session_id FROM tickets WHERE id = ?",
+            (ticket_id,),
+        ).fetchone()
+        turn_row = writer.execute(
+            "SELECT status, session_key FROM chat_turns WHERE entity_id = ?",
+            (ticket_id,),
+        ).fetchone()
+        assert tuple(ticket_row) == ("agent_running_step", STORED_KEY)
+        assert tuple(turn_row) == ("running", STORED_KEY)
+    finally:
+        writer.rollback()
+        stopper.join(5.0)
+        writer.close()
+        release.set()
+
+    assert runner.wait_idle(5.0)
+    ticket = _read(db, ticket_id)
+    assert ticket.ticket_status is TicketStatus.agent_running_step
+    assert ticket.employee_session_id == STORED_KEY
+
+
+def test_expired_stop_settles_matched_snapshot_turn_before_returning(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    ticket_id = _new_ticket(db)
+    entered = threading.Event()
+    release = threading.Event()
+    interrupt_calls: list[tuple[str, str, float | None]] = []
+
+    class ExpiredDeadlineGateway:
+        def status(self):
+            return AVAILABLE_GATEWAY_STATUS
+
+        def run_ticket_step(
+            self,
+            _session_key,
+            entity_id,
+            _prompt,
+            on_event=None,
+            on_session_key=None,
+            **_kwargs,
+        ):
+            assert on_session_key is not None
+            assert on_event is not None
+            on_session_key(STORED_KEY)
+            on_event(ev("message.delta", LIVE_SID, {"text": "partial before stop"})["params"])
+            entered.set()
+            assert release.wait(5.0)
+            return RunResult("interrupted", "late output", None, STORED_KEY, None)
+
+        def interrupt(
+            self,
+            session_key: str,
+            entity_id: str,
+            *,
+            deadline: float | None = None,
+        ) -> None:
+            interrupt_calls.append((session_key, entity_id, deadline))
+
+    runner = EmployeeStepRunner(
+        db,
+        RealClock(),
+        gateway=ExpiredDeadlineGateway(),  # type: ignore[arg-type]
+        automatic_employee_step_eligibility_wake=NoOpAutomaticEmployeeStepEligibilityWake(),
+        boundary_hour=BOUNDARY_HOUR,
+    )
+    runner.try_run_automatic_step(ticket_id)
+    assert entered.wait(5.0)
+    deadline = time.monotonic() - 1.0
+
+    runner.stop(deadline=deadline)
+
+    assert interrupt_calls == [(STORED_KEY, ticket_id, deadline)]
+    conn = connect(db)
+    try:
+        ticket = tickets_data.read_ticket(conn, ticket_id)
+        worker_turn = conn.execute(
+            "SELECT status, output_text, session_key FROM chat_turns WHERE entity_id = ?",
+            (ticket_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert ticket.ticket_status is TicketStatus.agent_running_step
+    assert ticket.employee_session_id == STORED_KEY
+    assert worker_turn is not None
+    assert tuple(worker_turn) == ("interrupted", "partial before stop", STORED_KEY)
+
+    release.set()
+    assert runner.wait_idle(5.0)
+    assert _read(db, ticket_id).ticket_status is TicketStatus.agent_running_step
+
+
+def test_late_complete_after_expired_stop_does_not_advance_ticket(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    ticket_id = _new_ticket(db)
+    entered = threading.Event()
+    release = threading.Event()
+
+    class LateCompleteGateway:
+        def status(self):
+            return AVAILABLE_GATEWAY_STATUS
+
+        def run_ticket_step(
+            self,
+            _session_key,
+            _entity_id,
+            _prompt,
+            on_event=None,
+            on_session_key=None,
+            **_kwargs,
+        ):
+            assert on_session_key is not None
+            assert on_event is not None
+            on_session_key(STORED_KEY)
+            on_event(ev("message.delta", LIVE_SID, {"text": "partial before stop"})["params"])
+            entered.set()
+            assert release.wait(5.0)
+            return RunResult("complete", "late complete output", None, STORED_KEY, None)
+
+        def interrupt(self, *_args, **_kwargs) -> None:
+            return None
+
+    runner = EmployeeStepRunner(
+        db,
+        RealClock(),
+        gateway=LateCompleteGateway(),  # type: ignore[arg-type]
+        automatic_employee_step_eligibility_wake=NoOpAutomaticEmployeeStepEligibilityWake(),
+        boundary_hour=BOUNDARY_HOUR,
+    )
+    runner.try_run_automatic_step(ticket_id)
+    assert entered.wait(5.0)
+
+    runner.stop(deadline=time.monotonic() - 1.0)
+    release.set()
+    assert runner.wait_idle(5.0)
+
+    conn = connect(db)
+    try:
+        ticket = tickets_data.read_ticket(conn, ticket_id)
+        worker_turn = conn.execute(
+            "SELECT status, output_text, session_key FROM chat_turns WHERE entity_id = ?",
+            (ticket_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert ticket.ticket_status is TicketStatus.agent_running_step
+    assert ticket.employee_session_id == STORED_KEY
+    assert worker_turn is not None
+    assert tuple(worker_turn) == ("interrupted", "partial before stop", STORED_KEY)
+
+
+def test_late_complete_after_ordinary_interruption_marks_ticket_errored(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    ticket_id = _new_ticket(db)
+    entered = threading.Event()
+    release = threading.Event()
+
+    class LateCompleteGateway:
+        def status(self):
+            return AVAILABLE_GATEWAY_STATUS
+
+        def run_ticket_step(
+            self,
+            _session_key,
+            _entity_id,
+            _prompt,
+            on_event=None,
+            on_session_key=None,
+            **_kwargs,
+        ):
+            assert on_session_key is not None
+            assert on_event is not None
+            on_session_key(STORED_KEY)
+            on_event(
+                ev("message.delta", LIVE_SID, {"text": "partial before pause"})["params"]
+            )
+            entered.set()
+            assert release.wait(5.0)
+            return RunResult("complete", "late complete output", None, STORED_KEY, None)
+
+    runner = EmployeeStepRunner(
+        db,
+        RealClock(),
+        gateway=LateCompleteGateway(),  # type: ignore[arg-type]
+        automatic_employee_step_eligibility_wake=NoOpAutomaticEmployeeStepEligibilityWake(),
+        boundary_hour=BOUNDARY_HOUR,
+    )
+    runner.try_run_automatic_step(ticket_id)
+    assert entered.wait(5.0)
+    conn = connect(db)
+    try:
+        active_turn = chat_data.read_active_turn(conn, ticket_id)
+        assert active_turn is not None
+        chat_data.settle_chat_turn(
+            conn,
+            active_turn.id,
+            entity_id=ticket_id,
+            status="interrupted",
+            reply_text="",
+            output_role="assistant",
+            error=None,
+            now=RealClock().now_unix(),
+        )
+    finally:
+        conn.close()
+
+    release.set()
+    assert runner.wait_idle(5.0)
+
+    conn = connect(db)
+    try:
+        ticket = tickets_data.read_ticket(conn, ticket_id)
+        worker_turn = conn.execute(
+            "SELECT status, output_text, session_key FROM chat_turns WHERE entity_id = ?",
+            (ticket_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert ticket.ticket_status is TicketStatus.errored
+    assert ticket.employee_session_id == STORED_KEY
+    assert worker_turn is not None
+    assert tuple(worker_turn) == ("interrupted", "partial before pause", STORED_KEY)
 
 
 def test_ordinary_interruption_outside_service_stop_still_errors(tmp_path: Path) -> None:
@@ -989,7 +1520,7 @@ def test_ordinary_interruption_outside_service_stop_still_errors(tmp_path: Path)
 
     class OrdinaryInterruptedGateway:
         def status(self):
-            return type("Status", (), {"available": True})()
+            return AVAILABLE_GATEWAY_STATUS
 
         def run_ticket_step(
             self,
@@ -1061,7 +1592,7 @@ def test_same_process_recovery_admission_for_ticket_submits_once(tmp_path: Path)
 
     class BlockingRecoveryGateway:
         def status(self):
-            return type("Status", (), {"available": True})()
+            return AVAILABLE_GATEWAY_STATUS
 
         def run_ticket_step(
             self,

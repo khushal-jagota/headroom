@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -118,6 +119,49 @@ def test_submission_consequences_isolate_late_interrupted_completion_from_next_p
     assert second_observations[-1].payload["text"] == "new reply"
     first.consequence.release()
     second.consequence.release()
+    manager.shutdown()
+    child.shutdown()
+
+
+def test_interrupt_command_lock_wait_consumes_absolute_deadline_without_sending() -> None:
+    fake = FakeGateway({})
+    child = _child(fake)
+    manager = LiveSessionManager(child)
+    session = manager.bind(STORED_KEY, LIVE_SID)
+    state = session._state
+    outcomes: list[InterruptReceipt | TransportUnknown] = []
+    errors: list[BaseException] = []
+    elapsed: list[float] = []
+    deadline = time.monotonic() + 0.05
+
+    def interrupt() -> None:
+        started = time.monotonic()
+        try:
+            outcomes.append(
+                session._interrupt_before_absolute_deadline(deadline=deadline)
+            )
+        except BaseException as exc:  # noqa: BLE001 - assertion surface
+            errors.append(exc)
+        finally:
+            elapsed.append(time.monotonic() - started)
+
+    state.command_lock.acquire()
+    caller = threading.Thread(target=interrupt)
+    try:
+        caller.start()
+        caller.join(0.2)
+        returned_within_budget = not caller.is_alive()
+    finally:
+        state.command_lock.release()
+        caller.join(5.0)
+
+    assert returned_within_budget is True
+    assert errors == []
+    assert len(outcomes) == 1
+    assert isinstance(outcomes[0], TransportUnknown)
+    assert elapsed[0] < 0.2
+    assert "command lock" in outcomes[0].detail
+    assert fake.sent_methods() == []
     manager.shutdown()
     child.shutdown()
 
@@ -720,6 +764,33 @@ def test_manager_shutdown_reports_a_router_that_did_not_terminate(
     with pytest.raises(GatewayError, match="router did not terminate"):
         manager.shutdown()
 
+    assert real_router.is_alive() is False
+    child.shutdown()
+
+
+def test_manager_shutdown_treats_an_expired_deadline_as_an_inconclusive_router_observation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeGateway({})
+    child = _child(fake)
+    manager = LiveSessionManager(child)
+    real_router = manager._router
+    joins: list[float | None] = []
+
+    class ZeroWaitObservationRouter:
+        def join(self, timeout: float | None = None) -> None:
+            joins.append(timeout)
+            real_router.join(timeout)
+
+        def is_alive(self) -> bool:
+            return True
+
+    monkeypatch.setattr(manager, "_router", ZeroWaitObservationRouter())
+
+    manager.shutdown(deadline=time.monotonic() - 1.0)
+
+    assert joins == [0.0]
+    real_router.join(5.0)
     assert real_router.is_alive() is False
     child.shutdown()
 

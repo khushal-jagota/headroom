@@ -110,11 +110,13 @@ only settle the visible Chat turn. The SQLite-backed periodic discovery timer is
 canonical backstop: its next scan observes that the eighth factor has cleared and may
 submit the Ticket to the runner.
 
-Shutdown derives one absolute deadline for discovery, accepted Employee work, and the
-Hermes gateways. Discovery stops accepting work first; the runner and gateways get only
-the time left on that same budget. If shutdown interrupts an Employee operation, Panels
-settles its visible turn as interrupted but leaves the Ticket running with its stored
-Employee session id. The next startup can therefore recover the same conversation.
+When Panels stops, it stops finding and accepting new Employee work before ending work
+already in progress. It asks each active Employee to stop, then gives every remaining
+cleanup step only the time left from one shared limit. It still tries to close the worker
+connection and the Chief-of-Staff connection even if one fails. Work cut off this way stays
+on its Ticket, and its visible reply is marked interrupted, so the next start can resume
+the same conversation. If the time has already run out, cleanup checks without waiting;
+that alone does not mean a healthy connection is stuck.
 
 _Code paths:_ `src/planner/runtime/automatic_employee_step_eligibility.py`,
 `src/planner/runtime/automatic_employee_step_discovery_loop.py`,

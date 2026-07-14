@@ -148,6 +148,38 @@ class Spawner:
         return child.spawn(argv, env)
 
 
+class NonExitingChild:
+    def __init__(self) -> None:
+        self._ready_sent = False
+        self.release_readers = threading.Event()
+        self.wait_timeouts: list[float | None] = []
+
+    def send(self, line: str) -> None:
+        del line
+
+    def read_stdout(self) -> str | None:
+        if not self._ready_sent:
+            self._ready_sent = True
+            return json.dumps(ev("gateway.ready"))
+        self.release_readers.wait()
+        return None
+
+    def read_stderr(self) -> str | None:
+        self.release_readers.wait()
+        return None
+
+    def close_stdin(self) -> None:
+        return None
+
+    def kill(self) -> None:
+        return None
+
+    def wait(self, timeout: float | None = None) -> int | None:
+        self.wait_timeouts.append(timeout)
+        threading.Event().wait(timeout)
+        return None
+
+
 def shared(fake: FakeGateway, worker_context=None) -> SharedGateway:
     return SharedGateway(
         hermes_python=HERMES_PY,
@@ -1540,6 +1572,29 @@ def test_shared_gateway_interrupt_resolves_stored_key_to_live_session() -> None:
     assert results[0].session_key == STORED_KEY
 
 
+def test_deadline_interrupt_does_not_spawn_missing_child() -> None:
+    fake = FakeGateway({})
+    gateway = shared(fake)
+
+    with pytest.raises(PlannerError):
+        gateway.interrupt(STORED_KEY, "t_demo", deadline=time.monotonic() + 1.0)
+
+    assert fake.argv is None
+    assert fake.sent == []
+
+
+def test_deadline_interrupt_does_not_resume_missing_live_session() -> None:
+    fake = FakeGateway({})
+    gateway = shared(fake)
+    gateway.start()
+    try:
+        with pytest.raises(PlannerError):
+            gateway.interrupt(STORED_KEY, "t_demo", deadline=time.monotonic() + 1.0)
+        assert fake.sent == []
+    finally:
+        gateway.shutdown()
+
+
 @pytest.mark.parametrize("second_disposition", ["streaming", "queued"])
 def test_human_stop_then_immediate_send_ignores_old_interrupted_completion(
     second_disposition: str,
@@ -1665,6 +1720,29 @@ def test_shared_gateway_shutdown_settles_pending_employee_once_without_retry(
     assert len(results) == 1
     assert results[0].status == "errored"
     assert fake.sent_methods().count("prompt.submit") == 1
+
+
+def test_shared_gateway_child_shutdown_spends_one_absolute_deadline() -> None:
+    child = NonExitingChild()
+    gateway = SharedGateway(
+        hermes_python=HERMES_PY,
+        home="/tmp/planner-home",
+        worker_role="planner-worker",
+        spawn=lambda _argv, _env: child,
+        base_env={},
+    )
+    gateway.start()
+    deadline = time.monotonic() + 0.05
+    started = time.monotonic()
+
+    gateway.shutdown(deadline=deadline)
+
+    elapsed = time.monotonic() - started
+    child.release_readers.set()
+    assert elapsed < 0.12
+    assert len(child.wait_timeouts) == 2
+    assert child.wait_timeouts[0] is not None and child.wait_timeouts[0] > 0.0
+    assert child.wait_timeouts[1] is not None and child.wait_timeouts[1] < 0.01
 
 
 def test_live_session_shutdown_deadline_failure_signals_waiters_and_clears_closing() -> None:

@@ -4,6 +4,74 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-14): shutdown `0.0s` repair
+
+Current build stage:
+
+- Ticket `t_s0q8d2ln` is cut on branch `codex/fix-shutdown-zero-budget` from `main` at
+  `bf2ac9b`. The implementation and all accepted review corrections are complete. A fresh final
+  Codex full-diff review reports `NO VIOLATIONS`; the final standards re-review reports no code-smell
+  findings and only requested this memory cleanup. The final spec re-review found one public-shape
+  overreach and one inaccurate role label; both are corrected. The closing spec review then found a
+  remaining SQLite busy-timeout deadline leak; it is reproduced and corrected. The final SQLite-
+  aware Codex review reports `NO VIOLATIONS`, and both closing review axes report no findings.
+- Shutdown now closes Employee admission, interrupts only running turns bound to their Ticket's
+  durable Employee session, settles unfinished visible turns before process exit, and preserves the
+  Ticket/session for restart recovery. Every interrupt, drain, gateway, child-process wait, and reader
+  join consumes the same absolute deadline. A zero-time router observation is inconclusive, while a
+  positive-time stuck router still errors. Every unique role gateway is attempted even after failure.
+- No configuration, durable state, Ticket status, scheduler, retry queue, public adapter contract, or
+  new lifecycle owner was added.
+- The first canonical gate invocation failed because the shared `.venv` editable install imported
+  `/Users/khushaljagota/.hermes/planning-v2/src` instead of this worktree. Its 39 unit and five e2e
+  failures are older-source/new-test mismatches, including missing Chat recovery fields and the
+  pre-fix shutdown behavior. The full failed transcript is
+  `data/verify/t_s0q8d2ln-environment-fail.log`. With `PYTHONPATH` pinned, Python resolves this
+  worktree's `src/planner`.
+- The corrected-source canonical gate exposed an acceptance-fixture contention contradiction, not
+  a production deadline failure. The process fake's 5,000-delta flood had produced 2,241 update
+  events and 51,520 characters before shutdown, then the log reported `database is locked`. That
+  flood manufactured the same SQLite contention which the separate locked-database regression
+  deliberately owns. The process fixture now emits one nonempty delta, still requires the visible
+  turn to settle `interrupted`, and also rejects any shutdown-settlement SQLite lock error. The
+  locked-database regression is unchanged.
+- A fresh read-only Codex review of the complete corrected diff, including the fixture/lock-boundary
+  distinction, reports `NO VIOLATIONS` with model `gpt-5.5` at high reasoning effort. Recording that
+  review is trivial integration glue performed directly by the orchestrator. No implementation changed.
+- The corrected tree passes the complete canonical gate with this worktree's `src` pinned in
+  `PYTHONPATH`: Ruff; mypy across 115 source files; 791 unit tests; compile/static and CSS checks;
+  Svelte check with zero errors and warnings; production build; frontend tests; and 94 Playwright
+  tests. Every gate is `ok` and the run ends `VERIFY: PASS`. The full transcript is retained at
+  `data/verify/t_s0q8d2ln-pass.log`; the earlier genuine fixture-race failure is retained separately
+  at `data/verify/t_s0q8d2ln-process-race-fail.log`.
+
+What just passed:
+
+- The production-process regression was RED with the exact `0.0s` router error and Uvicorn shutdown
+  failure. Its corrected acceptance fixture keeps one nonempty partial output and still requires exit
+  code zero, clean application shutdown, visible worker-turn settlement as interrupted, no SQLite
+  settlement lock error, and an unchanged Ticket Employee session. It passes 10 consecutive process
+  invocations. The deliberate locked-settlement regression and the ordinary unlocked settlement
+  regression both pass; Ruff on the changed test and the complete diff check are clean.
+- The expanded focused suite passes 169 tests with two existing warnings. It covers exact-once
+  concurrent stop, missing and parked session guards, lock and reply deadline consumption, child
+  cleanup, all-role cleanup, zero-versus-positive router waits, first-wins Chat and Ticket settlement,
+  shutdown late completion, and ordinary-Pause late completion.
+- Ruff is clean, mypy passes across 113 source files, and diff and whitespace checks are clean.
+- Three Codex implementation-review rounds found and drove corrections for process-exit settlement,
+  late Ticket completion, and their combined races. The final fresh implementation review and the
+  final post-two-axis full-diff review report `NO VIOLATIONS`; the fresh post-fixture full-diff review
+  also reports `NO VIOLATIONS`.
+
+Next step:
+
+- Hand the committed `codex/fix-shutdown-zero-budget` branch back to the owner. No merge, push,
+  deployment, restart, or live-database action is authorized in this ticket.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-14): durable failed Chat turns
 
 Current build stage:

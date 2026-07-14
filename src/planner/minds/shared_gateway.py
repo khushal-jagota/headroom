@@ -11,7 +11,6 @@ import os
 import threading
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
-from time import monotonic as _monotonic
 from typing import Any
 
 from planner.chat.contracts import (
@@ -134,12 +133,19 @@ class EntityRoutingGateway:
 
     def shutdown(self, *, deadline: float | None = None) -> None:
         seen: set[int] = set()
+        first_failure: Exception | None = None
         for gateway in (self._default_gateway, *self._entity_gateways.values()):
             ident = id(gateway)
             if ident in seen:
                 continue
             seen.add(ident)
-            gateway.shutdown(deadline=deadline)
+            try:
+                gateway.shutdown(deadline=deadline)
+            except Exception as exc:
+                if first_failure is None:
+                    first_failure = exc
+        if first_failure is not None:
+            raise first_failure
 
 
 class SharedGateway:
@@ -188,7 +194,7 @@ class SharedGateway:
                 if deadline is None:
                     child.shutdown()
                 else:
-                    child.shutdown(grace=max(0.0, deadline - _monotonic()))
+                    child.shutdown(deadline=deadline)
 
     def live_session(self, session_key: str) -> LiveSession | None:
         """Return the gateway-owned ingress for a currently live stored session."""
@@ -351,15 +357,32 @@ class SharedGateway:
                 ErrorCode.gateway_offline, "chat gateway stream failed", {"detail": str(exc)}
             ) from exc
 
-    def interrupt(self, session_key: str, entity_id: str) -> None:
+    def interrupt(
+        self,
+        session_key: str,
+        entity_id: str,
+        *,
+        deadline: float | None = None,
+    ) -> None:
         try:
-            child = self._child_or_spawn()
             live_session = self.live_session(session_key)
-            if live_session is None:
-                live_session_id = self._live_session_id_for_stored_key(child, session_key)
-                self._bind_live_session(child, session_key, live_session_id, {})
-                live_session = self._required_live_session(session_key)
-            receipt = live_session.interrupt(timeout=self._request_timeout)
+            if deadline is not None:
+                if live_session is None:
+                    raise GatewayError(
+                        f"Hermes session ingress is unavailable for {session_key}"
+                    )
+            else:
+                child = self._child_or_spawn()
+                if live_session is None:
+                    live_session_id = self._live_session_id_for_stored_key(child, session_key)
+                    self._bind_live_session(child, session_key, live_session_id, {})
+                    live_session = self._required_live_session(session_key)
+            if deadline is None:
+                receipt = live_session.interrupt(timeout=self._request_timeout)
+            else:
+                receipt = live_session._interrupt_before_absolute_deadline(
+                    deadline=deadline
+                )
             if isinstance(receipt, TransportUnknown):
                 raise GatewayError(receipt.detail)
         except GatewayRpcError as exc:

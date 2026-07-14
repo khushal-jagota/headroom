@@ -16,6 +16,7 @@ import subprocess
 import threading
 from collections import deque
 from collections.abc import Callable, Mapping
+from time import monotonic as _monotonic
 from typing import Any, Final, Protocol
 
 JsonDict = dict[str, Any]
@@ -388,14 +389,22 @@ class GatewayChild:
     def stderr_tail(self) -> list[str]:
         return list(self._stderr_lines)
 
-    def shutdown(self, grace: float = SHUTDOWN_GRACE_DEFAULT) -> None:
+    def shutdown(
+        self,
+        grace: float = SHUTDOWN_GRACE_DEFAULT,
+        *,
+        deadline: float | None = None,
+    ) -> None:
+        def remaining() -> float:
+            return grace if deadline is None else max(0.0, deadline - _monotonic())
+
         self._child.close_stdin()  # clean path: entry.py:344 exits on stdin EOF
-        if self._child.wait(grace) is None:
+        if self._child.wait(remaining()) is None:
             self._child.kill()
-            self._child.wait(grace)
+            self._child.wait(remaining())
         # reader threads exit on EOF; bounded join for tidiness (daemon threads anyway)
-        self._stdout_thread.join(timeout=grace)
-        self._stderr_thread.join(timeout=grace)
+        self._stdout_thread.join(timeout=remaining())
+        self._stderr_thread.join(timeout=remaining())
 
     @property
     def alive(self) -> bool:

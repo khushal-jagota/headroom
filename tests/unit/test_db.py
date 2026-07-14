@@ -140,6 +140,30 @@ def _insert_ticket(conn, **cols):
     )
 
 
+def test_connect_applies_busy_timeout_to_initial_connect_and_pragma(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_connect = sqlite3.connect
+    initial_connect_calls = []
+
+    def recording_connect(*args, **kwargs):
+        initial_connect_calls.append((args, kwargs))
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(db_module.sqlite3, "connect", recording_connect)
+
+    db_path = str(tmp_path / "bounded-connect.db")
+    conn = connect(db_path, busy_timeout_ms=275)
+    try:
+        assert initial_connect_calls == [
+            ((db_path,), {"isolation_level": None, "timeout": 0.275})
+        ]
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 275
+    finally:
+        conn.close()
+
+
 def test_fresh_schema_drops_enumerating_stage_and_ceiling_checks(tmp_path):
     # t_tt02 retired the two enumerating CHECKs (Stage, ceiling): lifecycle integrity
     # now lives in the registry validation doors, not the DB. The fresh schema no
