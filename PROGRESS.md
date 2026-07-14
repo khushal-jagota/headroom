@@ -31,6 +31,10 @@ Current build stage:
   and corrected the file-preview selector omission, overbroad event and mutation invalidation, missing
   current-day/cold-start handling, and the Ticket-creation companion-event contradiction. The final fresh
   read-only re-review, session `019f5eca-4772-7771-8727-515fd60e285e`, reports `NO VIOLATIONS`.
+- AD04 implementation is complete in the working tree. The initial independent diff review found two
+  frontend naming/type violations: the Ticket detail still used `AnyRecord`, and a Worker-count helper still
+  said Agent. Both are corrected through the delegated path. The fresh corrected-diff review, session
+  `019f5ede-7f24-78a2-b59a-4a6c51223672`, reports `NO VIOLATIONS`.
 
 What just passed:
 
@@ -186,12 +190,19 @@ What just passed:
   preservation, test, and changed-path contract in `ad04-ticket-only-review/contract-lock.md`. Its final
   correction explicitly allows only migration-time historical Worker-type classification: live Ticket
   creation and all canonical storage continue to require an explicit Worker type with no coding default.
+- AD04 focused implementation evidence is green: the affected Python set passes 90 tests; frontend checks,
+  tests, and production build pass with zero errors and the three existing Ticket-route warnings; the
+  affected browser set passes after its stale selector was corrected; Ruff, mypy over 114 source files,
+  CSS syntax, and `git diff --check` pass. These remain pre-gate checks, not the completeness claim.
+- The independent AD04 implementation review's accepted `AnyRecord` and Agent-helper findings are fixed.
+  The regenerated served bundle points to `index-DzbUvGPe.js`, and the corrected full diff has no review
+  violations.
 
 Next step:
 
-- Commit the isolated AD04 plan/review/contract checkpoint, then delegate implementation against that lock.
-  The worker will add RED tests first, change only the bounded allowlist, run focused checks, and leave the
-  product diff unstaged for independent Codex review before the one canonical `./verify`.
+- Commit the isolated AD04 implementation-review memory, commit the clean bounded product checkpoint, then
+  run the one canonical `PYTHONPATH="$PWD/src" ./verify`. If the gate passes, update closeout memory and move
+  to AD05's canonical human Chat-ingress ticket.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`

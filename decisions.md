@@ -905,6 +905,15 @@ creation's companion proposal/status events conservatively refresh Review becaus
 day-membership snapshot; adding an event distinction solely to avoid that bounded refetch has not earned its
 existence.
 
+## D-ad04-ticket-only-types-and-worker-names — Review source carries the concrete model
+
+The initial implementation review found that `ReviewRoute.svelte` still fetched a Ticket detail as
+`AnyRecord` and named the `running_worker_count` formatter `runningAgentsText`. Both findings are accepted.
+The route is no longer a generic entity dispatcher, so retaining the generic record type would preserve the
+deleted abstraction in the source contract. The count is explicitly a Worker count, so its helper uses
+Worker terminology. The visible `agent` / `agents in progress` wording is preserved because AD04 changes the
+model and interface names, not that product copy.
+
 The first three plan reviews found five real gaps: the file-preview Review selector, overbroad Ticket event
 mapping, Sprint-item mutation invalidation, the shared Ticket mutation list, and current-day gating. A final
 review exposed the creation-companion contradiction. All are accepted in the corrected plan; the final
