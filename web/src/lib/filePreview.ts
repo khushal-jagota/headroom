@@ -66,6 +66,15 @@ export function resolvePreview(target: FilePreviewTarget): ResolvedPreview {
   return { kind: "download", target, href, label, previewHref, actionLabel: "Download" };
 }
 
+export function prepareManagedHtmlPreviewDocument(html: string, managedHtmlHref: string): string {
+  const baseHref = absoluteHrefForManagedHtml(managedHtmlHref);
+  const document = parseManagedHtmlDocument(html);
+  const baseElement = document.createElement("base");
+  baseElement.setAttribute("href", baseHref);
+  document.head.insertBefore(baseElement, document.head.firstChild);
+  return serializeManagedHtmlDocument(document);
+}
+
 export function markdownExpansionFor(
   resolved: ResolvedPreview,
   depth: number,
@@ -192,6 +201,47 @@ function rawPathnameFromHref(href: string): string {
     return pathStart < 0 ? "/" : withoutQuery.slice(pathStart);
   }
   return withoutQuery;
+}
+
+function absoluteHrefForManagedHtml(href: string): string {
+  if (typeof window === "undefined") return href;
+  return new URL(href, window.location.href).href;
+}
+
+function parseManagedHtmlDocument(html: string): Document {
+  if (typeof DOMParser !== "undefined") {
+    return new DOMParser().parseFromString(html, "text/html");
+  }
+  if (typeof document !== "undefined" && document.implementation) {
+    const parsed = document.implementation.createHTMLDocument("");
+    parsed.open();
+    parsed.write(html);
+    parsed.close();
+    return parsed;
+  }
+  throw new Error("managed HTML preview requires a browser document parser");
+}
+
+function serializeManagedHtmlDocument(document: Document): string {
+  return `${serializeDoctype(document.doctype)}${document.documentElement.outerHTML}`;
+}
+
+function serializeDoctype(doctype: DocumentType | null): string {
+  if (!doctype) return "";
+  let serialized = `<!doctype ${doctype.name}`;
+  if (doctype.publicId) {
+    serialized += ` PUBLIC "${escapeDoctypeIdentifier(doctype.publicId)}"`;
+  } else if (doctype.systemId) {
+    serialized += " SYSTEM";
+  }
+  if (doctype.systemId) {
+    serialized += ` "${escapeDoctypeIdentifier(doctype.systemId)}"`;
+  }
+  return `${serialized}>`;
+}
+
+function escapeDoctypeIdentifier(value: string): string {
+  return value.replaceAll('"', "&quot;");
 }
 
 function extensionFor(path: string): string {

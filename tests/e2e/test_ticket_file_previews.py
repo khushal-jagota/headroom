@@ -48,6 +48,45 @@ def _write_ticket_files(server, ticket_id: str) -> None:
     (root / "archive.bin").write_bytes(b"download me")
 
 
+def _write_managed_html_reference_files(server, ticket_id: str) -> None:
+    root = _ticket_files_dir(server, ticket_id)
+    assets = root / "previews" / "assets"
+    assets.mkdir(parents=True)
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAW0lEQVR4nO3PQQ0AIBDAsAP/"
+        "nuGNAvZoFSzZOjNnyNi1dwfgUQCeBOBJAI4E4EkAngTgSQCeBOBJAI4E4EkAngTgSQCeBOBJ"
+        "AI4E4EkAngTgSQCeBOBJAI4E4EkAngTgSQCeBOBJAN4A2icCftL8UqQAAAAASUVORK5CYII="
+    )
+    (assets / "relative.png").write_bytes(png)
+    (assets / "root.png").write_bytes(png)
+    (assets / "relative.css").write_text(
+        "#relative-styled { color: rgb(13, 71, 161); }",
+        encoding="utf-8",
+    )
+    (assets / "root.css").write_text(
+        "#root-styled { color: rgb(27, 94, 32); }",
+        encoding="utf-8",
+    )
+    (root / "previews" / "index.html").write_text(
+        "<!-- <head> -->"
+        "<!doctype html>"
+        "<html>"
+        "<head>"
+        '<link rel="stylesheet" href="assets/relative.css">'
+        f'<link rel="stylesheet" href="/files/tickets/{ticket_id}/previews/assets/root.css">'
+        "</head>"
+        "<body>"
+        '<p id="relative-styled">relative stylesheet</p>'
+        '<p id="root-styled">root-relative stylesheet</p>'
+        '<img id="relative-image" src="assets/relative.png" alt="relative image">'
+        f'<img id="root-image" src="/files/tickets/{ticket_id}/previews/assets/root.png" '
+        'alt="root-relative image">'
+        "</body>"
+        "</html>",
+        encoding="utf-8",
+    )
+
+
 def _expected_hrefs(ticket_id: str) -> dict[str, str]:
     return {
         "Markdown": f"/files/tickets/{ticket_id}/notes/space%20name.md",
@@ -102,6 +141,39 @@ def _exercise_interactive_workspace_rows(frame) -> None:
     anchored_row = frame.locator("#anchored.variant.active [data-rail] .ticket-row").first
     anchored_row.wait_for(state="visible", timeout=WAIT_MS)
     _assert_painted(anchored_row)
+
+
+def _assert_managed_html_references_render(frame) -> None:
+    frame.locator("#relative-styled").wait_for(state="visible", timeout=WAIT_MS)
+    frame.locator("#root-styled").wait_for(state="visible", timeout=WAIT_MS)
+    assert frame.locator("#relative-styled").evaluate(
+        "node => getComputedStyle(node).color"
+    ) == "rgb(13, 71, 161)"
+    assert frame.locator("#root-styled").evaluate(
+        "node => getComputedStyle(node).color"
+    ) == "rgb(27, 94, 32)"
+    for image_id in ("relative-image", "root-image"):
+        metrics = frame.locator(f"#{image_id}").evaluate(
+            """image => new Promise((resolve) => {
+                const done = () => resolve({
+                    complete: image.complete,
+                    naturalWidth: image.naturalWidth,
+                    naturalHeight: image.naturalHeight,
+                    width: image.getBoundingClientRect().width,
+                    height: image.getBoundingClientRect().height,
+                });
+                if (image.complete) {
+                    done();
+                } else {
+                    image.addEventListener("load", done, { once: true });
+                    image.addEventListener("error", done, { once: true });
+                }
+            })"""
+        )
+        assert metrics["complete"] is True
+        assert metrics["naturalWidth"] == metrics["naturalHeight"] == 64
+        assert metrics["width"] > 0
+        assert metrics["height"] > 0
 
 
 def _wait_for_field_text(api, server, ticket_id: str, field: str, expected_fragment: str) -> str:
@@ -294,6 +366,66 @@ def test_interactive_html_preview_paints_and_switches_variants_in_both_surfaces(
     assert full_iframe.get_attribute("sandbox") == "allow-scripts"
     assert full_iframe.get_attribute("allow") is None
     _exercise_interactive_workspace_rows(
+        popup.frame_locator("[data-file-preview-route] iframe[data-file-preview-html]")
+    )
+    popup.close()
+
+
+def test_managed_html_preview_loads_sibling_stylesheets_and_images_in_both_surfaces(
+    server, context_factory, open_page, cli
+) -> None:
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Managed HTML references",
+    )["id"]
+    _write_managed_html_reference_files(server, ticket_id)
+    fields = {
+        "success": {
+            "value": f"[Managed HTML](/files/tickets/{ticket_id}/previews/index.html)",
+            "proposal": None,
+            "user_note": None,
+        },
+        "approach": {"value": None, "proposal": None, "user_note": None},
+        "plan": {"value": None, "proposal": None, "user_note": None},
+        "implementation": {"value": None, "proposal": None, "user_note": None},
+        "closeout": {"value": None, "proposal": None, "user_note": None},
+    }
+    _set_fields(server, ticket_id, fields)
+    context = context_factory()
+    ticket_page = open_page(
+        context,
+        server,
+        f"#/ticket/{ticket_id}",
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+        settled=True,
+    )
+    _open_ticket_field(ticket_page, "success")
+
+    embedded_preview = ticket_page.locator('[data-file-preview-kind="html"]').first
+    embedded_iframe = embedded_preview.locator("iframe[data-file-preview-html]")
+    embedded_iframe.wait_for(state="visible", timeout=WAIT_MS)
+    assert embedded_iframe.get_attribute("sandbox") == "allow-scripts"
+    assert embedded_iframe.get_attribute("allow") is None
+    _assert_managed_html_references_render(
+        embedded_preview.frame_locator("iframe[data-file-preview-html]")
+    )
+
+    with ticket_page.expect_popup() as popup_info:
+        embedded_preview.locator("a.button", has_text="Open preview").click()
+    popup = popup_info.value
+    popup.wait_for_load_state("domcontentloaded", timeout=WAIT_MS)
+    full_iframe = popup.locator(
+        "[data-file-preview-route] iframe[data-file-preview-html]"
+    )
+    full_iframe.wait_for(state="visible", timeout=WAIT_MS)
+    assert full_iframe.get_attribute("sandbox") == "allow-scripts"
+    assert full_iframe.get_attribute("allow") is None
+    _assert_managed_html_references_render(
         popup.frame_locator("[data-file-preview-route] iframe[data-file-preview-html]")
     )
     popup.close()
