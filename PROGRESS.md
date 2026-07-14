@@ -87,6 +87,8 @@ Current build stage:
   wrappers keep product presentation/edit-save state; `FilePreview` keeps target-specific behavior; and the
   two old lifecycle modules are deleted. Independent implementation review session
   `019f5f6d-4892-7273-8343-51122fe517b4` reports `NO VIOLATIONS`. The canonical gate is next.
+- AD07 is complete. Its committed reviewed checkpoint at `05e62a0` passes the canonical gate with 714 unit
+  tests and 82 Playwright tests; the full transcript is retained at `data/verify/ad07-pass.log`.
 
 What just passed:
 
@@ -289,12 +291,15 @@ What just passed:
   pass; and `git diff --check` is clean. The independent reviewer inspected the complete source, test, docs,
   and served-bundle diff and returned exactly `NO VIOLATIONS`. These are pre-gate checks, not the canonical
   completeness claim.
+- The committed AD07 checkpoint passes canonical `PYTHONPATH="$PWD/src" ./verify`: Ruff; mypy across 114
+  source files; 714 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three
+  existing warnings), production build, frontend tests; 82 Playwright e2e tests; final `VERIFY: PASS`.
+  The complete transcript is retained at `data/verify/ad07-pass.log`.
 
 Next step:
 
-- Run AD07's one canonical gate from the committed checkpoint and record its full transcript. AD08's ticket
-  is already defined and its delegated plan is in progress; isolated-final AD09 Employee session history
-  remains after it.
+- Review and contract-lock AD08's delegated Resource Catalogue plan, then delegate its implementation.
+  Isolated-final AD09 Employee session history remains after it.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`
