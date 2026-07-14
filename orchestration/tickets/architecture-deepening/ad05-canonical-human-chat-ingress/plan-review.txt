@@ -1,0 +1,33 @@
+AD05 implementation plan review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Initial session: 019f5eea-abb4-71d3-b4b8-745c2a066d16
+
+Finding
+
+Major: the focused command set omitted the existing unit and browser image suites even though the ticket
+requires focused proof that canonical image admission and delivery remain exact. The existing suites cover
+managed image references, image-only turns, unsafe-image rejection, ordered attachments, upload/removal,
+Chief image behavior, retry state, and restored transcript rendering.
+
+The review output printed this same finding twice; it is one issue, not two independent violations.
+
+Disposition
+
+Accepted. The corrected plan names `tests/unit/test_chat_images.py` and
+`tests/e2e/test_chat_images.py` as unchanged preservation contracts, keeps both outside the implementation
+allowlist, and runs each complete file without a keyword filter.
+
+Corrected-plan re-review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5eed-a837-7601-820e-f0ca50188e40
+
+Result
+
+NO VIOLATIONS
+
+The fresh review re-read the complete ticket, corrected plan, production boundaries, legacy callers, tests,
+and documentation. It reconfirmed the single canonical ingress, surviving gateway observation stream,
+complete deletion inventory, exact `/new` and next-message live-handle behavior, no replacement result
+shape, precise static guards, bounded changed paths, full image preservation checks, and AD06/AD09 limits.

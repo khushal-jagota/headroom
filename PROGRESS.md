@@ -40,6 +40,10 @@ Current build stage:
   parallel service functions, synchronous adapter methods/result shapes, and the unused browser SSE client.
   The gateway `stream` method remains because it is the one transport consumed by the canonical server-owned
   turn for both messages and commands; exact `/new` remains on that path.
+- AD05's delegated implementation plan is corrected and contract-locked. The first independent review found
+  one omission: its focused commands did not run the existing unit and browser image suites. Both are now
+  explicit unchanged preservation contracts outside the edit allowlist and run in full. Fresh re-review,
+  session `019f5eed-a837-7601-820e-f0ca50188e40`, reports `NO VIOLATIONS`.
 
 What just passed:
 
@@ -206,11 +210,16 @@ What just passed:
   source files; 692 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three
   existing warnings), production build, frontend tests; 80 Playwright e2e tests; final `VERIFY: PASS`.
   The complete transcript is retained at `data/verify/ad04-pass.log`.
+- AD05's inventory covers every legacy route, service, result type, protocol method, production/test adapter,
+  browser helper, and affected test. The reviewed replacement preserves the exact `/turns ->
+  start_human_turn -> GatewayAdapter.stream` path, session-key rules, Panels state, command behavior, and
+  literal `/new` transition without retaining a synchronous compatibility shape. The orchestrator generated
+  the two contract declarations and exact lock; consumer code is intentionally RED until delegated rewiring.
 
 Next step:
 
-- Delegate AD05's implementation plan against the ticket, then independently review the plan before
-  generating and locking its contract declarations.
+- Delegate AD05 implementation against the corrected plan and frozen declarations. After focused evidence,
+  independently review the complete diff before the one canonical `./verify` run.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`

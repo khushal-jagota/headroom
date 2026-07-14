@@ -1,5 +1,4 @@
-"""Chat domain shapes: messages, the gateway send result, and the availability
-signal for the panel (§11). Stdlib only."""
+"""Chat domain contracts for server-owned turns and gateway observations. Stdlib only."""
 
 from __future__ import annotations
 
@@ -86,24 +85,13 @@ class ChatHistory:
 
 
 @dataclass(frozen=True)
-class ChatSendResult:              # what the gateway adapter returns per send
-    reply_text: str
-    session_key: str               # persisted onto the entity's chat_session_key
+class ChatStreamChunk:
+    """One normalized gateway observation consumed by the server-owned human turn."""
 
-
-@dataclass(frozen=True)
-class CommandRunResult:            # what the gateway adapter returns per /command run
-    reply_text: str
-    session_key: str               # persisted onto the entity's chat_session_key (first run)
-    kind: str                      # "assistant" (a model turn) | "system" (display output)
-
-
-@dataclass(frozen=True)
-class ChatStreamChunk:             # normalized gateway stream chunk for SSE callers
-    type: str                      # "session" (internal) | "activity" | "token" | "done"
+    type: str                      # "session" | "activity" | "token" | "done"
     text: str = ""                 # token text, or activity label when type == "activity"
     reply_text: str = ""           # complete reply when type == "done"
-    session_key: str = ""          # minted/resumed key when type == "done"
+    session_key: str = ""          # minted/resumed key when type == "session" or "done"
     kind: str = "assistant"        # "assistant" | "system" when type == "done"
     activity: ChatActivityObservation | None = None   # structured activity when type == "activity"
 

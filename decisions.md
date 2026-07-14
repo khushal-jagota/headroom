@@ -933,6 +933,23 @@ review exposed the creation-companion contradiction. All are accepted in the cor
 read-only re-review reports `NO VIOLATIONS`. The exact read, response, UI, invalidation, deletion, and
 preservation boundaries are frozen in `ad04-ticket-only-review/contract-lock.md`.
 
+## D-ad05-image-preservation-is-focused-evidence — Existing image suites stay unchanged and run in full
+
+AD05 changes no image contract, but image admission and delivery pass through the canonical human turn that
+the ticket concentrates. The independent plan review therefore correctly required the existing unit and
+browser image suites as focused evidence rather than waiting for the later full gate. Both files remain
+outside the implementation allowlist: they are preservation contracts, not migration targets, and each runs
+in full without a keyword filter.
+
+## D-ad05-contract-lock — One human Chat admission and one gateway observation transport
+
+The corrected AD05 plan passed independent re-review with no violations. The public `/turns` and hosted
+Chief shells, sole `start_human_turn` admission service, exact surviving `GatewayAdapter.stream` signature,
+six-field `ChatStreamChunk`, deleted synchronous results/methods, stream-only fake behavior, literal `/new`
+transition, browser-helper deletion, static guards, and bounded path set are frozen in
+`ad05-canonical-human-chat-ingress/contract-lock.md`. Implementation may rewire callers to those declarations
+but may not invent compatibility shapes or deepen AD06/AD09 concerns.
+
 ## D-ad01-one-locked-ticket-migration — One terminal rebuild migrates every old Ticket schema
 
 AD01 replaces the sequential Ticket lifecycle, kickoff, type, and vocabulary rebuild path with one
