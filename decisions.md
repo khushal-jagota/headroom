@@ -625,6 +625,13 @@ This catalogue does not weaken the Worker-type boundary. Live creation always re
 type, with no `coding` inference or default. Only an explicit migration may classify a historical row that
 predates stored Worker type as `coding`.
 
+The reviewed implementation is committed at `d2cc125`. The first affected browser run found a duplicate
+Review read caused by stale-self-heal racing the new ordered refresh; the delegated correction marks the
+decision's refresh as handled before mutation and restores eligibility when the mutation itself fails. The
+complete affected browser set then passed 68/68. Independent implementation review session
+`019f5f98-5fd1-7610-9cd5-92d2cf2a32a8` found `NO VIOLATIONS` across the product diff, real backend emitters,
+served bundle, allowlist, and explicit-Worker-type boundary.
+
 ## D-shared-scrollbar-treatment — Native scrollbars, shared CSS, capability-safe hiding
 
 Panels' seven owned overflow surfaces (`.markdown pre`, Markdown `.file-preview`, `.chat-thread`,

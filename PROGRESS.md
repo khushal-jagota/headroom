@@ -98,7 +98,12 @@ Current build stage:
 - The AD08 lock retains exactly 13 cached projections, nine named mutation effects, entity-first ordinary
   invalidation, narrow Review inputs, and a semantic-free cache engine. It explicitly forbids live
   Worker-type inference/defaults; only the existing migration may rewrite a historical pre-Worker-type row
-  to `coding`. Delegated RED-first implementation is next.
+  to `coding`.
+- AD08's delegated implementation is committed at `d2cc125`. One catalogue now owns all 13 cached reads,
+  nine immediate mutation effects, and event dependencies; the generic cache remains semantic-free; phantom
+  identities and forwarding modules are deleted; and the served bundle is current. The focused type, Node,
+  unit, and 68-test browser evidence is green. Independent implementation review session
+  `019f5f98-5fd1-7610-9cd5-92d2cf2a32a8` reports `NO VIOLATIONS`. The canonical gate is next.
 
 What just passed:
 

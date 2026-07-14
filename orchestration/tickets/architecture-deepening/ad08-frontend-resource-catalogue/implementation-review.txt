@@ -1,0 +1,31 @@
+AD08 implementation review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5f98-5fd1-7610-9cd5-92d2cf2a32a8
+Reviewed state: complete uncommitted product diff later committed as d2cc125
+Result: NO VIOLATIONS
+
+The reviewer inspected every path in the exact 30-path allowlist plus the ticket, corrected plan,
+contract lock, standing rules, backend event enum and emitters, unchanged Chat and cache contracts,
+generated served bundle, and the separate AD09 plan exclusion. It checked the 13-entry public catalogue,
+nine mutation effects, Review ordering, route sharing/disposal, current-day and link behavior, Project-name
+fan-out and opened-Ticket filtering, Chat precision, cache semantics, anti-rot tests, documentation, generated
+asset replacement, path scope, and the absence of live Worker-type inference or defaults.
+
+Exact final reviewer output:
+
+NO VIOLATIONS
+
+The reviewer's attempted frontend commands were blocked only by its read-only sandbox because the tests and
+Vite need temporary writes. The delegated implementation had already supplied these successful writable
+focused checks:
+
+- `npm --prefix web run check`: zero errors and zero warnings.
+- `npm --prefix web test`: all catalogue, cache, and preservation assertions passed.
+- focused unit set: 9 passed.
+- exact affected browser set from plan section 10: 68 passed in 104.64 seconds.
+- allowlist audit: 30 actual paths, 30 expected, no extras or omissions.
+- final served bundle: `index-B57dEeFD.js`; predecessor `index-gWFofsYY.js` deleted; other assets unchanged.
+
+No finding required correction or scope widening. Full `./verify` remained intentionally unrun until the
+reviewed product commit existed.
