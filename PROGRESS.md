@@ -52,6 +52,11 @@ Current build stage:
 - AD06's deep canonical Chat-turn ticket is defined. It gives one human-turn owner the request, atomic
   admission, causal session-key binding, typed observations, transcript projection, Pause, and idempotent
   settlement. It explicitly leaves Employee delivery and AD09 history separation outside the boundary.
+- AD06's first independent plan review found four accepted violations: a claim-local Chat rule would split
+  AD03 eligibility; a human-only owner cannot honestly own worker-origin Pause; ordinary CAS could defeat
+  literal `/new`; and the private execution value was not declared. The ticket and decisions now require one
+  eight-factor eligibility rule, cross-origin visible Pause control, one-use force-fresh `/new` binding, and
+  an exact private execution dataclass. A corrected delegated plan and fresh re-review are required.
 
 What just passed:
 
@@ -236,9 +241,8 @@ What just passed:
 
 Next step:
 
-- Delegate AD06's implementation plan against the new ticket, independently review and freeze its exact
-  owner, observation, transaction, deletion, test, and changed-path contracts, then dispatch implementation.
-  Managed Markdown remains AD07.
+- Revise AD06's delegated plan for all four accepted review findings, then run a fresh read-only re-review.
+  Only a clean corrected plan may be contract-locked and dispatched. Managed Markdown remains AD07.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`

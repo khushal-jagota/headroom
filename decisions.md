@@ -965,6 +965,35 @@ contract explicitly requires preservation of the lost-first-write race. Leaving 
 canonical path less correct after deleting the parallel paths. The implementation review examined this
 branch specifically and reported `NO VIOLATIONS`; deeper turn concentration remains AD06.
 
+## D-ad06-active-chat-is-automatic-ineligibility — One complete decision includes active Chat
+
+AD06 closes the race where human admission and automatic Employee claim could both commit. An active Panels
+Chat turn is therefore the eighth factor in the sole
+`is_eligible_for_automatic_employee_step` function, consumed unchanged by discovery and final claim. It is
+not a claim-local mutex: that would violate AD03's central achievement by making discovery and claim ask
+different questions. This explicitly supersedes AD03's seven-factor enumeration and nothing else in its
+definition/claim contract.
+
+Chat settlement retains its existing no-wake behavior, including Pause. The SQLite state and canonical
+polling timer remain authoritative and observe eligibility after the turn settles. Adding an immediate wake
+would change the established meaning of Pause and is not required for correctness.
+
+## D-ad06-pause-is-visible-turn-control — Pause crosses origin, delivery does not
+
+The deep owner is `ChatTurnLifecycle`, with exact public operations `start_human_turn` and
+`pause_active_turn`. The first owns only human admission/execution. The second is deliberately cross-origin:
+the product Pause affordance can interrupt a human- or worker-origin visible Chat turn. It settles only the
+Panels Chat turn, preserves partial output, does not write Ticket status, and does not wake automatic
+eligibility. Employee prompt delivery and eventual Ticket settlement remain with `EmployeeStepRunner`.
+
+## D-ad06-new-forces-fresh-session — Literal /new wins its first binding
+
+Ordinary session binding compares the execution's expected key and adopts a concurrent database winner, so
+Panels and Hermes cannot diverge. Exact `/new` has different meaning: its first created candidate must become
+the new durable session. The owner carries one private, one-use force-fresh intent for that first binding;
+the candidate replaces any current key, attaches to the running turn, and is the live session used. After
+that binding, normal compare-and-set recovery and rotation rules resume. No other input may force a key.
+
 ## D-ad01-one-locked-ticket-migration — One terminal rebuild migrates every old Ticket schema
 
 AD01 replaces the sequential Ticket lifecycle, kickoff, type, and vocabulary rebuild path with one
