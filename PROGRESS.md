@@ -20,8 +20,8 @@ Current build stage:
 - AD01 is complete on the branch at `f9246d5`. The independently reviewed Worker-type/stored-Stage
   replacement follows the program-memory commit `aa1f29d` and the separately isolated test stabilization
   `afa57fd`.
-- AD02's delegated implementation is complete and its corrected diff has passed independent review with
-  `NO VIOLATIONS`. The reviewed checkpoint is ready to commit before the canonical gate.
+- AD02 is complete on the branch at `05e2fda`. Its delegated implementation and corrected diff passed
+  independent review with `NO VIOLATIONS`, and the committed checkpoint passes the canonical gate.
 
 What just passed:
 
@@ -144,11 +144,17 @@ What just passed:
   keys before reading a file or sending a request, while leaving Worker-type field validity with the API.
   Focused CLI browser tests pass 6/6, including every reserved key and a create-only name reaching the
   reconcile API. Corrected-diff re-review reports `NO VIOLATIONS`.
+- The committed AD02 checkpoint passes canonical `PYTHONPATH="$PWD/src" ./verify`: Ruff; mypy across 114
+  source files; 650 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three
+  existing warnings), production build, frontend tests; 80 Playwright e2e tests; final `VERIFY: PASS`.
+  The complete transcript is retained at `data/verify/ad02-pass.log`. An initial invocation exited before
+  all gates because the external worktree's `.venv` link was absent; its separate startup transcript is
+  `data/verify/ad02-startup-failure.log`, and restoring/removing the local link changed no tracked file.
 
 Next step:
 
-- Commit the independently reviewed AD02 checkpoint, then run the one canonical
-  `PYTHONPATH="$PWD/src" ./verify`. If it is clean, record the full transcript and advance serially to AD03.
+- Decompose AD03 around the single Automatic Employee-step eligibility decision, delegate its plan, and
+  review that plan against the runtime contract before any implementation.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`
