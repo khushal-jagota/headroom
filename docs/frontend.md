@@ -101,6 +101,13 @@ share.
   separate source mode and no Edit/Save/Cancel control set. Browser edits may move an
   atomic block within the editable DOM; that move keeps its mounted component alive,
   while actual deletion still unmounts it and cancels pending work.
+- **Managed Markdown has one DOM owner.** `managedMarkdown.ts` alone renders Markdown,
+  mounts and unmounts file previews, turns editable preview links into atomic blocks,
+  reads edited Markdown, maintains empty state, and cleans up observers and components.
+  `MarkdownBlock` only supplies read-only content and presentation values.
+  `InlineEdit` only coordinates focus, save, retry, keyboard, paste, Escape, and the
+  choice between Markdown and plain text. A failed Markdown save keeps the exact
+  attempted source so a later blur can retry without another edit.
 
 ## The shared component set
 
@@ -123,8 +130,8 @@ hand-rolling the same shapes per screen. Each does one job:
   picker, and the approve/accept action, plus a read-only mode for dropped tickets.
 - **ResourceState** — the shared error / loading scaffold; shows an error line, a
   loading line, or the content. Data-empty states ("No ideas yet.") stay in the screens.
-- **InlineEdit** — the one editable-markdown surface (notes, recaps, drafts).
-- **MarkdownBlock** — read-only rendering through the hardened markdown renderer.
+- **InlineEdit** — product editing and save behavior for Markdown and plain text.
+- **MarkdownBlock** — the read-only product wrapper for managed Markdown.
 - **FilePreview** — the one file preview card/inline renderer (see the file-preview rule).
 - **ChatPanel / ChatComposer** — the ticket and Chief-of-Staff chat rail and its input,
   including ordered pending image previews for picker, paste, and drop intake.
@@ -149,7 +156,7 @@ local day, not the server's planning-day boundary.
 
 _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 (one route per screen), `web/src/components/` (shared pieces), `web/src/lib/`
-(API, resources, event mapping, WebSocket, `labelize`, dates), `assets/tokens.css`
+(API, resources, event mapping, WebSocket, Managed Markdown, `labelize`, dates), `assets/tokens.css`
 (design tokens), `assets/app.css` (shared styling), `assets/markdown.js` (the
 hardened renderer), `web/dist/` (built app served by FastAPI).
 
@@ -171,4 +178,4 @@ hardened renderer), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-13 (per-type ticket rendering and shared scrollbar behavior verified)._
+_Last verified: 2026-07-14 (Managed Markdown ownership, per-type ticket rendering, and shared scrollbar behavior verified)._

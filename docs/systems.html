@@ -896,12 +896,24 @@
                 WebSocket event batches map to resource keys. The browser refetches
                 only those keys from the server.
               </p>
+              <p>
+                Managed Markdown has one browser-DOM owner.
+                <code>managedMarkdown.ts</code> renders through the hardened renderer,
+                mounts file previews, maintains editable atomic blocks, serializes
+                edits, reconciles moved or deleted previews, and tears everything
+                down. <code>MarkdownBlock</code> and <code>InlineEdit</code> only supply
+                product values and coordinate read-only presentation or ordinary
+                editing and save behavior. Plain contenteditable helpers remain
+                separate from Markdown lifecycle work.
+              </p>
               <p class="code-paths">
                 Code paths: <code>web/src/App.svelte</code>,
                 <code>web/src/routes/</code>,
                 <code>web/src/lib/resources.svelte.ts</code>,
                 <code>web/src/lib/ws.ts</code>,
-                <code>web/src/lib/eventMapping.mjs</code>
+                <code>web/src/lib/eventMapping.mjs</code>,
+                <code>web/src/lib/managedMarkdown.ts</code>,
+                <code>web/src/lib/editableText.ts</code>
               </p>
             </div>
           </details>
@@ -961,7 +973,7 @@
           </li>
           <li>
             <strong>Frontend</strong>
-            <span>Owns rendering and local drafts only.</span>
+            <span>Owns rendering and local drafts only. Within it, <code>managedMarkdown.ts</code> alone owns rendered Markdown DOM and preview lifetime.</span>
           </li>
           <li>
             <strong>CLI</strong>

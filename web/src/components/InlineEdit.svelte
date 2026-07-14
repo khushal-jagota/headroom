@@ -4,12 +4,14 @@
     editableMarkupChanged,
     editableMarkupSnapshot,
     handlePlainTextPaste,
-    paintMarkdownEditable,
     paintPlainEditable,
-    readMarkdownEditable,
     readPlainEditable,
-    refreshEditableEmptyState
-  } from "../lib/markdownEdit";
+    refreshPlainEditableEmptyState
+  } from "../lib/editableText";
+  import {
+    createManagedMarkdownSurface,
+    type EditableManagedMarkdownSurface
+  } from "../lib/managedMarkdown";
   import ErrorLine from "./ErrorLine.svelte";
 
   let {
@@ -40,18 +42,39 @@
   let error = $state<unknown>(null);
   let reverting = false;
   let editSnapshot = "";
-  let markdownDirty = false;
-  let cleanupMarkdownPreviews: (() => void) | null = null;
+  let markdownSurface: EditableManagedMarkdownSurface | null = null;
+  let markdownSurfaceHost: HTMLDivElement | null = null;
+  let activeMarkdownMode: boolean | null = null;
+  let pendingMarkdownSave: string | null = null;
 
   function rawValue(): string {
     return value === null || value === undefined ? "" : String(value);
   }
 
+  function selectMode(): boolean {
+    if (!el) return false;
+    if (
+      activeMarkdownMode === markdown &&
+      (!markdown || (markdownSurface !== null && markdownSurfaceHost === el))
+    ) {
+      return false;
+    }
+    markdownSurface?.destroy();
+    markdownSurface = null;
+    markdownSurfaceHost = null;
+    pendingMarkdownSave = null;
+    activeMarkdownMode = markdown;
+    if (markdown) {
+      markdownSurface = createManagedMarkdownSurface(el, { mode: "editable" });
+      markdownSurfaceHost = el;
+    }
+    return true;
+  }
+
   function paint(raw: unknown): void {
     if (!el) return;
-    cleanupMarkdownPreviews?.();
-    cleanupMarkdownPreviews = null;
-    if (markdown) cleanupMarkdownPreviews = paintMarkdownEditable(el, raw);
+    selectMode();
+    if (markdown) markdownSurface?.update(raw);
     else paintPlainEditable(el, raw);
   }
 
@@ -60,11 +83,7 @@
     if (!el) return;
     editing = true;
     error = null;
-    if (markdown) {
-      markdownDirty = false;
-    } else {
-      editSnapshot = editableMarkupSnapshot(el);
-    }
+    if (!markdown) editSnapshot = editableMarkupSnapshot(el);
   }
 
   async function commit(): Promise<void> {
@@ -73,11 +92,14 @@
     if (!node) return;
     let raw: string;
     if (markdown) {
-      if (!markdownDirty) {
+      const surface = markdownSurface;
+      if (!surface) return;
+      if (surface.hasChanges()) raw = surface.read();
+      else if (pendingMarkdownSave !== null) raw = pendingMarkdownSave;
+      else {
         editing = false;
         return;
       }
-      raw = readMarkdownEditable(node);
     } else {
       if (!editableMarkupChanged(node, editSnapshot)) {
         editing = false;
@@ -87,19 +109,23 @@
       raw = readPlainEditable(node);
     }
     if (raw === rawValue()) {
+      pendingMarkdownSave = null;
       editing = false;
       paint(raw);
       return;
     }
+    if (markdown) pendingMarkdownSave = raw;
     inFlight = true;
     error = null;
     try {
       await onSave(raw);
+      if (markdown) pendingMarkdownSave = null;
       editing = false;
       paint(raw);
     } catch (err) {
       error = err;
       editing = true;
+      if (markdown) pendingMarkdownSave = raw;
       paint(raw);
     } finally {
       inFlight = false;
@@ -122,6 +148,7 @@
       reverting = true;
       editing = false;
       error = null;
+      pendingMarkdownSave = null;
       paint(onCancel ? onCancel() : rawValue());
       el?.blur();
     }
@@ -129,12 +156,16 @@
 
   $effect(() => {
     const current = value;
-    if (!editing && !inFlight) paint(current);
+    const node = el;
+    if (!node) return;
+    const modeChanged = selectMode();
+    if (modeChanged || (!editing && !inFlight)) paint(current);
   });
 
   onDestroy(() => {
-    cleanupMarkdownPreviews?.();
-    cleanupMarkdownPreviews = null;
+    markdownSurface?.destroy();
+    markdownSurface = null;
+    markdownSurfaceHost = null;
   });
 </script>
 
@@ -163,8 +194,8 @@
   }}
   onkeydown={onKeydown}
   oninput={() => {
-    if (markdown) markdownDirty = true;
-    if (el) refreshEditableEmptyState(el, markdown);
+    if (markdown) markdownSurface?.refreshEmptyState();
+    else if (el) refreshPlainEditableEmptyState(el);
   }}
   onpaste={handlePlainTextPaste}
 ></div>

@@ -296,8 +296,16 @@ The WebSocket sends event batches. The browser maps each event to resource keys 
 refetches only those keys. This is why adding a backend event kind must be covered by
 the event-mapping test.
 
+Managed Markdown has one browser-DOM owner. `managedMarkdown.ts` renders through the
+hardened renderer, mounts file previews, maintains editable atomic blocks, serializes
+edits, reconciles moved or deleted previews, and tears everything down. The
+`MarkdownBlock` and `InlineEdit` components only supply product values and coordinate
+read-only presentation or ordinary editing and save behavior. Plain contenteditable
+helpers remain separate from Markdown lifecycle work.
+
 Code paths: `web/src/App.svelte`, `web/src/routes/`, `web/src/lib/resources.svelte.ts`,
-`web/src/lib/ws.ts`, `web/src/lib/eventMapping.mjs`.
+`web/src/lib/ws.ts`, `web/src/lib/eventMapping.mjs`,
+`web/src/lib/managedMarkdown.ts`, `web/src/lib/editableText.ts`.
 
 ### 8. The CLI And Authority System
 
@@ -328,7 +336,8 @@ Code paths: `src/planner/cli/main.py`, `src/planner/cli/http.py`,
 - Canonical writer functions own database mutations. Most live in domain `data.py`
   files; current exceptions are called out below.
 - Hermes owns chat transcripts.
-- The frontend owns rendering and local edit drafts only.
+- The frontend owns rendering and local edit drafts only. Within it,
+  `managedMarkdown.ts` alone owns rendered Markdown DOM and preview lifetime.
 - The CLI is an action surface, not a decision surface.
 
 These boundaries are why the system is understandable: there are many surfaces, but
