@@ -613,6 +613,7 @@ their direct universal stored-Stage comparisons are correct.
 
 **Test modifications**
 
+- `tests/support/__init__.py` (docstring-only Worker-type/current-production wording)
 - `tests/support/probe.py`
 - `tests/typing/tt01_overload_cases.py`
 - `tests/typing/tt02b_field_seam_cases.py`

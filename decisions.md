@@ -827,6 +827,12 @@ owner is `tests/unit/test_seed.py`, which the initial bounded allowlist omitted.
 added rather than hiding seed behavior in an unrelated allowed module. No production scope or contract
 changes.
 
+## D-ad02-support-wording-allowlist — Shared test support uses the live Worker-type model
+
+`tests/support/__init__.py` is added to AD02's allowlist for a docstring-only correction. Its old
+“ticket type” term and “production stays coding-only” statement are both false after the already-locked
+Worker-type model and shipped `new_worker` definition. No executable test support or behavior changes.
+
 ## D-ad01-one-locked-ticket-migration — One terminal rebuild migrates every old Ticket schema
 
 AD01 replaces the sequential Ticket lifecycle, kickoff, type, and vocabulary rebuild path with one

@@ -124,6 +124,9 @@ What just passed:
 - Implementation found one bounded allowlist omission: the required extra-definition-field seed proof
   belongs in `tests/unit/test_seed.py`. That test-only path is added; no product boundary or locked shape
   changes.
+- A final static wording scan found `tests/support/__init__.py` still used “ticket type” and claimed
+  production was coding-only. It is added for that docstring-only correction; executable support stays
+  unchanged.
 
 Next step:
 
