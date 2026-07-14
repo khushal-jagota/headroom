@@ -515,6 +515,14 @@ textarea {
   border: 0;
 }
 
+.file-preview-markdown-document {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  padding: var(--space-5);
+  overflow-y: auto;
+}
+
 /* --- Field editor -------------------------------------------------------- */
 
 .field-editor {

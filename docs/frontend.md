@@ -104,16 +104,20 @@ share.
   preview helper anchors the document's base URL to that HTML file's absolute managed
   URL, so relative stylesheet, script, image, and root-relative managed-file
   references resolve as they would if the file were opened from its `/files/...` URL.
-  A new-tab action opens the Panels preview route. On that route, HTML is no longer
-  wrapped in preview-card chrome: the route fetches the document, gives the iframe a
-  short-lived Blob URL, revokes the old URL when the target changes or unmounts, and
-  fills the available page with the same isolated script-enabled iframe. Images,
-  video, and audio render inline; unknown files stay as
-  download cards; ordinary external links stay external-link cards with deterministic host
-  text. The full preview route is
-  `#/preview?source=ticket&ticket=<id>&path=<path>`. Chat images under
-  `/files/chats/<entity-id>/...` use this same component and resolver rather than a
-  chat-only renderer.
+  A new-tab action opens the Panels preview route. On that route, HTML and Markdown
+  are no longer wrapped in preview-card chrome. HTML is fetched as a document, given
+  to the iframe through a short-lived Blob URL, revoked when the target changes or
+  unmounts, and fills the available page with the same isolated script-enabled iframe.
+  Markdown is fetched as source and rendered directly through `MarkdownBlock` in the
+  full-page document area, so managed links keep the same nested-preview and self-link
+  bounds as embedded Markdown without repeating the file title, metadata, or open
+  action. Images, video, and audio render inline; unknown files stay as download cards;
+  ordinary external links stay external-link cards with deterministic host
+  text. Full preview targets use either
+  `#/preview?source=ticket&ticket=<id>&path=<path>` or
+  `#/preview?source=chat&entity=<id>&path=<path>`. Managed chat files under
+  `/files/chats/<entity-id>/...` use the same component, resolver, and document route
+  rather than a chat-only renderer.
 - **Editable Markdown stays one surface.** Ticket notes, recaps, passed fields,
   approval drafts, and future Markdown surfaces remain directly editable with their
   existing focus, blur/save, keyboard, paste, and Escape behavior. Links stay mounted

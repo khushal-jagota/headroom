@@ -18,6 +18,10 @@ def _ticket_files_dir(server, ticket_id: str) -> Path:
     return server.db_path.parent / "files" / "tickets" / ticket_id
 
 
+def _chat_files_dir(server, entity_id: str) -> Path:
+    return server.db_path.parent / "files" / "chats" / entity_id
+
+
 def _write_ticket_files(server, ticket_id: str) -> None:
     root = _ticket_files_dir(server, ticket_id)
     (root / "notes").mkdir(parents=True)
@@ -84,6 +88,14 @@ def _write_managed_html_reference_files(server, ticket_id: str) -> None:
         "</body>"
         "</html>",
         encoding="utf-8",
+    )
+
+
+def _write_chat_markdown_file(server, entity_id: str) -> None:
+    root = _chat_files_dir(server, entity_id)
+    root.mkdir(parents=True)
+    (root / "chat-note.md").write_text(
+        "# Chat Notes\n\nRendered from chat files.", encoding="utf-8"
     )
 
 
@@ -176,6 +188,47 @@ def _assert_managed_html_references_render(frame) -> None:
         assert metrics["height"] > 0
 
 
+def _assert_full_page_markdown_document(page, heading: str) -> None:
+    page.wait_for_function(
+        "heading => document.querySelector("
+        "'[data-file-preview-route] [data-file-preview-markdown] h1'"
+        ")?.textContent === heading",
+        arg=heading,
+        timeout=WAIT_MS,
+    )
+    assert page.locator("[data-file-preview-route].file-preview-route--document").count() == 1
+    assert page.inner_text("[data-file-preview-route] h1") == heading
+    assert page.locator("[data-file-preview-route] > [data-file-preview]").count() == 0
+    assert page.locator("[data-file-preview-route] > .file-preview .file-preview-meta").count() == 0
+    assert page.locator("[data-file-preview-route] > .file-preview a.button").count() == 0
+    geometry = page.evaluate(
+        """() => {
+            const shellContent = document.querySelector('.shell-content');
+            const shell = shellContent.getBoundingClientRect();
+            const route = document.querySelector(
+                '[data-file-preview-route]'
+            ).getBoundingClientRect();
+            const doc = document.querySelector(
+                '[data-file-preview-markdown]'
+            ).getBoundingClientRect();
+            return {
+                viewportHeight: window.innerHeight,
+                shellWidth: shell.width,
+                routeWidth: route.width,
+                routeHeight: route.height,
+                docWidth: doc.width,
+                docHeight: doc.height,
+                shellPaddingTop: getComputedStyle(shellContent).paddingTop,
+            };
+        }"""
+    )
+    assert geometry["shellPaddingTop"] == "0px"
+    assert geometry["routeWidth"] >= geometry["shellWidth"] - 2
+    assert geometry["docWidth"] >= geometry["shellWidth"] - 2
+    assert geometry["routeHeight"] >= 0.75 * geometry["viewportHeight"]
+    assert geometry["docHeight"] > 0
+
+
 def _wait_for_field_text(api, server, ticket_id: str, field: str, expected_fragment: str) -> str:
     deadline = time.monotonic() + WAIT_MS / 1000
     while time.monotonic() < deadline:
@@ -203,9 +256,19 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
         "File preview route",
     )["id"]
     _write_ticket_files(server, ticket_id)
+    markdown_path = _ticket_files_dir(server, ticket_id) / "notes" / "space name.md"
+    markdown_path.write_text(
+        markdown_path.read_text(encoding="utf-8")
+        + f"\n\n[Image](/files/tickets/{ticket_id}/images/pic.png)",
+        encoding="utf-8",
+    )
+    _write_chat_markdown_file(server, ticket_id)
     fields = {
         "success": {
-            "value": f"[HTML](/files/tickets/{ticket_id}/page.html)",
+            "value": (
+                f"[Markdown](/files/tickets/{ticket_id}/notes/space%20name.md)\n\n"
+                f"[HTML](/files/tickets/{ticket_id}/page.html)"
+            ),
             "proposal": None,
             "user_note": None,
         },
@@ -216,18 +279,49 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     }
     _set_fields(server, ticket_id, fields)
     context = context_factory()
-    page = context.new_page()
 
-    page.goto(
-        f"{server.base}/#/preview?source=ticket&ticket={ticket_id}&path=notes%2Fspace%20name.md"
+    ticket_page = open_page(
+        context,
+        server,
+        f"#/ticket/{ticket_id}",
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+        # settled=True: this half only inspects steady-state ticket DOM (embedded
+        # markdown/HTML preview + popup geometry); it does not exercise the
+        # un-settled lifecycle.
+        settled=True,
     )
-    page.wait_for_selector(
-        '[data-file-preview-route] [data-file-preview-kind="markdown"] h1', timeout=WAIT_MS
+    _open_ticket_field(ticket_page, "success")
+    embedded_markdown = ticket_page.locator('[data-file-preview-kind="markdown"]').first
+    embedded_markdown.locator("h1", has_text="File Notes").wait_for(
+        state="visible", timeout=WAIT_MS
     )
-    assert page.inner_text("[data-file-preview-route] h1") == "File Notes"
-    assert page.locator(".shell-content").evaluate(
-        "node => getComputedStyle(node).paddingTop"
-    ) != "0px"
+    markdown_action = embedded_markdown.locator("a.file-preview-title").first
+    expected_markdown_url = (
+        f"{server.base}/#/preview?source=ticket&ticket={ticket_id}"
+        "&path=notes%2Fspace%20name.md"
+    )
+    with ticket_page.expect_popup() as markdown_popup_info:
+        markdown_action.click()
+    page = markdown_popup_info.value
+    page.wait_for_load_state("domcontentloaded", timeout=WAIT_MS)
+    assert page.url == expected_markdown_url
+    _assert_full_page_markdown_document(page, "File Notes")
+    assert (
+        page.locator('[data-file-preview-markdown] [data-file-preview-kind="markdown"] h1')
+        .filter(has_text="Other Notes")
+        .count()
+        == 1
+    )
+    self_link_card = page.locator(
+        '[data-file-preview-markdown] [data-file-preview-kind="markdown"] article.file-preview-card'
+    )
+    assert self_link_card.count() == 1
+    assert "space name.md" in self_link_card.inner_text()
+    managed_image = page.locator(
+        '[data-file-preview-markdown] [data-file-preview-kind="image"] img'
+    )
+    managed_image.wait_for(state="visible", timeout=WAIT_MS)
+    _assert_painted(managed_image)
 
     page.evaluate("window.__previewHashNavigationMarker = 'kept'")
     page.evaluate(
@@ -235,26 +329,18 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
         "'#/preview?source=ticket&ticket=' + ticket + '&path=notes%2Fother.md'; }",
         ticket_id,
     )
-    page.wait_for_function(
-        "() => document.querySelector('[data-file-preview-route] h1')"
-        "?.textContent === 'Other Notes'",
-        timeout=WAIT_MS,
-    )
-    assert page.inner_text("[data-file-preview-route] h1") == "Other Notes"
+    _assert_full_page_markdown_document(page, "Other Notes")
     assert page.evaluate("window.__previewHashNavigationMarker") == "kept"
+    page.close()
 
-    ticket_page = open_page(
-        context,
-        server,
-        f"#/ticket/{ticket_id}",
-        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        # settled=True: this half only inspects steady-state ticket DOM (embedded HTML
-        # preview + popup geometry); it does not exercise the un-settled lifecycle.
-        # Draining the since=0 catch-up flush before resolving embedded_preview stops a
-        # pending re-render from detaching that iframe node between resolve and click.
-        settled=True,
+    chat_page = context.new_page()
+    chat_page.goto(
+        f"{server.base}/#/preview?source=chat&entity={ticket_id}&path=chat-note.md"
     )
-    _open_ticket_field(ticket_page, "success")
+    _assert_full_page_markdown_document(chat_page, "Chat Notes")
+    chat_page.close()
+
+    ticket_page.evaluate("window.__htmlPopupNavigationMarker = 'kept'")
     embedded_preview = ticket_page.locator('[data-file-preview-kind="html"]').first
     embedded_preview.locator("iframe").wait_for(state="visible", timeout=WAIT_MS)
     html_action = embedded_preview.locator("a.button", has_text="Open preview")
@@ -303,7 +389,7 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     assert html_geometry["frameHeight"] >= 0.75 * html_geometry["routeHeight"]
     assert html_geometry["frameBottomGap"] <= 24
     popup.close()
-    assert page.evaluate("window.__previewHashNavigationMarker") == "kept"
+    assert ticket_page.evaluate("window.__htmlPopupNavigationMarker") == "kept"
 
 
 def test_interactive_html_preview_paints_and_switches_variants_in_both_surfaces(
