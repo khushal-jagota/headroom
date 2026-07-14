@@ -35,3 +35,16 @@ All accepted. The corrected plan must:
 4. freeze one exact private admitted-execution dataclass and make `_execute_turn` accept only it.
 
 A fresh corrected-plan re-review is required before contracts are generated or implementation begins.
+
+Corrected-plan re-review
+
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5f2a-63c2-7231-bd29-038e29ca4159
+Result: NO VIOLATIONS
+
+The fresh reviewer read the corrected plan, amended ticket, AD03 and AD05 locks, standing rules, and the
+named production/test paths. It explicitly rechecked the shared eighth eligibility factor, the unchanged
+claim writer, cross-origin Pause, Employee separation, force-fresh `/new`, the exact admitted dataclass,
+SQLite transaction ordering, dormant-session recovery before Hermes writes, HTTP/image/command preservation,
+static deletion coverage, documentation, and the bounded changed-path allowlist. It found the plan
+implementable and internally consistent without widening the reviewed boundary.

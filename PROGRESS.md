@@ -61,6 +61,10 @@ Current build stage:
   creation paths require a stored Worker type and reads return it without fallback. Two stale docs still
   called `coding` the default; those sentences were corrected as a small integration repair. Historical
   migration/cutover classification remains the only allowed implicit coding assignment.
+- AD06's corrected delegated plan passed a fresh independent Codex review with `NO VIOLATIONS` (session
+  `019f5f2a-63c2-7231-bd29-038e29ca4159`). The four original findings are fully resolved, and the exact
+  owner, transport, transaction, session-binding, settlement, test, deletion, and changed-path contracts
+  are ready to lock before implementation dispatch.
 
 What just passed:
 
@@ -245,8 +249,8 @@ What just passed:
 
 Next step:
 
-- Revise AD06's delegated plan for all four accepted review findings, then run a fresh read-only re-review.
-  Only a clean corrected plan may be contract-locked and dispatched. Managed Markdown remains AD07.
+- Freeze AD06's reviewed contract lock, then delegate implementation against that lock. Independently
+  review the completed diff before the one canonical `./verify`. Managed Markdown remains AD07.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`
