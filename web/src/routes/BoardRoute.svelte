@@ -3,7 +3,7 @@
   import { resourceCatalogue } from "../lib/resourceCatalogue";
   import { labelize, ticketStatusLabel } from "../lib/ui";
   import type { FieldStageVisualState } from "../lib/ui";
-  import { lifecycleFor } from "../lib/lifecycle";
+  import { lifecycleFor, type WorkerTypesResponse } from "../lib/lifecycle";
   import Button from "../components/Button.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
   import Disclosure from "../components/Disclosure.svelte";
@@ -39,7 +39,9 @@
   let allCards = $derived(columns.flatMap((column) => column.cards));
   let selectedCard = $derived(allCards.find((card) => card.id === ticketId) || null);
   let rightPaneMode = $derived<"chief" | "ticket">(selectedCard ? "ticket" : "chief");
-  let projectSections = $derived(buildProjectSections(columns, statusFilter, hideDone));
+  let projectSections = $derived(
+    buildProjectSections(columns, statusFilter, hideDone, manifest.data)
+  );
 
   $effect(() => {
     if (ticketId && board.data && !board.loading && !board.stale && !selectedCard) {
@@ -100,10 +102,32 @@
     return Number(card.activity_at ?? 0);
   }
 
+  function workerTypeSortValue(
+    workerTypes: WorkerTypesResponse | undefined,
+    card: Record<string, any>
+  ): number {
+    const index = workerTypes?.worker_types.findIndex(
+      (workerType) => workerType.worker_type === card.worker_type
+    );
+    return index !== undefined && index >= 0 ? index : Number.MAX_SAFE_INTEGER;
+  }
+
+  function stageSortValue(
+    workerTypes: WorkerTypesResponse | undefined,
+    card: Record<string, any>
+  ): number {
+    const workerType = workerTypes?.worker_types.find(
+      (candidate) => candidate.worker_type === card.worker_type
+    );
+    const index = workerType?.stages.findIndex((stage) => stage.id === card.stage);
+    return index !== undefined && index >= 0 ? index : Number.MAX_SAFE_INTEGER;
+  }
+
   function buildProjectSections(
     sourceColumns: Array<{ stage: string; cards: Record<string, any>[] }>,
     activeStatusFilter: string,
-    shouldHideDone: boolean
+    shouldHideDone: boolean,
+    workerTypes: WorkerTypesResponse | undefined
   ): Array<{ key: string; label: string; cards: Record<string, any>[] }> {
     const groups = new Map<string, { key: string; label: string; cards: Record<string, any>[] }>();
     let sequence = 0;
@@ -126,6 +150,13 @@
 
     for (const group of groups.values()) {
       group.cards.sort((left, right) => {
+        const workerTypeDelta =
+          workerTypeSortValue(workerTypes, left) - workerTypeSortValue(workerTypes, right);
+        if (workerTypeDelta) return workerTypeDelta;
+
+        const stageDelta = stageSortValue(workerTypes, left) - stageSortValue(workerTypes, right);
+        if (stageDelta) return stageDelta;
+
         const activityDelta = activitySortValue(right) - activitySortValue(left);
         return activityDelta || left.boardSequence - right.boardSequence;
       });
@@ -146,7 +177,12 @@
 </script>
 
 <section class="board-screen" data-screen="workspace">
-  <ResourceState error={board.error} loading={board.loading} hasData={Boolean(board.data)} loadingText="Loading workspace...">
+  <ResourceState
+    error={board.error || manifest.error}
+    loading={board.loading || manifest.loading}
+    hasData={Boolean(board.data && manifest.data)}
+    loadingText="Loading workspace..."
+  >
     <div class="board-workspace-wrap">
       <div class="board-workspace-shell">
         <section class="board-workspace-left" aria-label="Workspace ticket tree">

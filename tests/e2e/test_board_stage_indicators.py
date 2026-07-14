@@ -345,9 +345,20 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
     )
 
 
-def test_workspace_groups_by_project_orders_by_activity_and_filters_status(
+def test_workspace_groups_by_project_orders_by_type_stage_and_activity_and_filters_status(
     server, context_factory, open_page, cli, api
 ) -> None:
+    coding_success = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Vylo coding success",
+        "--project-id",
+        "project_vylo",
+    )["id"]
     older_activity = cli(
         server,
         "ticket",
@@ -381,6 +392,28 @@ def test_workspace_groups_by_project_orders_by_activity_and_filters_status(
         "--project-id",
         "project_vylo",
     )["id"]
+    new_worker_stages = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "new_worker",
+        "--title",
+        "Vylo new worker stages",
+        "--project-id",
+        "project_vylo",
+    )["id"]
+    new_worker_thinking = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "new_worker",
+        "--title",
+        "Vylo new worker thinking",
+        "--project-id",
+        "project_vylo",
+    )["id"]
     learning = cli(
         server,
         "ticket",
@@ -401,21 +434,35 @@ def test_workspace_groups_by_project_orders_by_activity_and_filters_status(
         "--title",
         "No project ticket",
     )["id"]
-    for ticket_id in (older_activity, newer_activity, done_activity, learning, no_project):
+    for ticket_id in (
+        coding_success,
+        older_activity,
+        newer_activity,
+        done_activity,
+        new_worker_stages,
+        new_worker_thinking,
+        learning,
+        no_project,
+    ):
         _add_today(api, server, ticket_id)
 
     _set_ticket_stage(server, older_activity, "needs_plan")
+    _set_ticket_stage(server, newer_activity, "needs_plan")
     _set_ticket_stage(server, done_activity, "done")
+    _set_ticket_stage(server, new_worker_thinking, "needs_thinking")
     _set_ticket_status(server, learning, "errored")
+    _set_ticket_updated_at(server, coding_success, 5)
     _set_ticket_updated_at(server, older_activity, 10)
     _set_ticket_updated_at(server, newer_activity, 30)
     _set_ticket_updated_at(server, done_activity, 20)
+    _set_ticket_updated_at(server, new_worker_stages, 100)
+    _set_ticket_updated_at(server, new_worker_thinking, 200)
 
     page = open_page(
         context_factory(),
         server,
         "#/workspace",
-        'section[data-screen="workspace"] [data-workspace-filters]',
+        '[data-project-key="project_vylo"]',
         settled=True,
     )
 
@@ -433,9 +480,12 @@ def test_workspace_groups_by_project_orders_by_activity_and_filters_status(
         "els => els.map(el => el.textContent.trim())",
     )
     assert vylo_titles == [
+        "Vylo coding success",
         "Vylo newer activity",
-        "Vylo done activity",
         "Vylo older activity",
+        "Vylo done activity",
+        "Vylo new worker stages",
+        "Vylo new worker thinking",
     ]
 
     assert page.eval_on_selector_all(
