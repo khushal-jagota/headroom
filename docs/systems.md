@@ -83,21 +83,22 @@ Code paths: `src/planner/sprints/`, `src/planner/tickets/`,
 
 ### 3. The Ticket Gate System
 
-Tickets are the correctness center. A ticket has two different kinds of state:
+Tickets are the correctness center. A Ticket has a Stage and a separate control status:
 
-- `state` is the work stage. Which stages exist is set by the ticket's **type**, not
-  fixed for all tickets; the gate reads each row's stage order, gates, and fields from
-  the type registry (see `ticket-types.md`). For the default `coding` type the states are
+- `stage` is the stored work Stage. Which Stages exist is set by the Ticket's **Worker
+  type**, not fixed for all Tickets; the gate reads each row's Stage order, gates, and
+  fields from the Worker type registry (see `worker-types.md`). For the default
+  `coding` Worker type the Stages are
   `needs_kickoff`, `needs_success`, `needs_approach`, `needs_plan`,
   `needs_implementation`, `needs_closeout`, `done`, or `dropped`.
 - `ticket_status` is runtime control: `empty`, `agent_running_step`,
   `awaiting_approval`, `user_takeover`, or `errored`. This set is universal.
 
-An ordinary Ticket starts with a parked proposal on the `kickoff` field — every type
+An ordinary Ticket starts with a parked proposal on the `kickoff` field — every Worker type
 leads with Kickoff. The title is separate editable Ticket metadata; approving Kickoff
 settles only the Kickoff field and advances the Ticket to its first working stage
 (`needs_success` for coding). Until then no worker stage runs. For coding the fields are
-`kickoff`, `success`, `approach`, `plan`, `implementation`, and `closeout`; another type
+`kickoff`, `success`, `approach`, `plan`, `implementation`, and `closeout`; another Worker type
 carries its own. Each field has a settled value, a pending proposal, and a field
 `user_note` for step-specific guidance. Workers write field proposals. The resolution
 engine is the only code that can settle a proposal or advance the Ticket.
@@ -112,7 +113,7 @@ Code paths: `src/planner/tickets/contracts.py`,
 
 Chief external-work intake is a second, explicit canonical path for reality already
 established outside Panels. It creates or reconciles a coherent settled-field prefix,
-sets the ticket to the reported state, and stops there. It refuses pending proposals,
+sets the Ticket to the reported Stage, and stops there. It refuses pending proposals,
 active control, running turns, backward moves, and malformed field prefixes. The report
 and reconciliation reasoning live in the Ticket's `kickoff` field; ordinary Ticket and
 sprint-item events remain the audit and invalidation signals.
@@ -259,8 +260,8 @@ production starts the worker and Chief gateways with explicit `worker` and `chie
 
 Ordinary groups can plan days, manage tickets, plan sprints, and file worker
 proposals/recaps/notes without exposing runtime controls. The exceptional Chief group
-has two external-work operations that establish a coherent imported state; it is not a
-generic state setter.
+has two external-work operations that establish a coherent imported Stage; it is not a
+generic Stage setter.
 
 The server classifies a missing `X-Plan-Actor` as **unattributed**, not human. `chief` is
 the explicit Chief role; every other non-empty value is an attributed non-Chief agent.
@@ -273,7 +274,7 @@ Code paths: `src/planner/cli/main.py`, `src/planner/cli/http.py`,
 
 ## Boundaries That Matter
 
-- The resolution engine owns ticket field values and ticket `state` transitions.
+- The resolution engine owns Ticket field values and Ticket `stage` transitions.
 - Ticket runtime writers own `ticket_status`.
 - Canonical writer functions own database mutations. Most live in domain `data.py`
   files; current exceptions are called out below.
@@ -300,11 +301,11 @@ less clean than the rest.
    tickets and active `links.kind='blocks'` rows. A `done` or `dropped` source clears
    its block. This keeps ticket readiness and item blocking on the same read model.
 
-3. **The frontend no longer copies the ticket state machine (resolved).** The UI used
+3. **The frontend no longer copies the Ticket Stage machine (resolved).** The UI used
    to repeat stage order, gating fields, and advance targets in `web/src/lib/ui.ts`. It
-   now derives them per type from the served `GET /api/ticket-types` manifest, through
+   now derives them per Worker type from the served `GET /api/worker-types` manifest, through
    `web/src/lib/lifecycle.ts` — the server is the single source and the drift risk is
-   closed (see `ticket-types.md`). `ui.ts` keeps only the label helper and visual-state
+   closed (see `worker-types.md`). `ui.ts` keeps only the label helper and visual-state
    shapes the lifecycle builds on.
 
 4. **Gateway bootstrap is indirect.** The adapter registry returns a real adapter

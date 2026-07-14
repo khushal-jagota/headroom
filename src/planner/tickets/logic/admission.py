@@ -35,7 +35,7 @@ def require_direct_actor(actor: str, action: str) -> None:
 
 
 def check_agent_proposal(
-    state: str,
+    stage: str,
     ceiling: str,
     at_cap: AtCap,
     field: FieldName | str,
@@ -43,18 +43,18 @@ def check_agent_proposal(
     definition: WorkflowDefinition | None = None,
 ) -> None:
     defn = definition or coding_bridge.coding_definition()
-    if machine.is_terminal(state, definition=defn):
+    if machine.is_terminal(stage, definition=defn):
         raise PlannerError(
-            ErrorCode.validation, "no proposals on a terminal ticket", {"state": str(state)}
+            ErrorCode.validation, "no proposals on a terminal ticket", {"stage": str(stage)}
         )
-    gating = machine.gating_field(state, definition=defn)
+    gating = machine.gating_field(stage, definition=defn)
     if gating is None:
         raise PlannerError(
             ErrorCode.validation,
-            "ticket state has no proposal field",
-            {"state": str(state)},
+            "ticket stage has no proposal field",
+            {"stage": str(stage)},
         )
-    if not machine.at_or_beyond_ceiling(state, ceiling, definition=defn):
+    if not machine.at_or_beyond_ceiling(stage, ceiling, definition=defn):
         return
     if at_cap == AtCap.stop:
         raise PlannerError(
@@ -62,7 +62,7 @@ def check_agent_proposal(
             "ticket is at its ceiling with at_cap=stop",
             {
                 "gating_field": str(gating),
-                "state": str(state),
+                "stage": str(stage),
                 "ceiling": str(ceiling),
                 "at_cap": "stop",
             },
@@ -74,27 +74,27 @@ def check_agent_proposal(
             {
                 "field": str(field),
                 "gating_field": str(gating),
-                "state": str(state),
+                "stage": str(stage),
             },
         )
 
 
 def check_recap_writable(
-    state: str, *, definition: WorkflowDefinition | None = None
+    stage: str, *, definition: WorkflowDefinition | None = None
 ) -> None:
     defn = definition or coding_bridge.coding_definition()
     # The first real-work stage (needs_success for coding, needs_stages for new_worker) —
     # NOT default_ceiling, which is now the leading needs_kickoff. Recap stays writable
     # exactly as before: only strictly past the first worker stage.
     first_worker = coding_bridge.views.first_worker_stage(defn)
-    if str(state) == defn.dropped_stage.id or not (
-        machine.state_index(state, definition=defn)
-        > machine.state_index(first_worker, definition=defn)
+    if str(stage) == defn.dropped_stage.id or not (
+        machine.stage_index(stage, definition=defn)
+        > machine.stage_index(first_worker, definition=defn)
     ):
         raise PlannerError(
             ErrorCode.recap_too_early,
             f"recap is writable only past the first worker stage ({first_worker})",
-            {"state": str(state), "first_worker_stage": first_worker},
+            {"stage": str(stage), "first_worker_stage": first_worker},
         )
 
 

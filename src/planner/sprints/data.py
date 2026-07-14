@@ -417,8 +417,8 @@ def assign_item_sprint(
 # --- reads ----------------------------------------------------------------------
 
 
-def _child_state_in_progress(ticket_type: str, state: str) -> bool:
-    """Per-type "in progress by state": a non-terminal linear stage strictly past the
+def _child_stage_in_progress(worker_type: str, stage: str) -> bool:
+    """Per-type "in progress by stage": a non-terminal linear stage strictly past the
     type's first worker stage (its first real-work stage — needs_success for coding,
     needs_stages for new_worker). Resolves the row's own definition so the pure
     ``derive_sprint_item_status`` consumes only a precomputed boolean.
@@ -428,14 +428,14 @@ def _child_state_in_progress(ticket_type: str, state: str) -> bool:
     decoupling.
 
     Terminality is checked FIRST so ``and`` short-circuits: ``dropped`` is outside the
-    linear order and ``state_index`` raises on it, so the index is never computed for a
-    terminal (done/dropped) state."""
-    defn = coding_bridge.require(ticket_type)
-    terminal = coding_bridge.views.is_terminal(defn, state)
-    first_worker_idx = coding_bridge.views.state_index(
+    linear order and ``stage_index`` raises on it, so the index is never computed for a
+    terminal (done/dropped) stage."""
+    defn = coding_bridge.require(worker_type)
+    terminal = coding_bridge.views.is_terminal(defn, stage)
+    first_worker_idx = coding_bridge.views.stage_index(
         defn, coding_bridge.views.first_worker_stage(defn)
     )
-    return (not terminal) and coding_bridge.views.state_index(defn, state) > first_worker_idx
+    return (not terminal) and coding_bridge.views.stage_index(defn, stage) > first_worker_idx
 
 
 def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
@@ -445,7 +445,7 @@ def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
     blockers_cleared = bool(blocking_ticket_ids) and not blocker_summary.blocked
     child_rows = conn.execute(
         """
-        SELECT tickets.id, tickets.state, tickets.ticket_status, tickets.ticket_type
+        SELECT tickets.id, tickets.stage, tickets.ticket_status, tickets.worker_type
         FROM tickets
         WHERE tickets.sprint_item_id = ?
         ORDER BY tickets.id
@@ -454,11 +454,11 @@ def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
     ).fetchall()
     children = [
         SprintItemChildStatus(
-            state=str(row["state"]),
+            stage=str(row["stage"]),
             ticket_status=str(row["ticket_status"]),
             blocked=core_links.blocker_summary(conn, str(row["id"])).blocked,
-            state_in_progress=_child_state_in_progress(
-                str(row["ticket_type"]), str(row["state"])
+            stage_in_progress=_child_stage_in_progress(
+                str(row["worker_type"]), str(row["stage"])
             ),
         )
         for row in child_rows

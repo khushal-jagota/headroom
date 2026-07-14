@@ -49,9 +49,9 @@ _PRE_EXISTING_CARD_KEYS = [
 ]
 
 _ENRICHMENT_CARD_KEYS = [
-    "ticket_type",
-    "state",
-    "state_label",
+    "worker_type",
+    "stage",
+    "stage_label",
     "gating_field",
     "gating_field_label",
     "is_done",
@@ -78,6 +78,7 @@ def _ticket(
 ) -> str:
     ticket = create_ticket(
         conn,
+        worker_type="coding",
         title=title,
         actor="human",
         now=now,
@@ -97,11 +98,7 @@ def test_board_view_only_returns_tickets_on_requested_day(tmp_db: Connection) ->
     add_day_ticket(tmp_db, "day_2026-07-03", other_day, 10)
 
     board = board_view(tmp_db, 20, day_id="day_2026-07-04")
-    titles = [
-        card["title"]
-        for column in board["columns"]
-        for card in column["cards"]
-    ]
+    titles = [card["title"] for column in board["columns"] for card in column["cards"]]
 
     assert titles == ["Today board ticket"]
 
@@ -122,11 +119,7 @@ def test_board_view_groups_parented_ticket_by_parent_item_project(
         add_day_ticket(tmp_db, "day_2026-07-04", ticket_id, 10)
 
     board = board_view(tmp_db, 20, day_id="day_2026-07-04")
-    cards = {
-        card["title"]: card
-        for column in board["columns"]
-        for card in column["cards"]
-    }
+    cards = {card["title"]: card for column in board["columns"] for card in column["cards"]}
 
     assert cards["Parented ticket"]["project_id"] is None
     assert cards["Parented ticket"]["project"] is None
@@ -145,7 +138,7 @@ def test_board_coding_card_keys_superset_and_columns_unchanged(tmp_db: Connectio
     board = board_view(tmp_db, 20, day_id="day_2026-07-04")
 
     # A coding-only board reproduces the 7 coding columns, in order, no appended column.
-    assert [column["state"] for column in board["columns"]] == _CODING_COLUMN_ORDER
+    assert [column["stage"] for column in board["columns"]] == _CODING_COLUMN_ORDER
 
     card = board["columns"][0]["cards"][0]
     keys = list(card.keys())
@@ -154,9 +147,9 @@ def test_board_coding_card_keys_superset_and_columns_unchanged(tmp_db: Connectio
     assert keys[len(_PRE_EXISTING_CARD_KEYS) :] == _ENRICHMENT_CARD_KEYS
 
     # The coding enrichment values for a fresh needs_kickoff card.
-    assert card["ticket_type"] == "coding"
-    assert card["state"] == "needs_kickoff"
-    assert card["state_label"] == "Kickoff"
+    assert card["worker_type"] == "coding"
+    assert card["stage"] == "needs_kickoff"
+    assert card["stage_label"] == "Kickoff"
     assert card["gating_field"] == "kickoff"
     assert card["gating_field_label"] == "Kickoff"
     assert card["is_done"] is False
@@ -168,20 +161,29 @@ def test_board_mixed_coding_probe_does_not_throw(
 ) -> None:
     coding_id = _ticket(tmp_db, "Coding board ticket", 1)
     probe = create_ticket(
-        tmp_db, title="Probe board ticket", actor="human", now=1, title_max_chars=200,
-        ticket_type="probe",
+        tmp_db,
+        title="Probe board ticket",
+        actor="human",
+        now=1,
+        title_max_chars=200,
+        worker_type="probe",
     )
     # Advance probe off needs_kickoff into needs_alpha (a state coding never has).
     accept_proposal(
-        tmp_db, probe.id, field=FieldName.kickoff, actor="human", now=2,
-        next_ceiling=NEEDS_BETA, at_cap=AtCap.propose,
+        tmp_db,
+        probe.id,
+        field=FieldName.kickoff,
+        actor="human",
+        now=2,
+        next_ceiling=NEEDS_BETA,
+        at_cap=AtCap.propose,
     )
     add_day_ticket(tmp_db, "day_2026-07-04", coding_id, 10)
     add_day_ticket(tmp_db, "day_2026-07-04", probe.id, 10)
 
     board = board_view(tmp_db, 20, day_id="day_2026-07-04")
 
-    states = [column["state"] for column in board["columns"]]
+    states = [column["stage"] for column in board["columns"]]
     # Coding's 7 columns first, in order; probe's needs_alpha appended after.
     assert states[: len(_CODING_COLUMN_ORDER)] == _CODING_COLUMN_ORDER
     assert states[len(_CODING_COLUMN_ORDER) :] == ["needs_alpha"]
@@ -190,13 +192,13 @@ def test_board_mixed_coding_probe_does_not_throw(
         card
         for column in board["columns"]
         for card in column["cards"]
-        if card["ticket_type"] == "probe"
+        if card["worker_type"] == "probe"
     ]
     assert len(probe_cards) == 1
     probe_card = probe_cards[0]
     # Probe card decoded against PROBE_DEFINITION — enrichment is probe-correct.
-    assert probe_card["state"] == "needs_alpha"
-    assert probe_card["state_label"] == "Alpha"
+    assert probe_card["stage"] == "needs_alpha"
+    assert probe_card["stage_label"] == "Alpha"
     assert probe_card["gating_field"] == "alpha"
     assert probe_card["gating_field_label"] == "Alpha"
     assert probe_card["is_done"] is False

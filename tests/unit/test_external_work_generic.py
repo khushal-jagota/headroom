@@ -131,11 +131,12 @@ def _needs_kickoff_ticket(defn: WorkflowDefinition) -> Ticket:
         proposal=Proposal(body="kickoff note", proposed_by="chief", created_at=1),
     )
     return Ticket(
-        id="t_x", title="x", state="needs_kickoff", priority=Priority.P3, deadline=None,
+        id="t_x", title="x", worker_type=defn.type_id, stage="needs_kickoff",
+        priority=Priority.P3, deadline=None,
         project_id=None, project_name=None, sprint_item_id=None, sprint_id=None, recap="",
         ceiling=coding_bridge.views.default_ceiling(defn), at_cap=AtCap.propose,
         ticket_status=TicketStatus.empty, implementer=None, chat_session_key=None, alias=None,
-        fields=TicketFields(slots), created_at=1, updated_at=1, ticket_type=defn.type_id,
+        fields=TicketFields(slots), created_at=1, updated_at=1,
     )
 
 
@@ -151,4 +152,4 @@ def test_type_declining_prefix_reconciliation_is_rejected() -> None:
         decide_external_work(ticket, "needs_one", {"kickoff": "kn"}, definition=_NO_PREFIX)
     assert exc.value.code == ErrorCode.validation
     assert exc.value.message == "type does not support external-work prefix reconciliation"
-    assert exc.value.detail == {"type_id": "noprefix"}
+    assert exc.value.detail == {"worker_type": "noprefix"}

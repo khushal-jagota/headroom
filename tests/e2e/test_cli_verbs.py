@@ -18,7 +18,7 @@ def test_ticket_create_sprint_item_parents_it(server, cli, api) -> None:
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Child",
@@ -34,8 +34,8 @@ def test_ticket_create_sprint_item_parents_it(server, cli, api) -> None:
 
 def test_ticket_list_day_filter(server, cli, api) -> None:
     # `ticket list --day today` scopes to the day's board (day_tickets join).
-    t_on = cli(server, "ticket", "create", "--type", "coding", "--title", "On today")["id"]
-    t_off = cli(server, "ticket", "create", "--type", "coding", "--title", "Off day")["id"]
+    t_on = cli(server, "ticket", "create", "--worker-type", "coding", "--title", "On today")["id"]
+    t_off = cli(server, "ticket", "create", "--worker-type", "coding", "--title", "Off day")["id"]
     cli(server, "day", "add-ticket", t_on, "--date", "today")   # add t_on to today's day
 
     listed = cli(server, "ticket", "list", "--day", "today")
@@ -86,11 +86,11 @@ def test_queue_pickup_command_removed(server) -> None:
 def test_ticket_approval_copy_events_and_worker_note_shape(server, cli, api) -> None:
     tid = cli(
         server,
-        "ticket", "create", "--type", "coding", "--title", "CLI approve ticket",
+        "ticket", "create", "--worker-type", "coding", "--title", "CLI approve ticket",
         "--kickoff-note", "intake context from user",
     )["id"]
     created = api.get(server, f"/api/tickets/{tid}")
-    assert created["state"] == "needs_kickoff"
+    assert created["stage"] == "needs_kickoff"
     assert created["fields"]["kickoff"]["proposal"]["body"] == "intake context from user"
 
     accepted_kickoff = cli(
@@ -106,7 +106,7 @@ def test_ticket_approval_copy_events_and_worker_note_shape(server, cli, api) -> 
         "-",
         stdin="updated intake",
     )
-    assert accepted_kickoff["state"] == "needs_success"
+    assert accepted_kickoff["stage"] == "needs_success"
     assert accepted_kickoff["ceiling"] == "needs_success"
     assert accepted_kickoff["at_cap"] == "propose"
     assert accepted_kickoff["fields"]["kickoff"]["value"] == "updated intake"
@@ -118,7 +118,7 @@ def test_ticket_approval_copy_events_and_worker_note_shape(server, cli, api) -> 
         stdin="success body",
     )
     approved = cli(server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "propose")
-    assert approved["state"] == "needs_approach"
+    assert approved["stage"] == "needs_approach"
     assert approved["fields"]["success"]["value"] == "success body"
 
     cli(server, "worker", "note", tid, "approach", "--body-file", "-", stdin="approach note")
@@ -144,7 +144,7 @@ def test_sprint_ticket_commands_use_sprint_option_and_current_selector(server, c
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Loose sprint ticket",

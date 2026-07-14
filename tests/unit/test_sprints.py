@@ -38,7 +38,7 @@ from planner.sprints.logic import DateRange, current_sprint_id
 def _insert_ticket(
     conn,
     ticket_id: str,
-    state: str,
+    stage: str,
     *,
     sprint_item_id: str | None = None,
     ticket_status: str = "empty",
@@ -47,17 +47,17 @@ def _insert_ticket(
     # shortcut for setting child/blocker ticket-states (only NOT-NULL non-defaulted
     # columns are supplied; project may stay NULL under its CHECK).
     conn.execute(
-        "INSERT INTO tickets (id, title, ticket_type, state, sprint_item_id, ceiling, "
+        "INSERT INTO tickets (id, title, worker_type, stage, sprint_item_id, ceiling, "
         "ticket_status, created_at, updated_at) "
         "VALUES (?, ?, 'coding', ?, ?, 'needs_success', ?, 0, 0)",
-        (ticket_id, "child", state, sprint_item_id, ticket_status),
+        (ticket_id, "child", stage, sprint_item_id, ticket_status),
     )
 
 
-def _set_ticket_state(conn, ticket_id: str, state: str) -> None:
+def _set_ticket_state(conn, ticket_id: str, stage: str) -> None:
     # Same sanction as _insert_ticket: blocker ticket-states are test fixtures here,
     # not exercises of T04's writers.
-    conn.execute("UPDATE tickets SET state = ? WHERE id = ?", (state, ticket_id))
+    conn.execute("UPDATE tickets SET stage = ? WHERE id = ?", (stage, ticket_id))
 
 
 def _events(conn, entity_id: str, kind: str) -> list[dict]:

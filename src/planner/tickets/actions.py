@@ -29,7 +29,7 @@ def create_ticket(
     now: int,
     title_max_chars: int,
     readiness_doorbell: ReadinessDoorbell,
-    ticket_type: str = "coding",
+    worker_type: str,
     kickoff_note: str = "",
     project_id: str | None = None,
     priority: Priority = Priority.P3,
@@ -49,7 +49,7 @@ def create_ticket(
         deadline=deadline,
         sprint_id=sprint_id,
         sprint_item_id=sprint_item_id,
-        ticket_type=ticket_type,
+        worker_type=worker_type,
     )
     readiness_doorbell.ring()
     return ticket
@@ -59,13 +59,13 @@ def create_ticket_from_external_work(
     conn: sqlite3.Connection,
     *,
     title: str,
-    target_state: str,
+    target_stage: str,
     provided_values: Mapping[str, str],
     actor: str,
     now: int,
     title_max_chars: int,
     readiness_doorbell: ReadinessDoorbell,
-    ticket_type: str,
+    worker_type: str,
     kickoff_note: str | None = None,
     recap: str | None = None,
     project_id: str | None = None,
@@ -78,7 +78,7 @@ def create_ticket_from_external_work(
         conn,
         title=title,
         kickoff_note=kickoff_note,
-        target_state=target_state,
+        target_stage=target_stage,
         provided_values=provided_values,
         actor=actor,
         now=now,
@@ -89,7 +89,7 @@ def create_ticket_from_external_work(
         deadline=deadline,
         sprint_id=sprint_id,
         sprint_item_id=sprint_item_id,
-        ticket_type=ticket_type,
+        worker_type=worker_type,
     )
     readiness_doorbell.ring()
     return ticket
@@ -99,7 +99,7 @@ def reconcile_ticket_from_external_work(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    target_state: str,
+    target_stage: str,
     provided_values: Mapping[str, str],
     actor: str,
     now: int,
@@ -112,7 +112,7 @@ def reconcile_ticket_from_external_work(
         conn,
         ticket_id,
         kickoff_note=kickoff_note,
-        target_state=target_state,
+        target_stage=target_stage,
         provided_values=provided_values,
         actor=actor,
         now=now,
@@ -206,19 +206,19 @@ def change_scope(
     return ticket
 
 
-def set_state(
+def set_stage(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    new_state: str,
+    new_stage: str,
     actor: str,
     now: int,
     readiness_doorbell: ReadinessDoorbell,
 ) -> Ticket:
-    ticket = tickets_data.set_state(
+    ticket = tickets_data.set_stage(
         conn,
         ticket_id,
-        new_state=new_state,
+        new_stage=new_stage,
         actor=actor,
         now=now,
     )

@@ -1,5 +1,5 @@
 """t_tt02b — generic per-type field storage + Tier-2 scope, and the domain-contract
-widening (Ticket.state/ceiling -> str).
+widening (Ticket.stage/ceiling -> str).
 
 These tests assert the ticket's acceptance items with concrete values:
 - T1: a coding ticket's fields_to_json bytes are byte-identical to the pre-widening
@@ -22,7 +22,7 @@ These tests assert the ticket's acceptance items with concrete values:
 - T7: a probe ticket survives create + reload (the P0 _row_to_ticket str() fix).
 - Coding parity: drop/state-jump bookend `==` comparisons survive the str flip.
 
-The probe definition uses stage/field ids that are NOT TicketState/FieldName members
+The probe definition uses stage/field ids that are NOT CodingStage/FieldName members
 (alpha/beta), built with "".join(...) so interning cannot mask an identity comparison.
 Registered test-only via coding_bridge.set_registry_for_test; production stays
 coding-only.
@@ -54,6 +54,7 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
+    CodingStage,
     FieldName,
     FieldSlot,
     Implementer,
@@ -62,7 +63,6 @@ from planner.tickets.contracts import (
     ScopePair,
     Ticket,
     TicketFields,
-    TicketState,
     TicketStatus,
 )
 from planner.tickets.logic import coding_bridge, fields_codec, machine, resolution
@@ -136,18 +136,33 @@ def test_coding_stored_fields_bytes_after_drive_are_golden(
 ) -> None:
     now = fake_clock.now_unix()
     t = tickets_data.create_ticket(
-        tmp_db, title="Coding", actor="human", now=now, title_max_chars=TITLE_MAX_CHARS
+        tmp_db,
+        worker_type="coding",
+        title="Coding",
+        actor="human",
+        now=now,
+        title_max_chars=TITLE_MAX_CHARS,
     )
     t = tickets_data.accept_proposal(
-        tmp_db, t.id, field=FieldName.kickoff, actor="human", now=now,
-        next_ceiling=NO_FURTHER, at_cap=AtCap.propose,
+        tmp_db,
+        t.id,
+        field=FieldName.kickoff,
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
     )
     tickets_data.file_proposal(
         tmp_db, t.id, field=FieldName.success, body="the success", actor="agent", now=now
     )
     t = tickets_data.accept_proposal(
-        tmp_db, t.id, field=FieldName.success, actor="human", now=now,
-        next_ceiling=NO_FURTHER, at_cap=AtCap.propose,
+        tmp_db,
+        t.id,
+        field=FieldName.success,
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
     )
     row = tmp_db.execute("SELECT fields FROM tickets WHERE id = ?", (t.id,)).fetchone()
     assert row["fields"] == _CODING_STORED_AFTER_DRIVE
@@ -246,7 +261,7 @@ def test_tier2_scope_generic(probe_registry: WorkflowDefinition) -> None:
 
     # coding parity (no definition): unchanged.
     assert machine.resolve_scope(
-        TicketState.needs_approach, TicketState.needs_plan, AtCap.stop
+        CodingStage.needs_approach, CodingStage.needs_plan, AtCap.stop
     ) == ScopePair(next_ceiling="needs_plan", at_cap=AtCap.stop)
 
 
@@ -255,27 +270,23 @@ def test_resolve_scope_distinguishes_unknown_from_too_early_coding_payloads() ->
     # DISTINCT with their exact pre-widening payloads.
     # (a) an id outside the ceiling range -> "unknown next_ceiling".
     with pytest.raises(PlannerError) as unknown:
-        machine.resolve_scope(TicketState.needs_approach, "bogus", AtCap.stop)
+        machine.resolve_scope(CodingStage.needs_approach, "bogus", AtCap.stop)
     assert unknown.value.code == ErrorCode.scope_invalid
     assert unknown.value.message == "unknown next_ceiling"
     assert unknown.value.detail == {"next_ceiling": "bogus"}
 
-    # (b) a valid ceiling whose index precedes new_state -> "at or beyond the new state".
+    # (b) a valid ceiling whose index precedes new_stage -> "at or beyond the new state".
     with pytest.raises(PlannerError) as too_early:
-        machine.resolve_scope(
-            TicketState.needs_plan, TicketState.needs_approach, AtCap.stop
-        )
+        machine.resolve_scope(CodingStage.needs_plan, CodingStage.needs_approach, AtCap.stop)
     assert too_early.value.code == ErrorCode.scope_invalid
-    assert too_early.value.message == "next_ceiling must be at or beyond the new state"
-    assert too_early.value.detail == {
-        "next_ceiling": "needs_approach", "new_state": "needs_plan"
-    }
+    assert too_early.value.message == "next_ceiling must be at or beyond the new stage"
+    assert too_early.value.detail == {"next_ceiling": "needs_approach", "new_stage": "needs_plan"}
 
     # validate_ceiling's coding payload is unchanged by the str() widening. needs_kickoff
     # is now a valid ceiling (the leading default), so needs_ghost is the out-of-range id.
     with pytest.raises(PlannerError) as bad_ceiling:
-        machine.validate_ceiling("needs_ghost")   # not a linear stage -> out of range
-    assert bad_ceiling.value.message == "ceiling must be a linear state"
+        machine.validate_ceiling("needs_ghost")  # not a linear stage -> out of range
+    assert bad_ceiling.value.message == "ceiling must be a linear stage"
     assert bad_ceiling.value.detail == {"ceiling": "needs_ghost"}
 
 
@@ -286,28 +297,25 @@ def test_resolve_scope_distinguishes_unknown_from_too_early_coding_payloads() ->
 # =====================================================================
 
 
-def _create_probe(
-    tmp_db: Connection, now: int, *, implementer: Implementer | None = None
-) -> str:
+def _create_probe(tmp_db: Connection, now: int, *, implementer: Implementer | None = None) -> str:
     ticket = tickets_data.create_ticket(
-        tmp_db, title="Probe drive", actor="human", now=now,
-        title_max_chars=TITLE_MAX_CHARS, ticket_type="probe", implementer=implementer,
+        tmp_db,
+        title="Probe drive",
+        actor="human",
+        now=now,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="probe",
+        implementer=implementer,
     )
     return ticket.id
 
 
 def _events(tmp_db: Connection, tid: str) -> list[tuple[str, dict[str, object]]]:
     """(kind, payload) rows for a ticket in append order."""
-    return [
-        (e.kind, e.payload)
-        for e in read_events_since(tmp_db, 0, 10_000)
-        if e.entity_id == tid
-    ]
+    return [(e.kind, e.payload) for e in read_events_since(tmp_db, 0, 10_000) if e.entity_id == tid]
 
 
-def _kinds_after(
-    tmp_db: Connection, tid: str, since: int
-) -> list[tuple[str, dict[str, object]]]:
+def _kinds_after(tmp_db: Connection, tid: str, since: int) -> list[tuple[str, dict[str, object]]]:
     return _events(tmp_db, tid)[since:]
 
 
@@ -320,31 +328,38 @@ def test_probe_data_layer_drive_to_done_exact_events(
 
     # created at needs_kickoff scoped to the leading needs_kickoff ceiling, kickoff parked.
     t = tickets_data.read_ticket(tmp_db, tid)
-    assert t.state == "needs_kickoff"
+    assert t.stage == "needs_kickoff"
     assert t.ceiling == "needs_kickoff"
     assert fields_codec.get_slot(t.fields, "kickoff").proposal is not None
 
     # --- accept kickoff, expanding the ceiling onward to needs_beta (beyond needs_alpha).
     before = len(_events(tmp_db, tid))
     t = tickets_data.accept_proposal(
-        tmp_db, tid, field=FieldName.kickoff, actor="human", now=now,
-        next_ceiling=_B, at_cap=AtCap.propose,
+        tmp_db,
+        tid,
+        field=FieldName.kickoff,
+        actor="human",
+        now=now,
+        next_ceiling=_B,
+        at_cap=AtCap.propose,
     )
-    assert t.state == _A
+    assert t.stage == _A
     assert t.ceiling == _B
     assert fields_codec.get_slot(t.fields, "kickoff").value == ""  # default kickoff note
-    # EXACT event order + payloads: proposal_accepted(kickoff) -> state_changed -> scope_changed.
+    # EXACT event order + payloads: proposal_accepted(kickoff) -> stage_changed -> scope_changed.
     kinds = _kinds_after(tmp_db, tid, before)
     assert [k for k, _ in kinds] == [
         EventKind.proposal_accepted.value,
-        EventKind.state_changed.value,
+        EventKind.stage_changed.value,
         EventKind.scope_changed.value,
         EventKind.ticket_status_changed.value,
     ]
-    assert kinds[0][1] == {
-        "field": "kickoff", "body": "", "resolved_by": "direct", "edited": False
+    assert kinds[0][1] == {"field": "kickoff", "body": "", "resolved_by": "direct", "edited": False}
+    assert kinds[1][1] == {
+        "from_stage": "needs_kickoff",
+        "to_stage": _A,
+        "cause": "direct_accept",
     }
-    assert kinds[1][1] == {"from": "needs_kickoff", "to": _A, "cause": "direct_accept"}
     assert kinds[2][1] == {"ceiling": _B, "at_cap": "propose", "cause": "onward_scope"}
 
     # --- propose alpha: ceiling (_B) is BEYOND state (_A) -> AUTO-ACCEPTS + advances.
@@ -352,42 +367,42 @@ def test_probe_data_layer_drive_to_done_exact_events(
     t = tickets_data.file_proposal(
         tmp_db, tid, field=_FA, body="alpha body", actor="agent", now=now
     )
-    assert t.state == _B                                   # auto-accepted + advanced
+    assert t.stage == _B  # auto-accepted + advanced
     assert fields_codec.get_slot(t.fields, _FA).value == "alpha body"
-    assert fields_codec.get_slot(t.fields, _FA).proposal is None   # proposal cleared
+    assert fields_codec.get_slot(t.fields, _FA).proposal is None  # proposal cleared
     # the transition hook fired for the FOREIGN type: needs_alpha->needs_beta -> user_takeover.
     assert t.ticket_status == TicketStatus.user_takeover
     kinds = _kinds_after(tmp_db, tid, before)
     assert [k for k, _ in kinds] == [
         EventKind.proposal_accepted.value,
-        EventKind.state_changed.value,
+        EventKind.stage_changed.value,
         EventKind.ticket_status_changed.value,
     ]
     assert kinds[0][1] == {
-        "field": _FA, "body": "alpha body", "resolved_by": "auto", "edited": False
+        "field": _FA,
+        "body": "alpha body",
+        "resolved_by": "auto",
+        "edited": False,
     }
-    assert kinds[1][1] == {"from": _A, "to": _B, "cause": "auto_accept"}
+    assert kinds[1][1] == {"from_stage": _A, "to_stage": _B, "cause": "auto_accept"}
     assert kinds[2][1] == {"ticket_status": "user_takeover"}
 
     # --- at needs_beta (ceiling _B ==): propose beta -> PARKS (value None, proposal set).
     before = len(_events(tmp_db, tid))
-    t = tickets_data.file_proposal(
-        tmp_db, tid, field=_FB, body="beta v1", actor="agent", now=now
-    )
+    t = tickets_data.file_proposal(tmp_db, tid, field=_FB, body="beta v1", actor="agent", now=now)
     beta = fields_codec.get_slot(t.fields, _FB)
     assert beta.value is None and beta.proposal is not None and beta.proposal.body == "beta v1"
-    assert t.state == _B
+    assert t.stage == _B
     kinds = _kinds_after(tmp_db, tid, before)
     assert [k for k, _ in kinds] == [
-        EventKind.proposal_filed.value, EventKind.ticket_status_changed.value
+        EventKind.proposal_filed.value,
+        EventKind.ticket_status_changed.value,
     ]
     assert kinds[0][1] == {"field": _FB, "body": "beta v1", "proposed_by": "agent"}
 
     # --- propose beta AGAIN -> SUPERSEDES the first (proposal_superseded emitted).
     before = len(_events(tmp_db, tid))
-    t = tickets_data.file_proposal(
-        tmp_db, tid, field=_FB, body="beta v2", actor="agent", now=now
-    )
+    t = tickets_data.file_proposal(tmp_db, tid, field=_FB, body="beta v2", actor="agent", now=now)
     assert fields_codec.get_slot(t.fields, _FB).proposal.body == "beta v2"
     kinds = _kinds_after(tmp_db, tid, before)
     assert kinds[0][0] == EventKind.proposal_superseded.value
@@ -396,10 +411,15 @@ def test_probe_data_layer_drive_to_done_exact_events(
 
     # --- accept beta -> advances to done (the terminal), value settled.
     t = tickets_data.accept_proposal(
-        tmp_db, tid, field=_FB, actor="human", now=now,
-        next_ceiling=NO_FURTHER, at_cap=AtCap.stop,
+        tmp_db,
+        tid,
+        field=_FB,
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.stop,
     )
-    assert t.state == "done"
+    assert t.stage == "done"
     assert fields_codec.get_slot(t.fields, _FB).value == "beta v2"
     assert fields_codec.get_slot(t.fields, _FB).proposal is None
 
@@ -412,10 +432,15 @@ def test_probe_recap_path_infers_gating_field(
     now = fake_clock.now_unix()
     tid = _create_probe(tmp_db, now)
     t = tickets_data.accept_proposal(
-        tmp_db, tid, field=FieldName.kickoff, actor="human", now=now,
-        next_ceiling=NO_FURTHER, at_cap=AtCap.propose,
+        tmp_db,
+        tid,
+        field=FieldName.kickoff,
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
     )
-    assert t.state == _A
+    assert t.stage == _A
 
     before = len(_events(tmp_db, tid))
     t = tickets_data.file_current_proposal_with_recap(
@@ -423,7 +448,7 @@ def test_probe_recap_path_infers_gating_field(
     )
     assert t.recap == "probe recap"
     assert fields_codec.get_slot(t.fields, _FA).proposal.body == "alpha via recap"
-    assert t.state == _A  # parked at the ceiling
+    assert t.stage == _A  # parked at the ceiling
     kinds = [k for k, _ in _kinds_after(tmp_db, tid, before)]
     assert EventKind.proposal_filed.value in kinds
     assert EventKind.recap_updated.value in kinds
@@ -437,23 +462,24 @@ def test_probe_return_for_revision_clears_parked_proposal(
     now = fake_clock.now_unix()
     tid = _create_probe(tmp_db, now)
     t = tickets_data.accept_proposal(
-        tmp_db, tid, field=FieldName.kickoff, actor="human", now=now,
-        next_ceiling=NO_FURTHER, at_cap=AtCap.propose,
+        tmp_db,
+        tid,
+        field=FieldName.kickoff,
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
     )
-    assert t.state == _A
+    assert t.stage == _A
     # park an alpha proposal, then attach a worker session (return needs an existing one).
     tickets_data.file_proposal(tmp_db, tid, field=_FA, body="alpha draft", actor="agent", now=now)
-    tmp_db.execute(
-        "UPDATE tickets SET chat_session_key = ? WHERE id = ?", ("probe-sess", tid)
-    )
+    tmp_db.execute("UPDATE tickets SET chat_session_key = ? WHERE id = ?", ("probe-sess", tid))
     tmp_db.commit()
 
-    tickets_data.return_for_revision(
-        tmp_db, tid, message="please revise", actor="human", now=now
-    )
+    tickets_data.return_for_revision(tmp_db, tid, message="please revise", actor="human", now=now)
     reloaded = tickets_data.read_ticket(tmp_db, tid)
-    assert fields_codec.get_slot(reloaded.fields, _FA).proposal is None   # parked proposal cleared
-    assert reloaded.state == _A
+    assert fields_codec.get_slot(reloaded.fields, _FA).proposal is None  # parked proposal cleared
+    assert reloaded.stage == _A
 
 
 def test_probe_admission_error_payload(
@@ -464,17 +490,22 @@ def test_probe_admission_error_payload(
     now = fake_clock.now_unix()
     tid = _create_probe(tmp_db, now)
     t = tickets_data.accept_proposal(
-        tmp_db, tid, field=FieldName.kickoff, actor="human", now=now,
-        next_ceiling=NO_FURTHER, at_cap=AtCap.propose,
+        tmp_db,
+        tid,
+        field=FieldName.kickoff,
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
     )
-    assert t.state == _A and t.ceiling == _A  # at the ceiling, at_cap propose
+    assert t.stage == _A and t.ceiling == _A  # at the ceiling, at_cap propose
 
     with pytest.raises(PlannerError) as exc:
         tickets_data.file_proposal(
             tmp_db, tid, field=_FB, body="beta too early", actor="agent", now=now
         )
     assert exc.value.code == ErrorCode.validation
-    assert exc.value.detail == {"field": _FB, "gating_field": _FA, "state": _A}
+    assert exc.value.detail == {"field": _FB, "gating_field": _FA, "stage": _A}
 
 
 def test_probe_at_cap_stop_error_payload(
@@ -484,18 +515,19 @@ def test_probe_at_cap_stop_error_payload(
     now = fake_clock.now_unix()
     tid = _create_probe(tmp_db, now)
     t = tickets_data.accept_proposal(
-        tmp_db, tid, field=FieldName.kickoff, actor="human", now=now,
-        next_ceiling=NO_FURTHER, at_cap=AtCap.stop,
+        tmp_db,
+        tid,
+        field=FieldName.kickoff,
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.stop,
     )
-    assert t.state == _A and t.ceiling == _A and t.at_cap == AtCap.stop
+    assert t.stage == _A and t.ceiling == _A and t.at_cap == AtCap.stop
     with pytest.raises(PlannerError) as exc:
-        tickets_data.file_proposal(
-            tmp_db, tid, field=_FA, body="blocked", actor="agent", now=now
-        )
+        tickets_data.file_proposal(tmp_db, tid, field=_FA, body="blocked", actor="agent", now=now)
     assert exc.value.code == ErrorCode.at_cap_stop
-    assert exc.value.detail == {
-        "gating_field": _FA, "state": _A, "ceiling": _A, "at_cap": "stop"
-    }
+    assert exc.value.detail == {"gating_field": _FA, "stage": _A, "ceiling": _A, "at_cap": "stop"}
 
 
 def test_probe_drive_to_dropped(
@@ -504,13 +536,18 @@ def test_probe_drive_to_dropped(
     now = fake_clock.now_unix()
     tid = _create_probe(tmp_db, now)
     t = tickets_data.accept_proposal(
-        tmp_db, tid, field=FieldName.kickoff, actor="human", now=now,
-        next_ceiling=NO_FURTHER, at_cap=AtCap.propose,
+        tmp_db,
+        tid,
+        field=FieldName.kickoff,
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
     )
-    assert t.state == _A
+    assert t.stage == _A
     # drop is universal (reserved bookend); it works on a probe ticket.
     t = tickets_data.drop_ticket(tmp_db, tid, actor="human", now=now)
-    assert t.state == "dropped"
+    assert t.stage == "dropped"
 
 
 # =====================================================================
@@ -523,11 +560,11 @@ def test_probe_survives_create_and_reload(
 ) -> None:
     now = fake_clock.now_unix()
     tid = _create_probe(tmp_db, now)
-    # _row_to_ticket must NOT raise (the str(row) fix; TicketState("needs_alpha") would ValueError).
+    # _row_to_ticket must NOT raise (the str(row) fix; CodingStage("needs_alpha") would ValueError).
     ticket = tickets_data.read_ticket(tmp_db, tid)
-    assert ticket.state == "needs_kickoff"
+    assert ticket.stage == "needs_kickoff"
     assert ticket.ceiling == "needs_kickoff"  # leading default ceiling (still a bare str)
-    assert type(ticket.state) is str
+    assert type(ticket.stage) is str
     assert type(ticket.ceiling) is str
 
 
@@ -541,43 +578,68 @@ def test_coding_bookend_comparisons_survive_str_flip(
 ) -> None:
     now = fake_clock.now_unix()
     t = tickets_data.create_ticket(
-        tmp_db, title="Coding", actor="human", now=now, title_max_chars=TITLE_MAX_CHARS
+        tmp_db,
+        worker_type="coding",
+        title="Coding",
+        actor="human",
+        now=now,
+        title_max_chars=TITLE_MAX_CHARS,
     )
     t = tickets_data.accept_proposal(
-        tmp_db, t.id, field=FieldName.kickoff, actor="human", now=now,
-        next_ceiling=NO_FURTHER, at_cap=AtCap.propose,
+        tmp_db,
+        t.id,
+        field=FieldName.kickoff,
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
     )
     # a state jump reaches needs_approach; its bookend guards still fire on a str state.
-    t = tickets_data.set_state(
-        tmp_db, t.id, new_state=TicketState.needs_approach, actor="human", now=now
+    t = tickets_data.set_stage(
+        tmp_db, t.id, new_stage=CodingStage.needs_approach, actor="human", now=now
     )
-    assert t.state == TicketState.needs_approach
-    assert t.state == "needs_approach"
+    assert t.stage == CodingStage.needs_approach
+    assert t.stage == "needs_approach"
 
-    # drop: the `== TicketState.done/.dropped` bookends still hold with ticket.state a str.
+    # drop: the `== CodingStage.done/.dropped` bookends still hold with ticket.stage a str.
     t = tickets_data.drop_ticket(tmp_db, t.id, actor="human", now=now)
-    assert t.state == TicketState.dropped
+    assert t.stage == CodingStage.dropped
     # dropped is terminal: a further drop raises via the surviving `==` guard.
     with pytest.raises(PlannerError) as exc:
         tickets_data.drop_ticket(tmp_db, t.id, actor="human", now=now)
     assert exc.value.code == ErrorCode.validation
 
 
-def test_decide_drop_and_jump_bookends_pure_str_state() -> None:
+def test_decide_drop_and_jump_bookends_pure_str_stage() -> None:
     # The pure-Decision path: a probe-style bare-str state hits the reserved bookend
-    # `==` comparisons in decide_drop / decide_state_jump. A dropped bare-str state is
+    # `==` comparisons in decide_drop / decide_stage_jump. A dropped bare-str state is
     # recognized as terminal by StrEnum equality, not identity.
-    def _t(state: str) -> Ticket:
+    def _t(stage: str) -> Ticket:
         return Ticket(
-            id="t_x", title="T", state=state, priority=Priority.P3, deadline=None,
-            project_id=None, project_name=None, sprint_item_id=None, sprint_id=None,
-            recap="", ceiling="needs_alpha", at_cap=AtCap.propose,
-            ticket_status=TicketStatus.empty, implementer=None, chat_session_key=None,
-            alias=None, fields=TicketFields.empty(("kickoff",)), created_at=0, updated_at=0,
+            id="t_x",
+            title="T",
+            worker_type="probe",
+            stage=stage,
+            priority=Priority.P3,
+            deadline=None,
+            project_id=None,
+            project_name=None,
+            sprint_item_id=None,
+            sprint_id=None,
+            recap="",
+            ceiling="needs_alpha",
+            at_cap=AtCap.propose,
+            ticket_status=TicketStatus.empty,
+            implementer=None,
+            chat_session_key=None,
+            alias=None,
+            fields=TicketFields.empty(("kickoff",)),
+            created_at=0,
+            updated_at=0,
         )
 
-    # a bare-str "dropped" state is recognized as terminal (== TicketState.dropped).
+    # a bare-str "dropped" state is recognized as terminal (== CodingStage.dropped).
     with pytest.raises(PlannerError):
         resolution.decide_drop(_t("dropped"), "human")
     with pytest.raises(PlannerError):
-        resolution.decide_state_jump(_t("dropped"), TicketState.needs_approach, "human")
+        resolution.decide_stage_jump(_t("dropped"), CodingStage.needs_approach, "human")

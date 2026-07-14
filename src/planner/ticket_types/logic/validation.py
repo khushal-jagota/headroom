@@ -34,22 +34,22 @@ def validate_definition(
 
     # R0 — non-empty (before any indexing).
     if len(defn.stages) < 1:
-        raise fail("definition has no stages", {"type_id": type_id})
+        raise fail("definition has no stages", {"worker_type": type_id})
     if len(defn.fields) < 1:
-        raise fail("definition has no fields", {"type_id": type_id})
+        raise fail("definition has no fields", {"worker_type": type_id})
 
     # R2 — unique stage ids (R1 is cross-definition, enforced in build_registry).
     seen_states: set[str] = set()
     for stage in defn.stages:
         if stage.id in seen_states:
-            raise fail("duplicate stage id", {"type_id": type_id, "state": stage.id})
+            raise fail("duplicate stage id", {"worker_type": type_id, "stage": stage.id})
         seen_states.add(stage.id)
 
     # R3 — unique field ids.
     seen_fields: set[str] = set()
     for field_def in defn.fields:
         if field_def.id in seen_fields:
-            raise fail("duplicate field id", {"type_id": type_id, "field": field_def.id})
+            raise fail("duplicate field id", {"worker_type": type_id, "field": field_def.id})
         seen_fields.add(field_def.id)
 
     first = defn.stages[0]
@@ -57,7 +57,7 @@ def validate_definition(
 
     # R4 — first stage is needs_kickoff, gating kickoff.
     if first.id != "needs_kickoff" or first.gating_field != "kickoff":
-        raise fail("first stage must be needs_kickoff", {"type_id": type_id, "first": first.id})
+        raise fail("first stage must be needs_kickoff", {"worker_type": type_id, "first": first.id})
 
     # R6 — exactly one linear terminal, and it is the last stage. Bool identity (is
     # True), not truthiness, so a stage with is_terminal=1 is NOT read as terminal and
@@ -68,37 +68,41 @@ def validate_definition(
         offending = terminals[0].id if terminals else last.id
         raise fail(
             "linear order must have exactly one terminal",
-            {"type_id": type_id, "state": offending},
+            {"worker_type": type_id, "stage": offending},
         )
 
     # R5 — the last (sole terminal) stage is done.
     if last.id != "done":
-        raise fail("last stage must be done", {"type_id": type_id, "last": last.id})
+        raise fail("last stage must be done", {"worker_type": type_id, "last": last.id})
 
     # R7 — dropped reserved / not linear; done only as the last stage; dropped_stage well-formed.
     for stage in defn.stages:
         if stage.id == "dropped":
             raise fail(
-                "dropped may not be a linear stage", {"type_id": type_id, "state": "dropped"}
+                "dropped may not be a linear stage", {"worker_type": type_id, "stage": "dropped"}
             )
     for stage in defn.stages[:-1]:
         if stage.id == "done":
-            raise fail("done may not be a mid stage", {"type_id": type_id, "state": "done"})
+            raise fail("done may not be a mid stage", {"worker_type": type_id, "stage": "done"})
     dropped = defn.dropped_stage
     if dropped.id != "dropped" or dropped.is_terminal is not True:
-        raise fail("dropped may not be a linear stage", {"type_id": type_id, "state": "dropped"})
+        raise fail(
+            "dropped may not be a linear stage", {"worker_type": type_id, "stage": "dropped"}
+        )
 
     # R8 — terminals carry no gate (done, then dropped).
     if last.gating_field is not None:
-        raise fail("terminal stage may not gate a field", {"type_id": type_id, "state": "done"})
+        raise fail("terminal stage may not gate a field", {"worker_type": type_id, "stage": "done"})
     if dropped.gating_field is not None:
-        raise fail("terminal stage may not gate a field", {"type_id": type_id, "state": "dropped"})
+        raise fail(
+            "terminal stage may not gate a field", {"worker_type": type_id, "stage": "dropped"}
+        )
 
     # R9 — every non-terminal stage gates a field.
     for stage in defn.stages:
         if not stage.is_terminal and stage.gating_field is None:
             raise fail(
-                "non-terminal stage must gate a field", {"type_id": type_id, "state": stage.id}
+                "non-terminal stage must gate a field", {"worker_type": type_id, "stage": stage.id}
             )
 
     # R10 — every non-terminal gate references a declared field.
@@ -107,7 +111,7 @@ def validate_definition(
         if not stage.is_terminal and stage.gating_field not in declared_field_ids:
             raise fail(
                 "gating field references an undeclared field",
-                {"type_id": type_id, "state": stage.id, "gating_field": stage.gating_field},
+                {"worker_type": type_id, "stage": stage.id, "gating_field": stage.gating_field},
             )
 
     # R11 — no field gated by two stages.
@@ -120,42 +124,45 @@ def validate_definition(
             if gated_count[stage.gating_field] > 1:
                 raise fail(
                     "field gated by more than one stage",
-                    {"type_id": type_id, "field": stage.gating_field},
+                    {"worker_type": type_id, "field": stage.gating_field},
                 )
 
     # R12 — every declared field is gated exactly once.
     for field_def in defn.fields:
         if gated_count.get(field_def.id, 0) == 0:
-            raise fail("declared field is never gated", {"type_id": type_id, "field": field_def.id})
+            raise fail(
+                "declared field is never gated", {"worker_type": type_id, "field": field_def.id}
+            )
 
     # R13 — first field is kickoff.
     if defn.fields[0].id != "kickoff":
         raise fail(
-            "first field must be kickoff", {"type_id": type_id, "first_field": defn.fields[0].id}
+            "first field must be kickoff",
+            {"worker_type": type_id, "first_field": defn.fields[0].id},
         )
 
     # R14 — worker-profile skill reference.
     if defn.worker_profile.specialist_skill not in known_skills:
         raise fail(
             "worker profile references an unknown skill",
-            {"type_id": type_id, "specialist_skill": defn.worker_profile.specialist_skill},
+            {"worker_type": type_id, "specialist_skill": defn.worker_profile.specialist_skill},
         )
 
     # R15 — worker-profile toolset reference.
     if defn.worker_profile.toolset_profile not in known_toolset_profiles:
         raise fail(
             "worker profile references an unknown toolset profile",
-            {"type_id": type_id, "toolset_profile": defn.worker_profile.toolset_profile},
+            {"worker_type": type_id, "toolset_profile": defn.worker_profile.toolset_profile},
         )
 
-    # R16 — hook stage references (old_state and new_state are known linear stage ids).
+    # R16 — hook stage references (old_stage and new_stage are known linear stage ids).
     known_stage_ids = {s.id for s in defn.stages}
     for hook in defn.transition_hooks:
-        for state_id in (hook.old_state, hook.new_state):
-            if state_id not in known_stage_ids:
+        for stage_id in (hook.old_stage, hook.new_stage):
+            if stage_id not in known_stage_ids:
                 raise fail(
                     "transition hook references an unknown stage",
-                    {"type_id": type_id, "state": state_id},
+                    {"worker_type": type_id, "stage": stage_id},
                 )
 
     # R17 — hook implementer reference.
@@ -164,7 +171,7 @@ def validate_definition(
         if hook.implementer not in known_implementers:
             raise fail(
                 "transition hook references an unknown implementer",
-                {"type_id": type_id, "implementer": hook.implementer},
+                {"worker_type": type_id, "implementer": hook.implementer},
             )
 
     # R18 — hook effect reference.
@@ -173,17 +180,17 @@ def validate_definition(
         if hook.effect not in known_effects:
             raise fail(
                 "transition hook references an unknown effect",
-                {"type_id": type_id, "effect": hook.effect},
+                {"worker_type": type_id, "effect": hook.effect},
             )
 
     # R19 — no duplicate hook key.
     seen_keys: set[tuple[str, str, str]] = set()
     for hook in defn.transition_hooks:
-        key = (hook.old_state, hook.new_state, hook.implementer)
+        key = (hook.old_stage, hook.new_stage, hook.implementer)
         if key in seen_keys:
             raise fail(
                 "duplicate transition hook",
-                {"type_id": type_id, "key": [hook.old_state, hook.new_state, hook.implementer]},
+                {"worker_type": type_id, "key": [hook.old_stage, hook.new_stage, hook.implementer]},
             )
         seen_keys.add(key)
 
@@ -193,5 +200,5 @@ def validate_definition(
     if type(defn.supports_prefix_reconciliation) is not bool:
         raise fail(
             "supports_prefix_reconciliation must be a bool",
-            {"type_id": type_id},
+            {"worker_type": type_id},
         )

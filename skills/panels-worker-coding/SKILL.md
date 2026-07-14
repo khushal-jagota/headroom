@@ -1,6 +1,6 @@
 ---
 name: panels-worker-coding
-description: Stage-by-stage guidance for a coding-type Panels ticket.
+description: Stage-by-stage guidance for a coding Worker type Panels Ticket.
 ---
 
 # Coding ticket stages

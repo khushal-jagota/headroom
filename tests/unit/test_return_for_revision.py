@@ -25,7 +25,7 @@ from planner.minds.shared_gateway import SharedGateway
 from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.runtime.readiness_doorbell import NoOpReadinessDoorbell
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, AtCap, FieldName, TicketState
+from planner.tickets.contracts import NO_FURTHER, AtCap, CodingStage, FieldName
 from planner.tickets.data import (
     change_scope,
     create_ticket,
@@ -131,7 +131,14 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
 def _ticket_with_pending_plan(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
-        ticket = create_ticket(conn, title="Revise plan", actor="human", now=0, title_max_chars=200)
+        ticket = create_ticket(
+            conn,
+            worker_type="coding",
+            title="Revise plan",
+            actor="human",
+            now=0,
+            title_max_chars=200,
+        )
         ticket = tickets_data.accept_proposal(
             conn,
             ticket.id,
@@ -144,7 +151,7 @@ def _ticket_with_pending_plan(db_path: Path) -> str:
         change_scope(
             conn,
             ticket.id,
-            ceiling=TicketState.needs_plan,
+            ceiling=CodingStage.needs_plan,
             at_cap=AtCap.propose,
             actor="human",
             now=0,
@@ -155,12 +162,8 @@ def _ticket_with_pending_plan(db_path: Path) -> str:
         file_proposal(
             conn, ticket.id, field=FieldName.approach, body="approach", actor="agent", now=0
         )
-        file_proposal(
-            conn, ticket.id, field=FieldName.plan, body="bad plan", actor="agent", now=0
-        )
-        finish_run_if_still_running_step(
-            conn, ticket.id, session_key=f"session-{ticket.id}", now=0
-        )
+        file_proposal(conn, ticket.id, field=FieldName.plan, body="bad plan", actor="agent", now=0)
+        finish_run_if_still_running_step(conn, ticket.id, session_key=f"session-{ticket.id}", now=0)
     finally:
         conn.close()
     return ticket.id
@@ -170,7 +173,12 @@ def _ticket_with_pending_closeout(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
         ticket = create_ticket(
-            conn, title="Revise closeout", actor="human", now=0, title_max_chars=200
+            conn,
+            worker_type="coding",
+            title="Revise closeout",
+            actor="human",
+            now=0,
+            title_max_chars=200,
         )
         ticket = tickets_data.accept_proposal(
             conn,
@@ -184,7 +192,7 @@ def _ticket_with_pending_closeout(db_path: Path) -> str:
         change_scope(
             conn,
             ticket.id,
-            ceiling=TicketState.needs_closeout,
+            ceiling=CodingStage.needs_closeout,
             at_cap=AtCap.propose,
             actor="human",
             now=0,
@@ -212,9 +220,7 @@ def _ticket_with_pending_closeout(db_path: Path) -> str:
             actor="agent",
             now=0,
         )
-        finish_run_if_still_running_step(
-            conn, ticket.id, session_key=f"session-{ticket.id}", now=0
-        )
+        finish_run_if_still_running_step(conn, ticket.id, session_key=f"session-{ticket.id}", now=0)
     finally:
         conn.close()
     return ticket.id
@@ -251,9 +257,7 @@ def test_http_revision_uses_real_runner_without_readiness_loop_and_returns_befor
 
     fake = BlockingRevisionGateway(
         {
-            "session.resume": [
-                Reply(result={"session_id": "live-session", "resumed": stored_key})
-            ],
+            "session.resume": [Reply(result={"session_id": "live-session", "resumed": stored_key})],
             "prompt.submit": [
                 Reply(
                     result={"status": "streaming"},
@@ -300,10 +304,13 @@ def test_http_revision_uses_real_runner_without_readiness_loop_and_returns_befor
             assert len(claimed) == 1
             conn = connect(str(db_path))
             try:
-                assert conn.execute(
-                    "SELECT role, text FROM chat_messages WHERE entity_id = ? ORDER BY id",
-                    (tid,),
-                ).fetchall() == []
+                assert (
+                    conn.execute(
+                        "SELECT role, text FROM chat_messages WHERE entity_id = ? ORDER BY id",
+                        (tid,),
+                    ).fetchall()
+                    == []
+                )
             finally:
                 conn.close()
 
@@ -311,7 +318,7 @@ def test_http_revision_uses_real_runner_without_readiness_loop_and_returns_befor
             assert runner.wait_idle(10.0)
             settled = client.get(f"/api/tickets/{tid}").json()
 
-        assert settled["state"] == "needs_plan"
+        assert settled["stage"] == "needs_plan"
         assert settled["ticket_status"] == "awaiting_approval"
         assert settled["fields"]["plan"]["proposal"]["body"] == "revised plan"
         assert doorbell.calls == 1
@@ -367,7 +374,7 @@ def test_return_for_revision_clears_proposal_after_accepting_employee_handoff(
             json={"message": "Duplicate send."},
         )
 
-    assert ticket["state"] == "needs_plan"
+    assert ticket["stage"] == "needs_plan"
     assert ticket["ticket_status"] == "agent_running_step"
     assert ticket["fields"]["plan"]["value"] is None
     assert ticket["fields"]["plan"]["proposal"] is None
@@ -399,7 +406,7 @@ def test_return_for_revision_keeps_closeout_gate_after_accepted_handoff(
         ticket = response.json()
         events = client.get(f"/api/tickets/{tid}/events").json()["events"]
 
-    assert ticket["state"] == "needs_closeout"
+    assert ticket["stage"] == "needs_closeout"
     assert ticket["ticket_status"] == "agent_running_step"
     assert ticket["fields"]["closeout"]["value"] is None
     assert ticket["fields"]["closeout"]["proposal"] is None
@@ -407,12 +414,10 @@ def test_return_for_revision_keeps_closeout_gate_after_accepted_handoff(
     assert all(
         event["payload"].get("cause") != "return_for_revision"
         for event in events
-        if event["kind"] == "state_changed"
+        if event["kind"] == "stage_changed"
     )
     assert _wait_until(lambda: len(employee_runner.decisions) == 1)
-    assert employee_runner.decisions == [
-        (tid, "The closeout needs evidence.", "released")
-    ]
+    assert employee_runner.decisions == [(tid, "The closeout needs evidence.", "released")]
     with TestClient(app) as client:
         assert client.get("/api/queues").json()["approvals"] == []
 
@@ -519,9 +524,7 @@ def test_post_commit_worker_turn_collision_errors_claim_without_submitting(
     runner, gateway = _install_real_runner(app, db_path, fake, doorbell=doorbell)
     original_start = chat_service.start_worker_turn
 
-    def collide_with_human_turn(
-        conn: Connection, entity_id: str, *, visible_text: str, now: int
-    ):
+    def collide_with_human_turn(conn: Connection, entity_id: str, *, visible_text: str, now: int):
         chat_data.start_turn(
             conn,
             entity_id,

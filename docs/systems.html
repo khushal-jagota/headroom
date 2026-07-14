@@ -695,15 +695,16 @@
             </summary>
             <div class="detail-body">
               <p>
-                Tickets have two states. <code>state</code> is the work stage:
-                success, approach, plan, implementation, closeout, done, or dropped.
-                <code>ticket_status</code> is runtime control: empty, running,
+                A Ticket stores <code>stage</code> for its work Stage. Its Worker type
+                declares the available Stages; coding uses kickoff, success, approach,
+                plan, implementation, closeout, done, or dropped.
+                <code>ticket_status</code> is separate runtime control: empty, running,
                 awaiting approval, user takeover, or errored.
               </p>
               <p>
-                Workers write proposals to the five fields: success, approach,
+                Workers write proposals to the six fields: kickoff, success, approach,
                 plan, implementation, and closeout. The resolution engine is the only code that can
-                settle a proposal or advance <code>state</code>. Scope is
+                settle a proposal or advance <code>stage</code>. Scope is
                 <code>ceiling</code> plus <code>at_cap</code>; it decides how far a
                 worker may go before the human must approve again.
               </p>
@@ -842,7 +843,7 @@
                 <code>sprint</code>, <code>worker</code>, and <code>chief</code>.
                 Ordinary commands preserve an ambient actor or send none; production
                 worker and Chief gateways set their roles explicitly. Chief external-work
-                intake is exceptional and is not a generic state setter.
+                intake is exceptional and is not a generic Stage setter.
               </p>
               <p>
                 A missing <code>X-Plan-Actor</code> means unattributed, not human.
@@ -869,7 +870,7 @@
         <ul class="boundary-list">
           <li>
             <strong>Resolution engine</strong>
-            <span>Owns ticket field values and ticket <code>state</code> transitions.</span>
+            <span>Owns Ticket field values and Ticket <code>stage</code> transitions.</span>
           </li>
           <li>
             <strong>Runtime writers</strong>
@@ -935,13 +936,13 @@
           <details>
             <summary>
               <span class="number">03</span>
-              <span><strong>The frontend copies ticket state-machine constants.</strong><span>Useful for rendering, but a drift risk.</span></span>
+              <span><strong>The frontend reads the Worker type manifest.</strong><span>The server owns Stage order and gates.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                <code>web/src/lib/ui.ts</code> repeats state order, gating fields,
-                and advance targets. A generated contract or server-provided
-                metadata would make the boundary cleaner.
+                <code>GET /api/worker-types</code> supplies each Worker type's Stage
+                order, gating fields, and advance targets. The frontend renders that
+                served metadata instead of copying the Ticket Stage machine.
               </p>
             </div>
           </details>

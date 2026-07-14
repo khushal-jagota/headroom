@@ -7,13 +7,13 @@ import httpx
 WAIT_MS = 10_000
 
 
-def _post_state(server, ticket_id: str, state: str) -> dict:
+def _post_stage(server, ticket_id: str, stage: str) -> dict:
     resp = httpx.post(
-        f"{server.base}/api/tickets/{ticket_id}/state",
-        json={"to": state},
+        f"{server.base}/api/tickets/{ticket_id}/stage",
+        json={"to_stage": stage},
         timeout=10.0,
     )
-    assert resp.status_code < 300, f"POST state -> {resp.status_code}: {resp.text}"
+    assert resp.status_code < 300, f"POST Stage -> {resp.status_code}: {resp.text}"
     return resp.json()
 
 
@@ -53,7 +53,7 @@ def test_ticket_blocker_summary_links_and_sprint_item_hash_selection(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Active blocker",
@@ -62,7 +62,7 @@ def test_ticket_blocker_summary_links_and_sprint_item_hash_selection(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Cleared blocker",
@@ -71,7 +71,7 @@ def test_ticket_blocker_summary_links_and_sprint_item_hash_selection(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Blocked ticket",
@@ -80,8 +80,8 @@ def test_ticket_blocker_summary_links_and_sprint_item_hash_selection(
     cli(server, "ticket", "block", blocked_ticket, "--by", active_blocker)
     cli(server, "ticket", "block", blocked_ticket, "--by", cleared_blocker)
     cli(server, "sprint", "item", "block", item_id, "--by", blocked_ticket)
-    assert _get_ticket(server, cleared_blocker)["state"] == "needs_success"
-    _post_state(server, cleared_blocker, "done")
+    assert _get_ticket(server, cleared_blocker)["stage"] == "needs_success"
+    _post_stage(server, cleared_blocker, "done")
 
     ready = f'section[data-screen="ticket"][data-ticket-id="{blocked_ticket}"]'
     page = open_page(context_factory(), server, f"#/ticket/{blocked_ticket}", ready, settled=True)

@@ -33,6 +33,7 @@ def _create(
 ):
     ticket = tickets_data.create_ticket(
         conn,
+        worker_type="coding",
         title=title,
         actor="human",
         now=clock.now_unix(),
@@ -115,19 +116,27 @@ def test_delete_ticket_removes_full_footprint_and_keeps_one_minimal_audit(
     with pytest.raises(PlannerError) as exc:
         tickets_data.read_ticket(tmp_db, target.id)
     assert exc.value.code is ErrorCode.not_found
-    assert [tuple(row) for row in tmp_db.execute(
-        "SELECT ticket_id, position FROM day_tickets WHERE day_id = ? ORDER BY position",
-        (day_id,),
-    )] == [(before.id, 0), (after.id, 1)]
-    assert tmp_db.execute(
-        "SELECT 1 FROM links WHERE from_id = ? OR to_id = ?", (target.id, target.id)
-    ).fetchone() is None
-    assert tmp_db.execute(
-        "SELECT 1 FROM chat_messages WHERE entity_id = ?", (target.id,)
-    ).fetchone() is None
-    assert tmp_db.execute(
-        "SELECT 1 FROM chat_turns WHERE entity_id = ?", (target.id,)
-    ).fetchone() is None
+    assert [
+        tuple(row)
+        for row in tmp_db.execute(
+            "SELECT ticket_id, position FROM day_tickets WHERE day_id = ? ORDER BY position",
+            (day_id,),
+        )
+    ] == [(before.id, 0), (after.id, 1)]
+    assert (
+        tmp_db.execute(
+            "SELECT 1 FROM links WHERE from_id = ? OR to_id = ?", (target.id, target.id)
+        ).fetchone()
+        is None
+    )
+    assert (
+        tmp_db.execute("SELECT 1 FROM chat_messages WHERE entity_id = ?", (target.id,)).fetchone()
+        is None
+    )
+    assert (
+        tmp_db.execute("SELECT 1 FROM chat_turns WHERE entity_id = ?", (target.id,)).fetchone()
+        is None
+    )
 
     target_events = tmp_db.execute(
         "SELECT kind, payload, created_at FROM events WHERE entity_id = ? ORDER BY id",
@@ -239,6 +248,7 @@ def test_delete_ticket_api_is_human_only_and_returns_affected_resources(tmp_path
     conn = connect(str(db_path))
     target = tickets_data.create_ticket(
         conn,
+        worker_type="coding",
         title="Delete through API",
         actor="human",
         now=1,
@@ -250,9 +260,7 @@ def test_delete_ticket_api_is_human_only_and_returns_affected_resources(tmp_path
     with TestClient(app) as client:
         doorbell_spy = _DoorbellSpy()
         app.state.readiness_doorbell = doorbell_spy
-        forbidden = client.delete(
-            f"/api/tickets/{target.id}", headers={"X-Plan-Actor": "agent"}
-        )
+        forbidden = client.delete(f"/api/tickets/{target.id}", headers={"X-Plan-Actor": "agent"})
         assert forbidden.status_code == 400
         assert forbidden.json()["error"]["code"] == "agent_forbidden"
 

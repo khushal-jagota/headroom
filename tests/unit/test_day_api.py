@@ -40,8 +40,14 @@ def _make_app(tmp_path: Path) -> tuple[object, Path]:
 def _ticket(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
-        ticket = create_ticket(conn, title="Run me today.", actor="human", now=0,
-                               title_max_chars=200)
+        ticket = create_ticket(
+            conn,
+            worker_type="coding",
+            title="Run me today.",
+            actor="human",
+            now=0,
+            title_max_chars=200,
+        )
         return ticket.id
     finally:
         conn.close()

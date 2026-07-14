@@ -53,7 +53,9 @@ def _make_app(tmp_path: Path, gateway: str = "fake") -> tuple[object, Path, Adap
 def _ticket(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
-        ticket = create_ticket(conn, title="Chat me.", actor="human", now=0, title_max_chars=200)
+        ticket = create_ticket(
+            conn, worker_type="coding", title="Chat me.", actor="human", now=0, title_max_chars=200
+        )
     finally:
         conn.close()
     return ticket.id
@@ -85,9 +87,7 @@ def _stored_key(db_path: Path, entity_id: str) -> object:
 def _set_ticket_status(db_path: Path, ticket_id: str, status: TicketStatus) -> None:
     conn = connect(str(db_path))
     try:
-        conn.execute(
-            "UPDATE tickets SET ticket_status = ? WHERE id = ?", (status.value, ticket_id)
-        )
+        conn.execute("UPDATE tickets SET ticket_status = ? WHERE id = ?", (status.value, ticket_id))
     finally:
         conn.close()
 

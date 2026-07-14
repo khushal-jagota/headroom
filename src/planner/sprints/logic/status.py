@@ -13,14 +13,14 @@ from planner.sprints.contracts import ItemStatus
 
 
 class SprintItemChildStatus(NamedTuple):
-    state: str
+    stage: str
     ticket_status: str
     blocked: bool
-    state_in_progress: bool
+    stage_in_progress: bool
 
 
-_DROPPED_STATE = "dropped"
-_DONE_STATE = "done"
+_DROPPED_STAGE = "dropped"
+_DONE_STAGE = "done"
 _IN_PROGRESS_TICKET_STATUSES = frozenset(
     {"agent_running_step", "awaiting_approval", "user_takeover"}
 )
@@ -32,11 +32,11 @@ def derive_sprint_item_status(
     directly_blocked: bool,
     children: Iterable[SprintItemChildStatus],
 ) -> ItemStatus:
-    non_dropped = [child for child in children if child.state != _DROPPED_STATE]
-    if non_dropped and all(child.state == _DONE_STATE for child in non_dropped):
+    non_dropped = [child for child in children if child.stage != _DROPPED_STAGE]
+    if non_dropped and all(child.stage == _DONE_STAGE for child in non_dropped):
         return ItemStatus.done
     if any(
-        child.ticket_status in _IN_PROGRESS_TICKET_STATUSES or child.state_in_progress
+        child.ticket_status in _IN_PROGRESS_TICKET_STATUSES or child.stage_in_progress
         for child in non_dropped
     ):
         return ItemStatus.in_progress

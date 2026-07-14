@@ -110,7 +110,7 @@ def create_app(
     async def _lifespan(app_: FastAPI) -> AsyncIterator[None]:
         Path(config.db_path).parent.mkdir(parents=True, exist_ok=True)
         Path(config.logs_dir).mkdir(parents=True, exist_ok=True)
-        # Build and validate the ticket-type registry once at startup so a malformed
+        # Build and validate the Worker-type registry once at startup so a malformed
         # definition refuses to boot loudly rather than failing on the first ticket op.
         coding_bridge.coding_registry()
         # One integrity scan over the migrated tickets table: a corrupt live row
@@ -225,13 +225,13 @@ def create_app(
             "test_mode": config.test_mode,
         }
 
-    @app.get("/api/ticket-types")
-    async def ticket_types() -> dict[str, Any]:
+    @app.get("/api/worker-types")
+    async def worker_types() -> dict[str, Any]:
         # The single source of stage order / labels / gates / fields / ceiling range
         # per registered type, served from the ACTIVE registry (a test-installed probe
-        # registry in-process; coding-only in production). One entry per type_id.
+        # registry in-process). One entry per internal definition id.
         reg = coding_bridge.registry()
-        return {"types": [reg.manifest(tid) for tid in reg.type_ids()]}
+        return {"worker_types": [reg.manifest(tid) for tid in reg.type_ids()]}
 
     @app.websocket("/api/events")
     async def events_ws(websocket: WebSocket, since: int = 0) -> None:

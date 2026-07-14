@@ -1,9 +1,9 @@
-"""The ``coding`` WorkflowDefinition: the first shipped ticket type, reproducing
+"""The ``coding`` WorkflowDefinition: the first shipped Worker type, reproducing
 today's landed lifecycle EXACTLY.
 
 Stages, gates, and fields are sourced by walking the ``tickets/contracts`` leaf
-enums (STATE_ORDER, GATING_FIELD, FieldName) so the golden tests assert equality
-against the live constants rather than a hand-copied order. The worker profile
+enums (CODING_STAGE_ORDER, CODING_GATING_FIELD_BY_STAGE, FieldName) so the golden
+tests assert equality against the live constants rather than a hand-copied order. The worker profile
 and the transition hook are DECLARED but INERT this ticket — nothing consumes
 them, and ``plan_handoff_status`` is not changed.
 
@@ -20,25 +20,25 @@ from planner.ticket_types.contracts import (
     WorkflowDefinition,
 )
 from planner.tickets.contracts import (
-    GATING_FIELD,
-    STATE_ORDER,
+    CODING_GATING_FIELD_BY_STAGE,
+    CODING_STAGE_ORDER,
+    CodingStage,
     FieldName,
     Implementer,
-    TicketState,
     TicketStatus,
 )
 
 # Display labels: underscore-stripped, title-cased stage/field names. ui.ts derives
 # these at render time (labelize); there are no canonical hardcoded label strings
 # to reuse, so these stand as the single label source (BRIEF decision 3).
-_STATE_LABELS: dict[str, str] = {
-    TicketState.needs_kickoff.value: "Kickoff",
-    TicketState.needs_success.value: "Success",
-    TicketState.needs_approach.value: "Approach",
-    TicketState.needs_plan.value: "Plan",
-    TicketState.needs_implementation.value: "Implementation",
-    TicketState.needs_closeout.value: "Closeout",
-    TicketState.done.value: "Done",
+_STAGE_LABELS: dict[str, str] = {
+    CodingStage.needs_kickoff.value: "Kickoff",
+    CodingStage.needs_success.value: "Success",
+    CodingStage.needs_approach.value: "Approach",
+    CodingStage.needs_plan.value: "Plan",
+    CodingStage.needs_implementation.value: "Implementation",
+    CodingStage.needs_closeout.value: "Closeout",
+    CodingStage.done.value: "Done",
 }
 
 _FIELD_LABELS: dict[str, str] = {
@@ -51,23 +51,23 @@ _FIELD_LABELS: dict[str, str] = {
 }
 
 
-def _stage_for(state: TicketState) -> Stage:
-    if state is TicketState.done:
+def _stage_for(stage: CodingStage) -> Stage:
+    if stage is CodingStage.done:
         return Stage(
-            id=state.value, label=_STATE_LABELS[state.value], gating_field=None, is_terminal=True
+            id=stage.value, label=_STAGE_LABELS[stage.value], gating_field=None, is_terminal=True
         )
     return Stage(
-        id=state.value,
-        label=_STATE_LABELS[state.value],
-        gating_field=GATING_FIELD[state].value,
+        id=stage.value,
+        label=_STAGE_LABELS[stage.value],
+        gating_field=CODING_GATING_FIELD_BY_STAGE[stage].value,
         is_terminal=False,
     )
 
 
-_STAGES: tuple[Stage, ...] = tuple(_stage_for(state) for state in STATE_ORDER)
+_STAGES: tuple[Stage, ...] = tuple(_stage_for(stage) for stage in CODING_STAGE_ORDER)
 
 _DROPPED_STAGE: Stage = Stage(
-    id=TicketState.dropped.value, label="Dropped", gating_field=None, is_terminal=True
+    id=CodingStage.dropped.value, label="Dropped", gating_field=None, is_terminal=True
 )
 
 _FIELDS: tuple[FieldDef, ...] = tuple(
@@ -85,8 +85,8 @@ _WORKER_PROFILE: WorkerProfile = WorkerProfile(
 # handed to needs_implementation under khushal becomes a durable user_takeover.
 _TRANSITION_HOOKS: tuple[TransitionHook, ...] = (
     TransitionHook(
-        old_state=TicketState.needs_plan.value,
-        new_state=TicketState.needs_implementation.value,
+        old_stage=CodingStage.needs_plan.value,
+        new_stage=CodingStage.needs_implementation.value,
         implementer=Implementer.khushal.value,
         effect=TicketStatus.user_takeover.value,
     ),

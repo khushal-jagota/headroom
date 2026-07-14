@@ -44,7 +44,7 @@ def serialize_definition(defn: WorkflowDefinition) -> ManifestDict:
     }
     fields: list[ManifestField] = [{"id": f.id, "label": f.label} for f in defn.fields]
     return {
-        "type_id": defn.type_id,
+        "worker_type": defn.type_id,
         "label": defn.label,
         "stages": stages,
         "dropped": dropped,

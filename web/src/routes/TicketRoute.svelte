@@ -47,17 +47,17 @@
   );
   const manifest = manifestResource();
 
-  // Derive the per-type lifecycle from the RESOURCE (ticket.data?.ticket_type), not
+  // Derive the per-Worker-type lifecycle from the RESOURCE (ticket.data?.worker_type), not
   // the markup-local {@const detail} which is only bound inside {#if ticket.data}
-  // (Codex F2). Null while the manifest is still loading OR when the type is absent
+  // (Codex F2). Null while the manifest is still loading OR when the Worker type is absent
   // from a loaded manifest; the markup tells those apart via manifest.loading /
   // manifest.error + a type-present check (Codex F3).
-  let lc = $derived(lifecycleFor(manifest.data, ticket.data?.ticket_type));
-  let manifestMissingType = $derived(
+  let lc = $derived(lifecycleFor(manifest.data, ticket.data?.worker_type));
+  let manifestMissingWorkerType = $derived(
     Boolean(
       ticket.data &&
         manifest.data &&
-        !manifest.data.types.some((t) => t.type_id === ticket.data?.ticket_type)
+        !manifest.data.worker_types.some((item) => item.worker_type === ticket.data?.worker_type)
     )
   );
 
@@ -196,13 +196,13 @@
   class="ticket-screen"
   data-screen="ticket"
   data-ticket-id={id}
-  data-state={ticket.data?.state}
+  data-stage={ticket.data?.stage}
 >
   <ResourceState error={ticket.error} loading={ticket.loading} hasData={Boolean(ticket.data)} loadingText="Loading ticket...">
-    {#if ticket.data && (manifest.error || manifestMissingType)}
+    {#if ticket.data && (manifest.error || manifestMissingWorkerType)}
       <div class="ticket-page" data-ticket-manifest-error>
         <ErrorLine
-          error={manifest.error ?? { code: "unknown_ticket_type", message: `no manifest for type "${ticket.data.ticket_type}"` }}
+          error={manifest.error ?? { code: "unknown_worker_type", message: `no manifest for Worker type "${ticket.data.worker_type}"` }}
         />
       </div>
     {:else if ticket.data}
@@ -244,8 +244,8 @@
                 }}
               />
             </span>
-            <Pill keyLabel="type" data-ticket-type={detail.ticket_type}>
-              {lc?.typeLabel ?? labelize(detail.ticket_type)}
+            <Pill keyLabel="worker type" data-worker-type={detail.worker_type}>
+              {lc?.workerTypeLabel ?? labelize(detail.worker_type)}
             </Pill>
             <Pill keyLabel="due">
               {detail.deadline || ""}
@@ -278,7 +278,7 @@
               <span data-marker={marker}><Chip variant={marker} value={marker} /></span>
             {/each}
             <span class="ticket-facts-gap"></span>
-            {#if detail.state !== "needs_kickoff"}
+            {#if detail.stage !== "needs_kickoff"}
               <button class="ticket-act" data-ticket-takeover-toggle="" onclick={() => void takeover(detail)}>
                 {detail.ticket_status === "user_takeover" ? "Release" : "Take over"}
               </button>
@@ -287,13 +287,13 @@
               {copied ? "Copied" : "Copy"}
             </button>
           </div>
-          {#if detail.state !== "done" && detail.state !== "needs_kickoff"}
+          {#if detail.stage !== "done" && detail.stage !== "needs_kickoff"}
             <div class="ticket-leash">
               approved until
               <span class="ticket-leash-sel" data-scope-ceiling>
                 <EnumPill
                   value={detail.ceiling}
-                  options={ceilingOptionsFor(lc, detail.state)}
+                  options={ceilingOptionsFor(lc, detail.stage)}
                   onChange={(ceiling) => void saveScope({ ceiling, at_cap: detail.at_cap })}
                 />
               </span>
@@ -313,7 +313,7 @@
         <div class="ticket-col">
           <div class="ticket-recap" data-recap>
             <Disclosure title="Recap" variant="support" defaultOpen={true} data-content-section="recap">
-              {#if recapVisibleFor(lc, detail.state)}
+              {#if recapVisibleFor(lc, detail.stage)}
                 <InlineEdit
                   value={detail.recap}
                   markdown
@@ -373,7 +373,7 @@
                 {slot}
                 {stageState}
                 lifecycle={lc}
-                ticketState={detail.state}
+                ticketStage={detail.stage}
                 ceiling={detail.ceiling}
                 emptyText={emptyTicketFieldText}
                 onAccept={(payload) => acceptField(name, payload)}

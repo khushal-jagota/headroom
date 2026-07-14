@@ -1,4 +1,4 @@
-"""t_tt03 — GET /api/ticket-types serves the registry's manifests.
+"""t_tt03 — GET /api/worker-types serves the registry's manifests.
 
 Production is coding-only, so the endpoint returns exactly one entry (coding's
 serialized manifest). With a test registry installed (probe), it returns both, in
@@ -56,9 +56,9 @@ def probe_installed() -> Iterator[None]:
 
 def test_production_serves_coding_and_new_worker(app) -> None:
     with TestClient(app) as client:
-        served = client.get("/api/ticket-types").json()
+        served = client.get("/api/worker-types").json()
     assert served == {
-        "types": [
+        "worker_types": [
             serialize_definition(CODING_DEFINITION),
             serialize_definition(NEW_WORKER_DEFINITION),
         ]
@@ -67,13 +67,13 @@ def test_production_serves_coding_and_new_worker(app) -> None:
 
 def test_coding_entry_json_roundtrips(app) -> None:
     with TestClient(app) as client:
-        served = client.get("/api/ticket-types").json()
+        served = client.get("/api/worker-types").json()
     assert json.loads(json.dumps(served)) == served
-    assert served["types"][0]["type_id"] == "coding"
+    assert served["worker_types"][0]["worker_type"] == "coding"
 
 
 def test_installed_probe_appears_after_coding(app, probe_installed: None) -> None:
     with TestClient(app) as client:
-        served = client.get("/api/ticket-types").json()
-    assert [m["type_id"] for m in served["types"]] == ["coding", "probe"]
-    assert served["types"][0] == serialize_definition(CODING_DEFINITION)
+        served = client.get("/api/worker-types").json()
+    assert [m["worker_type"] for m in served["worker_types"]] == ["coding", "probe"]
+    assert served["worker_types"][0] == serialize_definition(CODING_DEFINITION)

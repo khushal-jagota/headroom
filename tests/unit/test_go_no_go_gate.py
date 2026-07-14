@@ -6,7 +6,7 @@ created and driven through REAL propose/accept to ``done`` via the in-process
 FastAPI ``TestClient`` — real routes -> real marshallers -> per-type parse -> real
 writers -> real events. A missed ingress point (a surviving global-enum coercion)
 fails HERE, because probe's middle stages (``needs_alpha``/``needs_beta``) and
-fields (``alpha``/``beta``) are not ``TicketState``/``FieldName`` members.
+fields (``alpha``/``beta``) are not ``CodingStage``/``FieldName`` members.
 
 Transport note (D-note): the probe registry is installed process-globally via
 ``set_registry_for_test`` (the probe fixture), which the in-process app resolves
@@ -35,9 +35,9 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 
-# The exact probe manifest served at /api/ticket-types (mirrors test_probe_type).
+# The exact probe manifest served at /api/worker-types (mirrors test_probe_type).
 PROBE_MANIFEST = {
-    "type_id": "probe",
+    "worker_type": "probe",
     "label": "Probe",
     "stages": [
         {"id": "needs_kickoff", "label": "Kickoff", "gating_field": "kickoff",
@@ -61,7 +61,7 @@ PROBE_MANIFEST = {
 # The gating accept event order the engine emits for a direct gating accept with an
 # onward scope pair (observed once, then pinned): the accept, the linear advance, the
 # onward scope change, and the durable-control reset.
-_ACCEPT_EVENTS = ["proposal_accepted", "state_changed", "scope_changed", "ticket_status_changed"]
+_ACCEPT_EVENTS = ["proposal_accepted", "stage_changed", "scope_changed", "ticket_status_changed"]
 # A parked propose-with-recap: the filed proposal, the recap write, the awaiting reset.
 _PROPOSE_EVENTS = ["proposal_filed", "recap_updated", "ticket_status_changed"]
 
@@ -107,21 +107,23 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
     app, db_path = app_db
     with TestClient(app) as client:
         # 1. Manifest endpoint serves probe's exact shape.
-        served = client.get("/api/ticket-types").json()
-        probe_manifest = next(m for m in served["types"] if m["type_id"] == "probe")
+        served = client.get("/api/worker-types").json()
+        probe_manifest = next(
+            m for m in served["worker_types"] if m["worker_type"] == "probe"
+        )
         assert probe_manifest == PROBE_MANIFEST
 
         # 1. Create a probe ticket — exact initial state/ceiling/type/fields.
         created = client.post(
             "/api/tickets",
-            json={"title": "Probe gate", "type": "probe", "kickoff_note": "kickoff body"},
+            json={"title": "Probe gate", "worker_type": "probe", "kickoff_note": "kickoff body"},
         )
         assert created.status_code == 200, created.json()
         body = created.json()
         tid = body["id"]
-        assert body["state"] == "needs_kickoff"
+        assert body["stage"] == "needs_kickoff"
         assert body["ceiling"] == "needs_kickoff"        # leading default ceiling
-        assert body["ticket_type"] == "probe"
+        assert body["worker_type"] == "probe"
         assert list(body["fields"].keys()) == ["kickoff", "alpha", "beta"]
         assert body["fields"]["kickoff"]["proposal"] is not None
         assert body["fields"]["kickoff"]["proposal"]["body"] == "kickoff body"
@@ -137,7 +139,7 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
         )
         assert accept_kickoff.status_code == 200, accept_kickoff.json()
         k = accept_kickoff.json()
-        assert k["state"] == "needs_alpha"
+        assert k["stage"] == "needs_alpha"
         assert k["ceiling"] == "needs_alpha"
         assert k["at_cap"] == "propose"
         assert k["fields"]["kickoff"]["value"] == "kickoff body"
@@ -176,7 +178,7 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
             )
             assert accepted.status_code == 200, accepted.json()
             a = accepted.json()
-            assert a["state"] == next_state
+            assert a["stage"] == next_state
             assert a["at_cap"] == at_cap
             assert a["fields"][field]["value"] == f"{field} proposal"
             assert a["fields"][field]["proposal"] is None
@@ -185,7 +187,7 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
 
         # 6. Landed at done, ceiling done.
         final = client.get(f"/api/tickets/{tid}").json()
-        assert final["state"] == "done"
+        assert final["stage"] == "done"
         assert final["ceiling"] == "done"
         assert final["fields"]["alpha"]["value"] == "alpha proposal"
         assert final["fields"]["beta"]["value"] == "beta proposal"
@@ -208,7 +210,7 @@ def test_gate_invalid_inputs_return_exact_codes(app_db, probe_installed: None) -
     with TestClient(app) as client:
         made = client.post(
             "/api/tickets",
-            json={"title": "Probe errs", "type": "probe", "kickoff_note": "k"},
+            json={"title": "Probe errs", "worker_type": "probe", "kickoff_note": "k"},
         )
         tid = made.json()["id"]
 
@@ -217,14 +219,14 @@ def test_gate_invalid_inputs_return_exact_codes(app_db, probe_installed: None) -
         assert ghost.status_code == 400
         assert ghost.json()["error"]["code"] == "validation"
         assert ghost.json()["error"]["message"] == "unknown ticket field"
-        assert ghost.json()["error"]["detail"] == {"field": "ghost", "type_id": "probe"}
+        assert ghost.json()["error"]["detail"] == {"field": "ghost", "worker_type": "probe"}
 
         # 8. invalid STATE (coding's needs_success is foreign to probe).
-        state = client.post(f"/api/tickets/{tid}/state", json={"to": "needs_success"})
+        state = client.post(f"/api/tickets/{tid}/stage", json={"to_stage": "needs_success"})
         assert state.status_code == 400
         assert state.json()["error"]["code"] == "validation"
-        assert state.json()["error"]["message"] == "state outside the linear order"
-        assert state.json()["error"]["detail"] == {"state": "needs_success"}
+        assert state.json()["error"]["message"] == "stage outside the linear order"
+        assert state.json()["error"]["detail"] == {"stage": "needs_success"}
 
         # 8. invalid CEILING (needs_plan is not in probe's ceiling range).
         scope = client.post(
@@ -239,15 +241,18 @@ def test_gate_invalid_inputs_return_exact_codes(app_db, probe_installed: None) -
         missing = client.post("/api/tickets", json={"title": "no type"})
         assert missing.status_code == 400
         assert missing.json()["error"]["code"] == "validation"
-        assert missing.json()["error"]["detail"] == {"type": "", "types": ["coding", "probe"]}
+        assert missing.json()["error"]["detail"] == {
+            "worker_type": "",
+            "worker_types": ["coding", "probe"],
+        }
 
         # 8. unknown type on create -> the type list.
-        unknown = client.post("/api/tickets", json={"title": "bad", "type": "nonesuch"})
+        unknown = client.post("/api/tickets", json={"title": "bad", "worker_type": "nonesuch"})
         assert unknown.status_code == 400
         assert unknown.json()["error"]["code"] == "validation"
         assert unknown.json()["error"]["detail"] == {
-            "type": "nonesuch",
-            "types": ["coding", "probe"],
+            "worker_type": "nonesuch",
+            "worker_types": ["coding", "probe"],
         }
 
 
@@ -275,9 +280,9 @@ def test_gate_external_work_create_and_reconcile_both_types(
         coding = client.post(
             "/api/chief/tickets/from-external-work",
             json={
-                "type": "coding",
+                "worker_type": "coding",
                 "title": "Coding EW",
-                "state": "needs_plan",
+                "stage": "needs_plan",
                 "kickoff_note": "kn",
                 "success": "s",
                 "approach": "a",
@@ -286,7 +291,7 @@ def test_gate_external_work_create_and_reconcile_both_types(
         )
         assert coding.status_code == 200, coding.json()
         cf = coding.json()["fields"]
-        assert coding.json()["state"] == "needs_plan"
+        assert coding.json()["stage"] == "needs_plan"
         assert {k: cf[k]["value"] for k in ("success", "approach", "plan", "implementation",
                                             "closeout")} == {
             "success": "s", "approach": "a", "plan": None, "implementation": None, "closeout": None
@@ -297,9 +302,9 @@ def test_gate_external_work_create_and_reconcile_both_types(
         probe_create = client.post(
             "/api/chief/tickets/from-external-work",
             json={
-                "type": "probe",
+                "worker_type": "probe",
                 "title": "Probe EW",
-                "state": "needs_beta",
+                "stage": "needs_beta",
                 "kickoff_note": "kn",
                 "alpha": "alpha settled",
             },
@@ -307,7 +312,7 @@ def test_gate_external_work_create_and_reconcile_both_types(
         )
         assert probe_create.status_code == 200, probe_create.json()
         pf = probe_create.json()["fields"]
-        assert probe_create.json()["state"] == "needs_beta"
+        assert probe_create.json()["stage"] == "needs_beta"
         assert pf["kickoff"]["value"] == "kn"
         assert pf["alpha"]["value"] == "alpha settled"
         assert pf["beta"]["value"] is None
@@ -317,25 +322,25 @@ def test_gate_external_work_create_and_reconcile_both_types(
         seed = client.post(
             "/api/chief/tickets/from-external-work",
             json={
-                "type": "probe",
+                "worker_type": "probe",
                 "title": "Probe EW reconcile",
-                "state": "needs_alpha",
+                "stage": "needs_alpha",
                 "kickoff_note": "kn",
             },
             headers=chief,
         )
         assert seed.status_code == 200, seed.json()
-        assert seed.json()["state"] == "needs_alpha"
+        assert seed.json()["stage"] == "needs_alpha"
         seed_id = seed.json()["id"]
 
         reconciled = client.post(
             f"/api/chief/tickets/{seed_id}/reconcile-from-external-work",
-            json={"state": "needs_beta", "kickoff_note": "kn", "alpha": "alpha settled"},
+            json={"stage": "needs_beta", "kickoff_note": "kn", "alpha": "alpha settled"},
             headers=chief,
         )
         assert reconciled.status_code == 200, reconciled.json()
         rf = reconciled.json()["fields"]
-        assert reconciled.json()["state"] == "needs_beta"
+        assert reconciled.json()["stage"] == "needs_beta"
         assert rf["kickoff"]["value"] == "kn"
         assert rf["alpha"]["value"] == "alpha settled"
         assert rf["beta"]["value"] is None
@@ -344,7 +349,7 @@ def test_gate_external_work_create_and_reconcile_both_types(
         # proves the allowed field-key set is genuinely per-type.
         foreign = client.post(
             f"/api/chief/tickets/{seed_id}/reconcile-from-external-work",
-            json={"state": "needs_beta", "kickoff_note": "kn", "success": "coding field"},
+            json={"stage": "needs_beta", "kickoff_note": "kn", "success": "coding field"},
             headers=chief,
         )
         assert foreign.status_code == 400

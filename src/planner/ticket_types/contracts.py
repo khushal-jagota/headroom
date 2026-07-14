@@ -1,9 +1,9 @@
-"""Ticket-type registry shapes: the workflow definition and its parts, plus the
+"""Worker-type registry shapes: the workflow definition and its parts, plus the
 serialized manifest TypedDicts.
 
 All shapes are frozen dataclasses (definition side) and TypedDicts (manifest
 side). Types are plain strings at the boundary so the registry is genuinely
-N-ary across ticket types; the shipped ``coding`` definition sources its strings
+N-ary across Worker types; the shipped ``coding`` definition sources its strings
 from the ``tickets/contracts`` leaf enums so parity is checkable against the live
 lifecycle constants.
 
@@ -17,7 +17,7 @@ from typing import TypedDict
 
 @dataclass(frozen=True)
 class Stage:
-    id: str                       # a TicketState value, e.g. "needs_success"
+    id: str                       # a CodingStage value, e.g. "needs_success"
     label: str                    # display label, e.g. "Success"
     gating_field: str | None      # a FieldName value; None iff terminal (done / dropped)
     is_terminal: bool             # True for done and dropped
@@ -39,8 +39,8 @@ class WorkerProfile:              # declared, INERT this ticket — validated fo
 
 @dataclass(frozen=True)
 class TransitionHook:             # declared, INERT this ticket — plan_handoff_status is NOT changed
-    old_state: str                # "needs_plan"           (must be a known stage id)
-    new_state: str                # "needs_implementation" (must be a known stage id)
+    old_stage: str                # "needs_plan"           (must be a known Stage id)
+    new_stage: str                # "needs_implementation" (must be a known Stage id)
     implementer: str              # "khushal"              (must be a known Implementer value)
     effect: str                   # "user_takeover"        (must be a known TicketStatus value)
 
@@ -73,11 +73,11 @@ class ManifestField(TypedDict):
 
 
 class ManifestDict(TypedDict):
-    type_id: str
+    worker_type: str
     label: str
     stages: list[ManifestStage]        # full order incl. needs_kickoff … done (NOT dropped)
     dropped: ManifestStage             # the exceptional terminal
-    advance: dict[str, str]            # non-terminal state -> next state
+    advance: dict[str, str]            # non-terminal Stage -> next Stage
     fields: list[ManifestField]        # ordered, kickoff first
     ceiling_range: list[str]           # full linear stage order (now includes needs_kickoff)
     default_ceiling: str               # first entry of ceiling_range

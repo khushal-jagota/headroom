@@ -6,10 +6,11 @@ own_ and _what waits for the human_ is decided here. A ticket moves through its 
 by filling one blank at a time, and no value ever becomes real except through one
 door — the resolution engine.
 
-The stage set is not fixed for all tickets — it is declared by the ticket's **type**
-(see `ticket-types.md`). The lifecycle below is the **`coding`** type's, the default;
-another type walks its own stages the same way. What every type shares is the leading
-Kickoff, the `done`/`dropped` bookends, and the single-door rule.
+The Stage set is not fixed for all Tickets — it is declared by the Ticket's **Worker
+type** (see `worker-types.md`). The lifecycle below is the **`coding`** Worker type's,
+the default; another Worker type walks its own Stages the same way. What every Worker
+type shares is the leading Kickoff, the `done`/`dropped` bookends, and the single-door
+rule.
 
 ```
    THE CODING STAGES
@@ -23,10 +24,10 @@ Kickoff, the `done`/`dropped` bookends, and the single-door rule.
                                    dropped: any point, direct operation only
 ```
 
-## The stages (the coding type)
+## The Stages (the coding Worker type)
 
-Every type starts with **Kickoff** and ends at **done** (or **dropped**); the stages
-between are the type's own. What follows is the `coding` lifecycle.
+Every Worker type starts with **Kickoff** and ends at **done** (or **dropped**); the
+Stages between are the Worker type's own. What follows is the `coding` lifecycle.
 
 A ticket starts with **Kickoff**. Kickoff is the first ordinary Ticket field: the
 human-approved intake context. The title is separate editable Ticket metadata, not
@@ -53,19 +54,19 @@ plan, implementation, or closeout. After Kickoff is settled, later direct title 
 remain ordinary Ticket metadata edits, and Kickoff text edits use the ordinary field
 value path.
 
-_Code paths:_ `src/planner/tickets/` (the ticket state and its fields).
+_Code paths:_ `src/planner/tickets/` (the Ticket Stage and its fields).
 
 ### Work completed outside Panels
 
 When work was completed elsewhere, the Chief can reconcile an existing ticket or create
 one already populated through the explicit `panels chief` external-work commands. This
-is not a worker proposal and not a general state bypass. The operation requires a
-complete Kickoff field value, an exact settled-field prefix for the target state, and a Chief
+is not a worker proposal and not a general Stage bypass. The operation requires a
+complete Kickoff field value, an exact settled-field prefix for the target Stage, and a Chief
 request. It refuses backward moves, pending proposals, active ticket control, and
-running chat turns. The resulting scope stops at the imported state, so the worker does
+running chat turns. The resulting scope stops at the imported Stage, so the worker does
 not continue automatically.
 
-The create or reconciliation writer commits all fields, Kickoff value, recap, state, scope,
+The create or reconciliation writer commits all fields, Kickoff value, recap, Stage, scope,
 status normalization, and existing event signals together. A validation or concurrency
 failure leaves both the ticket and its event history unchanged. The surrounding action
 rings readiness after a new imported Ticket or a real reconciliation change. An exact
@@ -120,13 +121,13 @@ Every ticket carries a permission with two parts — together, its **scope**:
 
 Below the ceiling, a worker's proposal is accepted automatically and the ticket
 advances. At the ceiling, the at-cap rule decides. New tickets start leashed right at
-**Kickoff**: the ceiling is `needs_kickoff` for every type, so nothing advances past
+**Kickoff**: the ceiling is `needs_kickoff` for every Worker type, so nothing advances past
 the human-approved intake until the human grants scope onward — review before agents
 start. Every later stage behaves the same way, including the last two: an accepted
 implementation advances to **needs closeout**, and an accepted closeout advances
 straight to **done**. (The threshold three other behaviours key off — the recap gate,
 sprint-in-progress, external-work seed — is the *second* stage, held distinct from this
-start ceiling; see `ticket-types.md`.)
+start ceiling; see `worker-types.md`.)
 
 ## The approval gate, and the scope row
 
@@ -193,8 +194,9 @@ _Code paths:_ `src/planner/core/events.py`.
 
 ## Handoffs
 
-- **Ticket types** (`ticket-types.md`) — the registry that declares this ticket's stage
-  set, its gates and fields, and its worker. The six stages above are the `coding` type's.
+- **Worker types** (`worker-types.md`) — the registry that declares this Ticket's Stage
+  set, its gates and fields, and its worker. The six Stages above are the `coding`
+  Worker type's.
 - **The employee runtime** (`employee-runtime.md`) — the worker that files the
   proposals and does the drafting; committed readiness-changing actions ring its
   best-effort doorbell so the ticket can advance at once.

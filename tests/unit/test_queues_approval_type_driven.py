@@ -53,14 +53,19 @@ def _approvals(conn: Connection) -> list[dict]:
 
 def test_approval_digest_coding_kind_unchanged(tmp_db: Connection) -> None:
     ticket = create_ticket(
-        tmp_db, title="Coding", actor="human", now=1, title_max_chars=200
+        tmp_db, worker_type="coding", title="Coding", actor="human", now=1, title_max_chars=200
     )
     # Accept kickoff (default ceiling is now needs_kickoff, so kickoff parks until
     # accepted), expanding the ceiling to needs_success; a success proposal then parks.
     file_proposal(tmp_db, ticket.id, field=FieldName.kickoff, body="k", actor="agent", now=2)
     accept_proposal(
-        tmp_db, ticket.id, field=FieldName.kickoff, actor="human", now=2,
-        next_ceiling="needs_success", at_cap=AtCap.propose,
+        tmp_db,
+        ticket.id,
+        field=FieldName.kickoff,
+        actor="human",
+        now=2,
+        next_ceiling="needs_success",
+        at_cap=AtCap.propose,
     )
     file_proposal(tmp_db, ticket.id, field=FieldName.success, body="s", actor="agent", now=3)
     days_data.add_day_ticket(tmp_db, TODAY_DAY_ID, ticket.id, 3)
@@ -76,14 +81,23 @@ def test_approval_digest_probe_surfaces_on_registry_field(
     tmp_db: Connection, probe_registry: WorkflowDefinition
 ) -> None:
     probe = create_ticket(
-        tmp_db, title="Probe", actor="human", now=1, title_max_chars=200,
-        ticket_type="probe",
+        tmp_db,
+        title="Probe",
+        actor="human",
+        now=1,
+        title_max_chars=200,
+        worker_type="probe",
     )
     # Accept kickoff but hold the ceiling at needs_alpha, so the alpha proposal PARKS
     # (state == ceiling) rather than auto-accepting.
     accept_proposal(
-        tmp_db, probe.id, field=FieldName.kickoff, actor="human", now=2,
-        next_ceiling=NEEDS_ALPHA, at_cap=AtCap.propose,
+        tmp_db,
+        probe.id,
+        field=FieldName.kickoff,
+        actor="human",
+        now=2,
+        next_ceiling=NEEDS_ALPHA,
+        at_cap=AtCap.propose,
     )
     file_proposal(tmp_db, probe.id, field=FIELD_ALPHA, body="alpha body", actor="agent", now=3)
     days_data.add_day_ticket(tmp_db, TODAY_DAY_ID, probe.id, 3)
@@ -99,10 +113,10 @@ def test_ticket_approvals_are_limited_to_today_and_appear_when_added(
     tmp_db: Connection,
 ) -> None:
     on_day = create_ticket(
-        tmp_db, title="On today", actor="human", now=1, title_max_chars=200
+        tmp_db, worker_type="coding", title="On today", actor="human", now=1, title_max_chars=200
     )
     off_day = create_ticket(
-        tmp_db, title="Off today", actor="human", now=2, title_max_chars=200
+        tmp_db, worker_type="coding", title="Off today", actor="human", now=2, title_max_chars=200
     )
     for ticket, now in ((on_day, 3), (off_day, 4)):
         accept_proposal(

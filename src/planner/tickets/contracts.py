@@ -1,4 +1,4 @@
-"""Ticket domain shapes: the state machine order, the ticket fields, the scope pair,
+"""Ticket domain shapes: the coding Stage order, Ticket fields, scope pair,
 and the ticket row."""
 
 from __future__ import annotations
@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Final, Literal, NotRequired, TypedDict
+from typing import Final, Literal, NotRequired, Required, TypedDict
 
 from planner.core.contracts import Priority
 
@@ -17,7 +17,7 @@ from planner.core.contracts import Priority
 TITLE_MAX_CHARS: Final = 200
 
 
-class TicketState(StrEnum):        # linear lifecycle, exact order
+class CodingStage(StrEnum):        # coding workflow, exact linear order
     needs_kickoff = "needs_kickoff"
     needs_success = "needs_success"
     needs_approach = "needs_approach"
@@ -30,15 +30,15 @@ class TicketState(StrEnum):        # linear lifecycle, exact order
 
 # Linear pipeline order (dropped excluded). Index comparison implements "<= ceiling".
 # ceiling and next_ceiling values are restricted to members of this tuple (never dropped).
-STATE_ORDER: Final[tuple[TicketState, ...]] = (
-    TicketState.needs_kickoff, TicketState.needs_success, TicketState.needs_approach,
-    TicketState.needs_plan, TicketState.needs_implementation, TicketState.needs_closeout,
-    TicketState.done,
+CODING_STAGE_ORDER: Final[tuple[CodingStage, ...]] = (
+    CodingStage.needs_kickoff, CodingStage.needs_success, CodingStage.needs_approach,
+    CodingStage.needs_plan, CodingStage.needs_implementation, CodingStage.needs_closeout,
+    CodingStage.done,
 )
 
-WORKER_STATE_ORDER: Final[tuple[TicketState, ...]] = (
-    TicketState.needs_success, TicketState.needs_approach, TicketState.needs_plan,
-    TicketState.needs_implementation, TicketState.needs_closeout, TicketState.done,
+CODING_EMPLOYEE_STAGE_ORDER: Final[tuple[CodingStage, ...]] = (
+    CodingStage.needs_success, CodingStage.needs_approach, CodingStage.needs_plan,
+    CodingStage.needs_implementation, CodingStage.needs_closeout, CodingStage.done,
 )
 
 
@@ -71,25 +71,25 @@ class TicketStatus(StrEnum):       # durable state-of-control, written by data-l
     errored = "errored"
 
 
-# Gating field per non-terminal linear state: each state gates its same-named field.
-GATING_FIELD: Final[dict[TicketState, FieldName]] = {
-    TicketState.needs_kickoff: FieldName.kickoff,
-    TicketState.needs_success: FieldName.success,
-    TicketState.needs_approach: FieldName.approach,
-    TicketState.needs_plan: FieldName.plan,
-    TicketState.needs_implementation: FieldName.implementation,
-    TicketState.needs_closeout: FieldName.closeout,
+# Gating field per non-terminal coding Stage: each Stage gates its same-named field.
+CODING_GATING_FIELD_BY_STAGE: Final[dict[CodingStage, FieldName]] = {
+    CodingStage.needs_kickoff: FieldName.kickoff,
+    CodingStage.needs_success: FieldName.success,
+    CodingStage.needs_approach: FieldName.approach,
+    CodingStage.needs_plan: FieldName.plan,
+    CodingStage.needs_implementation: FieldName.implementation,
+    CodingStage.needs_closeout: FieldName.closeout,
 }
 
 # Accepted proposal advances one linear step. needs_closeout advances to done through
-# the same ordinary machinery; there is no state that skips a gate.
-ADVANCE_TARGET: Final[dict[TicketState, TicketState]] = {
-    TicketState.needs_kickoff: TicketState.needs_success,
-    TicketState.needs_success: TicketState.needs_approach,
-    TicketState.needs_approach: TicketState.needs_plan,
-    TicketState.needs_plan: TicketState.needs_implementation,
-    TicketState.needs_implementation: TicketState.needs_closeout,
-    TicketState.needs_closeout: TicketState.done,
+# the same ordinary machinery; there is no Stage that skips a gate.
+CODING_NEXT_STAGE_BY_STAGE: Final[dict[CodingStage, CodingStage]] = {
+    CodingStage.needs_kickoff: CodingStage.needs_success,
+    CodingStage.needs_success: CodingStage.needs_approach,
+    CodingStage.needs_approach: CodingStage.needs_plan,
+    CodingStage.needs_plan: CodingStage.needs_implementation,
+    CodingStage.needs_implementation: CodingStage.needs_closeout,
+    CodingStage.needs_closeout: CodingStage.done,
 }
 
 
@@ -134,10 +134,10 @@ class TicketFields:                # tickets.fields JSON column, generic over th
 
 
 # --- the scope pair (§4.4.7) ---
-NO_FURTHER: Final = "none"                     # wire sentinel: ceiling = the newly entered state
+NO_FURTHER: Final = "none"                     # wire sentinel: ceiling = the newly entered Stage
 # A ceiling id is any member of the type's ceiling_range (a str); "none" is the wire
-# sentinel meaning "the newly entered state". For coding these ids are TicketState values.
-NextCeiling = str | Literal["none"]            # was: TicketState | Literal["none"]
+# sentinel meaning "the newly entered Stage". Coding ids are CodingStage values.
+NextCeiling = str | Literal["none"]
 
 
 @dataclass(frozen=True)
@@ -153,7 +153,7 @@ class ScopePair:                   # required on every direct accept/edit-accept
 
 
 class CreateTicketBody(TypedDict, total=False):   # POST /tickets
-    ticket_type: str               # required registry type id (no ingress default)
+    worker_type: Required[str]      # required registry type id (no ingress default)
     title: str                     # default ""
     kickoff_note: str              # default ""; proposed intake context / user guidance
     priority: str | None           # Priority value; default P3
@@ -174,7 +174,7 @@ class TicketEdit(TypedDict, total=False):         # PATCH /tickets/{id}, parsed 
 
 
 class ReconcileTicketFromExternalWorkBody(TypedDict):
-    state: str
+    stage: str
     kickoff_note: str
     recap: NotRequired[str]
     success: NotRequired[str]
@@ -186,6 +186,7 @@ class ReconcileTicketFromExternalWorkBody(TypedDict):
 
 class CreateTicketFromExternalWorkBody(ReconcileTicketFromExternalWorkBody):
     title: str
+    worker_type: str
     priority: NotRequired[str | None]
     deadline: NotRequired[str | None]
     project: NotRequired[str | None]
@@ -205,7 +206,7 @@ class ProposeWithRecapBody(TypedDict, total=False):  # POST /tickets/{id}/propos
 
 class AcceptBody(TypedDict, total=False):         # POST /tickets/{id}/accept/{field}
     edited_body: str | None        # direct edit applied before resolution
-    next_ceiling: str | None       # TicketState value or NO_FURTHER; scope pair (§4.4.7)
+    next_ceiling: str | None       # CodingStage value or NO_FURTHER; scope pair (§4.4.7)
     at_cap: str | None             # AtCap value; scope pair (§4.4.7)
 
 
@@ -227,12 +228,12 @@ class RevisionMessageBody(TypedDict, total=False):  # POST /tickets/{id}/return-
 
 
 class ScopeBody(TypedDict, total=False):          # POST /tickets/{id}/scope
-    ceiling: str | None            # TicketState value; route requires it (scope_missing)
+    ceiling: str | None            # Stage id; route requires it (scope_missing)
     at_cap: str | None             # AtCap value; route requires it (scope_missing)
 
 
-class StateBody(TypedDict, total=False):          # POST /tickets/{id}/state
-    to: str                        # TicketState value; required (default "" is rejected)
+class StageBody(TypedDict, total=False):          # POST /tickets/{id}/stage
+    to_stage: str                  # Stage id; required (default "" is rejected)
 
 
 class LinkBody(TypedDict, total=False):           # POST /links (ticket-anchored, homed here)
@@ -245,7 +246,8 @@ class LinkBody(TypedDict, total=False):           # POST /links (ticket-anchored
 class Ticket:                      # §3.3 — column names match exactly
     id: str
     title: str                     # <= TITLE_MAX_CHARS (200), every write path
-    state: str                     # linear stage id; a TicketState for coding, a bare str otherwise
+    worker_type: str               # immutable registry id selected at creation
+    stage: str                     # directly stored Stage id
     priority: Priority             # default P3
     deadline: str | None           # ISO date
     project_id: str | None         # NULL when parented (derived)
@@ -262,7 +264,6 @@ class Ticket:                      # §3.3 — column names match exactly
     fields: TicketFields
     created_at: int
     updated_at: int
-    ticket_type: str = "coding"    # registry type id resolved on load; trailing default
 
 
 @dataclass(frozen=True)

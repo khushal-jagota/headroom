@@ -63,7 +63,7 @@ def _links(ticket_id: str) -> str:
     return "\n".join(f"[{label}]({href})" for label, href in _expected_hrefs(ticket_id).items())
 
 
-def _set_fields(server, ticket_id: str, fields: dict, state: str = "dropped") -> None:
+def _set_fields(server, ticket_id: str, fields: dict, stage: str = "dropped") -> None:
     if "kickoff" not in fields:
         fields = {
             "kickoff": {"value": "", "proposal": None, "user_note": None},
@@ -71,8 +71,8 @@ def _set_fields(server, ticket_id: str, fields: dict, state: str = "dropped") ->
         }
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
-            "UPDATE tickets SET state = ?, fields = ?, updated_at = 2 WHERE id = ?",
-            (state, json.dumps(fields), ticket_id),
+            "UPDATE tickets SET stage = ?, fields = ?, updated_at = 2 WHERE id = ?",
+            (stage, json.dumps(fields), ticket_id),
         )
 
 
@@ -125,7 +125,7 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "File preview route",
@@ -241,7 +241,7 @@ def test_interactive_html_preview_paints_and_switches_variants_in_both_surfaces(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Interactive HTML preview",
@@ -306,7 +306,7 @@ def test_markdown_file_preview_has_component_owned_max_height(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Bounded Markdown preview",
@@ -381,7 +381,7 @@ def test_read_only_ticket_and_chat_surfaces_share_file_preview(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Read-only file previews",
@@ -502,7 +502,7 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Normal field previews",
@@ -525,7 +525,7 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
         },
         "closeout": {"value": None, "proposal": None, "user_note": None},
     }
-    _set_fields(server, ticket_id, fields, state="needs_approach")
+    _set_fields(server, ticket_id, fields, stage="needs_approach")
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
             "UPDATE tickets SET recap = ? WHERE id = ?",
@@ -591,7 +591,7 @@ def test_editable_markdown_file_links_round_trip_as_raw_markdown(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Editable file links",
@@ -605,7 +605,7 @@ def test_editable_markdown_file_links_round_trip_as_raw_markdown(
         "implementation": {"value": None, "proposal": None, "user_note": None},
         "closeout": {"value": None, "proposal": None, "user_note": None},
     }
-    _set_fields(server, ticket_id, fields, state="needs_approach")
+    _set_fields(server, ticket_id, fields, stage="needs_approach")
     page = open_page(
         context_factory(),
         server,
@@ -677,7 +677,7 @@ def test_editable_markdown_preview_focus_noop_and_actions_do_not_persist_generat
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Editable preview actions",
@@ -691,7 +691,7 @@ def test_editable_markdown_preview_focus_noop_and_actions_do_not_persist_generat
         "implementation": {"value": None, "proposal": None, "user_note": None},
         "closeout": {"value": None, "proposal": None, "user_note": None},
     }
-    _set_fields(server, ticket_id, fields, state="needs_approach")
+    _set_fields(server, ticket_id, fields, stage="needs_approach")
     page = open_page(
         context_factory(),
         server,
@@ -758,7 +758,7 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Atomic preview editing",
@@ -783,7 +783,7 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
         "implementation": {"value": None, "proposal": None, "user_note": None},
         "closeout": {"value": None, "proposal": None, "user_note": None},
     }
-    _set_fields(server, ticket_id, fields, state="needs_approach")
+    _set_fields(server, ticket_id, fields, stage="needs_approach")
     page = open_page(
         context_factory(),
         server,
@@ -962,7 +962,7 @@ def test_editable_preview_deletion_unmounts_pending_fetch_and_clears_iframe(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Preview cleanup",
@@ -978,7 +978,7 @@ def test_editable_preview_deletion_unmounts_pending_fetch_and_clears_iframe(
         "implementation": {"value": None, "proposal": None, "user_note": None},
         "closeout": {"value": None, "proposal": None, "user_note": None},
     }
-    _set_fields(server, ticket_id, fields, state="needs_approach")
+    _set_fields(server, ticket_id, fields, stage="needs_approach")
     context = context_factory()
     context.add_init_script(
         """(() => {
@@ -1095,7 +1095,7 @@ def test_editing_that_moves_atomic_slot_keeps_preview_mounted(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Moving atomic preview",
@@ -1110,7 +1110,7 @@ def test_editing_that_moves_atomic_slot_keeps_preview_mounted(
         "implementation": {"value": None, "proposal": None, "user_note": None},
         "closeout": {"value": None, "proposal": None, "user_note": None},
     }
-    _set_fields(server, ticket_id, fields, state="needs_approach")
+    _set_fields(server, ticket_id, fields, stage="needs_approach")
     page = open_page(
         context_factory(),
         server,
@@ -1175,7 +1175,7 @@ def test_loaded_preview_proposal_approves_without_edited_body(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Preview proposal approval",

@@ -1,9 +1,9 @@
 export type AnyRecord = Record<string, any>;
 
-// The served ticket-type manifest response (GET /api/ticket-types). Re-exported here
+// The served Worker-type manifest response (GET /api/worker-types). Re-exported here
 // for the resource fetch typing; the derived Lifecycle + per-type manifest shapes are
 // imported directly from lifecycle.ts at call sites.
-export type { TicketTypesResponse } from "./lifecycle";
+export type { WorkerTypesResponse } from "./lifecycle";
 
 export type GatewayStatus = {
   available: boolean;
@@ -107,7 +107,7 @@ export type TicketField = {
 export type BlockedByTicket = {
   ticket_id: string;
   title: string;
-  state: string;
+  stage: string;
   active: boolean;
   href: string;
 };
@@ -135,8 +135,8 @@ export type Implementer =
 export type TicketDetail = {
   id: string;
   title: string;
-  ticket_type: string;
-  state: string;
+  worker_type: string;
+  stage: string;
   ceiling: string;
   at_cap: string;
   priority: string;
@@ -186,7 +186,7 @@ export type QueuesResponse = {
 
 export type BoardResponse = {
   columns: Array<{
-    state: string;
+    stage: string;
     cards: AnyRecord[];
   }>;
 };

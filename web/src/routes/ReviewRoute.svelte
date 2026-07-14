@@ -37,20 +37,20 @@
     return live[0] || null;
   });
 
-  // Per-type lifecycle for the current review entry's detail. Null while the
-  // manifest or the detail is still loading OR when the detail's ticket_type is
+  // Per-Worker-type lifecycle for the current review entry's detail. Null while the
+  // manifest or the detail is still loading OR when the detail's worker_type is
   // absent from a loaded manifest; the markup tells those apart (Codex F3).
-  let detailTicketType = $derived(
-    typeof detailResource?.data?.ticket_type === "string"
-      ? (detailResource.data.ticket_type as string)
+  let detailWorkerType = $derived(
+    typeof detailResource?.data?.worker_type === "string"
+      ? (detailResource.data.worker_type as string)
       : null
   );
-  let lc = $derived(lifecycleFor(manifest.data, detailTicketType));
-  let manifestMissingType = $derived(
+  let lc = $derived(lifecycleFor(manifest.data, detailWorkerType));
+  let manifestMissingWorkerType = $derived(
     Boolean(
-      detailTicketType &&
+      detailWorkerType &&
         manifest.data &&
-        !manifest.data.types.some((t) => t.type_id === detailTicketType)
+        !manifest.data.worker_types.some((item) => item.worker_type === detailWorkerType)
     )
   );
 
@@ -79,7 +79,7 @@
     const field = approvalField(entry);
     if (!field) return true;
     if (!detail.fields?.[field]?.proposal) return true;
-    return gatingFieldFor(lc, String(detail.state)) !== field;
+    return gatingFieldFor(lc, String(detail.stage)) !== field;
   }
 
   function approvalField(entry: QueueEntry): string | null {
@@ -238,11 +238,11 @@
       </div>
     {:else if detailResource?.loading && !detailResource.data}
       <div class="quiet-line">Loading approval...</div>
-    {:else if detailResource?.data && (manifest.error || manifestMissingType)}
+    {:else if detailResource?.data && (manifest.error || manifestMissingWorkerType)}
       {@const detail = detailResource.data as TicketDetail & AnyRecord}
       <div data-review-manifest-error>
         <ErrorLine
-          error={manifest.error ?? { code: "unknown_ticket_type", message: `no manifest for type "${detail.ticket_type}"` }}
+          error={manifest.error ?? { code: "unknown_worker_type", message: `no manifest for Worker type "${detail.worker_type}"` }}
         />
         <div class="review-card-actions">
           <Button variant="quiet" data-skip="" onclick={() => skip(entry)}>Skip</Button>
@@ -291,7 +291,7 @@
                   name={field}
                   slot={detail.fields[field]}
                   lifecycle={lc}
-                  ticketState={detail.state}
+                  ticketStage={detail.stage}
                   ceiling={detail.ceiling}
                   stageState={fieldStageVisualStateFor(lc, detail, field)}
                   recap={detail.recap}

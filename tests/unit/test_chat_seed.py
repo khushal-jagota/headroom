@@ -61,7 +61,9 @@ def _make_app(tmp_path: Path, gateway: str = "fake") -> tuple[object, Path]:
 def _ticket(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
-        ticket = create_ticket(conn, title="Chat me.", actor="human", now=0, title_max_chars=200)
+        ticket = create_ticket(
+            conn, worker_type="coding", title="Chat me.", actor="human", now=0, title_max_chars=200
+        )
         ticket = accept_proposal(
             conn,
             ticket.id,
@@ -94,9 +96,7 @@ def _ticket_status(db_path: Path, ticket_id: str) -> str:
 def _set_ticket_status(db_path: Path, ticket_id: str, status: TicketStatus) -> None:
     conn = connect(str(db_path))
     try:
-        conn.execute(
-            "UPDATE tickets SET ticket_status = ? WHERE id = ?", (status.value, ticket_id)
-        )
+        conn.execute("UPDATE tickets SET ticket_status = ? WHERE id = ?", (status.value, ticket_id))
     finally:
         conn.close()
 
@@ -1022,8 +1022,7 @@ def test_ticket_chat_stream_rejects_while_worker_step_running(tmp_path: Path) ->
 
     assert response.status_code == 200
     assert (
-        'event: error\ndata: {"code":"already_running",'
-        '"message":"ticket worker is already running"'
+        'event: error\ndata: {"code":"already_running","message":"ticket worker is already running"'
     ) in body
     assert _stored_key(db_path, "tickets", tid) is None
     assert _events(db_path, tid, "chat_session_created") == []

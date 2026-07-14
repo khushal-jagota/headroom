@@ -10,16 +10,16 @@ from typing import TYPE_CHECKING, Any
 
 from planner.tickets import data
 from planner.tickets.contracts import (
-    ADVANCE_TARGET,
-    GATING_FIELD,
+    CODING_EMPLOYEE_STAGE_ORDER,
+    CODING_GATING_FIELD_BY_STAGE,
+    CODING_NEXT_STAGE_BY_STAGE,
+    CODING_STAGE_ORDER,
     NO_FURTHER,
-    STATE_ORDER,
     TITLE_MAX_CHARS,
-    WORKER_STATE_ORDER,
     AtCap,
+    CodingStage,
     FieldName,
     Implementer,
-    TicketState,
 )
 from planner.tickets.logic import fields_codec, machine
 
@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 def _create(conn: Connection, clock: TestClock, **kw: Any) -> Ticket:
     return data.create_ticket(
         conn,
+        worker_type="coding",
         title=kw.pop("title", "Lifecycle ticket"),
         actor="human",
         now=clock.now_unix(),
@@ -58,7 +59,7 @@ def test_ticket_implementer_contract_and_nullable_create_storage(
 
 
 def test_canonical_states_and_fields_include_kickoff_as_first_ordinary_field() -> None:
-    assert [s.value for s in TicketState] == [
+    assert [s.value for s in CodingStage] == [
         "needs_kickoff",
         "needs_success",
         "needs_approach",
@@ -76,52 +77,50 @@ def test_canonical_states_and_fields_include_kickoff_as_first_ordinary_field() -
         "implementation",
         "closeout",
     ]
-    assert STATE_ORDER == (
-        TicketState.needs_kickoff,
-        TicketState.needs_success,
-        TicketState.needs_approach,
-        TicketState.needs_plan,
-        TicketState.needs_implementation,
-        TicketState.needs_closeout,
-        TicketState.done,
+    assert CODING_STAGE_ORDER == (
+        CodingStage.needs_kickoff,
+        CodingStage.needs_success,
+        CodingStage.needs_approach,
+        CodingStage.needs_plan,
+        CodingStage.needs_implementation,
+        CodingStage.needs_closeout,
+        CodingStage.done,
     )
-    assert WORKER_STATE_ORDER == (
-        TicketState.needs_success,
-        TicketState.needs_approach,
-        TicketState.needs_plan,
-        TicketState.needs_implementation,
-        TicketState.needs_closeout,
-        TicketState.done,
+    assert CODING_EMPLOYEE_STAGE_ORDER == (
+        CodingStage.needs_success,
+        CodingStage.needs_approach,
+        CodingStage.needs_plan,
+        CodingStage.needs_implementation,
+        CodingStage.needs_closeout,
+        CodingStage.done,
     )
 
 
 def test_each_non_terminal_state_gates_its_same_named_field() -> None:
-    assert GATING_FIELD == {
-        TicketState.needs_kickoff: FieldName.kickoff,
-        TicketState.needs_success: FieldName.success,
-        TicketState.needs_approach: FieldName.approach,
-        TicketState.needs_plan: FieldName.plan,
-        TicketState.needs_implementation: FieldName.implementation,
-        TicketState.needs_closeout: FieldName.closeout,
+    assert CODING_GATING_FIELD_BY_STAGE == {
+        CodingStage.needs_kickoff: FieldName.kickoff,
+        CodingStage.needs_success: FieldName.success,
+        CodingStage.needs_approach: FieldName.approach,
+        CodingStage.needs_plan: FieldName.plan,
+        CodingStage.needs_implementation: FieldName.implementation,
+        CodingStage.needs_closeout: FieldName.closeout,
     }
 
 
 def test_advance_is_one_linear_step_ending_at_done() -> None:
-    assert ADVANCE_TARGET == {
-        TicketState.needs_kickoff: TicketState.needs_success,
-        TicketState.needs_success: TicketState.needs_approach,
-        TicketState.needs_approach: TicketState.needs_plan,
-        TicketState.needs_plan: TicketState.needs_implementation,
-        TicketState.needs_implementation: TicketState.needs_closeout,
-        TicketState.needs_closeout: TicketState.done,
+    assert CODING_NEXT_STAGE_BY_STAGE == {
+        CodingStage.needs_kickoff: CodingStage.needs_success,
+        CodingStage.needs_success: CodingStage.needs_approach,
+        CodingStage.needs_approach: CodingStage.needs_plan,
+        CodingStage.needs_plan: CodingStage.needs_implementation,
+        CodingStage.needs_implementation: CodingStage.needs_closeout,
+        CodingStage.needs_closeout: CodingStage.done,
     }
     # Closeout advances to Done through ordinary machinery; ceiling does not skip
     # Closeout the way the retired in_progress/done special case skipped review.
-    assert machine.advance_target(TicketState.needs_closeout) is TicketState.done
-    assert machine.advance_target(TicketState.needs_kickoff) is TicketState.needs_success
-    assert (
-        machine.advance_target(TicketState.needs_implementation) is TicketState.needs_closeout
-    )
+    assert machine.advance_target(CodingStage.needs_closeout) is CodingStage.done
+    assert machine.advance_target(CodingStage.needs_kickoff) is CodingStage.needs_success
+    assert machine.advance_target(CodingStage.needs_implementation) is CodingStage.needs_closeout
 
 
 def test_full_linear_chain_auto_accepts_to_done(
@@ -130,21 +129,21 @@ def test_full_linear_chain_auto_accepts_to_done(
     now = fake_clock.now_unix()
     t = _create(tmp_db, fake_clock)
     data.change_scope(
-        tmp_db, t.id, ceiling=TicketState.done, at_cap=AtCap.propose, actor="human", now=now
+        tmp_db, t.id, ceiling=CodingStage.done, at_cap=AtCap.propose, actor="human", now=now
     )
     chain = [
-        (FieldName.kickoff, TicketState.needs_success),
-        (FieldName.success, TicketState.needs_approach),
-        (FieldName.approach, TicketState.needs_plan),
-        (FieldName.plan, TicketState.needs_implementation),
-        (FieldName.implementation, TicketState.needs_closeout),
-        (FieldName.closeout, TicketState.done),
+        (FieldName.kickoff, CodingStage.needs_success),
+        (FieldName.success, CodingStage.needs_approach),
+        (FieldName.approach, CodingStage.needs_plan),
+        (FieldName.plan, CodingStage.needs_implementation),
+        (FieldName.implementation, CodingStage.needs_closeout),
+        (FieldName.closeout, CodingStage.done),
     ]
     for fld, expected_state in chain:
         t = data.file_proposal(
             tmp_db, t.id, field=fld, body=f"{fld.value} body", actor="agent", now=now
         )
-        assert t.state == expected_state
+        assert t.stage == expected_state
     assert fields_codec.get_slot(t.fields, "kickoff").value == "kickoff body"
     assert fields_codec.get_slot(t.fields, "implementation").value == "implementation body"
     assert fields_codec.get_slot(t.fields, "closeout").value == "closeout body"
@@ -158,7 +157,7 @@ def test_closeout_accept_requires_human_and_reaches_done(
     data.change_scope(
         tmp_db,
         t.id,
-        ceiling=TicketState.needs_closeout,
+        ceiling=CodingStage.needs_closeout,
         at_cap=AtCap.propose,
         actor="human",
         now=now,
@@ -173,13 +172,13 @@ def test_closeout_accept_requires_human_and_reaches_done(
         t = data.file_proposal(
             tmp_db, t.id, field=fld, body=f"{fld.value} body", actor="agent", now=now
         )
-    assert t.state == TicketState.needs_closeout
+    assert t.stage == CodingStage.needs_closeout
 
     # Closeout is capped: the proposal parks for human approval, no auto-accept.
     t = data.file_proposal(
         tmp_db, t.id, field=FieldName.closeout, body="closeout body", actor="agent", now=now
     )
-    assert t.state == TicketState.needs_closeout
+    assert t.stage == CodingStage.needs_closeout
     assert fields_codec.get_slot(t.fields, "closeout").proposal is not None
     assert fields_codec.get_slot(t.fields, "closeout").value is None
 
@@ -192,5 +191,5 @@ def test_closeout_accept_requires_human_and_reaches_done(
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
     )
-    assert t.state == TicketState.done
+    assert t.stage == CodingStage.done
     assert fields_codec.get_slot(t.fields, "closeout").value == "closeout body"

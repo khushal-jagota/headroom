@@ -131,7 +131,11 @@ def test_project_id_and_legacy_project_compatibility(tmp_path: Path) -> None:
 
         ticket_by_id = client.post(
             "/api/tickets",
-            json={"title": "Ticket by id", "type": "coding", "project_id": project["id"]},
+            json={
+                "title": "Ticket by id",
+                "worker_type": "coding",
+                "project_id": project["id"],
+            },
         )
         assert ticket_by_id.status_code == 200, ticket_by_id.json()
         assert ticket_by_id.json()["project_id"] == project["id"]
@@ -139,7 +143,11 @@ def test_project_id_and_legacy_project_compatibility(tmp_path: Path) -> None:
 
         ticket_by_name = client.post(
             "/api/tickets",
-            json={"title": "Ticket by name", "type": "coding", "project": "Alpha One"},
+            json={
+                "title": "Ticket by name",
+                "worker_type": "coding",
+                "project": "Alpha One",
+            },
         )
         assert ticket_by_name.status_code == 200, ticket_by_name.json()
         assert ticket_by_name.json()["project_id"] == project["id"]

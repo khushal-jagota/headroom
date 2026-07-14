@@ -1,4 +1,6 @@
+import inspect
 import json
+import re
 import sqlite3
 
 import pytest
@@ -110,8 +112,8 @@ def _insert_ticket(conn, **cols):
     )
 
 
-def test_fresh_schema_drops_enumerating_state_and_ceiling_checks(tmp_path):
-    # t_tt02 retired the two enumerating CHECKs (state, ceiling): lifecycle integrity
+def test_fresh_schema_drops_enumerating_stage_and_ceiling_checks(tmp_path):
+    # t_tt02 retired the two enumerating CHECKs (Stage, ceiling): lifecycle integrity
     # now lives in the registry validation doors, not the DB. The fresh schema no
     # longer rejects a raw out-of-order write at the DB level — the registry is the
     # enforcement (asserted by the door/audit tests). This is the inverse of the old
@@ -123,15 +125,15 @@ def test_fresh_schema_drops_enumerating_state_and_ceiling_checks(tmp_path):
     tickets_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
     ).fetchone()[0]
-    assert "state IN ('needs_kickoff'" not in tickets_sql
+    assert "stage IN ('needs_kickoff'" not in tickets_sql
     assert "ceiling IN ('needs_success'" not in tickets_sql
     conn.execute(
-        "INSERT INTO tickets (id, title, ticket_type, ceiling, created_at, updated_at) "
+        "INSERT INTO tickets (id, title, worker_type, ceiling, created_at, updated_at) "
         "VALUES (?, ?, 'coding', 'needs_success', 1, 1)",
         ("t_fresh", "Fresh"),
     )
     # No enumerating CHECK, so these DB-level writes now succeed (registry gates them).
-    conn.execute("UPDATE tickets SET state = 'in_progress' WHERE id = 't_fresh'")
+    conn.execute("UPDATE tickets SET stage = 'in_progress' WHERE id = 't_fresh'")
     conn.execute("UPDATE tickets SET ceiling = 'needs_review' WHERE id = 't_fresh'")
     conn.close()
 
@@ -149,12 +151,13 @@ def test_fresh_schema_has_nullable_checked_ticket_implementer(tmp_path):
     assert implementer_column["notnull"] == 0
     assert implementer_column["dflt_value"] is None
     conn.execute(
-        "INSERT INTO tickets (id, title, ticket_type, ceiling, created_at, updated_at) "
+        "INSERT INTO tickets (id, title, worker_type, ceiling, created_at, updated_at) "
         "VALUES ('t_assignment', 'A', 'coding', 'needs_success', 1, 1)"
     )
-    assert conn.execute(
-        "SELECT implementer FROM tickets WHERE id = 't_assignment'"
-    ).fetchone()[0] is None
+    assert (
+        conn.execute("SELECT implementer FROM tickets WHERE id = 't_assignment'").fetchone()[0]
+        is None
+    )
     for value in ("khushal", "panels_worker", "hermes_codex", "hermes_claude"):
         conn.execute("UPDATE tickets SET implementer = ? WHERE id = 't_assignment'", (value,))
     conn.execute("UPDATE tickets SET implementer = NULL WHERE id = 't_assignment'")
@@ -286,9 +289,10 @@ def test_create_schema_rebuilds_legacy_links_after_sprint_blocker_conversion(tmp
 
     create_schema(conn)
 
-    assert conn.execute(
-        "SELECT sprint_item_id FROM tickets WHERE id = 't_child'"
-    ).fetchone()[0] == "si_legacy"
+    assert (
+        conn.execute("SELECT sprint_item_id FROM tickets WHERE id = 't_child'").fetchone()[0]
+        == "si_legacy"
+    )
     assert [
         tuple(row)
         for row in conn.execute("SELECT from_id, to_id, kind FROM links ORDER BY from_id, to_id")
@@ -297,8 +301,9 @@ def test_create_schema_rebuilds_legacy_links_after_sprint_blocker_conversion(tmp
         ("t_target", "si_legacy", "blocks"),
     ]
     links_sql = str(
-        conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='links'")
-        .fetchone()["sql"]
+        conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='links'"
+        ).fetchone()["sql"]
     )
     assert "kind = 'blocks'" in links_sql
     indexes = {
@@ -336,9 +341,7 @@ def test_create_schema_adds_ticket_implementer_after_lifecycle_migration_idempot
     create_schema(conn)
 
     assert tuple(
-        conn.execute(
-            "SELECT state, implementer FROM tickets WHERE id = 't_existing'"
-        ).fetchone()
+        conn.execute("SELECT stage, implementer FROM tickets WHERE id = 't_existing'").fetchone()
     ) == ("needs_success", None)
     columns = [str(row["name"]) for row in conn.execute("PRAGMA table_info(tickets)")]
     assert columns.count("implementer") == 1
@@ -380,10 +383,9 @@ def test_kickoff_migration_moves_existing_user_note_into_kickoff_field_value(tmp
     assert "kickoff_proposal" not in columns
     assert "user_note" not in columns
     row = conn.execute(
-        "SELECT state, fields, ticket_status FROM tickets "
-        "WHERE id = 't_existing'"
+        "SELECT stage, fields, ticket_status FROM tickets WHERE id = 't_existing'"
     ).fetchone()
-    assert row["state"] == "needs_success"
+    assert row["stage"] == "needs_success"
     assert json.loads(row["fields"])["kickoff"] == {
         "value": "preserve this intake note",
         "proposal": None,
@@ -468,7 +470,7 @@ def test_kickoff_migration_converts_current_schema_settled_and_pending_rows_idem
 
     rows = {
         row["id"]: row
-        for row in conn.execute("SELECT id, title, state, ticket_status, fields FROM tickets")
+        for row in conn.execute("SELECT id, title, stage, ticket_status, fields FROM tickets")
     }
     settled_fields = json.loads(rows["t_settled"]["fields"])
     pending_fields = json.loads(rows["t_pending"]["fields"])
@@ -487,8 +489,7 @@ def test_kickoff_migration_converts_current_schema_settled_and_pending_rows_idem
     }
     assert rows["t_pending"]["ticket_status"] == "awaiting_approval"
     assert [
-        tuple(row)
-        for row in conn.execute("SELECT day_id, ticket_id FROM day_tickets").fetchall()
+        tuple(row) for row in conn.execute("SELECT day_id, ticket_id FROM day_tickets").fetchall()
     ] == [("day_2026-07-11", "t_pending")]
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     conn.close()
@@ -517,10 +518,10 @@ def test_kickoff_migration_keeps_later_stage_approval_on_current_field(tmp_path)
     create_schema(conn)
 
     row = conn.execute(
-        "SELECT state, ticket_status, fields FROM tickets WHERE id = 't_success_approval'"
+        "SELECT stage, ticket_status, fields FROM tickets WHERE id = 't_success_approval'"
     ).fetchone()
     fields = json.loads(row["fields"])
-    assert row["state"] == "needs_success"
+    assert row["stage"] == "needs_success"
     assert row["ticket_status"] == "awaiting_approval"
     assert fields["kickoff"] == {
         "value": "settled kickoff note",
@@ -560,10 +561,10 @@ def test_kickoff_migration_settles_stale_later_stage_compound_kickoff_proposal(t
     create_schema(conn)
 
     row = conn.execute(
-        "SELECT state, ticket_status, fields FROM tickets WHERE id = 't_plan_approval'"
+        "SELECT stage, ticket_status, fields FROM tickets WHERE id = 't_plan_approval'"
     ).fetchone()
     fields = json.loads(row["fields"])
-    assert row["state"] == "needs_plan"
+    assert row["stage"] == "needs_plan"
     assert row["ticket_status"] == "awaiting_approval"
     assert fields["kickoff"] == {
         "value": "stale compound kickoff note",
@@ -614,33 +615,33 @@ def test_kickoff_migration_rolls_back_failed_foreign_key_check_and_preserves_lin
     )
     conn.execute("PRAGMA foreign_keys=ON")
 
-    with pytest.raises(RuntimeError, match="foreign key check failed after kickoff migration"):
-        db_module._migrate_ticket_kickoff_columns(conn)
+    with pytest.raises(RuntimeError, match="foreign key check failed after Ticket v18 migration"):
+        db_module._migrate_tickets_to_v18_contract(conn)
 
     tickets_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
     ).fetchone()[0]
     assert "user_note" in tickets_sql
     assert "kickoff" not in tickets_sql
-    assert tuple(conn.execute(
-        "SELECT title, user_note FROM tickets WHERE id = 't_existing'"
-    ).fetchone()) == ("Existing", "preserve this intake note")
-    assert conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tickets_new'"
-    ).fetchone() is None
+    assert tuple(
+        conn.execute("SELECT title, user_note FROM tickets WHERE id = 't_existing'").fetchone()
+    ) == ("Existing", "preserve this intake note")
+    assert (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tickets_new'"
+        ).fetchone()
+        is None
+    )
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
     conn.execute("DELETE FROM day_tickets WHERE ticket_id = 't_missing'")
-    db_module._migrate_ticket_kickoff_columns(conn)
+    db_module._migrate_tickets_to_v18_contract(conn)
 
-    migrated = conn.execute(
-        "SELECT state, fields FROM tickets WHERE id = 't_existing'"
-    ).fetchone()
-    assert migrated["state"] == "needs_success"
+    migrated = conn.execute("SELECT stage, fields FROM tickets WHERE id = 't_existing'").fetchone()
+    assert migrated["stage"] == "needs_success"
     assert json.loads(migrated["fields"])["kickoff"]["value"] == "preserve this intake note"
     assert [
-        tuple(row)
-        for row in conn.execute("SELECT day_id, ticket_id FROM day_tickets").fetchall()
+        tuple(row) for row in conn.execute("SELECT day_id, ticket_id FROM day_tickets").fetchall()
     ] == [("day_valid", "t_existing")]
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
@@ -653,9 +654,15 @@ def test_create_schema_migrates_current_schema_old_lifecycle_rows(tmp_path):
     conn.execute("PRAGMA foreign_keys=OFF")
     conn.executescript(_OLD_TICKETS_DDL)
     _insert_ticket(
-        conn, id="t_success", title="Success stage", state="needs_success",
-        ceiling="needs_plan", ticket_status="empty", fields=_fields_json(),
-        created_at=1, updated_at=1,
+        conn,
+        id="t_success",
+        title="Success stage",
+        state="needs_success",
+        ceiling="needs_plan",
+        ticket_status="empty",
+        fields=_fields_json(),
+        created_at=1,
+        updated_at=1,
     )
     _insert_ticket(
         conn,
@@ -679,38 +686,66 @@ def test_create_schema_migrates_current_schema_old_lifecycle_rows(tmp_path):
         updated_at=50,
     )
     _insert_ticket(
-        conn, id="t_in_progress", title="Mid work", state="in_progress",
-        ceiling="in_progress", ticket_status="agent_running_step",
-        fields=_fields_json(result={
-            "value": None,
-            "proposal": {"body": "draft", "proposed_by": "agent", "created_at": 100},
-            "user_note": "keep this",
-        }),
-        created_at=1, updated_at=1,
-    )
-    _insert_ticket(
-        conn, id="t_review_idle", title="Settled review", state="needs_review",
-        ceiling="needs_review", ticket_status="empty",
-        fields=_fields_json(result={
-            "value": "final answer", "proposal": None, "user_note": "reviewed note",
-        }),
-        created_at=1, updated_at=1,
-    )
-    _insert_ticket(
-        conn, id="t_review_active", title="Active revision", state="needs_review",
-        ceiling="needs_review", ticket_status="user_takeover",
+        conn,
+        id="t_in_progress",
+        title="Mid work",
+        state="in_progress",
+        ceiling="in_progress",
+        ticket_status="agent_running_step",
         fields=_fields_json(
-            result={"value": "draft answer", "proposal": None, "user_note": None}
+            result={
+                "value": None,
+                "proposal": {"body": "draft", "proposed_by": "agent", "created_at": 100},
+                "user_note": "keep this",
+            }
         ),
-        created_at=1, updated_at=1,
+        created_at=1,
+        updated_at=1,
     )
     _insert_ticket(
-        conn, id="t_review_awaiting", title="Awaiting approval", state="needs_review",
-        ceiling="done", ticket_status="awaiting_approval",
-        fields=_fields_json(result={
-            "value": "candidate final", "proposal": None, "user_note": "please check tone",
-        }),
-        created_at=1, updated_at=555,
+        conn,
+        id="t_review_idle",
+        title="Settled review",
+        state="needs_review",
+        ceiling="needs_review",
+        ticket_status="empty",
+        fields=_fields_json(
+            result={
+                "value": "final answer",
+                "proposal": None,
+                "user_note": "reviewed note",
+            }
+        ),
+        created_at=1,
+        updated_at=1,
+    )
+    _insert_ticket(
+        conn,
+        id="t_review_active",
+        title="Active revision",
+        state="needs_review",
+        ceiling="needs_review",
+        ticket_status="user_takeover",
+        fields=_fields_json(result={"value": "draft answer", "proposal": None, "user_note": None}),
+        created_at=1,
+        updated_at=1,
+    )
+    _insert_ticket(
+        conn,
+        id="t_review_awaiting",
+        title="Awaiting approval",
+        state="needs_review",
+        ceiling="done",
+        ticket_status="awaiting_approval",
+        fields=_fields_json(
+            result={
+                "value": "candidate final",
+                "proposal": None,
+                "user_note": "please check tone",
+            }
+        ),
+        created_at=1,
+        updated_at=555,
     )
     _insert_ticket(
         conn,
@@ -719,30 +754,41 @@ def test_create_schema_migrates_current_schema_old_lifecycle_rows(tmp_path):
         state="needs_review",
         ceiling="done",
         ticket_status="awaiting_approval",
-        fields=_fields_json(result={
-            "value": "revised candidate",
-            "proposal": {
-                "body": "revised candidate",
-                "proposed_by": "worker-1",
-                "created_at": 333,
-            },
-            "user_note": "keep both",
-        }),
+        fields=_fields_json(
+            result={
+                "value": "revised candidate",
+                "proposal": {
+                    "body": "revised candidate",
+                    "proposed_by": "worker-1",
+                    "created_at": 333,
+                },
+                "user_note": "keep both",
+            }
+        ),
         created_at=1,
         updated_at=777,
     )
     _insert_ticket(
-        conn, id="t_done", title="Shipped", state="done", ceiling="done",
+        conn,
+        id="t_done",
+        title="Shipped",
+        state="done",
+        ceiling="done",
         ticket_status="empty",
-        fields=_fields_json(
-            result={"value": "shipped", "proposal": None, "user_note": None}
-        ),
-        created_at=1, updated_at=1,
+        fields=_fields_json(result={"value": "shipped", "proposal": None, "user_note": None}),
+        created_at=1,
+        updated_at=1,
     )
     _insert_ticket(
-        conn, id="t_dropped", title="Dropped", state="dropped", ceiling="needs_plan",
-        ticket_status="empty", fields=_fields_json(),
-        created_at=1, updated_at=1,
+        conn,
+        id="t_dropped",
+        title="Dropped",
+        state="dropped",
+        ceiling="needs_plan",
+        ticket_status="empty",
+        fields=_fields_json(),
+        created_at=1,
+        updated_at=1,
     )
     conn.executescript(
         """
@@ -773,16 +819,20 @@ def test_create_schema_migrates_current_schema_old_lifecycle_rows(tmp_path):
     create_schema(conn)
 
     rows = {
-        row["id"]: (row["state"], row["ceiling"], json.loads(row["fields"]))
-        for row in conn.execute("SELECT id, state, ceiling, fields FROM tickets")
+        row["id"]: (row["stage"], row["ceiling"], json.loads(row["fields"]))
+        for row in conn.execute("SELECT id, stage, ceiling, fields FROM tickets")
     }
 
     assert rows["t_success"][:2] == ("needs_success", "needs_plan")
     assert rows["t_success"][2]["implementation"] == {
-        "value": None, "proposal": None, "user_note": None,
+        "value": None,
+        "proposal": None,
+        "user_note": None,
     }
     assert rows["t_success"][2]["closeout"] == {
-        "value": None, "proposal": None, "user_note": None,
+        "value": None,
+        "proposal": None,
+        "user_note": None,
     }
     assert "result" not in rows["t_success"][2]
 
@@ -797,7 +847,9 @@ def test_create_schema_migrates_current_schema_old_lifecycle_rows(tmp_path):
         "user_note": "keep this guidance",
     }
     assert rows["t_success_awaiting"][2]["implementation"] == {
-        "value": None, "proposal": None, "user_note": None,
+        "value": None,
+        "proposal": None,
+        "user_note": None,
     }
 
     assert rows["t_in_progress"][:2] == ("needs_implementation", "needs_implementation")
@@ -807,12 +859,16 @@ def test_create_schema_migrates_current_schema_old_lifecycle_rows(tmp_path):
         "user_note": "keep this",
     }
     assert rows["t_in_progress"][2]["closeout"] == {
-        "value": None, "proposal": None, "user_note": None,
+        "value": None,
+        "proposal": None,
+        "user_note": None,
     }
 
     assert rows["t_review_idle"][:2] == ("needs_closeout", "needs_closeout")
     assert rows["t_review_idle"][2]["implementation"] == {
-        "value": "final answer", "proposal": None, "user_note": "reviewed note",
+        "value": "final answer",
+        "proposal": None,
+        "user_note": "reviewed note",
     }
 
     assert rows["t_review_active"][:2] == (
@@ -820,7 +876,9 @@ def test_create_schema_migrates_current_schema_old_lifecycle_rows(tmp_path):
         "needs_implementation",
     )
     assert rows["t_review_active"][2]["implementation"] == {
-        "value": "draft answer", "proposal": None, "user_note": None,
+        "value": "draft answer",
+        "proposal": None,
+        "user_note": None,
     }
 
     assert rows["t_review_awaiting"][:2] == ("needs_implementation", "needs_implementation")
@@ -849,7 +907,9 @@ def test_create_schema_migrates_current_schema_old_lifecycle_rows(tmp_path):
 
     assert rows["t_done"][:2] == ("done", "done")
     assert rows["t_done"][2]["implementation"] == {
-        "value": "shipped", "proposal": None, "user_note": None,
+        "value": "shipped",
+        "proposal": None,
+        "user_note": None,
     }
 
     assert rows["t_dropped"][:2] == ("dropped", "needs_plan")
@@ -910,9 +970,12 @@ def test_lifecycle_migration_rolls_back_failed_foreign_key_check(tmp_path):
     ).fetchone()[0]
     assert "in_progress" in tickets_sql
     assert "needs_implementation" not in tickets_sql
-    assert conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tickets_new'"
-    ).fetchone() is None
+    assert (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tickets_new'"
+        ).fetchone()
+        is None
+    )
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     conn.close()
 
@@ -923,18 +986,27 @@ def test_create_schema_ticket_lifecycle_migration_is_idempotent(tmp_path):
     conn.row_factory = sqlite3.Row
     conn.executescript(_OLD_TICKETS_DDL)
     _insert_ticket(
-        conn, id="t_review_awaiting", title="Awaiting approval", state="needs_review",
-        ceiling="done", ticket_status="awaiting_approval",
-        fields=_fields_json(result={
-            "value": "candidate final", "proposal": None, "user_note": "please check tone",
-        }),
-        created_at=1, updated_at=1,
+        conn,
+        id="t_review_awaiting",
+        title="Awaiting approval",
+        state="needs_review",
+        ceiling="done",
+        ticket_status="awaiting_approval",
+        fields=_fields_json(
+            result={
+                "value": "candidate final",
+                "proposal": None,
+                "user_note": "please check tone",
+            }
+        ),
+        created_at=1,
+        updated_at=1,
     )
     create_schema(conn)
-    before = list(conn.execute("SELECT id, state, ceiling, fields FROM tickets ORDER BY id"))
+    before = list(conn.execute("SELECT id, stage, ceiling, fields FROM tickets ORDER BY id"))
 
     create_schema(conn)
-    after = list(conn.execute("SELECT id, state, ceiling, fields FROM tickets ORDER BY id"))
+    after = list(conn.execute("SELECT id, stage, ceiling, fields FROM tickets ORDER BY id"))
 
     assert [tuple(r) for r in before] == [tuple(r) for r in after]
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
@@ -1025,19 +1097,29 @@ def test_create_schema_migrates_ticket_lifecycle_with_old_project_column_rebuild
         """
     )
     _insert_ticket(
-        conn, id="t_awaiting", title="Awaiting", state="needs_review", ceiling="done",
-        project="Alpha One", status="awaiting_approval",
-        fields=_fields_json(result={
-            "value": "old draft", "proposal": None, "user_note": "watch tone",
-        }),
-        created_at=1, updated_at=1,
+        conn,
+        id="t_awaiting",
+        title="Awaiting",
+        state="needs_review",
+        ceiling="done",
+        project="Alpha One",
+        status="awaiting_approval",
+        fields=_fields_json(
+            result={
+                "value": "old draft",
+                "proposal": None,
+                "user_note": "watch tone",
+            }
+        ),
+        created_at=1,
+        updated_at=1,
     )
 
     create_schema(conn)
 
     rows = {
-        row["id"]: (row["state"], row["ceiling"], row["project_id"], json.loads(row["fields"]))
-        for row in conn.execute("SELECT id, state, ceiling, project_id, fields FROM tickets")
+        row["id"]: (row["stage"], row["ceiling"], row["project_id"], json.loads(row["fields"]))
+        for row in conn.execute("SELECT id, stage, ceiling, project_id, fields FROM tickets")
     }
     expected_lifecycle = ("needs_implementation", "needs_implementation", "project_alpha_one")
     assert rows["t_working"][:3] == expected_lifecycle
@@ -1083,8 +1165,7 @@ def test_create_schema_has_projects_project_ids_and_default_rows(tmp_path):
             assert "blocked_by" not in columns
             assert "status_proposal" not in columns
     assert {
-        str(row["name"])
-        for row in conn.execute("PRAGMA table_info(pending_worker_context)")
+        str(row["name"]) for row in conn.execute("PRAGMA table_info(pending_worker_context)")
     } == {"worker_entity_id", "context_key", "text", "revision"}
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     conn.close()
@@ -1108,7 +1189,7 @@ def test_create_schema_upgrades_old_ticket_status_column(tmp_path):
           recap TEXT NOT NULL DEFAULT '',
           ceiling TEXT NOT NULL DEFAULT 'needs_success',
           at_cap TEXT NOT NULL DEFAULT 'propose',
-          status TEXT NOT NULL DEFAULT 'empty',
+          status TEXT DEFAULT 'empty',
           worker TEXT,
           chat_session_key TEXT,
           alias TEXT,
@@ -1150,6 +1231,8 @@ def test_create_schema_upgrades_old_ticket_status_column(tmp_path):
           ('t_empty', 'Empty', 'empty', 'Vylo', NULL, 1, 1),
           ('t_working', 'Working', 'agent_working', 'Alpha One', NULL, 1, 1),
           ('t_errored', 'Errored', 'errored', 'Tribe', NULL, 1, 1),
+          ('t_null', 'Null', NULL, 'Vylo', NULL, 1, 1),
+          ('t_unknown', 'Unknown', 'not_a_status', 'Vylo', NULL, 1, 1),
           ('t_parented', 'Parented', 'empty', 'Alpha One', 'si_custom', 1, 1);
         INSERT INTO ideas (
           id, title, body, project, created_at, updated_at
@@ -1183,24 +1266,20 @@ def test_create_schema_upgrades_old_ticket_status_column(tmp_path):
         "project_tribe": ("Tribe", ""),
         "project_vylo": ("Vylo", ""),
     }
-    assert dict(
-        conn.execute("SELECT id, ticket_status FROM tickets ORDER BY id").fetchall()
-    ) == {
+    assert dict(conn.execute("SELECT id, ticket_status FROM tickets ORDER BY id").fetchall()) == {
         "t_empty": "empty",
         "t_errored": "errored",
+        "t_null": "empty",
         "t_parented": "empty",
+        "t_unknown": "empty",
         "t_working": "agent_running_step",
     }
-    assert dict(
-        conn.execute("SELECT id, project_id FROM sprint_items ORDER BY id").fetchall()
-    ) == {
+    assert dict(conn.execute("SELECT id, project_id FROM sprint_items ORDER BY id").fetchall()) == {
         "si_custom": "project_alpha_one",
         "si_default": "project_vylo",
         "si_deferred": "project_vylo",
     }
-    assert dict(
-        conn.execute("SELECT id, sprint_id FROM sprint_items ORDER BY id").fetchall()
-    ) == {
+    assert dict(conn.execute("SELECT id, sprint_id FROM sprint_items ORDER BY id").fetchall()) == {
         "si_custom": None,
         "si_default": None,
         "si_deferred": None,
@@ -1209,17 +1288,15 @@ def test_create_schema_upgrades_old_ticket_status_column(tmp_path):
         tuple(row)
         for row in conn.execute("SELECT from_id, to_id, kind FROM links ORDER BY from_id, to_id")
     ] == [("t_parented", "si_custom", "blocks")]
-    assert dict(
-        conn.execute("SELECT id, project_id FROM tickets ORDER BY id").fetchall()
-    ) == {
+    assert dict(conn.execute("SELECT id, project_id FROM tickets ORDER BY id").fetchall()) == {
         "t_empty": "project_vylo",
         "t_errored": "project_tribe",
+        "t_null": "project_vylo",
         "t_parented": None,
+        "t_unknown": "project_vylo",
         "t_working": "project_alpha_one",
     }
-    assert dict(
-        conn.execute("SELECT id, project_id FROM ideas ORDER BY id").fetchall()
-    ) == {
+    assert dict(conn.execute("SELECT id, project_id FROM ideas ORDER BY id").fetchall()) == {
         "idea_custom": "project_alpha_one",
         "idea_null": None,
     }
@@ -1266,7 +1343,7 @@ def test_create_schema_adds_project_summary_to_existing_project_table(tmp_path):
 # The shape the kickoff migration produces and the type migration consumes: the
 # current pre-type tickets shape (no kickoff_note/kickoff_proposal, six-slot fields,
 # implementer column present, the enumerating state/ceiling CHECKs still present).
-# This is the honest INPUT to _migrate_ticket_type_column, distinct from
+# This is the honest INPUT to _migrate_tickets_to_v18_contract, distinct from
 # _CURRENT_KICKOFF_TICKETS_DDL which still carries kickoff_note/kickoff_proposal.
 _POST_KICKOFF_PRE_TYPE_TICKETS_DDL = """
 CREATE TABLE tickets (
@@ -1336,20 +1413,46 @@ def test_type_migration_preserves_every_column_and_fk_integrity(tmp_path):
     _seed_kickoff_shape_relationships(conn)
     conn.executescript(_POST_KICKOFF_PRE_TYPE_TICKETS_DDL)
     _insert_ticket(
-        conn, id="t_a", title="Alpha ticket", state="needs_success", priority="P1",
-        deadline="2026-07-20", project_id="project_alpha", sprint_item_id=None,
-        sprint_id="sp_one", recap="alpha recap", ceiling="needs_plan", at_cap="stop",
-        ticket_status="empty", implementer="khushal",
-        chat_session_key="sess-a", alias="alias-a",
-        fields=_CODING_SIX_SLOT_FIELDS, created_at=11, updated_at=22,
+        conn,
+        id="t_a",
+        title="Alpha ticket",
+        state="needs_success",
+        priority="P1",
+        deadline="2026-07-20",
+        project_id="project_alpha",
+        sprint_item_id=None,
+        sprint_id="sp_one",
+        recap="alpha recap",
+        ceiling="needs_plan",
+        at_cap="stop",
+        ticket_status="empty",
+        implementer="khushal",
+        chat_session_key="sess-a",
+        alias="alias-a",
+        fields=_CODING_SIX_SLOT_FIELDS,
+        created_at=11,
+        updated_at=22,
     )
     _insert_ticket(
-        conn, id="t_b", title="Beta ticket", state="needs_kickoff", priority="P3",
-        deadline=None, project_id=None, sprint_item_id="si_one", sprint_id=None,
-        recap="", ceiling="needs_success", at_cap="propose",
-        ticket_status="awaiting_approval", implementer=None,
-        chat_session_key=None, alias=None,
-        fields=_CODING_SIX_SLOT_FIELDS, created_at=33, updated_at=44,
+        conn,
+        id="t_b",
+        title="Beta ticket",
+        state="needs_kickoff",
+        priority="P3",
+        deadline=None,
+        project_id=None,
+        sprint_item_id="si_one",
+        sprint_id=None,
+        recap="",
+        ceiling="needs_success",
+        at_cap="propose",
+        ticket_status="awaiting_approval",
+        implementer=None,
+        chat_session_key=None,
+        alias=None,
+        fields=_CODING_SIX_SLOT_FIELDS,
+        created_at=33,
+        updated_at=44,
     )
     conn.executescript(
         """
@@ -1370,59 +1473,134 @@ def test_type_migration_preserves_every_column_and_fk_integrity(tmp_path):
     )
     conn.execute("PRAGMA foreign_keys=ON")
 
-    before = {
-        row["id"]: dict(row) for row in conn.execute("SELECT * FROM tickets")
-    }
+    before = {row["id"]: dict(row) for row in conn.execute("SELECT * FROM tickets")}
 
-    db_module._migrate_ticket_type_column(conn)
+    db_module._migrate_tickets_to_v18_contract(conn)
 
-    after = {
-        row["id"]: dict(row) for row in conn.execute("SELECT * FROM tickets")
-    }
+    after = {row["id"]: dict(row) for row in conn.execute("SELECT * FROM tickets")}
     assert set(after) == set(before)
     assert len(after) == len(before) == 2
     for ticket_id, after_row in after.items():
-        assert after_row["ticket_type"] == "coding"
-        stripped = {k: v for k, v in after_row.items() if k != "ticket_type"}
-        assert stripped == before[ticket_id]
+        assert after_row["worker_type"] == "coding"
+        assert after_row["stage"] == before[ticket_id]["state"]
+        stripped = {k: v for k, v in after_row.items() if k not in {"worker_type", "stage"}}
+        old_without_state = {k: v for k, v in before[ticket_id].items() if k != "state"}
+        assert stripped == old_without_state
         assert after_row["fields"] == before[ticket_id]["fields"]  # byte-equal JSON
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     assert [
-        tuple(r) for r in conn.execute(
-            "SELECT day_id, ticket_id FROM day_tickets ORDER BY ticket_id"
-        )
+        tuple(r)
+        for r in conn.execute("SELECT day_id, ticket_id FROM day_tickets ORDER BY ticket_id")
     ] == [("day_2026-07-11", "t_a"), ("day_2026-07-11", "t_b")]
-    assert [
-        tuple(r) for r in conn.execute("SELECT from_id, to_id FROM links").fetchall()
-    ] == [("t_a", "t_b")]
+    assert [tuple(r) for r in conn.execute("SELECT from_id, to_id FROM links").fetchall()] == [
+        ("t_a", "t_b")
+    ]
     conn.close()
 
 
-def test_fresh_schema_has_ticket_type_not_null_no_default_and_composite_index(tmp_path):
-    # Acceptance 2 + F3 + F7: ticket_type NOT NULL, no enumerating CHECKs, ceiling
-    # NOT NULL with NO default, state default KEPT, type-independent checks present,
-    # both idx_tickets_state and idx_tickets_type_state present.
+def test_post_kickoff_shape_preserves_corrupt_fields_bytes(tmp_path):
+    conn = connect(str(tmp_path / "corrupt-post-kickoff-fields.db"))
+    conn.execute("PRAGMA foreign_keys=OFF")
+    _seed_kickoff_shape_relationships(conn)
+    conn.executescript(_POST_KICKOFF_PRE_TYPE_TICKETS_DDL)
+    corrupt_fields = '{"kickoff": definitely not valid JSON}\n'
+    _insert_ticket(
+        conn,
+        id="t_corrupt_fields",
+        title="Preserve corrupt fields",
+        state="needs_success",
+        ceiling="needs_success",
+        ticket_status="empty",
+        fields=corrupt_fields,
+        created_at=1,
+        updated_at=2,
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    db_module._migrate_tickets_to_v18_contract(conn)
+
+    migrated = conn.execute("SELECT fields FROM tickets WHERE id = 't_corrupt_fields'").fetchone()[
+        "fields"
+    ]
+    assert migrated == corrupt_fields
+
+
+@pytest.mark.parametrize("null_column", ("ceiling", "ticket_status", "fields"))
+def test_required_null_source_rolls_back_original_table(tmp_path, null_column: str):
+    conn = connect(str(tmp_path / f"null-{null_column}.db"))
+    conn.execute("PRAGMA foreign_keys=OFF")
+    _seed_kickoff_shape_relationships(conn)
+    ddl = _POST_KICKOFF_PRE_TYPE_TICKETS_DDL.replace(
+        f"  {null_column} TEXT NOT NULL", f"  {null_column} TEXT", 1
+    )
+    conn.executescript(ddl)
+    values = {
+        "ceiling": "needs_success",
+        "ticket_status": "empty",
+        "fields": _CODING_SIX_SLOT_FIELDS,
+    }
+    values[null_column] = None
+    _insert_ticket(
+        conn,
+        id="t_null",
+        title="Reject NULL",
+        state="needs_success",
+        ceiling=values["ceiling"],
+        ticket_status=values["ticket_status"],
+        fields=values["fields"],
+        created_at=1,
+        updated_at=2,
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+    sql_before = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()[0]
+    rows_before = [tuple(row) for row in conn.execute("SELECT * FROM tickets")]
+
+    with pytest.raises(RuntimeError, match=rf"NULL {null_column}"):
+        db_module._migrate_tickets_to_v18_contract(conn)
+
+    assert (
+        conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+        ).fetchone()[0]
+        == sql_before
+    )
+    assert [tuple(row) for row in conn.execute("SELECT * FROM tickets")] == rows_before
+    assert (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tickets_new'"
+        ).fetchone()
+        is None
+    )
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+
+def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(tmp_path):
+    # Acceptance 2 + F3 + F7: worker_type NOT NULL, no enumerating CHECKs, ceiling
+    # NOT NULL with NO default, Stage default kept, type-independent checks present,
+    # and both new Stage indexes present.
     db_path = tmp_path / "fresh-type.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     create_schema(conn)
 
     info = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(tickets)")}
-    assert info["ticket_type"]["notnull"] == 1
-    assert info["ticket_type"]["dflt_value"] is None
+    assert info["worker_type"]["notnull"] == 1
+    assert info["worker_type"]["dflt_value"] is None
     assert info["ceiling"]["notnull"] == 1
     assert info["ceiling"]["dflt_value"] is None
-    assert info["state"]["notnull"] == 1
-    assert info["state"]["dflt_value"] == "'needs_kickoff'"
+    assert info["stage"]["notnull"] == 1
+    assert info["stage"]["dflt_value"] == "'needs_kickoff'"
 
     tickets_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
     ).fetchone()[0]
-    # NOT-NULL on ticket_type is asserted above via PRAGMA; here confirm the column
+    # NOT-NULL on worker_type is asserted above via PRAGMA; here confirm the column
     # exists and neither enumerating CHECK survives (spacing is DDL-aligned, so match
     # on presence rather than an exact single-space fragment).
-    assert "ticket_type" in tickets_sql
-    assert "state IN ('needs_kickoff'" not in tickets_sql
+    assert "worker_type" in tickets_sql
+    assert "stage IN ('needs_kickoff'" not in tickets_sql
     assert "ceiling IN ('needs_success'" not in tickets_sql
     assert "length(title) <= 200" in tickets_sql
     assert "priority IN ('P0','P1','P2','P3')" in tickets_sql
@@ -1431,24 +1609,23 @@ def test_fresh_schema_has_ticket_type_not_null_no_default_and_composite_index(tm
     assert "implementer IN ('khushal'" in tickets_sql
 
     index_names = {str(row["name"]) for row in conn.execute("PRAGMA index_list(tickets)")}
-    assert "idx_tickets_state" in index_names
-    assert "idx_tickets_type_state" in index_names
+    assert "idx_tickets_stage" in index_names
+    assert "idx_tickets_worker_type_stage" in index_names
     composite_cols = [
-        str(row["name"])
-        for row in conn.execute("PRAGMA index_info(idx_tickets_type_state)")
+        str(row["name"]) for row in conn.execute("PRAGMA index_info(idx_tickets_worker_type_stage)")
     ]
-    assert composite_cols == ["ticket_type", "state"]
+    assert composite_cols == ["worker_type", "stage"]
     conn.close()
 
 
 def test_canonical_ddl_and_final_schema_carry_no_retired_check(tmp_path):
-    # Acceptance 7: the canonical DDL constant carries ticket_type NOT NULL and
+    # Acceptance 7: the canonical DDL constant carries worker_type NOT NULL and
     # neither enumerating CHECK; a later rebuild template cannot recreate the retired
     # CHECKs — the post-create_schema table never carries a retired lifecycle value
-    # or an enumerating state/ceiling CHECK.
-    assert "ticket_type          TEXT NOT NULL" in db_module.DDL
+    # or an enumerating Stage/ceiling CHECK.
+    assert "worker_type          TEXT NOT NULL" in db_module.DDL
     tickets_block = db_module.DDL.split("CREATE TABLE IF NOT EXISTS tickets")[1].split(");")[0]
-    assert "state IN (" not in tickets_block
+    assert "stage IN (" not in tickets_block
     assert "ceiling IN (" not in tickets_block
 
     db_path = tmp_path / "final-shape.db"
@@ -1460,7 +1637,7 @@ def test_canonical_ddl_and_final_schema_carry_no_retired_check(tmp_path):
     ).fetchone()[0]
     assert "in_progress" not in tickets_sql
     assert "needs_review" not in tickets_sql
-    assert "state IN (" not in tickets_sql
+    assert "stage IN (" not in tickets_sql
     assert "ceiling IN (" not in tickets_sql
     conn.close()
 
@@ -1473,9 +1650,17 @@ def test_type_migration_is_idempotent_on_migrated_db(tmp_path):
     conn.row_factory = sqlite3.Row
     conn.executescript(_CURRENT_KICKOFF_TICKETS_DDL)
     _insert_ticket(
-        conn, id="t_idem", title="Idempotent", state="needs_success",
-        ceiling="needs_success", ticket_status="empty", kickoff_note="",
-        kickoff_proposal=None, fields=_CODING_SIX_SLOT_FIELDS, created_at=1, updated_at=1,
+        conn,
+        id="t_idem",
+        title="Idempotent",
+        state="needs_success",
+        ceiling="needs_success",
+        ticket_status="empty",
+        kickoff_note="",
+        kickoff_proposal=None,
+        fields=_CODING_SIX_SLOT_FIELDS,
+        created_at=1,
+        updated_at=1,
     )
     create_schema(conn)
     sql_before = conn.execute(
@@ -1534,18 +1719,25 @@ def test_type_migration_rebuilds_partial_shape_not_skipped(tmp_path):
         """
     )
     _insert_ticket(
-        conn, id="t_partial", title="Partial", ticket_type="coding", state="needs_success",
-        ceiling="needs_success", fields=_CODING_SIX_SLOT_FIELDS, created_at=1, updated_at=1,
+        conn,
+        id="t_partial",
+        title="Partial",
+        ticket_type="coding",
+        state="needs_success",
+        ceiling="needs_success",
+        fields=_CODING_SIX_SLOT_FIELDS,
+        created_at=1,
+        updated_at=1,
     )
 
-    db_module._migrate_ticket_type_column(conn)
+    db_module._migrate_tickets_to_v18_contract(conn)
 
     tickets_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
     ).fetchone()[0]
-    assert "state IN ('needs_kickoff'" not in tickets_sql  # rebuilt, CHECK gone
+    assert "stage IN ('needs_kickoff'" not in tickets_sql  # rebuilt, CHECK gone
     assert "ceiling IN (" not in tickets_sql
-    row = conn.execute("SELECT ticket_type, title FROM tickets WHERE id = 't_partial'").fetchone()
+    row = conn.execute("SELECT worker_type, title FROM tickets WHERE id = 't_partial'").fetchone()
     assert tuple(row) == ("coding", "Partial")  # rows survived the rebuild
     conn.close()
 
@@ -1559,9 +1751,15 @@ def test_type_migration_rolls_back_failed_foreign_key_check_and_drops_scratch(tm
     _seed_kickoff_shape_relationships(conn)
     conn.executescript(_POST_KICKOFF_PRE_TYPE_TICKETS_DDL)
     _insert_ticket(
-        conn, id="t_keep", title="Keep me", state="needs_success", ceiling="needs_success",
+        conn,
+        id="t_keep",
+        title="Keep me",
+        state="needs_success",
+        ceiling="needs_success",
         ticket_status="empty",
-        fields=_CODING_SIX_SLOT_FIELDS, created_at=1, updated_at=1,
+        fields=_CODING_SIX_SLOT_FIELDS,
+        created_at=1,
+        updated_at=1,
     )
     conn.executescript(
         """
@@ -1577,8 +1775,8 @@ def test_type_migration_rolls_back_failed_foreign_key_check_and_drops_scratch(tm
     )
     conn.execute("PRAGMA foreign_keys=ON")
 
-    with pytest.raises(RuntimeError, match="foreign key check failed after ticket type migration"):
-        db_module._migrate_ticket_type_column(conn)
+    with pytest.raises(RuntimeError, match="foreign key check failed after Ticket v18 migration"):
+        db_module._migrate_tickets_to_v18_contract(conn)
 
     tickets_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
@@ -1588,8 +1786,331 @@ def test_type_migration_rolls_back_failed_foreign_key_check_and_drops_scratch(tm
     assert "state IN ('needs_kickoff'" in tickets_sql
     assert "ticket_type" not in tickets_sql
     assert conn.execute("SELECT title FROM tickets WHERE id = 't_keep'").fetchone()[0] == "Keep me"
-    assert conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tickets_new'"
-    ).fetchone() is None
+    assert (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tickets_new'"
+        ).fetchone()
+        is None
+    )
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     conn.close()
+
+
+def _typed_ticket_ddl(worker_column: str, stage_column: str) -> str:
+    ddl = re.sub(
+        r"\n\s+CHECK \(state IN \('needs_kickoff'.*?'dropped'\)\)",
+        "",
+        _POST_KICKOFF_PRE_TYPE_TICKETS_DDL,
+        count=1,
+        flags=re.DOTALL,
+    )
+    ddl = re.sub(
+        r"\n\s+CHECK \(ceiling IN \('needs_success'.*?'done'\)\)",
+        "",
+        ddl,
+        count=1,
+        flags=re.DOTALL,
+    )
+    ddl = ddl.replace("  state TEXT", f"  {worker_column} TEXT NOT NULL,\n  {stage_column} TEXT", 1)
+    return ddl
+
+
+def _insert_typed_ticket(
+    conn: sqlite3.Connection,
+    *,
+    ticket_id: str,
+    worker_column: str,
+    worker_type: str,
+    stage_column: str,
+    stage: str,
+) -> None:
+    _insert_ticket(
+        conn,
+        id=ticket_id,
+        title=ticket_id,
+        **{worker_column: worker_type, stage_column: stage},
+        ceiling=stage,
+        fields=_CODING_SIX_SLOT_FIELDS,
+        created_at=1,
+        updated_at=2,
+    )
+
+
+def test_v17_rows_preserve_actual_worker_type_and_stage(tmp_path):
+    conn = connect(str(tmp_path / "v17.db"))
+    conn.execute("PRAGMA foreign_keys=OFF")
+    _seed_kickoff_shape_relationships(conn)
+    conn.executescript(_typed_ticket_ddl("ticket_type", "state"))
+    _insert_typed_ticket(
+        conn,
+        ticket_id="t_coding",
+        worker_column="ticket_type",
+        worker_type="coding",
+        stage_column="state",
+        stage="needs_success",
+    )
+    _insert_typed_ticket(
+        conn,
+        ticket_id="t_new_worker",
+        worker_column="ticket_type",
+        worker_type="new_worker",
+        stage_column="state",
+        stage="needs_stages",
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    db_module._migrate_tickets_to_v18_contract(conn)
+
+    assert [
+        tuple(row)
+        for row in conn.execute("SELECT id, worker_type, stage FROM tickets ORDER BY id").fetchall()
+    ] == [
+        ("t_coding", "coding", "needs_success"),
+        ("t_new_worker", "new_worker", "needs_stages"),
+    ]
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+@pytest.mark.parametrize(
+    ("worker_column", "stage_column"),
+    (("worker_type", "state"), ("ticket_type", "stage")),
+)
+def test_one_column_partial_ticket_shapes_complete(
+    tmp_path, worker_column: str, stage_column: str
+) -> None:
+    conn = connect(str(tmp_path / f"partial-{worker_column}-{stage_column}.db"))
+    conn.execute("PRAGMA foreign_keys=OFF")
+    _seed_kickoff_shape_relationships(conn)
+    conn.executescript(_typed_ticket_ddl(worker_column, stage_column))
+    _insert_typed_ticket(
+        conn,
+        ticket_id="t_partial",
+        worker_column=worker_column,
+        worker_type="new_worker",
+        stage_column=stage_column,
+        stage="needs_stages",
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    db_module._migrate_tickets_to_v18_contract(conn)
+
+    row = conn.execute("SELECT worker_type, stage FROM tickets WHERE id = 't_partial'").fetchone()
+    assert tuple(row) == ("new_worker", "needs_stages")
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(tickets)")}
+    assert {"worker_type", "stage"} <= columns
+    assert "ticket_type" not in columns
+    assert "state" not in columns
+
+
+def test_partial_ticket_type_stage_preserves_stored_stage_and_ceiling(tmp_path):
+    conn = connect(str(tmp_path / "partial-ticket-type-stage-legacy-looking.db"))
+    conn.execute("PRAGMA foreign_keys=OFF")
+    _seed_kickoff_shape_relationships(conn)
+    conn.executescript(_typed_ticket_ddl("ticket_type", "stage"))
+    _insert_typed_ticket(
+        conn,
+        ticket_id="t_partial",
+        worker_column="ticket_type",
+        worker_type="new_worker",
+        stage_column="stage",
+        stage="needs_review",
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    db_module._migrate_tickets_to_v18_contract(conn)
+
+    row = conn.execute(
+        "SELECT worker_type, stage, ceiling FROM tickets WHERE id = 't_partial'"
+    ).fetchone()
+    assert tuple(row) == ("new_worker", "needs_review", "needs_review")
+    conn.close()
+
+
+def test_dual_ticket_columns_fail_without_changing_original(tmp_path):
+    conn = connect(str(tmp_path / "ambiguous.db"))
+    conn.execute("PRAGMA foreign_keys=OFF")
+    _seed_kickoff_shape_relationships(conn)
+    ddl = _typed_ticket_ddl("ticket_type", "state").replace(
+        "  ticket_type TEXT NOT NULL,",
+        "  ticket_type TEXT NOT NULL,\n  worker_type TEXT NOT NULL,",
+        1,
+    )
+    conn.executescript(ddl)
+    _insert_ticket(
+        conn,
+        id="t_ambiguous",
+        title="Ambiguous",
+        ticket_type="coding",
+        worker_type="new_worker",
+        state="needs_success",
+        ceiling="needs_success",
+        fields=_CODING_SIX_SLOT_FIELDS,
+        created_at=1,
+        updated_at=2,
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+    sql_before = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()[0]
+    rows_before = [tuple(row) for row in conn.execute("SELECT * FROM tickets")]
+
+    with pytest.raises(RuntimeError, match="ambiguous Ticket schema"):
+        db_module._migrate_tickets_to_v18_contract(conn)
+
+    sql_after = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()[0]
+    assert sql_after == sql_before
+    assert [tuple(row) for row in conn.execute("SELECT * FROM tickets")] == rows_before
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    assert (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tickets_new'"
+        ).fetchone()
+        is None
+    )
+
+
+def test_target_table_old_events_recover_exactly_and_reopen_is_idempotent(tmp_path):
+    conn = connect(str(tmp_path / "old-events.db"))
+    create_schema(conn)
+    conn.execute(
+        "INSERT INTO tickets (id, title, worker_type, stage, ceiling, created_at, updated_at) "
+        "VALUES ('t_events', 'Events', 'coding', 'needs_success', 'needs_success', 1, 1)"
+    )
+    unchanged_payload = '{"field":"title", "from":"A", "to":"B"}'
+    conn.executemany(
+        "INSERT INTO events (entity_id, kind, payload, created_at) VALUES (?, ?, ?, 1)",
+        (
+            (
+                "t_events",
+                "state_changed",
+                '{"from":"needs_success","to":"needs_plan","cause":"direct_state_jump","extra":1}',
+            ),
+            ("t_events", "ticket_created", '{"state":"needs_success","actor":"human"}'),
+            (
+                "si_events",
+                "item_children_changed",
+                '{"ticket_id":"t_events","reason":"state"}',
+            ),
+            ("t_events", "ticket_updated", unchanged_payload),
+        ),
+    )
+
+    create_schema(conn)
+    first = [
+        (str(row["kind"]), str(row["payload"]))
+        for row in conn.execute("SELECT kind, payload FROM events ORDER BY id")
+    ]
+
+    assert first[0][0] == "stage_changed"
+    assert json.loads(first[0][1]) == {
+        "from_stage": "needs_success",
+        "to_stage": "needs_plan",
+        "cause": "direct_stage_jump",
+        "extra": 1,
+    }
+    assert json.loads(first[1][1]) == {"stage": "needs_success", "actor": "human"}
+    assert json.loads(first[2][1]) == {"ticket_id": "t_events", "reason": "stage"}
+    assert first[3] == ("ticket_updated", unchanged_payload)
+
+    create_schema(conn)
+    second = [
+        (str(row["kind"]), str(row["payload"]))
+        for row in conn.execute("SELECT kind, payload FROM events ORDER BY id")
+    ]
+    assert second == first
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 18
+
+
+@pytest.mark.parametrize(
+    "bad_payload",
+    ("{", '{"from":"needs_success","from_stage":"needs_plan","to":"done"}'),
+)
+def test_event_rewrite_failure_rolls_back_table_rows_and_events(tmp_path, bad_payload: str):
+    conn = connect(str(tmp_path / "bad-event.db"))
+    conn.execute("PRAGMA foreign_keys=OFF")
+    _seed_kickoff_shape_relationships(conn)
+    conn.executescript(_typed_ticket_ddl("ticket_type", "state"))
+    conn.execute(
+        "CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, entity_id TEXT NOT NULL, "
+        "kind TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL)"
+    )
+    _insert_typed_ticket(
+        conn,
+        ticket_id="t_keep",
+        worker_column="ticket_type",
+        worker_type="coding",
+        stage_column="state",
+        stage="needs_success",
+    )
+    conn.execute(
+        "INSERT INTO events (entity_id, kind, payload, created_at) "
+        "VALUES ('t_keep', 'state_changed', ?, 1)",
+        (bad_payload,),
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+    sql_before = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()[0]
+    rows_before = [tuple(row) for row in conn.execute("SELECT * FROM tickets")]
+    events_before = [tuple(row) for row in conn.execute("SELECT * FROM events")]
+
+    with pytest.raises(RuntimeError, match="legacy Ticket event"):
+        db_module._migrate_tickets_to_v18_contract(conn)
+
+    assert (
+        conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+        ).fetchone()[0]
+        == sql_before
+    )
+    assert [tuple(row) for row in conn.execute("SELECT * FROM tickets")] == rows_before
+    assert [tuple(row) for row in conn.execute("SELECT * FROM events")] == events_before
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    assert (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tickets_new'"
+        ).fetchone()
+        is None
+    )
+
+
+def test_create_schema_reaches_only_consolidated_ticket_rebuild_after_lock(tmp_path):
+    conn = connect(str(tmp_path / "trace.db"))
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.executescript(_POST_KICKOFF_PRE_TYPE_TICKETS_DDL)
+    _insert_ticket(
+        conn,
+        id="t_trace",
+        title="Trace",
+        state="needs_success",
+        ceiling="needs_success",
+        fields=_CODING_SIX_SLOT_FIELDS,
+        created_at=1,
+        updated_at=1,
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+    statements: list[str] = []
+    conn.set_trace_callback(lambda statement: statements.append(statement.strip().upper()))
+
+    create_schema(conn)
+
+    begin_index = statements.index("BEGIN IMMEDIATE")
+    ticket_snapshot_index = next(
+        index
+        for index, statement in enumerate(statements)
+        if statement.startswith("SELECT * FROM TICKETS")
+    )
+    assert ticket_snapshot_index > begin_index
+    source = inspect.getsource(db_module.create_schema)
+    for retired in (
+        "_migrate_tickets_status_column",
+        "_migrate_ticket_user_note_column",
+        "_migrate_ticket_lifecycle",
+        "_migrate_ticket_implementer_column",
+        "_migrate_ticket_kickoff_columns",
+        "_migrate_ticket_type_column",
+        "_rebuild_tickets_with_project_id",
+    ):
+        assert retired not in source

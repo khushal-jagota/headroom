@@ -28,13 +28,13 @@ step at a time, and feeds an approval straight back in.
 
 **TicketReadinessLoop** polls today's tickets and picks the ones that are _ready_ —
 able to move and not already in flight — then passes each Ticket id to the employee
-runner. It never touches the AI or writes Ticket state. **EmployeeStepRunner** owns
+runner. It never touches the AI or writes the Ticket Stage. **EmployeeStepRunner** owns
 one step through the shared persistent Hermes gateway child: it rechecks readiness,
 claims the Ticket, assembles the prompt, resumes or creates the Ticket's durable
 session, submits one turn, and watches for the run to end. It then writes runtime
 status through the Ticket data writers. Proposals, approvals, takeover, release,
 and runtime start/finish/error all use those same writer functions, so
-"the code owns the state, the worker only proposes" holds even here.
+"the code owns the Stage, the worker only proposes" holds even here.
 
 The runner exists whenever the worker gateway exists. Readiness polling is optional:
 it may be disabled or another process may own the polling lock. Returning Review work
@@ -102,13 +102,14 @@ stuck ticket from a mystery into something you can debug.
 
 ## What is proved
 
-The runtime launches the **`panels-worker`** base role — deliberately type-agnostic;
-it points the worker to load its type's specialist skill on demand rather than baking
-one type's stages in (see `ticket-types.md`). The CLI entry point workers use is
+The runtime launches the **`panels-worker`** base role — deliberately Worker-type
+agnostic; it points the worker to load its Worker type's specialist skill on demand
+rather than baking one Worker type's Stages in (see `worker-types.md`). The CLI entry
+point workers use is
 **`panels`**. By default, a server uses the `hermes-home` directory beside its
 configured planning database, resolved to an absolute path before the gateways start.
 An explicit `PLAN_HERMES_HOME` overrides that location. On startup the server links this
-repo's role skills into the selected home — the base `panels-worker`, the per-type
+repo's role skills into the selected home — the base `panels-worker`, the per-Worker-type
 specialists (`panels-worker-coding`, `panels-worker-new-worker`, and the `probe-worker`
 test fixture), plus `panels`, `panels-chief-of-staff`, `panels-sprint-planning`, and
 `panels-rollover`. That link is what lets a worker `skill_view` its specialist. The
@@ -138,8 +139,9 @@ today now rings the readiness doorbell without a follow-up scope edit. The ticke
 
 ## Handoffs
 
-- **Ticket types** (`ticket-types.md`) — how the base worker self-routes to its type's
-  specialist skill, and the registry that declares each type's stages and worker.
+- **Worker types** (`worker-types.md`) — how the base worker self-routes to its Worker
+  type's specialist skill, and the registry that declares each Worker type's Stages and
+  worker.
 - **Tickets & the gates** (`tickets-and-gates.md`) — the proposals the employee
   files, the scope that decides whether a step auto-accepts, and the approval that
   rings the readiness doorbell.

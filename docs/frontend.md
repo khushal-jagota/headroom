@@ -30,10 +30,10 @@ One screen per part of the system:
   That address can be loaded, refreshed, shared, or revisited with browser history;
   a missing ticket safely leaves the Chief of Staff view open.
 - **Ticket** — the whole story of one piece of work: a serif title, a single facts
-  line (status, priority, its **type** pill, due, project, sprint, take-over/copy), the
+  line (status, priority, its **Worker type** pill, due, project, sprint, take-over/copy), the
   leash written as one sentence, the recap, then the spine of stages — which stages that
-  spine shows is the ticket's type's, derived from the served manifest (see below and
-  `ticket-types.md`); the kickoff user note sits first in that spine, collapsed. The one raised ask surface, live status markers, the
+  spine shows is the Ticket's Worker type's, derived from the served manifest (see below and
+  `worker-types.md`); the kickoff user note sits first in that spine, collapsed. The one raised ask surface, live status markers, the
   employee chat in serif alongside, and a copy button that produces a plain-text block
   for pasting anywhere. Its project picker is backed by the shared `projects` resource.
 - **Sprint** — one tracking page that scrolls (name, a meta line, the bet, then the
@@ -134,9 +134,9 @@ hand-rolling the same shapes per screen. Each does one job:
 - **ErrorLine** — a single error message line.
 
 A ticket's stage labels and order are not baked into the frontend: they come from the
-server's per-type manifest through `web/src/lib/lifecycle.ts`, keyed by each ticket's
-own type (see `ticket-types.md`). `labelize` in `web/src/lib/ui.ts` remains only as the
-fallback that turns a raw field/state or type id into a readable label before a manifest
+server's per-Worker-type manifest through `web/src/lib/lifecycle.ts`, keyed by each
+Ticket's own Worker type (see `worker-types.md`). `labelize` in `web/src/lib/ui.ts`
+remains only as the fallback that turns a raw field, Stage, or Worker type id into a readable label before a manifest
 has loaded. `web/src/lib/dates.ts` holds the date formatting the Day and Sprint screens
 share — the short-month day label the redesign speaks in, plus the weekday name. (The two visible native selects were left un-unified on purpose —
 they share almost nothing real; see `decisions.md`, D77.)
@@ -158,8 +158,8 @@ hardened renderer), `web/dist/` (built app served by FastAPI).
 - Every backend doc owns the behaviour its screen projects — **Tickets & the gates**
   (`tickets-and-gates.md`), **Days** (`days.md`), **Sprints** (`sprints.md`),
   **Backlog & Ideas** (`backlog-and-ideas.md`), **Chat** (`chat.md`).
-- **Ticket types** (`ticket-types.md`) — the served manifest the ticket screen turns
-  into a per-type lifecycle to render each ticket's stages and type pill.
+- **Worker types** (`worker-types.md`) — the served manifest the Ticket screen turns
+  into a per-Worker-type lifecycle to render each Ticket's Stages and Worker type pill.
 - **Projects** (`projects.md`) — the shared project selector resource.
 - **`DESIGN.md`** (repo root) — the visual language the tokens implement.
 

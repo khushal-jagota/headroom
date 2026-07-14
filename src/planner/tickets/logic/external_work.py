@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING
 from planner.core.contracts import ErrorCode, EventKind, PlannerError
 from planner.tickets.contracts import (
     AtCap,
+    CodingStage,
     FieldSlot,
     Ticket,
-    TicketState,
 )
 from planner.tickets.logic import admission, coding_bridge, fields_codec, machine
 from planner.tickets.logic.decisions import Decision, EventSpec
@@ -35,18 +35,18 @@ def _gate_field_order(defn: WorkflowDefinition) -> tuple[str, ...]:
     )
 
 
-def _prefix_count(defn: WorkflowDefinition, target_state: str) -> int:
-    """The number of settled fields a ``target_state`` requires: its index in the
-    linear stage order. ``state_index`` counts ``needs_kickoff``=0, the first worker
-    stage=1, … so ``state_index(target)`` IS the settled-field count (kickoff through
+def _prefix_count(defn: WorkflowDefinition, target_stage: str) -> int:
+    """The number of settled fields a ``target_stage`` requires: its index in the
+    linear stage order. ``stage_index`` counts ``needs_kickoff``=0, the first worker
+    stage=1, … so ``stage_index(target)`` IS the settled-field count (kickoff through
     the field gating the stage before ``target``). Reproduces coding's map exactly
     (needs_success:1 … done:6)."""
-    return coding_bridge.views.state_index(defn, target_state)
+    return coding_bridge.views.stage_index(defn, target_stage)
 
 
 def decide_external_work(
     ticket: Ticket,
-    target_state: str,
+    target_stage: str,
     provided_values: Mapping[str, str],
     *,
     definition: WorkflowDefinition | None = None,
@@ -66,24 +66,24 @@ def decide_external_work(
         raise PlannerError(
             ErrorCode.validation,
             "type does not support external-work prefix reconciliation",
-            {"type_id": defn.type_id},
+            {"worker_type": defn.type_id},
         )
     field_order = _gate_field_order(defn)
-    if str(target_state) not in coding_bridge.views.ceiling_range(defn):
+    if str(target_stage) not in coding_bridge.views.ceiling_range(defn):
         raise PlannerError(
             ErrorCode.validation,
-            "external work target must be a linear ticket state",
-            {"state": str(target_state)},
+            "external work target must be a linear ticket stage",
+            {"stage": str(target_stage)},
         )
-    if ticket.state == TicketState.dropped:
+    if ticket.stage == CodingStage.dropped:
         raise PlannerError(ErrorCode.validation, "dropped is terminal")
-    if machine.state_index(target_state, definition=defn) < machine.state_index(
-        ticket.state, definition=defn
+    if machine.stage_index(target_stage, definition=defn) < machine.stage_index(
+        ticket.stage, definition=defn
     ):
         raise PlannerError(
             ErrorCode.validation,
             "external work reconciliation cannot move backward",
-            {"from": str(ticket.state), "to": str(target_state)},
+            {"from_stage": str(ticket.stage), "to_stage": str(target_stage)},
         )
 
     for field in field_order:
@@ -95,7 +95,7 @@ def decide_external_work(
                 {"field": field},
             )
 
-    expected_count = _prefix_count(defn, str(target_state))
+    expected_count = _prefix_count(defn, str(target_stage))
     new_fields = ticket.fields
     value_events: list[EventSpec] = []
     for index, field in enumerate(field_order):
@@ -108,16 +108,16 @@ def decide_external_work(
             if final_value is None:
                 raise PlannerError(
                     ErrorCode.validation,
-                    "target state requires a settled field prefix",
-                    {"state": str(target_state), "field": field},
+                    "target stage requires a settled field prefix",
+                    {"stage": str(target_stage), "field": field},
                 )
             admission.validate_body(final_value, f"{field} value")
         else:
             if provided is not None or slot.value is not None:
                 raise PlannerError(
                     ErrorCode.validation,
-                    "target state forbids settled values beyond its prefix",
-                    {"state": str(target_state), "field": field},
+                    "target stage forbids settled values beyond its prefix",
+                    {"stage": str(target_stage), "field": field},
                 )
             final_value = None
         if final_value != slot.value:
@@ -135,26 +135,26 @@ def decide_external_work(
             )
 
     position_events: list[EventSpec] = []
-    new_state: str | None = None
-    if str(target_state) != str(ticket.state):
-        new_state = str(target_state)
+    new_stage: str | None = None
+    if str(target_stage) != str(ticket.stage):
+        new_stage = str(target_stage)
         position_events.append(
             EventSpec(
-                EventKind.state_changed,
+                EventKind.stage_changed,
                 {
-                    "from": str(ticket.state),
-                    "to": str(target_state),
+                    "from_stage": str(ticket.stage),
+                    "to_stage": str(target_stage),
                     "cause": CAUSE_EXTERNAL_WORK,
                 },
             )
         )
-    scope_changes = str(ticket.ceiling) != str(target_state) or ticket.at_cap != AtCap.stop
+    scope_changes = str(ticket.ceiling) != str(target_stage) or ticket.at_cap != AtCap.stop
     if scope_changes:
         position_events.append(
             EventSpec(
                 EventKind.scope_changed,
                 {
-                    "ceiling": str(target_state),
+                    "ceiling": str(target_stage),
                     "at_cap": AtCap.stop.value,
                     "cause": CAUSE_EXTERNAL_WORK,
                 },
@@ -165,8 +165,8 @@ def decide_external_work(
         Decision(events=tuple(value_events), new_fields=new_fields),
         Decision(
             events=tuple(position_events),
-            new_state=new_state,
-            new_ceiling=str(target_state) if scope_changes else None,
+            new_stage=new_stage,
+            new_ceiling=str(target_stage) if scope_changes else None,
             new_at_cap=AtCap.stop if scope_changes else None,
         ),
     )

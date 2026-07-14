@@ -11,7 +11,7 @@ export type FieldStageVisualState =
   | "errored"
   | "upcoming";
 
-export function stateLabel(value: string): string {
+export function stageLabel(value: string): string {
   return String(value).replace(/_/g, " ");
 }
 
@@ -30,10 +30,10 @@ export function fieldSlot(detail: TicketDetail, name: string): TicketField {
 }
 
 // The per-field visual-state input. The classifier that consumes it now lives in
-// lifecycle.ts (ticketStageVisualStateFor), keyed on the type's manifest-derived
+// lifecycle.ts (ticketStageVisualStateFor), keyed on the Worker type's manifest-derived
 // lifecycle; this shape stays here as the shared input contract.
 export type TicketStageVisualInput = {
-  ticketState: string;
+  ticketStage: string;
   ticketStatus?: string | null;
   fieldName: string;
   fieldHasProposal?: boolean;

@@ -5,9 +5,9 @@ the engine reads no lifecycle constant for its decisions (A), the codec is
 definition-validated yet lenient on unknown extras (B), the linear-order lookups
 are string-id-native and two definitions flow through the engine at once (C), the
 note write-path validates the field and stays a non-writer of canonical position
-(E), and canonical state/ceiling/at_cap flow only through _apply_decision (D).
+(E), and canonical stage/ceiling/at_cap flow only through _apply_decision (D).
 
-The synthetic definition uses stage/field ids that are NOT TicketState/FieldName
+The synthetic definition uses stage/field ids that are NOT CodingStage/FieldName
 members, built with "".join(...) so CPython interning cannot mask a surviving
 identity comparison. The typing cases (F) are machine-checked by the repo's strict
 mypy run over this file (reported separately by the implementer's gate).
@@ -38,11 +38,11 @@ from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     TITLE_MAX_CHARS,
     AtCap,
+    CodingStage,
     FieldName,
     FieldSlot,
     Proposal,
     TicketFields,
-    TicketState,
 )
 from planner.tickets.logic import coding_bridge, fields_codec, machine
 
@@ -114,7 +114,12 @@ def _machine_import_names() -> set[str]:
 
 def test_machine_imports_no_lifecycle_order_constants() -> None:
     imported = _machine_import_names()
-    for forbidden in ("STATE_ORDER", "WORKER_STATE_ORDER", "GATING_FIELD", "ADVANCE_TARGET"):
+    for forbidden in (
+        "CODING_STAGE_ORDER",
+        "CODING_EMPLOYEE_STAGE_ORDER",
+        "CODING_GATING_FIELD_BY_STAGE",
+        "CODING_NEXT_STAGE_BY_STAGE",
+    ):
         assert forbidden not in imported, f"machine.py must not import {forbidden}"
     assert "coding_bridge" in imported
 
@@ -152,7 +157,7 @@ def _six_slot_payload() -> dict[str, object]:
 
 def test_codec_lenient_on_unknown_extra_top_level_keys() -> None:
     payload = _six_slot_payload()
-    payload["result"] = "legacy value"          # the live-data legacy key
+    payload["result"] = "legacy value"  # the live-data legacy key
     payload["audit"] = {"who": "someone"}
     parsed = fields_codec.fields_from_json(json.dumps(payload), coding_bridge.coding_definition())
     assert fields_codec.get_slot(parsed, "kickoff").value == "k"
@@ -162,7 +167,7 @@ def test_codec_lenient_on_unknown_extra_top_level_keys() -> None:
 
 def test_codec_requires_each_declared_field() -> None:
     payload = _six_slot_payload()
-    del payload["closeout"]                      # a declared field missing
+    del payload["closeout"]  # a declared field missing
     with pytest.raises(PlannerError) as exc:
         fields_codec.fields_from_json(json.dumps(payload), coding_bridge.coding_definition())
     assert exc.value.code == ErrorCode.validation
@@ -184,16 +189,24 @@ def test_codec_round_trips_declared_fields() -> None:
     assert fields_codec.get_slot(parsed, "success").proposal.body == "p"
 
 
-def test_codec_default_definition_matches_explicit_coding() -> None:
+def test_codec_without_definition_decodes_the_stored_field_map() -> None:
     fields = fields_codec.with_slot(
         TicketFields.empty(coding_bridge.field_ids(coding_bridge.coding_definition())),
         "kickoff",
         FieldSlot(value="k"),
     )
-    raw = fields_codec.fields_to_json(fields)
+    payload = json.loads(fields_codec.fields_to_json(fields))
+    payload["stored_extra"] = {
+        "value": "preserved",
+        "proposal": None,
+        "user_note": None,
+    }
+    raw = json.dumps(payload)
     one_arg = fields_codec.fields_from_json(raw)
     explicit = fields_codec.fields_from_json(raw, coding_bridge.coding_definition())
-    assert one_arg == explicit
+    assert tuple(one_arg.slots) == (*tuple(explicit.slots), "stored_extra")
+    assert fields_codec.get_slot(one_arg, "stored_extra").value == "preserved"
+    assert "stored_extra" not in explicit.slots
 
 
 def test_codec_decodes_each_declared_value_not_only_presence() -> None:
@@ -228,7 +241,7 @@ def test_codec_decodes_non_coding_field_set() -> None:
 
 def test_views_operate_on_non_enum_synthetic_ids() -> None:
     _build_synthetic()
-    assert views.state_index(SYNTHETIC, _A) == 1
+    assert views.stage_index(SYNTHETIC, _A) == 1
     assert views.advance_target(SYNTHETIC, _A) == _B
     assert views.advance_target(SYNTHETIC, _B) == "done"
     assert views.gating_field(SYNTHETIC, _A) == _FA
@@ -242,10 +255,10 @@ def test_views_operate_on_non_enum_synthetic_ids() -> None:
 def test_machine_advance_target_returns_bare_string_for_foreign_id() -> None:
     _build_synthetic()
     result = machine.advance_target(_A, definition=SYNTHETIC)
-    # _as_state("needs_beta") raises TicketState(...), so a bare str comes back.
+    # _as_state("needs_beta") raises CodingStage(...), so a bare str comes back.
     assert type(result) is str
     assert result == _B
-    assert result != TicketState.done
+    assert result != CodingStage.done
 
 
 def test_machine_gating_field_returns_bare_string_for_foreign_id() -> None:
@@ -259,7 +272,7 @@ def test_machine_tier1_lookups_on_synthetic_ids() -> None:
     _build_synthetic()
     assert machine.is_terminal(_A, definition=SYNTHETIC) is False
     assert machine.is_terminal("done", definition=SYNTHETIC) is True
-    assert machine.state_index(_A, definition=SYNTHETIC) == 1
+    assert machine.stage_index(_A, definition=SYNTHETIC) == 1
     assert machine.at_or_beyond_ceiling(_A, _A, definition=SYNTHETIC) is True
 
 
@@ -267,7 +280,7 @@ def test_auto_accept_target_survives_interning_on_synthetic_field() -> None:
     # The surviving-`is` regression guard for machine.py's `field != gating_field(...)`.
     # gating_field returns the definition's STORED _FA object; the call-site arg must
     # be an equal-but-DISTINCT object so a restored `field is not gating_field(...)`
-    # would wrongly return None and fail this test. Same for the state arg.
+    # would wrongly return None and fail this test. Same for the stage arg.
     _build_synthetic()
     call_state = "".join(("needs_", "alpha"))
     call_field = "".join(("al", "pha"))
@@ -293,12 +306,12 @@ def test_admission_accepts_foreign_gate_generically() -> None:
     with pytest.raises(PlannerError) as exc:
         admission.check_agent_proposal(_A, _A, AtCap.propose, _FB, definition=SYNTHETIC)
     assert exc.value.code == ErrorCode.validation
-    assert exc.value.detail == {"field": _FB, "gating_field": _FA, "state": _A}
+    assert exc.value.detail == {"field": _FB, "gating_field": _FA, "stage": _A}
 
 
 def test_has_pending_gating_proposal_reads_foreign_gate_generically() -> None:
     # t_tt02b: the machine reads the type's OWN gate slot generically. For SYNTHETIC at
-    # state _A the gate is _FA; a proposal parked on the _FA slot is seen as pending,
+    # stage _A the gate is _FA; a proposal parked on the _FA slot is seen as pending,
     # never silently mis-routed to a coding slot. A bare-str gate flows without error.
     _build_synthetic()
     fields = fields_codec.with_slot(
@@ -318,9 +331,9 @@ def test_two_definitions_flow_through_engine_at_once() -> None:
     # genuinely N-ary, not a single global definition.
     _build_synthetic()
     assert machine.advance_target(_A, definition=SYNTHETIC) == _B
-    assert machine.advance_target(TicketState.needs_success) is TicketState.needs_approach
+    assert machine.advance_target(CodingStage.needs_success) is CodingStage.needs_approach
     assert machine.advance_target(_B, definition=SYNTHETIC) == "done"
-    assert machine.advance_target(TicketState.needs_closeout) is TicketState.done
+    assert machine.advance_target(CodingStage.needs_closeout) is CodingStage.done
 
 
 # =====================================================================
@@ -328,13 +341,13 @@ def test_two_definitions_flow_through_engine_at_once() -> None:
 # =====================================================================
 
 
-_CANONICAL_COL_WRITE = re.compile(r"\b(state|ceiling|at_cap)\s*=", re.IGNORECASE)
+_CANONICAL_COL_WRITE = re.compile(r"\b(stage|ceiling|at_cap)\s*=", re.IGNORECASE)
 
 
 def test_only_apply_decision_writes_canonical_position() -> None:
-    """state/ceiling/at_cap columns are written only inside _apply_decision.
+    """stage/ceiling/at_cap columns are written only inside _apply_decision.
 
-    Whitespace-insensitive: `SET state=?` (no space) must not evade the guard."""
+    Whitespace-insensitive: `SET stage=?` (no space) must not evade the guard."""
     tree = ast.parse(_DATA_PY.read_text(), filename=str(_DATA_PY))
     offenders: list[str] = []
     for node in ast.walk(tree):
@@ -372,8 +385,9 @@ def fake_clock() -> TestClock:
 def _seed_ticket_past_success(conn: Connection, now: int) -> str:
     ticket = tickets_data.create_ticket_from_external_work(
         conn,
+        worker_type="coding",
         title="Note target",
-        target_state=TicketState.needs_approach,
+        target_stage=CodingStage.needs_approach,
         provided_values={FieldName.success: "success value"},
         actor="human",
         now=now,
@@ -412,15 +426,13 @@ def test_note_on_undeclared_field_rejected_no_side_effect(
 
     after = tickets_data.read_ticket(tmp_db, ticket_id)
     assert after.fields == before.fields
-    assert after.state == before.state
+    assert after.stage == before.stage
     assert after.ceiling == before.ceiling
     assert after.at_cap == before.at_cap
     assert _event_count(tmp_db, ticket_id) == before_events
 
 
-def test_valid_note_changes_only_user_note(
-    tmp_db: Connection, fake_clock: TestClock
-) -> None:
+def test_valid_note_changes_only_user_note(tmp_db: Connection, fake_clock: TestClock) -> None:
     now = fake_clock.now_unix()
     ticket_id = _seed_ticket_past_success(tmp_db, now)
     before = tickets_data.read_ticket(tmp_db, ticket_id)
@@ -446,7 +458,7 @@ def test_valid_note_changes_only_user_note(
     assert fields_codec.get_slot(updated.fields, "success") == fields_codec.get_slot(
         before.fields, "success"
     )
-    assert updated.state == before.state
+    assert updated.stage == before.stage
     assert updated.ceiling == before.ceiling
     assert updated.at_cap == before.at_cap
     assert _event_count(tmp_db, ticket_id) == before_events + 1
@@ -460,5 +472,5 @@ def test_valid_note_changes_only_user_note(
 # assert_type is a runtime no-op, so keeping the cases here would give false
 # confidence; the dedicated mypy gate makes them genuinely enforced. Production
 # caller-narrowing is additionally enforced by `mypy src/` (widening
-# resolve_scope.new_state or the enum overload would fail at the machine.py call
+# resolve_scope.new_stage or the enum overload would fail at the machine.py call
 # sites).

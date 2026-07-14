@@ -23,8 +23,7 @@ from planner.files.logic.paths import resolve_chat_file
 from planner.tickets.data import create_ticket
 
 PNG = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLv"
-    "AAAAAElFTkSuQmCC"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
 )
 GIF = base64.b64decode("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==")
 WEBP = base64.b64decode("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEAAUAmJaQAA3AA/vuU")
@@ -78,7 +77,12 @@ def _ticket(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
         return create_ticket(
-            conn, title="Image chat", actor="human", now=0, title_max_chars=200
+            conn,
+            worker_type="coding",
+            title="Image chat",
+            actor="human",
+            now=0,
+            title_max_chars=200,
         ).id
     finally:
         conn.close()
@@ -171,9 +175,7 @@ def test_chat_image_publication_cleans_oversize_and_interrupted_temp_files(tmp_p
     db_path = tmp_path / "data" / "planning.db"
 
     with pytest.raises(ValueError, match="too large"):
-        asyncio.run(
-            store_chat_image(db_path, "t_image123", _chunks(PNG), "image.png", max_bytes=8)
-        )
+        asyncio.run(store_chat_image(db_path, "t_image123", _chunks(PNG), "image.png", max_bytes=8))
 
     async def interrupted() -> AsyncIterator[bytes]:
         yield PNG[:8]
@@ -373,8 +375,7 @@ def test_chat_turn_accepts_same_entity_image_and_keeps_transcript_reference(tmp_
             raise AssertionError(state)
 
     expected_paths = tuple(
-        (db_path.parent / image["reference"].lstrip("/")).resolve(strict=True)
-        for image in uploaded
+        (db_path.parent / image["reference"].lstrip("/")).resolve(strict=True) for image in uploaded
     )
     assert calls == [("What is shown?", expected_paths)]
     assert state["messages"][0]["text"] == (
@@ -481,11 +482,17 @@ def test_chat_turn_rejects_non_owned_or_unsafe_image_before_creating_turn(tmp_pa
 
     conn = connect(str(db_path))
     try:
-        assert conn.execute(
-            "SELECT COUNT(*) FROM chat_turns WHERE entity_id IN (?, ?)", (route_id, owner_id)
-        ).fetchone()[0] == 0
-        assert conn.execute(
-            "SELECT COUNT(*) FROM chat_messages WHERE entity_id IN (?, ?)", (route_id, owner_id)
-        ).fetchone()[0] == 0
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM chat_turns WHERE entity_id IN (?, ?)", (route_id, owner_id)
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM chat_messages WHERE entity_id IN (?, ?)", (route_id, owner_id)
+            ).fetchone()[0]
+            == 0
+        )
     finally:
         conn.close()

@@ -19,7 +19,7 @@ _CANDIDATE_SQL = (
     "SELECT t.id FROM tickets t "
     "JOIN day_tickets dt ON dt.ticket_id = t.id "
     "WHERE dt.day_id = ? "
-    "AND t.ticket_status = 'empty' AND t.state NOT IN ('done','dropped')"
+    "AND t.ticket_status = 'empty' AND t.stage NOT IN ('done','dropped')"
 )
 
 

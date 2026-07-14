@@ -4,11 +4,11 @@ type, not a global enum.
 Drives both a ``coding`` ticket (byte-identical to today) and a ``probe`` ticket
 through the in-process API, asserting the exact validation codes per type:
 - a field foreign to the type is rejected with the type-scoped payload;
-- a ceiling / state foreign to the type is rejected with the right code;
-- a coding ticket still accepts coding fields/states (no regression);
-- a probe proposal parks on the field the registry gates for its state.
-Plus the ``?state=`` filter decision (reserved bookends cross-type; a non-reserved
-state requires ticket_type).
+- a ceiling / stage foreign to the type is rejected with the right code;
+- a coding ticket still accepts coding fields/stages (no regression);
+- a probe proposal parks on the field the registry gates for its stage.
+Plus the ``?stage=`` filter decision: Stage is stored data, so listing compares it
+directly without resolving a Worker type.
 """
 
 from __future__ import annotations
@@ -54,9 +54,9 @@ def app_db(tmp_path: Path):
     return create_app(config, build_clock(config), build_adapters(config), conn_factory), db_path
 
 
-def _create(client: TestClient, ticket_type: str) -> str:
+def _create(client: TestClient, worker_type: str) -> str:
     r = client.post(
-        "/api/tickets", json={"title": ticket_type, "type": ticket_type, "kickoff_note": "k"}
+        "/api/tickets", json={"title": worker_type, "worker_type": worker_type, "kickoff_note": "k"}
     )
     assert r.status_code == 200, r.json()
     return r.json()["id"]
@@ -87,7 +87,7 @@ def test_coding_ticket_rejects_probe_field(app_db, probe_installed: None) -> Non
         assert r.status_code == 400
         assert r.json()["error"]["code"] == "validation"
         assert r.json()["error"]["message"] == "unknown ticket field"
-        assert r.json()["error"]["detail"] == {"field": "alpha", "type_id": "coding"}
+        assert r.json()["error"]["detail"] == {"field": "alpha", "worker_type": "coding"}
 
 
 def test_coding_ticket_rejects_probe_ceiling(app_db, probe_installed: None) -> None:
@@ -115,7 +115,7 @@ def test_accept_rejects_foreign_field_and_foreign_next_ceiling(
         )
         assert bad_field.status_code == 400
         assert bad_field.json()["error"]["code"] == "validation"
-        assert bad_field.json()["error"]["detail"] == {"field": "success", "type_id": "probe"}
+        assert bad_field.json()["error"]["detail"] == {"field": "success", "worker_type": "probe"}
         # A foreign next_ceiling (coding's needs_plan) on the probe kickoff accept is
         # rejected against probe's ceiling range.
         bad_ceiling = client.post(
@@ -127,7 +127,7 @@ def test_accept_rejects_foreign_field_and_foreign_next_ceiling(
         assert bad_ceiling.json()["error"]["detail"] == {"next_ceiling": "needs_plan"}
 
 
-# --- probe ingress: per-type field / ceiling / state ---------------------------
+# --- probe ingress: per-type field / ceiling / stage ---------------------------
 
 
 def test_probe_proposal_parks_on_registry_selected_field(app_db, probe_installed: None) -> None:
@@ -156,25 +156,25 @@ def test_probe_rejects_coding_field_value_edit(app_db, probe_installed: None) ->
         r = client.put(f"/api/tickets/{tid}/value/success", json={"body": "x"})
         assert r.status_code == 400
         assert r.json()["error"]["code"] == "validation"
-        assert r.json()["error"]["detail"] == {"field": "success", "type_id": "probe"}
+        assert r.json()["error"]["detail"] == {"field": "success", "worker_type": "probe"}
 
 
 def test_probe_rejects_coding_state_and_note_field(app_db, probe_installed: None) -> None:
     app, _db = app_db
     with TestClient(app) as client:
         tid = _create(client, "probe")
-        state = client.post(f"/api/tickets/{tid}/state", json={"to": "needs_plan"})
-        assert state.status_code == 400
-        assert state.json()["error"]["message"] == "state outside the linear order"
+        stage = client.post(f"/api/tickets/{tid}/stage", json={"to_stage": "needs_plan"})
+        assert stage.status_code == 400
+        assert stage.json()["error"]["message"] == "stage outside the linear order"
         note = client.put(
             f"/api/tickets/{tid}/notes/plan", json={"user_note": "x"}
         )
         assert note.status_code == 400
-        assert note.json()["error"]["detail"] == {"field": "plan", "type_id": "probe"}
+        assert note.json()["error"]["detail"] == {"field": "plan", "worker_type": "probe"}
 
 
 def test_probe_accepts_its_own_state_via_direct_state(app_db, probe_installed: None) -> None:
-    # /state must stop rejecting probe stages: advancing directly to needs_beta from
+    # /stage must stop rejecting probe stages: advancing directly to needs_beta from
     # needs_alpha is a valid probe stage jump (kickoff first settled so it's non-kickoff).
     app, _db = app_db
     with TestClient(app) as client:
@@ -184,50 +184,45 @@ def test_probe_accepts_its_own_state_via_direct_state(app_db, probe_installed: N
             json={"next_ceiling": "done", "at_cap": "propose"},
         )
         jumped = client.post(
-            f"/api/tickets/{tid}/state", json={"to": "needs_beta"}
+            f"/api/tickets/{tid}/stage", json={"to_stage": "needs_beta"}
         )
         assert jumped.status_code == 200, jumped.json()
-        assert jumped.json()["state"] == "needs_beta"
+        assert jumped.json()["stage"] == "needs_beta"
 
 
-# --- the ?state= filter decision -----------------------------------------------
+# --- the ?stage= filter decision -----------------------------------------------
 
 
-def test_state_filter_reserved_bookends_need_no_type(app_db, probe_installed: None) -> None:
+def test_stage_filter_compares_stored_values_directly(app_db, probe_installed: None) -> None:
     app, _db = app_db
     with TestClient(app) as client:
         _create(client, "coding")
         _create(client, "probe")
         for reserved in ("needs_kickoff", "done", "dropped"):
-            r = client.get(f"/api/tickets?state={reserved}")
+            r = client.get(f"/api/tickets?stage={reserved}")
             assert r.status_code == 200, r.json()
         # Both fresh tickets sit at needs_kickoff, so that bookend returns both.
-        both = client.get("/api/tickets?state=needs_kickoff").json()["tickets"]
+        both = client.get("/api/tickets?stage=needs_kickoff").json()["tickets"]
         assert len(both) == 2
 
 
-def test_state_filter_non_reserved_requires_type(app_db, probe_installed: None) -> None:
+def test_stage_filter_non_reserved_needs_no_worker_type(app_db, probe_installed: None) -> None:
     app, _db = app_db
     with TestClient(app) as client:
         _create(client, "coding")
-        # A non-reserved state with no ticket_type is ambiguous -> validation.
-        r = client.get("/api/tickets?state=needs_success")
-        assert r.status_code == 400
-        assert r.json()["error"]["code"] == "validation"
-        assert r.json()["error"]["detail"] == {"state": "needs_success"}
-        # With the right type it validates and filters. Advance the coding ticket to
+        # A non-reserved stage filters directly. Advance the coding ticket to
         # needs_success so the filter returns exactly it.
-        made = client.get("/api/tickets?state=needs_kickoff&ticket_type=coding").json()["tickets"]
+        made = client.get("/api/tickets?stage=needs_kickoff").json()["tickets"]
         assert len(made) == 1
         tid = made[0]["id"]
         client.post(
             f"/api/tickets/{tid}/accept/kickoff",
             json={"next_ceiling": "needs_success", "at_cap": "stop"},
         )
-        ok = client.get("/api/tickets?state=needs_success&ticket_type=coding")
+        ok = client.get("/api/tickets?stage=needs_success")
         assert ok.status_code == 200, ok.json()
         assert [t["id"] for t in ok.json()["tickets"]] == [tid]
-        # A state foreign to the named type -> validation.
-        foreign = client.get("/api/tickets?state=needs_alpha&ticket_type=coding")
-        assert foreign.status_code == 400
-        assert foreign.json()["error"]["message"] == "state outside the linear order"
+        # An unknown stored value is a valid filter and returns no rows.
+        unknown = client.get("/api/tickets?stage=needs_ghost")
+        assert unknown.status_code == 200
+        assert unknown.json()["tickets"] == []

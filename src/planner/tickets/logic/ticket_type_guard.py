@@ -2,7 +2,7 @@
 seed, and the startup audit (t_tt02).
 
 ``resolve_and_validate`` is the one place that decides whether a stored
-``(ticket_type, state, ceiling)`` triple is registry-valid. Every persistence door
+``(worker_type, stage, ceiling)`` triple is registry-valid. Every persistence door
 and the startup audit call it, so "valid" has exactly one definition and cannot
 drift between the read path and the audit.
 
@@ -13,7 +13,7 @@ missing declared field or a malformed slot and LENIENT on extra top-level keys
 decode through the codec with the definition this function returns, so the two
 share one policy by construction.
 
-F6-safe: imports only the ``coding_bridge`` seam, never ``ticket_types``."""
+F6-safe: imports only the ``coding_bridge`` seam, never ``worker_types``."""
 
 from __future__ import annotations
 
@@ -27,26 +27,26 @@ if TYPE_CHECKING:
 
 
 def resolve_and_validate(
-    ticket_type: str, *, state: str, ceiling: str
+    worker_type: str, *, stage: str, ceiling: str
 ) -> WorkflowDefinition:
-    """Resolve the type's definition and validate the row's ``state`` and ``ceiling``
+    """Resolve the type's definition and validate the row's ``stage`` and ``ceiling``
     against it. Returns the definition for the caller to thread onward (codec + engine).
 
     Raises ``PlannerError`` on:
-    - unknown ``ticket_type`` (``not_found``) — the registry door;
-    - ``state`` that is neither a linear stage nor the reserved ``dropped``
-      (``validation``, "state outside the linear order");
+    - unknown ``worker_type`` (``not_found``) — the registry door;
+    - ``stage`` that is neither a linear stage nor the reserved ``dropped``
+      (``validation``, "stage outside the linear order");
     - ``ceiling`` outside the type's ceiling range (``scope_invalid``)."""
-    defn = coding_bridge.require(ticket_type)
-    # A linear state resolves an index; the exceptional terminal ``dropped`` is
+    defn = coding_bridge.require(worker_type)
+    # A linear stage resolves an index; the exceptional terminal ``dropped`` is
     # accepted explicitly (it is outside the linear order). Any other id raises
-    # "state outside the linear order" from the views.
-    if state != defn.dropped_stage.id:
-        coding_bridge.views.state_index(defn, state)
+    # "stage outside the linear order" from the views.
+    if stage != defn.dropped_stage.id:
+        coding_bridge.views.stage_index(defn, stage)
     if ceiling not in coding_bridge.views.ceiling_range(defn):
         raise PlannerError(
             ErrorCode.scope_invalid,
             "ceiling outside the type's range",
-            {"type_id": ticket_type, "ceiling": ceiling},
+            {"worker_type": worker_type, "ceiling": ceiling},
         )
     return defn

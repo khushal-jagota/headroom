@@ -30,21 +30,21 @@ def _file(tmp_path: Path, name: str, text: str) -> str:
     return str(path)
 
 
-def test_chief_external_work_help_lists_state_and_type_options(server) -> None:
-    # --state is now a free-form option (validated server-side per type), so --help no
-    # longer enumerates coding's states; both external-work commands still surface the
-    # --state option, and create surfaces the required --type option.
+def test_chief_external_work_help_lists_stage_and_worker_type_options(server) -> None:
+    # --stage is now a free-form option (validated server-side per Worker type), so --help no
+    # longer enumerates coding.s Stages; both external-work commands still surface the
+    # --stage option, and create surfaces the required --worker-type option.
     for command in (
         "reconcile-ticket-from-external-work",
         "create-ticket-from-external-work",
     ):
         result = _run(server, "chief", command, "--help", actor=None)
         assert result.returncode == 0, result.stderr
-        assert "--state" in result.stdout
+        assert "--stage" in result.stdout
     create_help = _run(
         server, "chief", "create-ticket-from-external-work", "--help", actor=None
     )
-    assert "--type" in create_help.stdout
+    assert "--worker-type" in create_help.stdout
 
 
 def test_chief_external_work_cli_create_and_reconcile(server, tmp_path: Path) -> None:
@@ -62,9 +62,9 @@ def test_chief_external_work_cli_create_and_reconcile(server, tmp_path: Path) ->
         "create-ticket-from-external-work",
         "--title",
         "Imported through CLI",
-        "--type",
+        "--worker-type",
         "coding",
-        "--state",
+        "--stage",
         "needs_plan",
         "--kickoff-note-file",
         note,
@@ -78,14 +78,14 @@ def test_chief_external_work_cli_create_and_reconcile(server, tmp_path: Path) ->
     )
     assert created.returncode == 0, created.stderr
     created_json = json.loads(created.stdout)
-    assert created_json["state"] == "needs_plan"
+    assert created_json["stage"] == "needs_plan"
 
     reconciled = _run(
         server,
         "chief",
         "reconcile-ticket-from-external-work",
         created_json["id"],
-        "--state",
+        "--stage",
         "done",
         "--kickoff-note-file",
         note,
@@ -104,7 +104,7 @@ def test_chief_external_work_cli_create_and_reconcile(server, tmp_path: Path) ->
     assert reconciled.returncode == 0, reconciled.stderr
     reconciled_json = json.loads(reconciled.stdout)
     assert reconciled_json["id"] == created_json["id"]
-    assert reconciled_json["state"] == "done"
+    assert reconciled_json["stage"] == "done"
 
 
 def test_real_server_chief_external_work_terse_output_and_actor_rejection(
@@ -119,9 +119,9 @@ def test_real_server_chief_external_work_terse_output_and_actor_rejection(
         "create-ticket-from-external-work",
         "--title",
         "Terse import",
-        "--type",
+        "--worker-type",
         "coding",
-        "--state",
+        "--stage",
         "needs_success",
         "--kickoff-note-file",
         note,
@@ -133,7 +133,7 @@ def test_real_server_chief_external_work_terse_output_and_actor_rejection(
     assert "needs_success" in created.stdout
 
     ordinary = _run(
-        server, "ticket", "create", "--title", "To reconcile", "--type", "coding",
+        server, "ticket", "create", "--title", "To reconcile", "--worker-type", "coding",
         "--json", actor=None,
     )
     assert ordinary.returncode == 0, ordinary.stderr
@@ -156,7 +156,7 @@ def test_real_server_chief_external_work_terse_output_and_actor_rejection(
         "chief",
         "reconcile-ticket-from-external-work",
         ordinary_id,
-        "--state",
+        "--stage",
         "needs_approach",
         "--kickoff-note-file",
         note,
@@ -174,9 +174,9 @@ def test_real_server_chief_external_work_terse_output_and_actor_rejection(
         "create-ticket-from-external-work",
         "--title",
         "Rejected import",
-        "--type",
+        "--worker-type",
         "coding",
-        "--state",
+        "--stage",
         "needs_success",
         "--kickoff-note-file",
         note,

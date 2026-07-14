@@ -76,7 +76,7 @@ def _ticket_from_bullet(
 ) -> tuple[ParsedTicket | None, SkippedSection | None]:
     alias: str | None = None
     chat: str | None = None
-    state = None
+    stage = None
     priority: Priority | None = None
     success: str | None = None
     approach: str | None = None
@@ -91,7 +91,7 @@ def _ticket_from_bullet(
             elif label == "Chat ID":
                 chat = _field_value(child, value)
             elif label == "Readiness":
-                state = READINESS_MAP.get(value)
+                stage = READINESS_MAP.get(value)
             elif label == "Priority":
                 priority = resolve_priority(value, None)
             elif label == "Success":
@@ -103,7 +103,7 @@ def _ticket_from_bullet(
             # "Mode" is recognized-dropped.
             continue
         body_bullets.append(child)
-    if state is None:
+    if stage is None:
         return None, SkippedSection(
             source_file, "Tickets", REASON_NO_READINESS, excerpt_of(bullet.text)
         )
@@ -119,7 +119,7 @@ def _ticket_from_bullet(
         parts.append(reconstructed)
     ticket = ParsedTicket(
         title=bullet.text,
-        state=state,
+        stage=stage,
         priority=priority if priority is not None else Priority.P3,
         alias=alias,
         chat_session_key=chat,

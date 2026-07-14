@@ -13,7 +13,7 @@ Shape (contrasting coding at every free choice):
   -> ``needs_beta`` (gates ``beta``) -> ``done``; ``dropped`` is the reserved
   exceptional terminal. It shares only the universal ``needs_kickoff``/``kickoff``
   prefix and the ``done`` bookend; the middle stages/fields (``needs_alpha``/``alpha``,
-  ``needs_beta``/``beta``) are NOT ``TicketState``/``FieldName`` members — proving the
+  ``needs_beta``/``beta``) are NOT ``CodingStage``/``FieldName`` members — proving the
   engine is not enum-bound.
 - Fields (ordered): ``kickoff``, ``alpha``, ``beta``.
 - Ceiling range: ``needs_alpha`` -> ``needs_beta`` -> ``done``; default ceiling
@@ -84,8 +84,8 @@ PROBE_DEFINITION: WorkflowDefinition = WorkflowDefinition(
     # non-None transition-effect branch runs for a FOREIGN type.
     transition_hooks=(
         TransitionHook(
-            old_state=NEEDS_ALPHA,
-            new_state=NEEDS_BETA,
+            old_stage=NEEDS_ALPHA,
+            new_stage=NEEDS_BETA,
             implementer=Implementer.khushal.value,
             effect=TicketStatus.user_takeover.value,
         ),

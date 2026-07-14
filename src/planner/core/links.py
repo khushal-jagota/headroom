@@ -30,8 +30,8 @@ def _prefix(entity_id: str) -> str:
 
 
 def _ticket_is_active(conn: sqlite3.Connection, ticket_id: str) -> bool:
-    row = conn.execute("SELECT state FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
-    return row is not None and str(row["state"]) not in {"done", "dropped"}
+    row = conn.execute("SELECT stage FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+    return row is not None and str(row["stage"]) not in {"done", "dropped"}
 
 
 def _require_ticket(conn: sqlite3.Connection, entity_id: str, field: str) -> None:
@@ -66,7 +66,7 @@ def _active_successor_ids(conn: sqlite3.Connection, ticket_id: str) -> list[str]
         JOIN tickets source ON source.id = links.from_id
         WHERE links.from_id = ?
           AND links.kind = 'blocks'
-          AND source.state NOT IN ('done', 'dropped')
+          AND source.stage NOT IN ('done', 'dropped')
         ORDER BY links.to_id
         """,
         (ticket_id,),
@@ -175,7 +175,7 @@ def blocked_target_ids(conn: sqlite3.Connection) -> set[str]:
     rows = conn.execute(
         "SELECT DISTINCT l.to_id FROM links l "
         "JOIN tickets src ON src.id = l.from_id "
-        "WHERE l.kind = 'blocks' AND src.state NOT IN ('done', 'dropped')"
+        "WHERE l.kind = 'blocks' AND src.stage NOT IN ('done', 'dropped')"
     ).fetchall()
     return {str(row["to_id"]) for row in rows}
 
@@ -189,11 +189,11 @@ def blocker_summary(conn: sqlite3.Connection, entity_id: str) -> BlockerSummary:
     """Resolved active/read summary for the one Ticket relationship."""
     incoming_rows = conn.execute(
         """
-        SELECT source.id, source.title, source.state
+        SELECT source.id, source.title, source.stage
         FROM links
         JOIN tickets source ON source.id = links.from_id
         WHERE links.kind = 'blocks' AND links.to_id = ?
-        ORDER BY source.state NOT IN ('done', 'dropped') DESC,
+        ORDER BY source.stage NOT IN ('done', 'dropped') DESC,
           source.title COLLATE NOCASE,
           source.id
         """,
@@ -203,8 +203,8 @@ def blocker_summary(conn: sqlite3.Connection, entity_id: str) -> BlockerSummary:
         BlockedBySummaryRow(
             ticket_id=str(row["id"]),
             title=str(row["title"]),
-            state=str(row["state"]),
-            active=str(row["state"]) not in {"done", "dropped"},
+            stage=str(row["stage"]),
+            active=str(row["stage"]) not in {"done", "dropped"},
             href=f"#/ticket/{row['id']}",
         )
         for row in incoming_rows

@@ -43,9 +43,9 @@ await rm(dir, { recursive: true, force: true });
 // lifecycleFor is imported above from the REAL lifecycle.ts (not a copy) so Part B
 // exercises the production selector + memoization (Codex F6).
 
-// --- the coding manifest literal, exactly as GET /api/ticket-types serves it -----
+// --- the coding manifest literal, exactly as GET /api/worker-types serves it -----
 const codingManifest = {
-  type_id: "coding",
+  worker_type: "coding",
   label: "Coding",
   stages: [
     { id: "needs_kickoff", label: "Kickoff", gating_field: "kickoff", is_terminal: false },
@@ -94,7 +94,7 @@ const codingManifest = {
 // These are the retired constants, hardcoded here (NOT derived from the manifest) —
 // the assertion is that the manifest-built lifecycle reproduces them exactly.
 const OLD_FIELD_NAMES = ["kickoff", "success", "approach", "plan", "implementation", "closeout"];
-const OLD_STATE_ORDER = [
+const OLD_STAGE_ORDER = [
   "needs_kickoff",
   "needs_success",
   "needs_approach",
@@ -121,13 +121,22 @@ const OLD_ADVANCE = {
 };
 
 const coding = buildLifecycle(codingManifest);
+assert.equal(coding.workerType, "coding");
 assert.deepEqual(coding.fieldIds, OLD_FIELD_NAMES, "coding fieldIds == old FIELD_NAMES");
-assert.deepEqual(coding.stateOrder, OLD_STATE_ORDER, "coding stateOrder == old STATE_ORDER");
+assert.deepEqual(coding.stageOrder, OLD_STAGE_ORDER, "coding stageOrder == old STAGE_ORDER");
 assert.deepEqual(coding.gatingField, OLD_GATING_FIELD, "coding gatingField == old GATING_FIELD");
+assert.deepEqual(coding.gatedStage, {
+  kickoff: "needs_kickoff",
+  success: "needs_success",
+  approach: "needs_approach",
+  plan: "needs_plan",
+  implementation: "needs_implementation",
+  closeout: "needs_closeout"
+});
 assert.deepEqual(coding.advance, OLD_ADVANCE, "coding advance == old ADVANCE");
-assert.equal(coding.typeLabel, "Coding");
+assert.equal(coding.workerTypeLabel, "Coding");
 
-// The scope leash options keep the LOWERCASE stateLabel(id) labels ("needs success"),
+// The scope leash options keep the LOWERCASE stageLabel(id) labels ("needs success"),
 // NOT the manifest's capitalized stage.label — the mockup wording must not change.
 assert.deepEqual(ceilingOptionsFor(coding, "needs_success"), [
   { value: "needs_success", label: "needs success" },
@@ -137,7 +146,7 @@ assert.deepEqual(ceilingOptionsFor(coding, "needs_success"), [
   { value: "needs_closeout", label: "needs closeout" },
   { value: "done", label: "done" }
 ]);
-// A mid-range floor slices from that state.
+// A mid-range floor slices from that Stage.
 assert.deepEqual(ceilingOptionsFor(coding, "needs_plan"), [
   { value: "needs_plan", label: "needs plan" },
   { value: "needs_implementation", label: "needs implementation" },
@@ -159,7 +168,7 @@ assert.equal(fieldIsPassedFor(coding, "closeout", "needs_success"), false);
 // passed / done / upcoming).
 assert.equal(
   ticketStageVisualStateFor(coding, {
-    ticketState: "needs_success",
+    ticketStage: "needs_success",
     ticketStatus: "agent_running_step",
     fieldName: "success"
   }),
@@ -167,7 +176,7 @@ assert.equal(
 );
 assert.equal(
   ticketStageVisualStateFor(coding, {
-    ticketState: "needs_success",
+    ticketStage: "needs_success",
     ticketStatus: "errored",
     fieldName: "success"
   }),
@@ -175,7 +184,7 @@ assert.equal(
 );
 assert.equal(
   ticketStageVisualStateFor(coding, {
-    ticketState: "needs_success",
+    ticketStage: "needs_success",
     ticketStatus: "awaiting_approval",
     fieldName: "success"
   }),
@@ -183,7 +192,7 @@ assert.equal(
 );
 assert.equal(
   ticketStageVisualStateFor(coding, {
-    ticketState: "needs_success",
+    ticketStage: "needs_success",
     ticketStatus: "empty",
     fieldName: "success",
     fieldHasProposal: true
@@ -192,7 +201,7 @@ assert.equal(
 );
 assert.equal(
   ticketStageVisualStateFor(coding, {
-    ticketState: "needs_success",
+    ticketStage: "needs_success",
     ticketStatus: "empty",
     fieldName: "success"
   }),
@@ -200,7 +209,7 @@ assert.equal(
 );
 assert.equal(
   ticketStageVisualStateFor(coding, {
-    ticketState: "needs_approach",
+    ticketStage: "needs_approach",
     ticketStatus: "empty",
     fieldName: "success"
   }),
@@ -208,7 +217,7 @@ assert.equal(
 );
 assert.equal(
   ticketStageVisualStateFor(coding, {
-    ticketState: "done",
+    ticketStage: "done",
     ticketStatus: "empty",
     fieldName: "closeout"
   }),
@@ -216,7 +225,7 @@ assert.equal(
 );
 assert.equal(
   ticketStageVisualStateFor(coding, {
-    ticketState: "needs_success",
+    ticketStage: "needs_success",
     ticketStatus: "empty",
     fieldName: "closeout"
   }),
@@ -228,7 +237,7 @@ assert.equal(
   fieldStageVisualStateFor(
     coding,
     {
-      state: "needs_success",
+      stage: "needs_success",
       ticket_status: "empty",
       fields: { success: { proposal: { body: "x", proposed_by: "worker" } } }
     },
@@ -250,7 +259,7 @@ assert.deepEqual(ceilingOptionsFor(null, "needs_success"), []);
 assert.equal(fieldIsPassedFor(null, "success", "needs_approach"), false);
 assert.equal(
   ticketStageVisualStateFor(null, {
-    ticketState: "needs_success",
+    ticketStage: "needs_success",
     ticketStatus: "agent_running_step",
     fieldName: "success"
   }),
@@ -258,12 +267,12 @@ assert.equal(
 );
 assert.equal(recapVisibleFor(null, "needs_approach"), false);
 
-// --- Part B: a synthetic SECOND type proves the render logic is variable ----------
+// --- Part B: a synthetic SECOND Worker type proves the render logic is variable ---
 // research: needs_brief -> needs_findings -> needs_writeup -> done; fields brief/
 // findings/writeup. Routed through the real lookup+memoize (lifecycleFor), NOT
 // buildLifecycle(research) directly (Codex F6).
 const researchManifest = {
-  type_id: "research",
+  worker_type: "research",
   label: "Research",
   stages: [
     { id: "needs_brief", label: "Brief", gating_field: "brief", is_terminal: false },
@@ -287,16 +296,22 @@ const researchManifest = {
   worker_profile_id: "research-worker"
 };
 
-const response = { types: [codingManifest, researchManifest] };
+const response = { worker_types: [codingManifest, researchManifest] };
 const lc2 = lifecycleFor(response, "research");
 assert.ok(lc2, "lifecycleFor(response, 'research') resolves");
-assert.equal(lc2.typeLabel, "Research");
+assert.equal(lc2.workerType, "research");
+assert.equal(lc2.workerTypeLabel, "Research");
 assert.deepEqual(lc2.fieldIds, ["brief", "findings", "writeup"]);
-assert.deepEqual(lc2.stateOrder, ["needs_brief", "needs_findings", "needs_writeup", "done"]);
+assert.deepEqual(lc2.stageOrder, ["needs_brief", "needs_findings", "needs_writeup", "done"]);
 assert.deepEqual(lc2.gatingField, {
   needs_brief: "brief",
   needs_findings: "findings",
   needs_writeup: "writeup"
+});
+assert.deepEqual(lc2.gatedStage, {
+  brief: "needs_brief",
+  findings: "needs_findings",
+  writeup: "needs_writeup"
 });
 assert.equal(advanceTargetFor(lc2, "needs_brief", "done"), "needs_findings");
 assert.equal(advanceTargetFor(lc2, "needs_writeup", "done"), "done");
@@ -313,23 +328,23 @@ assert.equal(recapVisibleFor(lc2, "needs_findings"), false);
 assert.equal(recapVisibleFor(lc2, "needs_writeup"), true);
 assert.equal(
   ticketStageVisualStateFor(lc2, {
-    ticketState: "needs_findings",
+    ticketStage: "needs_findings",
     ticketStatus: "agent_running_step",
     fieldName: "findings"
   }),
   "current-running"
 );
 
-// The selector picks the right type: coding is unchanged, and building lc2 did not
+// The selector picks the right Worker type: coding is unchanged, and building lc2 did not
 // mutate it. (lifecycleFor(response,'coding') exercises the memo path too.)
 const codingViaLookup = lifecycleFor(response, "coding");
 assert.deepEqual(codingViaLookup.fieldIds, OLD_FIELD_NAMES);
 assert.deepEqual(codingViaLookup.gatingField, OLD_GATING_FIELD);
 assert.deepEqual(codingViaLookup.advance, OLD_ADVANCE);
-assert.equal(codingViaLookup.typeLabel, "Coding");
+assert.equal(codingViaLookup.workerTypeLabel, "Coding");
 // Memoization returns the same object on a repeat lookup.
 assert.equal(lifecycleFor(response, "research"), lc2);
-// An unknown type in a loaded response is null (distinct from "still loading").
+// An unknown Worker type in a loaded response is null (distinct from "still loading").
 assert.equal(lifecycleFor(response, "nope"), null);
 assert.equal(lifecycleFor(undefined, "coding"), null);
 

@@ -18,7 +18,13 @@ from planner.core.server import create_app
 from planner.projects import data as projects_data
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, WORKER_STATE_ORDER, AtCap, FieldName, TicketState
+from planner.tickets.contracts import (
+    CODING_EMPLOYEE_STAGE_ORDER,
+    NO_FURTHER,
+    AtCap,
+    CodingStage,
+    FieldName,
+)
 from planner.tickets.data import (
     create_ticket,
     file_proposal,
@@ -54,6 +60,7 @@ def _ordinary_ticket(db_path: Path) -> str:
     try:
         ticket = create_ticket(
             conn,
+            worker_type="coding",
             title="Existing work",
             actor="unattributed",
             now=1,
@@ -74,9 +81,9 @@ def _ordinary_ticket(db_path: Path) -> str:
 
 
 def _external_body(
-    state: TicketState, *, note: str = "External report and reasoning"
+    state: CodingStage, *, note: str = "External report and reasoning"
 ) -> dict[str, str]:
-    body = {"state": state.value, "kickoff_note": note}
+    body = {"stage": state.value, "kickoff_note": note}
     values = {
         "success": "Success settled",
         "approach": "Approach settled",
@@ -85,12 +92,12 @@ def _external_body(
         "closeout": "Closeout settled",
     }
     prefix_count = {
-        TicketState.needs_success: 0,
-        TicketState.needs_approach: 1,
-        TicketState.needs_plan: 2,
-        TicketState.needs_implementation: 3,
-        TicketState.needs_closeout: 4,
-        TicketState.done: 5,
+        CodingStage.needs_success: 0,
+        CodingStage.needs_approach: 1,
+        CodingStage.needs_plan: 2,
+        CodingStage.needs_implementation: 3,
+        CodingStage.needs_closeout: 4,
+        CodingStage.done: 5,
     }[state]
     body.update(dict(list(values.items())[:prefix_count]))
     return body
@@ -116,15 +123,15 @@ def test_both_external_work_routes_require_explicit_chief(
     with TestClient(app) as client:
         reconciled = client.post(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
-            json=_external_body(TicketState.needs_success),
+            json=_external_body(CodingStage.needs_success),
             headers=headers,
         )
         created = client.post(
             "/api/chief/tickets/from-external-work",
             json={
                 "title": "Imported",
-                "type": "coding",
-                **_external_body(TicketState.needs_success),
+                "worker_type": "coding",
+                **_external_body(CodingStage.needs_success),
             },
             headers=headers,
         )
@@ -134,24 +141,22 @@ def test_both_external_work_routes_require_explicit_chief(
     assert created.json()["error"]["code"] == "agent_forbidden"
 
 
-@pytest.mark.parametrize("state", WORKER_STATE_ORDER)
+@pytest.mark.parametrize("state", CODING_EMPLOYEE_STAGE_ORDER)
 def test_create_external_work_enforces_exact_settled_prefix_and_coherent_control(
-    tmp_path: Path, state: TicketState
+    tmp_path: Path, state: CodingStage
 ) -> None:
     app, _db_path = _make_app(tmp_path)
     body = {
         "title": f"Imported {state.value}",
-        "type": "coding",
+        "worker_type": "coding",
         "recap": "Imported recap",
         **_external_body(state),
     }
     with TestClient(app) as client:
-        response = client.post(
-            "/api/chief/tickets/from-external-work", json=body, headers=_CHIEF
-        )
+        response = client.post("/api/chief/tickets/from-external-work", json=body, headers=_CHIEF)
     assert response.status_code == 200, response.json()
     ticket = response.json()
-    assert ticket["state"] == state.value
+    assert ticket["stage"] == state.value
     assert ticket["ceiling"] == state.value
     assert ticket["at_cap"] == "stop"
     assert ticket["ticket_status"] == "empty"
@@ -171,24 +176,24 @@ def test_external_work_rejects_unknown_keys_and_prefix_mismatches_without_writes
         for forbidden in ("proposal", "fields", "ceiling", "at_cap", "ticket_status", "wat"):
             response = client.post(
                 f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
-                json={**_external_body(TicketState.needs_success), forbidden: "no"},
+                json={**_external_body(CodingStage.needs_success), forbidden: "no"},
                 headers=_CHIEF,
             )
             assert response.status_code == 400
             assert response.json()["error"]["code"] == "validation"
         missing = client.post(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
-            json={"state": "needs_plan", "kickoff_note": "note", "success": "yes"},
+            json={"stage": "needs_plan", "kickoff_note": "note", "success": "yes"},
             headers=_CHIEF,
         )
         future = client.post(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
-            json={**_external_body(TicketState.needs_success), "implementation": "too early"},
+            json={**_external_body(CodingStage.needs_success), "implementation": "too early"},
             headers=_CHIEF,
         )
         dropped = client.post(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
-            json={"state": "dropped", "kickoff_note": "note"},
+            json={"stage": "dropped", "kickoff_note": "note"},
             headers=_CHIEF,
         )
     assert [missing.status_code, future.status_code, dropped.status_code] == [400, 400, 400]
@@ -202,14 +207,14 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
             "/api/chief/tickets/from-external-work",
             json={
                 "title": "Forward",
-                "type": "coding",
-                **_external_body(TicketState.needs_implementation),
+                "worker_type": "coding",
+                **_external_body(CodingStage.needs_implementation),
             },
             headers=_CHIEF,
         ).json()
         backward = client.post(
             f"/api/chief/tickets/{made['id']}/reconcile-from-external-work",
-            json=_external_body(TicketState.needs_plan),
+            json=_external_body(CodingStage.needs_plan),
             headers=_CHIEF,
         )
     assert backward.status_code == 400
@@ -232,7 +237,7 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
     with TestClient(app) as client:
         pending = client.post(
             f"/api/chief/tickets/{pending_id}/reconcile-from-external-work",
-            json=_external_body(TicketState.needs_success),
+            json=_external_body(CodingStage.needs_success),
             headers=_CHIEF,
         )
     assert pending.status_code == 400
@@ -248,7 +253,7 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
         with TestClient(app) as client:
             response = client.post(
                 f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
-                json=_external_body(TicketState.needs_success),
+                json=_external_body(CodingStage.needs_success),
                 headers=_CHIEF,
             )
         assert response.status_code == 409
@@ -268,7 +273,7 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
     with TestClient(app) as client:
         running = client.post(
             f"/api/chief/tickets/{running_id}/reconcile-from-external-work",
-            json=_external_body(TicketState.needs_success),
+            json=_external_body(CodingStage.needs_success),
             headers=_CHIEF,
         )
     assert running.status_code == 409
@@ -287,17 +292,20 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
         conn.close()
 
     before = _events(db_path, ticket_id)
+
     class Rings:
         count = 0
+
         def ring(self) -> None:
             self.count += 1
+
     rings = Rings()
     app.state.readiness_doorbell = rings
     with TestClient(app) as client:
         invalid = client.post(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
             json={
-                "state": "needs_plan",
+                "stage": "needs_plan",
                 "kickoff_note": "new complete note",
                 "success": "valid first field",
                 "approach": "",
@@ -310,7 +318,7 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
             json={
                 "recap": "recap",
-                **_external_body(TicketState.needs_plan, note="new complete note"),
+                **_external_body(CodingStage.needs_plan, note="new complete note"),
             },
             headers=_CHIEF,
         )
@@ -320,13 +328,13 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
     assert ticket["ceiling"] == "needs_plan"
     assert ticket["at_cap"] == "stop"
     assert rings.count == 1
-    new_events = _events(db_path, ticket_id)[len(before):]
+    new_events = _events(db_path, ticket_id)[len(before) :]
     assert [kind for kind, _ in new_events] == [
         "field_value_edited",
         "field_value_edited",
         "field_value_edited",
         "recap_updated",
-        "state_changed",
+        "stage_changed",
         "scope_changed",
         "ticket_status_changed",
     ]
@@ -336,8 +344,8 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
         "approach",
     ]
     assert new_events[4][1] == {
-        "from": "needs_success",
-        "to": "needs_plan",
+        "from_stage": "needs_success",
+        "to_stage": "needs_plan",
         "cause": "external_work",
     }
     assert new_events[5][1] == {
@@ -349,10 +357,13 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
 
 def test_create_external_work_emits_exact_existing_events_and_rings(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
+
     class Rings:
         count = 0
+
         def ring(self) -> None:
             self.count += 1
+
     rings = Rings()
     app.state.readiness_doorbell = rings
     with TestClient(app) as client:
@@ -360,9 +371,9 @@ def test_create_external_work_emits_exact_existing_events_and_rings(tmp_path: Pa
             "/api/chief/tickets/from-external-work",
             json={
                 "title": "Already done",
-                "type": "coding",
+                "worker_type": "coding",
                 "recap": "done elsewhere",
-                **_external_body(TicketState.done),
+                **_external_body(CodingStage.done),
             },
             headers=_CHIEF,
         )
@@ -377,7 +388,7 @@ def test_create_external_work_emits_exact_existing_events_and_rings(tmp_path: Pa
         "field_value_edited",
         "field_value_edited",
         "recap_updated",
-        "state_changed",
+        "stage_changed",
         "scope_changed",
     ]
     assert [payload["field"] for kind, payload in events if kind == "field_value_edited"] == [
@@ -388,8 +399,8 @@ def test_create_external_work_emits_exact_existing_events_and_rings(tmp_path: Pa
         "closeout",
     ]
     assert events[7][1] == {
-        "from": "needs_success",
-        "to": "done",
+        "from_stage": "needs_success",
+        "to_stage": "done",
         "cause": "external_work",
     }
     assert events[8][1] == {
@@ -415,16 +426,16 @@ def test_reconcile_safety_reads_happen_after_begin_immediate(tmp_path: Path) -> 
     def reconcile_after_lock() -> None:
         conn = connect(str(db_path))
         conn.set_trace_callback(
-            lambda statement: attempted_begin.set()
-            if statement.strip().upper() == "BEGIN IMMEDIATE"
-            else None
+            lambda statement: (
+                attempted_begin.set() if statement.strip().upper() == "BEGIN IMMEDIATE" else None
+            )
         )
         try:
             reconcile_ticket_from_external_work(
                 conn,
                 ticket_id,
                 kickoff_note="External report",
-                target_state=TicketState.needs_success,
+                target_stage=CodingStage.needs_success,
                 provided_values={},
                 actor="chief",
                 now=3,
@@ -450,9 +461,9 @@ def test_reconcile_safety_reads_happen_after_begin_immediate(tmp_path: Path) -> 
     conn = connect(str(db_path))
     try:
         ticket = conn.execute(
-            "SELECT state, fields, ticket_status FROM tickets WHERE id = ?", (ticket_id,)
+            "SELECT stage, fields, ticket_status FROM tickets WHERE id = ?", (ticket_id,)
         ).fetchone()
-        assert ticket["state"] == "needs_success"
+        assert ticket["stage"] == "needs_success"
         assert json.loads(ticket["fields"])["kickoff"]["value"] == "Original report"
         assert ticket["ticket_status"] == "agent_running_step"
     finally:
@@ -479,24 +490,22 @@ def test_parent_item_events_cover_external_create_state_and_status_changes(tmp_p
             "/api/chief/tickets/from-external-work",
             json={
                 "title": "Parented external work",
-                "type": "coding",
+                "worker_type": "coding",
                 "sprint_item_id": item.id,
-                **_external_body(TicketState.needs_success),
+                **_external_body(CodingStage.needs_success),
             },
             headers=_CHIEF,
         )
     assert created_response.status_code == 200, created_response.json()
     ticket_id = created_response.json()["id"]
-    after_create = _events(db_path, item.id)[len(before):]
+    after_create = _events(db_path, item.id)[len(before) :]
     assert after_create == [
         ("item_children_changed", {"ticket_id": ticket_id, "reason": "created"})
     ]
 
     conn = connect(str(db_path))
     try:
-        conn.execute(
-            "UPDATE tickets SET ticket_status = 'errored' WHERE id = ?", (ticket_id,)
-        )
+        conn.execute("UPDATE tickets SET ticket_status = 'errored' WHERE id = ?", (ticket_id,))
         conn.commit()
     finally:
         conn.close()
@@ -505,11 +514,11 @@ def test_parent_item_events_cover_external_create_state_and_status_changes(tmp_p
     with TestClient(app) as client:
         reconciled_response = client.post(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
-            json=_external_body(TicketState.needs_approach),
+            json=_external_body(CodingStage.needs_approach),
             headers=_CHIEF,
         )
     assert reconciled_response.status_code == 200, reconciled_response.json()
-    assert _events(db_path, item.id)[len(before_reconcile):] == [
-        ("item_children_changed", {"ticket_id": ticket_id, "reason": "state"}),
+    assert _events(db_path, item.id)[len(before_reconcile) :] == [
+        ("item_children_changed", {"ticket_id": ticket_id, "reason": "stage"}),
         ("item_children_changed", {"ticket_id": ticket_id, "reason": "ticket_status"}),
     ]

@@ -21,7 +21,7 @@ Do not start next-sprint itemization before the current sprint review is settled
 Use this skill when the user wants to:
 
 - review a sprint and plan the next one;
-- reconcile the current sprint against actual ticket and item state;
+- reconcile the current sprint against actual Ticket Stages and item status;
 - run the midpoint review;
 - decide whether work belongs in the active sprint or backlog;
 - reset a stale sprint and re-establish a truthful two-week commitment.
@@ -83,7 +83,7 @@ For a stale sprint, do a thin truthful review rather than reconstructing a ficti
 
 ### 2. Establish outcomes first
 
-Compare actual sprint-item and ticket state with the sprint’s limiting factor, primary bet, supports, and pre-mortem. Summarize:
+Compare actual sprint-item status and Ticket Stages with the sprint’s limiting factor, primary bet, supports, and pre-mortem. Summarize:
 
 - what completed;
 - what moved but remains incomplete;

@@ -13,7 +13,7 @@ from planner.sprints import data as sprints_data
 from planner.sprints.contracts import ItemStatus, Sprint, SprintItem
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TicketState
+from planner.tickets.contracts import CodingStage
 from planner.tickets.logic import coding_bridge, fields_codec, machine
 from planner.tickets.views import ticket_json
 
@@ -89,40 +89,40 @@ def idea_json(row: sqlite3.Row) -> JsonDict:
 
 
 def item_rollup(conn: sqlite3.Connection, item_id: str) -> dict[str, int]:
-    rollup: dict[str, int] = {s.value: 0 for s in TicketState}
+    rollup: dict[str, int] = {s.value: 0 for s in CodingStage}
     rows = conn.execute(
-        "SELECT state, COUNT(*) AS n FROM tickets WHERE sprint_item_id = ? GROUP BY state",
+        "SELECT stage, COUNT(*) AS n FROM tickets WHERE sprint_item_id = ? GROUP BY stage",
         (item_id,),
     ).fetchall()
     for r in rows:
-        rollup[str(r["state"])] = int(r["n"])
+        rollup[str(r["stage"])] = int(r["n"])
     return rollup
 
 
 def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
-    """Per-item ticket rows for the tracking-page disclosure: id/title/state/priority
+    """Per-item ticket rows for the tracking-page disclosure: id/title/stage/priority
     plus the two board-card signals the sprint ticket row colours off —
     has_pending_proposal and ticket_status — ordered created_at, id (matching the
     loose-ticket ordering). A light projection — not full ticket_json — since the
     disclosure only lists rows that link to the ticket."""
     rows = conn.execute(
-        "SELECT id, title, state, priority, ticket_status, fields, ticket_type FROM tickets "
+        "SELECT id, title, stage, priority, ticket_status, fields, worker_type FROM tickets "
         "WHERE sprint_item_id = ? ORDER BY created_at, id",
         (item_id,),
     ).fetchall()
     result: list[JsonDict] = []
     for r in rows:
-        state = str(r["state"])
-        defn = coding_bridge.require(str(r["ticket_type"]))
+        stage = str(r["stage"])
+        defn = coding_bridge.require(str(r["worker_type"]))
         fields = fields_codec.fields_from_json(str(r["fields"]), defn)
         result.append(
             {
                 "id": str(r["id"]),
                 "title": str(r["title"]),
-                "state": state,
+                "stage": stage,
                 "priority": str(r["priority"]),
                 "has_pending_proposal": machine.has_pending_gating_proposal(
-                    state, fields, definition=defn
+                    stage, fields, definition=defn
                 ),
                 "ticket_status": str(r["ticket_status"]),
             }

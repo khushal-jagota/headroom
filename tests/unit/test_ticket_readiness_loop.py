@@ -35,7 +35,7 @@ from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.runtime.readiness_doorbell import LoopReadinessDoorbell, NoOpReadinessDoorbell
 from planner.runtime.ticket_readiness_loop import TicketReadinessLoop
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap, FieldName, Ticket, TicketState, TicketStatus
+from planner.tickets.contracts import AtCap, CodingStage, FieldName, Ticket, TicketStatus
 from planner.tickets.logic import fields_codec
 
 HOME = "/tmp/planner-home"
@@ -64,12 +64,12 @@ def _db(tmp_path: Path) -> str:
 
 
 def _new_ticket(
-    db: str, *, ceiling: TicketState | None = None, at_cap: AtCap = AtCap.propose
+    db: str, *, ceiling: CodingStage | None = None, at_cap: AtCap = AtCap.propose
 ) -> str:
     conn = connect(db)
     try:
         ticket = tickets_data.create_ticket(
-            conn, title="T", actor="human", now=0, title_max_chars=200
+            conn, worker_type="coding", title="T", actor="human", now=0, title_max_chars=200
         )
         ticket = tickets_data.accept_proposal(
             conn,
@@ -84,7 +84,7 @@ def _new_ticket(
             tickets_data.change_scope(
                 conn,
                 ticket.id,
-                ceiling=ceiling if ceiling is not None else TicketState.needs_success,
+                ceiling=ceiling if ceiling is not None else CodingStage.needs_success,
                 at_cap=at_cap,
                 actor="human",
                 now=0,
@@ -106,7 +106,7 @@ def _new_kickoff_ticket(db: str) -> str:
     conn = connect(db)
     try:
         ticket = tickets_data.create_ticket(
-            conn, title="T", actor="human", now=0, title_max_chars=200
+            conn, worker_type="coding", title="T", actor="human", now=0, title_max_chars=200
         )
         return ticket.id
     finally:
@@ -142,7 +142,7 @@ def _file_proposal(db: str, tid: str, field: str, body: str) -> None:
         conn.close()
 
 
-def _scope(db: str, tid: str, ceiling: TicketState, at_cap: AtCap) -> None:
+def _scope(db: str, tid: str, ceiling: CodingStage, at_cap: AtCap) -> None:
     conn = connect(db)
     try:
         tickets_data.change_scope(conn, tid, ceiling=ceiling, at_cap=at_cap, actor="human", now=0)
@@ -158,10 +158,10 @@ def _drop(db: str, tid: str) -> None:
         conn.close()
 
 
-def _jump_state(db: str, tid: str, state: TicketState) -> None:
+def _jump_state(db: str, tid: str, state: CodingStage) -> None:
     conn = connect(db)
     try:
-        tickets_data.set_state(conn, tid, new_state=state, actor="human", now=0)
+        tickets_data.set_stage(conn, tid, new_stage=state, actor="human", now=0)
     finally:
         conn.close()
 
@@ -286,7 +286,7 @@ def test_is_runnable_fresh_empty_default_scope(tmp_path: Path) -> None:
 
 def test_is_runnable_at_ceiling_stop_is_false(tmp_path: Path) -> None:
     db = _db(tmp_path)
-    tid = _new_ticket(db, ceiling=TicketState.needs_success, at_cap=AtCap.stop)
+    tid = _new_ticket(db, ceiling=CodingStage.needs_success, at_cap=AtCap.stop)
     conn = connect(db)
     try:
         assert readiness.is_runnable(conn, tickets_data.read_ticket(conn, tid)) is False
@@ -296,7 +296,7 @@ def test_is_runnable_at_ceiling_stop_is_false(tmp_path: Path) -> None:
 
 def test_is_runnable_at_ceiling_propose_is_true(tmp_path: Path) -> None:
     db = _db(tmp_path)
-    tid = _new_ticket(db, ceiling=TicketState.needs_success, at_cap=AtCap.propose)
+    tid = _new_ticket(db, ceiling=CodingStage.needs_success, at_cap=AtCap.propose)
     conn = connect(db)
     try:
         assert readiness.is_runnable(conn, tickets_data.read_ticket(conn, tid)) is True
@@ -323,7 +323,7 @@ def test_is_runnable_kickoff_uses_generic_parked_proposal_predicate(
     conn = connect(db)
     try:
         ticket = tickets_data.read_ticket(conn, tid)
-        assert ticket.state == TicketState.needs_kickoff
+        assert ticket.stage == CodingStage.needs_kickoff
         assert fields_codec.get_slot(ticket.fields, "kickoff").proposal is not None
         assert readiness.is_runnable(conn, ticket) is False
         assert tickets_data.read_ticket(conn, tid).ticket_status is TicketStatus.awaiting_approval
@@ -342,16 +342,25 @@ def test_is_runnable_new_worker_novel_stage_does_not_raise(tmp_path: Path) -> No
     conn = connect(db)
     try:
         ticket = tickets_data.create_ticket(
-            conn, title="Design a worker", actor="human", now=0, title_max_chars=200,
-            ticket_type="new_worker",
+            conn,
+            title="Design a worker",
+            actor="human",
+            now=0,
+            title_max_chars=200,
+            worker_type="new_worker",
         )
         # Accept kickoff, expanding the ceiling so the ticket lands at needs_stages with
         # room to propose (runnable). Novel stage, non-coding type.
         ticket = tickets_data.accept_proposal(
-            conn, ticket.id, field=FieldName.kickoff, actor="human", now=0,
-            next_ceiling="needs_stages", at_cap=AtCap.propose,
+            conn,
+            ticket.id,
+            field=FieldName.kickoff,
+            actor="human",
+            now=0,
+            next_ceiling="needs_stages",
+            at_cap=AtCap.propose,
         )
-        assert ticket.state == "needs_stages"
+        assert ticket.stage == "needs_stages"
         assert readiness.is_runnable(conn, tickets_data.read_ticket(conn, ticket.id)) is True
     finally:
         conn.close()
@@ -365,14 +374,23 @@ def test_is_runnable_new_worker_at_ceiling_stop_is_false(tmp_path: Path) -> None
     conn = connect(db)
     try:
         ticket = tickets_data.create_ticket(
-            conn, title="Design a worker", actor="human", now=0, title_max_chars=200,
-            ticket_type="new_worker",
+            conn,
+            title="Design a worker",
+            actor="human",
+            now=0,
+            title_max_chars=200,
+            worker_type="new_worker",
         )
         ticket = tickets_data.accept_proposal(
-            conn, ticket.id, field=FieldName.kickoff, actor="human", now=0,
-            next_ceiling="none", at_cap=AtCap.stop,
+            conn,
+            ticket.id,
+            field=FieldName.kickoff,
+            actor="human",
+            now=0,
+            next_ceiling="none",
+            at_cap=AtCap.stop,
         )
-        assert ticket.state == "needs_stages"
+        assert ticket.stage == "needs_stages"
         assert ticket.ceiling == "needs_stages"
         assert readiness.is_runnable(conn, tickets_data.read_ticket(conn, ticket.id)) is False
     finally:
@@ -383,8 +401,8 @@ def test_is_runnable_needs_closeout_follows_ordinary_gating(tmp_path: Path) -> N
     # closeout is a field-gated state like every other: no special-cased "no gating
     # field, human must approve" behavior remains in the five-field model.
     db = _db(tmp_path)
-    tid = _new_ticket(db, ceiling=TicketState.needs_closeout, at_cap=AtCap.propose)
-    _jump_state(db, tid, TicketState.needs_closeout)
+    tid = _new_ticket(db, ceiling=CodingStage.needs_closeout, at_cap=AtCap.propose)
+    _jump_state(db, tid, CodingStage.needs_closeout)
     conn = connect(db)
     try:
         assert readiness.is_runnable(conn, tickets_data.read_ticket(conn, tid)) is True
@@ -405,7 +423,7 @@ def test_is_runnable_terminal_is_false(tmp_path: Path) -> None:
 
 def test_is_runnable_blocked_is_false(tmp_path: Path) -> None:
     db = _db(tmp_path)
-    blocker = _new_ticket(db)          # open ticket -> blocks
+    blocker = _new_ticket(db)  # open ticket -> blocks
     target = _new_ticket(db)
     _add_block(db, blocker, target)
     conn = connect(db)
@@ -417,12 +435,12 @@ def test_is_runnable_blocked_is_false(tmp_path: Path) -> None:
 
 def test_is_runnable_below_ceiling_after_auto_accept_is_true(tmp_path: Path) -> None:
     db = _db(tmp_path)
-    tid = _new_ticket(db, ceiling=TicketState.needs_approach)
+    tid = _new_ticket(db, ceiling=CodingStage.needs_approach)
     _file_proposal(db, tid, "success", "b")  # auto-accepts (below ceiling) -> needs_approach
     conn = connect(db)
     try:
         ticket = tickets_data.read_ticket(conn, tid)
-        assert ticket.state == TicketState.needs_approach
+        assert ticket.stage == CodingStage.needs_approach
         assert readiness.is_runnable(conn, ticket) is True  # next step (approach) is ready
     finally:
         conn.close()
@@ -447,7 +465,7 @@ def test_poll_sets_off_a_ready_ticket(tmp_path: Path) -> None:
 
     ticket = _read(db, tid)
     assert ticket.ticket_status == TicketStatus.awaiting_approval
-    assert "session.create" in fake.sent_methods()          # kickoff = step 0 through create
+    assert "session.create" in fake.sent_methods()  # kickoff = step 0 through create
 
 
 def test_poll_passes_only_ticket_id_to_runner_interface(tmp_path: Path) -> None:
@@ -489,7 +507,7 @@ def test_poll_excludes_every_non_runnable_ticket(tmp_path: Path) -> None:
     # predicate-excluded: dropped, at-ceiling+stop, parked proposal, blocked
     t_dropped = _new_ticket(db)
     _drop(db, t_dropped)
-    t_stop = _new_ticket(db, ceiling=TicketState.needs_success, at_cap=AtCap.stop)
+    t_stop = _new_ticket(db, ceiling=CodingStage.needs_success, at_cap=AtCap.stop)
     t_parked = _new_ticket(db)
     _file_proposal(db, t_parked, "success", "b")
     blocker = _new_ticket(db, at_cap=AtCap.stop)  # open (blocks) but itself not runnable
@@ -510,7 +528,7 @@ def test_poll_excludes_every_non_runnable_ticket(tmp_path: Path) -> None:
 
     runner = _runner(db, FakeGateway({}))  # must never be used
     loop = _loop(db, runner)
-    assert loop.poll_once() == []       # nothing ready -> nothing started
+    assert loop.poll_once() == []  # nothing ready -> nothing started
 
 
 def test_fast_path_wake_sets_off_before_the_timer(tmp_path: Path) -> None:
@@ -539,7 +557,7 @@ def test_fast_path_wake_sets_off_before_the_timer(tmp_path: Path) -> None:
     try:
         assert first_empty_scan.wait(3.0)
         tid = _new_ticket(db)
-        _add_to_day(db, tid)          # on today -> in scope
+        _add_to_day(db, tid)  # on today -> in scope
         tid_box.append(tid)
         loop.wake()
         # the wake drove the employee step well under 60s (wait on the effect, not wait_idle, which
@@ -556,7 +574,7 @@ def test_settlement_doorbell_drives_the_auto_advance_chain(tmp_path: Path) -> No
     # ceiling=needs_approach: step 0 (success) auto-accepts and its settlement doorbell
     # drives step 1 (approach) automatically, which parks at the ceiling and stops the chain.
     db = _db(tmp_path)
-    tid = _new_ticket(db, ceiling=TicketState.needs_approach)
+    tid = _new_ticket(db, ceiling=CodingStage.needs_approach)
     _add_to_day(db, tid)  # on today -> in scope
     fake = _ProposingFake(
         {
@@ -596,7 +614,7 @@ def test_settlement_doorbell_drives_the_auto_advance_chain(tmp_path: Path) -> No
         loop.stop()
 
     ticket = _read(db, tid)
-    assert ticket.state == TicketState.needs_approach       # step 0 auto-accepted + advanced
+    assert ticket.stage == CodingStage.needs_approach  # step 0 auto-accepted + advanced
     assert fields_codec.get_slot(ticket.fields, "success").value == "s"  # step 0 value settled
     assert (
         fields_codec.get_slot(ticket.fields, "approach").proposal is not None
@@ -674,20 +692,20 @@ def test_poll_is_scoped_to_today(tmp_path: Path) -> None:
     runner = _runner(db, fake)
     loop = _loop(db, runner)
 
-    assert loop.poll_once() == []          # backlog -> out of scope, never spawned
-    _add_to_day(db, tid)                 # now on today's day
-    assert loop.poll_once() == [tid]       # in scope + runnable -> set off
+    assert loop.poll_once() == []  # backlog -> out of scope, never spawned
+    _add_to_day(db, tid)  # now on today's day
+    assert loop.poll_once() == [tid]  # in scope + runnable -> set off
     assert runner.wait_idle(10.0)
     assert _read(db, tid).ticket_status == TicketStatus.awaiting_approval
 
 
 def test_poll_excludes_ticket_on_another_day(tmp_path: Path) -> None:
     db = _db(tmp_path)
-    tid = _new_ticket(db)                 # fresh + runnable
-    _add_to_day(db, tid, OTHER_DAY_ID)    # but on yesterday, not today
-    runner = _runner(db, FakeGateway({}))      # must never be used
+    tid = _new_ticket(db)  # fresh + runnable
+    _add_to_day(db, tid, OTHER_DAY_ID)  # but on yesterday, not today
+    runner = _runner(db, FakeGateway({}))  # must never be used
     loop = _loop(db, runner)
-    assert loop.poll_once() == []           # other-day Ticket is out of scope
+    assert loop.poll_once() == []  # other-day Ticket is out of scope
 
 
 def test_poll_sets_off_today_ticket_after_approval_advance(tmp_path: Path) -> None:
@@ -695,11 +713,11 @@ def test_poll_sets_off_today_ticket_after_approval_advance(tmp_path: Path) -> No
     # gating field empty, still below ceiling) is set off for its NEXT step on the next poll —
     # exactly what the approval doorbell triggers (re-derive readiness -> run a step).
     db = _db(tmp_path)
-    tid = _new_ticket(db, ceiling=TicketState.needs_approach)
+    tid = _new_ticket(db, ceiling=CodingStage.needs_approach)
     _add_to_day(db, tid)
-    _file_proposal(db, tid, "success", "s")               # auto-accepts below ceiling
+    _file_proposal(db, tid, "success", "s")  # auto-accepts below ceiling
     _set_key(db, tid, STORED_KEY)
-    assert _read(db, tid).state == TicketState.needs_approach
+    assert _read(db, tid).stage == CodingStage.needs_approach
 
     fake = _ProposingFake(
         _resume_script(STORED_KEY, _complete_ev()),
@@ -707,6 +725,6 @@ def test_poll_sets_off_today_ticket_after_approval_advance(tmp_path: Path) -> No
     )
     runner = _runner(db, fake)
     loop = _loop(db, runner)
-    assert loop.poll_once() == [tid]                          # ready -> next step
+    assert loop.poll_once() == [tid]  # ready -> next step
     assert runner.wait_idle(10.0)
     assert _read(db, tid).ticket_status == TicketStatus.awaiting_approval

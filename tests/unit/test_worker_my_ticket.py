@@ -69,7 +69,11 @@ def test_my_ticket_returns_coding_specialist(tmp_path: Path) -> None:
     with TestClient(app) as client:
         created = client.post(
             "/api/tickets",
-            json={"title": "Coding work", "type": "coding", "kickoff_note": "k"},
+            json={
+                "title": "Coding work",
+                "worker_type": "coding",
+                "kickoff_note": "k",
+            },
         )
         assert created.status_code == 200, created.text
         ticket_id = created.json()["id"]
@@ -90,7 +94,11 @@ def test_my_ticket_returns_probe_specialist(
     with TestClient(app) as client:
         created = client.post(
             "/api/tickets",
-            json={"title": "Probe work", "type": "probe", "kickoff_note": "k"},
+            json={
+                "title": "Probe work",
+                "worker_type": "probe",
+                "kickoff_note": "k",
+            },
         )
         assert created.status_code == 200, created.text
         ticket_id = created.json()["id"]

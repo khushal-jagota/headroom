@@ -44,14 +44,24 @@ def test_item_tickets_probe_child_decodes(
     item = create_item(tmp_db, title="Item", project_id="project_vylo", clock=clock)
 
     probe = create_ticket(
-        tmp_db, title="Probe child", actor="human", now=1, title_max_chars=200,
-        ticket_type="probe", sprint_item_id=item.id,
+        tmp_db,
+        title="Probe child",
+        actor="human",
+        now=1,
+        title_max_chars=200,
+        worker_type="probe",
+        sprint_item_id=item.id,
     )
-    # Hold the ceiling at needs_alpha so the alpha proposal PARKS (state == ceiling),
+    # Hold the ceiling at needs_alpha so the alpha proposal PARKS (stage == ceiling),
     # giving a pending gating proposal on probe's registry-selected field.
     accept_proposal(
-        tmp_db, probe.id, field=FieldName.kickoff, actor="human", now=2,
-        next_ceiling=NEEDS_ALPHA, at_cap=AtCap.propose,
+        tmp_db,
+        probe.id,
+        field=FieldName.kickoff,
+        actor="human",
+        now=2,
+        next_ceiling=NEEDS_ALPHA,
+        at_cap=AtCap.propose,
     )
     file_proposal(tmp_db, probe.id, field=FIELD_ALPHA, body="alpha body", actor="agent", now=3)
 
@@ -59,9 +69,9 @@ def test_item_tickets_probe_child_decodes(
 
     assert len(rows) == 1
     row = rows[0]
-    # No throw at needs_alpha (a state coding never has); probe-correct projection.
+    # No throw at needs_alpha (a stage coding never has); probe-correct projection.
     assert row["id"] == probe.id
-    assert row["state"] == "needs_alpha"
+    assert row["stage"] == "needs_alpha"
     assert row["has_pending_proposal"] is True
     assert row["ticket_status"] == "awaiting_approval"
 
@@ -72,15 +82,25 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
     clock = TestClock(datetime(2026, 7, 4, 12, 0, 0).astimezone())
     item = create_item(tmp_db, title="Item", project_id="project_vylo", clock=clock)
     child = create_ticket(
-        tmp_db, title="Coding child", actor="human", now=1, title_max_chars=200,
+        tmp_db,
+        worker_type="coding",
+        title="Coding child",
+        actor="human",
+        now=1,
+        title_max_chars=200,
         sprint_item_id=item.id,
     )
     # Accept kickoff (default ceiling is now needs_kickoff, so kickoff parks until
     # accepted), expanding the ceiling to needs_success; a success proposal then parks.
     file_proposal(tmp_db, child.id, field=FieldName.kickoff, body="k", actor="agent", now=2)
     accept_proposal(
-        tmp_db, child.id, field=FieldName.kickoff, actor="human", now=2,
-        next_ceiling="needs_success", at_cap=AtCap.propose,
+        tmp_db,
+        child.id,
+        field=FieldName.kickoff,
+        actor="human",
+        now=2,
+        next_ceiling="needs_success",
+        at_cap=AtCap.propose,
     )
     file_proposal(tmp_db, child.id, field=FieldName.success, body="s", actor="agent", now=3)
 
@@ -88,5 +108,5 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
     assert len(rows) == 1
     row = rows[0]
     assert row["id"] == child.id
-    assert row["state"] == "needs_success"
+    assert row["stage"] == "needs_success"
     assert row["has_pending_proposal"] is True

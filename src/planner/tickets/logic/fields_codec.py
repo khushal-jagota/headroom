@@ -67,17 +67,19 @@ def _slot_from_obj(obj: Any) -> FieldSlot:
 def fields_from_json(
     raw: str, definition: WorkflowDefinition | None = None
 ) -> TicketFields:
-    if definition is None:
-        definition = coding_bridge.coding_definition()
     data: Any = json.loads(raw)
     _require(isinstance(data, dict))
-    # Each DECLARED field must be present AND decode via _slot_from_obj; unknown
-    # extra top-level keys are IGNORED (leniency preserved — legacy rows carry a
-    # top-level "result" key). The slot map is keyed by the definition's declared
-    # field ids in declared order, so a registered non-coding field set decodes into
-    # its own slots.
+    # A plain storage read decodes the stored field-key map exactly as written. It
+    # does not need a Worker type merely to return a Ticket row. Interpretation
+    # callers and the boot audit pass a definition; that path still requires every
+    # declared field and ignores unknown legacy top-level keys.
+    field_ids = (
+        tuple(str(field_id) for field_id in data)
+        if definition is None
+        else coding_bridge.field_ids(definition)
+    )
     slots: dict[str, FieldSlot] = {}
-    for field_id in coding_bridge.field_ids(definition):
+    for field_id in field_ids:
         _require(field_id in data)
         slots[field_id] = _slot_from_obj(data[field_id])
     return TicketFields(slots)

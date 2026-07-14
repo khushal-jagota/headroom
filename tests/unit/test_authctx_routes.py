@@ -52,7 +52,8 @@ def _ticket(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
         ticket = create_ticket(
-            conn, title="Patch me.", actor="unattributed", now=0, title_max_chars=200
+            conn, title="Patch me.", actor="unattributed", now=0, title_max_chars=200,
+            worker_type="coding",
         )
         ticket = accept_proposal(
             conn,

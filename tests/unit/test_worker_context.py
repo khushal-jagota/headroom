@@ -13,9 +13,9 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
+    CodingStage,
     FieldName,
     TicketEdit,
-    TicketState,
 )
 from planner.tickets.worker_context import TICKET_CHANGED_CONTEXT_KEY, TICKET_CHANGED_TEXT
 from planner.worker_context import data
@@ -84,7 +84,12 @@ def test_sqlite_service_composes_prompt_and_acknowledges_only_prepared_revision(
 
 def _ticket(tmp_db):
     ticket = tickets_data.create_ticket(
-        tmp_db, title="Context ticket", actor="human", now=1, title_max_chars=200
+        tmp_db,
+        worker_type="coding",
+        title="Context ticket",
+        actor="human",
+        now=1,
+        title_max_chars=200,
     )
     return tickets_data.accept_proposal(
         tmp_db,
@@ -152,13 +157,8 @@ def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(tmp
         now=6,
     )
 
-    pending = [
-        (item.context_key, item.text, item.revision)
-        for item in _pending(tmp_db, ticket.id)
-    ]
-    assert pending == [
-        (TICKET_CHANGED_CONTEXT_KEY, TICKET_CHANGED_TEXT, 3)
-    ]
+    pending = [(item.context_key, item.text, item.revision) for item in _pending(tmp_db, ticket.id)]
+    assert pending == [(TICKET_CHANGED_CONTEXT_KEY, TICKET_CHANGED_TEXT, 3)]
 
 
 @pytest.mark.parametrize(
@@ -175,9 +175,9 @@ def test_only_edited_approval_produces_context_at_each_approval_gate(
     def parked_ticket(edited: bool):
         ticket = _ticket(tmp_db)
         ceiling = {
-            FieldName.success: TicketState.needs_success,
-            FieldName.approach: TicketState.needs_approach,
-            FieldName.plan: TicketState.needs_plan,
+            FieldName.success: CodingStage.needs_success,
+            FieldName.approach: CodingStage.needs_approach,
+            FieldName.plan: CodingStage.needs_plan,
         }[field]
         tickets_data.change_scope(
             tmp_db,
@@ -221,7 +221,7 @@ def test_direct_value_and_scope_edits_produce_context_but_plain_accept_does_not(
     tickets_data.change_scope(
         tmp_db,
         ticket.id,
-        ceiling=TicketState.needs_closeout,
+        ceiling=CodingStage.needs_closeout,
         at_cap=AtCap.propose,
         actor="human",
         now=20,
@@ -271,7 +271,7 @@ def test_human_recap_marks_context_but_agent_recap_does_not(tmp_db) -> None:
         actor="human",
         now=29,
         edited_body=None,
-        next_ceiling=TicketState.needs_plan,
+        next_ceiling=CodingStage.needs_plan,
         at_cap=AtCap.propose,
     )
 
@@ -310,14 +310,23 @@ def test_legacy_chat_paths_persist_original_visible_text_without_gateway_history
             return ChatSendResult(reply_text="send reply", session_key=f"session-{entity_id}")
 
         def run_command(
-            self, session_key, entity_id, command, on_session_key=None  # noqa: ANN001
+            self,
+            session_key,
+            entity_id,
+            command,
+            on_session_key=None,  # noqa: ANN001
         ) -> CommandRunResult:
             return CommandRunResult(
                 reply_text="command reply", session_key=f"session-{entity_id}", kind="assistant"
             )
 
         def stream(
-            self, session_key, entity_id, text, mode, on_session_key=None  # noqa: ANN001
+            self,
+            session_key,
+            entity_id,
+            text,
+            mode,
+            on_session_key=None,  # noqa: ANN001
         ):
             key = f"session-{entity_id}"
             yield ChatStreamChunk(type="session", session_key=key)
@@ -332,11 +341,20 @@ def test_legacy_chat_paths_persist_original_visible_text_without_gateway_history
 
     chat_service.send(tmp_db, gateway, send_ticket.id, "original send", 50)  # type: ignore[arg-type]
     chat_service.run_command(
-        tmp_db, gateway, command_ticket.id, "/model-backed", 51  # type: ignore[arg-type]
+        tmp_db,
+        gateway,
+        command_ticket.id,
+        "/model-backed",
+        51,  # type: ignore[arg-type]
     )
     list(
         chat_service.stream(
-            tmp_db, gateway, stream_ticket.id, "original stream", "message", 52  # type: ignore[arg-type]
+            tmp_db,
+            gateway,
+            stream_ticket.id,
+            "original stream",
+            "message",
+            52,  # type: ignore[arg-type]
         )
     )
 

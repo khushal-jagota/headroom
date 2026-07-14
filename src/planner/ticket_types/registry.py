@@ -44,7 +44,9 @@ class Registry:
         for defn in definitions:
             if defn.type_id in table:
                 raise PlannerError(
-                    ErrorCode.validation, "duplicate ticket type id", {"type_id": defn.type_id}
+                    ErrorCode.validation,
+                    "duplicate worker type id",
+                    {"worker_type": defn.type_id},
                 )
             validate_definition(
                 defn,
@@ -63,7 +65,7 @@ class Registry:
             return self._definitions[type_id]
         except KeyError as exc:
             raise PlannerError(
-                ErrorCode.not_found, "unknown ticket type", {"type_id": type_id}
+                ErrorCode.not_found, "unknown worker type", {"worker_type": type_id}
             ) from exc
 
     def definition_for(self, type_id: str) -> WorkflowDefinition:
@@ -78,23 +80,23 @@ class Registry:
     def stage_ids(self, type_id: str) -> tuple[str, ...]:
         return views.stage_ids(self.require(type_id))
 
-    def state_index(self, type_id: str, state_id: str) -> int:
-        return views.state_index(self.require(type_id), state_id)
+    def stage_index(self, type_id: str, stage_id: str) -> int:
+        return views.stage_index(self.require(type_id), stage_id)
 
-    def require_stage(self, type_id: str, state_id: str) -> Stage:
-        return views.require_stage(self.require(type_id), state_id)
+    def require_stage(self, type_id: str, stage_id: str) -> Stage:
+        return views.require_stage(self.require(type_id), stage_id)
 
-    def is_terminal(self, type_id: str, state_id: str) -> bool:
-        return views.is_terminal(self.require(type_id), state_id)
+    def is_terminal(self, type_id: str, stage_id: str) -> bool:
+        return views.is_terminal(self.require(type_id), stage_id)
 
-    def gating_field(self, type_id: str, state_id: str) -> str | None:
-        return views.gating_field(self.require(type_id), state_id)
+    def gating_field(self, type_id: str, stage_id: str) -> str | None:
+        return views.gating_field(self.require(type_id), stage_id)
 
     def gate_map(self, type_id: str) -> dict[str, str]:
         return views.gate_map(self.require(type_id))
 
-    def gated_state(self, type_id: str, field_id: str) -> str:
-        return views.gated_state(self.require(type_id), field_id)
+    def gated_stage(self, type_id: str, field_id: str) -> str:
+        return views.gated_stage(self.require(type_id), field_id)
 
     def has_field(self, type_id: str, field_id: str) -> bool:
         return views.has_field(self.require(type_id), field_id)
@@ -102,8 +104,8 @@ class Registry:
     def field_ids(self, type_id: str) -> tuple[str, ...]:
         return views.field_ids(self.require(type_id))
 
-    def advance_target(self, type_id: str, state_id: str) -> str | None:
-        return views.advance_target(self.require(type_id), state_id)
+    def advance_target(self, type_id: str, stage_id: str) -> str | None:
+        return views.advance_target(self.require(type_id), stage_id)
 
     def advance_map(self, type_id: str) -> dict[str, str]:
         return views.advance_map(self.require(type_id))
@@ -118,9 +120,9 @@ class Registry:
         return views.linear_terminal_stage_id(self.require(type_id))
 
     def transition_effect(
-        self, type_id: str, implementer: str, old_state: str, new_state: str
+        self, type_id: str, implementer: str, old_stage: str, new_stage: str
     ) -> str | None:
-        return views.transition_effect(self.require(type_id), implementer, old_state, new_state)
+        return views.transition_effect(self.require(type_id), implementer, old_stage, new_stage)
 
 
 def build_registry(

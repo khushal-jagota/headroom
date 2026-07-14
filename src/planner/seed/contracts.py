@@ -7,18 +7,18 @@ from dataclasses import dataclass, field
 from typing import Final
 
 from planner.core.contracts import Priority
-from planner.tickets.contracts import TicketState
+from planner.tickets.contracts import CodingStage
 
 # §12 mapping tables — exact source strings on the left.
 TRACKING_ITEM_SECTIONS: Final[frozenset[str]] = frozenset(
     {"Todo", "In Progress", "Done", "Blocked", "Deferred"}
 )
 
-READINESS_MAP: Final[dict[str, TicketState]] = {
-    "Concepts": TicketState.needs_success,
-    "Needs Shaping": TicketState.needs_approach,
-    "Ready": TicketState.needs_plan,
-    "In Progress": TicketState.needs_implementation,
+READINESS_MAP: Final[dict[str, CodingStage]] = {
+    "Concepts": CodingStage.needs_success,
+    "Needs Shaping": CodingStage.needs_approach,
+    "Ready": CodingStage.needs_plan,
+    "In Progress": CodingStage.needs_implementation,
 }
 
 # `Priority:` labels are literal P0..P3 in the source (verified in the snapshot) — identity map.
@@ -70,7 +70,7 @@ class ParsedItem:                  # sprint-tracking.md item or deferred.md item
 @dataclass
 class ParsedTicket:                # workspace.md ticket
     title: str
-    state: TicketState
+    stage: CodingStage
     priority: Priority
     alias: str | None = None       # "Ticket ID:"
     chat_session_key: str | None = None   # "Chat ID:"

@@ -82,16 +82,18 @@ def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api)
 
     for page in (page_a, page_b):
         count = page.eval_on_selector_all(
-            '[data-card][data-ticket-state="needs_success"]', "els => els.length"
+            '[data-card][data-ticket-stage="needs_success"]', "els => els.length"
         )
         assert count == 0, count
     flushes_b = page_b.evaluate("window.__plannerDebug.flushes")
 
-    created = cli(server, "ticket", "create", "--type", "coding", "--title", "T18 board ticket")
+    created = cli(
+        server, "ticket", "create", "--worker-type", "coding", "--title", "T18 board ticket"
+    )
     tid = created["id"]
-    assert created["state"] == "needs_success", created
+    assert created["stage"] == "needs_success", created
 
-    card = f'[data-card][data-ticket-state="needs_success"][data-ticket-id="{tid}"]'
+    card = f'[data-card][data-ticket-stage="needs_success"][data-ticket-id="{tid}"]'
     page_b.wait_for_function(
         "f => window.__plannerDebug.flushes > f", arg=flushes_b, timeout=WAIT_MS
     )
@@ -112,7 +114,9 @@ def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api)
 
 
 def test_e23_env_pinned_propose(server, context_factory, open_page, cli, api):
-    tid = cli(server, "ticket", "create", "--type", "coding", "--title", "T18 propose ticket")["id"]
+    tid = cli(
+        server, "ticket", "create", "--worker-type", "coding", "--title", "T18 propose ticket"
+    )["id"]
     # PLAN_TICKET_ID resolves the ticket (no positional id); stdin carries the body.
     cli(
         server,
@@ -164,7 +168,7 @@ def test_e23_env_pinned_propose(server, context_factory, open_page, cli, api):
     assert page.inner_text(f"{b} strong") == "exact"
 
     # Did not advance: still needs_success, and the value is still unset.
-    assert page.get_attribute(ready, "data-state") == "needs_success"
+    assert page.get_attribute(ready, "data-stage") == "needs_success"
     assert api.get(server, f"/api/tickets/{tid}")["fields"]["success"]["value"] is None
 
 
@@ -175,7 +179,7 @@ def test_review_tracks_today_membership_without_reload(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Today-scoped review",
@@ -231,7 +235,7 @@ def test_review_tracks_today_membership_without_reload(
         timeout=WAIT_MS,
     )
     ticket = api.get(server, f"/api/tickets/{tid}")
-    assert ticket["state"] == "needs_success"
+    assert ticket["stage"] == "needs_success"
     assert ticket["fields"]["kickoff"]["value"] == "Review this premise"
 
 
@@ -239,8 +243,15 @@ def test_kickoff_accepts_from_review_without_worker_revision_control(
     server, context_factory, open_page, cli, api
 ):
     tid = cli(
-        server, "ticket", "create", "--type", "coding", "--title", "Review kickoff",
-        "--kickoff-note", "Review this premise",
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Review kickoff",
+        "--kickoff-note",
+        "Review this premise",
     )["id"]
     _add_to_today(api, server, tid)
     card = f'[data-review-card][data-entity-id="{tid}"]'
@@ -253,8 +264,9 @@ def test_kickoff_accepts_from_review_without_worker_revision_control(
     title_editor.focus()
     title_editor.evaluate(SELECT_NODE_CONTENTS)
     with page.expect_response(
-        lambda response: response.request.method == "PATCH"
-        and response.url.endswith(f"/api/tickets/{tid}")
+        lambda response: (
+            response.request.method == "PATCH" and response.url.endswith(f"/api/tickets/{tid}")
+        )
     ):
         page.keyboard.type("Reviewed kickoff title")
         title_editor.blur()
@@ -265,14 +277,16 @@ def test_kickoff_accepts_from_review_without_worker_revision_control(
     page.click(f"{card} [data-accept]")
     page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
     detail = api.get(server, f"/api/tickets/{tid}")
-    assert detail["state"] == "needs_success"
+    assert detail["stage"] == "needs_success"
     assert detail["ceiling"] == "needs_approach"
     assert detail["at_cap"] == "stop"
     assert detail["title"] == "Reviewed kickoff title"
 
 
 def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
-    tid = cli(server, "ticket", "create", "--type", "coding", "--title", "T18 review ticket")["id"]
+    tid = cli(
+        server, "ticket", "create", "--worker-type", "coding", "--title", "T18 review ticket"
+    )["id"]
     cli(
         server,
         "worker",
@@ -295,7 +309,7 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
         context_factory(),
         server,
         f"#/ticket/{tid}",
-        'section[data-screen="ticket"][data-state="needs_success"]',
+        'section[data-screen="ticket"][data-stage="needs_success"]',
         settled=True,
     )
 
@@ -312,12 +326,12 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
     # Second context updates without reload — the flip arrives via the WS flush.
     page_b.wait_for_function(
         "() => { const s = document.querySelector('section[data-screen=\"ticket\"]');"
-        " return !!s && s.getAttribute('data-state') === 'needs_approach'; }",
+        " return !!s && s.getAttribute('data-stage') === 'needs_approach'; }",
         timeout=WAIT_MS,
     )
 
     d = api.get(server, f"/api/tickets/{tid}")
-    assert d["state"] == "needs_approach", d
+    assert d["stage"] == "needs_approach", d
     assert d["ceiling"] == "needs_approach", d  # default approval scope is next stage
     assert d["at_cap"] == "propose", d
     assert d["fields"]["success"]["value"] == E24_BODY
@@ -331,7 +345,7 @@ def test_review_return_for_revision_starts_agent_without_chat_copy(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Revision review ticket",
@@ -361,7 +375,7 @@ def test_review_return_for_revision_starts_agent_without_chat_copy(
     page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
 
     ticket = api.get(server, f"/api/tickets/{tid}")
-    assert ticket["state"] == "needs_success"
+    assert ticket["stage"] == "needs_success"
     assert ticket["ticket_status"] == "agent_running_step"
     assert ticket["fields"]["success"]["value"] is None
     assert ticket["fields"]["success"]["proposal"] is None
@@ -377,7 +391,7 @@ def test_markdown_approval_focus_noop_keeps_raw_source(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Markdown noop ticket",
@@ -422,14 +436,19 @@ def test_markdown_approval_focus_noop_keeps_raw_source(
     assert d["fields"]["success"]["value"] == NOOP_MARKDOWN_BODY
     assert d["fields"]["success"]["proposal"] is None
     with sqlite3.connect(server.db_path) as conn:
-        assert conn.execute(
-            "SELECT context_key FROM pending_worker_context WHERE worker_entity_id = ?",
-            (tid,),
-        ).fetchall() == []
+        assert (
+            conn.execute(
+                "SELECT context_key FROM pending_worker_context WHERE worker_entity_id = ?",
+                (tid,),
+            ).fetchall()
+            == []
+        )
 
 
 def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api):
-    tid = cli(server, "ticket", "create", "--type", "coding", "--title", "T18 edit ticket")["id"]
+    tid = cli(server, "ticket", "create", "--worker-type", "coding", "--title", "T18 edit ticket")[
+        "id"
+    ]
     cli(
         server,
         "worker",
@@ -482,11 +501,10 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
     assert d["fields"]["success"]["value"] == E25_EDIT, repr(d["fields"]["success"]["value"])
     assert d["ceiling"] == "needs_plan", d
     assert d["at_cap"] == "propose", d
-    assert d["state"] == "needs_approach", d
+    assert d["stage"] == "needs_approach", d
     with sqlite3.connect(server.db_path) as conn:
         assert conn.execute(
-            "SELECT context_key, revision FROM pending_worker_context "
-            "WHERE worker_entity_id = ?",
+            "SELECT context_key, revision FROM pending_worker_context WHERE worker_entity_id = ?",
             (tid,),
         ).fetchall() == [("ticket_changed", 1)]
 
@@ -495,7 +513,7 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
         context_factory(),
         server,
         f"#/ticket/{tid}",
-        'section[data-screen="ticket"][data-state="needs_approach"]',
+        'section[data-screen="ticket"][data-stage="needs_approach"]',
         settled=True,
     )
     assert (
@@ -516,7 +534,7 @@ def test_review_keyboard_shortcuts(server, context_factory, open_page, cli, api)
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Shortcut ticket one",
@@ -536,7 +554,7 @@ def test_review_keyboard_shortcuts(server, context_factory, open_page, cli, api)
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Shortcut ticket two",
@@ -634,7 +652,7 @@ def test_e26_chat_panel_echo_and_offline(
         pending_server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "T18 pending chat ticket",
@@ -703,8 +721,7 @@ def test_e26_chat_panel_echo_and_offline(
     )
     pending_page.wait_for_selector(pending_jump_selector, timeout=WAIT_MS)
     assert (
-        pending_page.get_attribute(pending_jump_selector, "aria-label")
-        == "Jump to latest message"
+        pending_page.get_attribute(pending_jump_selector, "aria-label") == "Jump to latest message"
     )
 
     # Clicking returns to the latest message and restores follow mode. The next live
@@ -724,9 +741,7 @@ def test_e26_chat_panel_echo_and_offline(
         pending_thread_selector,
         "el => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight })",
     )
-    assert abs(following_after_send["top"] - following_after_send["max"]) <= 1, (
-        following_after_send
-    )
+    assert abs(following_after_send["top"] - following_after_send["max"]) <= 1, following_after_send
 
     _wait_chat_text(pending_page, "planner", "echo: follow streaming growth")
     assert pending_page.query_selector(pending_selector) is not None
@@ -792,9 +807,7 @@ def test_e26_chat_panel_echo_and_offline(
         pending_thread_selector,
         "el => ({ top: el.scrollTop, max: el.scrollHeight - el.clientHeight })",
     )
-    assert abs(manual_follow_scroll["top"] - manual_follow_scroll["max"]) <= 1, (
-        manual_follow_scroll
-    )
+    assert abs(manual_follow_scroll["top"] - manual_follow_scroll["max"]) <= 1, manual_follow_scroll
     pending_page.wait_for_function(
         "selector => document.querySelector(selector) === null",
         arg=pending_selector,
@@ -802,7 +815,9 @@ def test_e26_chat_panel_echo_and_offline(
     )
 
     # --- echo half (default echo gateway) ---
-    tid = cli(server, "ticket", "create", "--type", "coding", "--title", "T18 chat ticket")["id"]
+    tid = cli(server, "ticket", "create", "--worker-type", "coding", "--title", "T18 chat ticket")[
+        "id"
+    ]
     page = open_page(
         context_factory(),
         server,
@@ -898,7 +913,9 @@ def test_e26_chat_panel_echo_and_offline(
 
     # --- offline half (boot-time adapter -> a second instance) ---
     off = server_factory(gateway="offline")
-    tid2 = cli(off, "ticket", "create", "--type", "coding", "--title", "T18 offline ticket")["id"]
+    tid2 = cli(off, "ticket", "create", "--worker-type", "coding", "--title", "T18 offline ticket")[
+        "id"
+    ]
     page2 = open_page(
         context_factory(),
         off,
@@ -912,7 +929,9 @@ def test_e26_chat_panel_echo_and_offline(
 
 
 def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
-    tid = cli(server, "ticket", "create", "--type", "coding", "--title", "T18 chain ticket")["id"]
+    tid = cli(server, "ticket", "create", "--worker-type", "coding", "--title", "T18 chain ticket")[
+        "id"
+    ]
 
     # Unattributed direct scope: ceiling needs_plan, at_cap propose.
     g = api.direct_post(
@@ -933,7 +952,7 @@ def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
         ticket_id=tid,
         stdin=E27_SUCCESS,
     )
-    assert r1["state"] == "needs_approach", r1
+    assert r1["stage"] == "needs_approach", r1
     r2 = cli(
         server,
         "worker",
@@ -945,7 +964,7 @@ def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
         ticket_id=tid,
         stdin=E27_APPROACH,
     )
-    assert r2["state"] == "needs_plan", r2
+    assert r2["stage"] == "needs_plan", r2
     r3 = cli(
         server,
         "worker",
@@ -957,11 +976,11 @@ def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
         ticket_id=tid,
         stdin=E27_PLAN,
     )
-    assert r3["state"] == "needs_plan", r3
+    assert r3["stage"] == "needs_plan", r3
     assert r3["fields"]["plan"]["proposal"]["body"] == E27_PLAN, r3
 
     d = api.get(server, f"/api/tickets/{tid}")
-    assert d["state"] == "needs_plan", d
+    assert d["stage"] == "needs_plan", d
     assert d["ceiling"] == "needs_plan", d
     assert d["at_cap"] == "propose", d
     assert d["fields"]["success"]["value"] == E27_SUCCESS
@@ -983,7 +1002,9 @@ def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
 def test_slash_menu_runs_skill(server, context_factory, open_page, cli, api):
     # The "/" menu is a read of the gateway command catalog; selecting a Skill runs
     # it on the ticket's own mind via POST /command (fake gateway -> a scripted reply).
-    tid = cli(server, "ticket", "create", "--type", "coding", "--title", "T18 slash ticket")["id"]
+    tid = cli(server, "ticket", "create", "--worker-type", "coding", "--title", "T18 slash ticket")[
+        "id"
+    ]
     page = open_page(
         context_factory(),
         server,
@@ -1034,7 +1055,9 @@ def test_slash_menu_runs_display_command(server, context_factory, open_page, cli
     # A non-skill display command (/status) executes on the ticket's own mind via POST
     # /command and renders as a system line — on BOTH the menu-pick and the typed-Send
     # path. The Exit category stays out of the menu (a web chat can't quit the mind).
-    tid = cli(server, "ticket", "create", "--type", "coding", "--title", "T18 display ticket")["id"]
+    tid = cli(
+        server, "ticket", "create", "--worker-type", "coding", "--title", "T18 display ticket"
+    )["id"]
     page = open_page(
         context_factory(),
         server,
@@ -1085,12 +1108,21 @@ def test_pending_kickoff_edits_and_approves_before_five_worker_stages(
     server, context_factory, open_page, cli, api
 ):
     tid = cli(
-        server, "ticket", "create", "--type", "coding", "--title", "Draft title",
-        "--kickoff-note", "Draft premise",
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Draft title",
+        "--kickoff-note",
+        "Draft premise",
     )["id"]
     page = open_page(
-        context_factory(), server, f"#/ticket/{tid}",
-        f'section[data-screen="ticket"][data-ticket-id="{tid}"][data-state="needs_kickoff"]',
+        context_factory(),
+        server,
+        f"#/ticket/{tid}",
+        f'section[data-screen="ticket"][data-ticket-id="{tid}"][data-stage="needs_kickoff"]',
         settled=True,
     )
     assert page.locator('details[data-field="kickoff"] [data-approval-block]').count() == 1
@@ -1108,8 +1140,9 @@ def test_pending_kickoff_edits_and_approves_before_five_worker_stages(
     title_editor.focus()
     title_editor.evaluate(SELECT_NODE_CONTENTS)
     with page.expect_response(
-        lambda response: response.request.method == "PATCH"
-        and response.url.endswith(f"/api/tickets/{tid}")
+        lambda response: (
+            response.request.method == "PATCH" and response.url.endswith(f"/api/tickets/{tid}")
+        )
     ):
         page.keyboard.type("Approved title")
         title_editor.blur()
@@ -1121,12 +1154,14 @@ def test_pending_kickoff_edits_and_approves_before_five_worker_stages(
     page.select_option('details[data-field="kickoff"] [data-scope-ceiling]', "needs_approach")
     page.select_option('details[data-field="kickoff"] [data-scope-atcap] select', "stop")
     with page.expect_response(
-        lambda response: response.request.method == "POST"
-        and response.url.endswith(f"/api/tickets/{tid}/accept/kickoff")
+        lambda response: (
+            response.request.method == "POST"
+            and response.url.endswith(f"/api/tickets/{tid}/accept/kickoff")
+        )
     ):
         page.click('details[data-field="kickoff"] [data-accept]')
     page.wait_for_selector(
-        f'section[data-screen="ticket"][data-ticket-id="{tid}"][data-state="needs_success"]',
+        f'section[data-screen="ticket"][data-ticket-id="{tid}"][data-stage="needs_success"]',
         timeout=WAIT_MS,
     )
     detail = api.get(server, f"/api/tickets/{tid}")
@@ -1142,13 +1177,22 @@ def test_settled_kickoff_field_renders_as_canonical_intake_block(
     server, context_factory, open_page, cli
 ):
     tid = cli(
-        server, "ticket", "create", "--type", "coding", "--title", "Kickoff note UI ticket",
-        "--kickoff-note", "Preserve this intake boundary.",
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Kickoff note UI ticket",
+        "--kickoff-note",
+        "Preserve this intake boundary.",
     )["id"]
     cli(server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "propose")
 
     page = open_page(
-        context_factory(), server, f"#/ticket/{tid}",
+        context_factory(),
+        server,
+        f"#/ticket/{tid}",
         f'section[data-screen="ticket"][data-ticket-id="{tid}"] details[data-field="kickoff"]',
         settled=True,
     )
@@ -1163,8 +1207,10 @@ def test_settled_kickoff_field_renders_as_canonical_intake_block(
     editor.evaluate(SELECT_NODE_CONTENTS)
     page.keyboard.type("Updated intake boundary.")
     with page.expect_response(
-        lambda response: response.request.method == "PUT"
-        and response.url.endswith(f"/api/tickets/{tid}/value/kickoff")
+        lambda response: (
+            response.request.method == "PUT"
+            and response.url.endswith(f"/api/tickets/{tid}/value/kickoff")
+        )
     ):
         editor.blur()
     page.wait_for_function(
@@ -1173,21 +1219,23 @@ def test_settled_kickoff_field_renders_as_canonical_intake_block(
     )
     with sqlite3.connect(server.db_path) as conn:
         assert conn.execute(
-            "SELECT context_key, revision FROM pending_worker_context "
-            "WHERE worker_entity_id = ?", (tid,),
+            "SELECT context_key, revision FROM pending_worker_context WHERE worker_entity_id = ?",
+            (tid,),
         ).fetchall() == [("ticket_changed", 1)]
 
     empty_tid = cli(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Empty kickoff note UI ticket",
     )["id"]
     empty_page = open_page(
-        context_factory(), server, f"#/ticket/{empty_tid}",
+        context_factory(),
+        server,
+        f"#/ticket/{empty_tid}",
         f'section[data-screen="ticket"][data-ticket-id="{empty_tid}"] '
         'details[data-field="kickoff"]',
         settled=True,
@@ -1201,9 +1249,13 @@ def test_settled_kickoff_field_renders_as_canonical_intake_block(
         )
         == "Value..."
     )
-    assert empty_page.locator(
-        'details[data-field="kickoff"] .ticket-field-value [data-markdown-inline-edit]'
-    ).get_attribute("contenteditable") == "true"
+    assert (
+        empty_page.locator(
+            'details[data-field="kickoff"] .ticket-field-value [data-markdown-inline-edit]'
+        ).get_attribute("contenteditable")
+        == "true"
+    )
+
 
 def test_ticket_implementer_assignment_edits_in_facts_without_changing_workflow(
     server, context_factory, open_page, cli, api
@@ -1212,7 +1264,7 @@ def test_ticket_implementer_assignment_edits_in_facts_without_changing_workflow(
         server,
         "ticket",
         "create",
-        "--type",
+        "--worker-type",
         "coding",
         "--title",
         "Implementer assignment UI ticket",
@@ -1231,7 +1283,7 @@ def test_ticket_implementer_assignment_edits_in_facts_without_changing_workflow(
     # edit/save/cancel flow.
     assert page.locator(implementer).count() == 1
     initial = api.get(server, f"/api/tickets/{tid}")
-    initial_state = initial["state"]
+    initial_stage = initial["stage"]
     initial_ticket_status = initial["ticket_status"]
     assert initial["implementer"] is None
 
@@ -1257,18 +1309,20 @@ def test_ticket_implementer_assignment_edits_in_facts_without_changing_workflow(
     def assert_assignment_without_workflow_change(expected: str | None) -> None:
         detail = api.get(server, f"/api/tickets/{tid}")
         assert detail["implementer"] == expected
-        assert detail["state"] == initial_state
+        assert detail["stage"] == initial_stage
         assert detail["ticket_status"] == initial_ticket_status
-        assert page.get_attribute(ready, "data-state") == initial_state
+        assert page.get_attribute(ready, "data-stage") == initial_stage
         assert (
             page.get_attribute("[data-ticket-status]", "data-ticket-status")
             == initial_ticket_status
         )
         assert page.locator(f"{implementer} button").count() == 0
-        assert page.locator(
-            f"{implementer} [data-edit], {implementer} [data-save], "
-            f"{implementer} [data-cancel]"
-        ).count() == 0
+        assert (
+            page.locator(
+                f"{implementer} [data-edit], {implementer} [data-save], {implementer} [data-cancel]"
+            ).count()
+            == 0
+        )
         for action in ("Edit", "Save", "Cancel"):
             assert page.get_by_role("button", name=action, exact=True).count() == 0
 
@@ -1276,24 +1330,27 @@ def test_ticket_implementer_assignment_edits_in_facts_without_changing_workflow(
     assert_assignment_without_workflow_change(None)
 
     with page.expect_response(
-        lambda response: response.request.method == "PATCH"
-        and response.url.endswith(f"/api/tickets/{tid}")
+        lambda response: (
+            response.request.method == "PATCH" and response.url.endswith(f"/api/tickets/{tid}")
+        )
     ):
         page.select_option(f"{implementer} select", "khushal")
     wait_for_assignment("khushal", "Khushal")
     assert_assignment_without_workflow_change("khushal")
 
     with page.expect_response(
-        lambda response: response.request.method == "PATCH"
-        and response.url.endswith(f"/api/tickets/{tid}")
+        lambda response: (
+            response.request.method == "PATCH" and response.url.endswith(f"/api/tickets/{tid}")
+        )
     ):
         page.select_option(f"{implementer} select", "hermes_codex")
     wait_for_assignment("hermes_codex", "Hermes with Codex")
     assert_assignment_without_workflow_change("hermes_codex")
 
     with page.expect_response(
-        lambda response: response.request.method == "PATCH"
-        and response.url.endswith(f"/api/tickets/{tid}")
+        lambda response: (
+            response.request.method == "PATCH" and response.url.endswith(f"/api/tickets/{tid}")
+        )
     ):
         page.select_option(f"{implementer} select", "")
     wait_for_assignment("", "(unassigned)")

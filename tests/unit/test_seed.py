@@ -150,19 +150,19 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     # (5) ticket Readiness mappings by alias.
     tickets = _rows_by(
         tmp_db,
-        "SELECT tickets.id, tickets.alias, tickets.state, tickets.priority, "
+        "SELECT tickets.id, tickets.alias, tickets.stage, tickets.priority, "
         "tickets.chat_session_key, tickets.sprint_item_id, tickets.sprint_id, "
         "tickets.project_id, projects.name AS project, tickets.recap, tickets.ceiling, "
         "tickets.at_cap, tickets.deadline, tickets.fields "
         "FROM tickets LEFT JOIN projects ON projects.id = tickets.project_id",
         "alias",
     )
-    assert tickets["ticket-20260611-onboarding-survey"]["state"] == "needs_success"
-    assert tickets["ticket-20260611-export-format"]["state"] == "needs_approach"
-    assert tickets["ticket-20260611-release-branch"]["state"] == "needs_plan"
-    assert tickets["ticket-20260611-import-pipeline"]["state"] == "needs_implementation"
+    assert tickets["ticket-20260611-onboarding-survey"]["stage"] == "needs_success"
+    assert tickets["ticket-20260611-export-format"]["stage"] == "needs_approach"
+    assert tickets["ticket-20260611-release-branch"]["stage"] == "needs_plan"
+    assert tickets["ticket-20260611-import-pipeline"]["stage"] == "needs_implementation"
     for row in tickets.values():
-        assert row["ceiling"] == row["state"]
+        assert row["ceiling"] == row["stage"]
         assert row["at_cap"] == "propose"
         assert row["recap"] == ""
         assert row["deadline"] is None

@@ -67,7 +67,8 @@ def _ticket(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
         return create_ticket(
-            conn, title="Trusted ingress ticket", actor="human", now=0, title_max_chars=200
+            conn, title="Trusted ingress ticket", actor="human", now=0, title_max_chars=200,
+            worker_type="coding",
         ).id
     finally:
         conn.close()

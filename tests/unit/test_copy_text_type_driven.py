@@ -35,7 +35,7 @@ from planner.tickets.views import copy_text
 # placement (not just an all-"(none)" shape).
 _CODING_COPY_TEXT_GOLDEN = (
     "Coding ticket\n"
-    "state: needs_success\n"
+    "stage: needs_success\n"
     "priority: P3\n"
     "implementer: (none)\n"
     "\n"
@@ -69,7 +69,12 @@ def probe_registry() -> Iterator[WorkflowDefinition]:
 
 def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
     ticket = create_ticket(
-        tmp_db, title="Coding ticket", actor="human", now=1, title_max_chars=200
+        tmp_db,
+        worker_type="coding",
+        title="Coding ticket",
+        actor="human",
+        now=1,
+        title_max_chars=200,
     )
     file_proposal(
         tmp_db, ticket.id, field=FieldName.kickoff, body="kickoff body", actor="agent", now=2
@@ -78,8 +83,13 @@ def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
     # default ceiling is now needs_kickoff, so kickoff parks until accepted — the golden
     # pins a SETTLED kickoff value, so we accept and expand the ceiling onward).
     accept_proposal(
-        tmp_db, ticket.id, field=FieldName.kickoff, actor="human", now=3,
-        next_ceiling="needs_success", at_cap=AtCap.propose,
+        tmp_db,
+        ticket.id,
+        field=FieldName.kickoff,
+        actor="human",
+        now=3,
+        next_ceiling="needs_success",
+        at_cap=AtCap.propose,
     )
     set_field_user_note(
         tmp_db, ticket.id, field=FieldName.success, user_note="success note", actor="human", now=4
@@ -91,8 +101,12 @@ def test_copy_text_probe_renders_own_fields(
     tmp_db: Connection, probe_registry: WorkflowDefinition
 ) -> None:
     ticket = create_ticket(
-        tmp_db, title="Probe ticket", actor="human", now=1, title_max_chars=200,
-        ticket_type="probe",
+        tmp_db,
+        title="Probe ticket",
+        actor="human",
+        now=1,
+        title_max_chars=200,
+        worker_type="probe",
     )
     text = copy_text(tmp_db, ticket.id)
 

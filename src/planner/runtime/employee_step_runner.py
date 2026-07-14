@@ -40,13 +40,13 @@ def _next_step_prompt(ticket: Ticket) -> str:
     Route selection/suitability guidance lives in the panels-worker skill, not here.
     The gating field is resolved against the ticket's OWN type definition (not the
     coding default), so a novel-stage type (e.g. new_worker at needs_stages) reads
-    its real field instead of raising 'state outside the linear order'."""
-    defn = coding_bridge.require(ticket.ticket_type)
-    gating = machine.gating_field(ticket.state, definition=defn)
+    its real field instead of raising 'stage outside the linear order'."""
+    defn = coding_bridge.require(ticket.worker_type)
+    gating = machine.gating_field(ticket.stage, definition=defn)
     field = str(gating) if gating is not None else "the next step"
     implementer_wire = ticket.implementer.value if ticket.implementer is not None else "unassigned"
     return (
-        f"Work ticket {ticket.id} — {ticket.title}. It is in state '{str(ticket.state)}'; "
+        f"Work ticket {ticket.id} — {ticket.title}. It is at Stage '{str(ticket.stage)}'; "
         f"take the next step and propose the '{field}' field for approval. "
         f"Implementer: {implementer_wire}."
     )

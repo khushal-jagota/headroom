@@ -16,7 +16,7 @@
   let {
     name,
     slot,
-    ticketState,
+    ticketStage,
     ceiling,
     lifecycle = null,
     stageState = "upcoming",
@@ -31,7 +31,7 @@
   }: {
     name: string;
     slot: TicketField;
-    ticketState: string;
+    ticketStage: string;
     ceiling: string;
     lifecycle?: Lifecycle | null;
     stageState?: FieldStageVisualState;
@@ -47,13 +47,13 @@
 
   let reviewVariant = $derived(variant === "review");
   let fieldLabel = $derived(labelize(name));
-  let isDropped = $derived(ticketState === "dropped");
-  let isGating = $derived(gatingFieldFor(lifecycle, ticketState) === name);
-  let passed = $derived(fieldIsPassedFor(lifecycle, name, ticketState));
+  let isDropped = $derived(ticketStage === "dropped");
+  let isGating = $derived(gatingFieldFor(lifecycle, ticketStage) === name);
+  let passed = $derived(fieldIsPassedFor(lifecycle, name, ticketStage));
   let hasValue = $derived(hasText(slot.value));
   let hasNotes = $derived(hasText(slot.user_note));
   let hasProposal = $derived(Boolean(slot.proposal));
-  let nextState = $derived(advanceTargetFor(lifecycle, ticketState, ceiling));
+  let nextStage = $derived(advanceTargetFor(lifecycle, ticketStage, ceiling));
   let defaultOpen = $derived(isGating);
 
   function hasText(value: unknown): boolean {
@@ -94,7 +94,7 @@
       whatLabel={fieldLabel}
       proposalBody={slot.proposal?.body || ""}
       proposedBy={slot.proposal?.proposed_by || ""}
-      newState={nextState}
+      newStage={nextStage}
       {lifecycle}
       onApprove={onAccept}
     />
@@ -106,7 +106,7 @@
         whatLabel={fieldLabel}
         proposalBody={slot.proposal?.body || ""}
         proposedBy={slot.proposal?.proposed_by || ""}
-        newState={nextState}
+        newStage={nextStage}
         {lifecycle}
         onApprove={onAccept}
       />

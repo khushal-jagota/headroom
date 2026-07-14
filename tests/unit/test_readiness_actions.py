@@ -25,8 +25,8 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
+    CodingStage,
     FieldName,
-    TicketState,
 )
 from planner.tickets.logic import fields_codec
 
@@ -76,6 +76,7 @@ def _create_direct(db_path: Path, *, title: str = "Ready") -> str:
     try:
         ticket = tickets_data.create_ticket(
             conn,
+            worker_type="coding",
             title=title,
             actor="human",
             now=1,
@@ -125,9 +126,7 @@ def _ticket_and_events_snapshot(
 ) -> tuple[tuple[tuple[str, object], ...], tuple[tuple[object, ...], ...]]:
     conn = connect(str(db_path))
     try:
-        ticket = conn.execute(
-            "SELECT * FROM tickets WHERE id = ?", (ticket_id,)
-        ).fetchone()
+        ticket = conn.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
         assert ticket is not None
         columns = tuple(str(column) for column in ticket.keys())
         assert columns.count("updated_at") == 1
@@ -147,9 +146,7 @@ def _ticket_and_events_snapshot(
 def _ticket_updated_at(db_path: Path, ticket_id: str) -> int:
     conn = connect(str(db_path))
     try:
-        row = conn.execute(
-            "SELECT updated_at FROM tickets WHERE id = ?", (ticket_id,)
-        ).fetchone()
+        row = conn.execute("SELECT updated_at FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
         assert row is not None
         return int(row["updated_at"])
     finally:
@@ -173,7 +170,7 @@ def _external_body(state: str) -> dict[str, str]:
         "done": 5,
     }[state]
     return {
-        "state": state,
+        "stage": state,
         "kickoff_note": "external note",
         **dict(list(values.items())[:count]),
     }
@@ -182,25 +179,25 @@ def _external_body(state: str) -> dict[str, str]:
 def test_ticket_create_and_chief_create_ring_after_success_only(tmp_path: Path) -> None:
     app, db_path, _clock, doorbell = _make_app(tmp_path)
     with TestClient(app) as client:
-        invalid = client.post("/api/tickets", json={"title": "", "type": "coding"})
+        invalid = client.post("/api/tickets", json={"title": "", "worker_type": "coding"})
         assert invalid.status_code == 400
         assert doorbell.calls == 0
 
-        created = client.post("/api/tickets", json={"title": "Created", "type": "coding"})
+        created = client.post("/api/tickets", json={"title": "Created", "worker_type": "coding"})
         assert created.status_code == 200, created.text
         assert doorbell.calls == 1
         assert "ticket_created" in _event_kinds(db_path, created.json()["id"])
 
         unauthorized = client.post(
             "/api/chief/tickets/from-external-work",
-            json={"title": "Denied", "type": "coding", **_external_body("needs_success")},
+            json={"title": "Denied", "worker_type": "coding", **_external_body("needs_success")},
         )
         assert unauthorized.status_code == 400
         assert doorbell.calls == 1
 
         imported = client.post(
             "/api/chief/tickets/from-external-work",
-            json={"title": "Imported", "type": "coding", **_external_body("needs_success")},
+            json={"title": "Imported", "worker_type": "coding", **_external_body("needs_success")},
             headers=_CHIEF,
         )
         assert imported.status_code == 200, imported.text
@@ -214,16 +211,14 @@ def test_chief_rejections_do_not_ring_or_change_canonical_records(
     with TestClient(app) as client:
         malformed_create = client.post(
             "/api/chief/tickets/from-external-work",
-            json={"title": "Malformed", "type": "coding", "state": "needs_success"},
+            json={"title": "Malformed", "worker_type": "coding", "stage": "needs_success"},
             headers=_CHIEF,
         )
         assert malformed_create.status_code == 400
         assert doorbell.calls == 0
 
         conn = connect(str(db_path))
-        assert conn.execute(
-            "SELECT 1 FROM tickets WHERE title = 'Malformed'"
-        ).fetchone() is None
+        assert conn.execute("SELECT 1 FROM tickets WHERE title = 'Malformed'").fetchone() is None
         conn.close()
 
         ticket_id = _create_direct(db_path, title="Reconcile rejection")
@@ -231,7 +226,7 @@ def test_chief_rejections_do_not_ring_or_change_canonical_records(
         malformed_reconcile = client.post(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
             json={
-                "state": "needs_plan",
+                "stage": "needs_plan",
                 "kickoff_note": "external note",
                 "success": "success",
             },
@@ -261,22 +256,16 @@ def test_chief_rejections_do_not_ring_or_change_canonical_records(
 def test_chief_reconcile_rings_for_semantic_change_and_errored_normalization_only(
     tmp_path: Path,
 ) -> None:
-    app, db_path, clock, doorbell = _make_app(
-        tmp_path, fake_now="2099-01-01T12:00:00+00:00"
-    )
+    app, db_path, clock, doorbell = _make_app(tmp_path, fake_now="2099-01-01T12:00:00+00:00")
     assert isinstance(clock, planner_clock.TestClock)
-    body = {"title": "Imported", "type": "coding", **_external_body("needs_success")}
+    body = {"title": "Imported", "worker_type": "coding", **_external_body("needs_success")}
     with TestClient(app) as client:
-        created = client.post(
-            "/api/chief/tickets/from-external-work", json=body, headers=_CHIEF
-        )
+        created = client.post("/api/chief/tickets/from-external-work", json=body, headers=_CHIEF)
         assert created.status_code == 200, created.text
         ticket_id = created.json()["id"]
         doorbell.reset()
 
-        before_replay = _ticket_and_events_snapshot(
-            db_path, ticket_id, exclude_updated_at=True
-        )
+        before_replay = _ticket_and_events_snapshot(db_path, ticket_id, exclude_updated_at=True)
         before_replay_updated_at = _ticket_updated_at(db_path, ticket_id)
         clock.set(clock.now() + timedelta(minutes=1))
         replay = client.post(
@@ -287,18 +276,14 @@ def test_chief_reconcile_rings_for_semantic_change_and_errored_normalization_onl
         assert replay.status_code == 200, replay.text
         assert doorbell.calls == 0
         assert (
-            _ticket_and_events_snapshot(
-                db_path, ticket_id, exclude_updated_at=True
-            )
+            _ticket_and_events_snapshot(db_path, ticket_id, exclude_updated_at=True)
             == before_replay
         )
         assert _ticket_updated_at(db_path, ticket_id) == clock.now_unix()
         assert _ticket_updated_at(db_path, ticket_id) != before_replay_updated_at
 
         conn = connect(str(db_path))
-        conn.execute(
-            "UPDATE tickets SET ticket_status = 'errored' WHERE id = ?", (ticket_id,)
-        )
+        conn.execute("UPDATE tickets SET ticket_status = 'errored' WHERE id = ?", (ticket_id,))
         conn.commit()
         conn.close()
         before = _event_kinds(db_path, ticket_id)
@@ -326,9 +311,7 @@ def test_chief_reconcile_rings_for_semantic_change_and_errored_normalization_onl
         assert second_replay.status_code == 200
         assert doorbell.calls == 1
         assert (
-            _ticket_and_events_snapshot(
-                db_path, ticket_id, exclude_updated_at=True
-            )
+            _ticket_and_events_snapshot(db_path, ticket_id, exclude_updated_at=True)
             == before_second_replay
         )
         assert _ticket_updated_at(db_path, ticket_id) == clock.now_unix()
@@ -375,9 +358,10 @@ def test_every_approved_ticket_control_action_rings_once_and_failures_ring_zero(
         conn = connect(str(db_path))
         review = tickets_data.create_ticket_from_external_work(
             conn,
+            worker_type="coding",
             title="Approve",
             kickoff_note="external note",
-            target_state=TicketState.needs_closeout,
+            target_stage=CodingStage.needs_closeout,
             provided_values={
                 FieldName.success: "success",
                 FieldName.approach: "approach",
@@ -389,11 +373,20 @@ def test_every_approved_ticket_control_action_rings_once_and_failures_ring_zero(
             title_max_chars=TITLE_MAX_CHARS,
         )
         tickets_data.change_scope(
-            conn, review.id, ceiling=TicketState.needs_closeout, at_cap=AtCap.propose,
-            actor="human", now=3,
+            conn,
+            review.id,
+            ceiling=CodingStage.needs_closeout,
+            at_cap=AtCap.propose,
+            actor="human",
+            now=3,
         )
         tickets_data.file_proposal(
-            conn, review.id, field=FieldName.closeout, body="closeout", actor="agent", now=3,
+            conn,
+            review.id,
+            field=FieldName.closeout,
+            body="closeout",
+            actor="agent",
+            now=3,
         )
         conn.close()
         denied_approve = client.post(
@@ -408,7 +401,7 @@ def test_every_approved_ticket_control_action_rings_once_and_failures_ring_zero(
             json={"next_ceiling": "none", "at_cap": "propose"},
         )
         assert response.status_code == 200, response.text
-        assert response.json()["state"] == "done"
+        assert response.json()["stage"] == "done"
         assert doorbell.calls == 2
         wrong_review = client.post(
             f"/api/tickets/{_create_direct(db_path)}/accept/closeout", json={}
@@ -420,9 +413,10 @@ def test_every_approved_ticket_control_action_rings_once_and_failures_ring_zero(
         conn = connect(str(db_path))
         editable = tickets_data.create_ticket_from_external_work(
             conn,
+            worker_type="coding",
             title="Edit value",
             kickoff_note="external note",
-            target_state=TicketState.needs_approach,
+            target_stage=CodingStage.needs_approach,
             provided_values={FieldName.success: "old"},
             actor="chief",
             now=4,
@@ -436,9 +430,7 @@ def test_every_approved_ticket_control_action_rings_once_and_failures_ring_zero(
         )
         assert denied_value.status_code == 400
         assert doorbell.calls == 2
-        response = client.put(
-            f"/api/tickets/{editable.id}/value/success", json={"body": "new"}
-        )
+        response = client.put(f"/api/tickets/{editable.id}/value/success", json={"body": "new"})
         assert response.status_code == 200, response.text
         assert response.json()["fields"]["success"]["value"] == "new"
         assert doorbell.calls == 3
@@ -473,25 +465,23 @@ def test_every_approved_ticket_control_action_rings_once_and_failures_ring_zero(
 
         state_id = _create_direct(db_path, title="State")
         denied_state = client.post(
-            f"/api/tickets/{state_id}/state",
-            json={"to": "needs_approach"},
+            f"/api/tickets/{state_id}/stage",
+            json={"to_stage": "needs_approach"},
             headers=_AGENT,
         )
         assert denied_state.status_code == 400
         assert doorbell.calls == 4
         same_state = client.post(
-            f"/api/tickets/{state_id}/state", json={"to": "needs_success"}
+            f"/api/tickets/{state_id}/stage", json={"to_stage": "needs_success"}
         )
         assert same_state.status_code == 400
         assert doorbell.calls == 4
         response = client.post(
-            f"/api/tickets/{state_id}/state", json={"to": "needs_approach"}
+            f"/api/tickets/{state_id}/stage", json={"to_stage": "needs_approach"}
         )
         assert response.status_code == 200, response.text
         assert doorbell.calls == 5
-        invalid_state = client.post(
-            f"/api/tickets/{state_id}/state", json={"to": "bogus"}
-        )
+        invalid_state = client.post(f"/api/tickets/{state_id}/stage", json={"to_stage": "bogus"})
         assert invalid_state.status_code == 400
         assert doorbell.calls == 5
 
@@ -511,9 +501,7 @@ def test_every_approved_ticket_control_action_rings_once_and_failures_ring_zero(
         assert response.status_code == 200, response.text
         assert response.json()["ticket_status"] == "user_takeover"
         assert doorbell.calls == 7
-        denied_release = client.post(
-            f"/api/tickets/{control_id}/release", headers=_AGENT
-        )
+        denied_release = client.post(f"/api/tickets/{control_id}/release", headers=_AGENT)
         assert denied_release.status_code == 400
         assert doorbell.calls == 7
         response = client.post(f"/api/tickets/{control_id}/release")
@@ -521,9 +509,7 @@ def test_every_approved_ticket_control_action_rings_once_and_failures_ring_zero(
         assert response.json()["ticket_status"] == "empty"
         assert doorbell.calls == 8
 
-        unauthorized = client.post(
-            f"/api/tickets/{control_id}/takeover", headers=_AGENT
-        )
+        unauthorized = client.post(f"/api/tickets/{control_id}/takeover", headers=_AGENT)
         assert unauthorized.status_code == 400
         assert doorbell.calls == 8
         missing_takeover = client.post("/api/tickets/t_missing/takeover")
@@ -567,17 +553,18 @@ def test_ticket_delete_with_day_and_block_link_rings_exactly_once(tmp_path: Path
     conn = connect(str(db_path))
     try:
         assert conn.execute("SELECT 1 FROM tickets WHERE id = ?", (target,)).fetchone() is None
-        assert conn.execute(
-            "SELECT 1 FROM links WHERE from_id = ? OR to_id = ?", (target, target)
-        ).fetchone() is None
+        assert (
+            conn.execute(
+                "SELECT 1 FROM links WHERE from_id = ? OR to_id = ?", (target, target)
+            ).fetchone()
+            is None
+        )
     finally:
         conn.close()
 
 
 @pytest.mark.parametrize("date", ["today", "2099-02-03"])
-def test_day_membership_add_remove_ring_only_for_actual_change(
-    tmp_path: Path, date: str
-) -> None:
+def test_day_membership_add_remove_ring_only_for_actual_change(tmp_path: Path, date: str) -> None:
     app, db_path, _clock, doorbell = _make_app(tmp_path)
     ticket_id = _create_direct(db_path)
     with TestClient(app) as client:
@@ -615,23 +602,21 @@ def test_day_database_failure_rolls_back_and_does_not_ring(tmp_path: Path) -> No
     conn.close()
 
     with TestClient(app, raise_server_exceptions=False) as client:
-        failed = client.post(
-            "/api/day/2099-06-01/tickets", json={"ticket_id": ticket_id}
-        )
+        failed = client.post("/api/day/2099-06-01/tickets", json={"ticket_id": ticket_id})
         assert failed.status_code == 500
         assert doorbell.calls == 0
 
     conn = connect(str(db_path))
     try:
-        assert conn.execute(
-            "SELECT 1 FROM days WHERE id = 'day_2099-06-01'"
-        ).fetchone() is None
-        assert conn.execute(
-            "SELECT 1 FROM day_tickets WHERE day_id = 'day_2099-06-01'"
-        ).fetchone() is None
-        assert conn.execute(
-            "SELECT 1 FROM events WHERE entity_id = 'day_2099-06-01'"
-        ).fetchone() is None
+        assert conn.execute("SELECT 1 FROM days WHERE id = 'day_2099-06-01'").fetchone() is None
+        assert (
+            conn.execute("SELECT 1 FROM day_tickets WHERE day_id = 'day_2099-06-01'").fetchone()
+            is None
+        )
+        assert (
+            conn.execute("SELECT 1 FROM events WHERE entity_id = 'day_2099-06-01'").fetchone()
+            is None
+        )
     finally:
         conn.close()
 
@@ -772,7 +757,7 @@ def test_source_state_deactivation_reports_blocked_targets_and_rings_once(
     conn = connect(str(db_path))
     try:
         payload = conn.execute(
-            "SELECT payload FROM events WHERE entity_id = ? AND kind = 'state_changed' "
+            "SELECT payload FROM events WHERE entity_id = ? AND kind = 'stage_changed' "
             "ORDER BY id DESC LIMIT 1",
             (source,),
         ).fetchone()
@@ -812,14 +797,14 @@ def test_reactivating_source_rejects_active_blocks_cycle_and_does_not_ring(
     source = _create_direct(db_path, title="Source")
     target = _create_direct(db_path, title="Target")
     conn = connect(str(db_path))
-    tickets_data.set_state(conn, source, new_state=TicketState.done, actor="human", now=1)
+    tickets_data.set_stage(conn, source, new_stage=CodingStage.done, actor="human", now=1)
     core_links.add_link(conn, source, target, LinkKind.blocks, 1)
     core_links.add_link(conn, target, source, LinkKind.blocks, 1)
     conn.close()
     doorbell.reset()
 
     with TestClient(app) as client:
-        reopened = client.post(f"/api/tickets/{source}/state", json={"to": "needs_success"})
+        reopened = client.post(f"/api/tickets/{source}/stage", json={"to_stage": "needs_success"})
 
     assert reopened.status_code == 400
     assert reopened.json()["error"]["code"] == "link_cycle"
@@ -886,9 +871,10 @@ def test_successful_excluded_ticket_and_day_writes_do_not_ring(tmp_path: Path) -
     conn = connect(str(db_path))
     recap_ticket = tickets_data.create_ticket_from_external_work(
         conn,
+        worker_type="coding",
         title="Recap-ready",
         kickoff_note="external note",
-        target_state=TicketState.needs_approach,
+        target_stage=CodingStage.needs_approach,
         provided_values={FieldName.success: "success"},
         actor="chief",
         now=2,
@@ -908,9 +894,7 @@ def test_successful_excluded_ticket_and_day_writes_do_not_ring(tmp_path: Path) -
         assert note.status_code == 200, note.text
         assert note.json()["fields"]["success"]["user_note"] == "field note"
 
-        recap = client.put(
-            f"/api/tickets/{recap_ticket.id}/recap", json={"body": "recap"}
-        )
+        recap = client.put(f"/api/tickets/{recap_ticket.id}/recap", json={"body": "recap"})
         assert recap.status_code == 200, recap.text
         assert recap.json()["recap"] == "recap"
 
@@ -929,8 +913,7 @@ def test_successful_excluded_ticket_and_day_writes_do_not_ring(tmp_path: Path) -
         )
         assert combined_proposal.status_code == 200, combined_proposal.text
         assert (
-            combined_proposal.json()["fields"]["success"]["proposal"]["body"]
-            == "combined proposal"
+            combined_proposal.json()["fields"]["success"]["proposal"]["body"] == "combined proposal"
         )
         assert combined_proposal.json()["recap"] == "combined recap"
 
@@ -982,9 +965,7 @@ def test_successful_excluded_parentage_project_sprint_and_chat_writes_do_not_rin
         )
         assert sprint.status_code == 200, sprint.text
         sprint_id = sprint.json()["id"]
-        sprint_edit = client.patch(
-            f"/api/sprints/{sprint_id}", json={"name": "Edited sprint"}
-        )
+        sprint_edit = client.patch(f"/api/sprints/{sprint_id}", json={"name": "Edited sprint"})
         assert sprint_edit.status_code == 200, sprint_edit.text
         assert sprint_edit.json()["name"] == "Edited sprint"
 
@@ -994,9 +975,7 @@ def test_successful_excluded_parentage_project_sprint_and_chat_writes_do_not_rin
         )
         assert item.status_code == 200, item.text
         item_id = item.json()["id"]
-        parented = client.post(
-            f"/api/items/{item_id}/tickets", json={"ticket_id": ticket_id}
-        )
+        parented = client.post(f"/api/items/{item_id}/tickets", json={"ticket_id": ticket_id})
         assert parented.status_code == 200, parented.text
         assert parented.json()["rollup"]["needs_success"] == 1
         unparented = client.delete(f"/api/items/{item_id}/tickets/{ticket_id}")
@@ -1019,9 +998,7 @@ def test_best_effort_rings_after_ticket_and_day_commits(
     def ticket_delivery() -> None:
         conn = connect(str(db_path))
         try:
-            assert conn.execute(
-                "SELECT 1 FROM tickets WHERE title = 'Committed first'"
-            ).fetchone()
+            assert conn.execute("SELECT 1 FROM tickets WHERE title = 'Committed first'").fetchone()
         finally:
             conn.close()
         observed.append("ticket")
@@ -1029,7 +1006,9 @@ def test_best_effort_rings_after_ticket_and_day_commits(
 
     app.state.readiness_doorbell = LoopReadinessDoorbell(ticket_delivery)
     with TestClient(app) as client:
-        created = client.post("/api/tickets", json={"title": "Committed first", "type": "coding"})
+        created = client.post(
+            "/api/tickets", json={"title": "Committed first", "worker_type": "coding"}
+        )
     assert created.status_code == 200, created.text
 
     ticket_id = created.json()["id"]
@@ -1048,17 +1027,17 @@ def test_best_effort_rings_after_ticket_and_day_commits(
 
     app.state.readiness_doorbell = LoopReadinessDoorbell(day_delivery)
     with TestClient(app) as client:
-        added = client.post(
-            "/api/day/2099-04-05/tickets", json={"ticket_id": ticket_id}
-        )
+        added = client.post("/api/day/2099-04-05/tickets", json={"ticket_id": ticket_id})
     assert added.status_code == 200, added.text
     assert observed == ["ticket", "day"]
     assert "ticket wake failed" in caplog.text
     assert "day wake failed" in caplog.text
-    assert sum(
-        record.getMessage() == "readiness doorbell delivery failed"
-        for record in caplog.records
-    ) == 2
+    assert (
+        sum(
+            record.getMessage() == "readiness doorbell delivery failed" for record in caplog.records
+        )
+        == 2
+    )
 
 
 def test_routes_do_not_own_readiness_loop_or_ring_policy() -> None:
@@ -1075,9 +1054,7 @@ def test_routes_do_not_own_readiness_loop_or_ring_policy() -> None:
         source = (root / relative).read_text(encoding="utf-8")
         tree = ast.parse(source)
         names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
-        attributes = {
-            node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
-        }
+        attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
         assert forbidden.isdisjoint(names | attributes)
         assert ".ring(" not in source
 

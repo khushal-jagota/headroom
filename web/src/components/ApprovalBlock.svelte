@@ -18,7 +18,7 @@
     proposalBody = "",
     proposedBy = "",
     note = "",
-    newState = null,
+    newStage = null,
     lifecycle = null,
     layout = "default",
     requireScope = false,
@@ -32,7 +32,7 @@
     proposalBody?: string | null;
     proposedBy?: string;
     note?: string | null;
-    newState?: string | null;
+    newStage?: string | null;
     lifecycle?: Lifecycle | null;
     layout?: "default" | "review";
     requireScope?: boolean;
@@ -117,7 +117,7 @@
       >
         {actionLabel}
       </Button>
-      {#if showScope}<ScopePairPicker {newState} {lifecycle} bind:scope />{/if}
+      {#if showScope}<ScopePairPicker {newStage} {lifecycle} bind:scope />{/if}
     </div>
   </div>
 {/snippet}

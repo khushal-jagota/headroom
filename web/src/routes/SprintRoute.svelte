@@ -82,14 +82,14 @@
     });
   }
 
-  // Done-fraction from the item's ticket-state rollup: done count over total tickets;
+  // Done-fraction from the item's Ticket-Stage rollup: done count over total tickets;
   // an em dash when the item has no tickets yet. Dropped tickets are excluded from the
   // denominator — item status ignores them, so a fully-done item reads "2/2 done", not
   // "2/3", when one of its tickets was dropped.
   function doneFraction(item: AnyRecord): string {
     const rollup = (item.rollup as Record<string, number>) || {};
     const total = Object.entries(rollup).reduce(
-      (sum, [state, count]) => (state === "dropped" ? sum : sum + count),
+      (sum, [stage, count]) => (stage === "dropped" ? sum : sum + count),
       0
     );
     if (total === 0) return "—";
@@ -129,8 +129,8 @@
     );
   }
 
-  function ticketStateClass(ticket: AnyRecord): string {
-    if (ticket.state === "done") return "tst tst--done";
+  function ticketStageClass(ticket: AnyRecord): string {
+    if (ticket.stage === "done") return "tst tst--done";
     if (ticketNeedsYou(ticket)) return "tst tst--now";
     return "tst";
   }
@@ -265,7 +265,7 @@
                           <a class="trow" href={`#/ticket/${ticket.id}`} data-ticket-id={ticket.id}>
                             <span class="pr">{ticket.priority}</span>
                             <span class="t">{ticket.title}</span>
-                            <span class={ticketStateClass(ticket)}>{labelize(ticket.state, { capitalize: false })}</span>
+                            <span class={ticketStageClass(ticket)}>{labelize(ticket.stage, { capitalize: false })}</span>
                           </a>
                         {/each}
                       {:else}
@@ -290,7 +290,7 @@
                   <a class="trow" href={`#/ticket/${ticket.id}`} data-ticket-id={ticket.id}>
                     <span class="pr">{ticket.priority}</span>
                     <span class="t">{ticket.title}</span>
-                    <span class={ticketStateClass(ticket)}>{labelize(ticket.state, { capitalize: false })}</span>
+                    <span class={ticketStageClass(ticket)}>{labelize(ticket.stage, { capitalize: false })}</span>
                   </a>
                 {/each}
               </div>

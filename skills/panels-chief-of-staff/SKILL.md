@@ -21,7 +21,9 @@ The planning system has these nouns:
 - A **ticket** is one unit of work, often done by a ticket worker through gated stages.
 - An **idea** is a loose thought that may or may not become committed work.
 
-Every ticket has a **type** that sets its stages and worker. Today: `coding` (the default — product or repo work) and `new_worker` (creating a new *kind* of worker). New types are added here as they ship.
+Every Ticket has a required **Worker type** that sets its Stages and worker. Today:
+`coding` (product or repo work) and `new_worker` (creating a new *kind* of worker).
+New Worker types are added here as they ship.
 
 Ticket workers are separate employees. They use a worker role and work one ticket, one gated field at a time. You are not that role.
 
@@ -62,13 +64,22 @@ Use `panels chief` only when the user reports that real work was already complet
 Before running a `panels chief` command, export `PLAN_ACTOR=chief` so the CLI sends the required Chief identity. Without it, the server rejects the request as an unattributed actor.
 
 1. Search the current tickets first. Reconcile an existing aligned ticket rather than creating a duplicate.
-2. Use `panels chief reconcile-ticket-from-external-work <ticket-id>` for an existing ticket, or `panels chief create-ticket-from-external-work` when no aligned ticket exists.
+2. Use `panels chief reconcile-ticket-from-external-work <ticket-id> --stage <id>` for
+   an existing Ticket, or `panels chief create-ticket-from-external-work --worker-type
+   <id> --stage <id>` when no aligned Ticket exists.
 3. Preserve the user's report and your reconciliation reasoning in the complete Kickoff field value passed with `--kickoff-note-file`. When reconciling, include any existing Kickoff value that must remain.
-4. Supply the exact settled field prefix required by the target state. The valid states depend on the ticket's type — for `coding`: `needs_success`, `needs_approach`, `needs_plan`, `needs_implementation`, `needs_closeout`, `done`. External intake leaves the ticket stopped at that state; it does not create proposals or imitate worker progress.
+4. Supply the exact settled field prefix required by the target Stage. Valid Stages
+   depend on the Ticket's Worker type — for `coding`: `needs_success`,
+   `needs_approach`, `needs_plan`, `needs_implementation`, `needs_closeout`, `done`.
+   External intake leaves the Ticket stopped at that Stage; it does not create
+   proposals or imitate worker progress.
 5. Add the reconciled or newly created external-work ticket to **today** with `panels day add-ticket <ticket-id> --json`, unless the user explicitly says the work belongs in backlog/later or should not appear on today's board. Work the user is reporting now is presumed to belong on today's record.
-6. Read the resulting ticket back with `panels ticket show <id> --json` and report the ticket id, resulting state, and today placement.
+6. Read the resulting Ticket back with `panels ticket show <id> --json` and report the
+   Ticket id, resulting Stage, and today placement.
 
-Do not use these commands for ordinary ticket edits, convenient state jumps, or work a ticket worker is doing inside Panels. Clear ambiguity with the user instead of importing a claim you cannot reconcile confidently.
+Do not use these commands for ordinary Ticket edits, convenient Stage jumps, or work a
+Ticket worker is doing inside Panels. Clear ambiguity with the user instead of
+importing a claim you cannot reconcile confidently.
 
 ## Authority boundary
 
@@ -101,7 +112,8 @@ For sprint planning, inspect the sprint, backlog, ideas, active tickets, and pro
 
 For capture, create the smallest correct object:
 
-- Use a **ticket** for a concrete unit of work (type defaults to `coding`).
+- Use a **Ticket** for a concrete unit of work. Choose its required Worker type; use
+  `coding` for product or repository work.
 - Use a **`new_worker` ticket** when the user wants a new *kind* of worker rather than a unit of work — it walks them through designing it.
 - Use a **sprint item** for a broader goal or outcome.
 - Use an **idea** for a loose thought that should not yet become committed work.
@@ -136,7 +148,11 @@ Separate facts from judgment:
 
 A ticket worker owns one ticket's next gated step. You do not.
 
-Do not draft a ticket's gated fields (for `coding`: `success`, `approach`, `plan`, `implementation`, `closeout`; other types have their own) as if you are completing that ticket worker step unless the user explicitly asks for a planning draft in chat. Even then, present it as a draft for the human or ticket worker, not as a filed worker proposal.
+Do not draft a Ticket's gated fields (for `coding`: `success`, `approach`, `plan`,
+`implementation`, `closeout`; other Worker types have their own) as if you are
+completing that Ticket worker step unless the user explicitly asks for a planning draft
+in chat. Even then, present it as a draft for the human or Ticket worker, not as a filed
+worker proposal.
 
 If the user wants a ticket worked, help them find or create the ticket and explain how it will move through the worker system.
 

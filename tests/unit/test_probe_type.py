@@ -1,6 +1,6 @@
 """t_tt02x — the canonical ``probe`` type contract + a compact drive-to-done.
 
-``probe`` is the synthetic SECOND ticket type (``tests/support/probe.py``),
+``probe`` is the synthetic SECOND Worker type (``tests/support/probe.py``),
 registered TEST-ONLY, that proves the persistence + engine stack is genuinely
 N-ary and not ``coding`` in disguise. The exhaustive DATA-layer drive with EXACT
 per-transition event assertions lives in ``test_generic_field_storage.py`` (t_tt02b,
@@ -100,7 +100,7 @@ def test_registry_validates_probe() -> None:
 
 # The exact serialized manifest — the full dict (mirrors the coding manifest test).
 PROBE_MANIFEST = {
-    "type_id": "probe",
+    "worker_type": "probe",
     "label": "Probe",
     "stages": [
         {
@@ -206,9 +206,7 @@ def _worker_session_exists(conn: Connection, tid: str) -> bool:
     row = conn.execute("SELECT chat_session_key FROM tickets WHERE id = ?", (tid,)).fetchone()
     if row["chat_session_key"] is not None:
         return True
-    turns = conn.execute(
-        "SELECT 1 FROM chat_turns WHERE entity_id = ? LIMIT 1", (tid,)
-    ).fetchone()
+    turns = conn.execute("SELECT 1 FROM chat_turns WHERE entity_id = ? LIMIT 1", (tid,)).fetchone()
     return turns is not None
 
 
@@ -217,29 +215,38 @@ def test_probe_drives_to_done_via_real_writers(
 ) -> None:
     now = fake_clock.now_unix()
     ticket = tickets_data.create_ticket(
-        tmp_db, title="Probe", actor="human", now=now,
-        title_max_chars=TITLE_MAX_CHARS, ticket_type="probe",
+        tmp_db,
+        title="Probe",
+        actor="human",
+        now=now,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="probe",
     )
     tid = ticket.id
 
     # Created at needs_kickoff scoped to the leading needs_kickoff ceiling, kickoff parked.
-    assert ticket.state == "needs_kickoff"
+    assert ticket.stage == "needs_kickoff"
     assert ticket.ceiling == "needs_kickoff"
     assert fields_codec.get_slot(ticket.fields, "kickoff").proposal is not None
 
     # accept kickoff, expanding the ceiling onward to needs_beta -> advances to needs_alpha.
     t = tickets_data.accept_proposal(
-        tmp_db, tid, field=FieldName.kickoff, actor="human", now=now,
-        next_ceiling=NEEDS_BETA, at_cap=AtCap.propose,
+        tmp_db,
+        tid,
+        field=FieldName.kickoff,
+        actor="human",
+        now=now,
+        next_ceiling=NEEDS_BETA,
+        at_cap=AtCap.propose,
     )
-    assert t.state == NEEDS_ALPHA
+    assert t.stage == NEEDS_ALPHA
     assert t.ceiling == NEEDS_BETA
 
     # propose alpha: ceiling (needs_beta) is BEYOND state (needs_alpha) -> AUTO-ACCEPT + advance.
     t = tickets_data.file_proposal(
         tmp_db, tid, field=FIELD_ALPHA, body="alpha body", actor="agent", now=now
     )
-    assert t.state == NEEDS_BETA
+    assert t.stage == NEEDS_BETA
     assert fields_codec.get_slot(t.fields, FIELD_ALPHA).value == "alpha body"
     assert fields_codec.get_slot(t.fields, FIELD_ALPHA).proposal is None
 
@@ -248,12 +255,17 @@ def test_probe_drives_to_done_via_real_writers(
         tmp_db, tid, field=FIELD_BETA, body="beta body", actor="agent", now=now
     )
     t = tickets_data.accept_proposal(
-        tmp_db, tid, field=FIELD_BETA, actor="human", now=now,
-        next_ceiling=NO_FURTHER, at_cap=AtCap.stop,
+        tmp_db,
+        tid,
+        field=FIELD_BETA,
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.stop,
     )
 
     # Exact final state: done, both worker fields settled to their accepted values.
-    assert t.state == "done"
+    assert t.stage == "done"
     assert fields_codec.get_slot(t.fields, FIELD_ALPHA).value == "alpha body"
     assert fields_codec.get_slot(t.fields, FIELD_BETA).value == "beta body"
     assert fields_codec.get_slot(t.fields, FIELD_BETA).proposal is None
@@ -267,12 +279,16 @@ def test_probe_drives_to_dropped(
 ) -> None:
     now = fake_clock.now_unix()
     ticket = tickets_data.create_ticket(
-        tmp_db, title="Probe", actor="human", now=now,
-        title_max_chars=TITLE_MAX_CHARS, ticket_type="probe",
+        tmp_db,
+        title="Probe",
+        actor="human",
+        now=now,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="probe",
     )
     # drop is the universal reserved bookend; it terminates a probe ticket at dropped.
     t = tickets_data.drop_ticket(tmp_db, ticket.id, actor="human", now=now)
-    assert t.state == "dropped"
+    assert t.stage == "dropped"
     assert _worker_session_exists(tmp_db, ticket.id) is False
 
 
@@ -289,24 +305,28 @@ def test_create_with_unknown_type_raises_not_found(
     now = fake_clock.now_unix()
     with pytest.raises(PlannerError) as exc:
         tickets_data.create_ticket(
-            tmp_db, title="Nope", actor="human", now=now,
-            title_max_chars=TITLE_MAX_CHARS, ticket_type="ghost",
+            tmp_db,
+            title="Nope",
+            actor="human",
+            now=now,
+            title_max_chars=TITLE_MAX_CHARS,
+            worker_type="ghost",
         )
     assert exc.value.code == ErrorCode.not_found
-    assert exc.value.message == "unknown ticket type"
-    assert exc.value.detail == {"type_id": "ghost"}
+    assert exc.value.message == "unknown worker type"
+    assert exc.value.detail == {"worker_type": "ghost"}
 
 
-def test_probe_invalid_state_rejected(probe_registry: WorkflowDefinition) -> None:
-    # A state that is neither a probe linear stage nor the reserved dropped: the shared
-    # load/persist validator raises "state outside the linear order".
+def test_probe_invalid_stage_rejected(probe_registry: WorkflowDefinition) -> None:
+    # A Stage that is neither a probe linear stage nor the reserved dropped: the shared
+    # load/persist validator raises "stage outside the linear order".
     from planner.tickets.logic import ticket_type_guard
 
     with pytest.raises(PlannerError) as exc:
-        ticket_type_guard.resolve_and_validate("probe", state="needs_ghost", ceiling=NEEDS_ALPHA)
+        ticket_type_guard.resolve_and_validate("probe", stage="needs_ghost", ceiling=NEEDS_ALPHA)
     assert exc.value.code == ErrorCode.validation
-    assert exc.value.message == "state outside the linear order"
-    assert exc.value.detail == {"state": "needs_ghost"}
+    assert exc.value.message == "stage outside the linear order"
+    assert exc.value.detail == {"stage": "needs_ghost"}
 
 
 def test_probe_invalid_ceiling_rejected(probe_registry: WorkflowDefinition) -> None:
@@ -317,12 +337,10 @@ def test_probe_invalid_ceiling_rejected(probe_registry: WorkflowDefinition) -> N
     from planner.tickets.logic import ticket_type_guard
 
     with pytest.raises(PlannerError) as exc:
-        ticket_type_guard.resolve_and_validate(
-            "probe", state=NEEDS_ALPHA, ceiling="needs_ghost"
-        )
+        ticket_type_guard.resolve_and_validate("probe", stage=NEEDS_ALPHA, ceiling="needs_ghost")
     assert exc.value.code == ErrorCode.scope_invalid
     assert exc.value.message == "ceiling outside the type's range"
-    assert exc.value.detail == {"type_id": "probe", "ceiling": "needs_ghost"}
+    assert exc.value.detail == {"worker_type": "probe", "ceiling": "needs_ghost"}
 
 
 def test_probe_invalid_field_rejected(probe_registry: WorkflowDefinition) -> None:

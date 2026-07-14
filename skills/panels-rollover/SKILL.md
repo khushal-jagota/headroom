@@ -13,7 +13,7 @@ Panels is the source of truth. Use the `panels` CLI; do not edit the old planner
 
 - The planning day changes at **5am local time**.
 - Never carry `done` or `dropped` tickets forward.
-- Trust Panels ticket state; commits and implementation reports are supporting evidence only.
+- Trust the stored Panels Ticket Stage; commits and implementation reports are supporting evidence only.
 - Carry only obvious unfinished work, not the whole sprint backlog.
 - Keep broad reprioritization in sprint planning.
 - Do not bypass ticket gates.
@@ -33,7 +33,7 @@ panels ticket list --sprint current --json
 
 Work out what finished, what remains unfinished, what is waiting for approval or blocked, and which unfinished tickets are obvious carryover candidates.
 
-Do not rewrite ticket lifecycle state during rollover. Surface uncertain choices instead of inventing them.
+Do not rewrite a Ticket Stage during rollover. Surface uncertain choices instead of inventing them.
 
 ## 2. Prepare today's kickoff
 
@@ -83,6 +83,6 @@ Cron prompts stay thin and load this skill.
 - **Morning:** prepare the kickoff draft if it is missing, then stop for review.
 - **Afternoon:** act only as a failsafe—prepare the same draft if it is still missing; otherwise no-op.
 - Scheduled runs never add tickets to today without the user's agreement.
-- Hermes cron sessions inherit worker identity, while Day overview and note writes are direct-only. For scheduled checks, prefix only the approved kickoff-draft `panels day set` commands with `PLAN_ACTOR=chief`. This authority is limited to the approved kickoff draft; never use it to edit ticket lifecycle state, approve gates, or add tickets before the user agrees.
+- Hermes cron sessions inherit worker identity, while Day overview and note writes are direct-only. For scheduled checks, prefix only the approved kickoff-draft `panels day set` commands with `PLAN_ACTOR=chief`. This authority is limited to the approved kickoff draft; never use it to edit a Ticket Stage, approve gates, or add tickets before the user agrees.
 
 If Panels is unavailable, report the blocker. Never fall back to the old files.

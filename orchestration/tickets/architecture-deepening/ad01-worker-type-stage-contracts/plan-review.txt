@@ -1,0 +1,55 @@
+AD01 independent plan review
+============================
+
+Reviewer: Codex CLI, gpt-5.5, read-only sandbox, high reasoning effort
+Date: 2026-07-13
+Session: 019f5cde-f4d1-7841-ab23-058ea3f0701b
+Exit code: 0
+
+Full final output
+-----------------
+
+Findings
+
+1. High — Migration design / Call order and canonical shape
+
+   The plan claims safe migration from every schema shape currently recognized by `db.py`, but it
+   leaves older ticket-table rebuilds in the path unchanged. Current `_migrate_ticket_lifecycle` and
+   `_migrate_ticket_kickoff_columns` snapshot rows and build `tickets_new` before the write-lock swap,
+   while `D-migration-boundary` requires the live migration to hold the lock across snapshot → copy →
+   swap to avoid lost concurrent writes.
+
+   Smallest correction: include those legacy ticket-table rebuilds in AD01 migration safety work,
+   moving snapshot/copy under the same FK-off + `BEGIN IMMEDIATE`/savepoint envelope, or replace them
+   with one locked terminal rebuild that subsumes those shapes.
+
+2. Medium — Bounded implementation allowlist / Live skills and docs
+
+   The allowlist omits `skills/panels-worker-coding/SKILL.md`, a live specialist skill. It currently
+   exposes old type vocabulary in its metadata (`coding-type Panels ticket`) and is part of the agent
+   role skill surface the AD01 ticket explicitly requires to update. Without allowing this file, the
+   plan’s old-name deletion/static assertion cannot be satisfied for live skills.
+
+   Smallest correction: add `skills/panels-worker-coding/SKILL.md` to the live skills allowlist and
+   update the wording to Worker type / Stage vocabulary only.
+
+Orchestrator disposition
+------------------------
+
+1. Accepted. AD01 will replace the legacy lifecycle, kickoff, and type rebuild chain with one terminal,
+   lock-held v18 rebuild that recognizes and transforms all of those source shapes. This removes the
+   pre-lock snapshot windows rather than repairing three independent swap implementations.
+2. Accepted. Add `skills/panels-worker-coding/SKILL.md` to the allowlist and change only its rejected
+   Worker-type vocabulary. Its stage guidance and behavior remain unchanged.
+
+Corrected-plan re-review
+------------------------
+
+Reviewer: Codex CLI, gpt-5.5, read-only sandbox, high reasoning effort
+Date: 2026-07-13
+Session: 019f5ce4-5dc3-7122-8953-54b40cb4c814
+Exit code: 0
+
+Full final output:
+
+NO VIOLATIONS

@@ -13,11 +13,11 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.tickets import views as ticket_views
 
 
-def _ticket(conn, ticket_id: str, state: str = "needs_success") -> None:
+def _ticket(conn, ticket_id: str, stage: str = "needs_success") -> None:
     conn.execute(
-        "INSERT INTO tickets (id, title, ticket_type, state, ceiling, created_at, updated_at) "
+        "INSERT INTO tickets (id, title, worker_type, stage, ceiling, created_at, updated_at) "
         "VALUES (?, ?, 'coding', ?, 'needs_success', 1, 1)",
-        (ticket_id, ticket_id, state),
+        (ticket_id, ticket_id, stage),
     )
 
 
@@ -65,7 +65,7 @@ def test_add_blocks_endpoint_reads_happen_under_begin_immediate(tmp_db) -> None:
 
 
 def test_blocks_cycle_check_ignores_inactive_sources(tmp_db) -> None:
-    _ticket(tmp_db, "t_done_source", state="done")
+    _ticket(tmp_db, "t_done_source", stage="done")
     _ticket(tmp_db, "t_active_target")
 
     core_links.add_link(tmp_db, "t_done_source", "t_active_target", LinkKind.blocks, 1)
@@ -81,11 +81,11 @@ def test_blocks_cycle_check_ignores_inactive_sources(tmp_db) -> None:
 
 
 def test_blocker_summary_resolves_active_and_cleared_ticket_and_item_rows(tmp_db) -> None:
-    _ticket(tmp_db, "t_blocked", state="needs_success")
-    _ticket(tmp_db, "t_active_blocker", state="needs_plan")
-    _ticket(tmp_db, "t_done_blocker", state="done")
-    _ticket(tmp_db, "t_outgoing_source", state="needs_success")
-    _ticket(tmp_db, "t_outgoing_target", state="needs_implementation")
+    _ticket(tmp_db, "t_blocked", stage="needs_success")
+    _ticket(tmp_db, "t_active_blocker", stage="needs_plan")
+    _ticket(tmp_db, "t_done_blocker", stage="done")
+    _ticket(tmp_db, "t_outgoing_source", stage="needs_success")
+    _ticket(tmp_db, "t_outgoing_target", stage="needs_implementation")
     _sprint_item(tmp_db, "si_outgoing_target")
     tmp_db.execute("UPDATE tickets SET title = 'Blocked ticket' WHERE id = 't_blocked'")
     tmp_db.execute("UPDATE tickets SET title = 'Active blocker' WHERE id = 't_active_blocker'")
@@ -106,14 +106,14 @@ def test_blocker_summary_resolves_active_and_cleared_ticket_and_item_rows(tmp_db
             BlockedBySummaryRow(
                 ticket_id="t_active_blocker",
                 title="Active blocker",
-                state="needs_plan",
+                stage="needs_plan",
                 active=True,
                 href="#/ticket/t_active_blocker",
             ),
             BlockedBySummaryRow(
                 ticket_id="t_done_blocker",
                 title="Done blocker",
-                state="done",
+                stage="done",
                 active=False,
                 href="#/ticket/t_done_blocker",
             ),
@@ -143,9 +143,9 @@ def test_blocker_summary_resolves_active_and_cleared_ticket_and_item_rows(tmp_db
 
 
 def test_ticket_detail_and_copy_text_use_resolved_blocker_summary(tmp_db) -> None:
-    _ticket(tmp_db, "t_blocked", state="needs_success")
-    _ticket(tmp_db, "t_active_blocker", state="needs_plan")
-    _ticket(tmp_db, "t_done_blocker", state="done")
+    _ticket(tmp_db, "t_blocked", stage="needs_success")
+    _ticket(tmp_db, "t_active_blocker", stage="needs_plan")
+    _ticket(tmp_db, "t_done_blocker", stage="done")
     tmp_db.execute("UPDATE tickets SET title = 'Blocked ticket' WHERE id = 't_blocked'")
     tmp_db.execute("UPDATE tickets SET title = 'Active blocker' WHERE id = 't_active_blocker'")
     tmp_db.execute("UPDATE tickets SET title = 'Done blocker' WHERE id = 't_done_blocker'")
@@ -159,14 +159,14 @@ def test_ticket_detail_and_copy_text_use_resolved_blocker_summary(tmp_db) -> Non
         {
             "ticket_id": "t_active_blocker",
             "title": "Active blocker",
-            "state": "needs_plan",
+            "stage": "needs_plan",
             "active": True,
             "href": "#/ticket/t_active_blocker",
         },
         {
             "ticket_id": "t_done_blocker",
             "title": "Done blocker",
-            "state": "done",
+            "stage": "done",
             "active": False,
             "href": "#/ticket/t_done_blocker",
         },

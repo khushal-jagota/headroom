@@ -237,28 +237,28 @@ def _import_tickets(
             "implementation": {"value": None, "proposal": None, "user_note": None},
             "closeout": {"value": None, "proposal": None, "user_note": None},
         }
-        # Seed door: the (type, state, ceiling) it is about to write must be
-        # registry-valid, so a malformed seed state fails with the specific error
+        # Seed door: the (Worker type, Stage, ceiling) it is about to write must be
+        # registry-valid, so a malformed seed Stage fails with the specific error
         # rather than a bad row. Reaches the registry only through coding_bridge (F6).
         ticket_type_guard.resolve_and_validate(
-            "coding", state=ticket.state.value, ceiling=ticket.state.value
+            "coding", stage=ticket.stage.value, ceiling=ticket.stage.value
         )
         conn.execute(
             "INSERT INTO tickets ("
-            "id, title, ticket_type, state, priority, deadline, project_id, sprint_item_id, "
+            "id, title, worker_type, stage, priority, deadline, project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, "
             "chat_session_key, alias, fields, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                ticket_id, ticket.title, "coding", ticket.state.value, ticket.priority.value,
-                None, None, sprint_item_id, row_sprint_id, "", ticket.state.value, "propose",
+                ticket_id, ticket.title, "coding", ticket.stage.value, ticket.priority.value,
+                None, None, sprint_item_id, row_sprint_id, "", ticket.stage.value, "propose",
                 ticket.chat_session_key, ticket.alias, json.dumps(fields), now, now,
             ),
         )
         append_event(
             conn, ticket_id, EventKind.ticket_created,
             {
-                "title": ticket.title, "state": ticket.state.value,
+                "title": ticket.title, "stage": ticket.stage.value,
                 "alias": ticket.alias, "source": "seed",
             },
             now,

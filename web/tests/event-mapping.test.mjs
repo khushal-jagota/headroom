@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { keysForEvent } from "../src/lib/eventMapping.mjs";
 
 const FALLBACK_KINDS = [
-  "state_changed",
+  "stage_changed",
   "proposal_accepted",
   "proposal_superseded",
   "day_ticket_removed",
@@ -149,7 +149,7 @@ assert.deepEqual(
   keysForEvent({
     id: 3,
     entity_id: "t_source",
-    kind: "state_changed",
+    kind: "stage_changed",
     payload: {
       affected_blocked_target_ids: ["t_blocked", "si_blocked"]
     },

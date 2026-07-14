@@ -1,16 +1,16 @@
-# Ticket types
+# Worker types
 
-Not every ticket does the same kind of work, so not every ticket walks the same
-stages. A **ticket type** is a single registry entry that declares one workflow end
-to end: the ordered stages a ticket of that type moves through, the field each stage
+Not every Ticket does the same kind of work, so not every Ticket walks the same
+Stages. A **Worker type** is a single registry entry that declares one workflow end
+to end: the ordered Stages a Ticket of that Worker type moves through, the field each Stage
 gates, the fields it carries, and its **worker** — the specialist skill (and the
 model / toolset) that knows how to do that kind of work. The engine holds no "if this
-is a coding ticket" branches; it reads the type and follows whatever the type says.
+is a coding Ticket" branches; it reads the Worker type and follows whatever the Worker type says.
 
-Two types ship today. **`coding`** is the default — product or repository work, the
+Two Worker types ship today. **`coding`** is the default — product or repository work, the
 six-stage lifecycle the planner has always had. **`new_worker`** is the create-a-worker
 worker: its own worker designs and lands *another* worker, through a bespoke lifecycle
-of its own. A third, **`probe`**, is a test-only fixture — never a shipped type; it
+of its own. A third, **`probe`**, is a test-only fixture — never a shipped Worker type; it
 exists only to prove the machinery is genuinely general, not coding-shaped in disguise.
 
 ```
@@ -72,22 +72,22 @@ _Code paths:_ `src/planner/ticket_types/contracts.py` (the shapes),
 
 A definition reaches the rest of the system through exactly two doors.
 
-**The engine** reads a ticket's type through one seam — a single module that is the
-only place in the engine allowed to name the type registry. Every other engine module
-that needs to know a ticket's stage order, its gates, or where a stage advances to
-reaches those answers through that one seam, resolving each ticket row's *own* type.
+**The engine** reads a Ticket's Worker type through one seam — a single module that is
+the only place in the engine allowed to name the Worker type registry. Every other engine
+module that needs to know a Ticket's Stage order, its gates, or where a Stage advances to
+reaches those answers through that one seam, resolving each Ticket row's *own* Worker type.
 This is why there are no per-type branches: a generic operation takes the definition and
 indexes its tables, so a ticket with unfamiliar stages costs the engine nothing.
 
-**The web** reads types through an HTTP endpoint, `GET /api/ticket-types`, which serves
-one entry per registered type: its stages, labels, gates, fields, and ceiling range, in
-a single flat shape. The frontend turns each entry into a per-type lifecycle and renders
-a ticket using *its* type's stages — so a coding ticket and a new_worker ticket show
+**The web** reads Worker types through `GET /api/worker-types`, which serves one entry
+per registered Worker type: its Stages, labels, gates, fields, and ceiling range, in a
+single flat shape. The frontend turns each entry into a per-Worker-type lifecycle and renders
+a Ticket using *its* Worker type's Stages — so a coding Ticket and a new_worker Ticket show
 different spines from the same code, driven entirely by what the server served.
 
 _Code paths:_ `src/planner/tickets/logic/coding_bridge.py` (the single engine seam),
 `src/planner/ticket_types/logic/manifest.py` (the served shape),
-`src/planner/core/server.py` (`GET /api/ticket-types`),
+`src/planner/core/server.py` (`GET /api/worker-types`),
 `web/src/lib/lifecycle.ts` (the manifest → per-type lifecycle the frontend renders from).
 
 ## The start ceiling, and the first working stage
@@ -121,8 +121,8 @@ base role is `panels-worker`, and it is deliberately **type-agnostic**: it knows
 work *a* ticket one step at a time, but nothing about coding's or new_worker's particular
 stages. That base skill's text is preloaded when the worker starts.
 
-To specialize, the worker runs `panels worker my-ticket`. Alongside the ticket's id and
-state, that command reports the ticket's **worker** — the specialist skill for its type,
+To specialize, the worker runs `panels worker my-ticket`. Alongside the Ticket's id and
+Stage, that command reports the Ticket's **worker** — the specialist skill for its Worker type,
 resolved from the definition's worker profile. The worker then loads that skill on demand
 with the `skill_view` tool and follows it for the stage-by-stage work. The base role's job
 is only to point the way; the specialist carries the substance:

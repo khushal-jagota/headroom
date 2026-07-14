@@ -28,13 +28,13 @@ from planner.ticket_types.contracts import (
 from planner.ticket_types.logic import validation, views
 from planner.ticket_types.registry import Registry, build_registry
 from planner.tickets.contracts import (
-    ADVANCE_TARGET,
-    GATING_FIELD,
-    STATE_ORDER,
-    WORKER_STATE_ORDER,
+    CODING_EMPLOYEE_STAGE_ORDER,
+    CODING_GATING_FIELD_BY_STAGE,
+    CODING_NEXT_STAGE_BY_STAGE,
+    CODING_STAGE_ORDER,
+    CodingStage,
     FieldName,
     Implementer,
-    TicketState,
     TicketStatus,
 )
 from planner.tickets.logic import coding_bridge, machine
@@ -80,8 +80,8 @@ def test_require_unknown_type_raises_not_found() -> None:
     assert_raises_planner(
         lambda: build().require("nope"),
         code=ErrorCode.not_found,
-        message="unknown ticket type",
-        detail={"type_id": "nope"},
+        message="unknown worker type",
+        detail={"worker_type": "nope"},
     )
 
 
@@ -95,7 +95,7 @@ def test_public_constructor_validates_invalid_definition() -> None:  # F2
         ),
         code=ErrorCode.validation,
         message="definition has no stages",
-        detail={"type_id": "coding"},
+        detail={"worker_type": "coding"},
     )
 
 
@@ -107,8 +107,8 @@ def test_public_constructor_rejects_duplicate_type_id() -> None:  # F2
             known_toolset_profiles=KNOWN_TOOLSET_PROFILES,
         ),
         code=ErrorCode.validation,
-        message="duplicate ticket type id",
-        detail={"type_id": "coding"},
+        message="duplicate worker type id",
+        detail={"worker_type": "coding"},
     )
 
 
@@ -129,7 +129,7 @@ def test_empty_stages_rejected() -> None:  # R0
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="definition has no stages",
-        detail={"type_id": "coding"},
+        detail={"worker_type": "coding"},
     )
 
 
@@ -139,7 +139,7 @@ def test_empty_fields_rejected() -> None:  # R0
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="definition has no fields",
-        detail={"type_id": "coding"},
+        detail={"worker_type": "coding"},
     )
 
 
@@ -151,8 +151,8 @@ def test_duplicate_type_id_rejected() -> None:  # R1
             known_toolset_profiles=KNOWN_TOOLSET_PROFILES,
         ),
         code=ErrorCode.validation,
-        message="duplicate ticket type id",
-        detail={"type_id": "coding"},
+        message="duplicate worker type id",
+        detail={"worker_type": "coding"},
     )
 
 
@@ -166,7 +166,7 @@ def test_duplicate_stage_id_rejected() -> None:  # R2
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="duplicate stage id",
-        detail={"type_id": "coding", "state": "needs_success"},
+        detail={"worker_type": "coding", "stage": "needs_success"},
     )
 
 
@@ -179,7 +179,7 @@ def test_duplicate_field_id_rejected() -> None:  # R3
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="duplicate field id",
-        detail={"type_id": "coding", "field": "success"},
+        detail={"worker_type": "coding", "field": "success"},
     )
 
 
@@ -190,7 +190,7 @@ def test_first_stage_not_kickoff_rejected() -> None:  # R4
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="first stage must be needs_kickoff",
-        detail={"type_id": "coding", "first": "needs_success"},
+        detail={"worker_type": "coding", "first": "needs_success"},
     )
 
 
@@ -204,7 +204,7 @@ def test_nonterminal_without_successor_rejected() -> None:  # R6 (isolated)
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="linear order must have exactly one terminal",
-        detail={"type_id": "coding", "state": "done"},
+        detail={"worker_type": "coding", "stage": "done"},
     )
 
 
@@ -218,7 +218,7 @@ def test_wrong_terminal_id_rejected() -> None:  # R5 (isolated)
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="last stage must be done",
-        detail={"type_id": "coding", "last": "finished"},
+        detail={"worker_type": "coding", "last": "finished"},
     )
 
 
@@ -233,7 +233,7 @@ def test_dropped_used_as_linear_stage_rejected() -> None:  # R7
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="dropped may not be a linear stage",
-        detail={"type_id": "coding", "state": "dropped"},
+        detail={"worker_type": "coding", "stage": "dropped"},
     )
 
 
@@ -246,7 +246,7 @@ def test_terminal_stage_gating_field_rejected() -> None:  # R8
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="terminal stage may not gate a field",
-        detail={"type_id": "coding", "state": "done"},
+        detail={"worker_type": "coding", "stage": "done"},
     )
 
 
@@ -260,7 +260,7 @@ def test_missing_gate_for_nonterminal_rejected() -> None:  # R9
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="non-terminal stage must gate a field",
-        detail={"type_id": "coding", "state": "needs_success"},
+        detail={"worker_type": "coding", "stage": "needs_success"},
     )
 
 
@@ -274,7 +274,7 @@ def test_gate_points_at_undeclared_field_rejected() -> None:  # R10
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="gating field references an undeclared field",
-        detail={"type_id": "coding", "state": "needs_success", "gating_field": "ghost"},
+        detail={"worker_type": "coding", "stage": "needs_success", "gating_field": "ghost"},
     )
 
 
@@ -291,7 +291,7 @@ def test_field_gated_by_two_stages_rejected() -> None:  # R11
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="field gated by more than one stage",
-        detail={"type_id": "coding", "field": "success"},
+        detail={"worker_type": "coding", "field": "success"},
     )
 
 
@@ -302,7 +302,7 @@ def test_declared_field_never_gated_rejected() -> None:  # R12
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="declared field is never gated",
-        detail={"type_id": "coding", "field": "extra"},
+        detail={"worker_type": "coding", "field": "extra"},
     )
 
 
@@ -313,7 +313,7 @@ def test_first_field_not_kickoff_rejected() -> None:  # R13
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="first field must be kickoff",
-        detail={"type_id": "coding", "first_field": "success"},
+        detail={"worker_type": "coding", "first_field": "success"},
     )
 
 
@@ -324,7 +324,7 @@ def test_worker_profile_unknown_skill_rejected() -> None:  # R14
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="worker profile references an unknown skill",
-        detail={"type_id": "coding", "specialist_skill": "not-a-skill"},
+        detail={"worker_type": "coding", "specialist_skill": "not-a-skill"},
     )
 
 
@@ -335,15 +335,15 @@ def test_worker_profile_unknown_toolset_rejected() -> None:  # R15
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="worker profile references an unknown toolset profile",
-        detail={"type_id": "coding", "toolset_profile": "nope"},
+        detail={"worker_type": "coding", "toolset_profile": "nope"},
     )
 
 
 def test_hook_unknown_stage_rejected() -> None:  # R16
     hooks = (
         TransitionHook(
-            old_state="ghost",
-            new_state="needs_implementation",
+            old_stage="ghost",
+            new_stage="needs_implementation",
             implementer="khushal",
             effect="user_takeover",
         ),
@@ -353,15 +353,15 @@ def test_hook_unknown_stage_rejected() -> None:  # R16
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="transition hook references an unknown stage",
-        detail={"type_id": "coding", "state": "ghost"},
+        detail={"worker_type": "coding", "stage": "ghost"},
     )
 
 
 def test_hook_unknown_implementer_rejected() -> None:  # R17
     hooks = (
         TransitionHook(
-            old_state="needs_plan",
-            new_state="needs_implementation",
+            old_stage="needs_plan",
+            new_stage="needs_implementation",
             implementer="bob",
             effect="user_takeover",
         ),
@@ -371,15 +371,15 @@ def test_hook_unknown_implementer_rejected() -> None:  # R17
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="transition hook references an unknown implementer",
-        detail={"type_id": "coding", "implementer": "bob"},
+        detail={"worker_type": "coding", "implementer": "bob"},
     )
 
 
 def test_hook_unknown_effect_rejected() -> None:  # R18
     hooks = (
         TransitionHook(
-            old_state="needs_plan",
-            new_state="needs_implementation",
+            old_stage="needs_plan",
+            new_stage="needs_implementation",
             implementer="khushal",
             effect="explode",
         ),
@@ -389,7 +389,7 @@ def test_hook_unknown_effect_rejected() -> None:  # R18
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="transition hook references an unknown effect",
-        detail={"type_id": "coding", "effect": "explode"},
+        detail={"worker_type": "coding", "effect": "explode"},
     )
 
 
@@ -401,7 +401,7 @@ def test_duplicate_hook_key_rejected() -> None:  # R19
         code=ErrorCode.validation,
         message="duplicate transition hook",
         detail={
-            "type_id": "coding",
+            "worker_type": "coding",
             "key": ["needs_plan", "needs_implementation", "khushal"],
         },
     )
@@ -419,7 +419,7 @@ def test_non_bool_is_terminal_rejected() -> None:  # F3 — strict bool identity
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="linear order must have exactly one terminal",
-        detail={"type_id": "coding", "state": "done"},
+        detail={"worker_type": "coding", "stage": "done"},
     )
 
 
@@ -432,7 +432,7 @@ def test_non_bool_supports_prefix_reconciliation_rejected() -> None:  # F3 (R20)
         lambda: validate(defn),
         code=ErrorCode.validation,
         message="supports_prefix_reconciliation must be a bool",
-        detail={"type_id": "coding"},
+        detail={"worker_type": "coding"},
     )
 
 
@@ -442,18 +442,18 @@ def test_non_bool_supports_prefix_reconciliation_rejected() -> None:  # F3 (R20)
 
 
 def test_coding_stage_order_equals_state_order() -> None:
-    assert views.stage_ids(CODING_DEFINITION) == tuple(s.value for s in STATE_ORDER)
+    assert views.stage_ids(CODING_DEFINITION) == tuple(s.value for s in CODING_STAGE_ORDER)
 
 
 def test_coding_gate_map_equals_gating_field() -> None:
     assert views.gate_map(CODING_DEFINITION) == {
-        s.value: f.value for s, f in GATING_FIELD.items()
+        s.value: f.value for s, f in CODING_GATING_FIELD_BY_STAGE.items()
     }
 
 
 def test_coding_advance_map_equals_advance_target() -> None:
     assert views.advance_map(CODING_DEFINITION) == {
-        s.value: t.value for s, t in ADVANCE_TARGET.items()
+        s.value: t.value for s, t in CODING_NEXT_STAGE_BY_STAGE.items()
     }
 
 
@@ -471,7 +471,7 @@ def test_coding_field_order_equals_field_name_order() -> None:  # F4
 
 def test_coding_field_gates_inverse_equals_field_gates() -> None:  # F4
     assert {f.value: s.value for f, s in FIELD_GATES.items()} == {
-        field_id: views.gated_state(CODING_DEFINITION, field_id)
+        field_id: views.gated_stage(CODING_DEFINITION, field_id)
         for field_id in views.field_ids(CODING_DEFINITION)
     }
 
@@ -481,7 +481,7 @@ def test_coding_ceiling_range_leads_with_kickoff_then_worker_state_order() -> No
     # ticket's default/selectable ceiling), then the worker states.
     assert views.ceiling_range(CODING_DEFINITION) == (
         "needs_kickoff",
-    ) + tuple(s.value for s in WORKER_STATE_ORDER)
+    ) + tuple(s.value for s in CODING_EMPLOYEE_STAGE_ORDER)
 
 
 def test_coding_default_ceiling_is_needs_kickoff() -> None:
@@ -489,29 +489,29 @@ def test_coding_default_ceiling_is_needs_kickoff() -> None:
     # kickoff); the FIRST WORKER stage stays needs_success and is a distinct concept.
     assert views.default_ceiling(CODING_DEFINITION) == "needs_kickoff"
     assert views.first_worker_stage(CODING_DEFINITION) == "needs_success"
-    assert views.first_worker_stage(CODING_DEFINITION) == WORKER_STATE_ORDER[0].value
+    assert views.first_worker_stage(CODING_DEFINITION) == CODING_EMPLOYEE_STAGE_ORDER[0].value
 
 
 def test_coding_linear_terminal_stage_id_is_done() -> None:
-    assert views.linear_terminal_stage_id(CODING_DEFINITION) == TicketState.done.value
+    assert views.linear_terminal_stage_id(CODING_DEFINITION) == CodingStage.done.value
 
 
 # =====================================================================
-# Acceptance item 2b — derived API behavior incl. unknown-state safety (F2)
+# Acceptance item 2b — derived API behavior incl. unknown-stage safety (F2)
 # =====================================================================
 
 
-def test_state_index_matches_state_order() -> None:
-    for s in STATE_ORDER:
-        assert views.state_index(CODING_DEFINITION, s.value) == STATE_ORDER.index(s)
+def test_stage_index_matches_state_order() -> None:
+    for s in CODING_STAGE_ORDER:
+        assert views.stage_index(CODING_DEFINITION, s.value) == CODING_STAGE_ORDER.index(s)
 
 
-def test_state_index_unknown_raises() -> None:
+def test_stage_index_unknown_raises() -> None:
     assert_raises_planner(
-        lambda: views.state_index(CODING_DEFINITION, "ghost"),
+        lambda: views.stage_index(CODING_DEFINITION, "ghost"),
         code=ErrorCode.validation,
-        message="state outside the linear order",
-        detail={"state": "ghost"},
+        message="stage outside the linear order",
+        detail={"stage": "ghost"},
     )
 
 
@@ -525,8 +525,8 @@ def test_is_terminal_unknown_raises() -> None:
     assert_raises_planner(
         lambda: views.is_terminal(CODING_DEFINITION, "ghost"),
         code=ErrorCode.validation,
-        message="state outside the linear order",
-        detail={"state": "ghost"},
+        message="stage outside the linear order",
+        detail={"stage": "ghost"},
     )
 
 
@@ -538,8 +538,8 @@ def test_gating_field_terminal_is_none_unknown_raises() -> None:
     assert_raises_planner(
         lambda: views.gating_field(CODING_DEFINITION, "ghost"),
         code=ErrorCode.validation,
-        message="state outside the linear order",
-        detail={"state": "ghost"},
+        message="stage outside the linear order",
+        detail={"stage": "ghost"},
     )
 
 
@@ -549,19 +549,19 @@ def test_advance_target_terminal_is_none_unknown_raises() -> None:
     assert_raises_planner(
         lambda: views.advance_target(CODING_DEFINITION, "ghost"),
         code=ErrorCode.validation,
-        message="state outside the linear order",
-        detail={"state": "ghost"},
+        message="stage outside the linear order",
+        detail={"stage": "ghost"},
     )
 
 
-def test_gated_state_inverse() -> None:
-    assert views.gated_state(CODING_DEFINITION, "success") == "needs_success"
-    assert views.gated_state(CODING_DEFINITION, "kickoff") == "needs_kickoff"
+def test_gated_stage_inverse() -> None:
+    assert views.gated_stage(CODING_DEFINITION, "success") == "needs_success"
+    assert views.gated_stage(CODING_DEFINITION, "kickoff") == "needs_kickoff"
 
 
-def test_gated_state_ungated_field_raises() -> None:
+def test_gated_stage_ungated_field_raises() -> None:
     assert_raises_planner(
-        lambda: views.gated_state(CODING_DEFINITION, "ghost"),
+        lambda: views.gated_stage(CODING_DEFINITION, "ghost"),
         code=ErrorCode.validation,
         message="field gates no stage",
         detail={"field": "ghost"},
@@ -578,8 +578,8 @@ def test_require_stage_returns_stage() -> None:
     assert_raises_planner(
         lambda: views.require_stage(CODING_DEFINITION, "ghost"),
         code=ErrorCode.validation,
-        message="state outside the linear order",
-        detail={"state": "ghost"},
+        message="stage outside the linear order",
+        detail={"stage": "ghost"},
     )
 
 
@@ -604,7 +604,7 @@ def test_transition_effect_matches_plan_handoff() -> None:
     )
     # Equals the live machine hook, without modifying plan_handoff_status.
     live = machine.plan_handoff_status(
-        Implementer.khushal, TicketState.needs_plan, TicketState.needs_implementation
+        Implementer.khushal, CodingStage.needs_plan, CodingStage.needs_implementation
     )
     assert live == TicketStatus.user_takeover
     assert live.value == "user_takeover"
@@ -615,7 +615,7 @@ def test_transition_effect_matches_plan_handoff() -> None:
 # =====================================================================
 
 EXPECTED = {
-    "type_id": "coding",
+    "worker_type": "coding",
     "label": "Coding",
     "stages": [
         {

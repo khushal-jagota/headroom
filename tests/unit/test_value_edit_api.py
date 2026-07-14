@@ -17,7 +17,7 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.tickets.contracts import NO_FURTHER, AtCap, FieldName, TicketState
+from planner.tickets.contracts import NO_FURTHER, AtCap, CodingStage, FieldName
 from planner.tickets.data import accept_proposal, change_scope, create_ticket, file_proposal
 
 _AGENT = {"X-Plan-Actor": "agent"}  # a plain (non-dispatched) agent context
@@ -49,7 +49,9 @@ def _passed_ticket(db_path: Path) -> str:
     """Drive a ticket to needs_plan with success & approach settled (values)."""
     conn = connect(str(db_path))
     try:
-        ticket = create_ticket(conn, title="Edit me.", actor="human", now=0, title_max_chars=200)
+        ticket = create_ticket(
+            conn, worker_type="coding", title="Edit me.", actor="human", now=0, title_max_chars=200
+        )
         ticket = accept_proposal(
             conn,
             ticket.id,
@@ -60,13 +62,19 @@ def _passed_ticket(db_path: Path) -> str:
             at_cap=AtCap.propose,
         )
         change_scope(
-            conn, ticket.id, ceiling=TicketState.needs_plan, at_cap=AtCap.propose, actor="human",
+            conn,
+            ticket.id,
+            ceiling=CodingStage.needs_plan,
+            at_cap=AtCap.propose,
+            actor="human",
             now=0,
         )
-        file_proposal(conn, ticket.id, field=FieldName.success, body="success v1", actor="agent",
-                      now=0)
-        file_proposal(conn, ticket.id, field=FieldName.approach, body="approach v1", actor="agent",
-                      now=0)
+        file_proposal(
+            conn, ticket.id, field=FieldName.success, body="success v1", actor="agent", now=0
+        )
+        file_proposal(
+            conn, ticket.id, field=FieldName.approach, body="approach v1", actor="agent", now=0
+        )
     finally:
         conn.close()
     return ticket.id
@@ -80,7 +88,7 @@ def test_put_value_human_edits_settled_field(tmp_path: Path) -> None:
     assert response.status_code == 200, response.json()
     body = response.json()
     assert body["fields"]["success"]["value"] == "edited success"
-    assert body["state"] == "needs_plan"  # value edit leaves state untouched
+    assert body["stage"] == "needs_plan"  # value edit leaves state untouched
     assert body["ceiling"] == "needs_plan"
 
 
