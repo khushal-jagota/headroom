@@ -721,6 +721,15 @@ without changing their own `project_id`) and shows all four ticket-stage dots. H
 Chief of Staff is embedded in Workspace, not a primary nav tab (the `#/chief` route stays for direct
 links).
 
+## D-workspace-ticket-order — Served Worker-type and Stage order precede activity
+
+Within each existing Workspace project category, rows follow the served Worker-type manifest order,
+then that type's own served Stage order, then `activity_at` newest first. The prior board sequence is
+the final deterministic fallback only. Workspace treats both the board and Worker-type manifest as
+required resources before rendering rows, so it never briefly presents the retired activity-first
+order while the manifest is loading. Category grouping and order, filters, collapse state, row
+content, selection, navigation, and presentation do not change.
+
 ## D-shared-component-set — One component set; consolidate, don't redesign
 
 The frontend consolidation reduced the component footprint through serial contract-scoped tickets
