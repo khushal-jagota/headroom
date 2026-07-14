@@ -19,7 +19,9 @@ Current build stage:
   commit because its restart/session behavior is the most finicky.
 - AD01 is complete on the branch at `f9246d5`. The independently reviewed Worker-type/stored-Stage
   replacement follows the program-memory commit `aa1f29d` and the separately isolated test stabilization
-  `afa57fd`. The worktree is clean; AD02 is the next serial ticket.
+  `afa57fd`.
+- AD02's delegated implementation plan has passed corrected independent review and its exact contract is
+  locked. Implementation is the next serial step; no product files have changed yet.
 
 What just passed:
 
@@ -110,13 +112,21 @@ What just passed:
   700 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three existing
   warnings), production build, frontend tests; 77 Playwright e2e tests; final `VERIFY: PASS`. The full
   transcript is retained at `data/verify/ad01-pass.log`.
+- AD02's delegated plan mapped the behavior-bearing definition, narrow registry, complete call-site
+  threading, deletion set, schema-v19 rebuild, tests, and bounded allowlist. A separate read-only runtime
+  audit found the hidden seed, CLI, field-codec, creation, read-model, and import-graph edges before work.
+- Independent plan review found two High violations: seed still duplicated coding's complete field set,
+  and Chief's CLI could not carry novel Worker-type fields. Both are accepted and corrected. Seed now
+  derives its complete slot map from the resolved definition; Chief gains generic repeated field input.
+- The corrected AD02 plan also deletes the shallow guard instead of renaming it and puts Ticket-position
+  validation on `WorkerTypeDefinition`. Independent re-review reports `NO VIOLATIONS`; the review record
+  and exact contract lock are in the AD02 ticket directory.
 
 Next step:
 
-- AD02 — Deep Worker workflow interpretation — is decomposed at
-  `orchestration/tickets/architecture-deepening/ad02-deep-worker-workflow/ticket.md`. Delegate its
-  implementation plan, independently review and lock the Worker-type contract, then implement from the
-  clean AD01 checkpoint.
+- Delegate AD02 implementation from its reviewed plan and contract lock. The implementation agent owns
+  only the bounded allowlist; the orchestrator will inspect the definition boundary and v19 migration,
+  obtain independent diff review, then run the canonical gate once after review fixes.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit defaults at any layer. SQLite's coding-shaped `fields` default

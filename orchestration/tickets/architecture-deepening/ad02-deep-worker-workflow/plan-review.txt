@@ -1,0 +1,49 @@
+AD02 implementation plan review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5e36-27bc-7292-91de-754a96068987
+
+Findings
+
+1. High: seed import still leaves a second coding field authority.
+
+plan.md says seed/importer.py will “always supply its coding fields JSON.” The current
+importer hardcodes the six coding field keys. That violates the ticket contract that
+creation field maps come from the required Worker-type definition and that no
+coding-shaped field default or second authority remains.
+
+Smallest correction: change the plan so seed resolves the coding
+WorkerTypeDefinition, builds TicketFields.empty(definition.field_ids()), then overlays
+the seed values for kickoff, success, and approach through the shared field/slot codec.
+The seed readiness map may stay coding-only legacy translation, but field key
+construction must not be duplicated.
+
+2. High: Chief external-work CLI cannot carry novel fields.
+
+plan.md retains only --success-file, --approach-file, --plan-file,
+--implementation-file, and --closeout-file, then relies on generic API and engine
+support. Current CLI body construction only sends those coding keys. That means
+new_worker or probe external work cannot submit fields such as stages, thinking,
+drafting, alpha, or beta through the Chief CLI, despite AD02 requiring shipped and
+probe external-work paths. The plan also excludes
+skills/panels-chief-of-staff/SKILL.md from the allowlist, but that skill still tells
+Chief to supply the target prefix without any generic field mechanism.
+
+Smallest correction: retain the coding convenience flags, but add a generic repeated
+field option such as --field-file FIELD=PATH to both Chief commands, reject duplicate
+field keys before send, and let the API remain the authority. Add
+skills/panels-chief-of-staff/SKILL.md to the allowlist and update
+test_chief_external_work_cli.py with a new_worker external-work case carrying a novel
+field.
+
+Disposition
+
+Both findings accepted. The plan must be corrected and independently re-reviewed
+before the contract is locked or implementation begins.
+
+Corrected-plan re-review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5e3c-e49b-7780-acb8-9fbfd312703b
+
+NO VIOLATIONS

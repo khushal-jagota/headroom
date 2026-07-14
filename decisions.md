@@ -800,6 +800,25 @@ shaped JSON default is removed through a v19 forward migration that rewrites rec
 the proven lock-held migration envelope and preserves every stored field value. An omitted field map must
 fail rather than silently produce a coding-shaped row for another Worker type.
 
+## D-ad02-ingress-and-seed-authority — Every field set comes from the resolved definition
+
+AD02's first independent plan review found two remaining coding-shaped edges. The historical seed importer
+may translate its three known coding values, but it builds the complete slot map from the resolved coding
+definition rather than hardcoding six field keys. Chief's external-work CLI retains its named coding
+conveniences and adds repeatable `--field-file FIELD=PATH` input so another Worker type can carry its own
+fields. Duplicate keys fail locally; the API remains the validity authority. The same correction removes
+the proposed renamed guard: Ticket-position validation lives on `WorkerTypeDefinition` after explicit
+registry lookup.
+
+## D-ad02-contract-lock — The reviewed deep Worker-type boundary is fixed before rewiring
+
+AD02's corrected plan passed independent re-review with no violations. The frozen behavior-bearing
+definition, narrow registry, explicit production/test configuration, required semantic parameters,
+definition-derived seed and creation fields, generic Chief field transport, and schema-v19 no-default
+migration are locked in `ad02-deep-worker-workflow/contract-lock.md`. Implementation may fill in and
+rewire these declarations but may not add compatibility aliases, implicit definitions, parallel tables,
+or a broader registry surface.
+
 ## D-ad01-one-locked-ticket-migration — One terminal rebuild migrates every old Ticket schema
 
 AD01 replaces the sequential Ticket lifecycle, kickoff, type, and vocabulary rebuild path with one
