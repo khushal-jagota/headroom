@@ -111,6 +111,11 @@ Current build stage:
   correction makes Worker type a required seed command/programmatic argument and passes it through exactly;
   only the terminal v20 migration may classify a genuinely old row with no stored Worker type as `coding`.
   Fresh review session `019f5fa7-9f49-7322-b33d-a91ccee643f1` reports `NO VIOLATIONS`.
+- AD09's isolated product implementation is committed at `0e0bf06`. The first implementation review found
+  two real violations: legacy Ticket `chat_session_created` still reached Ticket aggregates, and the
+  required browser proof against silently repopulating deleted Panels rows from retained Employee history
+  was missing. Both were corrected through delegation. Fresh review session
+  `019f5fc8-c093-7163-8bee-2b15db5d19ea` reports `NO VIOLATIONS`; the canonical gate is next.
 
 What just passed:
 
@@ -320,8 +325,8 @@ What just passed:
 
 Next step:
 
-- Delegate AD09's RED-first implementation against the reviewed lock, then run its focused checks and an
-  independent implementation review before the single canonical gate.
+- Run AD09's single canonical `./verify` against committed product plus review memory. If green, close AD09,
+  review and verify the complete branch, then merge it serially to `main` and verify the integrated checkout.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`

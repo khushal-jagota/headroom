@@ -840,6 +840,13 @@ Ticket migration remains the sole place allowed to assign `coding` automatically
 row that predates stored Worker type. This live-boundary ruling supersedes the seed carveout recorded in
 `D-ad02-ingress-and-seed-authority` without changing its migration translation rules.
 
+The implementation review also made the deletion consequence explicit: a historical Ticket
+`chat_session_created` cannot be treated as an ordinary Ticket event after AD09. Migration rewrites stored
+instances, and a synthetic live instance maps to no frontend resource. Only the new
+`employee_session_changed` refreshes Ticket detail. Real Day/agent Chat session and message/turn events
+remain Chat-only. A browser regression now proves retained Hermes history cannot manufacture visible Panels
+rows after those rows are deleted.
+
 ## D-ad02-definition-owns-workflow — A resolved Worker-type definition interprets its workflow
 
 AD02 replaces the shallow definition/views/registry-forwarder/bridge stack with one immutable
