@@ -36,6 +36,10 @@ Current build stage:
   said Agent. Both are corrected through the delegated path. The fresh corrected-diff review, session
   `019f5ede-7f24-78a2-b59a-4a6c51223672`, reports `NO VIOLATIONS`, and the committed checkpoint passes the
   canonical gate.
+- AD05's canonical human Chat-ingress ticket is defined. It deletes the three retired HTTP routes, their
+  parallel service functions, synchronous adapter methods/result shapes, and the unused browser SSE client.
+  The gateway `stream` method remains because it is the one transport consumed by the canonical server-owned
+  turn for both messages and commands; exact `/new` remains on that path.
 
 What just passed:
 
@@ -205,8 +209,8 @@ What just passed:
 
 Next step:
 
-- Define AD05's canonical human Chat-ingress ticket from the live route, service, contract, caller, test,
-  and documentation surfaces. Then delegate its implementation plan before independent plan review.
+- Delegate AD05's implementation plan against the ticket, then independently review the plan before
+  generating and locking its contract declarations.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`

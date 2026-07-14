@@ -350,6 +350,13 @@ duplicate admission, session persistence, transcript mutation, settlement, and e
 `/new` behavior remains part of the canonical turn. This changes only human Chat ingress; Panels transcript
 rows remain UI/audit state and worker delivery still occurs only through the Hermes gateway/session path.
 
+The word `stream` names two different things in the old code. The HTTP SSE route and
+`planner.chat.service.stream` are duplicate human ingress and are deleted. `GatewayAdapter.stream` is the
+single Hermes observation transport already consumed by `_run_human_turn`; it remains and serves both
+message and command modes. The synchronous adapter `send` and `run_command` methods and their result types
+are parallel paths and are deleted. This distinction keeps one ingress without cutting out the transport
+the surviving turn actually owns.
+
 ## D-panels-chat-and-employee-history — Visible Chat and employee history are separate truths
 
 **Panels Chat** is the durable product-visible conversation; **Employee session history** is the
