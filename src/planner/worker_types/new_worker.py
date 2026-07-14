@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.contracts import (
     FieldDefinition,
     StageDefinition,
@@ -13,14 +14,14 @@ NEW_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     worker_type="new_worker",
     label="New Worker",
     stages=(
-        StageDefinition("needs_kickoff", "Kickoff", "kickoff", False),
-        StageDefinition("needs_stages", "Stages", "stages", False),
-        StageDefinition("needs_thinking", "Thinking", "thinking", False),
-        StageDefinition("needs_drafting", "Drafting", "drafting", False),
-        StageDefinition("needs_closeout", "Closeout", "closeout", False),
-        StageDefinition("done", "Done", None, True),
+        StageDefinition("needs_kickoff", "Kickoff", "kickoff", False, StageOwnershipMode.worker),
+        StageDefinition("needs_stages", "Stages", "stages", False, StageOwnershipMode.worker),
+        StageDefinition("needs_thinking", "Thinking", "thinking", False, StageOwnershipMode.worker),
+        StageDefinition("needs_drafting", "Drafting", "drafting", False, StageOwnershipMode.worker),
+        StageDefinition("needs_closeout", "Closeout", "closeout", False, StageOwnershipMode.worker),
+        StageDefinition("done", "Done", None, True, None),
     ),
-    dropped_stage=StageDefinition("dropped", "Dropped", None, True),
+    dropped_stage=StageDefinition("dropped", "Dropped", None, True, None),
     fields=(
         FieldDefinition("kickoff", "Kickoff"),
         FieldDefinition("stages", "Stages"),
@@ -34,7 +35,6 @@ NEW_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         reasoning_effort=None,
         toolset_profile="default",
     ),
-    transition_hooks=(),
     supports_prefix_reconciliation=True,
 )
 

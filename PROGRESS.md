@@ -11,22 +11,25 @@ Current build stage:
 - Ticket `t_ue4pt9ru` has approved Success, Approach, and Plan and is in Implementation on isolated
   branch `ticket/t_ue4pt9ru-stage-ownership` at worktree
   `/Users/khushaljagota/.hermes/worktrees/planning-v2-t_ue4pt9ru`.
-- The frozen implementation contract is
-  `orchestration/tickets/t_ue4pt9ru-stage-ownership/contract.md`. Its first read-only Codex review found
-  two accepted omissions: successful no-proposal run settlement must preserve an active Take over, and
-  the renamed execution route must remain direct-write-only. Both are corrected; fresh re-review reports
-  `NO VIOLATIONS`.
-- Backend, frontend, and skills/docs implementation slices are delegated in parallel with disjoint file
-  ownership. All slices use test-first focused verification and must not run the canonical gate.
+- The implementation now covers Worker/User/Paired Stage ownership defaults and overrides, canonical
+  resting-status resolution, automatic eligibility, paired Ticket Chat, Chief external-work reconciliation,
+  ExecutionRoute migration, API/CLI/UI controls, Workspace/Sprint lifecycle presentation, skills, and docs.
+- Two complete-diff Codex reviews produced six accepted findings. All are corrected and recorded in
+  `orchestration/tickets/t_ue4pt9ru-stage-ownership/review-disposition.md`; the final read-only re-review
+  reports `NO VIOLATIONS`.
 
 What just passed:
 
-- Contract re-review session `019f60ba-ac9a-7970-bb67-a16bcf23047a` reports `NO VIOLATIONS`.
+- Full unit suite: `PYTHONPATH="$PWD/src:$PWD" .venv/bin/pytest -q tests/unit`.
+- Python quality gates: `ruff check src tests` and `mypy src/planner` (113 source files).
+- Frontend quality gates: `npm --prefix web run check` and `npm --prefix web test`.
+- Focused Playwright coverage for execution route, Stage owner editing, `paired_work`, desktop/mobile
+  Workspace filtering, and StageMark presentation.
+- Final Codex implementation review: `NO VIOLATIONS`.
 
 Next step:
 
-- Integrate the three delegated slices serially, run focused cross-slice checks, review the complete diff,
-  resolve every finding, then run one canonical `./verify`.
+- Commit the reviewed implementation, run exactly one canonical `./verify`, then propose Implementation.
 
 Blockers:
 

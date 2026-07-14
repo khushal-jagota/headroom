@@ -17,9 +17,10 @@ from tests.support.probe import (
 )
 
 from planner.core.clock import TestClock
+from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect, create_schema
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap, Implementer, TicketStatus
+from planner.tickets.contracts import AtCap, StageOwnershipMode, TicketStatus
 from planner.tickets.logic import fields_codec
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -82,7 +83,6 @@ def test_probe_ticket_drives_through_real_writers(
         actor="human",
         now=now,
         title_max_chars=200,
-        implementer=Implementer.khushal,
     )
     ticket = tickets_data.accept_proposal(
         tmp_db,
@@ -94,6 +94,15 @@ def test_probe_ticket_drives_through_real_writers(
         at_cap=AtCap.propose,
     )
     assert ticket.stage == NEEDS_ALPHA
+    assert ticket.ticket_status is TicketStatus.user_takeover
+    ticket = tickets_data.set_stage_ownership(
+        tmp_db,
+        ticket.id,
+        stage=NEEDS_ALPHA,
+        ownership_mode=StageOwnershipMode.worker,
+        now=now,
+    )
+    assert ticket.ticket_status is TicketStatus.empty
     ticket = tickets_data.file_proposal(
         tmp_db,
         ticket.id,
@@ -103,11 +112,13 @@ def test_probe_ticket_drives_through_real_writers(
         now=now,
     )
     assert ticket.stage == NEEDS_BETA
-    assert ticket.ticket_status is TicketStatus.user_takeover
+    assert ticket.ticket_status is TicketStatus.paired_work
     assert fields_codec.get_slot(ticket.fields, FIELD_ALPHA).value == "alpha value"
 
 
-def test_plain_read_does_not_resolve_registry(tmp_db: Connection, fake_clock: TestClock) -> None:
+def test_plain_read_requires_registry_for_ownership_metadata(
+    tmp_db: Connection, fake_clock: TestClock
+) -> None:
     ticket = tickets_data.create_ticket(
         tmp_db,
         title="Stored probe",
@@ -117,6 +128,7 @@ def test_plain_read_does_not_resolve_registry(tmp_db: Connection, fake_clock: Te
         title_max_chars=200,
     )
     uninstall_probe_registry()
-    read = tickets_data.read_ticket(tmp_db, ticket.id)
-    assert read.worker_type == "probe"
-    assert read.stage == "needs_kickoff"
+    with pytest.raises(PlannerError) as exc:
+        tickets_data.read_ticket(tmp_db, ticket.id)
+    assert exc.value.code is ErrorCode.not_found
+    assert exc.value.detail == {"worker_type": "probe"}

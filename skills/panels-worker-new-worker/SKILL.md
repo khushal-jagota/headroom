@@ -6,8 +6,9 @@ description: Stage-by-stage guidance for a new-worker ticket — designing and l
 # Designing a new worker
 
 This Ticket's deliverable is **another worker**: a new Worker type and the specialist
-skill that guides it. A worker is a short lifecycle — ordered Stages, each needing one
-thing a human approves — plus the skill that teaches an agent to do each Stage well.
+skill that guides it. A worker is a short lifecycle — ordered Stages, each with one
+gated field and one default ownership mode — plus the skill that teaches an agent to
+do each Stage well.
 
 The hard part isn't writing files; it's the **thinking** — what the worker is for, what shape its lifecycle takes, what "good" means at each stage, and who does the work. Each stage below is a thinking beat the human reviews before you move on.
 
@@ -15,7 +16,7 @@ The hard part isn't writing files; it's the **thinking** — what the worker is 
 
 **Stages → Thinking → Drafting → Closeout → Done**
 
-- **needs_stages** — the new worker's lifecycle: its ordered stages and what each one needs.
+- **needs_stages** — the new worker's lifecycle: its ordered stages, what each one needs, and who owns each Stage by default.
 - **needs_thinking** — the design substance: what a good result looks like, who does the work, the standard each stage holds.
 - **needs_drafting** — the artifacts: the new worker's `SKILL.md` and its Worker type definition.
 - **needs_closeout** — landing it: files placed, registered, provisioned; a restart makes it live.
@@ -27,6 +28,8 @@ The hard part isn't writing files; it's the **thinking** — what the worker is 
 Decide the new worker's stages before touching any files. A good **stages** proposal gives:
 
 - A **best-guess lifecycle** — ordered `needs_<x>` stages, each gating a same-named `<x>` field, each with one line on what it needs.
+- A **default ownership mode for every non-terminal Stage** — `worker`, `user`, or
+  `paired`. Terminal `done` and `dropped` have no ownership mode.
 - The **alternatives you weighed**, and why you chose this shape — longer or shorter, a stage split or merged.
 - What you **included or excluded, and why** — a stage earns its place only as a real, separately-reviewable beat; if two always get approved together, they're one.
 
@@ -37,7 +40,15 @@ Match the stages to how the work actually breaks. Most work also splits **doing 
 This is where the worker's value is decided; a thin pass here makes a worthless worker. Work out three things, each grounded in the specific work — not the abstract:
 
 1. **The "good result" bar.** What a strong deliverable at each stage actually contains, and how a reviewer tells strong from weak. Be concrete — *"cites primary sources and states what it couldn't confirm,"* not *"high quality."* If you can't state the bar, the skill can't hold anyone to it.
-2. **Who does each stage, and why** — human or agent. Judgment, access, or accountable ownership → human; bounded, tool-completable work → agent. Where a stage hands accepted work to a human to execute, that becomes a transition hook (a durable takeover, as coding does at plan → implementation).
+2. **The default ownership of each non-terminal Stage, and why.** Choose `worker` when
+   the Employee can complete the Stage independently with available tools. Choose `user`
+   when the Stage normally requires the user's access, judgment, external action, or
+   accountable manual ownership; completed work will be recorded through Chief
+   external-work reconciliation. Choose `paired` when the work should advance through
+   user-originated Ticket Chat with the same Employee and every resulting proposal needs
+   approval. Ownership is not scope or execution route. Do not recreate Take over,
+   Release, dispatch, Chat, approval, or reconciliation mechanics in the specialist;
+   `panels-worker` owns those shared rules.
 3. **The standard each stage's skill enforces** — the specific discipline the new skill teaches, per stage. This is the raw material drafting turns into the skill.
 
 Genericity test: any sentence equally true of a different worker isn't done — replace it with the specific truth about this one.
@@ -47,8 +58,9 @@ Genericity test: any sentence equally true of a different worker isn't done — 
 From the approved thinking, write the two files:
 
 - The new worker's **`SKILL.md`** — front matter plus one guidance section per stage, mirroring this skill and `panels-worker-coding`.
-- Its **Worker type definition** — the `WorkerTypeDefinition`: Stages, ordered fields,
-  ceiling range, worker profile, any handoff. Novel ids are plain strings; reuse the
+- Its **Worker type definition** — the `WorkerTypeDefinition`: Stages with a default
+  ownership mode on every non-terminal Stage, ordered fields, ceiling range, worker
+  profile, and reconciliation support. Novel ids are plain strings; reuse the
   shared `needs_kickoff`/`kickoff`, `needs_closeout`/`closeout`, `done`, `dropped`.
 
 Point the reviewer at both files and note briefly how they realize the thinking.
@@ -73,7 +85,8 @@ what was placed and registered, and how you confirmed the worker is live.
 ### Working disciplines
 
 - **Ground before you opine** — read this skill, `panels-worker-coding`, and a shipped definition before shaping a new one.
-- **Everything earns its place** — a stage, field, or handoff exists only if you can say why. A padded lifecycle is worse than a tight one.
+- **Everything earns its place** — a Stage, field, or ownership default exists only if
+  you can say why. A padded lifecycle is worse than a tight one.
 - **Name things for what they are** — the new worker's names are read by people who didn't design it.
 - **Keep proposals decision-level** — each field is something a human approves, not a spec to excavate.
 - **Explain your judgment in chat** after each proposal — the direction, the alternatives ruled out, the calls made.

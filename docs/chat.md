@@ -68,6 +68,13 @@ because it goes through the Ticket's `employee_session_id` and is then mirrored 
 Panels Chat. Direct `chat_messages` or `chat_turns` writes are only UI/audit state
 unless the same text is also delivered through Hermes.
 
+For a **paired** Stage, this ordinary user-originated Ticket Chat path is how work
+continues. It reaches the same durable Employee session and worker context as the rest of
+the Ticket. Finishing a Chat turn without a proposal leaves the Ticket in **paired work**.
+A real worker proposal moves it to approval and always parks there, even when the Ticket's
+scope would auto-accept a worker-owned proposal. Chat itself never settles the gated
+field or advances the Stage.
+
 The EmployeeStepRunner uses the same chat-state projection but a separate delivery
 path. It claims a Ticket and calls the employee-only `run_ticket_step`; it does not
 enter `ChatTurnLifecycle` or the human gateway method. When it starts a worker step,
@@ -86,8 +93,8 @@ The visible active turn can be paused from the chat panel. While a turn is activ
 the composer's send button becomes the pause button; pressing it interrupts that
 chat session and settles the `chat_turns` row as interrupted with any partial output
 kept. The same Pause action controls a visible human-origin or worker-origin turn.
-Pause does not change the ticket's runtime status or dispatch ownership, and Chat
-settlement does not wake Automatic Employee-step discovery.
+Pause does not change the Ticket's runtime status or Stage ownership, and Chat settlement
+does not wake Automatic Employee-step discovery.
 
 Stop changes the visible Panels turn immediately. It does not guess that Hermes has
 finished unwinding the interrupted work. A following send goes straight to Hermes

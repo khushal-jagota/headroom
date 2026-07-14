@@ -106,6 +106,18 @@ that explicit Stop instead of imposing one. The old human `khushal` implementer 
 coding Implementation ownership override; the remaining agent choices are renamed **execution route**
 and remain direct-write-only instructions, not automatic model routing.
 
+## D-stage-ownership-integration-repair — Tests pin ownership, not retired transition hooks
+
+The stage-ownership integration repair translated old `implementer=khushal` and transition-hook tests
+to explicit ownership contracts: coding legacy `khushal` migrates to
+`stage_ownership_overrides["needs_implementation"] = "user"`, probe uses declared mixed defaults, and
+ExecutionRoute covers only `panels_worker`, `hermes_codex`, and `hermes_claude`. Plain Ticket reads now
+require the Worker-type registry because Ticket detail exposes default/effective ownership; the old
+registry-free read assertion was retired. Chief reconciliation is allowed from inactive owner states
+(`user_takeover` and `paired_work`) because user-completed work returns through Chief, while active
+worker/proposal/chat states still block it. Run settlement derives the resting owner state only when it
+actually changes, so no-op status events are not emitted.
+
 ## D-field-circles-derived — Field/stage visual state is lifecycle-derived, not value-derived
 
 A ticket field's circle (completed / current / upcoming) is a pure frontend derivation over the

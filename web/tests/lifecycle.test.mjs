@@ -27,6 +27,7 @@ const lifecycleOut = (await transpile("lifecycle")).replace(/from\s+["']\.\/ui["
 await writeFile(join(dir, "ui.mjs"), uiOut, "utf8");
 const lifecyclePath = join(dir, "lifecycle.mjs");
 await writeFile(lifecyclePath, lifecycleOut, "utf8");
+const uiModule = await import(join(dir, "ui.mjs"));
 const {
   buildLifecycle,
   lifecycleFor,
@@ -40,6 +41,8 @@ const {
 } = await import(lifecyclePath);
 await rm(dir, { recursive: true, force: true });
 
+const { ticketStatusText, ticketStatusLabel } = uiModule;
+
 // lifecycleFor is imported above from the REAL lifecycle.ts (not a copy) so Part B
 // exercises the production selector + memoization (Codex F6).
 
@@ -48,20 +51,57 @@ const codingManifest = {
   worker_type: "coding",
   label: "Coding",
   stages: [
-    { id: "needs_kickoff", label: "Kickoff", gating_field: "kickoff", is_terminal: false },
-    { id: "needs_success", label: "Success", gating_field: "success", is_terminal: false },
-    { id: "needs_approach", label: "Approach", gating_field: "approach", is_terminal: false },
-    { id: "needs_plan", label: "Plan", gating_field: "plan", is_terminal: false },
+    {
+      id: "needs_kickoff",
+      label: "Kickoff",
+      gating_field: "kickoff",
+      is_terminal: false,
+      default_ownership_mode: "worker"
+    },
+    {
+      id: "needs_success",
+      label: "Success",
+      gating_field: "success",
+      is_terminal: false,
+      default_ownership_mode: "worker"
+    },
+    {
+      id: "needs_approach",
+      label: "Approach",
+      gating_field: "approach",
+      is_terminal: false,
+      default_ownership_mode: "user"
+    },
+    {
+      id: "needs_plan",
+      label: "Plan",
+      gating_field: "plan",
+      is_terminal: false,
+      default_ownership_mode: "paired"
+    },
     {
       id: "needs_implementation",
       label: "Implementation",
       gating_field: "implementation",
-      is_terminal: false
+      is_terminal: false,
+      default_ownership_mode: "worker"
     },
-    { id: "needs_closeout", label: "Closeout", gating_field: "closeout", is_terminal: false },
-    { id: "done", label: "Done", gating_field: null, is_terminal: true }
+    {
+      id: "needs_closeout",
+      label: "Closeout",
+      gating_field: "closeout",
+      is_terminal: false,
+      default_ownership_mode: "worker"
+    },
+    { id: "done", label: "Done", gating_field: null, is_terminal: true, default_ownership_mode: null }
   ],
-  dropped: { id: "dropped", label: "Dropped", gating_field: null, is_terminal: true },
+  dropped: {
+    id: "dropped",
+    label: "Dropped",
+    gating_field: null,
+    is_terminal: true,
+    default_ownership_mode: null
+  },
   advance: {
     needs_kickoff: "needs_success",
     needs_success: "needs_approach",
@@ -135,6 +175,15 @@ assert.deepEqual(coding.gatedStage, {
 });
 assert.deepEqual(coding.advance, OLD_ADVANCE, "coding advance == old ADVANCE");
 assert.equal(coding.workerTypeLabel, "Coding");
+assert.deepEqual(coding.stageDefaultOwnershipMode, {
+  needs_kickoff: "worker",
+  needs_success: "worker",
+  needs_approach: "user",
+  needs_plan: "paired",
+  needs_implementation: "worker",
+  needs_closeout: "worker",
+  done: null
+});
 
 // The scope leash options keep the LOWERCASE stageLabel(id) labels ("needs success"),
 // NOT the manifest's capitalized stage.label — the mockup wording must not change.
@@ -207,6 +256,16 @@ assert.equal(
   }),
   "current-waiting"
 );
+assert.equal(
+  ticketStageVisualStateFor(coding, {
+    ticketStage: "needs_success",
+    ticketStatus: "paired_work",
+    fieldName: "success"
+  }),
+  "current-paired-work"
+);
+assert.equal(ticketStatusText("paired_work"), "paired work");
+assert.equal(ticketStatusLabel("paired_work"), "status paired work");
 assert.equal(
   ticketStageVisualStateFor(coding, {
     ticketStage: "needs_approach",

@@ -39,7 +39,7 @@ from planner.runtime.automatic_employee_step_eligibility import (
     is_eligible_for_automatic_employee_step,
 )
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap, TicketStatus
+from planner.tickets.contracts import AtCap, StageOwnershipMode, TicketStatus
 
 ROOT = Path(__file__).resolve().parents[2]
 PLANNING_DAY_ID = "day_2026-07-14"
@@ -688,6 +688,88 @@ class _InterruptRecordingGateway:
 
     def interrupt(self, session_key: str, entity_id: str) -> None:
         self.interrupt_calls.append((session_key, entity_id))
+
+
+def test_paired_ticket_chat_reuses_employee_session_and_stays_paired_without_proposal(
+    tmp_path: Path,
+) -> None:
+    db, ticket_id = _eligible_ticket_database(tmp_path, "paired-chat.db")
+    conn = connect(db)
+    try:
+        conn.execute(
+            "UPDATE tickets SET employee_session_id = 'paired-session' WHERE id = ?",
+            (ticket_id,),
+        )
+        ticket = tickets_data.set_stage_ownership(
+            conn,
+            ticket_id,
+            stage="needs_success",
+            ownership_mode=StageOwnershipMode.paired,
+            now=4,
+        )
+        assert ticket.ticket_status is TicketStatus.paired_work
+    finally:
+        conn.close()
+
+    class CompletingGateway:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str | None, str, str, str, bool]] = []
+
+        def run_human_turn(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            text: str,
+            mode: str,
+            bind_session_key: HumanSessionKeyBinder,
+            image_paths: tuple[Path, ...] = (),
+            *,
+            require_existing_session: bool = False,
+        ) -> Iterator[HumanChatObservation]:
+            del image_paths
+            self.calls.append((session_key, entity_id, text, mode, require_existing_session))
+            assert session_key == "paired-session"
+            bind_session_key("paired-session")
+            yield HumanChatCompletion("paired reply", "assistant")
+
+        def interrupt(self, session_key: str, entity_id: str) -> None:
+            raise AssertionError((session_key, entity_id))
+
+    gateway = CompletingGateway()
+    lifecycle = ChatTurnLifecycle(
+        lambda: connect(db),
+        lambda: gateway,  # type: ignore[arg-type]
+        lambda: 5,
+        db,
+    )
+    turn = lifecycle.start_human_turn(ticket_id, ChatTurnRequest(text="work with me"))
+
+    def chat_completed() -> bool:
+        check = connect(db)
+        try:
+            row = check.execute(
+                "SELECT status FROM chat_turns WHERE id = ?",
+                (turn.id,),
+            ).fetchone()
+            return row is not None and row["status"] == "complete"
+        finally:
+            check.close()
+
+    assert _wait_until(chat_completed)
+    conn = connect(db)
+    try:
+        ticket = tickets_data.read_ticket(conn, ticket_id)
+        assert ticket.ticket_status is TicketStatus.paired_work
+        assert ticket.employee_session_id == "paired-session"
+        stored_fields = json.loads(
+            conn.execute("SELECT fields FROM tickets WHERE id = ?", (ticket_id,)).fetchone()[
+                "fields"
+            ]
+        )
+        assert stored_fields["success"]["proposal"] is None
+    finally:
+        conn.close()
+    assert gateway.calls == [("paired-session", ticket_id, "work with me", "message", False)]
 
 
 def test_human_admission_wins_atomic_race_and_claim_has_no_side_effects(

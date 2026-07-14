@@ -15,8 +15,8 @@ These tests assert the ticket's acceptance items with concrete values:
   payloads (unknown-ceiling vs at-or-beyond) are pinned for coding parity (review F2).
 - T5: the DATA-layer drive on a probe ticket exercises every converted path at runtime
   with a non-coding type — a foreign AUTO-ACCEPT (ceiling beyond state, review F3), the
-  non-None transition-hook path (needs_alpha->needs_beta under khushal -> user_takeover),
-  proposal supersession, the recap writer, return-for-revision, and the admission /
+  mixed-mode ownership path (worker alpha auto-accepts into paired beta), proposal
+  supersession, the recap writer, return-for-revision, and the admission /
   at-cap-stop error payloads — with EXACT event order and payloads at each transition
   (review F4).
 - T7: a probe ticket survives create + reload (the P0 _row_to_ticket str() fix).
@@ -53,10 +53,10 @@ from planner.tickets.contracts import (
     TITLE_MAX_CHARS,
     AtCap,
     FieldSlot,
-    Implementer,
     Priority,
     Proposal,
     ScopePair,
+    StageOwnershipMode,
     Ticket,
     TicketFields,
     TicketStatus,
@@ -318,7 +318,7 @@ def test_resolve_scope_distinguishes_unknown_from_too_early_coding_payloads() ->
 # =====================================================================
 
 
-def _create_probe(tmp_db: Connection, now: int, *, implementer: Implementer | None = None) -> str:
+def _create_probe(tmp_db: Connection, now: int) -> str:
     ticket = tickets_data.create_ticket(
         tmp_db,
         title="Probe drive",
@@ -326,7 +326,6 @@ def _create_probe(tmp_db: Connection, now: int, *, implementer: Implementer | No
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="probe",
-        implementer=implementer,
     )
     return ticket.id
 
@@ -344,8 +343,14 @@ def test_probe_data_layer_drive_to_done_exact_events(
     tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkerTypeDefinition
 ) -> None:
     now = fake_clock.now_unix()
-    # implementer=khushal so the probe transition hook (needs_alpha->needs_beta) fires.
-    tid = _create_probe(tmp_db, now, implementer=Implementer.khushal)
+    tid = _create_probe(tmp_db, now)
+    tickets_data.set_stage_ownership(
+        tmp_db,
+        tid,
+        stage=_A,
+        ownership_mode=StageOwnershipMode.worker,
+        now=now,
+    )
 
     # created at needs_kickoff scoped to the leading needs_kickoff ceiling, kickoff parked.
     t = tickets_data.read_ticket(tmp_db, tid)
@@ -391,8 +396,9 @@ def test_probe_data_layer_drive_to_done_exact_events(
     assert t.stage == _B  # auto-accepted + advanced
     assert fields_codec.get_slot(t.fields, _FA).value == "alpha body"
     assert fields_codec.get_slot(t.fields, _FA).proposal is None  # proposal cleared
-    # the transition hook fired for the FOREIGN type: needs_alpha->needs_beta -> user_takeover.
-    assert t.ticket_status == TicketStatus.user_takeover
+    # Probe's mixed ownership fired for the FOREIGN type:
+    # worker-owned needs_alpha auto-accepted into paired needs_beta.
+    assert t.ticket_status == TicketStatus.paired_work
     kinds = _kinds_after(tmp_db, tid, before)
     assert [k for k, _ in kinds] == [
         EventKind.proposal_accepted.value,
@@ -406,7 +412,7 @@ def test_probe_data_layer_drive_to_done_exact_events(
         "edited": False,
     }
     assert kinds[1][1] == {"from_stage": _A, "to_stage": _B, "cause": "auto_accept"}
-    assert kinds[2][1] == {"ticket_status": "user_takeover"}
+    assert kinds[2][1] == {"ticket_status": "paired_work"}
 
     # --- at needs_beta (ceiling _B ==): propose beta -> PARKS (value None, proposal set).
     before = len(_events(tmp_db, tid))
@@ -649,7 +655,10 @@ def test_decide_drop_and_jump_bookends_pure_str_stage() -> None:
             ceiling="needs_alpha",
             at_cap=AtCap.propose,
             ticket_status=TicketStatus.empty,
-            implementer=None,
+            execution_route=None,
+            stage_ownership_overrides={},
+            default_stage_ownership_mode=StageOwnershipMode.worker,
+            effective_stage_ownership_mode=StageOwnershipMode.worker,
             employee_session_id=None,
             alias=None,
             fields=TicketFields.empty(("kickoff",)),

@@ -25,6 +25,7 @@ from planner.seed.logic.fieldmap import resolve_priority
 from planner.seed.logic.latest import pick_latest_daily
 from planner.seed.logic.tracking import parse_tracking
 from planner.seed.logic.workspace import match_item_title, parse_workspace
+from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
     install_worker_type_registry_for_test,
@@ -510,7 +511,13 @@ def test_seed_fields_follow_the_explicit_registered_definition(tmp_db: Connectio
         label="Seed probe",
         stages=(
             *CODING_WORKER_TYPE_DEFINITION.stages[:-1],
-            StageDefinition("needs_seed_extra", "Seed extra", extra_field, False),
+            StageDefinition(
+                "needs_seed_extra",
+                "Seed extra",
+                extra_field,
+                False,
+                StageOwnershipMode.worker,
+            ),
             CODING_WORKER_TYPE_DEFINITION.stages[-1],
         ),
         fields=(

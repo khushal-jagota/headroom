@@ -72,7 +72,22 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "ceiling": str(ticket.ceiling),
         "at_cap": ticket.at_cap.value,
         "ticket_status": ticket.ticket_status.value,
-        "implementer": ticket.implementer.value if ticket.implementer is not None else None,
+        "execution_route": (
+            ticket.execution_route.value if ticket.execution_route is not None else None
+        ),
+        "stage_ownership_overrides": {
+            stage: mode.value for stage, mode in ticket.stage_ownership_overrides.items()
+        },
+        "default_stage_ownership_mode": (
+            ticket.default_stage_ownership_mode.value
+            if ticket.default_stage_ownership_mode is not None
+            else None
+        ),
+        "effective_stage_ownership_mode": (
+            ticket.effective_stage_ownership_mode.value
+            if ticket.effective_stage_ownership_mode is not None
+            else None
+        ),
         "employee_session_id": ticket.employee_session_id,
         "alias": ticket.alias,
         "fields": json.loads(fields_codec.fields_to_json(ticket.fields)),
@@ -199,7 +214,10 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"{ticket.title}\n"
         f"stage: {str(ticket.stage)}\n"
         f"priority: {ticket.priority.value}\n"
-        f"implementer: {ticket.implementer.value if ticket.implementer is not None else '(none)'}\n"
+        "execution_route: "
+        f"{ticket.execution_route.value if ticket.execution_route is not None else '(none)'}\n"
+        "owner: "
+        f"{ticket.effective_stage_ownership_mode.value if ticket.effective_stage_ownership_mode is not None else '(none)'}\n"  # noqa: E501
         f"\n"
         f"{field_blocks}"
         f"recap:\n{show(ticket.recap)}\n"

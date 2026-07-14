@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import (
     NO_FURTHER,
     AtCap,
-    Implementer,
     NextCeiling,
     ScopePair,
+    StageOwnershipMode,
     TicketFields,
     TicketStatus,
 )
@@ -124,14 +125,29 @@ def has_pending_parked_proposal(
     )
 
 
-def plan_handoff_status(
-    implementer: Implementer | None,
-    old_stage: str,
-    new_stage: str | None,
+def effective_stage_ownership_mode(
+    stage: str,
+    stage_ownership_overrides: Mapping[str, StageOwnershipMode],
     *,
     worker_type_definition: WorkerTypeDefinition,
-) -> TicketStatus | None:
-    if new_stage is None or implementer is None:
+) -> StageOwnershipMode | None:
+    if worker_type_definition.is_terminal(stage):
         return None
-    effect = worker_type_definition.transition_effect(implementer.value, old_stage, new_stage)
-    return TicketStatus(effect) if effect is not None else None
+    if stage in stage_ownership_overrides:
+        return stage_ownership_overrides[stage]
+    default = worker_type_definition.stage_definition(stage).default_ownership_mode
+    if default is None:
+        raise PlannerError(
+            ErrorCode.validation,
+            "non-terminal stage has no default ownership",
+            {"stage": stage},
+        )
+    return default
+
+
+def resting_ticket_status(ownership_mode: StageOwnershipMode) -> TicketStatus:
+    if ownership_mode is StageOwnershipMode.worker:
+        return TicketStatus.empty
+    if ownership_mode is StageOwnershipMode.user:
+        return TicketStatus.user_takeover
+    return TicketStatus.paired_work

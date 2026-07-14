@@ -7,7 +7,7 @@ import pytest
 
 from planner.core.errors import PlannerError
 from planner.runtime import automatic_employee_step_eligibility
-from planner.tickets.contracts import AtCap, TicketFields
+from planner.tickets.contracts import AtCap, StageOwnershipMode, TicketFields
 from planner.tickets.logic import admission, external_work, fields_codec, machine, resolution
 from planner.worker_types.contracts import (
     FieldDefinition,
@@ -26,19 +26,18 @@ SYNTHETIC_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     worker_type="synthetic",
     label="Synthetic",
     stages=(
-        StageDefinition("needs_kickoff", "Kickoff", "kickoff", False),
-        StageDefinition(ALPHA, "Alpha", FIELD_ALPHA, False),
-        StageDefinition(BETA, "Beta", FIELD_BETA, False),
-        StageDefinition("done", "Done", None, True),
+        StageDefinition("needs_kickoff", "Kickoff", "kickoff", False, StageOwnershipMode.worker),
+        StageDefinition(ALPHA, "Alpha", FIELD_ALPHA, False, StageOwnershipMode.worker),
+        StageDefinition(BETA, "Beta", FIELD_BETA, False, StageOwnershipMode.worker),
+        StageDefinition("done", "Done", None, True, None),
     ),
-    dropped_stage=StageDefinition("dropped", "Dropped", None, True),
+    dropped_stage=StageDefinition("dropped", "Dropped", None, True, None),
     fields=(
         FieldDefinition("kickoff", "Kickoff"),
         FieldDefinition(FIELD_ALPHA, "Alpha"),
         FieldDefinition(FIELD_BETA, "Beta"),
     ),
     worker_profile=WorkerProfile("synthetic-worker", None, None, "default"),
-    transition_hooks=(),
     supports_prefix_reconciliation=True,
 )
 
@@ -116,7 +115,7 @@ def test_stored_decode_is_registry_free_and_declared_validation_is_explicit() ->
         (admission.check_agent_proposal, (ALPHA, BETA, AtCap.propose, FIELD_ALPHA)),
         (admission.check_recap_writable, (BETA,)),
         (machine.has_pending_parked_proposal, (object(),)),
-        (machine.plan_handoff_status, (None, ALPHA, BETA)),
+        (machine.effective_stage_ownership_mode, (ALPHA, {})),
         (resolution.decide_file_proposal, (object(), FIELD_ALPHA, "body", "agent", 0)),
         (
             resolution.decide_accept,
@@ -148,7 +147,7 @@ def test_semantic_signatures_have_required_descriptive_parameter() -> None:
         machine.resolve_scope,
         machine.has_pending_gating_proposal,
         machine.has_pending_parked_proposal,
-        machine.plan_handoff_status,
+        machine.effective_stage_ownership_mode,
         admission.check_agent_proposal,
         admission.check_recap_writable,
         resolution._accept_gating_proposal,

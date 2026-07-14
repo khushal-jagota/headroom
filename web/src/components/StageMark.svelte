@@ -10,10 +10,14 @@
     class?: string;
     [key: string]: unknown;
   } = $props();
+
+  let waitingCompatibleClass = $derived(
+    state === "current-paired-work" ? " stage-mark--current-waiting" : ""
+  );
 </script>
 
 <span
-  class={`stage-mark stage-mark--${state}${extraClass ? ` ${extraClass}` : ""}`}
+  class={`stage-mark stage-mark--${state}${waitingCompatibleClass}${extraClass ? ` ${extraClass}` : ""}`}
   role="img"
   aria-label={state.replace(/-/g, " ")}
   {...rest}

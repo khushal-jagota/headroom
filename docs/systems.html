@@ -700,14 +700,24 @@
                 declares the available Stages; coding uses kickoff, success, approach,
                 plan, implementation, closeout, done, or dropped.
                 <code>ticket_status</code> is separate runtime control: empty, running,
-                awaiting approval, user takeover, or errored.
+                awaiting approval, user takeover, paired work, or errored.
               </p>
               <p>
                 Workers write proposals to the six fields: kickoff, success, approach,
                 plan, implementation, and closeout. The resolution engine is the only code that can
                 settle a proposal or advance <code>stage</code>. Scope is
                 <code>ceiling</code> plus <code>at_cap</code>; it decides how far a
-                worker may go before the human must approve again.
+                worker may go before the human must approve again. The UI labels the
+                parked-proposal cap choice Continue while the stored value remains
+                <code>propose</code>.
+              </p>
+              <p>
+                Stage ownership decides who drives the current Stage: worker, user, or
+                paired. Worker-owned Stages can be discovered automatically, user-owned
+                Stages rest in user takeover, and paired Stages continue through ordinary
+                Ticket Chat while any real proposal parks for approval. Execution route
+                is separate: Panels worker, Hermes with Codex, Hermes with Claude, or no
+                route.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/tickets/contracts.py</code>,
@@ -726,10 +736,11 @@
             <div class="detail-body">
               <p>
                 One complete decision owns <strong>Automatic Employee-step eligibility</strong>.
-                It returns yes only when all eight facts hold:
+                It returns yes only when all nine facts hold:
               </p>
               <ol>
                 <li>The Ticket belongs to the supplied <code>planning_day_id</code> — today's day during automatic discovery.</li>
+                <li>Its current Stage's effective ownership is <code>worker</code>.</li>
                 <li>Its <code>ticket_status</code> is <code>empty</code>.</li>
                 <li>Its Stage is not terminal.</li>
                 <li>Its Stage has a next gated field.</li>
@@ -751,7 +762,9 @@
                 call the gateway, or build a prompt. After a successful claim, the runner marks
                 the Ticket running, resumes or creates its durable
                 <code>employee_session_id</code>, submits one prompt through that Hermes
-                conversation, and settles runtime status when the turn ends.
+                conversation, and settles runtime status when the turn ends. Inactive
+                settlement derives the next resting status from the current Stage's
+                effective owner.
               </p>
               <p>
                 Human Chat admission and the final Employee claim both use SQLite's
@@ -777,7 +790,8 @@
               <p>
                 Chat completion, Chat error, and Pause do not send an eligibility wake.
                 They only settle the visible Chat turn. The next SQLite-backed periodic
-                scan observes that the eighth factor has cleared.
+                scan observes that the running-chat factor has cleared and may run the
+                Ticket only if ownership and every other condition allow it.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/runtime/automatic_employee_step_eligibility.py</code>,

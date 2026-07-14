@@ -16,6 +16,7 @@ from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     AtCap,
     NextCeiling,
+    StageOwnershipMode,
     Ticket,
     TicketDeletion,
 )
@@ -260,6 +261,26 @@ def release_ticket(
     automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> Ticket:
     ticket = tickets_data.release_ticket(conn, ticket_id, now=now)
+    automatic_employee_step_eligibility_wake.wake()
+    return ticket
+
+
+def set_stage_ownership(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    stage: str,
+    ownership_mode: StageOwnershipMode | None,
+    now: int,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
+) -> Ticket:
+    ticket = tickets_data.set_stage_ownership(
+        conn,
+        ticket_id,
+        stage=stage,
+        ownership_mode=ownership_mode,
+        now=now,
+    )
     automatic_employee_step_eligibility_wake.wake()
     return ticket
 

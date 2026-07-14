@@ -114,8 +114,9 @@ export type BlockerSummary = {
   blocks: BlocksTarget[];
 };
 
-export type Implementer =
-  | "khushal"
+export type StageOwnershipMode = "worker" | "user" | "paired";
+
+export type ExecutionRoute =
   | "panels_worker"
   | "hermes_codex"
   | "hermes_claude";
@@ -135,7 +136,10 @@ export type TicketDetail = {
   effective_sprint_id?: string | null;
   sprint_item_id?: string | null;
   ticket_status?: string;
-  implementer: Implementer | null;
+  execution_route: ExecutionRoute | null;
+  stage_ownership_overrides: Record<string, StageOwnershipMode>;
+  default_stage_ownership_mode: StageOwnershipMode | null;
+  effective_stage_ownership_mode: StageOwnershipMode | null;
   employee_session_id: string | null;
   day_ids?: string[];
   blocked?: boolean;

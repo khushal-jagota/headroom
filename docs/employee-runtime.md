@@ -3,10 +3,10 @@
 Each ticket has a single worker that carries it forward — think of it as an
 **employee** you have handed that one piece of work to. Behind the scenes it is a
 live AI session (a Hermes "mind") that stays with the ticket across its stages. You
-are its manager: you talk to it in the ticket's chat, you set how far it may go (its
-scope), and you approve its work. It only ever _proposes_ — nothing it writes becomes
-real until it is accepted, automatically within the room you granted or by you in
-person.
+are its manager: you talk to it in the ticket's chat, choose who owns the current Stage,
+set how far worker-owned work may go (its scope), and approve its work. It only ever
+_proposes_ — nothing it writes becomes real until it is accepted, automatically within
+the room you granted or by you in person.
 
 Automatic discovery decides _whether_ a Ticket may start another employee step. A
 separate runner owns the step itself.
@@ -25,18 +25,20 @@ separate runner owns the step itself.
 ## Discovery and execution
 
 One function answers **Automatic Employee-step eligibility**. It returns yes only
-when all eight facts hold:
+when all nine facts hold:
 
 1. The Ticket belongs to the supplied `planning_day_id` — today's day during
    automatic discovery.
-2. Its `ticket_status` is `empty`.
-3. Its Stage is not terminal.
-4. Its Stage has a next gated field.
-5. That field has no parked proposal.
-6. Its `ceiling` and `at_cap` allow another proposal; the Ticket is not at or beyond
+2. Its current Stage's effective ownership is `worker`; user-owned and paired Stages
+   are never dispatched automatically.
+3. Its `ticket_status` is `empty`.
+4. Its Stage is not terminal.
+5. Its Stage has a next gated field.
+6. That field has no parked proposal.
+7. Its `ceiling` and `at_cap` allow another proposal; the Ticket is not at or beyond
    a stopping ceiling.
-7. It has no active blocker.
-8. It has no running Panels Chat turn, whether that visible turn came from a human or
+8. It has no active blocker.
+9. It has no running Panels Chat turn, whether that visible turn came from a human or
    an Employee step.
 
 **AutomaticEmployeeStepDiscoveryLoop** is read-only and advisory. Its database scan
@@ -54,6 +56,12 @@ durable session, submits one turn, watches the run end, and settles runtime stat
 through the Ticket data writers. Proposals, approvals, takeover, release, and runtime
 start/finish/error use those same writers, so "the code owns the Stage, the worker
 only proposes" holds here too.
+
+When a successful run clears `agent_running_step`, the canonical writer reapplies the
+current Stage's effective ownership even if the run filed no proposal. It therefore
+cannot turn a live user takeover back into worker-ready state. A Stage change likewise
+derives the next inactive status from the entered Stage's effective ownership. Scope
+still controls autonomous proposal acceptance; it does not choose the owner.
 
 Human Chat admission and the final Employee claim both take SQLite's write lock and
 recheck their opposing fact inside the transaction. Therefore only one side can win:
@@ -107,8 +115,8 @@ shows this as `auto not on today`.
 
 Chat completion, Chat error, and Pause deliberately send no eligibility wake. They
 only settle the visible Chat turn. The SQLite-backed periodic discovery timer is the
-canonical backstop: its next scan observes that the eighth factor has cleared and may
-submit the Ticket to the runner.
+canonical backstop: its next scan observes that the running-chat factor has cleared and
+may submit the Ticket to the runner if ownership and every other factor allow it.
 
 Shutdown derives one absolute deadline for discovery, accepted Employee work, and the
 Hermes gateways. Discovery stops accepting work first; the runner and gateways get only
@@ -210,8 +218,9 @@ today wakes eligibility discovery without a follow-up scope edit. The ticket mov
   type's specialist skill, and the registry that declares each Worker type's Stages and
   worker.
 - **Tickets & the gates** (`tickets-and-gates.md`) — the proposals the employee
-  files, the scope that decides whether a step auto-accepts, and the approval that
-  wakes Automatic Employee-step eligibility discovery after commit.
+  files, the Stage ownership required for automatic work, the separate scope that
+  decides whether a step auto-accepts, and the approval that wakes Automatic
+  Employee-step eligibility discovery after commit.
 - **Chat** (`chat.md`) — the live conversation with the employee and the slash menu
   of commands and skills, over the same gateway.
 - **The command-line tool** (`cli.md`) — the surface the employee acts through.

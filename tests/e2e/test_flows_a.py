@@ -1256,7 +1256,7 @@ def test_settled_kickoff_field_renders_as_canonical_intake_block(
     )
 
 
-def test_ticket_implementer_assignment_edits_in_facts_without_changing_workflow(
+def test_ticket_execution_route_edits_in_facts_without_changing_workflow(
     server, context_factory, open_page, cli, api
 ):
     tid = cli(
@@ -1266,7 +1266,7 @@ def test_ticket_implementer_assignment_edits_in_facts_without_changing_workflow(
         "--worker-type",
         "coding",
         "--title",
-        "Implementer assignment UI ticket",
+        "Execution route UI ticket",
     )["id"]
     ready = f'section[data-screen="ticket"][data-ticket-id="{tid}"]'
     page = open_page(
@@ -1276,15 +1276,16 @@ def test_ticket_implementer_assignment_edits_in_facts_without_changing_workflow(
         ready,
         settled=True,
     )
-    implementer = ".ticket-facts [data-implementer]"
+    execution_route = ".ticket-facts [data-execution-route]"
 
-    # The assignment is one inline selector in the existing facts row, not a new
+    # The route is one inline selector in the existing facts row, not a new
     # edit/save/cancel flow.
-    assert page.locator(implementer).count() == 1
+    assert page.locator(execution_route).count() == 1
+    assert page.locator(f'{execution_route} option[value="khushal"]').count() == 0
     initial = api.get(server, f"/api/tickets/{tid}")
     initial_stage = initial["stage"]
     initial_ticket_status = initial["ticket_status"]
-    assert initial["implementer"] is None
+    assert initial["execution_route"] is None
 
     def wait_for_assignment(value: str, label: str) -> None:
         page.wait_for_function(
@@ -1301,13 +1302,13 @@ def test_ticket_implementer_assignment_edits_in_facts_without_changing_workflow(
                     : '';
                 return select?.value === value && visibleLabel === label;
             }""",
-            arg={"selector": implementer, "value": value, "label": label},
+            arg={"selector": execution_route, "value": value, "label": label},
             timeout=WAIT_MS,
         )
 
     def assert_assignment_without_workflow_change(expected: str | None) -> None:
         detail = api.get(server, f"/api/tickets/{tid}")
-        assert detail["implementer"] == expected
+        assert detail["execution_route"] == expected
         assert detail["stage"] == initial_stage
         assert detail["ticket_status"] == initial_ticket_status
         assert page.get_attribute(ready, "data-stage") == initial_stage
@@ -1315,10 +1316,12 @@ def test_ticket_implementer_assignment_edits_in_facts_without_changing_workflow(
             page.get_attribute("[data-ticket-status]", "data-ticket-status")
             == initial_ticket_status
         )
-        assert page.locator(f"{implementer} button").count() == 0
+        assert page.locator(f"{execution_route} button").count() == 0
         assert (
             page.locator(
-                f"{implementer} [data-edit], {implementer} [data-save], {implementer} [data-cancel]"
+                f"{execution_route} [data-edit], "
+                f"{execution_route} [data-save], "
+                f"{execution_route} [data-cancel]"
             ).count()
             == 0
         )
@@ -1333,16 +1336,16 @@ def test_ticket_implementer_assignment_edits_in_facts_without_changing_workflow(
             response.request.method == "PATCH" and response.url.endswith(f"/api/tickets/{tid}")
         )
     ):
-        page.select_option(f"{implementer} select", "khushal")
-    wait_for_assignment("khushal", "Khushal")
-    assert_assignment_without_workflow_change("khushal")
+        page.select_option(f"{execution_route} select", "panels_worker")
+    wait_for_assignment("panels_worker", "Panels worker")
+    assert_assignment_without_workflow_change("panels_worker")
 
     with page.expect_response(
         lambda response: (
             response.request.method == "PATCH" and response.url.endswith(f"/api/tickets/{tid}")
         )
     ):
-        page.select_option(f"{implementer} select", "hermes_codex")
+        page.select_option(f"{execution_route} select", "hermes_codex")
     wait_for_assignment("hermes_codex", "Hermes with Codex")
     assert_assignment_without_workflow_change("hermes_codex")
 
@@ -1351,11 +1354,11 @@ def test_ticket_implementer_assignment_edits_in_facts_without_changing_workflow(
             response.request.method == "PATCH" and response.url.endswith(f"/api/tickets/{tid}")
         )
     ):
-        page.select_option(f"{implementer} select", "")
+        page.select_option(f"{execution_route} select", "")
     wait_for_assignment("", "(unassigned)")
     assert_assignment_without_workflow_change(None)
 
     page.reload()
-    page.wait_for_selector(f"{ready} {implementer}", timeout=WAIT_MS)
+    page.wait_for_selector(f"{ready} {execution_route}", timeout=WAIT_MS)
     wait_for_assignment("", "(unassigned)")
     assert_assignment_without_workflow_change(None)

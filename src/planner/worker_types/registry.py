@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from types import MappingProxyType
 
 from planner.core.contracts import ErrorCode, JsonDict, PlannerError
-from planner.tickets.contracts import Implementer, TicketStatus
+from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.contracts import (
     WorkerTypeDefinition,
     WorkerTypeManifest,
@@ -108,6 +108,29 @@ def _validate_definition(
                 "non-terminal stage must gate a field",
                 {"worker_type": worker_type, "stage": stage.id},
             )
+        if not stage.is_terminal and stage.default_ownership_mode is None:
+            raise fail(
+                "non-terminal stage must declare default ownership",
+                {"worker_type": worker_type, "stage": stage.id},
+            )
+        if stage.is_terminal and stage.default_ownership_mode is not None:
+            raise fail(
+                "terminal stage may not declare default ownership",
+                {"worker_type": worker_type, "stage": stage.id},
+            )
+        if (
+            stage.default_ownership_mode is not None
+            and not isinstance(stage.default_ownership_mode, StageOwnershipMode)
+        ):
+            raise fail(
+                "stage default ownership must be a known mode",
+                {"worker_type": worker_type, "stage": stage.id},
+            )
+    if dropped.default_ownership_mode is not None:
+        raise fail(
+            "terminal stage may not declare default ownership",
+            {"worker_type": worker_type, "stage": "dropped"},
+        )
 
     declared_field_ids = {field.id for field in definition.fields}
     for stage in definition.stages:
@@ -167,44 +190,6 @@ def _validate_definition(
             },
         )
 
-    known_stage_ids = {stage.id for stage in definition.stages}
-    for hook in definition.transition_hooks:
-        for stage_id in (hook.old_stage, hook.new_stage):
-            if stage_id not in known_stage_ids:
-                raise fail(
-                    "transition hook references an unknown stage",
-                    {"worker_type": worker_type, "stage": stage_id},
-                )
-
-    known_implementers = {implementer.value for implementer in Implementer}
-    for hook in definition.transition_hooks:
-        if hook.implementer not in known_implementers:
-            raise fail(
-                "transition hook references an unknown implementer",
-                {"worker_type": worker_type, "implementer": hook.implementer},
-            )
-
-    known_effects = {status.value for status in TicketStatus}
-    for hook in definition.transition_hooks:
-        if hook.effect not in known_effects:
-            raise fail(
-                "transition hook references an unknown effect",
-                {"worker_type": worker_type, "effect": hook.effect},
-            )
-
-    seen_hook_keys: set[tuple[str, str, str]] = set()
-    for hook in definition.transition_hooks:
-        key = (hook.old_stage, hook.new_stage, hook.implementer)
-        if key in seen_hook_keys:
-            raise fail(
-                "duplicate transition hook",
-                {
-                    "worker_type": worker_type,
-                    "key": [hook.old_stage, hook.new_stage, hook.implementer],
-                },
-            )
-        seen_hook_keys.add(key)
-
     if type(definition.supports_prefix_reconciliation) is not bool:
         raise fail(
             "supports_prefix_reconciliation must be a bool",
@@ -259,6 +244,11 @@ class WorkerTypeRegistry:
                 "label": stage.label,
                 "gating_field": stage.gating_field,
                 "is_terminal": stage.is_terminal,
+                "default_ownership_mode": (
+                    stage.default_ownership_mode.value
+                    if stage.default_ownership_mode is not None
+                    else None
+                ),
             }
             for stage in definition.stages
         ]
@@ -267,6 +257,7 @@ class WorkerTypeRegistry:
             "label": definition.dropped_stage.label,
             "gating_field": definition.dropped_stage.gating_field,
             "is_terminal": definition.dropped_stage.is_terminal,
+            "default_ownership_mode": None,
         }
         fields: list[WorkerTypeManifestField] = [
             {"id": field.id, "label": field.label} for field in definition.fields

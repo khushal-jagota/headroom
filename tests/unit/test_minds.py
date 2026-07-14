@@ -2523,7 +2523,7 @@ def test_provisioned_skills_encode_implementation_and_closeout_lifecycle(
     assert "needs_closeout" not in worker
     assert "panels worker my-ticket" in worker
     assert "skill_view" in worker
-    assert "you handle the one current step only." in worker
+    assert "You handle the one\ncurrent step only." in worker
     assert "Never invoke " in worker and "panels chief" in worker
 
     # panels lists the five canonical outputs, not the retired `result` field.

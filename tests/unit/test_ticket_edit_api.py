@@ -97,7 +97,7 @@ def _snapshot(db_path: Path, ticket_id: str) -> dict[str, Any]:
                 ticket.deadline,
                 ticket.project_id,
                 ticket.sprint_id,
-                ticket.implementer.value if ticket.implementer is not None else None,
+                ticket.execution_route.value if ticket.execution_route is not None else None,
                 str(ticket.stage),
                 ticket.ticket_status.value,
             ),
@@ -126,7 +126,7 @@ def _new_ticket_events(db_path: Path, ticket_id: str, prior_count: int) -> list[
         conn.close()
 
 
-def test_patch_implementer_set_change_clear_noop_and_invalid_are_atomic(
+def test_patch_execution_route_set_change_clear_noop_and_invalid_are_atomic(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
@@ -134,64 +134,68 @@ def test_patch_implementer_set_change_clear_noop_and_invalid_are_atomic(
     original = _snapshot(db_path, ticket_id)
 
     with TestClient(app) as client:
-        set_response = client.patch(f"/api/tickets/{ticket_id}", json={"implementer": "khushal"})
+        set_response = client.patch(
+            f"/api/tickets/{ticket_id}", json={"execution_route": "panels_worker"}
+        )
         assert set_response.status_code == 200, set_response.json()
-        assert set_response.json()["implementer"] == "khushal"
+        assert set_response.json()["execution_route"] == "panels_worker"
         assert set_response.json()["stage"] == "needs_success"
         assert set_response.json()["ticket_status"] == "empty"
 
         changed_response = client.patch(
-            f"/api/tickets/{ticket_id}", json={"implementer": "hermes_codex"}
+            f"/api/tickets/{ticket_id}", json={"execution_route": "hermes_codex"}
         )
         assert changed_response.status_code == 200, changed_response.json()
-        assert changed_response.json()["implementer"] == "hermes_codex"
+        assert changed_response.json()["execution_route"] == "hermes_codex"
         detail = client.get(f"/api/tickets/{ticket_id}")
         assert detail.status_code == 200
-        assert detail.json()["implementer"] == "hermes_codex"
+        assert detail.json()["execution_route"] == "hermes_codex"
         copy_text = client.get(f"/api/tickets/{ticket_id}/copy-text")
         assert copy_text.status_code == 200
-        assert "implementer: hermes_codex\n" in copy_text.text
+        assert "execution_route: hermes_codex\n" in copy_text.text
 
-        cleared_response = client.patch(f"/api/tickets/{ticket_id}", json={"implementer": None})
+        cleared_response = client.patch(
+            f"/api/tickets/{ticket_id}", json={"execution_route": None}
+        )
         assert cleared_response.status_code == 200, cleared_response.json()
-        assert cleared_response.json()["implementer"] is None
+        assert cleared_response.json()["execution_route"] is None
         cleared = _snapshot(db_path, ticket_id)
 
-        noop_response = client.patch(f"/api/tickets/{ticket_id}", json={"implementer": None})
+        noop_response = client.patch(f"/api/tickets/{ticket_id}", json={"execution_route": None})
         assert noop_response.status_code == 200, noop_response.json()
         assert _snapshot(db_path, ticket_id) == cleared
 
         invalid_response = client.patch(
             f"/api/tickets/{ticket_id}",
-            json={"title": "Must not land", "implementer": "other"},
+            json={"title": "Must not land", "execution_route": "khushal"},
         )
         assert invalid_response.status_code == 400
         assert invalid_response.json()["error"] == {
             "code": "validation",
-            "message": "invalid implementer",
-            "detail": {"implementer": "other"},
+            "message": "invalid execution_route",
+            "detail": {"execution_route": "khushal"},
         }
         assert _snapshot(db_path, ticket_id) == cleared
 
         forbidden_response = client.patch(
             f"/api/tickets/{ticket_id}",
-            json={"priority": "P1", "implementer": "panels_worker"},
+            json={"priority": "P1", "execution_route": "panels_worker"},
             headers={"X-Plan-Actor": "agent"},
         )
         assert forbidden_response.status_code == 400
         assert forbidden_response.json()["error"] == {
             "code": "agent_forbidden",
             "message": "direct-only field",
-            "detail": {"field": "implementer", "actor": "agent"},
+            "detail": {"field": "execution_route", "actor": "agent"},
         }
 
     final = _snapshot(db_path, ticket_id)
     assert final == cleared
     assert final["values"][-2:] == original["values"][-2:]
     assert [event[1] for event in final["events"][len(original["events"]) :]] == [
-        {"field": "implementer", "from": None, "to": "khushal"},
-        {"field": "implementer", "from": "khushal", "to": "hermes_codex"},
-        {"field": "implementer", "from": "hermes_codex", "to": None},
+        {"field": "execution_route", "from": None, "to": "panels_worker"},
+        {"field": "execution_route", "from": "panels_worker", "to": "hermes_codex"},
+        {"field": "execution_route", "from": "hermes_codex", "to": None},
     ]
     assert final["context"] == (
         (

@@ -138,6 +138,7 @@ const REVIEW_TICKET_EVENT_KINDS = new Set([
   "kickoff_proposal_filed",
   "kickoff_accepted",
   "approval_returned",
+  "stage_ownership_changed",
   "ticket_status_changed",
   "ticket_deleted"
 ]);
@@ -298,9 +299,7 @@ const RESOURCE_DEFINITIONS = {
       eventInvalidated: true,
       affectedByEvent: (facts) => {
         const identities: CatalogueResourceIdentity[] = [];
-        if (
-          ordinaryTicketEvent(facts) || facts.employeeSessionChanged
-        ) {
+        if (ordinaryTicketEvent(facts) || facts.employeeSessionChanged) {
           identities.push(`ticket:${facts.event.entity_id}`);
         }
         for (const entityId of facts.relatedEntityIds) {

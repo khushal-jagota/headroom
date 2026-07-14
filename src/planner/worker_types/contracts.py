@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TypedDict
 
 from planner.core.contracts import ErrorCode, PlannerError
+from planner.tickets.contracts import StageOwnershipMode
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,6 +15,7 @@ class StageDefinition:
     label: str
     gating_field: str | None
     is_terminal: bool
+    default_ownership_mode: StageOwnershipMode | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,14 +33,6 @@ class WorkerProfile:
 
 
 @dataclass(frozen=True, slots=True)
-class TransitionHook:
-    old_stage: str
-    new_stage: str
-    implementer: str
-    effect: str
-
-
-@dataclass(frozen=True, slots=True)
 class WorkerTypeDefinition:
     worker_type: str
     label: str
@@ -46,7 +40,6 @@ class WorkerTypeDefinition:
     dropped_stage: StageDefinition
     fields: tuple[FieldDefinition, ...]
     worker_profile: WorkerProfile
-    transition_hooks: tuple[TransitionHook, ...]
     supports_prefix_reconciliation: bool
 
     def stage_ids(self) -> tuple[str, ...]:
@@ -152,16 +145,6 @@ class WorkerTypeDefinition:
                 {"worker_type": self.worker_type, "ceiling": ceiling},
             )
 
-    def transition_effect(self, implementer: str, old_stage: str, new_stage: str) -> str | None:
-        for hook in self.transition_hooks:
-            if (
-                hook.implementer == implementer
-                and hook.old_stage == old_stage
-                and hook.new_stage == new_stage
-            ):
-                return hook.effect
-        return None
-
     def reconciliation_field_order(self) -> tuple[str, ...]:
         return tuple(
             stage.gating_field
@@ -175,6 +158,7 @@ class WorkerTypeManifestStage(TypedDict):
     label: str
     gating_field: str | None
     is_terminal: bool
+    default_ownership_mode: str | None
 
 
 class WorkerTypeManifestField(TypedDict):

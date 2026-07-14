@@ -12,10 +12,11 @@ The command tree matches the system model:
 - `worker ...` — worker-only writes such as ticket proposals, recaps, and notes.
 - `chief ...` — explicit intake of work completed outside Panels.
 
-Ordinary command groups do not expose internal runtime controls. Ticket `ticket_status`,
-run claiming, takeover, and release remain code-owned. The exceptional `chief` group can
-establish a coherent Ticket Stage from externally completed work; it is not a generic
-Stage setter.
+Ordinary command groups do not expose internal runtime controls. Ticket `ticket_status`
+and run claiming remain code-owned. The direct `ticket ownership` command changes a
+declared Stage override; it is not a runtime-status setter. The exceptional `chief` group
+can establish a coherent Ticket Stage from externally completed work; it is not a
+generic Stage setter.
 
 ## The verbs
 
@@ -28,8 +29,14 @@ Stage setter.
   tickets. `ticket create` requires `--worker-type` and can take a `--kickoff-note` /
   `--kickoff-note-file` intake body for the Kickoff field. `ticket list --stage`
   compares the stored Stage directly. `ticket set` names one field (`title`, `kickoff-note`, `priority`, `deadline`,
-  or `project` / `project-id`). Sprint placement is a sprint command, not a ticket
-  setter. `ticket delete` is a permanent direct operation and requires `--yes`.
+  `project` / `project-id`, or `execution-route`). An execution route is nullable; its
+  values are `panels_worker`, `hermes_codex`, and `hermes_claude`. It tells the Employee
+  how to carry out worker work and does not change Stage ownership. Sprint placement is
+  a sprint command, not a ticket setter. `ticket delete` is a permanent direct operation
+  and requires `--yes`.
+- **`ticket ownership <id> --stage <stage> --mode worker|user|paired|default`** — set or
+  clear one Stage's ownership override. `default` clears the override so the Worker
+  type's Stage default applies. Terminal and unknown Stages are rejected.
 - **`ticket copy / events`** — copy one ticket's plain-text packet or inspect its event log.
 - **`sprint create / list / show / set / add-ticket / remove-ticket`** — plan and
   populate sprints. `current` resolves through `/api/sprint/current`; `none` means the
@@ -52,7 +59,8 @@ Stage setter.
   reconciliation reasoning, and the
   exact settled field prefix for the target `--stage`. Creation also requires
   `--worker-type`. Reconciliation refuses pending or active Ticket work; both
-  operations leave the Ticket stopped at the imported Stage.
+  operations move the ceiling to the imported Stage, preserve an explicit Stop
+  (otherwise Continue remains), and apply that Stage's effective ownership.
 - **`serve`** — run the server and background worker runtime in the foreground.
   It may be launched from outside the repository; the app shell, static assets, and
   checked-in config are resolved from the repository root.
@@ -106,4 +114,4 @@ lease; the employee runtime runs one step at a time and writes status itself (se
 
 ---
 
-_Last verified: 2026-07-13._
+_Last verified: 2026-07-14._

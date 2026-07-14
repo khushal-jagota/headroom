@@ -88,29 +88,51 @@ NEW_WORKER_MANIFEST = {
             "label": "Kickoff",
             "gating_field": "kickoff",
             "is_terminal": False,
+            "default_ownership_mode": "worker",
         },
-        {"id": "needs_stages", "label": "Stages", "gating_field": "stages", "is_terminal": False},
+        {
+            "id": "needs_stages",
+            "label": "Stages",
+            "gating_field": "stages",
+            "is_terminal": False,
+            "default_ownership_mode": "worker",
+        },
         {
             "id": "needs_thinking",
             "label": "Thinking",
             "gating_field": "thinking",
             "is_terminal": False,
+            "default_ownership_mode": "worker",
         },
         {
             "id": "needs_drafting",
             "label": "Drafting",
             "gating_field": "drafting",
             "is_terminal": False,
+            "default_ownership_mode": "worker",
         },
         {
             "id": "needs_closeout",
             "label": "Closeout",
             "gating_field": "closeout",
             "is_terminal": False,
+            "default_ownership_mode": "worker",
         },
-        {"id": "done", "label": "Done", "gating_field": None, "is_terminal": True},
+        {
+            "id": "done",
+            "label": "Done",
+            "gating_field": None,
+            "is_terminal": True,
+            "default_ownership_mode": None,
+        },
     ],
-    "dropped": {"id": "dropped", "label": "Dropped", "gating_field": None, "is_terminal": True},
+    "dropped": {
+        "id": "dropped",
+        "label": "Dropped",
+        "gating_field": None,
+        "is_terminal": True,
+        "default_ownership_mode": None,
+    },
     "advance": {
         "needs_kickoff": "needs_stages",
         "needs_stages": "needs_thinking",
@@ -179,10 +201,18 @@ def test_new_worker_default_ceiling_and_first_worker_stage() -> None:
     assert NEW_WORKER_TYPE_DEFINITION.first_worker_stage() == "needs_stages"
 
 
-def test_new_worker_has_no_transition_hooks() -> None:
-    # No stage hands accepted work to a human to execute, so there is no plan-handoff
-    # analogue — the hook tuple is empty by design.
-    assert NEW_WORKER_TYPE_DEFINITION.transition_hooks == ()
+def test_new_worker_defaults_every_non_terminal_stage_to_worker_ownership() -> None:
+    assert {
+        stage.id: stage.default_ownership_mode.value
+        for stage in NEW_WORKER_TYPE_DEFINITION.stages
+        if not stage.is_terminal
+    } == {
+        "needs_kickoff": "worker",
+        "needs_stages": "worker",
+        "needs_thinking": "worker",
+        "needs_drafting": "worker",
+        "needs_closeout": "worker",
+    }
 
 
 # =====================================================================

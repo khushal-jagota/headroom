@@ -92,8 +92,9 @@ Before running a `panels chief` command, export `PLAN_ACTOR=chief` so the CLI se
    Always provide the complete settled prefix for the requested Stage. Do not infer that
    a field belongs to a Worker type or that a prefix is valid from these examples; Panels'
    API response is authoritative.
-   External intake leaves the Ticket stopped at that Stage; it does not create
-   proposals or imitate worker progress.
+   External intake moves the ceiling to that Stage and preserves an explicit Stop;
+   otherwise Continue remains. The entered Stage's effective ownership determines where
+   the Ticket rests. The intake does not create proposals or imitate worker progress.
 5. Add the reconciled or newly created external-work ticket to **today** with `panels day add-ticket <ticket-id> --json`, unless the user explicitly says the work belongs in backlog/later or should not appear on today's board. Work the user is reporting now is presumed to belong on today's record.
 6. Read the resulting Ticket back with `panels ticket show <id> --json` and report the
    Ticket id, resulting Stage, and today placement.

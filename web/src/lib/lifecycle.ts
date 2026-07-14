@@ -12,7 +12,7 @@ import {
   type FieldStageVisualState,
   type TicketStageVisualInput
 } from "./ui";
-import type { TicketDetail } from "./types";
+import type { StageOwnershipMode, TicketDetail } from "./types";
 
 // --- served worker_types manifest shapes ----------------------------------------
 
@@ -21,6 +21,7 @@ export type ManifestStage = {
   label: string;
   gating_field: string | null;
   is_terminal: boolean;
+  default_ownership_mode: StageOwnershipMode | null;
 };
 
 export type ManifestField = {
@@ -57,14 +58,17 @@ export type Lifecycle = {
   ceilingRange: string[]; // == m.ceiling_range
   fieldLabel: Record<string, string>;
   stageLabel: Record<string, string>;
+  stageDefaultOwnershipMode: Record<string, StageOwnershipMode | null>;
 };
 
 export function buildLifecycle(m: WorkerTypeManifest): Lifecycle {
   const gatingField: Record<string, string> = {};
   const gatedStage: Record<string, string> = {};
   const stageLabel: Record<string, string> = {};
+  const stageDefaultOwnershipMode: Record<string, StageOwnershipMode | null> = {};
   for (const stage of m.stages) {
     stageLabel[stage.id] = stage.label;
+    stageDefaultOwnershipMode[stage.id] = stage.default_ownership_mode;
     if (!stage.is_terminal && stage.gating_field) {
       gatingField[stage.id] = stage.gating_field;
       gatedStage[stage.gating_field] = stage.id;
@@ -84,7 +88,8 @@ export function buildLifecycle(m: WorkerTypeManifest): Lifecycle {
     advance: { ...m.advance },
     ceilingRange: [...m.ceiling_range],
     fieldLabel,
-    stageLabel
+    stageLabel,
+    stageDefaultOwnershipMode
   };
 }
 
@@ -144,6 +149,7 @@ export function ticketStageVisualStateFor(
   if (gatingFieldFor(lc, ticketStage) === fieldName) {
     if (ticketStatus === "agent_running_step") return "current-running";
     if (ticketStatus === "errored") return "errored";
+    if (ticketStatus === "paired_work") return "current-paired-work";
     if (fieldHasProposal || ticketStatus === "awaiting_approval") {
       return "current-awaiting-approval";
     }

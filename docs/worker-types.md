@@ -23,22 +23,26 @@ shipped Worker type.
 Each Worker type is one immutable `WorkerTypeDefinition`. The definition contains:
 
 - its id and human label;
-- the ordered Stages, including the field gated by each non-terminal Stage;
+- the ordered Stages, including the field and default ownership mode of each
+  non-terminal Stage (`worker`, `user`, or `paired`);
 - the separate `dropped` terminal Stage;
 - the ordered fields carried by its Tickets;
 - the worker profile, including the specialist skill;
-- any transition hooks; and
 - whether work completed outside Panels may be reconciled as a settled field prefix.
 
 The definition also answers the workflow questions that used to be spread across Ticket
 constants and free helper views. Its methods find a Stage or field, return Stage order and
 advance targets, identify gates and terminals, calculate the default ceiling and first
-working Stage, validate a Ticket position, select transition effects, and provide the
-field order used for external-work reconciliation.
+working Stage, validate a Ticket position, and provide the field order used for
+external-work reconciliation.
+
+The shipped `coding` and `new_worker` definitions currently default every non-terminal
+Stage to worker ownership. New Worker types still choose deliberately for each Stage;
+they do not inherit that choice from registry order or another definition.
 
 This makes the definition the one authority for both the data and behavior of that
-workflow. Ticket contracts still own universal Ticket facts such as status and
-implementer, but they do not define a coding lifecycle.
+workflow. Ticket contracts still own universal Ticket facts such as status, per-Ticket
+ownership overrides, and execution route, but they do not define a coding lifecycle.
 
 _Code paths:_ `src/planner/worker_types/contracts.py` contains the immutable declaration
 types and behavior. `src/planner/worker_types/coding.py` and
@@ -49,8 +53,8 @@ types and behavior. `src/planner/worker_types/coding.py` and
 `WorkerTypeRegistry` validates every definition when the registry is built. It checks the
 shared structural rules: kickoff comes first, `done` is the one linear terminal,
 `dropped` sits outside the line, every non-terminal Stage gates one declared field, every
-field is gated once, worker skills and toolsets are known, and transition hooks name real
-Stages, implementers, and effects.
+field is gated once, every non-terminal Stage declares a valid default ownership mode,
+terminal Stages declare none, and worker skills and toolsets are known.
 
 A malformed definition therefore stops application composition instead of failing only
 when a Ticket happens to reach the bad part of its workflow.
@@ -83,8 +87,9 @@ result = resolve_value(..., worker_type_definition=definition)
 
 A boundary that already knows the intended Worker type, such as Ticket creation, resolves
 that definition once and derives the initial Stage, field map, and ceiling from it. A
-boundary that processes several Tickets resolves each Ticket's stored Worker type. Direct
-read paths that only return stored state need no definition.
+boundary that processes several Tickets resolves each Ticket's stored Worker type. Ticket
+read paths also resolve the definition because current default and effective ownership are
+derived from the stored Worker type, Stage, and override map rather than persisted twice.
 
 There is no compatibility bridge or special coding seam. The application boundary,
 definition, and framework-free rule are the whole path.
@@ -128,7 +133,9 @@ There is no `/api/seed` route or `panels seed` command.
 
 `GET /api/worker-types` lists the configured registry and calls its `manifest` method for
 each definition. Every entry contains the Worker type label, Stages, gates, advance map,
-fields, ceiling range, default ceiling, and specialist skill id.
+fields, ceiling range, default ceiling, and specialist skill id. Every Stage also carries
+its default ownership mode; terminal Stages carry none. The Ticket response supplies the
+current Stage's default and effective ownership, so clients do not reconstruct the rule.
 
 The frontend derives one lifecycle per Worker type from this served manifest. It renders a
 Ticket against the entry matching the Ticket's stored `worker_type`. A coding Ticket and a
@@ -164,8 +171,9 @@ One new Worker type needs one definition and one production registration path:
 1. Write the specialist `SKILL.md` under `skills/<name>/`, with guidance for each working
    Stage.
 2. Add one definition module under `src/planner/worker_types/`. Construct an immutable
-   `WorkerTypeDefinition` with its ordered Stages, fields, worker profile, hooks, and
-   reconciliation support. Novel Stage and field ids are plain strings.
+   `WorkerTypeDefinition` with its ordered Stages, fields, worker profile, and
+   reconciliation support. Give every non-terminal Stage a deliberate default ownership
+   mode; `done` and `dropped` have none. Novel Stage and field ids are plain strings.
 3. In `src/planner/worker_types/configuration.py`, add the specialist skill to the known
    skills catalog and add the definition to `_PRODUCTION_WORKER_TYPE_DEFINITIONS`. Do not
    register it anywhere else.
@@ -191,7 +199,7 @@ prefix, and reconciliation support before changing state.
 ## Handoffs
 
 - **Tickets and gates** (`tickets-and-gates.md`) explains scope, proposals, resolution,
-  and approval.
+  Stage ownership and per-Ticket overrides, execution routes, and approval.
 - **The employee runtime** (`employee-runtime.md`) explains how a worker owns one Ticket
   step and reaches its specialist.
 - **The frontend** (`frontend.md`) explains the screens driven by the served manifest.

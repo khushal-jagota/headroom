@@ -13,7 +13,7 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
-    Implementer,
+    ExecutionRoute,
 )
 from planner.tickets.logic import fields_codec
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
@@ -38,19 +38,18 @@ def _create(conn: Connection, clock: TestClock, **kw: Any) -> Ticket:
     )
 
 
-def test_ticket_implementer_contract_and_nullable_create_storage(
+def test_ticket_execution_route_contract_and_nullable_create_storage(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
-    assert [implementer.value for implementer in Implementer] == [
-        "khushal",
+    assert [route.value for route in ExecutionRoute] == [
         "panels_worker",
         "hermes_codex",
         "hermes_claude",
     ]
-    for implementer in (*Implementer, None):
-        ticket = _create(tmp_db, fake_clock, implementer=implementer)
-        assert ticket.implementer is implementer
-        assert data.read_ticket(tmp_db, ticket.id).implementer is implementer
+    for execution_route in (*ExecutionRoute, None):
+        ticket = _create(tmp_db, fake_clock, execution_route=execution_route)
+        assert ticket.execution_route is execution_route
+        assert data.read_ticket(tmp_db, ticket.id).execution_route is execution_route
 
 
 def test_canonical_states_and_fields_include_kickoff_as_first_ordinary_field() -> None:

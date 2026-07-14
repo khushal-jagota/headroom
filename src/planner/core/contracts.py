@@ -49,6 +49,7 @@ class EventKind(StrEnum):
     note_updated = "note_updated"                    # field user_note slot {field}
     recap_updated = "recap_updated"                  # §3.3
     scope_changed = "scope_changed"                  # {ceiling, at_cap, cause}
+    stage_ownership_changed = "stage_ownership_changed"  # ownership override set/clear
     field_value_edited = "field_value_edited"        # {field, body}
 
     # --- supplemental: plain field updates (§3.2 "event-logged" updates) ---

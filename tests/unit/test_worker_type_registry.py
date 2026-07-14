@@ -10,12 +10,12 @@ from pathlib import Path
 import pytest
 
 from planner.core.contracts import ErrorCode, PlannerError
+from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
 from planner.worker_types.contracts import (
     FieldDefinition,
     StageDefinition,
-    TransitionHook,
     WorkerProfile,
     WorkerTypeDefinition,
 )
@@ -49,10 +49,9 @@ def assert_error(
 @pytest.mark.parametrize(
     "value",
     [
-        StageDefinition("a", "A", "a", False),
+        StageDefinition("a", "A", "a", False, StageOwnershipMode.worker),
         FieldDefinition("a", "A"),
         WorkerProfile("panels-worker", None, None, "default"),
-        TransitionHook("a", "b", "khushal", "empty"),
         CODING_WORKER_TYPE_DEFINITION,
     ],
 )
@@ -96,9 +95,10 @@ def test_coding_definition_owns_complete_behavior() -> None:
     assert definition.is_terminal("dropped")
     assert definition.gating_field("dropped") is None
     assert definition.advance_target("dropped") is None
-    assert (
-        definition.transition_effect("khushal", "needs_plan", "needs_implementation")
-        == "user_takeover"
+    assert all(
+        stage.default_ownership_mode is StageOwnershipMode.worker
+        for stage in definition.stages
+        if not stage.is_terminal
     )
     assert definition.worker_profile.specialist_skill == "panels-worker-coding"
     definition.validate_ticket_position("dropped", "done")
@@ -269,38 +269,6 @@ def test_registry_validation_order_and_messages() -> None:
         {"worker_type": "coding", "toolset_profile": "ghost"},
     )
     assert_error(
-        replace(
-            base,
-            transition_hooks=(replace(base.transition_hooks[0], new_stage="ghost"),),
-        ),
-        "transition hook references an unknown stage",
-        {"worker_type": "coding", "stage": "ghost"},
-    )
-    assert_error(
-        replace(
-            base,
-            transition_hooks=(replace(base.transition_hooks[0], implementer="ghost"),),
-        ),
-        "transition hook references an unknown implementer",
-        {"worker_type": "coding", "implementer": "ghost"},
-    )
-    assert_error(
-        replace(
-            base,
-            transition_hooks=(replace(base.transition_hooks[0], effect="ghost"),),
-        ),
-        "transition hook references an unknown effect",
-        {"worker_type": "coding", "effect": "ghost"},
-    )
-    assert_error(
-        replace(base, transition_hooks=(base.transition_hooks[0],) * 2),
-        "duplicate transition hook",
-        {
-            "worker_type": "coding",
-            "key": ["needs_plan", "needs_implementation", "khushal"],
-        },
-    )
-    assert_error(
         replace(base, supports_prefix_reconciliation=1),  # type: ignore[arg-type]
         "supports_prefix_reconciliation must be a bool",
         {"worker_type": "coding"},
@@ -357,35 +325,58 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
                 "label": "Kickoff",
                 "gating_field": "kickoff",
                 "is_terminal": False,
+                "default_ownership_mode": "worker",
             },
             {
                 "id": "needs_success",
                 "label": "Success",
                 "gating_field": "success",
                 "is_terminal": False,
+                "default_ownership_mode": "worker",
             },
             {
                 "id": "needs_approach",
                 "label": "Approach",
                 "gating_field": "approach",
                 "is_terminal": False,
+                "default_ownership_mode": "worker",
             },
-            {"id": "needs_plan", "label": "Plan", "gating_field": "plan", "is_terminal": False},
+            {
+                "id": "needs_plan",
+                "label": "Plan",
+                "gating_field": "plan",
+                "is_terminal": False,
+                "default_ownership_mode": "worker",
+            },
             {
                 "id": "needs_implementation",
                 "label": "Implementation",
                 "gating_field": "implementation",
                 "is_terminal": False,
+                "default_ownership_mode": "worker",
             },
             {
                 "id": "needs_closeout",
                 "label": "Closeout",
                 "gating_field": "closeout",
                 "is_terminal": False,
+                "default_ownership_mode": "worker",
             },
-            {"id": "done", "label": "Done", "gating_field": None, "is_terminal": True},
+            {
+                "id": "done",
+                "label": "Done",
+                "gating_field": None,
+                "is_terminal": True,
+                "default_ownership_mode": None,
+            },
         ],
-        "dropped": {"id": "dropped", "label": "Dropped", "gating_field": None, "is_terminal": True},
+        "dropped": {
+            "id": "dropped",
+            "label": "Dropped",
+            "gating_field": None,
+            "is_terminal": True,
+            "default_ownership_mode": None,
+        },
         "advance": {
             "needs_kickoff": "needs_success",
             "needs_success": "needs_approach",
