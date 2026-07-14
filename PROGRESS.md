@@ -4,7 +4,7 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 the bottom; the blow-by-blow is git's.
 
-## Current work cycle (2026-07-13): architecture deepening implementation
+## Current work cycle (2026-07-14): architecture deepening implementation
 
 Current build stage:
 
@@ -113,8 +113,12 @@ What just passed:
 
 Next step:
 
-- Decompose AD02 — Deep Worker workflow interpretation — into its contract-scoped ticket and begin the
-  delegated plan/review pipeline from the clean `f9246d5` checkpoint.
+- AD02 — Deep Worker workflow interpretation — is decomposed at
+  `orchestration/tickets/architecture-deepening/ad02-deep-worker-workflow/ticket.md`. Delegate its
+  implementation plan, independently review and lock the Worker-type contract, then implement from the
+  clean AD01 checkpoint.
+- The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
+  verification; no partial program merge or push is authorized.
 
 Blockers:
 

@@ -779,6 +779,21 @@ The architecture-deepening stages share public contracts and must land serially,
 the source checkout avoids presenting the entire child checkout as an untracked change on `main`. Each
 stage still receives its own reviewed commit; AD09 remains a deliberately isolated final commit.
 
+## D-architecture-program-merge — Merge only the completed verified program
+
+The owner authorized merging the architecture-deepening branch back to `main` after the program is done.
+No partial stage is merged: AD01 through AD09 each land as reviewed branch checkpoints, the complete branch
+receives the final canonical verification, and only then is it merged serially into `main` and verified in
+the integrated checkout. This authorization does not include pushing or opening a pull request.
+
+## D-ad02-definition-owns-workflow — A resolved Worker-type definition interprets its workflow
+
+AD02 replaces the shallow definition/views/registry-forwarder/bridge stack with one immutable
+`WorkerTypeDefinition` that owns pure Stage and field interpretation. A boundary resolves the Ticket's
+stored Worker type once and threads that definition into semantic rules. Direct Stage and stored-field
+reads remain direct. Coding lifecycle enums and tables, optional-definition defaults, and compatibility
+imports are deleted because each would preserve a second authority or a hidden coding path.
+
 ## D-ad01-one-locked-ticket-migration — One terminal rebuild migrates every old Ticket schema
 
 AD01 replaces the sequential Ticket lifecycle, kickoff, type, and vocabulary rebuild path with one
