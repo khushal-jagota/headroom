@@ -76,14 +76,18 @@ Blockers:
 
 Current build stage:
 
-- Ticket `t_f9ue37gz` is implemented on branch `ticket/t_f9ue37gz-failed-chat-recovery-v2`
-  in the isolated worktree `/private/tmp/panels-t_f9ue37gz-v2`. Implementation remains unmerged;
-  Closeout owns integration.
+- Ticket `t_f9ue37gz` is integrated into `main` by merge commit `bf2ac9b`; the verified
+  implementation commit is `499b5be`. `main` has since advanced to `8fbf648` with the independently
+  verified shutdown repair and remains checked out in `/private/tmp/panels-main-shutdown-closeout`.
 - Failed and interrupted `chat_turns` now project into Panels Chat with partial output preserved. A
   guarded Continue action can resume only the latest eligible human turn in its exact current Hermes
   session, without replaying the original prompt.
 - The shared Ticket and Chief Chat panel renders quiet, distinct Failed/Interrupted outcomes. Day Chat
   keeps the same backend state contract; no Day Chat screen was invented.
+- The live v20 database was backed up with SQLite integrity `ok`, then migrated through canonical startup
+  to schema v21. The live database reports integrity `ok`, the recovery column and unique index exist,
+  and `/api/chat/t_f9ue37gz/state` serves the new `outcomes` contract. Panels now runs from the `main`
+  worktree on port 8767.
 
 What just passed:
 
@@ -92,20 +96,18 @@ What just passed:
 - Svelte check, frontend unit tests, production build, and four focused Playwright cases pass, including
   refresh, exact-once partial output, continuation, no-action failure, Chief interruption, and startup
   restart recovery.
-- Independent Codex implementation review reports `NO VIOLATIONS` against the accepted contract and
-  planning artifact.
-- The complete canonical gate passes Ruff, mypy across 115 source files, 775 unit tests, compile/static
-  and CSS checks, Svelte check with zero errors and warnings, production build, frontend tests, and 93
-  Playwright tests, ending `VERIFY: PASS`. The [full transcript](/files/tickets/t_f9ue37gz/artifacts/verify.txt)
-  is retained with the ticket.
+- Independent implementation review and the post-merge integration review both report `NO VIOLATIONS`.
+- The post-merge canonical gate passes Ruff, mypy across 115 source files, 775 unit tests, compile/static
+  and CSS checks, Svelte check with zero errors and warnings, production build, frontend tests, and 94
+  Playwright tests, ending `VERIFY: PASS`. The
+  [closeout transcript](/files/tickets/t_f9ue37gz/artifacts/closeout-verify.txt) is retained with the ticket.
 - A [real implementation screenshot](/files/tickets/t_f9ue37gz/artifacts/implementation.png) shows the
   preserved partial response, compact Failed outcome, safe Continue action, and unchanged composer with
   no clipping.
 
 Next step:
 
-- Commit the verified branch and propose Implementation. Closeout owns the merge, live database backup and
-  v21 migration through the canonical startup path, post-merge verification, and worktree cleanup.
+- Await Closeout approval. No merge, deployment, restart, live migration, or ticket-owned cleanup remains.
 
 Blockers:
 
