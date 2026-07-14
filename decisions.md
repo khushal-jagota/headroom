@@ -866,6 +866,13 @@ optional guard or bypass. Direct revision remains a different, explicitly reques
 not use automatic eligibility. These names are long because each says what the thing actually does; no
 old-name facade or compatibility alias is justified.
 
+AD03's first independent plan review found one remaining live wording edge: `config.yaml` called the
+dispatch switch “Ticket readiness polling” while the plan excluded configuration. The corrected scope
+allows only that line-9 comment and includes it in the vocabulary lock; config keys and behavior stay
+unchanged. Wake-specific test doubles and aliases also take eligibility-wake names rather than preserving
+the rejected Doorbell metaphor in generic helper names. Corrected-plan re-review reports
+`NO VIOLATIONS`, and `ad03-automatic-employee-step-eligibility/contract-lock.md` freezes the interfaces.
+
 ## D-ad01-one-locked-ticket-migration — One terminal rebuild migrates every old Ticket schema
 
 AD01 replaces the sequential Ticket lifecycle, kickoff, type, and vocabulary rebuild path with one

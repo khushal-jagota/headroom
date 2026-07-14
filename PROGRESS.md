@@ -24,7 +24,8 @@ Current build stage:
   independent review with `NO VIOLATIONS`, and the committed checkpoint passes the canonical gate.
 - AD03 is decomposed in `ad03-automatic-employee-step-eligibility/ticket.md`. Its locked direction is one
   complete eligibility function shared by discovery and the final transactional claim, plus descriptive
-  discovery-loop and wake names; delegated planning is the next pipeline step.
+  discovery-loop and wake names. Its delegated plan passed corrected independent review and the exact
+  contract is now frozen for implementation.
 
 What just passed:
 
@@ -153,12 +154,18 @@ What just passed:
   The complete transcript is retained at `data/verify/ad02-pass.log`. An initial invocation exited before
   all gates because the external worktree's `.venv` link was absent; its separate startup transcript is
   `data/verify/ad02-startup-failure.log`, and restoring/removing the local link changed no tracked file.
+- AD03's delegated plan inventories the complete eligibility, discovery, wake, runner, transactional claim,
+  runtime composition, action, test, typing, instruction, and documentation surfaces. Independent review
+  found one Medium allowlist omission: `config.yaml` still used “Ticket readiness” in a live line-9
+  comment. The correction adds only that comment, includes it in the static vocabulary guard, and makes
+  wake-specific test-double naming explicit. Corrected-plan re-review reports `NO VIOLATIONS`; the exact
+  interfaces are frozen in the AD03 contract lock.
 
 Next step:
 
-- Delegate the AD03 implementation plan, then independently review it against the complete eligibility,
-  transaction-time planning-day, direct-revision bypass, and commit-before-wake contracts before any
-  implementation.
+- Delegate AD03 implementation from the reviewed plan and contract lock. The implementation agent owns
+  only the corrected bounded allowlist; the orchestrator will spot-check the complete decision and
+  transaction-time claim, obtain independent diff review, then run the canonical gate after review fixes.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`

@@ -1,0 +1,29 @@
+AD03 implementation plan review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5e80-e1c6-7cf3-b2d9-6da330506192
+
+Finding
+
+Medium: `config.yaml` is a live root configuration file with old domain vocabulary at
+`config.yaml:9` (`Ticket readiness polling startup switch`), but the plan's allowlist explicitly says
+“No ... configuration file changes” at `plan.md:569-570`. This violates the ticket's requirement to
+replace vague `readiness` / `runnable` vocabulary in live runtime/tests/docs and inventory every affected
+root path (`ticket.md:8`, `ticket.md:94-95`).
+
+Smallest correction: add `config.yaml` to the bounded allowlist and update only that comment to automatic
+Employee-step discovery/dispatch language; include it in the static old-vocabulary guard.
+
+Disposition
+
+Accepted. This is a comment-only live-configuration correction. No config key, default, parsing, or
+runtime behavior changes. The corrected plan will also state explicitly that wake-specific test doubles
+and aliases use eligibility-wake language rather than retaining an unqualified Doorbell name.
+
+Corrected-plan re-review
+
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5e84-8140-7980-89d5-3c2d3374531f
+
+NO VIOLATIONS
