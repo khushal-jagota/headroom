@@ -950,6 +950,21 @@ transition, browser-helper deletion, static guards, and bounded path set are fro
 `ad05-canonical-human-chat-ingress/contract-lock.md`. Implementation may rewire callers to those declarations
 but may not invent compatibility shapes or deepen AD06/AD09 concerns.
 
+## D-ad05-lost-first-write-winner — Panels attaches the key that won persistence
+
+AD05 implementation exposed a pre-existing mismatch in the canonical turn: during a concurrent first
+session-key write, `_persist_key` could correctly adopt the database winner while the running Panels turn
+was still attached to the losing key announced by this stream. Duplicate session or done observations from
+that stream could then retain or overwrite the loser. The correction remembers the announced key, attaches
+the effective persisted winner, and substitutes that winner only for duplicate observations carrying the
+same losing announcement. A later different key remains a genuine session rotation, and the worker-running
+guard still runs on every report.
+
+This narrow deviation from the plan's “turn internals unchanged except glue” is accepted because the AD05
+contract explicitly requires preservation of the lost-first-write race. Leaving the mismatch would make the
+canonical path less correct after deleting the parallel paths. The implementation review examined this
+branch specifically and reported `NO VIOLATIONS`; deeper turn concentration remains AD06.
+
 ## D-ad01-one-locked-ticket-migration — One terminal rebuild migrates every old Ticket schema
 
 AD01 replaces the sequential Ticket lifecycle, kickoff, type, and vocabulary rebuild path with one

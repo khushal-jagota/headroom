@@ -1,0 +1,23 @@
+AD05 implementation review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5f04-3ebd-7a50-a26c-c0a072b8738f
+
+Result
+
+NO VIOLATIONS
+
+The review re-read the ticket, corrected plan, frozen contract, complete unstaged product diff, added
+contract test, unchanged image and live-state preservation suites, and changed-path allowlist. It
+reconfirmed that `/turns -> start_human_turn -> GatewayAdapter.stream` is the only human Chat admission,
+the three retired routes and synchronous service/adapter/result shapes are absent, browser SSE ingress is
+deleted, image and Employee-step paths remain separate, and literal `/new` keeps its exact transition and
+next-message reuse behavior.
+
+The reviewer examined the implementation's session-key callback correction separately. Before the
+correction, a concurrent first write could make `_persist_key` adopt the database winner while the running
+Panels turn was still attached to the losing announced key; repeated session/done observations could then
+overwrite or retain that loser. The corrected path remembers the announced key, attaches the effective
+persisted winner, substitutes that winner for duplicate completion observations, and still treats a later
+different key as a genuine rotation. The reviewer found this to be the narrow lost-race preservation fix
+required by AD05, not an AD06 turn-internals refactor.

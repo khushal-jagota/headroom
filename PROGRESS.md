@@ -44,6 +44,10 @@ Current build stage:
   one omission: its focused commands did not run the existing unit and browser image suites. Both are now
   explicit unchanged preservation contracts outside the edit allowlist and run in full. Fresh re-review,
   session `019f5eed-a837-7601-820e-f0ca50188e40`, reports `NO VIOLATIONS`.
+- AD05 implementation is complete and independently reviewed. The product diff removes every retired Chat
+  ingress/result/method shape, keeps the single server-owned turn, and preserves images, live turn state,
+  commands, `/new`, Employee-step separation, and session-key rules. Review session
+  `019f5f04-3ebd-7a50-a26c-c0a072b8738f` reports `NO VIOLATIONS`.
 
 What just passed:
 
@@ -215,11 +219,17 @@ What just passed:
   start_human_turn -> GatewayAdapter.stream` path, session-key rules, Panels state, command behavior, and
   literal `/new` transition without retaining a synchronous compatibility shape. The orchestrator generated
   the two contract declarations and exact lock; consumer code is intentionally RED until delegated rewiring.
+- AD05 focused implementation evidence is green: its static contract passes 4 tests; the affected unit
+  bundles pass 212 and 131 tests; Ruff and mypy over 114 source files pass; frontend checking, tests, and
+  production build pass with the three existing Ticket-route warnings; the complete unit/browser image
+  preservation suites, live Chat-state suite, and affected message/command browser flows pass. The
+  independent review also accepted the narrow lost-first-write winner correction as required preservation,
+  not AD06 scope.
 
 Next step:
 
-- Delegate AD05 implementation against the corrected plan and frozen declarations. After focused evidence,
-  independently review the complete diff before the one canonical `./verify` run.
+- Commit the reviewed AD05 product diff, then run the one canonical `PYTHONPATH="$PWD/src" ./verify` gate.
+  On a clean result, close AD05 and begin AD06 without stacking unverified work.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`
