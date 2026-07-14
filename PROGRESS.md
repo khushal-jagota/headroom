@@ -65,6 +65,13 @@ Current build stage:
   `019f5f2a-63c2-7231-bd29-038e29ca4159`). The four original findings are fully resolved, and the exact
   owner, transport, transaction, session-binding, settlement, test, deletion, and changed-path contracts
   are ready to lock before implementation dispatch.
+- AD06's delegated implementation is committed at `e32dd47`. `ChatTurnLifecycle` now owns human admission
+  and execution plus cross-origin visible Pause; human admission and the final Employee claim exclude one
+  another under SQLite's write lock; the sole automatic decision has eight factors; causal binding makes
+  Panels and the actual Hermes write use the same session; exact `/new` forces only its first fresh bind;
+  and generic first-wins Chat settlement is idempotent across completion, failure, and Pause. Employee
+  delivery and Ticket settlement remain separate. Independent implementation review session
+  `019f5f48-af76-7030-b9d5-1939bf6ba749` reports `NO VIOLATIONS`.
 
 What just passed:
 
@@ -246,11 +253,19 @@ What just passed:
   source files; 687 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three
   existing warnings), production build, frontend tests; 80 Playwright e2e tests; final `VERIFY: PASS`.
   The complete transcript is retained at `data/verify/ad05-pass.log`.
+- AD06 focused evidence is green: 284 affected unit tests, Ruff over every changed production/test path,
+  targeted mypy over all ten changed production modules, compileall, and `git diff --check`. The focused
+  contract tests include real two-connection settlement races in both orders, both human-admission /
+  Employee-claim lock orders, and actual Hermes session-id assertions for initial and dormant message,
+  image, command, and alias writes. These are pre-gate checks, not the completeness claim.
+- The independent AD06 implementation review inspected the complete changed path set plus the new untracked
+  test before commit and returned exactly `NO VIOLATIONS`. Its transcript and disposition are recorded in
+  `orchestration/tickets/architecture-deepening/ad06-deep-canonical-chat-turn/implementation-review.txt`.
 
 Next step:
 
-- Freeze AD06's reviewed contract lock, then delegate implementation against that lock. Independently
-  review the completed diff before the one canonical `./verify`. Managed Markdown remains AD07.
+- Run the one canonical `./verify` against committed AD06 and retain its full output. Only after that gate
+  is green, close AD06 and define/delegate AD07 Managed Markdown against its own reviewed contract.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`

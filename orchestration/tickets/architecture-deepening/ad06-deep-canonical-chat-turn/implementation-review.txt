@@ -1,0 +1,22 @@
+AD06 implementation diff review
+================================
+
+Reviewer: Codex CLI, gpt-5.5, high reasoning, read-only sandbox
+Session: 019f5f48-af76-7030-b9d5-1939bf6ba749
+Reviewed: the complete uncommitted implementation diff from a3845da, including the
+untracked tests/unit/test_human_chat_turn.py, against ticket.md, plan.md,
+contract-lock.md, PRINCIPLES.md, and AGENTS.md.
+
+The review explicitly checked the sole lifecycle owner, the atomic human-admission /
+Employee-claim race, the shared eight-factor eligibility rule, cross-origin Pause,
+causal session binding and exact /new force-fresh behavior, dormant retry convergence,
+typed observations, first-wins settlement under real SQLite concurrency, dynamic
+gateway resolution, image and command preservation, Employee separation, deletion
+guards, documentation, and the changed-path allowlist.
+
+Full final reviewer output:
+
+NO VIOLATIONS
+
+Disposition: no finding to accept, refute, or repair. The reviewed product diff was
+committed unchanged as e32dd47.
