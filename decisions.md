@@ -794,6 +794,12 @@ stored Worker type once and threads that definition into semantic rules. Direct 
 reads remain direct. Coding lifecycle enums and tables, optional-definition defaults, and compatibility
 imports are deleted because each would preserve a second authority or a hidden coding path.
 
+The no-default rule also applies to storage. Canonical SQLite `tickets.fields` becomes required with no
+default; sanctioned creation builds it from the required Worker-type definition. The existing coding-
+shaped JSON default is removed through a v19 forward migration that rewrites recognized old tables under
+the proven lock-held migration envelope and preserves every stored field value. An omitted field map must
+fail rather than silently produce a coding-shaped row for another Worker type.
+
 ## D-ad01-one-locked-ticket-migration — One terminal rebuild migrates every old Ticket schema
 
 AD01 replaces the sequential Ticket lifecycle, kickoff, type, and vocabulary rebuild path with one

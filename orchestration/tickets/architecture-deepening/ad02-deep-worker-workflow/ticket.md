@@ -33,7 +33,8 @@ The delegated plan must specify and the orchestrator will lock the exact declara
 - new `src/planner/worker_types/registry.py` and package facade;
 - the coding and `new_worker` Worker-type definition modules;
 - `src/planner/tickets/contracts.py`, which must cease declaring coding lifecycle authority; and
-- the Worker-type manifest serialization contract, whose existing public JSON shape is unchanged.
+- the Worker-type manifest serialization contract, whose existing public JSON shape is unchanged; and
+- SQLite schema version 19, whose canonical `tickets.fields` column is `TEXT NOT NULL` with no default.
 
 The intended contract is:
 
@@ -51,6 +52,9 @@ The intended contract is:
 6. Reading, returning, displaying, grouping, or directly comparing a stored Stage does not resolve a
    Worker type. Field JSON may likewise be decoded as stored data without a definition; validation or
    workflow interpretation must use the explicit definition.
+7. Ticket creation builds and supplies the field map from the required Worker-type definition. SQLite has
+   no coding-shaped field default: an insert that omits `fields` fails instead of silently constructing a
+   coding Ticket shape for another Worker type.
 
 ## Parallel authority to delete
 
@@ -84,14 +88,18 @@ The plan must:
 3. Trace every current lifecycle interpretation call site. For each, state where the Ticket's Worker type
    is resolved, how the definition is threaded, and why a direct Stage read does or does not need it.
 4. Remove all coding defaults without replacing them with a differently named global fallback.
-5. Preserve the exact manifest, validation-error, runtime, persistence, external-work, Review, board,
+5. Design one lock-held v19 Ticket-table migration that accepts every historical shape the current
+   consolidated migration recognizes plus canonical v18, copies each existing `fields` value byte-for-byte,
+   removes only the column default, preserves indexes/foreign keys/events, and is idempotent and rollback-
+   safe. Do not stack an unlocked v18 rebuild followed by a second rebuild.
+6. Preserve the exact manifest, validation-error, runtime, persistence, external-work, Review, board,
    sprint, CLI, frontend, and Worker-specialist behavior.
-6. Define a bounded implementation allowlist. Package moves must be explicit deletes plus adds; no
+7. Define a bounded implementation allowlist. Package moves must be explicit deletes plus adds; no
    compatibility package, module, import alias, property, or forwarding method is allowed.
-7. Replace parity tests between duplicate authorities with tests of the single definition itself. Include
+8. Replace parity tests between duplicate authorities with tests of the single definition itself. Include
    both shipped Worker types and the non-coding `probe` through engine, persistence, read-model, runtime,
    and external-work paths.
-8. Add static assertions that fail if the old package/bridge/defaults/tables or a second lifecycle
+9. Add static assertions that fail if the old package/bridge/defaults/tables or a second lifecycle
    authority returns.
 
 ## Acceptance
@@ -99,6 +107,8 @@ The plan must:
 - `src/planner/worker_types/` is the only Worker-type domain; `src/planner/ticket_types/` does not exist.
 - The coding and `new_worker` definitions are the only executable declarations of their Stage order,
   field gates, successors, terminals, scope range, transition effects, and Worker profile.
+- Fresh and migrated v19 schemas have no default for `tickets.fields`; existing field JSON is preserved
+  exactly, sanctioned creates always supply the definition-built map, and omission fails at SQLite.
 - A semantic operation cannot be called without a resolved Worker-type definition; there is no implicit
   coding behavior.
 - The Registry contains no lifecycle forwarding API and `coding_bridge.py` is deleted.
@@ -108,6 +118,8 @@ The plan must:
 - Adding a third production Worker type still means its definition/specialist plus one registration entry,
   without changing Ticket engine logic.
 - Static architecture tests prove the deleted names, bridge, defaults, and parallel tables remain absent.
+- Migration tests cover direct upgrade from older shapes and v18, repeated open, foreign-key preservation,
+  and injected-failure rollback without data loss.
 - The full canonical `./verify` passes once after implementation and review fixes.
 
 ## Out of scope

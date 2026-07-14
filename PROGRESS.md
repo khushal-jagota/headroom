@@ -119,6 +119,9 @@ Next step:
   clean AD01 checkpoint.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
+- The owner confirmed AD02 has no implicit defaults at any layer. SQLite's coding-shaped `fields` default
+  must be removed with a lock-held v19 forward migration; old tables may be rewritten, but all existing
+  field JSON and related data must be preserved.
 
 Blockers:
 
