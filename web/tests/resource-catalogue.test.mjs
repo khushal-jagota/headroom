@@ -45,6 +45,7 @@ const expectedPublicDeclarations = [
   "export function mutateJsonWithResourceEffect",
   "export function keysForEvent",
   "export function invalidateCatalogueResources",
+  "export async function reconcileSubscribedCatalogueResources",
   "export function knownEntityPrefixes",
   'export type { ResourceHandle } from "./resources.svelte"'
 ];
@@ -133,6 +134,7 @@ globalThis.__catalogueCache = {
   },
   peek: (key) => dataByIdentity.get(key),
   invalidateMany: (identities, reason) => invalidations.push({ identities: [...identities], reason }),
+  subscribedResourceKeys: () => ["board", "ticket:t_a/b", "chat-commands", "not-a-catalogue-resource"],
   refresh: (key) => {
     refreshes.push(key);
     return nextReviewRefresh || Promise.resolve(dataByIdentity.get(key));
@@ -145,8 +147,8 @@ const executableSource = ownerSource
     "const { fetchJson } = globalThis.__catalogueApi;"
   )
   .replace(
-    /import\s*\{\s*invalidateMany,\s*peek,\s*refresh,\s*resource,\s*type ResourceHandle\s*\}\s*from\s*["']\.\/resources\.svelte["'];/,
-    "const { invalidateMany, peek, refresh, resource } = globalThis.__catalogueCache;"
+    /import\s*\{\s*invalidateMany,\s*peek,\s*refresh,\s*resource,\s*subscribedResourceKeys,\s*type ResourceHandle\s*\}\s*from\s*["']\.\/resources\.svelte["'];/,
+    "const { invalidateMany, peek, refresh, resource, subscribedResourceKeys } = globalThis.__catalogueCache;"
   );
 const compiled = ts.transpileModule(executableSource, {
   compilerOptions: {
@@ -165,6 +167,7 @@ const {
   mutateJsonWithResourceEffect,
   keysForEvent,
   invalidateCatalogueResources,
+  reconcileSubscribedCatalogueResources,
   knownEntityPrefixes
 } = catalogueModule;
 
@@ -441,6 +444,12 @@ for (const keys of [
 ]) {
   assert.ok(!keys.some((key) => key === "queues" || key.startsWith("item:") || key.startsWith("sprint:") && key !== "sprint:current" || /^day:(?!today$)/.test(key)));
 }
+
+refreshes.length = 0;
+const invalidationCountBeforeReconciliation = invalidations.length;
+await reconcileSubscribedCatalogueResources();
+assert.deepEqual(refreshes, ["board", "ticket:t_a/b", "chat-commands"]);
+assert.equal(invalidations.length, invalidationCountBeforeReconciliation);
 
 const backendKinds = JSON.parse(process.env.PLANNER_EVENT_KINDS || "[]");
 for (const kind of backendKinds) {

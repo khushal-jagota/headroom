@@ -101,6 +101,7 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
                 "PLAN_LOGS_DIR": str(srvdir / "logs"),
                 "PLAN_DISPATCHER_LOCK_PATH": str(srvdir / "dispatcher.lock"),
                 "PLAN_WS_POLL_MS": "50",
+                "PLAN_WS_HEARTBEAT_MS": "500",
                 "PLAN_UI_DEBOUNCE_MS": "50",
             }
         )
@@ -142,6 +143,7 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
                 meta = resp.json()
                 assert meta["test_mode"] is True, meta
                 assert meta["ui_debounce_ms"] == 50, meta
+                assert meta["ws_heartbeat_ms"] == 500, meta
                 root = httpx.get(f"{base}/", timeout=1.0)
                 assert root.status_code == 200, root.status_code
                 assert "data-svelte-app" in root.text

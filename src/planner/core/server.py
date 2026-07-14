@@ -289,6 +289,7 @@ def create_app(
         return {
             "ui_debounce_ms": config.ui_debounce_ms,
             "ws_poll_ms": config.ws_poll_ms,
+            "ws_heartbeat_ms": config.ws_heartbeat_ms,
             "test_mode": config.test_mode,
         }
 
@@ -307,7 +308,12 @@ def create_app(
     @app.websocket("/api/events")
     async def events_ws(websocket: WebSocket, since: int = 0) -> None:
         await tail_events(
-            websocket, since, conn_factory, config.ws_poll_ms, config.events_read_limit
+            websocket,
+            since,
+            conn_factory,
+            config.ws_poll_ms,
+            config.events_read_limit,
+            config.ws_heartbeat_ms,
         )
 
     @app.get("/", response_class=HTMLResponse)

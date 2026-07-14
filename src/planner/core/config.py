@@ -35,6 +35,7 @@ class Config:
     worker_skill: str
     # other tunables named across SPEC
     ws_poll_ms: int
+    ws_heartbeat_ms: int
     ui_debounce_ms: int
     dispatcher_lock_path: str
     logs_dir: str
@@ -239,6 +240,9 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         hermes_profile=_str_value(cfg, env, "hermes_profile", "PLAN_HERMES_PROFILE", "default"),
         worker_skill=_str_value(cfg, env, "worker_skill", "PLAN_WORKER_SKILL", "panels-worker"),
         ws_poll_ms=_int_value(cfg, env, "ws_poll_ms", "PLAN_WS_POLL_MS", 300),
+        ws_heartbeat_ms=_int_value(
+            cfg, env, "ws_heartbeat_ms", "PLAN_WS_HEARTBEAT_MS", 15000
+        ),
         ui_debounce_ms=_int_value(cfg, env, "ui_debounce_ms", "PLAN_UI_DEBOUNCE_MS", 250),
         dispatcher_lock_path=_str_value(
             cfg, env, "dispatcher_lock_path", "PLAN_DISPATCHER_LOCK_PATH", "data/dispatcher.lock"

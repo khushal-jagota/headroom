@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Panels navigation connection status — planning artifact</title>
+  <link rel="stylesheet" href="/assets/tokens.css">
+  <link rel="stylesheet" href="/assets/app.css">
+  <style>
+    .artifact {
+      min-height: 100vh;
+      background: var(--surface-base);
+    }
+
+    .shell-statuses {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: var(--space-4);
+      min-width: 0;
+    }
+
+    .shell-presence {
+      margin-left: 0;
+    }
+
+    .shell-connection {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-2);
+      color: var(--text-faintest);
+      font-family: var(--font-ui);
+      font-size: var(--type-xs);
+      white-space: nowrap;
+    }
+
+    .shell-connection-mark {
+      width: var(--space-2);
+      height: var(--space-2);
+      flex: none;
+      border-radius: var(--radius-pill);
+      background: var(--accent-done);
+    }
+
+    .shell-connection[data-state="reconnecting"] {
+      color: var(--text-faint);
+    }
+
+    .shell-connection[data-state="reconnecting"] .shell-connection-mark {
+      background: transparent;
+      border: var(--border-hairline) solid var(--text-faintest);
+      border-top-color: var(--text-muted);
+      animation: connection-spin var(--motion-loop-spin) linear infinite;
+    }
+
+    .shell-connection[data-state="offline"] {
+      color: var(--accent-error);
+    }
+
+    .shell-connection[data-state="offline"] .shell-connection-mark {
+      background: var(--accent-error);
+    }
+
+    .artifact-body {
+      max-width: var(--measure-index);
+      padding: var(--space-7) var(--space-5);
+    }
+
+    .artifact-kicker {
+      margin: 0 0 var(--space-3);
+      color: var(--text-faintest);
+      font-family: var(--font-ui);
+      font-size: var(--type-xs);
+      letter-spacing: var(--tracking-label);
+      text-transform: uppercase;
+    }
+
+    .artifact-title {
+      margin: 0;
+      color: var(--text-strong);
+      font-family: var(--font-serif);
+      font-size: var(--type-serif-display);
+      font-weight: 400;
+      letter-spacing: var(--tracking-title);
+    }
+
+    .artifact-copy {
+      max-width: var(--measure-read);
+      margin: var(--space-3) 0 var(--space-6);
+      color: var(--text-muted);
+      font-family: var(--font-serif);
+      font-size: var(--type-serif-md);
+    }
+
+    .state-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-2);
+    }
+
+    .state-control {
+      appearance: none;
+      border: var(--border-hairline) solid var(--border-color);
+      border-radius: var(--radius-pill);
+      padding: var(--space-2) var(--space-3);
+      background: transparent;
+      color: var(--text-faint);
+      font-family: var(--font-ui);
+      font-size: var(--type-xs);
+      cursor: pointer;
+    }
+
+    .state-control:hover,
+    .state-control[aria-pressed="true"] {
+      color: var(--text-strong);
+      background: var(--surface-raised);
+    }
+
+    .state-notes {
+      margin: var(--space-7) 0 0;
+      padding: 0;
+      list-style: none;
+      border-top: var(--border-hairline) solid var(--border-color);
+    }
+
+    .state-notes li {
+      display: grid;
+      grid-template-columns: minmax(96px, 0.25fr) 1fr;
+      gap: var(--space-4);
+      padding: var(--space-4) 0;
+      border-bottom: var(--border-hairline) solid var(--border-color);
+    }
+
+    .state-notes strong {
+      color: var(--text-default);
+      font-family: var(--font-ui);
+      font-size: var(--type-sm);
+      font-weight: 500;
+    }
+
+    .state-notes span {
+      color: var(--text-faint);
+      font-family: var(--font-serif);
+      font-size: var(--type-serif-sm);
+    }
+
+    @keyframes connection-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .shell-connection[data-state="reconnecting"] .shell-connection-mark {
+        animation: none;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .shell-nav {
+        overflow-x: auto;
+      }
+
+      .shell-links {
+        gap: var(--space-4);
+      }
+
+      .shell-statuses {
+        position: sticky;
+        right: 0;
+        padding-left: var(--space-3);
+        background: var(--surface-base);
+      }
+
+      .shell-presence {
+        flex: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="artifact shell">
+    <header class="shell-nav">
+      <nav class="shell-links" aria-label="Panels">
+        <a class="nav-link active" href="#">Day</a>
+        <a class="nav-link nav-link--review" href="#">Review <span class="nav-badge">2</span></a>
+        <a class="nav-link" href="#">Workspace</a>
+        <a class="nav-link" href="#">Sprint</a>
+        <a class="nav-link" href="#">Backlog</a>
+        <a class="nav-link" href="#">Ideas</a>
+      </nav>
+      <div class="shell-statuses">
+        <span class="shell-presence">
+          <span class="shell-presence-spin" aria-hidden="true"></span>
+          2 working
+        </span>
+        <span class="shell-connection" data-state="connected" role="status" aria-live="polite">
+          <span class="shell-connection-mark" aria-hidden="true"></span>
+          <span class="shell-connection-label">Connected</span>
+        </span>
+      </div>
+    </header>
+
+    <main class="artifact-body">
+      <p class="artifact-kicker">Planning artifact · navigation in context</p>
+      <h1 class="artifact-title">Live server connection status</h1>
+      <p class="artifact-copy">The connection signal stays at the navigation’s far-right edge and remains separate from worker presence. Use the controls to inspect each state; production behavior changes these automatically.</p>
+
+      <div class="state-controls" role="group" aria-label="Preview connection state">
+        <button class="state-control" type="button" data-preview="connected" aria-pressed="true">Connected</button>
+        <button class="state-control" type="button" data-preview="reconnecting" aria-pressed="false">Reconnecting</button>
+        <button class="state-control" type="button" data-preview="offline" aria-pressed="false">Offline</button>
+      </div>
+
+      <ul class="state-notes">
+        <li><strong>Connected</strong><span>Quiet confirmation. A healthy heartbeat keeps this state current.</span></li>
+        <li><strong>Reconnecting</strong><span>Shown as soon as a known connection is interrupted and while automatic retries are active.</span></li>
+        <li><strong>Offline</strong><span>Clear failure state after liveness is lost beyond the retry grace period; no claim about the server process itself.</span></li>
+      </ul>
+    </main>
+  </div>
+
+  <script>
+    const status = document.querySelector('.shell-connection');
+    const label = document.querySelector('.shell-connection-label');
+    const labels = { connected: 'Connected', reconnecting: 'Reconnecting', offline: 'Offline' };
+
+    document.querySelectorAll('[data-preview]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const state = button.dataset.preview;
+        status.dataset.state = state;
+        label.textContent = labels[state];
+        document.querySelectorAll('[data-preview]').forEach((candidate) => {
+          candidate.setAttribute('aria-pressed', String(candidate === button));
+        });
+      });
+    });
+  </script>
+</body>
+</html>

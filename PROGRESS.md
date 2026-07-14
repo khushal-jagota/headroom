@@ -4,6 +4,29 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-14): live Panels connection status
+
+Current build stage:
+
+- Ticket `t_ycpcb619` has approved Implementation commit `fe7f0c1`. Closeout is integrating that
+  verified change with current `main` through `integrate/t_ycpcb619`; the cherry-pick retained current
+  main's newer progress ledger and will rebuild one combined production bundle.
+- The existing event WebSocket emits configured quiet heartbeats and owns the browser's
+  Connected/Reconnecting/Offline lifecycle. Recovery preserves cursor replay and keyed invalidation,
+  then performs one catalogue-owned refresh of currently subscribed resources. Navigation keeps this
+  signal separate from worker presence on desktop and mobile.
+- Pre-integration implementation review finished `NO VIOLATIONS`, and the implementation branch passed
+  the canonical gate with 796 unit tests and 95 Playwright tests.
+
+Next step:
+
+- Finish the integration build, review the current-main diff, rerun canonical verification, then merge
+  into `main` and propose Closeout. No deployment, restart, migration, or follow-up applies.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-14): Workspace Hide done as the only visibility filter
 
 Current build stage:

@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { fetchJson } from "./lib/api";
   import { resourceCatalogue } from "./lib/resourceCatalogue";
-  import { startEventStream, stopEventStream } from "./lib/ws";
+  import { connectionStatus, startEventStream, stopEventStream } from "./lib/ws";
   import BacklogRoute from "./routes/BacklogRoute.svelte";
   import BoardRoute from "./routes/BoardRoute.svelte";
   import ChiefOfStaffRoute from "./routes/ChiefOfStaffRoute.svelte";
@@ -20,6 +20,11 @@
   };
 
   const review = resourceCatalogue.review();
+  const connectionLabels = {
+    connected: "Connected",
+    reconnecting: "Reconnecting",
+    offline: "Offline"
+  };
 
   let route = $state<Route>(parseRoute());
   let workspaceHideDone = $state(true);
@@ -90,8 +95,11 @@
       route = parseRoute();
     };
     window.addEventListener("hashchange", onHash);
-    fetchJson<{ ui_debounce_ms: number }>("/api/meta")
-      .then((meta) => startEventStream({ debounceMs: meta.ui_debounce_ms }))
+    fetchJson<{ ui_debounce_ms: number; ws_heartbeat_ms: number }>("/api/meta")
+      .then((meta) => startEventStream({
+        debounceMs: meta.ui_debounce_ms,
+        heartbeatMs: meta.ws_heartbeat_ms
+      }))
       .catch(() => startEventStream({ debounceMs: 250 }));
     return () => {
       window.removeEventListener("hashchange", onHash);
@@ -118,12 +126,24 @@
       <a class:active={currentNav("backlog")} class="nav-link" data-screen="backlog" href="#/backlog">Backlog</a>
       <a class:active={currentNav("ideas")} class="nav-link" data-screen="ideas" href="#/ideas">Ideas</a>
     </nav>
-    {#if (review.data?.running_worker_count || 0) > 0}
-      <span class="shell-presence" data-shell-presence>
-        <span class="shell-presence-spin"></span>
-        {review.data?.running_worker_count} working
+    <div class="shell-statuses">
+      {#if (review.data?.running_worker_count || 0) > 0}
+        <span class="shell-presence" data-shell-presence>
+          <span class="shell-presence-spin" aria-hidden="true"></span>
+          {review.data?.running_worker_count} working
+        </span>
+      {/if}
+      <span
+        class="shell-connection"
+        data-connection-status
+        data-state={$connectionStatus}
+        role="status"
+        aria-live="polite"
+      >
+        <span class="shell-connection-mark" aria-hidden="true"></span>
+        <span class="shell-connection-label">{connectionLabels[$connectionStatus]}</span>
       </span>
-    {/if}
+    </div>
   </header>
 
   <main class="shell-content">

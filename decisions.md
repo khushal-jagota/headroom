@@ -653,6 +653,16 @@ emits `project_created`, and there is intentionally no rename/delete/archive in 
 
 # Frontend architecture and UI
 
+## D-event-websocket-owns-connection-health — One channel owns liveness and recovery
+
+The existing event WebSocket is the sole browser-to-server health authority. Quiet server periods use
+an empty event-batch heartbeat (`events: []` with the unchanged cursor); the client confirms health
+only from a valid frame, keeps cursor replay and indefinite capped backoff, and exposes
+Connected/Reconnecting/Offline as a reactive shell status. Recovery performs one catalogue-owned
+refresh of currently subscribed identities in addition to ordinary event-key invalidation, so stale
+active resources are repaired without coupling the socket to cache internals. Connection health stays
+visually and semantically separate from worker presence; both remain visible in the narrow shell.
+
 ## D-slate-blue-brand-accent — Soft Steel is the single brand accent
 
 The owner selected Option A — Soft Steel from the four in-context slate-blue comparisons. Panels keeps its

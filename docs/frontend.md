@@ -43,8 +43,10 @@ One screen per part of the system:
 - **Backlog** and **Ideas** — the two catch surfaces; both capture through the same
   unboxed serif idiom (see `backlog-and-ideas.md`).
 
-The shell itself carries a presence readout — a small spinner and "N working" — from
-the global running-worker count, alongside the amber Review badge.
+The shell itself carries two separate live signals. Worker presence is the small
+spinner and "N working" readout from the global running-worker count. Server
+connection health is the compact Connected / Reconnecting / Offline readout beside
+it, driven only by the browser's event WebSocket.
 
 Each screen is a projection of a backend; the behaviour behind it is documented with
 that backend, not here. This doc owns the shell and the rendering rules the screens
@@ -76,6 +78,17 @@ share.
   refresh only their matching Chat. Day Chat events do not refresh the Day projection.
   Employee session history is an explicit ordinary Ticket read, not a cached Panels
   Chat resource.
+
+  The event WebSocket is also the browser's connection-health owner. The shell starts
+  at Reconnecting and changes to Connected only after a valid event frame or heartbeat
+  frame arrives; socket open alone is not enough. Quiet heartbeats are shaped like the
+  event envelope with `events: []` and the current cursor. They update liveness only:
+  no event keys are mapped, no flush is scheduled, and no resource is invalidated. If a
+  healthy connection closes or misses heartbeats, the shell shows Reconnecting, then
+  Offline after the served heartbeat grace. Retries keep going with the same capped
+  backoff. When a previously healthy connection becomes healthy again, the catalogue
+  refreshes the currently subscribed resources once, in addition to normal cursor
+  catch-up and keyed invalidation for missed events.
 
   An empty Panels Chat stays empty. `ChatState` reads only durable Panels messages,
   terminal outcomes, and the live turn; it never retries with or merges Hermes

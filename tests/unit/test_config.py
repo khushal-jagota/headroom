@@ -21,6 +21,7 @@ def test_config_defaults_expose_only_live_runtime_knobs() -> None:
     assert isinstance(cfg, Config)
     assert cfg.dispatch_enabled is True
     assert cfg.tick_seconds == 60
+    assert cfg.ws_heartbeat_ms == 15000
     assert cfg.trusted_ingress_provider is None
     assert cfg.trusted_ingress_allowed_login is None
     assert cfg.trusted_ingress_canonical_origin is None
@@ -143,3 +144,9 @@ def test_retired_environment_keys_are_ignored() -> None:
     assert cfg.tick_seconds == 5
     for name in _RETIRED_CONFIG_NAMES:
         assert not hasattr(cfg, name)
+
+
+def test_ws_heartbeat_ms_can_be_overridden_by_environment() -> None:
+    cfg = load_config(path=None, env={"PLAN_WS_HEARTBEAT_MS": "125"})
+
+    assert cfg.ws_heartbeat_ms == 125

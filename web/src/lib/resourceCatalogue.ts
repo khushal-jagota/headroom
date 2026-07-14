@@ -5,6 +5,7 @@ import {
   peek,
   refresh,
   resource,
+  subscribedResourceKeys,
   type ResourceHandle
 } from "./resources.svelte";
 import type {
@@ -508,6 +509,13 @@ export function invalidateCatalogueResources(
 ): void {
   for (const identity of identities) validateIdentity(identity);
   invalidateMany(Array.from(new Set(identities)), reason);
+}
+
+export async function reconcileSubscribedCatalogueResources(): Promise<void> {
+  const identities = Array.from(
+    new Set(subscribedResourceKeys().filter(recognizesIdentity))
+  ) as CatalogueResourceIdentity[];
+  await Promise.all(identities.map((identity) => refresh(identity)?.catch(() => undefined)));
 }
 
 export function knownEntityPrefixes(): readonly EventEntityPrefix[] {

@@ -153,6 +153,12 @@ export function refresh<T>(key: string): Promise<T> | undefined {
   return entry ? runFetch(entry, true) : undefined;
 }
 
+export function subscribedResourceKeys(): string[] {
+  return Array.from(entries.values())
+    .filter((entry) => entry.subscribers > 0)
+    .map((entry) => entry.key);
+}
+
 export function __resourceStats() {
   return Array.from(entries.values()).map((entry) => ({
     key: entry.key,

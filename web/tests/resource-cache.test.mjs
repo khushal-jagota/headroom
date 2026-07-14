@@ -25,7 +25,8 @@ const compiled = ts.transpileModule(executableSource, {
 const dir = await mkdtemp(join(tmpdir(), "planner-resource-cache-"));
 const modulePath = join(dir, "resources.mjs");
 await writeFile(modulePath, compiled, "utf8");
-const { resource, peek, invalidateMany, refresh, __resourceStats } = await import(modulePath);
+const { resource, peek, invalidateMany, refresh, subscribedResourceKeys, __resourceStats } =
+  await import(modulePath);
 await rm(dir, { recursive: true, force: true });
 
 function deferred() {
@@ -157,6 +158,15 @@ await settle();
 assert.equal(reopened.data, "dormant reopened");
 assert.equal(__resourceStats().find((entry) => entry.key === "test:dormant").subscribers, 1);
 
+// The cache exposes only current subscribed keys for catalogue recovery, not entry internals.
+const subscribedKeys = subscribedResourceKeys();
+assert.ok(subscribedKeys.includes("test:batch"));
+assert.ok(subscribedKeys.includes("test:dormant"));
+assert.ok(!subscribedKeys.includes("test:missing"));
+assert.ok(subscribedKeys.every((key) => typeof key === "string"));
+reopened.dispose();
+assert.ok(!subscribedResourceKeys().includes("test:dormant"));
+
 // Peek is read-only and missing-key invalidation/refresh performs no request.
 assert.equal(peek("test:dormant"), "dormant reopened");
 assert.equal(peek("test:missing"), undefined);
@@ -172,6 +182,5 @@ refreshHandle.dispose();
 failureHandle.dispose();
 firstFailureHandle.dispose();
 batchHandle.dispose();
-reopened.dispose();
 
 console.log("resource-cache.test.mjs: all assertions passed");
