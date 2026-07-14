@@ -90,6 +90,72 @@ def _seed_recoverable_ticket_chat(db_path: Path) -> str:
         conn.close()
 
 
+def _seed_failed_ticket_turn(server, entity_id: str) -> str:
+    turn_id = f"run_e2e_failed_{entity_id}"
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+            ("failed-session-e2e", entity_id),
+        )
+        conn.execute(
+            "INSERT INTO chat_turns ("
+            "id, entity_id, origin, mode, status, phase, activity_label, output_role, "
+            "output_text, session_key, error, started_at, updated_at, completed_at"
+            ") VALUES (?, ?, 'human', 'message', 'errored', 'settled', NULL, "
+            "'assistant', ?, 'failed-session-e2e', 'gateway disconnected', 1, 2, 2)",
+            (turn_id, entity_id, "The durable partial answer"),
+        )
+        conn.execute(
+            "INSERT INTO chat_messages (entity_id, turn_id, role, text, created_at) "
+            "VALUES (?, ?, 'human', ?, 1)",
+            (entity_id, turn_id, "Please finish this answer"),
+        )
+    return turn_id
+
+
+def _seed_failed_ticket_turn_without_output(server, entity_id: str) -> str:
+    turn_id = f"run_e2e_failed_empty_{entity_id}"
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "INSERT INTO chat_turns ("
+            "id, entity_id, origin, mode, status, phase, activity_label, output_role, "
+            "output_text, session_key, error, started_at, updated_at, completed_at"
+            ") VALUES (?, ?, 'human', 'message', 'errored', 'settled', NULL, "
+            "'assistant', '', NULL, 'internal traceback should stay hidden', 1, 2, 2)",
+            (turn_id, entity_id),
+        )
+        conn.execute(
+            "INSERT INTO chat_messages (entity_id, turn_id, role, text, created_at) "
+            "VALUES (?, ?, 'human', ?, 1)",
+            (entity_id, turn_id, "This will fail before output"),
+        )
+    return turn_id
+
+
+def _seed_interrupted_chief_turn(server, entity_id: str) -> str:
+    turn_id = f"run_e2e_interrupted_{entity_id}"
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO agent_chat_sessions "
+            "(id, chat_session_key, created_at, updated_at) VALUES (?, ?, 1, 1)",
+            (entity_id, "chief-interrupted-session-e2e"),
+        )
+        conn.execute(
+            "INSERT INTO chat_turns ("
+            "id, entity_id, origin, mode, status, phase, activity_label, output_role, "
+            "output_text, session_key, error, started_at, updated_at, completed_at"
+            ") VALUES (?, ?, 'human', 'message', 'interrupted', 'settled', NULL, "
+            "'assistant', ?, 'chief-interrupted-session-e2e', NULL, 1, 2, 2)",
+            (turn_id, entity_id, "I paused after checking the board."),
+        )
+        conn.execute(
+            "INSERT INTO chat_messages (entity_id, turn_id, role, text, created_at) "
+            "VALUES (?, ?, 'human', ?, 1)",
+            (entity_id, turn_id, "What should I inspect next?"),
+        )
+    return turn_id
+
+
 def _seed_running_worker_turn(server, entity_id: str) -> None:
     turn_id = f"run_e2e_worker_{entity_id}"
     with sqlite3.connect(server.db_path) as conn:
@@ -690,6 +756,142 @@ def test_running_chat_preserves_unchanged_preview_subtree_and_replaces_changed_t
     page.evaluate("() => window.__stableHistoricalPreviewObserver.disconnect()")
 
 
+def test_failed_ticket_turn_survives_refresh_and_continues_in_existing_session(
+    server, context_factory, open_page, cli, api
+) -> None:
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Durable failed chat turn",
+    )["id"]
+    failed_turn_id = _seed_failed_ticket_turn(server, tid)
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{tid}",
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]',
+        settled=True,
+    )
+
+    _wait_chat_text(page, "you", "Please finish this answer")
+    _wait_chat_text(page, "planner", "The durable partial answer")
+    outcome = page.locator(f'[data-chat-outcome="{failed_turn_id}"]')
+    outcome.wait_for(state="visible", timeout=WAIT_MS)
+    assert "Failed" in outcome.inner_text()
+    assert (
+        page.locator(
+            '[data-chat-msg="planner"]',
+            has_text="The durable partial answer",
+        ).count()
+        == 1
+    )
+    continue_button = outcome.locator("[data-chat-continue]")
+    assert continue_button.is_visible()
+
+    page.reload()
+    page.wait_for_selector(
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]', timeout=WAIT_MS
+    )
+    page.locator(f'[data-chat-outcome="{failed_turn_id}"]').wait_for(
+        state="visible", timeout=WAIT_MS
+    )
+    page.locator(f'[data-chat-outcome="{failed_turn_id}"] [data-chat-continue]').click()
+    _wait_chat_text(
+        page,
+        "planner",
+        "echo: Continue the previous response in this existing session.",
+    )
+    page.wait_for_function(
+        "() => !document.querySelector('[data-chat-continue]')",
+        timeout=WAIT_MS,
+    )
+
+    state = api.get(server, f"/api/chat/{tid}/state")
+    assert state["outcomes"][0]["can_continue"] is False
+    assert [message["text"] for message in state["messages"]].count(
+        "Please finish this answer"
+    ) == 1
+
+
+def test_failed_ticket_turn_without_output_shows_no_continue_or_raw_error(
+    server, context_factory, open_page, cli
+) -> None:
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "No output failed chat turn",
+    )["id"]
+    failed_turn_id = _seed_failed_ticket_turn_without_output(server, tid)
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{tid}",
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]',
+        settled=True,
+    )
+
+    _wait_chat_text(page, "you", "This will fail before output")
+    outcome = page.locator(f'[data-chat-outcome="{failed_turn_id}"]')
+    outcome.wait_for(state="visible", timeout=WAIT_MS)
+    assert "Failed" in outcome.inner_text()
+    assert "No response received" in outcome.inner_text()
+    assert "internal traceback should stay hidden" not in outcome.inner_text()
+    assert outcome.locator("[data-chat-continue]").count() == 0
+    assert page.locator('[data-chat-msg="planner"]').count() == 0
+
+
+def test_interrupted_chief_turn_survives_refresh_and_continues_in_existing_session(
+    server, context_factory, open_page, api
+) -> None:
+    entity_id = "agent_panels_chief_of_staff"
+    interrupted_turn_id = _seed_interrupted_chief_turn(server, entity_id)
+    page = open_page(
+        context_factory(),
+        server,
+        "#/chief",
+        'section[data-screen="chief"] [data-chat-input]',
+        settled=False,
+    )
+
+    _wait_chat_text(page, "you", "What should I inspect next?")
+    _wait_chat_text(page, "planner", "I paused after checking the board.")
+    outcome = page.locator(f'[data-chat-outcome="{interrupted_turn_id}"]')
+    outcome.wait_for(state="visible", timeout=WAIT_MS)
+    assert "Interrupted" in outcome.inner_text()
+    assert (
+        page.locator(
+            '[data-chat-msg="planner"]',
+            has_text="I paused after checking the board.",
+        ).count()
+        == 1
+    )
+
+    page.reload()
+    page.wait_for_selector('section[data-screen="chief"] [data-chat-input]', timeout=WAIT_MS)
+    page.locator(f'[data-chat-outcome="{interrupted_turn_id}"] [data-chat-continue]').click()
+    _wait_chat_text(
+        page,
+        "planner",
+        "echo: Continue the previous response in this existing session.",
+    )
+    page.wait_for_function(
+        "() => !document.querySelector('[data-chat-continue]')",
+        timeout=WAIT_MS,
+    )
+
+    state = api.get(server, f"/api/chat/{entity_id}/state")
+    assert state["outcomes"][0]["status"] == "interrupted"
+    assert state["outcomes"][0]["can_continue"] is False
+
+
 def test_ticket_chat_send_survives_navigation_from_server_state(
     server, context_factory, open_page, cli, api
 ) -> None:
@@ -808,7 +1010,7 @@ def test_ticket_panels_rows_do_not_fall_back_to_employee_session_history(
         assert retained == (employee_session_id,)
 
     panels_state = api.get(server, f"/api/chat/{tid}/state")
-    assert panels_state == {"messages": [], "active_turn": None}
+    assert panels_state == {"messages": [], "outcomes": [], "active_turn": None}
     retained_history = api.get(
         server, f"/api/tickets/{tid}/employee-session-history"
     )

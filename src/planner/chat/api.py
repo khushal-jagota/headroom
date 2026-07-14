@@ -75,6 +75,13 @@ async def start_chat_turn(
     return asdict(result)
 
 
+@router.post("/chat/{entity_id}/turns/{turn_id}/continue")
+async def continue_chat_turn(entity_id: str, turn_id: str, request: Request) -> dict[str, Any]:
+    authctx.require_direct_write(authctx.request_context(request))
+    result = request.app.state.chat_turn_lifecycle.continue_human_turn(entity_id, turn_id)
+    return asdict(result)
+
+
 @router.post("/messages/chief")
 async def start_chief_message(body: dict[str, Any], request: Request) -> dict[str, Any]:
     authctx.require_direct_write(authctx.request_context(request))

@@ -150,7 +150,7 @@ def _latest_turn(db_path: Path, entity_id: str) -> dict[str, object]:
     conn = connect(str(db_path))
     try:
         row = conn.execute(
-            "SELECT id, status, session_key, error FROM chat_turns "
+            "SELECT id, status, session_key, recovery_of_turn_id, error FROM chat_turns "
             "WHERE entity_id = ? ORDER BY started_at DESC, rowid DESC LIMIT 1",
             (entity_id,),
         ).fetchone()
@@ -158,6 +158,55 @@ def _latest_turn(db_path: Path, entity_id: str) -> dict[str, object]:
         conn.close()
     assert row is not None
     return dict(row)
+
+
+def _row_count(db_path: Path, table: str) -> int:
+    conn = connect(str(db_path))
+    try:
+        row = conn.execute(f"SELECT COUNT(*) AS count FROM {table}").fetchone()
+    finally:
+        conn.close()
+    return int(row["count"])
+
+
+def _insert_terminal_chat_turn(
+    db_path: Path,
+    entity_id: str,
+    *,
+    turn_id: str,
+    origin: str = "human",
+    mode: str = "message",
+    status: str = "errored",
+    output_role: str = "assistant",
+    output_text: str = "",
+    session_key: str | None,
+    error: str | None = "gateway disconnected",
+    started_at: int = 10,
+) -> None:
+    conn = connect(str(db_path))
+    try:
+        conn.execute(
+            "INSERT INTO chat_turns ("
+            "id, entity_id, origin, mode, status, phase, activity_label, output_role, "
+            "output_text, session_key, error, started_at, updated_at, completed_at"
+            ") VALUES (?, ?, ?, ?, ?, 'settled', NULL, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                turn_id,
+                entity_id,
+                origin,
+                mode,
+                status,
+                output_role,
+                output_text,
+                session_key,
+                error,
+                started_at,
+                started_at + 1,
+                started_at + 1,
+            ),
+        )
+    finally:
+        conn.close()
 
 
 def test_employee_session_history_empty_without_session(tmp_path: Path) -> None:
@@ -227,7 +276,7 @@ def test_panels_state_is_database_only_and_does_not_materialize_empty_entities(
         ):
             response = client.get(f"/api/chat/{entity_id}/state")
             assert response.status_code == 200
-            assert response.json() == {"messages": [], "active_turn": None}
+            assert response.json() == {"messages": [], "outcomes": [], "active_turn": None}
 
     conn = connect(str(db_path))
     try:
@@ -936,6 +985,584 @@ def test_human_turn_rejects_while_worker_step_running(tmp_path: Path) -> None:
     assert response.json()["error"]["code"] == "already_running"
     assert _stored_key(db_path, "tickets", tid) is None
     assert _events(db_path, tid, "employee_session_changed") == []
+
+
+def test_chat_state_reads_do_not_materialize_empty_day_or_chief_rows(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+
+    with TestClient(app) as client:
+        day_response = client.get("/api/chat/day_2099-01-01/state")
+        chief_response = client.get(f"/api/chat/{CHIEF_OF_STAFF_ENTITY_ID}/state")
+
+    assert day_response.status_code == 200
+    assert day_response.json() == {"messages": [], "outcomes": [], "active_turn": None}
+    assert chief_response.status_code == 200
+    assert chief_response.json() == {"messages": [], "outcomes": [], "active_turn": None}
+    assert _row_count(db_path, "days") == 0
+    assert _row_count(db_path, "agent_chat_sessions") == 0
+
+
+def test_terminal_outcome_continuation_eligibility_for_ticket_day_and_chief(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    _set_stored_key(db_path, "tickets", tid, "ticket-session")
+    _insert_terminal_chat_turn(
+        db_path,
+        tid,
+        turn_id="run_ticket_failed",
+        output_text="ticket partial",
+        session_key="ticket-session",
+    )
+    conn = connect(str(db_path))
+    try:
+        conn.execute(
+            "INSERT INTO days (id, chat_session_key, created_at, updated_at) "
+            "VALUES ('day_2099-01-02', 'day-session', 1, 1)"
+        )
+        conn.execute(
+            "INSERT INTO agent_chat_sessions (id, chat_session_key, created_at, updated_at) "
+            "VALUES (?, 'chief-session', 1, 1)",
+            (CHIEF_OF_STAFF_ENTITY_ID,),
+        )
+    finally:
+        conn.close()
+    _insert_terminal_chat_turn(
+        db_path,
+        "day_2099-01-02",
+        turn_id="run_day_failed",
+        output_text="day partial",
+        session_key="day-session",
+    )
+    _insert_terminal_chat_turn(
+        db_path,
+        CHIEF_OF_STAFF_ENTITY_ID,
+        turn_id="run_chief_failed",
+        output_text="chief partial",
+        session_key="chief-session",
+    )
+
+    with TestClient(app) as client:
+        ticket_state = client.get(f"/api/chat/{tid}/state").json()
+        day_state = client.get("/api/chat/day_2099-01-02/state").json()
+        chief_state = client.get(f"/api/chat/{CHIEF_OF_STAFF_ENTITY_ID}/state").json()
+
+    assert ticket_state["outcomes"][0]["can_continue"] is True
+    assert day_state["outcomes"][0]["can_continue"] is True
+    assert chief_state["outcomes"][0]["can_continue"] is True
+
+
+def test_failed_human_turn_projects_partial_output_and_safe_recovery(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+
+    class PartialFailureGateway:
+        def status(self) -> GatewayStatus:
+            return GatewayStatus(available=True)
+
+        def run_human_turn(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            text: str,
+            mode: str,
+            bind_session_key: HumanSessionKeyBinder,
+            image_paths: tuple[Path, ...] = (),
+            *,
+            require_existing_session: bool = False,
+        ) -> Iterator[HumanChatObservation]:
+            assert session_key is None
+            assert text == "compare options"
+            assert require_existing_session is False
+            bind_session_key("recoverable-session")
+            yield HumanChatOutputDelta("The safer option is")
+            raise PlannerError(ErrorCode.gateway_offline, "gateway disconnected")
+
+    _replace_gateway(app, PartialFailureGateway())
+    with TestClient(app) as client:
+        started = client.post(
+            f"/api/chat/{tid}/turns",
+            json={"text": "compare options", "mode": "message"},
+        )
+        assert started.status_code == 200
+        state = _wait_for_settled(client, tid)
+
+    assert [(message["role"], message["text"]) for message in state["messages"]] == [
+        ("human", "compare options")
+    ]
+    assert state["outcomes"] == [
+        {
+            "turn_id": started.json()["id"],
+            "origin": "human",
+            "status": "errored",
+            "output_role": "assistant",
+            "output_text": "The safer option is",
+            "error": "gateway disconnected",
+            "can_continue": True,
+            "completed_at": state["outcomes"][0]["completed_at"],
+        }
+    ]
+
+
+def test_continue_failed_turn_reuses_bound_session_without_replaying_prompt(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    calls: list[tuple[str | None, str, bool]] = []
+
+    class RecoveringGateway:
+        def status(self) -> GatewayStatus:
+            return GatewayStatus(available=True)
+
+        def run_human_turn(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            text: str,
+            mode: str,
+            bind_session_key: HumanSessionKeyBinder,
+            image_paths: tuple[Path, ...] = (),
+            *,
+            require_existing_session: bool = False,
+        ) -> Iterator[HumanChatObservation]:
+            calls.append((session_key, text, require_existing_session))
+            if len(calls) == 1:
+                bind_session_key("recoverable-session")
+                yield HumanChatOutputDelta("partial answer")
+                raise PlannerError(ErrorCode.gateway_offline, "gateway disconnected")
+            assert session_key == "recoverable-session"
+            assert require_existing_session is True
+            bind_session_key("recoverable-session")
+            yield HumanChatCompletion("finished answer", "assistant")
+
+    _replace_gateway(app, RecoveringGateway())
+    with TestClient(app) as client:
+        started = client.post(
+            f"/api/chat/{tid}/turns",
+            json={"text": "original uncertain prompt", "mode": "message"},
+        )
+        first_state = _wait_for_settled(client, tid)
+        assert first_state["outcomes"][0]["can_continue"] is True
+
+        continued = client.post(
+            f"/api/chat/{tid}/turns/{started.json()['id']}/continue"
+        )
+        assert continued.status_code == 200, continued.text
+        final_state = _wait_for_settled(client, tid)
+
+    assert calls == [
+        (None, "original uncertain prompt", False),
+        (
+            "recoverable-session",
+            "Continue the previous response in this existing session.",
+            True,
+        ),
+    ]
+    assert [message["text"] for message in final_state["messages"]] == [
+        "original uncertain prompt",
+        "Continue the previous response in this existing session.",
+        "finished answer",
+    ]
+    assert final_state["outcomes"][0]["output_text"] == "partial answer"
+    assert final_state["outcomes"][0]["can_continue"] is False
+    latest = _latest_turn(db_path, tid)
+    assert latest["recovery_of_turn_id"] == started.json()["id"]
+    assert latest["session_key"] == "recoverable-session"
+
+
+def test_continue_interrupted_turn_reuses_existing_session(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    _set_stored_key(db_path, "tickets", tid, "interrupt-session")
+    _insert_terminal_chat_turn(
+        db_path,
+        tid,
+        turn_id="run_interrupted",
+        status="interrupted",
+        output_text="paused partial",
+        session_key="interrupt-session",
+        error=None,
+    )
+    calls: list[tuple[str | None, str, bool]] = []
+
+    class Gateway:
+        def status(self) -> GatewayStatus:
+            return GatewayStatus(available=True)
+
+        def run_human_turn(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            text: str,
+            mode: str,
+            bind_session_key: HumanSessionKeyBinder,
+            image_paths: tuple[Path, ...] = (),
+            *,
+            require_existing_session: bool = False,
+        ) -> Iterator[HumanChatObservation]:
+            calls.append((session_key, text, require_existing_session))
+            bind_session_key("interrupt-session")
+            yield HumanChatCompletion("continued after pause", "assistant")
+
+    _replace_gateway(app, Gateway())
+    with TestClient(app) as client:
+        state = client.get(f"/api/chat/{tid}/state").json()
+        assert state["outcomes"][0]["status"] == "interrupted"
+        assert state["outcomes"][0]["can_continue"] is True
+        response = client.post(f"/api/chat/{tid}/turns/run_interrupted/continue")
+        assert response.status_code == 200, response.text
+        final_state = _wait_for_settled(client, tid)
+
+    assert calls == [
+        (
+            "interrupt-session",
+            "Continue the previous response in this existing session.",
+            True,
+        )
+    ]
+    assert final_state["messages"][-1]["text"] == "continued after pause"
+
+
+@pytest.mark.parametrize(
+    ("case", "origin", "session_key", "stored_key", "expected_status", "expected_code"),
+    [
+        ("unbound", "human", None, "current-session", 400, "validation"),
+        ("mismatched", "human", "old-session", "current-session", 400, "validation"),
+        ("worker-origin", "worker", "current-session", "current-session", 400, "validation"),
+    ],
+)
+def test_continue_rejects_unsafe_terminal_turns_without_gateway_call(
+    tmp_path: Path,
+    case: str,
+    origin: str,
+    session_key: str | None,
+    stored_key: str,
+    expected_status: int,
+    expected_code: str,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    _set_stored_key(db_path, "tickets", tid, stored_key)
+    turn_id = f"run_{case}"
+    _insert_terminal_chat_turn(
+        db_path,
+        tid,
+        turn_id=turn_id,
+        origin=origin,
+        output_text="unsafe partial",
+        session_key=session_key,
+    )
+    calls = 0
+
+    class Gateway:
+        def status(self) -> GatewayStatus:
+            return GatewayStatus(available=True)
+
+        def run_human_turn(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            text: str,
+            mode: str,
+            bind_session_key: HumanSessionKeyBinder,
+            image_paths: tuple[Path, ...] = (),
+            *,
+            require_existing_session: bool = False,
+        ) -> Iterator[HumanChatObservation]:
+            nonlocal calls
+            calls += 1
+            yield HumanChatCompletion("should not run", "assistant")
+
+    _replace_gateway(app, Gateway())
+    with TestClient(app) as client:
+        state = client.get(f"/api/chat/{tid}/state").json()
+        assert state["outcomes"][0]["can_continue"] is False
+        response = client.post(f"/api/chat/{tid}/turns/{turn_id}/continue")
+
+    assert response.status_code == expected_status
+    assert response.json()["error"]["code"] == expected_code
+    assert calls == 0
+
+
+def test_continue_rejects_competing_active_turn_without_gateway_call(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    _set_stored_key(db_path, "tickets", tid, "current-session")
+    _insert_terminal_chat_turn(
+        db_path,
+        tid,
+        turn_id="run_failed_before_active",
+        output_text="partial",
+        session_key="current-session",
+    )
+    conn = connect(str(db_path))
+    try:
+        chat_data.start_turn(
+            conn,
+            tid,
+            origin="human",
+            mode="message",
+            visible_role="human",
+            visible_text="new active turn",
+            output_role="assistant",
+            phase="thinking",
+            activity_label="Thinking",
+            now=20,
+        )
+    finally:
+        conn.close()
+    calls = 0
+
+    class Gateway:
+        def status(self) -> GatewayStatus:
+            return GatewayStatus(available=True)
+
+        def run_human_turn(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            text: str,
+            mode: str,
+            bind_session_key: HumanSessionKeyBinder,
+            image_paths: tuple[Path, ...] = (),
+            *,
+            require_existing_session: bool = False,
+        ) -> Iterator[HumanChatObservation]:
+            nonlocal calls
+            calls += 1
+            yield HumanChatCompletion("should not run", "assistant")
+
+    _replace_gateway(app, Gateway())
+    with TestClient(app) as client:
+        state = client.get(f"/api/chat/{tid}/state").json()
+        assert state["outcomes"][0]["can_continue"] is False
+        response = client.post(f"/api/chat/{tid}/turns/run_failed_before_active/continue")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "already_running"
+    assert calls == 0
+
+
+def test_continue_rechecks_ticket_worker_status_inside_admission(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    _set_stored_key(db_path, "tickets", tid, "current-session")
+    _insert_terminal_chat_turn(
+        db_path,
+        tid,
+        turn_id="run_failed_before_worker",
+        output_text="partial",
+        session_key="current-session",
+    )
+    _set_ticket_status(db_path, tid, TicketStatus.agent_running_step)
+    calls = 0
+
+    conn = connect(str(db_path))
+    try:
+        with pytest.raises(PlannerError) as excinfo:
+            chat_data.start_human_continuation_turn(
+                conn,
+                tid,
+                "run_failed_before_worker",
+                entity_kind="ticket",
+                visible_text="Continue the previous response in this existing session.",
+                now=30,
+            )
+    finally:
+        conn.close()
+    assert excinfo.value.code == ErrorCode.already_running
+
+    class Gateway:
+        def status(self) -> GatewayStatus:
+            return GatewayStatus(available=True)
+
+        def run_human_turn(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            text: str,
+            mode: str,
+            bind_session_key: HumanSessionKeyBinder,
+            image_paths: tuple[Path, ...] = (),
+            *,
+            require_existing_session: bool = False,
+        ) -> Iterator[HumanChatObservation]:
+            nonlocal calls
+            calls += 1
+            yield HumanChatCompletion("should not run", "assistant")
+
+    _replace_gateway(app, Gateway())
+    with TestClient(app) as client:
+        response = client.post(f"/api/chat/{tid}/turns/run_failed_before_worker/continue")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "already_running"
+    assert calls == 0
+
+
+def test_continue_rejects_duplicate_click_without_second_gateway_call(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    _set_stored_key(db_path, "tickets", tid, "current-session")
+    _insert_terminal_chat_turn(
+        db_path,
+        tid,
+        turn_id="run_double_click",
+        output_text="partial",
+        session_key="current-session",
+    )
+    calls = 0
+    gateway_entered = threading.Event()
+    release_gateway = threading.Event()
+
+    class Gateway:
+        def status(self) -> GatewayStatus:
+            return GatewayStatus(available=True)
+
+        def run_human_turn(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            text: str,
+            mode: str,
+            bind_session_key: HumanSessionKeyBinder,
+            image_paths: tuple[Path, ...] = (),
+            *,
+            require_existing_session: bool = False,
+        ) -> Iterator[HumanChatObservation]:
+            nonlocal calls
+            calls += 1
+            assert session_key == "current-session"
+            assert require_existing_session is True
+            bind_session_key("current-session")
+            gateway_entered.set()
+            release_gateway.wait(timeout=5)
+            yield HumanChatCompletion("continued once", "assistant")
+
+    _replace_gateway(app, Gateway())
+    try:
+        with TestClient(app) as client:
+            first = client.post(f"/api/chat/{tid}/turns/run_double_click/continue")
+            assert first.status_code == 200, first.text
+            assert gateway_entered.wait(timeout=5)
+            second = client.post(f"/api/chat/{tid}/turns/run_double_click/continue")
+            release_gateway.set()
+            for _ in range(40):
+                final_state = _wait_for_settled(client, tid)
+                if any(
+                    message["text"] == "continued once"
+                    for message in final_state["messages"]
+                ):
+                    break
+                threading.Event().wait(0.05)
+            else:
+                raise AssertionError(final_state)
+    finally:
+        release_gateway.set()
+
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "already_running"
+    assert calls == 1
+    assert final_state["messages"][-1]["text"] == "continued once"
+
+
+def test_ordinary_no_output_failure_projects_without_safe_continuation(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+
+    class Gateway:
+        def status(self) -> GatewayStatus:
+            return GatewayStatus(available=True)
+
+        def run_human_turn(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            text: str,
+            mode: str,
+            bind_session_key: HumanSessionKeyBinder,
+            image_paths: tuple[Path, ...] = (),
+            *,
+            require_existing_session: bool = False,
+        ) -> Iterator[HumanChatObservation]:
+            raise PlannerError(ErrorCode.gateway_offline, "gateway disconnected")
+            yield HumanChatCompletion("unreachable", "assistant")
+
+    _replace_gateway(app, Gateway())
+    with TestClient(app) as client:
+        started = client.post(
+            f"/api/chat/{tid}/turns", json={"text": "will fail", "mode": "message"}
+        )
+        state = _wait_for_settled(client, tid)
+
+    assert state["outcomes"] == [
+        {
+            "turn_id": started.json()["id"],
+            "origin": "human",
+            "status": "errored",
+            "output_role": "assistant",
+            "output_text": "",
+            "error": "gateway disconnected",
+            "can_continue": False,
+            "completed_at": state["outcomes"][0]["completed_at"],
+        }
+    ]
+
+
+def test_later_human_turn_makes_failed_turn_ineligible_for_continuation(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    tid = _ticket(db_path)
+    calls = 0
+
+    class Gateway:
+        def status(self) -> GatewayStatus:
+            return GatewayStatus(available=True)
+
+        def run_human_turn(
+            self,
+            session_key: str | None,
+            entity_id: str,
+            text: str,
+            mode: str,
+            bind_session_key: HumanSessionKeyBinder,
+            image_paths: tuple[Path, ...] = (),
+            *,
+            require_existing_session: bool = False,
+        ) -> Iterator[HumanChatObservation]:
+            nonlocal calls
+            calls += 1
+            bind_session_key("shared-session")
+            if calls == 1:
+                raise PlannerError(ErrorCode.gateway_offline, "first failed")
+            yield HumanChatCompletion("new answer", "assistant")
+
+    _replace_gateway(app, Gateway())
+    with TestClient(app) as client:
+        failed = client.post(
+            f"/api/chat/{tid}/turns", json={"text": "first", "mode": "message"}
+        )
+        _wait_for_settled(client, tid)
+        replacement = client.post(
+            f"/api/chat/{tid}/turns", json={"text": "replacement", "mode": "message"}
+        )
+        assert replacement.status_code == 200
+        state = _wait_for_settled(client, tid)
+        stale_continue = client.post(
+            f"/api/chat/{tid}/turns/{failed.json()['id']}/continue"
+        )
+
+    assert state["outcomes"][0]["can_continue"] is False
+    assert stale_continue.status_code == 409
+    assert stale_continue.json()["error"]["code"] == "already_running"
+    assert calls == 2
 
 
 def test_human_turn_gateway_busy_settles_failed(tmp_path: Path) -> None:

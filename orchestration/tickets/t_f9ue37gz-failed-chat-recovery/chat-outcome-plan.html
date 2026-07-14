@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Failed Chat turn — planning artifact</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#11130f; --panel:#171a15; --sunken:#0d0f0c; --overlay:#22261f;
+    --border:#33382f; --text:#d7d9d1; --muted:#92988b; --faint:#666d61;
+    --accent:#d5ff5f; --fail:#ff877a; --interrupt:#d6b66d;
+    --serif:ui-serif,Georgia,serif; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,sans-serif}
+  .page{min-height:100vh;display:grid;grid-template-columns:minmax(260px,1fr) minmax(340px,430px);gap:28px;padding:32px}
+  .ticket{padding:12px 10px}.eyebrow,.chat-head,.annotation,.state-note{font:11px/1.4 var(--mono);color:var(--faint);letter-spacing:.04em}
+  h1{font:500 30px/1.15 var(--serif);margin:10px 0 14px;max-width:620px}.lead{max-width:610px;color:var(--muted);font:16px/1.6 var(--serif)}
+  .states{display:flex;gap:8px;flex-wrap:wrap;margin:28px 0 18px}.states button{border:1px solid var(--border);background:transparent;color:var(--muted);padding:7px 10px;border-radius:999px;font:11px var(--mono);cursor:pointer}.states button.on{background:var(--overlay);border-color:#606956;color:var(--text)}
+  .annotation{max-width:620px;border-left:1px solid var(--border);padding-left:14px}.annotation strong{color:var(--muted);font-weight:600}
+  .chat{height:min(720px,calc(100vh - 64px));min-height:560px;background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px;display:flex;flex-direction:column;box-shadow:0 18px 50px #0008}
+  .chat-head{display:flex;align-items:center;gap:7px;padding:0 2px 10px}.dot{width:7px;height:7px;border-radius:50%;background:#7cae5b}.thread{flex:1;overflow:auto;display:flex;flex-direction:column;gap:20px;padding:14px 2px 22px;mask-image:linear-gradient(to bottom,transparent,#000 18px,#000 calc(100% - 14px),transparent)}
+  .you{align-self:flex-end;max-width:82%;padding:8px 12px;border-radius:12px;background:var(--overlay);font:14px/1.55 var(--serif)}
+  .assistant{font:14px/1.65 var(--serif);color:#c6c9c0}.assistant p{margin:0}.assistant .faded{color:var(--muted)}
+  .outcome{border-left:2px solid var(--fail);padding:3px 0 3px 12px;display:grid;gap:7px}.outcome.interrupted{border-color:var(--interrupt)}
+  .outcome-title{display:flex;align-items:baseline;gap:8px;font:11px/1.4 var(--mono);color:var(--fail)}.interrupted .outcome-title{color:var(--interrupt)}
+  .outcome-detail{color:var(--faint);font:11px/1.45 var(--mono)}
+  .continue{justify-self:start;border:1px solid #647044;background:transparent;color:var(--accent);border-radius:999px;padding:6px 10px;font:600 11px var(--mono);cursor:pointer}.continue:hover{background:#d5ff5f12}.continue:disabled{color:var(--faint);border-color:var(--border)}
+  .composer{flex:none;background:var(--sunken);border:1px solid var(--border);border-radius:12px;padding:11px 12px;color:var(--faint);font:14px var(--serif)}
+  .composer-row{display:flex;justify-content:space-between;align-items:center;margin-top:13px;font:12px var(--mono)}.send{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:#2f352a;color:var(--muted)}
+  [hidden]{display:none!important}@media(max-width:800px){.page{grid-template-columns:1fr;padding:18px}.chat{height:650px}.ticket{padding-bottom:0}}
+</style>
+</head>
+<body>
+<main class="page">
+  <section class="ticket">
+    <div class="eyebrow">TICKET · CHAT FAILURE RECOVERY</div>
+    <h1>Keep failed Panels Chat turns visible and recoverable</h1>
+    <p class="lead">The existing Chat layout stays intact. A settled failure or interruption remains exactly where the response was, with a quiet outcome row below any partial text.</p>
+    <div class="states" aria-label="Preview state">
+      <button class="on" data-state="partial">Failed · partial output</button>
+      <button data-state="unsafe">Failed · no safe recovery</button>
+      <button data-state="interrupted">Interrupted</button>
+    </div>
+    <div class="annotation">
+      <strong>Interaction:</strong> “Continue” appears only for a turn bound to the current Hermes session. It sends a new continuation instruction; it never resends the original prompt. If delivery is uncertain and no bound session exists, the failure remains visible without an action.
+    </div>
+  </section>
+
+  <aside class="chat" data-chat>
+    <div class="chat-head"><span class="dot"></span><span>employee</span></div>
+    <div class="thread">
+      <div class="you">Compare the two rollout options and recommend one.</div>
+
+      <section data-panel="partial">
+        <div class="assistant"><p>The safer route is to keep the existing gateway boundary and add the recovery state at the Chat lifecycle layer. That keeps ticket, day, and Chief Chat aligned while—</p></div>
+        <div class="outcome" style="margin-top:9px">
+          <div class="outcome-title"><strong>Failed</strong><span>Response stopped unexpectedly</span></div>
+          <div class="outcome-detail">Partial response preserved · existing session available</div>
+          <button class="continue">Continue</button>
+        </div>
+      </section>
+
+      <section data-panel="unsafe" hidden>
+        <div class="outcome">
+          <div class="outcome-title"><strong>Failed</strong><span>No response received</span></div>
+          <div class="outcome-detail">The request may have been delivered. Start a new message rather than replaying it automatically.</div>
+        </div>
+      </section>
+
+      <section data-panel="interrupted" hidden>
+        <div class="assistant"><p class="faded">I compared the routes and paused before reaching the recommendation.</p></div>
+        <div class="outcome interrupted" style="margin-top:9px">
+          <div class="outcome-title"><strong>Interrupted</strong><span>Response paused</span></div>
+          <div class="outcome-detail">Partial response preserved · existing session available</div>
+          <button class="continue">Continue</button>
+        </div>
+      </section>
+    </div>
+    <div class="composer">Message the employee…<div class="composer-row"><span>/ &nbsp; ＋</span><span class="send">↑</span></div></div>
+  </aside>
+</main>
+<script>
+  const buttons=[...document.querySelectorAll('[data-state]')];
+  buttons.forEach(button=>button.addEventListener('click',()=>{
+    buttons.forEach(item=>item.classList.toggle('on',item===button));
+    document.querySelectorAll('[data-panel]').forEach(panel=>panel.hidden=panel.dataset.panel!==button.dataset.state);
+  }));
+  document.querySelectorAll('.continue').forEach(button=>button.addEventListener('click',()=>{
+    button.textContent='Continuing…'; button.disabled=true;
+  }));
+</script>
+</body>
+</html>

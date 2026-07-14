@@ -100,6 +100,7 @@ def test_admitted_turn_and_lifecycle_interface_are_exact() -> None:
     }
     assert public_methods == {
         "start_human_turn",
+        "continue_human_turn",
         "recover_human_turn",
         "pause_active_turn",
     }
@@ -120,7 +121,7 @@ def test_admitted_turn_and_lifecycle_interface_are_exact() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == "_AdmittedHumanChatTurn"
     ]
-    assert len(admitted_calls) == 2
+    assert len(admitted_calls) == 3
     force_values = {
         ast.unparse(keyword.value)
         for call in admitted_calls

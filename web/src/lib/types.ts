@@ -46,8 +46,20 @@ export type ChatTurn = {
   completed_at?: number | null;
 };
 
+export type ChatTurnOutcome = {
+  turn_id: string;
+  origin: "human" | "worker" | "system" | string;
+  status: "errored" | "interrupted";
+  output_role: "assistant" | "system" | string;
+  output_text: string;
+  error?: string | null;
+  can_continue: boolean;
+  completed_at: number;
+};
+
 export type ChatStateResponse = {
   messages: ChatStateMessage[];
+  outcomes: ChatTurnOutcome[];
   active_turn: ChatTurn | null;
 };
 

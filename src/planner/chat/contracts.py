@@ -70,8 +70,23 @@ class ChatTurn:
 
 
 @dataclass(frozen=True)
+class ChatTurnOutcome:
+    """Transcript projection for one durable failed or interrupted turn."""
+
+    turn_id: str
+    origin: str
+    status: Literal["errored", "interrupted"]
+    output_role: str
+    output_text: str
+    error: str | None
+    can_continue: bool
+    completed_at: int
+
+
+@dataclass(frozen=True)
 class ChatState:
     messages: tuple[ChatStateMessage, ...]
+    outcomes: tuple[ChatTurnOutcome, ...]
     active_turn: ChatTurn | None
 
 

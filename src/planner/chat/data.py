@@ -20,13 +20,14 @@ from planner.chat.contracts import (
     ChatStateMessage,
     ChattableEntityKind,
     ChatTurn,
+    ChatTurnOutcome,
 )
 from planner.core.contracts import EventKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event
 from planner.core.ids import new_id
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import EmployeeSessionIdTransition
+from planner.tickets.contracts import EmployeeSessionIdTransition, TicketStatus
 
 MAX_ACTIVE_TURN_ACTIVITY_ENTRIES: Final = 100
 
@@ -138,7 +139,55 @@ def read_state(
     ).fetchall()
     messages = tuple(_row_to_message(row) for row in rows)
     active_turn = read_active_turn(conn, entity_id)
-    return ChatState(messages=messages, active_turn=active_turn)
+    if entity_id.startswith("t_"):
+        entity_row = conn.execute(
+            "SELECT employee_session_id AS session_key FROM tickets WHERE id = ?",
+            (entity_id,),
+        ).fetchone()
+    elif entity_id.startswith("day_"):
+        entity_row = conn.execute(
+            "SELECT chat_session_key AS session_key FROM days WHERE id = ?",
+            (entity_id,),
+        ).fetchone()
+    else:
+        entity_row = conn.execute(
+            "SELECT chat_session_key AS session_key FROM agent_chat_sessions WHERE id = ?",
+            (entity_id,),
+        ).fetchone()
+    current_session_key = None if entity_row is None else entity_row["session_key"]
+    outcome_rows = conn.execute(
+        "SELECT terminal.id, terminal.origin, terminal.status, terminal.output_role, "
+        "terminal.output_text, terminal.session_key, terminal.error, terminal.completed_at, "
+        "NOT EXISTS (SELECT 1 FROM chat_turns recovery "
+        "WHERE recovery.recovery_of_turn_id = terminal.id) AS unrecovered, "
+        "NOT EXISTS (SELECT 1 FROM chat_turns later "
+        "WHERE later.entity_id = terminal.entity_id AND later.rowid > terminal.rowid) AS latest "
+        "FROM chat_turns terminal WHERE terminal.entity_id = ? "
+        "AND terminal.status IN ('errored', 'interrupted') "
+        "ORDER BY terminal.started_at, terminal.id",
+        (entity_id,),
+    ).fetchall()
+    outcomes = tuple(
+        ChatTurnOutcome(
+            turn_id=str(row["id"]),
+            origin=str(row["origin"]),
+            status=row["status"],
+            output_role=str(row["output_role"]),
+            output_text=str(row["output_text"]),
+            error=row["error"],
+            can_continue=(
+                active_turn is None
+                and row["origin"] == "human"
+                and row["session_key"] is not None
+                and row["session_key"] == current_session_key
+                and bool(row["unrecovered"])
+                and bool(row["latest"])
+            ),
+            completed_at=int(row["completed_at"]),
+        )
+        for row in outcome_rows
+    )
+    return ChatState(messages=messages, outcomes=outcomes, active_turn=active_turn)
 
 
 def read_active_turn(conn: sqlite3.Connection, entity_id: str) -> ChatTurn | None:
@@ -346,6 +395,138 @@ def start_turn_in_transaction(
     row = conn.execute("SELECT * FROM chat_turns WHERE id = ?", (turn_id,)).fetchone()
     assert row is not None
     return _row_to_turn(row)
+
+
+def start_human_continuation_turn(
+    conn: sqlite3.Connection,
+    entity_id: str,
+    turn_id: str,
+    *,
+    entity_kind: ChattableEntityKind,
+    visible_text: str,
+    now: int,
+) -> tuple[ChatTurn, str]:
+    """Atomically claim one safe terminal human turn for continuation."""
+    with _txn(conn):
+        terminal = conn.execute(
+            "SELECT rowid AS turn_rowid, * FROM chat_turns WHERE id = ? AND entity_id = ?",
+            (turn_id, entity_id),
+        ).fetchone()
+        if terminal is None:
+            raise PlannerError(ErrorCode.not_found, "chat turn not found", {"turn_id": turn_id})
+        if terminal["origin"] != "human" or terminal["status"] not in (
+            "errored",
+            "interrupted",
+        ):
+            raise PlannerError(
+                ErrorCode.validation,
+                "chat turn cannot be continued",
+                {"entity_id": entity_id, "turn_id": turn_id},
+            )
+        if entity_kind == "ticket":
+            entity = conn.execute(
+                "SELECT employee_session_id AS session_key, ticket_status "
+                "FROM tickets WHERE id = ?",
+                (entity_id,),
+            ).fetchone()
+            if (
+                entity is not None
+                and entity["ticket_status"] == TicketStatus.agent_running_step.value
+            ):
+                raise PlannerError(
+                    ErrorCode.already_running,
+                    "ticket worker is already running",
+                    {"entity_id": entity_id},
+                )
+        elif entity_kind == "day":
+            entity = conn.execute(
+                "SELECT chat_session_key AS session_key FROM days WHERE id = ?",
+                (entity_id,),
+            ).fetchone()
+        else:
+            entity = conn.execute(
+                "SELECT chat_session_key AS session_key FROM agent_chat_sessions WHERE id = ?",
+                (entity_id,),
+            ).fetchone()
+        current_session_key = None if entity is None else entity["session_key"]
+        if (
+            terminal["session_key"] is None
+            or current_session_key is None
+            or terminal["session_key"] != current_session_key
+        ):
+            raise PlannerError(
+                ErrorCode.validation,
+                "chat turn is not bound to the current session",
+                {"entity_id": entity_id, "turn_id": turn_id},
+            )
+        if conn.execute(
+            "SELECT 1 FROM chat_turns WHERE entity_id = ? AND rowid > ?",
+            (entity_id, terminal["turn_rowid"]),
+        ).fetchone() is not None:
+            raise PlannerError(
+                ErrorCode.already_running,
+                "chat turn has a later replacement",
+                {"entity_id": entity_id, "turn_id": turn_id},
+            )
+        if conn.execute(
+            "SELECT 1 FROM chat_turns WHERE entity_id = ? AND status = 'running'",
+            (entity_id,),
+        ).fetchone() is not None:
+            raise PlannerError(ErrorCode.already_running, "chat turn is already running")
+        if conn.execute(
+            "SELECT 1 FROM chat_turns WHERE recovery_of_turn_id = ?", (turn_id,)
+        ).fetchone() is not None:
+            raise PlannerError(
+                ErrorCode.already_running,
+                "chat turn was already continued",
+                {"entity_id": entity_id, "turn_id": turn_id},
+            )
+        continuation_id = new_id("run")
+        conn.execute(
+            "INSERT INTO chat_turns ("
+            "id, entity_id, origin, mode, status, phase, activity_label, output_role, "
+            "output_text, session_key, recovery_of_turn_id, error, started_at, updated_at, "
+            "completed_at) VALUES (?, ?, 'human', ?, 'running', 'thinking', ?, ?, '', ?, ?, "
+            "NULL, ?, ?, NULL)",
+            (
+                continuation_id,
+                entity_id,
+                terminal["mode"],
+                "Continuing chat",
+                terminal["output_role"],
+                current_session_key,
+                turn_id,
+                now,
+                now,
+            ),
+        )
+        _append_message(
+            conn,
+            entity_id,
+            turn_id=continuation_id,
+            role="system",
+            text=visible_text,
+            now=now,
+        )
+        append_event(
+            conn,
+            entity_id,
+            EventKind.chat_turn_started,
+            {
+                "turn_id": continuation_id,
+                "origin": "human",
+                "mode": terminal["mode"],
+                "phase": "thinking",
+                "recovery_of_turn_id": turn_id,
+            },
+            now,
+        )
+        row = conn.execute(
+            "SELECT * FROM chat_turns WHERE id = ?", (continuation_id,)
+        ).fetchone()
+        assert row is not None
+        assert current_session_key is not None
+        return _row_to_turn(row), str(current_session_key)
 
 
 def _settle_chat_turn_in_transaction(

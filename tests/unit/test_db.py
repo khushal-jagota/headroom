@@ -106,6 +106,26 @@ CREATE TABLE tickets (
 );
 """
 
+_V20_CHAT_TURNS_DDL = """
+CREATE TABLE chat_turns (
+  id             TEXT PRIMARY KEY,
+  entity_id      TEXT NOT NULL,
+  origin         TEXT NOT NULL CHECK (origin IN ('human','worker','system')),
+  mode           TEXT NOT NULL CHECK (mode IN ('message','command','worker_step')),
+  status         TEXT NOT NULL CHECK (status IN ('running','complete','errored','interrupted')),
+  phase          TEXT NOT NULL
+                 CHECK (phase IN ('queued','thinking','doing','responding','settled')),
+  activity_label TEXT,
+  output_role    TEXT NOT NULL CHECK (output_role IN ('assistant','system')),
+  output_text    TEXT NOT NULL DEFAULT '',
+  session_key    TEXT,
+  error          TEXT,
+  started_at     INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL,
+  completed_at   INTEGER
+);
+"""
+
 
 def _fields_json(**slots):
     return json.dumps(slots)
@@ -210,6 +230,96 @@ def test_fresh_schema_links_are_blocks_only_without_belongs_to_index(tmp_path):
         if str(row["origin"]) != "pk"
     }
     assert indexes == {"idx_links_to"}
+    conn.close()
+
+
+def test_fresh_schema_has_chat_turn_recovery_column_and_index(tmp_path):
+    conn = connect(str(tmp_path / "fresh-chat-recovery.db"))
+    create_schema(conn)
+
+    columns = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(chat_turns)")}
+    assert "recovery_of_turn_id" in columns
+    foreign_keys = conn.execute("PRAGMA foreign_key_list(chat_turns)").fetchall()
+    assert ("chat_turns", "recovery_of_turn_id", "id") in [
+        (row["table"], row["from"], row["to"]) for row in foreign_keys
+    ]
+    indexes = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA index_list(chat_turns)")
+        if str(row["origin"]) != "pk"
+    }
+    assert "idx_chat_turns_one_recovery" in indexes
+    conn.close()
+
+
+def test_create_schema_migrates_v20_chat_turn_recovery_column_and_index(tmp_path):
+    conn = connect(str(tmp_path / "v20-chat-recovery.db"))
+    conn.executescript(_V20_CHAT_TURNS_DDL)
+    conn.execute(
+        "INSERT INTO chat_turns ("
+        "id, entity_id, origin, mode, status, phase, activity_label, output_role, "
+        "output_text, session_key, error, started_at, updated_at, completed_at"
+        ") VALUES ('run_original', 't_existing', 'human', 'message', 'errored', "
+        "'settled', NULL, 'assistant', 'partial', 'session-1', 'offline', 1, 2, 2)"
+    )
+    conn.execute("PRAGMA user_version=20")
+
+    create_schema(conn)
+    create_schema(conn)
+
+    columns = [
+        str(row["name"]) for row in conn.execute("PRAGMA table_info(chat_turns)")
+    ]
+    assert columns.count("recovery_of_turn_id") == 1
+    preserved = conn.execute(
+        "SELECT output_text, session_key, recovery_of_turn_id FROM chat_turns "
+        "WHERE id = 'run_original'"
+    ).fetchone()
+    assert dict(preserved) == {
+        "output_text": "partial",
+        "session_key": "session-1",
+        "recovery_of_turn_id": None,
+    }
+    foreign_keys = conn.execute("PRAGMA foreign_key_list(chat_turns)").fetchall()
+    assert ("chat_turns", "recovery_of_turn_id", "id") in [
+        (row["table"], row["from"], row["to"]) for row in foreign_keys
+    ]
+    indexes = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA index_list(chat_turns)")
+        if str(row["origin"]) != "pk"
+    }
+    assert "idx_chat_turns_one_recovery" in indexes
+    conn.execute(
+        "INSERT INTO chat_turns ("
+        "id, entity_id, origin, mode, status, phase, activity_label, output_role, "
+        "output_text, session_key, recovery_of_turn_id, error, started_at, updated_at, "
+        "completed_at"
+        ") VALUES ('run_recovery', 't_existing', 'human', 'message', 'complete', "
+        "'settled', NULL, 'assistant', 'done', 'session-1', 'run_original', NULL, 3, 4, 4)"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO chat_turns ("
+            "id, entity_id, origin, mode, status, phase, activity_label, output_role, "
+            "output_text, session_key, recovery_of_turn_id, error, started_at, updated_at, "
+            "completed_at"
+            ") VALUES ('run_duplicate_recovery', 't_existing', 'human', 'message', "
+            "'complete', 'settled', NULL, 'assistant', 'done again', 'session-1', "
+            "'run_original', NULL, 5, 6, 6)"
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO chat_turns ("
+            "id, entity_id, origin, mode, status, phase, activity_label, output_role, "
+            "output_text, session_key, recovery_of_turn_id, error, started_at, updated_at, "
+            "completed_at"
+            ") VALUES ('run_bad_recovery', 't_existing', 'human', 'message', "
+            "'complete', 'settled', NULL, 'assistant', 'bad', 'session-1', "
+            "'run_missing', NULL, 7, 8, 8)"
+        )
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     conn.close()
 
 
@@ -1681,8 +1791,8 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(tm
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     create_schema(conn)
-    assert SCHEMA_VERSION == 20
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 20
+    assert SCHEMA_VERSION == 21
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     info = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(tickets)")}
     assert info["worker_type"]["notnull"] == 1
