@@ -44,10 +44,11 @@ Current build stage:
   one omission: its focused commands did not run the existing unit and browser image suites. Both are now
   explicit unchanged preservation contracts outside the edit allowlist and run in full. Fresh re-review,
   session `019f5eed-a837-7601-820e-f0ca50188e40`, reports `NO VIOLATIONS`.
-- AD05 implementation is complete and independently reviewed. The product diff removes every retired Chat
+- AD05 is complete on the branch at `754ff27`. The product diff removes every retired Chat
   ingress/result/method shape, keeps the single server-owned turn, and preserves images, live turn state,
   commands, `/new`, Employee-step separation, and session-key rules. Review session
-  `019f5f04-3ebd-7a50-a26c-c0a072b8738f` reports `NO VIOLATIONS`.
+  `019f5f04-3ebd-7a50-a26c-c0a072b8738f` reports `NO VIOLATIONS`, and the committed checkpoint passes the
+  canonical gate.
 
 What just passed:
 
@@ -225,11 +226,16 @@ What just passed:
   preservation suites, live Chat-state suite, and affected message/command browser flows pass. The
   independent review also accepted the narrow lost-first-write winner correction as required preservation,
   not AD06 scope.
+- The committed AD05 checkpoint passes canonical `PYTHONPATH="$PWD/src" ./verify`: Ruff; mypy across 114
+  source files; 687 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three
+  existing warnings), production build, frontend tests; 80 Playwright e2e tests; final `VERIFY: PASS`.
+  The complete transcript is retained at `data/verify/ad05-pass.log`.
 
 Next step:
 
-- Commit the reviewed AD05 product diff, then run the one canonical `PYTHONPATH="$PWD/src" ./verify` gate.
-  On a clean result, close AD05 and begin AD06 without stacking unverified work.
+- Begin AD06 from the clean AD05 checkpoint: define the deep canonical Chat-turn contract, delegate its
+  implementation plan, independently review and freeze it, then dispatch implementation. Managed Markdown
+  remains AD07.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`
