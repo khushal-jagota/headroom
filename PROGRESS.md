@@ -181,8 +181,9 @@ What just passed:
 
 Next step:
 
-- Decompose AD04 Ticket-only Review against its contract surfaces, delegate the implementation plan, and
-  obtain independent plan review before freezing the next contract.
+- Delegate the AD04 Ticket-only Review implementation plan from
+  `ad04-ticket-only-review/ticket.md`, then obtain independent plan review before freezing its exact public
+  and internal contract.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`
