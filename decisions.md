@@ -594,6 +594,13 @@ emits `project_created`, and there is intentionally no rename/delete/archive in 
 
 # Frontend architecture and UI
 
+## D-slate-blue-brand-accent — Soft Steel is the single brand accent
+
+The owner selected Option A — Soft Steel from the four in-context slate-blue comparisons. Panels keeps its
+warm-dark surfaces and routes the selected family through the existing four shared brand tokens: bright
+`#9aadd2`, surface `#222a38`, text `#dce6f8`, and ink `#111318`. Done green and error red remain semantic
+tokens rather than being recoloured as brand treatment. This is a token change, not a component redesign.
+
 ## D-resource-refresh-two-signals — Canonical events plus immediate targeted refresh
 
 The server event stream remains the canonical invalidation source. A successful UI write also keeps an

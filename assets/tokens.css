@@ -1,11 +1,11 @@
 /* The single token file. The app's entire personality is tunable here — no other
  * file hardcodes a colour, radius, duration, spacing step, border width, size, or
- * font. Stage-5 values: restrained warm-dark surfaces, one deliberate amber
- * accent meaning "needs the human", a closed five-size type scale. No new
+ * font. Stage-5 values: restrained warm-dark surfaces, one deliberate slate-blue
+ * brand accent meaning "needs the human", a closed five-size type scale. No new
  * categories without evidence of need (PRINCIPLES.md, SPEC §10). */
 
 :root {
-  /* Surfaces — warm near-black neutrals so the amber accent stays the emphasis */
+  /* Surfaces — warm near-black neutrals so the slate-blue accent stays the emphasis */
   --surface-base: #1b1917;
   --surface-raised: #24211b;
   --surface-overlay: #26221c;
@@ -18,11 +18,11 @@
   --text-faint: #8a867c;
   --text-faintest: #66625a;
 
-  /* Accent — THE one accent (warm amber). Means "needs the human". */
-  --accent-bright: #e7a742;
-  --accent-surface: #33291a;
-  --accent-text: #f4e3bd;
-  --accent-ink: #1c1406;   /* dark text on the amber fill (e.g. Approve) */
+  /* Accent — THE one brand accent (Soft Steel slate blue). Means "needs the human". */
+  --accent-bright: #9aadd2;
+  --accent-surface: #222a38;
+  --accent-text: #dce6f8;
+  --accent-ink: #111318;   /* dark text on the accent fill (e.g. Approve) */
   --accent-done: #7fa564;  /* the green done marks */
   --accent-error: #d85d5d; /* red marks for errored ticket stages */
 
