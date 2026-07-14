@@ -8,9 +8,9 @@ the bottom; the blow-by-blow is git's.
 
 Current build stage:
 
-- Ticket `t_bbzgswpj` Implementation is complete on isolated branch
-  `ticket/t_bbzgswpj-slate-blue` in `/private/tmp/panels-t_bbzgswpj`. The four-token replacement and its
-  focused regression were small enough to implement directly rather than dispatching a second ticket.
+- Ticket `t_bbzgswpj` is integrated into `main` by merge commit `b479e5b`; the ticket branch and worktree are
+  removed. The four-token replacement and its focused regression were small enough to implement directly
+  rather than dispatching a second ticket. Unrelated active owner edits were restored after the merge.
 - The owner selected Option A — Soft Steel. The shared brand family is now `#9aadd2` bright,
   `#222a38` surface, `#dce6f8` text, and `#111318` ink. Green done and red error tokens are unchanged;
   no component layout or interaction styling changed.
@@ -38,7 +38,7 @@ What just passed:
 
 Next step:
 
-- Propose Implementation for approval with the real desktop/mobile screenshots and verification evidence.
+- Await Closeout approval. No merge, deploy, restart, migration, or follow-up work remains.
 
 Blockers:
 
