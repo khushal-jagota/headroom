@@ -49,6 +49,9 @@ Current build stage:
   commands, `/new`, Employee-step separation, and session-key rules. Review session
   `019f5f04-3ebd-7a50-a26c-c0a072b8738f` reports `NO VIOLATIONS`, and the committed checkpoint passes the
   canonical gate.
+- AD06's deep canonical Chat-turn ticket is defined. It gives one human-turn owner the request, atomic
+  admission, causal session-key binding, typed observations, transcript projection, Pause, and idempotent
+  settlement. It explicitly leaves Employee delivery and AD09 history separation outside the boundary.
 
 What just passed:
 
@@ -233,9 +236,9 @@ What just passed:
 
 Next step:
 
-- Begin AD06 from the clean AD05 checkpoint: define the deep canonical Chat-turn contract, delegate its
-  implementation plan, independently review and freeze it, then dispatch implementation. Managed Markdown
-  remains AD07.
+- Delegate AD06's implementation plan against the new ticket, independently review and freeze its exact
+  owner, observation, transaction, deletion, test, and changed-path contracts, then dispatch implementation.
+  Managed Markdown remains AD07.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`
