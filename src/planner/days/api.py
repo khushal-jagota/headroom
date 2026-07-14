@@ -19,11 +19,11 @@ from planner.days import data as days_data
 from planner.days.contracts import AddDayTicketBody
 from planner.days.logic import dates
 from planner.tickets.api import (
+    AutomaticEmployeeStepEligibilityWakeDependency,
     Cfg,
     Clk,
     Ctx,
     DbConn,
-    Doorbell,
     body_opt_str,
     body_str,
     txn,
@@ -74,8 +74,9 @@ async def get_day(date: str, conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
 
 
 @router.patch("/day/{date}")
-async def patch_day(date: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
-                    clk: Clk) -> JsonDict:
+async def patch_day(
+    date: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk
+) -> JsonDict:
     require_direct_write(ctx)  # §8: overview fields + notes are direct-only
     did = resolve_day_id(date, clk, cfg)
     now = clk.now_unix()
@@ -94,9 +95,14 @@ async def patch_day(date: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg:
 
 
 @router.post("/day/{date}/tickets")
-async def add_day_ticket(date: str, raw: dict[str, Any], conn: DbConn,
-                         cfg: Cfg, clk: Clk,
-                         readiness_doorbell: Doorbell) -> JsonDict:
+async def add_day_ticket(
+    date: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    cfg: Cfg,
+    clk: Clk,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
+) -> JsonDict:
     body = AddDayTicketBody(ticket_id=body_str(raw, "ticket_id"))
     did = resolve_day_id(date, clk, cfg)
     now = clk.now_unix()
@@ -105,14 +111,20 @@ async def add_day_ticket(date: str, raw: dict[str, Any], conn: DbConn,
         did,
         body["ticket_id"],
         now=now,
-        readiness_doorbell=readiness_doorbell,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return _day_view(conn, did, now)
 
 
 @router.delete("/day/{date}/tickets/{ticket_id}")
-async def remove_day_ticket(date: str, ticket_id: str, conn: DbConn, cfg: Cfg,
-                            clk: Clk, readiness_doorbell: Doorbell) -> JsonDict:
+async def remove_day_ticket(
+    date: str,
+    ticket_id: str,
+    conn: DbConn,
+    cfg: Cfg,
+    clk: Clk,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
+) -> JsonDict:
     did = resolve_day_id(date, clk, cfg)
     now = clk.now_unix()
     days_actions.remove_ticket_from_day(
@@ -120,6 +132,6 @@ async def remove_day_ticket(date: str, ticket_id: str, conn: DbConn, cfg: Cfg,
         did,
         ticket_id,
         now=now,
-        readiness_doorbell=readiness_doorbell,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return _day_view(conn, did, now)

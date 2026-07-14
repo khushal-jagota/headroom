@@ -120,22 +120,24 @@ def test_put_value_logs_field_value_edited_event(tmp_path: Path) -> None:
     assert matching[0]["payload"] == {"field": "success", "body": "edited success"}
 
 
-def test_put_value_rings_readiness_doorbell_after_successful_edit(tmp_path: Path) -> None:
+def test_put_value_wakes_automatic_employee_step_eligibility_wake_after_successful_edit(
+    tmp_path: Path,
+) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _passed_ticket(db_path)
 
-    class RecordingDoorbell:
+    class RecordingEligibilityWake:
         def __init__(self) -> None:
-            self.rings = 0
+            self.wakes = 0
 
-        def ring(self) -> None:
-            self.rings += 1
+        def wake(self) -> None:
+            self.wakes += 1
 
-    doorbell = RecordingDoorbell()
-    app.state.readiness_doorbell = doorbell
+    eligibility_wake = RecordingEligibilityWake()
+    app.state.automatic_employee_step_eligibility_wake = eligibility_wake
 
     with TestClient(app) as client:
         response = client.put(f"/api/tickets/{tid}/value/success", json={"body": "edited success"})
 
     assert response.status_code == 200, response.json()
-    assert doorbell.rings == 1
+    assert eligibility_wake.wakes == 1

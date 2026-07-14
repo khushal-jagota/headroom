@@ -1,14 +1,14 @@
 """Accept and execute one employee step for a Ticket.
 
 The runner owns prompt construction, the Ticket claim, the worker Hermes session,
-Panels worker Chat state, and settlement. Automatic readiness discovery is a
-separate responsibility in :mod:`planner.runtime.ticket_readiness_loop`.
+Panels worker Chat state, and settlement. Automatic Employee-step discovery is a
+separate responsibility in
+:mod:`planner.runtime.automatic_employee_step_discovery_loop`.
 """
 
 from __future__ import annotations
 
 import logging
-import sqlite3
 import threading
 
 from planner.chat import service as chat_service
@@ -17,8 +17,10 @@ from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic import dates
 from planner.minds.shared_gateway import SharedGateway, SharedGatewayBusy
-from planner.runtime import readiness
-from planner.runtime.readiness_doorbell import ReadinessDoorbell
+from planner.runtime import automatic_employee_step_eligibility
+from planner.runtime.automatic_employee_step_eligibility_wake import (
+    AutomaticEmployeeStepEligibilityWake,
+)
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import Ticket, TicketStatus
 from planner.worker_types.configuration import configured_worker_type_registry
@@ -95,28 +97,28 @@ class EmployeeStepRunner:
         clock: Clock,
         *,
         gateway: SharedGateway,
-        readiness_doorbell: ReadinessDoorbell,
+        automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
         boundary_hour: int,
         busy_timeout_ms: int = 5000,
     ) -> None:
         self._db_path = db_path
         self._clock = clock
         self._gateway = gateway
-        self._readiness_doorbell = readiness_doorbell
+        self._automatic_employee_step_eligibility_wake = automatic_employee_step_eligibility_wake
         self._boundary_hour = boundary_hour
         self._busy_timeout_ms = busy_timeout_ms
         self._accepting = True
         self._active = 0
         self._active_cond = threading.Condition()
 
-    def run_ready_step(self, ticket_id: str) -> None:
-        """Start one automatic step; the transaction-time readiness check is final."""
+    def try_run_automatic_step(self, ticket_id: str) -> None:
+        """Start one automatic step; the transaction-time eligibility check is final."""
         with self._active_cond:
             if not self._accepting:
                 return
             self._active += 1
             thread = threading.Thread(
-                target=self._run_ready_thread,
+                target=self._run_automatic_step_thread,
                 args=(ticket_id,),
                 name=f"employee-step-{ticket_id}",
                 daemon=True,
@@ -171,7 +173,7 @@ class EmployeeStepRunner:
         except Exception:  # an unavailable adapter must reject before Ticket mutation
             return False
 
-    def _run_ready_thread(self, ticket_id: str) -> None:
+    def _run_automatic_step_thread(self, ticket_id: str) -> None:
         settled = False
         try:
             settled = self._run(ticket_id, revision_guidance=None)
@@ -196,7 +198,7 @@ class EmployeeStepRunner:
         with self._active_cond:
             self._active -= 1
             if settled:
-                self._readiness_doorbell.ring()
+                self._automatic_employee_step_eligibility_wake.wake()
             self._active_cond.notify_all()
 
     def _run(self, ticket_id: str, *, revision_guidance: str | None) -> bool:
@@ -204,32 +206,20 @@ class EmployeeStepRunner:
         try:
             now = self._clock.now_unix()
             if revision_guidance is None:
-
-                def ready_on_today(
-                    _conn: sqlite3.Connection,
-                    ticket: Ticket,
-                    worker_type_definition: WorkerTypeDefinition,
-                ) -> bool:
-                    today_id = dates.resolve_day_id("today", self._clock.now(), self._boundary_hour)
-                    on_today = _conn.execute(
-                        "SELECT 1 FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
-                        (today_id, ticket.id),
-                    ).fetchone()
-                    return on_today is not None and readiness.is_runnable(
-                        _conn,
-                        ticket,
-                        worker_type_definition=worker_type_definition,
-                    )
-
-                claimed = tickets_data.start_run_if_runnable(
+                claimed = tickets_data.claim_automatic_employee_step(
                     conn,
                     ticket_id,
-                    guard=ready_on_today,
+                    planning_day_id_resolver=lambda: dates.resolve_day_id(
+                        "today", self._clock.now(), self._boundary_hour
+                    ),
+                    eligibility_check=(
+                        automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step
+                    ),
                     now=now,
                 )
                 if claimed is None:
                     _log.info(
-                        "employee runner skipped a no-longer-ready Ticket (ticket=%s)",
+                        "employee runner skipped a no-longer-eligible Ticket (ticket=%s)",
                         ticket_id,
                     )
                     return False

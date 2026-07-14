@@ -585,8 +585,8 @@
                 <span>keyed UI refetch</span>
               </div>
               <div>
-                <strong>TicketReadinessLoop</strong>
-                <span>today readiness poll</span>
+                <strong>AutomaticEmployeeStepDiscoveryLoop</strong>
+                <span>today membership candidates</span>
               </div>
             </li>
             <li>
@@ -614,7 +614,7 @@
           </li>
           <li>
             <strong>Why did work run?</strong>
-            <span>Employee Runtime. TicketReadinessLoop finds runnable Tickets; EmployeeStepRunner runs one worker step.</span>
+            <span>Employee Runtime. AutomaticEmployeeStepDiscoveryLoop checks Automatic Employee-step eligibility; EmployeeStepRunner runs one worker step.</span>
           </li>
           <li>
             <strong>Where is chat?</strong>
@@ -677,8 +677,9 @@
               </p>
               <p>
                 The Board is today's execution board, not an all-ticket inventory.
-                TicketReadinessLoop starts from the same today membership, then narrows to
-                empty, non-terminal tickets that pass readiness.
+                AutomaticEmployeeStepDiscoveryLoop starts with that same membership-only
+                candidate set, then asks the complete Automatic Employee-step eligibility
+                decision about each Ticket.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/sprints/</code>,
@@ -720,32 +721,54 @@
           <details>
             <summary>
               <span class="number">04</span>
-              <span><strong>The Employee Runtime</strong><span>Optional readiness discovery and always-available step execution.</span></span>
+              <span><strong>The Employee Runtime</strong><span>Advisory automatic eligibility discovery and separate step execution.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                TicketReadinessLoop polls today's Tickets whose <code>ticket_status</code> is
-                <code>empty</code>, then applies readiness: not terminal, has a
-                next field, no pending proposal there, not blocked, and not stopped
-                at the scope limit.
+                One complete decision owns <strong>Automatic Employee-step eligibility</strong>.
+                It returns yes only when all seven facts hold:
+              </p>
+              <ol>
+                <li>The Ticket belongs to the supplied <code>planning_day_id</code> — today's day during automatic discovery.</li>
+                <li>Its <code>ticket_status</code> is <code>empty</code>.</li>
+                <li>Its Stage is not terminal.</li>
+                <li>Its Stage has a next gated field.</li>
+                <li>That field has no parked proposal.</li>
+                <li>Its <code>ceiling</code> and <code>at_cap</code> allow another proposal; the Ticket is not at or beyond a stopping ceiling.</li>
+                <li>It has no active blocker.</li>
+              </ol>
+              <p>
+                AutomaticEmployeeStepDiscoveryLoop is read-only and advisory. It selects
+                only Tickets that belong to today's day, then calls the complete decision for
+                each membership candidate. It does not claim Tickets, write state, or contact Hermes.
               </p>
               <p>
-                EmployeeStepRunner marks the Ticket running, resumes or creates its Hermes
-                session, submits one prompt, and settles runtime status when the
-                turn ends. A parked proposal becomes <code>awaiting_approval</code>;
-                auto-accepted work can return to <code>empty</code>.
+                EmployeeStepRunner separately owns one worker step. Its final claim starts
+                <code>BEGIN IMMEDIATE</code>, reloads the Ticket and its Worker type definition,
+                resolves the planning day inside the transaction, and calls the same complete
+                decision. A stale discovery result cannot change status, create chat state,
+                call the gateway, or build a prompt. After a successful claim, the runner marks
+                the Ticket running, resumes or creates its Hermes session, submits one prompt,
+                and settles runtime status when the turn ends.
               </p>
               <p>
-                Ticket, Day membership, and blocking-link actions commit first, then ring a
-                best-effort ReadinessDoorbell. Runner settlement rings it too. The doorbell
-                carries no Ticket id and owns no state. A failed delivery is logged and ignored;
-                SQLite and the periodic timer remain canonical. Processes without the polling
-                lock use a no-op doorbell rather than IPC.
+                A direct requested revision bypasses Automatic Employee-step eligibility and
+                planning-day resolution, uses a reserved runner handoff, and strictly resumes
+                the Ticket's stored Hermes session.
+              </p>
+              <p>
+                Ticket, Day membership, and blocking-link actions commit first, then call
+                <code>AutomaticEmployeeStepEligibilityWake.wake()</code>. Runner settlement does
+                the same. This best-effort same-process wake carries no Ticket id, owns no state,
+                and sends no IPC. Failure is logged and ignored; SQLite and the periodic discovery
+                timer remain canonical. The polling-lock owner uses
+                <code>LoopAutomaticEmployeeStepEligibilityWake</code>; processes without the lock receive
+                <code>NoOpAutomaticEmployeeStepEligibilityWake</code>.
               </p>
               <p class="code-paths">
-                Code paths: <code>src/planner/runtime/readiness.py</code>,
-                <code>src/planner/runtime/readiness_doorbell.py</code>,
-                <code>src/planner/runtime/ticket_readiness_loop.py</code>,
+                Code paths: <code>src/planner/runtime/automatic_employee_step_eligibility.py</code>,
+                <code>src/planner/runtime/automatic_employee_step_discovery_loop.py</code>,
+                <code>src/planner/runtime/automatic_employee_step_eligibility_wake.py</code>,
                 <code>src/planner/runtime/employee_step_runner.py</code>,
                 <code>src/planner/tickets/actions.py</code>,
                 <code>src/planner/days/actions.py</code>,
@@ -986,7 +1009,7 @@
 
       <footer>
         HTML companion to <a href="systems.md">systems.md</a>. Last verified:
-        2026-07-08.
+        2026-07-14.
       </footer>
     </main>
   </div>

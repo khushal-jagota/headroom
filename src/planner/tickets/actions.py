@@ -8,8 +8,10 @@ from dataclasses import replace
 
 from planner.core.contracts import Priority
 from planner.core.errors import ErrorCode, PlannerError
+from planner.runtime.automatic_employee_step_eligibility_wake import (
+    AutomaticEmployeeStepEligibilityWake,
+)
 from planner.runtime.contracts import EmployeeRevisionRunner
-from planner.runtime.readiness_doorbell import ReadinessDoorbell
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     AtCap,
@@ -27,7 +29,7 @@ def create_ticket(
     actor: str,
     now: int,
     title_max_chars: int,
-    readiness_doorbell: ReadinessDoorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
     worker_type: str,
     kickoff_note: str = "",
     project_id: str | None = None,
@@ -50,7 +52,7 @@ def create_ticket(
         sprint_item_id=sprint_item_id,
         worker_type=worker_type,
     )
-    readiness_doorbell.ring()
+    automatic_employee_step_eligibility_wake.wake()
     return ticket
 
 
@@ -63,7 +65,7 @@ def create_ticket_from_external_work(
     actor: str,
     now: int,
     title_max_chars: int,
-    readiness_doorbell: ReadinessDoorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
     worker_type: str,
     kickoff_note: str | None = None,
     recap: str | None = None,
@@ -90,7 +92,7 @@ def create_ticket_from_external_work(
         sprint_item_id=sprint_item_id,
         worker_type=worker_type,
     )
-    readiness_doorbell.ring()
+    automatic_employee_step_eligibility_wake.wake()
     return ticket
 
 
@@ -102,7 +104,7 @@ def reconcile_ticket_from_external_work(
     provided_values: Mapping[str, str],
     actor: str,
     now: int,
-    readiness_doorbell: ReadinessDoorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
     kickoff_note: str | None = None,
     recap: str | None = None,
 ) -> Ticket:
@@ -118,7 +120,7 @@ def reconcile_ticket_from_external_work(
         recap=recap,
     )
     if replace(before, updated_at=ticket.updated_at) != ticket:
-        readiness_doorbell.ring()
+        automatic_employee_step_eligibility_wake.wake()
     return ticket
 
 
@@ -128,10 +130,10 @@ def delete_ticket(
     *,
     actor: str,
     now: int,
-    readiness_doorbell: ReadinessDoorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> TicketDeletion:
     deleted = tickets_data.delete_ticket(conn, ticket_id, actor=actor, now=now)
-    readiness_doorbell.ring()
+    automatic_employee_step_eligibility_wake.wake()
     return deleted
 
 
@@ -142,7 +144,7 @@ def accept_proposal(
     field: str,
     actor: str,
     now: int,
-    readiness_doorbell: ReadinessDoorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
     edited_body: str | None = None,
     next_ceiling: NextCeiling | None = None,
     at_cap: AtCap | None = None,
@@ -157,7 +159,7 @@ def accept_proposal(
         next_ceiling=next_ceiling,
         at_cap=at_cap,
     )
-    readiness_doorbell.ring()
+    automatic_employee_step_eligibility_wake.wake()
     return ticket
 
 
@@ -169,7 +171,7 @@ def edit_field_value(
     new_body: str,
     actor: str,
     now: int,
-    readiness_doorbell: ReadinessDoorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> Ticket:
     ticket = tickets_data.edit_field_value(
         conn,
@@ -179,7 +181,7 @@ def edit_field_value(
         actor=actor,
         now=now,
     )
-    readiness_doorbell.ring()
+    automatic_employee_step_eligibility_wake.wake()
     return ticket
 
 
@@ -191,7 +193,7 @@ def change_scope(
     at_cap: AtCap,
     actor: str,
     now: int,
-    readiness_doorbell: ReadinessDoorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> Ticket:
     ticket = tickets_data.change_scope(
         conn,
@@ -201,7 +203,7 @@ def change_scope(
         actor=actor,
         now=now,
     )
-    readiness_doorbell.ring()
+    automatic_employee_step_eligibility_wake.wake()
     return ticket
 
 
@@ -212,7 +214,7 @@ def set_stage(
     new_stage: str,
     actor: str,
     now: int,
-    readiness_doorbell: ReadinessDoorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> Ticket:
     ticket = tickets_data.set_stage(
         conn,
@@ -221,7 +223,7 @@ def set_stage(
         actor=actor,
         now=now,
     )
-    readiness_doorbell.ring()
+    automatic_employee_step_eligibility_wake.wake()
     return ticket
 
 
@@ -231,10 +233,10 @@ def drop_ticket(
     *,
     actor: str,
     now: int,
-    readiness_doorbell: ReadinessDoorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> Ticket:
     ticket = tickets_data.drop_ticket(conn, ticket_id, actor=actor, now=now)
-    readiness_doorbell.ring()
+    automatic_employee_step_eligibility_wake.wake()
     return ticket
 
 
@@ -243,10 +245,10 @@ def take_over_ticket(
     ticket_id: str,
     *,
     now: int,
-    readiness_doorbell: ReadinessDoorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> Ticket:
     ticket = tickets_data.take_over_ticket(conn, ticket_id, now=now)
-    readiness_doorbell.ring()
+    automatic_employee_step_eligibility_wake.wake()
     return ticket
 
 
@@ -255,10 +257,10 @@ def release_ticket(
     ticket_id: str,
     *,
     now: int,
-    readiness_doorbell: ReadinessDoorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> Ticket:
     ticket = tickets_data.release_ticket(conn, ticket_id, now=now)
-    readiness_doorbell.ring()
+    automatic_employee_step_eligibility_wake.wake()
     return ticket
 
 

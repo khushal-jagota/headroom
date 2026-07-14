@@ -7,6 +7,10 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from planner.runtime.automatic_employee_step_eligibility_wake import (
+    LoopAutomaticEmployeeStepEligibilityWake,
+    NoOpAutomaticEmployeeStepEligibilityWake,
+)
 
 from planner.core import loops
 from planner.core import server as server_module
@@ -18,7 +22,6 @@ from planner.core.server import create_app
 from planner.minds import config as minds_config
 from planner.minds.fake import FakeGateway
 from planner.minds.shared_gateway import SharedGateway
-from planner.runtime.readiness_doorbell import LoopReadinessDoorbell, NoOpReadinessDoorbell
 
 
 def test_dispatch_disabled_keeps_employee_runner_without_acquiring_polling_lock(
@@ -47,9 +50,15 @@ def test_dispatch_disabled_keeps_employee_runner_without_acquiring_polling_lock(
     )
     try:
         assert handle.employee_step_runner is not None
-        assert handle.ticket_readiness_loop is None
-        assert isinstance(handle.readiness_doorbell, NoOpReadinessDoorbell)
-        assert handle.employee_step_runner._readiness_doorbell is handle.readiness_doorbell
+        assert handle.automatic_employee_step_discovery_loop is None
+        assert isinstance(
+            handle.automatic_employee_step_eligibility_wake,
+            NoOpAutomaticEmployeeStepEligibilityWake,
+        )
+        assert (
+            handle.employee_step_runner._automatic_employee_step_eligibility_wake
+            is handle.automatic_employee_step_eligibility_wake
+        )
         assert not lock_path.exists()
     finally:
         asyncio.run(handle.stop())
@@ -81,14 +90,20 @@ def test_polling_lock_owned_elsewhere_keeps_employee_runner(
     )
     try:
         assert handle.employee_step_runner is not None
-        assert handle.ticket_readiness_loop is None
-        assert isinstance(handle.readiness_doorbell, NoOpReadinessDoorbell)
-        assert handle.employee_step_runner._readiness_doorbell is handle.readiness_doorbell
+        assert handle.automatic_employee_step_discovery_loop is None
+        assert isinstance(
+            handle.automatic_employee_step_eligibility_wake,
+            NoOpAutomaticEmployeeStepEligibilityWake,
+        )
+        assert (
+            handle.employee_step_runner._automatic_employee_step_eligibility_wake
+            is handle.automatic_employee_step_eligibility_wake
+        )
     finally:
         asyncio.run(handle.stop())
 
 
-def test_lock_winner_composes_readiness_loop_with_employee_runner(
+def test_lock_winner_composes_automatic_discovery_with_employee_runner(
     tmp_path: Path,
     fake_clock: TestClock,
     monkeypatch: pytest.MonkeyPatch,
@@ -103,7 +118,7 @@ def test_lock_winner_composes_readiness_loop_with_employee_runner(
     constructed: list[Any] = []
     released: list[str] = []
 
-    class RecordingReadinessLoop:
+    class RecordingDiscoveryLoop:
         def __init__(self, _db_path, _clock, runner, **_kwargs) -> None:
             self.runner = runner
             self.started: list[int] = []
@@ -121,7 +136,7 @@ def test_lock_winner_composes_readiness_loop_with_employee_runner(
 
     monkeypatch.setattr(loops, "ensure_machine_lock", lambda _path: True)
     monkeypatch.setattr(loops, "release_machine_lock", released.append)
-    monkeypatch.setattr(loops, "TicketReadinessLoop", RecordingReadinessLoop)
+    monkeypatch.setattr(loops, "AutomaticEmployeeStepDiscoveryLoop", RecordingDiscoveryLoop)
 
     handle = loops.start_background_loops(
         config,
@@ -129,18 +144,21 @@ def test_lock_winner_composes_readiness_loop_with_employee_runner(
         shared_gateway=cast(SharedGateway, object()),
     )
     try:
-        assert handle.ticket_readiness_loop is constructed[0]
+        assert handle.automatic_employee_step_discovery_loop is constructed[0]
         assert constructed[0].runner is handle.employee_step_runner
         assert constructed[0].started == [config.tick_seconds]
-        assert handle.employee_step_runner._readiness_doorbell is handle.readiness_doorbell
-        handle.readiness_doorbell.ring()
+        assert (
+            handle.employee_step_runner._automatic_employee_step_eligibility_wake
+            is handle.automatic_employee_step_eligibility_wake
+        )
+        handle.automatic_employee_step_eligibility_wake.wake()
         assert constructed[0].wakes == 1
     finally:
         asyncio.run(handle.stop())
     assert released == [config.dispatcher_lock_path]
 
 
-def test_readiness_loop_start_failure_releases_lock_but_keeps_runner(
+def test_discovery_start_failure_releases_lock_but_keeps_runner(
     tmp_path: Path,
     fake_clock: TestClock,
     monkeypatch: pytest.MonkeyPatch,
@@ -154,13 +172,13 @@ def test_readiness_loop_start_failure_releases_lock_but_keeps_runner(
     )
     released: list[str] = []
 
-    class BrokenReadinessLoop:
+    class BrokenDiscoveryLoop:
         def __init__(self, *_args, **_kwargs) -> None:
             raise RuntimeError("cannot start poller")
 
     monkeypatch.setattr(loops, "ensure_machine_lock", lambda _path: True)
     monkeypatch.setattr(loops, "release_machine_lock", released.append)
-    monkeypatch.setattr(loops, "TicketReadinessLoop", BrokenReadinessLoop)
+    monkeypatch.setattr(loops, "AutomaticEmployeeStepDiscoveryLoop", BrokenDiscoveryLoop)
 
     fake = FakeGateway({})
     gateway = SharedGateway(
@@ -178,8 +196,11 @@ def test_readiness_loop_start_failure_releases_lock_but_keeps_runner(
     )
     try:
         assert handle.employee_step_runner is not None
-        assert handle.ticket_readiness_loop is None
-        assert isinstance(handle.readiness_doorbell, NoOpReadinessDoorbell)
+        assert handle.automatic_employee_step_discovery_loop is None
+        assert isinstance(
+            handle.automatic_employee_step_eligibility_wake,
+            NoOpAutomaticEmployeeStepEligibilityWake,
+        )
         assert released == [config.dispatcher_lock_path]
         handoff = handle.employee_step_runner.reserve_revision(
             "direct-revision-ticket", "Revise this result."
@@ -210,8 +231,8 @@ def test_partial_loop_start_failure_stops_loop_and_rebuilds_runner_with_noop(
     released: list[str] = []
 
     class RecordingRunner:
-        def __init__(self, *_args, readiness_doorbell, **_kwargs) -> None:
-            self.readiness_doorbell = readiness_doorbell
+        def __init__(self, *_args, automatic_employee_step_eligibility_wake, **_kwargs) -> None:
+            self.automatic_employee_step_eligibility_wake = automatic_employee_step_eligibility_wake
             runners.append(self)
 
         def stop(self) -> None:
@@ -233,7 +254,7 @@ def test_partial_loop_start_failure_stops_loop_and_rebuilds_runner_with_noop(
     monkeypatch.setattr(loops, "ensure_machine_lock", lambda _path: True)
     monkeypatch.setattr(loops, "release_machine_lock", released.append)
     monkeypatch.setattr(loops, "EmployeeStepRunner", RecordingRunner)
-    monkeypatch.setattr(loops, "TicketReadinessLoop", PartiallyStartedLoop)
+    monkeypatch.setattr(loops, "AutomaticEmployeeStepDiscoveryLoop", PartiallyStartedLoop)
 
     handle = loops.start_background_loops(
         config,
@@ -242,11 +263,20 @@ def test_partial_loop_start_failure_stops_loop_and_rebuilds_runner_with_noop(
     )
     try:
         assert len(runners) == 2
-        assert isinstance(runners[0].readiness_doorbell, LoopReadinessDoorbell)
+        assert isinstance(
+            runners[0].automatic_employee_step_eligibility_wake,
+            LoopAutomaticEmployeeStepEligibilityWake,
+        )
         assert handle.employee_step_runner is runners[1]
-        assert handle.ticket_readiness_loop is None
-        assert isinstance(handle.readiness_doorbell, NoOpReadinessDoorbell)
-        assert runners[1].readiness_doorbell is handle.readiness_doorbell
+        assert handle.automatic_employee_step_discovery_loop is None
+        assert isinstance(
+            handle.automatic_employee_step_eligibility_wake,
+            NoOpAutomaticEmployeeStepEligibilityWake,
+        )
+        assert (
+            runners[1].automatic_employee_step_eligibility_wake
+            is handle.automatic_employee_step_eligibility_wake
+        )
         assert stopped == ["loop", "runner-0"]
         assert released == [config.dispatcher_lock_path]
     finally:
@@ -304,8 +334,8 @@ def test_server_lifespan_drains_runtime_before_shutting_down_gateways(
 
     class RecordingRuntime:
         employee_step_runner = object()
-        ticket_readiness_loop = None
-        readiness_doorbell = NoOpReadinessDoorbell()
+        automatic_employee_step_discovery_loop = None
+        automatic_employee_step_eligibility_wake = NoOpAutomaticEmployeeStepEligibilityWake()
 
         async def stop(self) -> None:
             order.append("runtime.stop")
@@ -352,7 +382,10 @@ def test_server_lifespan_drains_runtime_before_shutting_down_gateways(
 
     with TestClient(app):
         assert app.state.employee_step_runner is runtime.employee_step_runner
-        assert app.state.readiness_doorbell is runtime.readiness_doorbell
+        assert (
+            app.state.automatic_employee_step_eligibility_wake
+            is runtime.automatic_employee_step_eligibility_wake
+        )
 
     assert order == ["runtime.stop", "worker.shutdown", "chief.shutdown"]
 
@@ -382,8 +415,8 @@ def test_server_lifespan_uses_absolute_database_adjacent_hermes_home_across_cwds
 
     class RecordingRuntime:
         employee_step_runner = object()
-        ticket_readiness_loop = None
-        readiness_doorbell = NoOpReadinessDoorbell()
+        automatic_employee_step_discovery_loop = None
+        automatic_employee_step_eligibility_wake = NoOpAutomaticEmployeeStepEligibilityWake()
 
         async def stop(self) -> None:
             return None

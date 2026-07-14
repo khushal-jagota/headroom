@@ -16,7 +16,7 @@ from planner.core.contracts import EventKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import read_events_since
 from planner.days import data as days_data
-from planner.runtime import readiness
+from planner.runtime import automatic_employee_step_eligibility
 from planner.tickets import actions, data
 from planner.tickets import views as ticket_views
 from planner.tickets.contracts import (
@@ -40,12 +40,15 @@ if TYPE_CHECKING:
     from planner.tickets.contracts import Ticket
 
 
-class _RecordingDoorbell:
+class _RecordingEligibilityWake:
     def __init__(self) -> None:
-        self.rings = 0
+        self.wakes = 0
 
-    def ring(self) -> None:
-        self.rings += 1
+    def wake(self) -> None:
+        self.wakes += 1
+
+
+_AUTOMATIC_PLANNING_DAY_ID = "day_2099-01-01"
 
 
 def _create(conn: Connection, cfg: Config, clock: TestClock, **kw: Any) -> Ticket:
@@ -82,6 +85,26 @@ def _create(conn: Connection, cfg: Config, clock: TestClock, **kw: Any) -> Ticke
 def _scope(conn: Connection, t: Ticket, ceiling: str, at_cap: AtCap, clock: TestClock) -> Ticket:
     return data.change_scope(
         conn, t.id, ceiling=ceiling, at_cap=at_cap, actor="human", now=clock.now_unix()
+    )
+
+
+def _claim_eligible_automatic_step(conn: Connection, ticket_id: str, *, now: int) -> Ticket | None:
+    if (
+        conn.execute(
+            "SELECT 1 FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
+            (_AUTOMATIC_PLANNING_DAY_ID, ticket_id),
+        ).fetchone()
+        is None
+    ):
+        days_data.add_day_ticket(conn, _AUTOMATIC_PLANNING_DAY_ID, ticket_id, now)
+    return data.claim_automatic_employee_step(
+        conn,
+        ticket_id,
+        planning_day_id_resolver=lambda: _AUTOMATIC_PLANNING_DAY_ID,
+        eligibility_check=(
+            automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step
+        ),
+        now=now,
     )
 
 
@@ -255,11 +278,11 @@ def test_accept_kickoff_field_advances_to_success_and_leaves_title_independent(
     assert accepted[-1].payload["edited"] is True
 
 
-def test_accept_kickoff_field_action_rings_and_leaves_ticket_runnable(
+def test_accept_kickoff_field_action_wakes_and_leaves_ticket_eligible(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     t = _create(tmp_db, cfg, fake_clock, settle_kickoff=False)
-    doorbell = _RecordingDoorbell()
+    eligibility_wake = _RecordingEligibilityWake()
 
     settled = actions.accept_proposal(
         tmp_db,
@@ -269,15 +292,17 @@ def test_accept_kickoff_field_action_rings_and_leaves_ticket_runnable(
         now=fake_clock.now_unix(),
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
-        readiness_doorbell=doorbell,
+        automatic_employee_step_eligibility_wake=eligibility_wake,
     )
 
-    assert doorbell.rings == 1
+    assert eligibility_wake.wakes == 1
     assert settled.stage == "needs_success"
+    days_data.add_day_ticket(tmp_db, _AUTOMATIC_PLANNING_DAY_ID, settled.id, fake_clock.now_unix())
     assert (
-        readiness.is_runnable(
+        automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step(
             tmp_db,
             settled,
+            planning_day_id=_AUTOMATIC_PLANNING_DAY_ID,
             worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
         )
         is True
@@ -343,32 +368,64 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
     t = _create(tmp_db, cfg, fake_clock)
     assert t.ticket_status is TicketStatus.empty
 
-    guard_calls = 0
+    days_data.add_day_ticket(tmp_db, _AUTOMATIC_PLANNING_DAY_ID, t.id, now)
+    resolver_calls = 0
+    eligibility_calls = 0
 
-    def guard(
+    def planning_day_id_resolver() -> str:
+        nonlocal resolver_calls
+        resolver_calls += 1
+        assert tmp_db.in_transaction
+        return _AUTOMATIC_PLANNING_DAY_ID
+
+    def eligibility_check(
         conn: Connection,
         ticket: Ticket,
+        *,
+        planning_day_id: str,
         worker_type_definition: WorkerTypeDefinition,
     ) -> bool:
-        nonlocal guard_calls
-        guard_calls += 1
+        nonlocal eligibility_calls
+        eligibility_calls += 1
+        assert conn.in_transaction
+        assert ticket == data.read_ticket(conn, t.id)
+        assert planning_day_id == _AUTOMATIC_PLANNING_DAY_ID
         assert worker_type_definition.worker_type == ticket.worker_type
-        return True
+        return automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step(
+            conn,
+            ticket,
+            planning_day_id=planning_day_id,
+            worker_type_definition=worker_type_definition,
+        )
 
-    started = data.start_run_if_runnable(tmp_db, t.id, guard=guard, now=now)
+    started = data.claim_automatic_employee_step(
+        tmp_db,
+        t.id,
+        planning_day_id_resolver=planning_day_id_resolver,
+        eligibility_check=eligibility_check,
+        now=now,
+    )
     assert started is not None
     assert started.ticket_status is TicketStatus.agent_running_step
-    assert guard_calls == 1
+    assert resolver_calls == 1
+    assert eligibility_calls == 1
 
-    skipped = data.start_run_if_runnable(tmp_db, t.id, guard=guard, now=now)
+    skipped = data.claim_automatic_employee_step(
+        tmp_db,
+        t.id,
+        planning_day_id_resolver=planning_day_id_resolver,
+        eligibility_check=eligibility_check,
+        now=now,
+    )
     assert skipped is None
-    assert guard_calls == 1  # non-empty status skips before the readiness guard
+    assert resolver_calls == 2
+    assert eligibility_calls == 2  # no partial pre-status short circuit
 
     t = data.finish_run_if_still_running_step(tmp_db, t.id, session_key="sess-1", now=now)
     assert t.ticket_status is TicketStatus.empty
     assert t.chat_session_key == "sess-1"
 
-    t = data.start_run_if_runnable(tmp_db, t.id, guard=None, now=now)
+    t = _claim_eligible_automatic_step(tmp_db, t.id, now=now)
     assert t is not None
     t = data.file_proposal(tmp_db, t.id, field="success", body="parked", actor="agent", now=now)
     assert t.ticket_status is TicketStatus.awaiting_approval
@@ -389,9 +446,16 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
 
     t = data.take_over_ticket(tmp_db, t.id, now=now)
     assert t.ticket_status is TicketStatus.user_takeover
-    skipped = data.start_run_if_runnable(tmp_db, t.id, guard=guard, now=now)
+    skipped = data.claim_automatic_employee_step(
+        tmp_db,
+        t.id,
+        planning_day_id_resolver=planning_day_id_resolver,
+        eligibility_check=eligibility_check,
+        now=now,
+    )
     assert skipped is None
-    assert guard_calls == 1
+    assert resolver_calls == 3
+    assert eligibility_calls == 3
 
     t = data.release_ticket(tmp_db, t.id, now=now)
     assert t.ticket_status is TicketStatus.empty
@@ -409,7 +473,7 @@ def test_claim_running_step_chat_session_key_logs_lookup_event(
 ) -> None:
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
-    data.start_run_if_runnable(tmp_db, t.id, guard=None, now=now)
+    _claim_eligible_automatic_step(tmp_db, t.id, now=now)
 
     updated = data.claim_running_step_chat_session_key(
         tmp_db, t.id, session_key="sess-early", now=now
@@ -441,7 +505,7 @@ def test_mark_run_errored_if_still_running_step_preserves_lost_ownership(
 ) -> None:
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
-    data.start_run_if_runnable(tmp_db, t.id, guard=None, now=now)
+    _claim_eligible_automatic_step(tmp_db, t.id, now=now)
     t = data.mark_run_errored_if_still_running_step(
         tmp_db, t.id, error="boom", session_key="sess-error", now=now
     )
@@ -449,7 +513,7 @@ def test_mark_run_errored_if_still_running_step_preserves_lost_ownership(
     assert t.chat_session_key == "sess-error"
 
     t = data.release_ticket(tmp_db, t.id, now=now)
-    t = data.start_run_if_runnable(tmp_db, t.id, guard=None, now=now)
+    t = _claim_eligible_automatic_step(tmp_db, t.id, now=now)
     assert t is not None
     t = data.take_over_ticket(tmp_db, t.id, now=now)
     t = data.mark_run_errored_if_still_running_step(
@@ -520,7 +584,7 @@ def test_auto_accepted_plan_routes_only_khushal_to_takeover_that_survives_settle
             actor="agent",
             now=now,
         )
-    started = data.start_run_if_runnable(tmp_db, ticket.id, guard=None, now=now)
+    started = _claim_eligible_automatic_step(tmp_db, ticket.id, now=now)
     assert started is not None
 
     ticket = data.file_proposal(
@@ -561,7 +625,7 @@ def test_current_worker_plan_proposal_routes_khushal_to_takeover_that_survives_s
             actor="agent",
             now=now,
         )
-    started = data.start_run_if_runnable(tmp_db, ticket.id, guard=None, now=now)
+    started = _claim_eligible_automatic_step(tmp_db, ticket.id, now=now)
     assert started is not None
 
     ticket = data.file_current_proposal_with_recap(

@@ -34,7 +34,9 @@ from planner.core.ws import tail_events
 from planner.days.api import router as days_router
 from planner.files.api import router as files_router
 from planner.projects.api import router as projects_router
-from planner.runtime.readiness_doorbell import NoOpReadinessDoorbell
+from planner.runtime.automatic_employee_step_eligibility_wake import (
+    NoOpAutomaticEmployeeStepEligibilityWake,
+)
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
 from planner.worker_context.contracts import WorkerContextService
@@ -177,7 +179,9 @@ def create_app(
                     )
                 else:
                     app_.state.employee_step_runner = loops.employee_step_runner
-                    app_.state.readiness_doorbell = loops.readiness_doorbell
+                    app_.state.automatic_employee_step_eligibility_wake = (
+                        loops.automatic_employee_step_eligibility_wake
+                    )
         try:
             yield
         finally:
@@ -197,7 +201,7 @@ def create_app(
     app.state.clock = clock
     app.state.adapters = adapters
     app.state.conn_factory = conn_factory
-    app.state.readiness_doorbell = NoOpReadinessDoorbell()
+    app.state.automatic_employee_step_eligibility_wake = NoOpAutomaticEmployeeStepEligibilityWake()
     app.state.employee_step_runner = (
         TestModeAcceptingEmployeeRevisionRunner() if config.test_mode else None
     )

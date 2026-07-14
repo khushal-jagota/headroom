@@ -289,14 +289,14 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
 
     before = _events(db_path, ticket_id)
 
-    class Rings:
+    class EligibilityWakes:
         count = 0
 
-        def ring(self) -> None:
+        def wake(self) -> None:
             self.count += 1
 
-    rings = Rings()
-    app.state.readiness_doorbell = rings
+    wakes = EligibilityWakes()
+    app.state.automatic_employee_step_eligibility_wake = wakes
     with TestClient(app) as client:
         invalid = client.post(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
@@ -323,7 +323,7 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
     assert ticket["ticket_status"] == "empty"
     assert ticket["ceiling"] == "needs_plan"
     assert ticket["at_cap"] == "stop"
-    assert rings.count == 1
+    assert wakes.count == 1
     new_events = _events(db_path, ticket_id)[len(before) :]
     assert [kind for kind, _ in new_events] == [
         "field_value_edited",
@@ -351,17 +351,17 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
     }
 
 
-def test_create_external_work_emits_exact_existing_events_and_rings(tmp_path: Path) -> None:
+def test_create_external_work_emits_exact_existing_events_and_wakes(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
 
-    class Rings:
+    class EligibilityWakes:
         count = 0
 
-        def ring(self) -> None:
+        def wake(self) -> None:
             self.count += 1
 
-    rings = Rings()
-    app.state.readiness_doorbell = rings
+    wakes = EligibilityWakes()
+    app.state.automatic_employee_step_eligibility_wake = wakes
     with TestClient(app) as client:
         response = client.post(
             "/api/chief/tickets/from-external-work",
@@ -374,7 +374,7 @@ def test_create_external_work_emits_exact_existing_events_and_rings(tmp_path: Pa
             headers=_CHIEF,
         )
     assert response.status_code == 200, response.json()
-    assert rings.count == 1
+    assert wakes.count == 1
     events = _events(db_path, response.json()["id"])
     assert [kind for kind, _ in events] == [
         "ticket_created",

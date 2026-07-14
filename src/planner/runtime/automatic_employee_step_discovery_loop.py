@@ -1,4 +1,4 @@
-"""Discover automatically runnable Tickets on today's board."""
+"""Read-only discovery of Tickets eligible for an automatic Employee step."""
 
 from __future__ import annotations
 
@@ -8,24 +8,20 @@ import threading
 from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.days.logic import dates
-from planner.runtime import readiness
+from planner.runtime import automatic_employee_step_eligibility
 from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import Ticket
 from planner.worker_types.configuration import configured_worker_type_registry
 
 _log = logging.getLogger(__name__)
 
 _CANDIDATE_SQL = (
-    "SELECT t.id FROM tickets t "
-    "JOIN day_tickets dt ON dt.ticket_id = t.id "
-    "WHERE dt.day_id = ? "
-    "AND t.ticket_status = 'empty' AND t.stage NOT IN ('done','dropped')"
+    "SELECT t.id FROM tickets t JOIN day_tickets dt ON dt.ticket_id = t.id WHERE dt.day_id = ?"
 )
 
 
-class TicketReadinessLoop:
-    """Read-only discovery plus a wakeable timer backstop."""
+class AutomaticEmployeeStepDiscoveryLoop:
+    """Read-only discovery plus a wakeable periodic timer backstop."""
 
     def __init__(
         self,
@@ -46,40 +42,45 @@ class TicketReadinessLoop:
         self._thread: threading.Thread | None = None
 
     def wake(self) -> None:
-        """Wake readiness discovery now; the timer remains a backstop."""
+        """Ask discovery to poll now; the periodic timer remains the backstop."""
         self._wake.set()
 
     def poll_once(self) -> list[str]:
-        """Discover ready Tickets and pass only their ids to the employee runner."""
-        today_id = dates.resolve_day_id("today", self._clock.now(), self._boundary_hour)
+        """Discover eligible Ticket ids and pass them to the Employee-step runner."""
+        planning_day_id = dates.resolve_day_id(
+            "today",
+            self._clock.now(),
+            self._boundary_hour,
+        )
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
-            rows = conn.execute(_CANDIDATE_SQL, (today_id,)).fetchall()
-            ready: list[Ticket] = []
+            rows = conn.execute(_CANDIDATE_SQL, (planning_day_id,)).fetchall()
+            eligible_ticket_ids: list[str] = []
             registry = configured_worker_type_registry()
             for row in rows:
                 ticket = tickets_data.read_ticket(conn, str(row["id"]))
                 worker_type_definition = registry.require(ticket.worker_type)
-                if readiness.is_runnable(
+                if automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step(
                     conn,
                     ticket,
+                    planning_day_id=planning_day_id,
                     worker_type_definition=worker_type_definition,
                 ):
-                    ready.append(ticket)
+                    eligible_ticket_ids.append(ticket.id)
         finally:
             conn.close()
-        for ticket in ready:
-            self._employee_step_runner.run_ready_step(ticket.id)
-        return [ticket.id for ticket in ready]
+        for ticket_id in eligible_ticket_ids:
+            self._employee_step_runner.try_run_automatic_step(ticket_id)
+        return eligible_ticket_ids
 
     def start(self, interval: int) -> None:
         """Start the production discovery thread."""
         if self._thread is not None:
-            raise RuntimeError("Ticket readiness loop already started")
+            raise RuntimeError("automatic employee-step discovery loop already started")
         self._thread = threading.Thread(
             target=self._run_loop,
             args=(interval,),
-            name="ticket-readiness-loop",
+            name="automatic-employee-step-discovery-loop",
             daemon=True,
         )
         self._thread.start()
@@ -98,6 +99,6 @@ class TicketReadinessLoop:
             try:
                 self.poll_once()
             except Exception:
-                _log.exception("ticket readiness poll failed")
+                _log.exception("automatic employee-step discovery poll failed")
             self._wake.wait(interval)
             self._wake.clear()

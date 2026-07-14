@@ -1,11 +1,13 @@
-"""Day membership actions that commit before ringing readiness discovery."""
+"""Day membership actions that commit before waking Automatic Employee-step eligibility."""
 
 from __future__ import annotations
 
 import sqlite3
 
 from planner.days import data as days_data
-from planner.runtime.readiness_doorbell import ReadinessDoorbell
+from planner.runtime.automatic_employee_step_eligibility_wake import (
+    AutomaticEmployeeStepEligibilityWake,
+)
 from planner.tickets import data as tickets_data
 
 
@@ -15,7 +17,7 @@ def add_ticket_to_day(
     ticket_id: str,
     *,
     now: int,
-    readiness_doorbell: ReadinessDoorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> bool:
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -27,8 +29,9 @@ def add_ticket_to_day(
     else:
         conn.execute("COMMIT")
     if changed:
-        readiness_doorbell.ring()
+        automatic_employee_step_eligibility_wake.wake()
     return changed
+
 
 def remove_ticket_from_day(
     conn: sqlite3.Connection,
@@ -36,7 +39,7 @@ def remove_ticket_from_day(
     ticket_id: str,
     *,
     now: int,
-    readiness_doorbell: ReadinessDoorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> bool:
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -47,5 +50,5 @@ def remove_ticket_from_day(
     else:
         conn.execute("COMMIT")
     if changed:
-        readiness_doorbell.ring()
+        automatic_employee_step_eligibility_wake.wake()
     return changed

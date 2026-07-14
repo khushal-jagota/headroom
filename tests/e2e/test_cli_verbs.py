@@ -1,6 +1,6 @@
 """E2E for the W3b one-CLI rework — real `panels serve` subprocess, CLI over HTTP. Non-anchored
 names (the test_eNN_ anchors are reserved for the SPEC acceptance items). No browser: these
-drive the CLI + API surfaces only. The readiness loop never runs in test mode."""
+drive the CLI + API surfaces only. Automatic Employee-step discovery never runs in test mode."""
 
 from __future__ import annotations
 

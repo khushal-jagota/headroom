@@ -38,8 +38,10 @@ from planner.core.contracts import JsonDict, LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import planning_date, resolve_day_id
 from planner.projects import data as projects_data
+from planner.runtime.automatic_employee_step_eligibility_wake import (
+    AutomaticEmployeeStepEligibilityWake,
+)
 from planner.runtime.contracts import EmployeeRevisionRunner
-from planner.runtime.readiness_doorbell import ReadinessDoorbell
 from planner.sprints import views as sprints_views
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
@@ -99,8 +101,13 @@ async def db_conn(request: Request) -> AsyncIterator[sqlite3.Connection]:
         conn.close()
 
 
-def get_readiness_doorbell(request: Request) -> ReadinessDoorbell:
-    return cast(ReadinessDoorbell, request.app.state.readiness_doorbell)
+def get_automatic_employee_step_eligibility_wake(
+    request: Request,
+) -> AutomaticEmployeeStepEligibilityWake:
+    return cast(
+        AutomaticEmployeeStepEligibilityWake,
+        request.app.state.automatic_employee_step_eligibility_wake,
+    )
 
 
 def get_employee_revision_runner(request: Request) -> EmployeeRevisionRunner | None:
@@ -112,7 +119,9 @@ DbConn = Annotated[sqlite3.Connection, Depends(db_conn)]
 Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
 Clk = Annotated[Clock, Depends(get_clock)]
-Doorbell = Annotated[ReadinessDoorbell, Depends(get_readiness_doorbell)]
+AutomaticEmployeeStepEligibilityWakeDependency = Annotated[
+    AutomaticEmployeeStepEligibilityWake, Depends(get_automatic_employee_step_eligibility_wake)
+]
 EmployeeRunner = Annotated[EmployeeRevisionRunner | None, Depends(get_employee_revision_runner)]
 
 
@@ -372,7 +381,12 @@ def _parse_scope_at_cap(raw: str | None) -> AtCap | None:
 
 @router.post("/tickets")
 async def create_ticket(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk, readiness_doorbell: Doorbell
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = _marshal_create_ticket(raw)
     now = clk.now_unix()
@@ -399,7 +413,7 @@ async def create_ticket(
         sprint_id=body["sprint_id"],
         sprint_item_id=body["sprint_item_id"],
         worker_type=body["worker_type"],
-        readiness_doorbell=readiness_doorbell,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -410,7 +424,7 @@ async def create_ticket_from_external_work(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    readiness_doorbell: Doorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_chief(ctx)
     worker_type = _require_create_worker_type(raw)
@@ -443,7 +457,7 @@ async def create_ticket_from_external_work(
         sprint_id=body.get("sprint_id"),
         sprint_item_id=body.get("sprint_item_id"),
         worker_type=worker_type,
-        readiness_doorbell=readiness_doorbell,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -455,7 +469,7 @@ async def reconcile_ticket_from_external_work(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    readiness_doorbell: Doorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_chief(ctx)
     _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
@@ -471,7 +485,7 @@ async def reconcile_ticket_from_external_work(
         recap=body.get("recap"),
         actor=ctx.actor,
         now=now,
-        readiness_doorbell=readiness_doorbell,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -532,7 +546,7 @@ async def delete_ticket(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    readiness_doorbell: Doorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_direct_write(ctx)
     deleted = tickets_actions.delete_ticket(
@@ -540,7 +554,7 @@ async def delete_ticket(
         ticket_id,
         actor=ctx.actor,
         now=clk.now_unix(),
-        readiness_doorbell=readiness_doorbell,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return {
         "ok": True,
@@ -651,7 +665,7 @@ async def accept_field(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    readiness_doorbell: Doorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = _marshal_accept(raw)
     require_direct_write(ctx)
@@ -669,7 +683,7 @@ async def accept_field(
         edited_body=body["edited_body"],
         next_ceiling=next_ceiling,
         at_cap=at_cap,
-        readiness_doorbell=readiness_doorbell,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -736,7 +750,7 @@ async def put_value(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    readiness_doorbell: Doorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = ValueEditBody(body=body_str(raw, "body"))
     require_direct_write(ctx)
@@ -750,7 +764,7 @@ async def put_value(
         new_body=body["body"],
         actor=ctx.actor,
         now=now,
-        readiness_doorbell=readiness_doorbell,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -762,7 +776,7 @@ async def scope_ticket(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    readiness_doorbell: Doorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = ScopeBody(ceiling=body_opt_str(raw, "ceiling"), at_cap=body_opt_str(raw, "at_cap"))
     require_direct_write(ctx)
@@ -794,7 +808,7 @@ async def scope_ticket(
         at_cap=at_cap,
         actor=ctx.actor,
         now=now,
-        readiness_doorbell=readiness_doorbell,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -806,7 +820,7 @@ async def set_stage(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    readiness_doorbell: Doorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = StageBody(to_stage=body_str(raw, "to_stage"))
     require_direct_write(ctx)
@@ -823,7 +837,7 @@ async def set_stage(
         new_stage=to_stage,
         actor=ctx.actor,
         now=now,
-        readiness_doorbell=readiness_doorbell,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -834,7 +848,7 @@ async def drop_ticket(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    readiness_doorbell: Doorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_direct_write(ctx)
     now = clk.now_unix()
@@ -843,7 +857,7 @@ async def drop_ticket(
         ticket_id,
         actor=ctx.actor,
         now=now,
-        readiness_doorbell=readiness_doorbell,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -854,7 +868,7 @@ async def take_over_ticket(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    readiness_doorbell: Doorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_direct_write(ctx)
     now = clk.now_unix()
@@ -862,7 +876,7 @@ async def take_over_ticket(
         conn,
         ticket_id,
         now=now,
-        readiness_doorbell=readiness_doorbell,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -873,7 +887,7 @@ async def release_ticket(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    readiness_doorbell: Doorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_direct_write(ctx)
     now = clk.now_unix()
@@ -881,7 +895,7 @@ async def release_ticket(
         conn,
         ticket_id,
         now=now,
-        readiness_doorbell=readiness_doorbell,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -903,7 +917,7 @@ async def add_link(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    readiness_doorbell: Doorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_direct_write(ctx)
     body = LinkBody(
@@ -919,7 +933,7 @@ async def add_link(
         body["to_id"],
         kind,
         now=now,
-        readiness_doorbell=readiness_doorbell,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return {"from_id": body["from_id"], "to_id": body["to_id"], "kind": kind.value}
 
@@ -929,7 +943,7 @@ async def remove_link(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    readiness_doorbell: Doorbell,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
     from_id: str,
     to_id: str,
     kind: str,
@@ -943,7 +957,7 @@ async def remove_link(
         to_id,
         kind_enum,
         now=now,
-        readiness_doorbell=readiness_doorbell,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return {"ok": True}
 

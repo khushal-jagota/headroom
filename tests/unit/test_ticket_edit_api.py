@@ -17,6 +17,8 @@ from planner.core.contracts import Priority
 from planner.core.db import connect, create_schema
 from planner.core.events import read_events_since
 from planner.core.server import create_app
+from planner.days import data as days_data
+from planner.runtime import automatic_employee_step_eligibility
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import NO_FURTHER, AtCap
 from planner.worker_context import data as worker_context_data
@@ -550,7 +552,17 @@ def test_active_worker_and_running_chat_do_not_block_an_ordinary_edit(
     ticket_id = _create_ticket(db_path)
     conn = connect(str(db_path))
     try:
-        started = tickets_data.start_run_if_runnable(conn, ticket_id, guard=None, now=2)
+        planning_day_id = "day_2026-07-10"
+        days_data.add_day_ticket(conn, planning_day_id, ticket_id, 2)
+        started = tickets_data.claim_automatic_employee_step(
+            conn,
+            ticket_id,
+            planning_day_id_resolver=lambda: planning_day_id,
+            eligibility_check=(
+                automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step
+            ),
+            now=2,
+        )
         assert started is not None
         chat_data.start_turn(
             conn,

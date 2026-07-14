@@ -53,21 +53,21 @@ def _ticket(db_path: Path) -> str:
         conn.close()
 
 
-def test_day_add_and_previously_missed_removal_ring_after_actual_change(
+def test_day_add_and_previously_missed_removal_wake_after_actual_change(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
     ticket_id = _ticket(db_path)
 
-    class RecordingDoorbell:
+    class RecordingEligibilityWake:
         def __init__(self) -> None:
-            self.rings = 0
+            self.wakes = 0
 
-        def ring(self) -> None:
-            self.rings += 1
+        def wake(self) -> None:
+            self.wakes += 1
 
-    doorbell = RecordingDoorbell()
-    app.state.readiness_doorbell = doorbell
+    eligibility_wake = RecordingEligibilityWake()
+    app.state.automatic_employee_step_eligibility_wake = eligibility_wake
 
     with TestClient(app) as client:
         response = client.post("/api/day/today/tickets", json={"ticket_id": ticket_id})
@@ -80,4 +80,4 @@ def test_day_add_and_previously_missed_removal_ring_after_actual_change(
     assert removed.status_code == 200, removed.json()
     assert absent.status_code == 200, absent.json()
     assert response.json()["tickets"][0]["id"] == ticket_id
-    assert doorbell.rings == 2
+    assert eligibility_wake.wakes == 2

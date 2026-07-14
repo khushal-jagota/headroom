@@ -24,12 +24,12 @@ else is a surface, a worker, or a projection of that record.
        +-------------+-------------+
        |                           |
        v                           v
-  WebSocket doorbell          TicketReadinessLoop
-  keyed UI refetch            today runnable tickets
+  WebSocket doorbell          AutomaticEmployeeStepDiscoveryLoop
+  keyed UI refetch            today membership candidates
                                    |
                                    v
                               EmployeeStepRunner
-                              Hermes employee
+                              one Hermes employee step
 ```
 
 The important separation is simple: the server owns truth, ticket workers propose, and
@@ -68,9 +68,9 @@ These are the things the planner is made of:
   A blocker only counts while its source Ticket is not `done` or `dropped`.
 
 The Board is not an inventory. It is today's execution board: tickets attached to
-today's day. TicketReadinessLoop starts from that same today membership, then narrows further
-to empty, non-terminal tickets that pass readiness. A ticket can exist and be ready
-in every other way, but if it is not on today's day, it will not auto-run.
+today's day. AutomaticEmployeeStepDiscoveryLoop starts with that same membership-only
+candidate set, then asks the complete Automatic Employee-step eligibility decision
+about each Ticket. A Ticket that is not on today's day will not auto-run.
 
 Daily rollover is an agent workflow rather than a domain engine. The repo-owned
 `panels-rollover` skill reads the day and sprint boundary through the CLI, drafts the
@@ -162,28 +162,50 @@ routes.
 
 ### 4. The Employee Runtime
 
-The runtime has two systems.
+The runtime keeps advisory discovery separate from step execution.
 
-**TicketReadinessLoop** discovers readiness. It polls today's Tickets whose `ticket_status` is `empty`,
-then applies the readiness predicate: not terminal, has a next gating field, no
-pending proposal on that field, not blocked, and not stopped at its scope limit.
+One complete decision owns **Automatic Employee-step eligibility**. It returns yes
+only when all seven facts hold:
 
-**EmployeeStepRunner** owns one worker step. It marks the Ticket `agent_running_step`, resumes or
-creates that ticket's Hermes session, submits one prompt, then settles the runtime
-status when the turn ends. If the worker parks a proposal, the ticket becomes
-`awaiting_approval`; if the proposal auto-accepted and more work is allowed, it
-returns to `empty` so TicketReadinessLoop can discover the next step.
+1. The Ticket belongs to the supplied `planning_day_id` — today's day during
+   automatic discovery.
+2. Its `ticket_status` is `empty`.
+3. Its Stage is not terminal.
+4. Its Stage has a next gated field.
+5. That field has no parked proposal.
+6. Its `ceiling` and `at_cap` allow another proposal; the Ticket is not at or beyond
+   a stopping ceiling.
+7. It has no active blocker.
 
-Ticket, Day membership, and blocking-link actions commit first, then ring a
-best-effort `ReadinessDoorbell`. Runner settlement rings the same doorbell to continue
-automatic work. The doorbell carries no Ticket id and owns no state. Delivery failure
-is logged and ignored; SQLite and the periodic timer remain canonical. Processes that
-do not own the polling lock receive a no-op doorbell instead of trying to wake another
-process.
+**AutomaticEmployeeStepDiscoveryLoop** is read-only and advisory. It selects only
+Tickets that belong to today's day, then calls the complete eligibility decision for
+each membership candidate. It does not claim Tickets, write state, or contact Hermes.
 
-Code paths: `src/planner/runtime/readiness.py`,
-`src/planner/runtime/readiness_doorbell.py`,
-`src/planner/runtime/ticket_readiness_loop.py`,
+**EmployeeStepRunner** separately owns one worker step. Its final claim starts
+`BEGIN IMMEDIATE`, reloads the Ticket and its Worker type definition, resolves the
+planning day inside the transaction, and calls the same complete eligibility decision.
+A stale discovery result cannot change status, create chat state, call the gateway, or
+build a prompt. After a successful claim, the runner marks the Ticket
+`agent_running_step`, resumes or creates its Hermes session, submits one prompt, and
+settles runtime status when the turn ends. A parked proposal becomes
+`awaiting_approval`; auto-accepted work can return to `empty` for another discovery
+pass.
+
+A direct requested revision is different. It bypasses Automatic Employee-step
+eligibility and planning-day resolution, uses a reserved runner handoff, and strictly
+resumes the Ticket's stored Hermes session.
+
+Ticket, Day membership, and blocking-link actions commit first, then call
+`AutomaticEmployeeStepEligibilityWake.wake()`. Runner settlement does the same. This
+best-effort same-process wake carries no Ticket id, owns no state, and sends no IPC.
+Failure is logged and ignored; SQLite and the periodic discovery timer remain
+canonical. The polling-lock owner uses
+`LoopAutomaticEmployeeStepEligibilityWake`; a process without the lock receives
+`NoOpAutomaticEmployeeStepEligibilityWake`.
+
+Code paths: `src/planner/runtime/automatic_employee_step_eligibility.py`,
+`src/planner/runtime/automatic_employee_step_discovery_loop.py`,
+`src/planner/runtime/automatic_employee_step_eligibility_wake.py`,
 `src/planner/runtime/employee_step_runner.py`,
 `src/planner/tickets/actions.py`, `src/planner/days/actions.py`,
 `src/planner/core/link_actions.py`,
@@ -299,7 +321,8 @@ less clean than the rest.
 2. **Sprint item status is a read projection.** Sprint items no longer store their
    own status. They derive `todo`, `in_progress`, `blocked`, or `done` from child
    tickets and active `links.kind='blocks'` rows. A `done` or `dropped` source clears
-   its block. This keeps ticket readiness and item blocking on the same read model.
+   its block. This keeps Automatic Employee-step eligibility and item blocking on the
+   same read model.
 
 3. **The frontend no longer copies the Ticket Stage machine (resolved).** The UI used
    to repeat stage order, gating fields, and advance targets in `web/src/lib/ui.ts`. It
@@ -326,4 +349,4 @@ less clean than the rest.
 
 ---
 
-_Last verified: 2026-07-13._
+_Last verified: 2026-07-14._

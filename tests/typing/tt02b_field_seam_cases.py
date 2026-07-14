@@ -6,8 +6,11 @@ import sqlite3
 from collections.abc import Mapping
 from typing import assert_type
 
-from planner.runtime import readiness
-from planner.runtime.readiness_doorbell import ReadinessDoorbell
+from planner.runtime.automatic_employee_step_eligibility_wake import (
+    AutomaticEmployeeStepEligibilityWake,
+)
+
+from planner.runtime import automatic_employee_step_eligibility
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, Ticket
@@ -18,7 +21,7 @@ from planner.worker_types.contracts import WorkerTypeDefinition
 
 def _cases(
     conn: sqlite3.Connection,
-    doorbell: ReadinessDoorbell,
+    eligibility_wake: AutomaticEmployeeStepEligibilityWake,
     ticket: Ticket,
     at_cap: AtCap,
     definition: WorkerTypeDefinition,
@@ -48,7 +51,7 @@ def _cases(
         field=foreign_field,
         actor="human",
         now=0,
-        readiness_doorbell=doorbell,
+        automatic_employee_step_eligibility_wake=eligibility_wake,
     )
     _t7: Ticket = tickets_actions.edit_field_value(
         conn,
@@ -57,7 +60,7 @@ def _cases(
         new_body="b",
         actor="human",
         now=0,
-        readiness_doorbell=doorbell,
+        automatic_employee_step_eligibility_wake=eligibility_wake,
     )
 
     assert_type(
@@ -110,6 +113,23 @@ def _cases(
         worker_type_definition=definition,
     )
     assert_type(
-        readiness.is_runnable(conn, ticket, worker_type_definition=definition),
+        automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step(
+            conn,
+            ticket,
+            planning_day_id="day_2099-01-01",
+            worker_type_definition=definition,
+        ),
         bool,
+    )
+    assert_type(
+        tickets_data.claim_automatic_employee_step(
+            conn,
+            ticket.id,
+            planning_day_id_resolver=lambda: "day_2099-01-01",
+            eligibility_check=(
+                automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step
+            ),
+            now=0,
+        ),
+        Ticket | None,
     )

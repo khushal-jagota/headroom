@@ -6,7 +6,7 @@ import json
 import pytest
 
 from planner.core.errors import PlannerError
-from planner.runtime import readiness
+from planner.runtime import automatic_employee_step_eligibility
 from planner.tickets.contracts import AtCap, TicketFields
 from planner.tickets.logic import admission, external_work, fields_codec, machine, resolution
 from planner.worker_types.contracts import (
@@ -129,7 +129,10 @@ def test_stored_decode_is_registry_free_and_declared_validation_is_explicit() ->
             (object(), BETA, AtCap.propose, "human"),
         ),
         (external_work.decide_external_work, (object(), BETA, {})),
-        (readiness.is_runnable, (object(), object())),
+        (
+            automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step,
+            (object(), object()),
+        ),
     ],
 )
 def test_semantic_functions_require_definition(function: object, args: tuple[object, ...]) -> None:
@@ -155,9 +158,31 @@ def test_semantic_signatures_have_required_descriptive_parameter() -> None:
         resolution.decide_return_for_revision,
         resolution.decide_scope_change,
         external_work.decide_external_work,
-        readiness.is_runnable,
+        automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step,
     )
     for function in functions:
         parameter = inspect.signature(function).parameters["worker_type_definition"]
         assert parameter.kind is inspect.Parameter.KEYWORD_ONLY, function.__name__
         assert parameter.default is inspect.Parameter.empty, function.__name__
+
+
+def test_complete_eligibility_requires_explicit_day_and_definition() -> None:
+    function = automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step
+    parameters = inspect.signature(function).parameters
+    for name in ("planning_day_id", "worker_type_definition"):
+        parameter = parameters[name]
+        assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        assert parameter.default is inspect.Parameter.empty
+
+    with pytest.raises(TypeError):
+        function(  # type: ignore[call-arg]
+            object(),
+            object(),
+            worker_type_definition=SYNTHETIC_WORKER_TYPE_DEFINITION,
+        )
+    with pytest.raises(TypeError):
+        function(  # type: ignore[call-arg]
+            object(),
+            object(),
+            planning_day_id="day_2099-01-01",
+        )

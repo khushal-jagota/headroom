@@ -526,7 +526,7 @@ def test_semantic_modules_have_no_optional_definition_or_coding_fallback() -> No
         root / "src/planner/tickets/logic/admission.py",
         root / "src/planner/tickets/logic/resolution.py",
         root / "src/planner/tickets/logic/external_work.py",
-        root / "src/planner/runtime/readiness.py",
+        root / "src/planner/runtime/automatic_employee_step_eligibility.py",
     )
     for path in paths:
         source = path.read_text()

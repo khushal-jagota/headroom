@@ -11,7 +11,7 @@ import json
 import sqlite3
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from typing import Final
+from typing import Final, Protocol
 
 from planner.core import links as core_links
 from planner.core.contracts import EventKind, Priority
@@ -49,6 +49,17 @@ class _Unset:
 
 
 _UNSET: Final = _Unset()
+
+
+class _AutomaticEmployeeStepEligibilityCheck(Protocol):
+    def __call__(
+        self,
+        conn: sqlite3.Connection,
+        ticket: Ticket,
+        *,
+        planning_day_id: str,
+        worker_type_definition: WorkerTypeDefinition,
+    ) -> bool: ...
 
 
 @contextmanager
@@ -625,21 +636,25 @@ def get_effective_sprint_id(conn: sqlite3.Connection, ticket_id: str) -> str | N
     return sprint_id
 
 
-def start_run_if_runnable(
+def claim_automatic_employee_step(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    guard: Callable[[sqlite3.Connection, Ticket, WorkerTypeDefinition], bool] | None,
+    planning_day_id_resolver: Callable[[], str],
+    eligibility_check: _AutomaticEmployeeStepEligibilityCheck,
     now: int,
 ) -> Ticket | None:
-    """Start a run only from empty after the injected readiness guard passes."""
     with _txn(conn):
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
-        if ticket.ticket_status is not TicketStatus.empty:
-            return None
-        if guard is not None and not guard(conn, ticket, worker_type_definition):
+        planning_day_id = planning_day_id_resolver()
+        if not eligibility_check(
+            conn,
+            ticket,
+            planning_day_id=planning_day_id,
+            worker_type_definition=worker_type_definition,
+        ):
             return None
         _write_ticket_status(conn, ticket_id, TicketStatus.agent_running_step, now)
         return _load_ticket_for_write(conn, ticket_id)

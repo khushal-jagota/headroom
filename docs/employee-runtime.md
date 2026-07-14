@@ -8,40 +8,58 @@ scope), and you approve its work. It only ever _proposes_ — nothing it writes 
 real until it is accepted, automatically within the room you granted or by you in
 person.
 
-Around each employee runs a small loop that decides _when_ to make it act, runs one
-step at a time, and feeds an approval straight back in.
+Automatic discovery decides _whether_ a Ticket may start another employee step. A
+separate runner owns the step itself.
 
 ```
-   TicketReadinessLoop                     EmployeeStepRunner
-   ───────────────────                     ──────────────────
-   scan today's tickets for ones           use the shared gateway · resume the
-   READY to move                           ticket's mind · submit one prompt
-        │  fire ─────────────────────────► watch the single run end
-        │                                  write the ticket's status (the one door)
-        ▼                                          │
-   an approval / unblock, or a finished           │  a proposal, parked or applied
-   step, RINGS a best-effort doorbell ◄───────────┘
-   (SQLite + the timer remain the backstop)
+   AutomaticEmployeeStepDiscoveryLoop      EmployeeStepRunner
+   ───────────────────────────────────      ──────────────────
+   scan today's membership candidates      claim inside one transaction
+   apply the complete eligibility rule ───► resume the Ticket's Hermes session
+                                           run and settle one employee step
+        ▲                                          │
+        └──── best-effort wake after commit ───────┘
+              (SQLite + the timer remain canonical)
 ```
 
 ## Discovery and execution
 
-**TicketReadinessLoop** polls today's tickets and picks the ones that are _ready_ —
-able to move and not already in flight — then passes each Ticket id to the employee
-runner. It never touches the AI or writes the Ticket Stage. **EmployeeStepRunner** owns
-one step through the shared persistent Hermes gateway child: it rechecks readiness,
-claims the Ticket, assembles the prompt, resumes or creates the Ticket's durable
-session, submits one turn, and watches for the run to end. It then writes runtime
-status through the Ticket data writers. Proposals, approvals, takeover, release,
-and runtime start/finish/error all use those same writer functions, so
-"the code owns the Stage, the worker only proposes" holds even here.
+One function answers **Automatic Employee-step eligibility**. It returns yes only
+when all seven facts hold:
 
-The runner exists whenever the worker gateway exists. Readiness polling is optional:
-it may be disabled or another process may own the polling lock. Returning Review work
-for revision therefore reserves a runner thread directly before changing the Ticket,
-then releases that handoff after commit. The revision resumes the stored Hermes session
-strictly. If that session is stale, Panels records an errored employee turn instead of
-silently creating a different conversation.
+1. The Ticket belongs to the supplied `planning_day_id` — today's day during
+   automatic discovery.
+2. Its `ticket_status` is `empty`.
+3. Its Stage is not terminal.
+4. Its Stage has a next gated field.
+5. That field has no parked proposal.
+6. Its `ceiling` and `at_cap` allow another proposal; the Ticket is not at or beyond
+   a stopping ceiling.
+7. It has no active blocker.
+
+**AutomaticEmployeeStepDiscoveryLoop** is read-only and advisory. Its database scan
+selects only Tickets that belong to today's day, then it asks the complete eligibility
+function about each membership candidate. It passes eligible Ticket ids to the
+runner, but it does not claim a Ticket, touch Hermes, or write Ticket state.
+
+**EmployeeStepRunner** separately owns one step through the shared persistent Hermes
+gateway child. Its final claim starts `BEGIN IMMEDIATE`, reloads the Ticket and its
+Worker type definition, resolves the planning day inside that transaction, and asks
+the same complete eligibility function again. A stale discovery result therefore
+cannot change status, create chat state, call the gateway, or build a prompt. After a
+successful claim, the runner assembles the prompt, resumes or creates the Ticket's
+durable session, submits one turn, watches the run end, and settles runtime status
+through the Ticket data writers. Proposals, approvals, takeover, release, and runtime
+start/finish/error use those same writers, so "the code owns the Stage, the worker
+only proposes" holds here too.
+
+The runner exists whenever the worker gateway exists. Automatic discovery is
+optional: it may be disabled or another process may own the polling lock. Returning
+Review work for revision deliberately bypasses Automatic Employee-step eligibility
+and planning-day resolution. It reserves a runner handoff before changing the Ticket,
+then releases that handoff after commit. The revision resumes the stored Hermes
+session strictly. If that session is stale, Panels records an errored employee turn
+instead of silently creating a different conversation.
 
 One employee is one ticket session, so Hermes' per-session busy guard keeps one turn
 in flight for that ticket while the shared employee-role child can hold many sessions.
@@ -49,18 +67,21 @@ The Ticket keeps its durable Hermes session key across stages. The lightweight P
 listener for that session may detach after Hermes is observed idle and no accepted
 operation remains; reopening the employee resumes the stored session. If delivery is
 unknown, Panels records that honest outcome and never retries the employee prompt
-automatically. After a
-readiness-changing action commits, it rings a small doorbell that asks the local loop
-to check again. A failed ring is logged and never changes the successful action. The
-database and periodic timer are still the source of truth. A process that does not own
-the polling lock uses a no-op doorbell; it does not send an IPC wake. A ticket that is
-not on today is outside the automatic run set even
+automatically. After an eligibility-affecting action commits, it calls the payload-free
+best-effort `AutomaticEmployeeStepEligibilityWake.wake()`. Runner settlement does the
+same to continue automatic work. A failed wake is logged and never changes the
+successful action. The wake carries no Ticket id, owns no state, and sends no IPC.
+SQLite and the periodic discovery timer remain canonical. The polling-lock owner uses
+`LoopAutomaticEmployeeStepEligibilityWake`; a process without the lock receives
+`NoOpAutomaticEmployeeStepEligibilityWake`. A ticket that is not on today is outside
+the automatic run set even
 when its status is `empty`; it does not appear on the Board, and the ticket page
 shows this as `auto not on today`.
 
-_Code paths:_ `src/planner/runtime/ticket_readiness_loop.py`,
+_Code paths:_ `src/planner/runtime/automatic_employee_step_eligibility.py`,
+`src/planner/runtime/automatic_employee_step_discovery_loop.py`,
+`src/planner/runtime/automatic_employee_step_eligibility_wake.py`,
 `src/planner/runtime/employee_step_runner.py`,
-`src/planner/runtime/readiness_doorbell.py`,
 `src/planner/tickets/actions.py`, `src/planner/days/actions.py`,
 `src/planner/core/link_actions.py`,
 `src/planner/minds/` (the employee primitive: the shared gateway child and its
@@ -120,20 +141,20 @@ selected home. Ticket chat has been smoked against a non-test server and reached
 real Hermes worker.
 
 The full live worker loop has also been smoked against fresh non-test databases.
-A ticket placed on today was discovered by TicketReadinessLoop, run by
+A ticket placed on today was discovered by AutomaticEmployeeStepDiscoveryLoop, run by
 EmployeeStepRunner, and parked at
 `awaiting_approval` after the employee filed a proposal. The same durable Hermes
 session history showed the employee-step prompt and worker reply in ticket chat.
 
 A second smoke used a long poll interval to prove that a settled success-condition
-edit is a wake event, not just something the timer eventually notices: editing the
-success value rang the readiness doorbell and the employee filed the next approach proposal.
+edit wakes discovery instead of waiting for the timer: after the edit committed, its
+eligibility wake led to the employee filing the next approach proposal.
 EmployeeStepRunner persists a created or resumed `chat_session_key` before submitting the
 prompt, so a worker calling `panels worker my-ticket` during its own turn can resolve
 the current ticket immediately.
 
 A live smoke on the default DB also proved that adding a new harmless ticket to
-today now rings the readiness doorbell without a follow-up scope edit. The ticket moved to
+today wakes eligibility discovery without a follow-up scope edit. The ticket moved to
 `agent_running_step` on the immediate read after the day add, then parked at
 `awaiting_approval` with a success proposal.
 
@@ -144,7 +165,7 @@ today now rings the readiness doorbell without a follow-up scope edit. The ticke
   worker.
 - **Tickets & the gates** (`tickets-and-gates.md`) — the proposals the employee
   files, the scope that decides whether a step auto-accepts, and the approval that
-  rings the readiness doorbell.
+  wakes Automatic Employee-step eligibility discovery after commit.
 - **Chat** (`chat.md`) — the live conversation with the employee and the slash menu
   of commands and skills, over the same gateway.
 - **The command-line tool** (`cli.md`) — the surface the employee acts through.
@@ -165,4 +186,4 @@ today now rings the readiness doorbell without a follow-up scope edit. The ticke
 
 ---
 
-_Last verified: 2026-07-13._
+_Last verified: 2026-07-14._
