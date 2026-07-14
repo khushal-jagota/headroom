@@ -17,6 +17,9 @@ Current build stage:
 - Landing order is Worker workflow → Automatic Employee-step eligibility → Review → canonical Chat turn →
   managed Markdown → resource catalogue → Employee session history. The last item is an isolated final
   commit because its restart/session behavior is the most finicky.
+- AD01 is complete on the branch at `f9246d5`. The independently reviewed Worker-type/stored-Stage
+  replacement follows the program-memory commit `aa1f29d` and the separately isolated test stabilization
+  `afa57fd`. The worktree is clean; AD02 is the next serial ticket.
 
 What just passed:
 
@@ -102,7 +105,7 @@ What just passed:
   exact test passed 10/10 naturally; delaying native scroll delivery reproduced the exact failure 3/3;
   synchronously dispatching the scroll event passed 3/3 target-reaching controls. `ChatPanel.svelte` is
   unchanged. The one-line fixture fix passes the focused test, Ruff, diff-check, and independent review
-  with `NO VIOLATIONS`; it will be committed separately as trivial test stabilization.
+  with `NO VIOLATIONS`; it is committed separately as trivial test stabilization at `afa57fd`.
 - The post-fix canonical `PYTHONPATH="$PWD/src" ./verify` is clean: Ruff; mypy across 119 source files;
   700 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three existing
   warnings), production build, frontend tests; 77 Playwright e2e tests; final `VERIFY: PASS`. The full
@@ -110,8 +113,8 @@ What just passed:
 
 Next step:
 
-- Isolate the one-line chat-fixture stabilization commit, commit the reviewed and verified AD01 contract,
-  then advance to AD02.
+- Decompose AD02 — Deep Worker workflow interpretation — into its contract-scoped ticket and begin the
+  delegated plan/review pipeline from the clean `f9246d5` checkpoint.
 
 Blockers:
 
