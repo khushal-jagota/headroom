@@ -124,6 +124,10 @@ Current build stage:
   resource dependencies, generated assets, API deletion seams, Markdown ownership, and Employee-history
   separation. Session `019f5fcf-cfa9-73d0-8741-27e7f687900a` reports `NO VIOLATIONS`; the exact record is
   `orchestration/tickets/architecture-deepening/final-review.txt`.
+- The complete reviewed branch passes its final canonical gate at `2982197`: Ruff; mypy across 115 source
+  files; 738 unit tests; compile/static and CSS/Markdown checks; Svelte check with zero errors and zero
+  warnings; production build; frontend tests; 87 Playwright tests; final `VERIFY: PASS`. The full transcript
+  is retained at `data/verify/architecture-deepening-final-pass.log`.
 
 What just passed:
 
@@ -333,7 +337,8 @@ What just passed:
 
 Next step:
 
-- Run one final branch `./verify`, then merge serially to `main` and verify the integrated checkout.
+- Merge the clean, reviewed, canonically verified branch serially to `main`, then verify the integrated
+  checkout.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`
