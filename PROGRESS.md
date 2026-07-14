@@ -36,7 +36,11 @@ Current build stage:
 - Merge commit `2384159` was created. Its first canonical gate completed all suites and found only one Ruff
   import-order failure in `tests/typing/tt02b_field_seam_cases.py`; mypy passed across 115 source files,
   760 unit tests passed, the complete frontend gate passed, and 88 Playwright tests passed. The import-only
-  repair was applied directly as trivial integration glue. A new commit and one clean canonical rerun remain.
+  repair was applied directly as trivial integration glue and committed at `b574046`.
+- The corrected integration head `b574046` passes the canonical gate: Ruff; mypy across 115 source files;
+  760 unit tests; compile/static and CSS/Markdown checks; Svelte check with zero errors and zero warnings;
+  production build; frontend tests; 88 Playwright tests; final `VERIFY: PASS`. The full transcript is retained
+  at `data/verify/architecture-merge-pass.log`. Fast-forwarding main with its owner edits preserved is next.
 
 - Shared understanding is confirmed for all six architecture candidates. Implementation is isolated on
   branch `codex/architecture-deepening` in

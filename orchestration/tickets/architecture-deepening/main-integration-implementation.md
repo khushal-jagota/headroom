@@ -136,3 +136,8 @@ Ruff-only failure: the combined import block in
 files, 760 unit tests passed, the complete frontend gate passed, and 88 Playwright tests
 passed. Ruff applied its import-only ordering fix; executable tests and production code
 were unchanged. This is trivial integration glue handled directly by the orchestrator.
+
+The repair commit is `b574046`. Its canonical `./verify` passes Ruff, mypy across 115
+source files, 760 unit tests, all compile/static and frontend gates, and 88 Playwright
+tests, ending in `VERIFY: PASS`. The full transcript is retained at
+`data/verify/architecture-merge-pass.log`.
