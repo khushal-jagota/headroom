@@ -33,6 +33,10 @@ Current build stage:
   no replacement turn or gateway call. Its focused regression and the complete Employee-runner/core-loop
   pair pass; Ruff, focused mypy, compileall, and diff check pass. Fresh corrected-diff review session
   `019f5ffb-6b3b-7310-9f2f-c8e95b908436` reports `NO VIOLATIONS`. The merge commit and canonical gate remain.
+- Merge commit `2384159` was created. Its first canonical gate completed all suites and found only one Ruff
+  import-order failure in `tests/typing/tt02b_field_seam_cases.py`; mypy passed across 115 source files,
+  760 unit tests passed, the complete frontend gate passed, and 88 Playwright tests passed. The import-only
+  repair was applied directly as trivial integration glue. A new commit and one clean canonical rerun remain.
 
 - Shared understanding is confirmed for all six architecture candidates. Implementation is isolated on
   branch `codex/architecture-deepening` in

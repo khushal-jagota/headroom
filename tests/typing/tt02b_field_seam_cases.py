@@ -6,11 +6,10 @@ import sqlite3
 from collections.abc import Mapping
 from typing import assert_type
 
+from planner.runtime import automatic_employee_step_eligibility
 from planner.runtime.automatic_employee_step_eligibility_wake import (
     AutomaticEmployeeStepEligibilityWake,
 )
-
-from planner.runtime import automatic_employee_step_eligibility
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, Ticket

@@ -127,3 +127,12 @@ Post-repair evidence:
 - `git diff --check` for the repair — pass.
 
 No full `./verify` was run for this review repair.
+
+## Post-merge gate repair
+
+The first canonical gate on merge commit `2384159` ran every suite and reported one
+Ruff-only failure: the combined import block in
+`tests/typing/tt02b_field_seam_cases.py` was not ordered. Mypy passed across 115 source
+files, 760 unit tests passed, the complete frontend gate passed, and 88 Playwright tests
+passed. Ruff applied its import-only ordering fix; executable tests and production code
+were unchanged. This is trivial integration glue handled directly by the orchestrator.
