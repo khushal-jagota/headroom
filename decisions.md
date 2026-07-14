@@ -873,6 +873,21 @@ unchanged. Wake-specific test doubles and aliases also take eligibility-wake nam
 the rejected Doorbell metaphor in generic helper names. Corrected-plan re-review reports
 `NO VIOLATIONS`, and `ad03-automatic-employee-step-eligibility/contract-lock.md` freezes the interfaces.
 
+## D-ad03-stale-gate-regression — Prove every eligibility factor at the final side-effect boundary
+
+Independent AD03 implementation review found no production-path split, but correctly identified that the
+runner's stale-discovery regression covered only six of the complete decision's seven factors. A valid
+registered Worker-type definition normally guarantees that a non-terminal Stage has a gated field, yet the
+complete eligibility contract deliberately treats that as its own factor and the acceptance language says
+*any* factor becoming false must prevent every downstream side effect. The finding is accepted. The
+already-allowed runner test file gains the smallest test-only definition/seam that makes that factor false
+at final claim, without changing production code or weakening the requirement that discovery and claim use
+the exact same function.
+
+AD03 follows the existing implementation-scope rule from `D-ad01-review-scope-isolation`: required
+`PROGRESS.md`, `decisions.md`, and review evidence are orchestrator outputs, not delegated product paths.
+They are committed as an isolated review/memory checkpoint before the corrected product-diff re-review.
+
 ## D-ad01-one-locked-ticket-migration — One terminal rebuild migrates every old Ticket schema
 
 AD01 replaces the sequential Ticket lifecycle, kickoff, type, and vocabulary rebuild path with one

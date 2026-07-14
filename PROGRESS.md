@@ -22,10 +22,15 @@ Current build stage:
   `afa57fd`.
 - AD02 is complete on the branch at `05e2fda`. Its delegated implementation and corrected diff passed
   independent review with `NO VIOLATIONS`, and the committed checkpoint passes the canonical gate.
-- AD03 is decomposed in `ad03-automatic-employee-step-eligibility/ticket.md`. Its locked direction is one
-  complete eligibility function shared by discovery and the final transactional claim, plus descriptive
-  discovery-loop and wake names. Its delegated plan passed corrected independent review and the exact
-  contract is now frozen for implementation.
+- AD03's delegated implementation is complete and fully unstaged apart from orchestrator-owned review and
+  memory records, which are isolated from the bounded product diff. The production path has passed the
+  orchestrator's load-bearing spot-check: membership-only discovery and the final `BEGIN IMMEDIATE` claim
+  call the same complete seven-factor function; direct revision stays separate; wake, lock, and shutdown
+  ownership follow the frozen contract. Independent implementation review found one Medium test gap: the
+  stale-claim no-side-effect matrix proves six factors but omits the distinct no-gated-field factor. The
+  finding is accepted; the test-only correction passes its focused checks. A first corrected-review setup
+  audit found only that the new orchestrator records needed isolation, so a fresh qualifying read-only
+  corrected-diff review will run from the isolated memory checkpoint.
 
 What just passed:
 
@@ -160,12 +165,16 @@ What just passed:
   comment. The correction adds only that comment, includes it in the static vocabulary guard, and makes
   wake-specific test-double naming explicit. Corrected-plan re-review reports `NO VIOLATIONS`; the exact
   interfaces are frozen in the AD03 contract lock.
+- AD03 implementation pre-review evidence is green: the affected integrated unit set passes 232 tests;
+  Ruff, strict mypy over 114 source files, compile checks, docs consistency, the exact changed-path audit,
+  `git diff --check`, and the empty-index check all pass. These are focused checks, not the canonical
+  completeness claim. Independent reviewer session `019f5ea0-46f2-76e1-a78f-cae334227de9` found only the
+  missing stale no-gated-field downstream-side-effect regression; no production-path violation was found.
 
 Next step:
 
-- Delegate AD03 implementation from the reviewed plan and contract lock. The implementation agent owns
-  only the corrected bounded allowlist; the orchestrator will spot-check the complete decision and
-  transaction-time claim, obtain independent diff review, then run the canonical gate after review fixes.
+- Run a fresh read-only corrected-diff review from the isolated AD03 review/memory checkpoint. Run the
+  canonical gate only after that corrected review reports no violations.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`

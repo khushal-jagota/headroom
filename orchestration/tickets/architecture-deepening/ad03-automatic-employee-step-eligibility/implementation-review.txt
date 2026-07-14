@@ -1,0 +1,32 @@
+AD03 implementation review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5ea0-46f2-76e1-a78f-cae334227de9
+
+Finding
+
+Medium: stale-discovery side-effect coverage misses one eligibility conjunct. The contract makes
+“non-terminal Stage with a gated field” part of the complete eligibility decision
+(`contract-lock.md:22`), and acceptance requires stale discovery to produce no status event, Chat row,
+gateway call, or prompt after “any eligibility conjunct changes” (`ticket.md:123`). The stale
+side-effect test only parameterizes day removal, non-empty status, terminal Stage, parked proposal,
+scope stop, and active blocker (`tests/unit/test_employee_step_runner.py:1123`), with mutation handling
+for only those cases (`tests/unit/test_employee_step_runner.py:1151`). The missing “next gated field is
+absent” case is treated as a distinct conjunct in the decision-table tests
+(`tests/unit/test_automatic_employee_step_eligibility.py:156,238`), but it is not proven at the runner
+stale-claim/no-downstream-side-effects boundary.
+
+Disposition
+
+Accepted. Add the smallest test-only no-gated-field case to the already-allowed runner stale-claim
+regression. Do not change production code or weaken the exact shared-function identity requirement.
+
+Corrected-review setup audit
+
+Session: 019f5ea0-46f2-76e1-a78f-cae334227de9 (resumed)
+
+The correction itself satisfied the original finding. The resumed CLI session did not retain the required
+read-only sandbox, so it is not the qualifying corrected-diff review. It reported one Low path-scope issue:
+the newly required `PROGRESS.md`, `decisions.md`, and this review record were unstaged beside the bounded
+implementation. Accepted as diff hygiene. The orchestrator-owned records are isolated in their own commit;
+the product diff will receive a fresh read-only review from that checkpoint.
