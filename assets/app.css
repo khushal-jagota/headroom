@@ -1184,7 +1184,7 @@ button.list-row:hover .list-row-title {
 }
 
 /* the "/" command menu = a raised popover above the composer; a read of the
- * gateway catalog. No dividers, no amber — grouped rows fade into the surface. */
+ * gateway catalog. No dividers, no accent — grouped rows fade into the surface. */
 .chat-menu {
   position: absolute;
   left: 0;
@@ -1554,7 +1554,7 @@ select {
   font-variant-numeric: tabular-nums;
 }
 
-/* The title speaks — serif display, hover amber, still the ticket link. */
+/* The title speaks — serif display, brand-accent hover, still the ticket link. */
 .review-ticket-title {
   font-family: var(--font-serif);
   font-size: var(--type-serif-display);
@@ -2103,7 +2103,7 @@ select {
   color: var(--text-default);
 }
 
-/* Errored run — the one event that must not be missed. Amber marker (needs the
+/* Errored run — the one event that must not be missed. Brand-accent marker (needs the
  * human), the reason bright and allowed to wrap however long it is. */
 .event-log-row--error .event-log-kind {
   color: var(--accent-bright);
@@ -2381,7 +2381,7 @@ select {
 /* --- The ask: the one rationed depth surface (t_ui02 + t_ui03) ------------- */
 /* The ask block is the single raised surface that earns depth: a top-light
  * gradient, a top-highlight inset, and a long soft shadow. Its content is serif;
- * the Approve button carries a faint amber glow. ONE definition shared by the
+ * the Approve button carries a faint accent glow. ONE definition shared by the
  * ticket document and the Review chamber — both render .approval-proposal-shell
  * (the only surfaces that do; the workspace ticket-in-pane is a ticket screen). */
 .approval-proposal-shell {
@@ -2402,14 +2402,14 @@ select {
 
 /* A non-gating proposal (ticket only) is the same single ask surface: the outer
  * approval wrapper goes flat so only the shell carries the depth (its actions
- * render below the shell in this mode and keep the same amber treatment). */
+ * render below the shell in this mode and keep the same accent treatment). */
 [data-screen="ticket"] .approval[data-mode="proposal"] {
   background: transparent;
   border-radius: 0;
   padding: 0;
 }
 
-/* Approve in the ask — the strong amber fill with a glow beneath, the one place
+/* Approve in the ask — the strong accent fill with a glow beneath, the one place
  * the accent goes solid. Shared shell rule + the ticket proposal-mode twin whose
  * button renders outside the shell. */
 .approval-proposal-shell .button--primary,
@@ -2681,7 +2681,7 @@ select {
   font-size: var(--type-xs);
 }
 
-/* Status display — a dot + the status word, quiet by default; amber only when the
+/* Status display — a dot + the status word, quiet by default; brand accent only when the
  * status means "needs you" (awaiting approval). Running conveys itself through the
  * existing marker chips, not this label. */
 .ticket-status-display {
@@ -2970,7 +2970,7 @@ select {
 
 /* Sprint Overview (rev6): Kickoff / Mid-sprint Review / Sprint Review. Three headed
    .disclosure--phase sections; the phase decides which is open (JS). Each field is a
-   label + the shared .ed inline-edit surface. No freeze, no amber, no ✓/●/○ marks. */
+   label + the shared .ed inline-edit surface. No freeze, no accent, no ✓/●/○ marks. */
 [data-screen="sprint"] .disclosure--phase {
   border-top: var(--border-hairline) solid var(--border-color);
 }
@@ -3130,7 +3130,7 @@ select {
   outline-offset: var(--space-1);
 }
 
-/* status word on the item row — faint by default, amber when in progress */
+/* status word on the item row — faint by default, brand accent when in progress */
 [data-screen="sprint"] .disclosure--item .st {
   white-space: nowrap;
   font-size: var(--type-xs);
@@ -3523,10 +3523,10 @@ select {
 }
 
 /* --- shared compose surfaces (Backlog + Ideas) --------------------------- */
-/* The transparent inline-edit inputs (amber caret) and the chip-toggle selectors and
+/* The transparent inline-edit inputs (brand-accent caret) and the chip-toggle selectors and
    grayscale commit — one look across both compose forms. */
 
-/* THE CAPTURE INPUT — one transparent inline field (amber caret) shared by the
+/* THE CAPTURE INPUT — one transparent inline field (brand-accent caret) shared by the
  * backlog and ideas compose forms. Per-screen .title-in/.detail-in sizes below are
  * genuine differences (backlog is compact; the ideas capture is the hero). */
 .in {
@@ -3600,7 +3600,7 @@ select {
   background: var(--surface-overlay);
 }
 
-/* Commit — the one solid-amber action on the capture, the mockup's .commit. */
+/* Commit — the one solid brand-accent action on the capture, the mockup's .commit. */
 [data-screen="backlog"] [data-commit].button,
 [data-screen="ideas"] [data-commit].button {
   background: var(--accent-bright);

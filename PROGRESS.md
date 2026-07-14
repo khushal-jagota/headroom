@@ -4,6 +4,46 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 the bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-14): slate-blue brand accent
+
+Current build stage:
+
+- Ticket `t_bbzgswpj` Implementation is complete on isolated branch
+  `ticket/t_bbzgswpj-slate-blue` in `/private/tmp/panels-t_bbzgswpj`. The four-token replacement and its
+  focused regression were small enough to implement directly rather than dispatching a second ticket.
+- The owner selected Option A — Soft Steel. The shared brand family is now `#9aadd2` bright,
+  `#222a38` surface, `#dce6f8` text, and `#111318` ink. Green done and red error tokens are unchanged;
+  no component layout or interaction styling changed.
+
+What just passed:
+
+- The focused Playwright regression failed first against the amber token family, then passes 2/2 on desktop
+  and mobile after the shared-token change. It checks the exact family, navigation, waiting, pending,
+  approval, link, hover, focus, selected, done, and error treatments.
+- Real ticket screenshots were captured at 1440×1000 and 390×844 with no browser console or page errors.
+  Contrast ratios are 7.75:1 for bright-on-base, 8.21:1 for ink-on-bright, and 11.48:1 for accent text on
+  the accent surface.
+- Independent Codex review found two concrete gaps: the focused test omitted the explicit current-waiting
+  stage mark, and live CSS comments still named the retired amber accent. The waiting assertion was added and
+  mutation-checked across both viewports; every stale live comment was corrected. Final fresh review reports
+  `NO VIOLATIONS`.
+- The first canonical gate passed mypy across 115 files, 760 unit tests, compile/static checks, the complete
+  frontend gate, and 90 Playwright tests. It failed only Ruff on seven overlong lines in the new test. The
+  test was reformatted, the two embedded JavaScript strings were wrapped, and focused Ruff plus both browser
+  cases are green.
+- The corrected branch passes the complete canonical gate: Ruff; mypy across 115 files; 760 unit tests;
+  compile/static and CSS checks; Svelte check with zero errors and warnings; production build; frontend
+  tests; 90 Playwright tests; final `VERIFY: PASS`. The transcript is
+  `data/verify/t_bbzgswpj-pass.log`.
+
+Next step:
+
+- Propose Implementation for approval with the real desktop/mobile screenshots and verification evidence.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-14): architecture deepening integration
 
 Current build stage:
