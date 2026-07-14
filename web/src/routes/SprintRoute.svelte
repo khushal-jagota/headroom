@@ -119,19 +119,21 @@
     return `day ${day} of ${total}`;
   }
 
-  // A ticket row reads amber when it needs a human (a pending gating proposal),
-  // green when done. Works for both the item-ticket projection
-  // (has_pending_proposal) and loose tickets (ticket_status).
-  function ticketNeedsYou(ticket: AnyRecord): boolean {
+  // A ticket row reads active when it is in a non-empty working/review state, green
+  // when done. Works for both item-ticket projections and loose tickets.
+  function ticketIsActive(ticket: AnyRecord): boolean {
     return (
       ticket.has_pending_proposal === true ||
-      ticket.ticket_status === "awaiting_approval"
+      ticket.ticket_status === "awaiting_approval" ||
+      ticket.ticket_status === "agent_running_step" ||
+      ticket.ticket_status === "paired_work" ||
+      ticket.ticket_status === "user_takeover"
     );
   }
 
   function ticketStageClass(ticket: AnyRecord): string {
     if (ticket.stage === "done") return "tst tst--done";
-    if (ticketNeedsYou(ticket)) return "tst tst--now";
+    if (ticketIsActive(ticket)) return "tst tst--now";
     return "tst";
   }
 

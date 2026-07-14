@@ -24,6 +24,7 @@ from planner.tickets.contracts import (
     AtCap,
     FieldSlot,
     Proposal,
+    StageOwnershipMode,
     Ticket,
     TicketFields,
     TicketStatus,
@@ -83,16 +84,40 @@ _MISALIGNED = WorkerTypeDefinition(
     label="Misaligned",
     stages=(
         StageDefinition(
-            id="needs_kickoff", label="Kickoff", gating_field="kickoff", is_terminal=False
+            id="needs_kickoff",
+            label="Kickoff",
+            gating_field="kickoff",
+            is_terminal=False,
+            default_ownership_mode=StageOwnershipMode.worker,
         ),
-        StageDefinition(id="needs_first", label="First", gating_field="first", is_terminal=False),
         StageDefinition(
-            id="needs_second", label="Second", gating_field="second", is_terminal=False
+            id="needs_first",
+            label="First",
+            gating_field="first",
+            is_terminal=False,
+            default_ownership_mode=StageOwnershipMode.worker,
         ),
-        StageDefinition(id="done", label="Done", gating_field=None, is_terminal=True),
+        StageDefinition(
+            id="needs_second",
+            label="Second",
+            gating_field="second",
+            is_terminal=False,
+            default_ownership_mode=StageOwnershipMode.worker,
+        ),
+        StageDefinition(
+            id="done",
+            label="Done",
+            gating_field=None,
+            is_terminal=True,
+            default_ownership_mode=None,
+        ),
     ),
     dropped_stage=StageDefinition(
-        id="dropped", label="Dropped", gating_field=None, is_terminal=True
+        id="dropped",
+        label="Dropped",
+        gating_field=None,
+        is_terminal=True,
+        default_ownership_mode=None,
     ),
     # Declared field order intentionally scrambled relative to the gate order.
     fields=(
@@ -106,7 +131,6 @@ _MISALIGNED = WorkerTypeDefinition(
         reasoning_effort=None,
         toolset_profile="default",
     ),
-    transition_hooks=(),
     supports_prefix_reconciliation=True,
 )
 
@@ -115,13 +139,33 @@ _NO_PREFIX = WorkerTypeDefinition(
     label="No prefix",
     stages=(
         StageDefinition(
-            id="needs_kickoff", label="Kickoff", gating_field="kickoff", is_terminal=False
+            id="needs_kickoff",
+            label="Kickoff",
+            gating_field="kickoff",
+            is_terminal=False,
+            default_ownership_mode=StageOwnershipMode.worker,
         ),
-        StageDefinition(id="needs_one", label="One", gating_field="one", is_terminal=False),
-        StageDefinition(id="done", label="Done", gating_field=None, is_terminal=True),
+        StageDefinition(
+            id="needs_one",
+            label="One",
+            gating_field="one",
+            is_terminal=False,
+            default_ownership_mode=StageOwnershipMode.worker,
+        ),
+        StageDefinition(
+            id="done",
+            label="Done",
+            gating_field=None,
+            is_terminal=True,
+            default_ownership_mode=None,
+        ),
     ),
     dropped_stage=StageDefinition(
-        id="dropped", label="Dropped", gating_field=None, is_terminal=True
+        id="dropped",
+        label="Dropped",
+        gating_field=None,
+        is_terminal=True,
+        default_ownership_mode=None,
     ),
     fields=(FieldDefinition(id="kickoff", label="Kickoff"), FieldDefinition(id="one", label="One")),
     worker_profile=WorkerProfile(
@@ -130,7 +174,6 @@ _NO_PREFIX = WorkerTypeDefinition(
         reasoning_effort=None,
         toolset_profile="default",
     ),
-    transition_hooks=(),
     supports_prefix_reconciliation=False,
 )
 
@@ -163,7 +206,10 @@ def _needs_kickoff_ticket(defn: WorkerTypeDefinition) -> Ticket:
         ceiling=defn.default_ceiling(),
         at_cap=AtCap.propose,
         ticket_status=TicketStatus.empty,
-        implementer=None,
+        execution_route=None,
+        stage_ownership_overrides={},
+        default_stage_ownership_mode=StageOwnershipMode.worker,
+        effective_stage_ownership_mode=StageOwnershipMode.worker,
         employee_session_id=None,
         alias=None,
         fields=TicketFields(slots),

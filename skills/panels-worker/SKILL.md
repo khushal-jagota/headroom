@@ -3,9 +3,12 @@ name: panels-worker
 description: Working a Panels ticket, one step at a time.
 ---
 
-# Working a ticket
+# Working a Ticket
 
-You work one ticket, one step at a time. You're given the next step to take; you do it, and propose what you've done. Then you're given the next step, or you're not. A ticket is worked all the way through this way — but your job is only ever the single step in front of you.
+You work one Ticket, one Stage at a time. You're given the current Stage only; do
+that work, then propose what you've done. The Ticket may move to the next Stage, rest
+with the user, rest in paired work, or stop for approval. Your job is only ever the
+single Stage in front of you.
 
 ## The system
 
@@ -19,21 +22,53 @@ Sprint items and tickets can also stand alone, outside a sprint. A ticket moves 
 
 ## Your ticket and your specialist
 Which Stages a Ticket has, and what each needs, depend on its Worker type. Run
-`panels worker my-ticket` — it names your worker skill. Invoke that skill with
-`skill_view("<name>")` and follow it for the stage-by-stage work.
-you handle the one current step only.
+`panels worker my-ticket` — it names your worker skill and reports the current
+Stage, effective ownership, scope, and execution route. Invoke that skill with
+`skill_view("<name>")` and follow it for the stage-by-stage work. You handle the one
+current step only.
 
 Worker skills:
 - `panels-worker-coding` — coding tickets.
 - `panels-worker-new-worker` — new_worker tickets (designing another worker).
 - `probe-worker` — the probe fixture Worker type (test genericity proof).
 
+### Who owns the current Stage
+
+Every non-terminal Stage has a default ownership mode. A Ticket can override that
+default for one Stage; the current Stage's override wins, otherwise its default applies.
+Ownership says who drives the current Stage. It is separate from both Ticket scope and
+execution route.
+
+- **Worker** — the Employee may be discovered and run automatically when every other
+  eligibility condition also allows it. Scope still decides whether a proposal is
+  accepted below the ceiling, parked through **Continue** at the ceiling, or prevented
+  by **Stop**.
+- **User** — the Ticket rests in user takeover and is never dispatched automatically.
+  User-completed work returns through the Chief's external-work create or reconcile
+  operation; there is no worker self-settle or self-proposal substitute. The Chief moves
+  the ceiling to the reconciled Stage, preserves an explicit Stop (otherwise Continue
+  remains), and the entered Stage's ownership then controls what happens next.
+- **Paired** — the Ticket rests in paired work and is never dispatched automatically.
+  Ordinary Ticket Chat is the continuation path: the user's message reaches this
+  Ticket's durable Employee session and worker context. If the turn ends without a
+  proposal, the Ticket remains paired. A real proposal always parks for approval, even
+  when scope would auto-accept the same proposal from a worker-owned Stage. Approval
+  advances normally and the next Stage's ownership takes effect.
+
+**Take over** sets an explicit `user` override on the current Stage, including while a
+run is active. **Release** clears that current-Stage override; it does not reveal an
+older override, and the Stage default applies again. Respect the Ticket's effective
+ownership. Do not treat Take over, Release, or an owner change as a scope change.
+
 ### The CLI
 
 Everything runs through the `panels` command — `panels --help` for full usage. The tools you use:
 
-- **`panels worker my-ticket`** — the Ticket you're on: who you are, and its current Stage.
+- **`panels worker my-ticket`** — the Ticket you're on: who you are, its current Stage,
+  effective ownership, scope, and execution route.
 - **`panels ticket show <id>`** — read any ticket.
+- **`panels ticket ownership <id> --stage <stage> --mode worker|user|paired|default`** —
+  set or clear a Stage ownership override when the user directly instructs that change.
 - **`panels worker propose <id> --body-file - --recap "…"`** — propose the ticket's current gated field; body arrives on stdin or via `--body-file`, and every proposal must also set a recap.
 - **`panels worker recap <id> --body-file -`** — update the running recap outside a proposal.
 - **`panels worker note <id> <field> --body-file -`** — preserve user guidance next to a field without touching its value.
@@ -42,16 +77,22 @@ Everything runs through the `panels` command — `panels --help` for full usage.
 
 Never invoke `panels chief`.
 
-### Implementer assignment
+### Execution route
 
-A Ticket's implementer is a human-overridable execution route, not an account or capability system and not an automatic model router.
+A Ticket's nullable execution route is a direct user instruction for how Employee work
+should be carried out. It is not Stage ownership, scope, permission, an account or
+capability system, or an automatic model router. There is no human execution route.
 
-- **Khushal** — use for work needing human judgment, access, external action, or deliberate manual ownership. Prepare a clear handoff instead of implementing it.
-- **Panels worker** — use for bounded work you can complete directly with your normal tools.
-- **Hermes with Codex** — use for repository implementation with explicit tests and review.
-- **Hermes with Claude** — use for broader or exploratory multi-file work that needs sustained codebase reasoning.
+- **Panels worker** (`panels_worker`) — complete the work directly with your normal tools.
+- **Hermes with Codex** (`hermes_codex`) — use Codex for repository implementation with
+  explicit tests and review.
+- **Hermes with Claude** (`hermes_claude`) — use Claude for broader or exploratory
+  multi-file work that needs sustained codebase reasoning.
 
-Follow the assignment; never silently substitute another route. If the route is unsuitable, explain why and recommend a concise human override. For Codex or Claude routes, you still own the brief, integration, review, verification, and final result; delegation does not transfer Ticket accountability.
+Follow the route; never silently substitute another one. If it is unsuitable, explain
+why and recommend a concise direct user change. You cannot change your own route. For
+Codex or Claude routes, you still own the brief, integration, review, verification, and
+final result; delegation does not transfer Ticket accountability.
 
 ## How to complete this effectively
 

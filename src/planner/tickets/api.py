@@ -54,7 +54,7 @@ from planner.tickets.contracts import (
     AtCap,
     CreateTicketBody,
     CreateTicketFromExternalWorkBody,
-    Implementer,
+    ExecutionRoute,
     LinkBody,
     NoteBody,
     ProposeBody,
@@ -64,6 +64,7 @@ from planner.tickets.contracts import (
     RevisionMessageBody,
     ScopeBody,
     StageBody,
+    StageOwnershipMode,
     Ticket,
     TicketEdit,
     ValueEditBody,
@@ -79,7 +80,7 @@ _TICKET_DIRECT_ONLY_FIELDS = (
     "title",
     "project",
     "project_id",
-    "implementer",
+    "execution_route",
 )
 
 
@@ -598,7 +599,7 @@ async def patch_ticket(
         "title",
         "priority",
         "deadline",
-        "implementer",
+        "execution_route",
         "project",
         "project_id",
         "sprint_id",
@@ -617,11 +618,11 @@ async def patch_ticket(
         edit["priority"] = parse_enum(Priority, body_str(body, "priority"), "priority")
     if "deadline" in body:
         edit["deadline"] = body_opt_str(body, "deadline")
-    if "implementer" in body:
-        implementer_raw = body_opt_str(body, "implementer")
-        edit["implementer"] = (
-            parse_enum(Implementer, implementer_raw, "implementer")
-            if implementer_raw is not None
+    if "execution_route" in body:
+        execution_route_raw = body_opt_str(body, "execution_route")
+        edit["execution_route"] = (
+            parse_enum(ExecutionRoute, execution_route_raw, "execution_route")
+            if execution_route_raw is not None
             else None
         )
     if "project" in body or "project_id" in body:
@@ -917,6 +918,41 @@ async def release_ticket(
     ticket = tickets_actions.release_ticket(
         conn,
         ticket_id,
+        now=now,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
+    )
+    return tickets_views.ticket_json(ticket, now)
+
+
+@router.put("/tickets/{ticket_id}/stage-ownership/{stage}")
+async def put_stage_ownership(
+    ticket_id: str,
+    stage: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
+) -> JsonDict:
+    require_direct_write(ctx)
+    if set(raw) != {"ownership_mode"}:
+        raise PlannerError(
+            ErrorCode.validation,
+            "stage ownership requires ownership_mode",
+            {"fields": sorted(raw)},
+        )
+    ownership_raw = body_opt_str(raw, "ownership_mode")
+    ownership_mode = (
+        parse_enum(StageOwnershipMode, ownership_raw, "ownership_mode")
+        if ownership_raw is not None
+        else None
+    )
+    now = clk.now_unix()
+    ticket = tickets_actions.set_stage_ownership(
+        conn,
+        ticket_id,
+        stage=stage,
+        ownership_mode=ownership_mode,
         now=now,
         automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )

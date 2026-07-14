@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from planner.tickets.contracts import Implementer, TicketStatus
+from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
     install_worker_type_registry_for_test,
@@ -11,7 +11,6 @@ from planner.worker_types.configuration import (
 from planner.worker_types.contracts import (
     FieldDefinition,
     StageDefinition,
-    TransitionHook,
     WorkerProfile,
     WorkerTypeDefinition,
 )
@@ -30,12 +29,12 @@ PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     worker_type="probe",
     label="Probe",
     stages=(
-        StageDefinition("needs_kickoff", "Kickoff", "kickoff", False),
-        StageDefinition(NEEDS_ALPHA, "Alpha", FIELD_ALPHA, False),
-        StageDefinition(NEEDS_BETA, "Beta", FIELD_BETA, False),
-        StageDefinition("done", "Done", None, True),
+        StageDefinition("needs_kickoff", "Kickoff", "kickoff", False, StageOwnershipMode.worker),
+        StageDefinition(NEEDS_ALPHA, "Alpha", FIELD_ALPHA, False, StageOwnershipMode.user),
+        StageDefinition(NEEDS_BETA, "Beta", FIELD_BETA, False, StageOwnershipMode.paired),
+        StageDefinition("done", "Done", None, True, None),
     ),
-    dropped_stage=StageDefinition("dropped", "Dropped", None, True),
+    dropped_stage=StageDefinition("dropped", "Dropped", None, True, None),
     fields=(
         FieldDefinition("kickoff", "Kickoff"),
         FieldDefinition(FIELD_ALPHA, "Alpha"),
@@ -46,14 +45,6 @@ PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         model=None,
         reasoning_effort=None,
         toolset_profile="default",
-    ),
-    transition_hooks=(
-        TransitionHook(
-            old_stage=NEEDS_ALPHA,
-            new_stage=NEEDS_BETA,
-            implementer=Implementer.khushal.value,
-            effect=TicketStatus.user_takeover.value,
-        ),
     ),
     supports_prefix_reconciliation=True,
 )

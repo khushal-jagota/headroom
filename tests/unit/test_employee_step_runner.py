@@ -43,7 +43,7 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     AtCap,
     EmployeeSessionIdTransition,
-    Implementer,
+    ExecutionRoute,
     TicketStatus,
 )
 from planner.tickets.logic import fields_codec
@@ -139,7 +139,7 @@ def _new_ticket(
     db_path: str,
     *,
     ceiling: str | None = None,
-    implementer: Implementer | None = None,
+    execution_route: ExecutionRoute | None = None,
 ) -> str:
     conn = connect(db_path)
     try:
@@ -150,7 +150,7 @@ def _new_ticket(
             actor="human",
             now=0,
             title_max_chars=200,
-            implementer=implementer,
+            execution_route=execution_route,
         )
         ticket = _accept_kickoff_field(conn, ticket.id)
         _delete_kickoff_setup_events(conn, ticket.id)
@@ -409,7 +409,7 @@ def test_complete_with_no_proposal_is_empty_not_errored(tmp_path: Path) -> None:
     assert eligibility_wake.calls == 1
 
 
-def test_next_step_prompt_includes_implementer_wire_value_or_unassigned(tmp_path: Path) -> None:
+def test_next_step_prompt_includes_execution_route_and_stage_owner(tmp_path: Path) -> None:
     db = _db(tmp_path)
     conn = connect(db)
     try:
@@ -420,7 +420,7 @@ def test_next_step_prompt_includes_implementer_wire_value_or_unassigned(tmp_path
             actor="human",
             now=0,
             title_max_chars=200,
-            implementer=Implementer.hermes_claude,
+            execution_route=ExecutionRoute.hermes_claude,
         )
         assigned = _accept_kickoff_field(conn, assigned.id)
         _delete_kickoff_setup_events(conn, assigned.id)
@@ -436,12 +436,12 @@ def test_next_step_prompt_includes_implementer_wire_value_or_unassigned(tmp_path
     assert _next_step_prompt(assigned, worker_type_definition=worker_type_definition) == (
         f"Work ticket {assigned.id} — T. It is at Stage 'needs_success'; "
         "take the next step and propose the 'success' field for approval. "
-        "Implementer: hermes_claude."
+        "Execution route: hermes_claude. Stage owner: worker."
     )
     assert _next_step_prompt(unassigned, worker_type_definition=worker_type_definition) == (
         f"Work ticket {unassigned.id} — T. It is at Stage 'needs_success'; "
         "take the next step and propose the 'success' field for approval. "
-        "Implementer: unassigned."
+        "Execution route: unassigned. Stage owner: worker."
     )
 
 
@@ -481,17 +481,17 @@ def test_next_step_prompt_reads_novel_stage_field_for_new_worker(tmp_path: Path)
     ) == (
         f"Work ticket {ticket.id} — Design a worker. It is at Stage 'needs_stages'; "
         "take the next step and propose the 'stages' field for approval. "
-        "Implementer: unassigned."
+        "Execution route: unassigned. Stage owner: worker."
     )
 
 
 def test_worker_step_prompt_and_reply_are_visible_in_chat_history(tmp_path: Path) -> None:
     db = _db(tmp_path)
-    tid = _new_ticket(db, implementer=Implementer.hermes_codex)
+    tid = _new_ticket(db, execution_route=ExecutionRoute.hermes_codex)
     prompt = (
         f"Work ticket {tid} — T. It is at Stage 'needs_success'; "
         "take the next step and propose the 'success' field for approval. "
-        "Implementer: hermes_codex."
+        "Execution route: hermes_codex. Stage owner: worker."
     )
     fake = FakeGateway(
         {
@@ -568,7 +568,7 @@ def test_queued_employee_waits_past_prior_interruption_before_settling(
     prompt = (
         f"Work ticket {tid} — T. It is at Stage 'needs_success'; "
         "take the next step and propose the 'success' field for approval. "
-        "Implementer: unassigned."
+        "Execution route: unassigned. Stage owner: worker."
     )
     fake = ManualEventFake(
         {
@@ -759,7 +759,9 @@ def test_created_session_key_is_queryable_before_prompt_submit(tmp_path: Path) -
     assert _read(db, tid).employee_session_id == STORED_KEY
 
 
-def test_worker_does_not_prompt_if_session_key_claim_is_lost(tmp_path: Path) -> None:
+def test_active_takeover_during_new_session_run_settles_to_user_takeover(
+    tmp_path: Path,
+) -> None:
     db = _db(tmp_path)
     tid = _new_ticket(db)
 
@@ -797,13 +799,15 @@ def test_worker_does_not_prompt_if_session_key_claim_is_lost(tmp_path: Path) -> 
     assert runner.wait_idle(10.0)
 
     ticket = _read(db, tid)
-    assert gateway.prompted is False
+    assert gateway.prompted is True
     assert ticket.ticket_status == TicketStatus.user_takeover
-    assert ticket.employee_session_id is None
+    assert ticket.employee_session_id == STORED_KEY
     assert eligibility_wake.calls == 1
 
 
-def test_worker_rechecks_existing_session_key_ownership_before_prompt(tmp_path: Path) -> None:
+def test_active_takeover_during_existing_session_run_settles_to_user_takeover(
+    tmp_path: Path,
+) -> None:
     db = _db(tmp_path)
     tid = _new_ticket(db)
     _set_key(db, tid, STORED_KEY)
@@ -843,13 +847,13 @@ def test_worker_rechecks_existing_session_key_ownership_before_prompt(tmp_path: 
     assert runner.wait_idle(10.0)
 
     ticket = _read(db, tid)
-    assert gateway.prompted is False
+    assert gateway.prompted is True
     assert ticket.ticket_status == TicketStatus.user_takeover
     assert ticket.employee_session_id == STORED_KEY
     assert eligibility_wake.calls == 1
 
 
-def test_worker_error_does_not_overwrite_lost_ownership(tmp_path: Path) -> None:
+def test_worker_error_after_active_takeover_leaves_ticket_errored(tmp_path: Path) -> None:
     db = _db(tmp_path)
     tid = _new_ticket(db)
 
@@ -884,11 +888,11 @@ def test_worker_error_does_not_overwrite_lost_ownership(tmp_path: Path) -> None:
     assert runner.wait_idle(10.0)
 
     ticket = _read(db, tid)
-    assert ticket.ticket_status == TicketStatus.user_takeover
+    assert ticket.ticket_status == TicketStatus.errored
     assert ticket.employee_session_id == STORED_KEY
     assert [e["ticket_status"] for e in _status_events(db, tid)] == [
         "agent_running_step",
-        "user_takeover",
+        "errored",
     ]
     assert eligibility_wake.calls == 1
 

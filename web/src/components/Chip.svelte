@@ -14,6 +14,7 @@
     "blockers-cleared",
     "errored",
     "frozen",
+    "paired-work",
     "user-takeover"
   ]);
 

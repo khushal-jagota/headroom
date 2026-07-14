@@ -23,10 +23,11 @@ from planner.tickets import worker_context as ticket_worker_context
 from planner.tickets.contracts import (
     AtCap,
     EmployeeSessionIdTransition,
+    ExecutionRoute,
     FieldSlot,
-    Implementer,
     NextCeiling,
     Proposal,
+    StageOwnershipMode,
     Ticket,
     TicketDeletion,
     TicketEdit,
@@ -68,12 +69,48 @@ def _txn(conn: sqlite3.Connection) -> Iterator[None]:
         conn.execute("COMMIT")
 
 
+def _stage_ownership_overrides_from_json(raw: object) -> dict[str, StageOwnershipMode]:
+    if raw is None:
+        return {}
+    try:
+        payload = json.loads(str(raw))
+    except ValueError as exc:
+        raise RuntimeError("ticket stage_ownership_overrides is corrupt") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("ticket stage_ownership_overrides is not an object")
+    overrides: dict[str, StageOwnershipMode] = {}
+    for stage, mode in payload.items():
+        if not isinstance(stage, str) or not isinstance(mode, str):
+            raise RuntimeError("ticket stage_ownership_overrides has invalid entries")
+        overrides[stage] = StageOwnershipMode(mode)
+    return overrides
+
+
+def _stage_ownership_overrides_to_json(
+    overrides: Mapping[str, StageOwnershipMode],
+) -> str:
+    return json.dumps({stage: mode.value for stage, mode in sorted(overrides.items())})
+
+
 def _row_to_ticket(row: sqlite3.Row) -> Ticket:
     worker_type = str(row["worker_type"])
+    worker_type_definition = configured_worker_type_registry().require(worker_type)
+    stage = str(row["stage"])
+    overrides = _stage_ownership_overrides_from_json(row["stage_ownership_overrides"])
+    default_ownership = (
+        None
+        if worker_type_definition.is_terminal(stage)
+        else worker_type_definition.stage_definition(stage).default_ownership_mode
+    )
+    effective_ownership = machine.effective_stage_ownership_mode(
+        stage,
+        overrides,
+        worker_type_definition=worker_type_definition,
+    )
     return Ticket(
         id=row["id"],
         title=row["title"],
-        stage=str(row["stage"]),
+        stage=stage,
         priority=Priority(row["priority"]),
         deadline=row["deadline"],
         project_id=row["project_id"],
@@ -84,7 +121,12 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         ceiling=str(row["ceiling"]),
         at_cap=AtCap(row["at_cap"]),
         ticket_status=TicketStatus(row["ticket_status"]),
-        implementer=Implementer(row["implementer"]) if row["implementer"] is not None else None,
+        execution_route=(
+            ExecutionRoute(row["execution_route"]) if row["execution_route"] is not None else None
+        ),
+        stage_ownership_overrides=overrides,
+        default_stage_ownership_mode=default_ownership,
+        effective_stage_ownership_mode=effective_ownership,
         employee_session_id=row["employee_session_id"],
         alias=row["alias"],
         fields=fields_codec.fields_from_json(row["fields"]),
@@ -234,6 +276,42 @@ def _write_ticket_status(
     )
 
 
+def _resting_status_for_ticket(
+    ticket: Ticket,
+    *,
+    worker_type_definition: WorkerTypeDefinition,
+) -> TicketStatus:
+    ownership_mode = machine.effective_stage_ownership_mode(
+        ticket.stage,
+        ticket.stage_ownership_overrides,
+        worker_type_definition=worker_type_definition,
+    )
+    if ownership_mode is None:
+        return TicketStatus.empty
+    return machine.resting_ticket_status(ownership_mode)
+
+
+def _write_resting_ticket_status(
+    conn: sqlite3.Connection,
+    ticket: Ticket,
+    *,
+    worker_type_definition: WorkerTypeDefinition,
+    now: int,
+) -> None:
+    target_status = _resting_status_for_ticket(
+        ticket,
+        worker_type_definition=worker_type_definition,
+    )
+    if ticket.ticket_status is target_status:
+        return
+    _write_ticket_status(
+        conn,
+        ticket.id,
+        target_status,
+        now,
+    )
+
+
 def write_employee_session_id_in_transaction(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -290,7 +368,9 @@ def claim_running_step_employee_session_id(
 ) -> Ticket:
     """Persist or adopt the durable Employee session for the active worker step."""
     with _txn(conn):
-        ticket = _load_ticket_for_write(conn, ticket_id)
+        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
+            conn, ticket_id
+        )
         if ticket.ticket_status is not TicketStatus.agent_running_step:
             return ticket
         write_employee_session_id_in_transaction(
@@ -316,7 +396,7 @@ def create_ticket(
     deadline: str | None = None,
     sprint_id: str | None = None,
     sprint_item_id: str | None = None,
-    implementer: Implementer | None = None,
+    execution_route: ExecutionRoute | None = None,
     worker_type: str,
 ) -> Ticket:
     admission.validate_title(title, title_max_chars)
@@ -364,9 +444,9 @@ def create_ticket(
             "INSERT INTO tickets ("
             "id, title, worker_type, stage, priority, deadline, project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, "
-            "ticket_status, implementer, "
+            "ticket_status, execution_route, stage_ownership_overrides, "
             "employee_session_id, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -380,7 +460,8 @@ def create_ticket(
                 default_ceiling,
                 AtCap.propose.value,
                 TicketStatus.awaiting_approval.value,
-                implementer.value if implementer is not None else None,
+                execution_route.value if execution_route is not None else None,
+                "{}",
                 fields_json,
                 now,
                 now,
@@ -478,9 +559,9 @@ def create_ticket_from_external_work(
         conn.execute(
             "INSERT INTO tickets ("
             "id, title, worker_type, stage, priority, deadline, project_id, sprint_item_id, "
-            "sprint_id, recap, ceiling, at_cap, ticket_status, "
+            "sprint_id, recap, ceiling, at_cap, ticket_status, stage_ownership_overrides, "
             "employee_session_id, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -499,6 +580,7 @@ def create_ticket_from_external_work(
                 first_worker,
                 AtCap.propose.value,
                 TicketStatus.empty.value,
+                "{}",
                 fields_codec.fields_to_json(initial_fields),
                 now,
                 now,
@@ -524,7 +606,13 @@ def create_ticket_from_external_work(
             append_event(conn, ticket_id, EventKind.recap_updated, {}, now)
             ticket = _load_ticket_for_write(conn, ticket_id)
         ticket = _apply_decision(conn, ticket, position_decision, now)
-        return ticket
+        _write_resting_ticket_status(
+            conn,
+            ticket,
+            worker_type_definition=worker_type_definition,
+            now=now,
+        )
+        return _load_ticket_for_write(conn, ticket_id)
 
 
 def reconcile_ticket_from_external_work(
@@ -547,7 +635,12 @@ def reconcile_ticket_from_external_work(
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
-        if ticket.ticket_status not in (TicketStatus.empty, TicketStatus.errored):
+        if ticket.ticket_status not in (
+            TicketStatus.empty,
+            TicketStatus.user_takeover,
+            TicketStatus.paired_work,
+            TicketStatus.errored,
+        ):
             raise PlannerError(
                 ErrorCode.already_running,
                 "ticket control is active",
@@ -579,10 +672,13 @@ def reconcile_ticket_from_external_work(
             append_event(conn, ticket_id, EventKind.recap_updated, {}, now)
             ticket = _load_ticket_for_write(conn, ticket_id)
         ticket = _apply_decision(conn, ticket, position_decision, now)
-        if ticket.ticket_status is TicketStatus.errored:
-            _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
-            ticket = _load_ticket_for_write(conn, ticket_id)
-        return ticket
+        _write_resting_ticket_status(
+            conn,
+            ticket,
+            worker_type_definition=worker_type_definition,
+            now=now,
+        )
+        return _load_ticket_for_write(conn, ticket_id)
 
 
 def audit_ticket_registry_integrity(conn: sqlite3.Connection) -> None:
@@ -695,7 +791,9 @@ def finish_run_if_still_running_step(
     now: int,
 ) -> Ticket:
     with _txn(conn):
-        ticket = _load_ticket_for_write(conn, ticket_id)
+        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
+            conn, ticket_id
+        )
         if employee_session_transition is not None:
             write_employee_session_id_in_transaction(
                 conn,
@@ -705,7 +803,12 @@ def finish_run_if_still_running_step(
                 now=now,
             )
         if ticket.ticket_status is TicketStatus.agent_running_step:
-            _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
+            _write_resting_ticket_status(
+                conn,
+                ticket,
+                worker_type_definition=worker_type_definition,
+                now=now,
+            )
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -780,15 +883,14 @@ def file_proposal(
             _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
             updated = _load_ticket_for_write(conn, ticket_id)
         else:
-            handoff_status = machine.plan_handoff_status(
-                ticket.implementer,
-                ticket.stage,
-                decision.new_stage,
+            updated = _load_ticket_for_write(conn, ticket_id)
+            _write_resting_ticket_status(
+                conn,
+                updated,
                 worker_type_definition=worker_type_definition,
+                now=now,
             )
-            if handoff_status is not None:
-                _write_ticket_status(conn, ticket_id, handoff_status, now)
-                updated = _load_ticket_for_write(conn, ticket_id)
+            updated = _load_ticket_for_write(conn, ticket_id)
         return updated
 
 
@@ -836,14 +938,13 @@ def file_current_proposal_with_recap(
         if any(spec.kind is EventKind.proposal_filed for spec in decision.events):
             _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
         else:
-            handoff_status = machine.plan_handoff_status(
-                ticket.implementer,
-                ticket.stage,
-                decision.new_stage,
+            updated = _load_ticket_for_write(conn, ticket_id)
+            _write_resting_ticket_status(
+                conn,
+                updated,
                 worker_type_definition=worker_type_definition,
+                now=now,
             )
-            if handoff_status is not None:
-                _write_ticket_status(conn, ticket_id, handoff_status, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -871,43 +972,170 @@ def accept_proposal(
             at_cap,
             worker_type_definition=worker_type_definition,
         )
-        _apply_decision(conn, ticket, decision, now)
+        updated = _apply_decision(conn, ticket, decision, now)
         if edited_body is not None:
             ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
-        handoff_status = machine.plan_handoff_status(
-            ticket.implementer,
-            ticket.stage,
-            decision.new_stage,
+        _write_resting_ticket_status(
+            conn,
+            updated,
+            worker_type_definition=worker_type_definition,
+            now=now,
+        )
+        return _load_ticket_for_write(conn, ticket_id)
+
+
+def set_stage_ownership(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    stage: str,
+    ownership_mode: StageOwnershipMode | None,
+    now: int,
+) -> Ticket:
+    with _txn(conn):
+        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
+            conn, ticket_id
+        )
+        if not worker_type_definition.is_known_stage(stage):
+            raise PlannerError(ErrorCode.validation, "invalid stage", {"stage": stage})
+        if worker_type_definition.is_terminal(stage):
+            raise PlannerError(
+                ErrorCode.validation,
+                "terminal stage cannot have ownership",
+                {"stage": stage},
+            )
+        overrides = dict(ticket.stage_ownership_overrides)
+        if ownership_mode is None:
+            overrides.pop(stage, None)
+        else:
+            overrides[stage] = ownership_mode
+        conn.execute(
+            "UPDATE tickets SET stage_ownership_overrides = ?, updated_at = ? WHERE id = ?",
+            (_stage_ownership_overrides_to_json(overrides), now, ticket_id),
+        )
+        updated = _load_ticket_for_write(conn, ticket_id)
+        effective_ownership_mode = machine.effective_stage_ownership_mode(
+            stage,
+            overrides,
             worker_type_definition=worker_type_definition,
         )
-        _write_ticket_status(conn, ticket_id, handoff_status or TicketStatus.empty, now)
-        return _load_ticket_for_write(conn, ticket_id)
+        assert effective_ownership_mode is not None
+        append_event(
+            conn,
+            ticket_id,
+            EventKind.stage_ownership_changed,
+            {
+                "stage": stage,
+                "ownership_mode": ownership_mode.value if ownership_mode is not None else None,
+                "effective_ownership_mode": effective_ownership_mode.value,
+            },
+            now,
+        )
+        if updated.ticket_status not in (
+            TicketStatus.agent_running_step,
+            TicketStatus.awaiting_approval,
+            TicketStatus.errored,
+        ):
+            _write_resting_ticket_status(
+                conn,
+                updated,
+                worker_type_definition=worker_type_definition,
+                now=now,
+            )
+            updated = _load_ticket_for_write(conn, ticket_id)
+        return updated
 
 
 def take_over_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Ticket:
     with _txn(conn):
-        ticket = _load_ticket_for_write(conn, ticket_id)
+        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
+            conn, ticket_id
+        )
         if ticket.stage == "needs_kickoff":
             raise PlannerError(
                 ErrorCode.validation,
                 "kickoff must be settled before takeover",
                 {"ticket_id": ticket_id},
             )
-        _write_ticket_status(conn, ticket_id, TicketStatus.user_takeover, now)
-        return _load_ticket_for_write(conn, ticket_id)
+        overrides = dict(ticket.stage_ownership_overrides)
+        overrides[ticket.stage] = StageOwnershipMode.user
+        conn.execute(
+            "UPDATE tickets SET stage_ownership_overrides = ?, updated_at = ? WHERE id = ?",
+            (_stage_ownership_overrides_to_json(overrides), now, ticket_id),
+        )
+        updated = _load_ticket_for_write(conn, ticket_id)
+        append_event(
+            conn,
+            ticket_id,
+            EventKind.stage_ownership_changed,
+            {
+                "stage": ticket.stage,
+                "ownership_mode": StageOwnershipMode.user.value,
+                "effective_ownership_mode": StageOwnershipMode.user.value,
+            },
+            now,
+        )
+        if updated.ticket_status not in (
+            TicketStatus.agent_running_step,
+            TicketStatus.awaiting_approval,
+            TicketStatus.errored,
+        ):
+            _write_resting_ticket_status(
+                conn,
+                updated,
+                worker_type_definition=worker_type_definition,
+                now=now,
+            )
+            updated = _load_ticket_for_write(conn, ticket_id)
+        return updated
 
 
 def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Ticket:
     with _txn(conn):
-        ticket = _load_ticket_for_write(conn, ticket_id)
+        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
+            conn, ticket_id
+        )
         if ticket.stage == "needs_kickoff":
             raise PlannerError(
                 ErrorCode.validation,
                 "kickoff must be settled before release",
                 {"ticket_id": ticket_id},
             )
-        _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
-        return _load_ticket_for_write(conn, ticket_id)
+        overrides = dict(ticket.stage_ownership_overrides)
+        overrides.pop(ticket.stage, None)
+        conn.execute(
+            "UPDATE tickets SET stage_ownership_overrides = ?, updated_at = ? WHERE id = ?",
+            (_stage_ownership_overrides_to_json(overrides), now, ticket_id),
+        )
+        updated = _load_ticket_for_write(conn, ticket_id)
+        append_event(
+            conn,
+            ticket_id,
+            EventKind.stage_ownership_changed,
+            {
+                "stage": ticket.stage,
+                "ownership_mode": None,
+                "effective_ownership_mode": (
+                    updated.effective_stage_ownership_mode.value
+                    if updated.effective_stage_ownership_mode is not None
+                    else None
+                ),
+            },
+            now,
+        )
+        if updated.ticket_status not in (
+            TicketStatus.agent_running_step,
+            TicketStatus.awaiting_approval,
+            TicketStatus.errored,
+        ):
+            _write_resting_ticket_status(
+                conn,
+                updated,
+                worker_type_definition=worker_type_definition,
+                now=now,
+            )
+            updated = _load_ticket_for_write(conn, ticket_id)
+        return updated
 
 
 def edit_field_value(
@@ -980,14 +1208,30 @@ def set_stage(
         # so it needs no definition; the ingress validated new_stage against the type,
         # and _apply_decision re-validates the prospective (stage, ceiling) per-type.
         decision = resolution.decide_stage_jump(ticket, new_stage, actor)
-        return _apply_decision(conn, ticket, decision, now)
+        updated = _apply_decision(conn, ticket, decision, now)
+        _write_resting_ticket_status(
+            conn,
+            updated,
+            worker_type_definition=worker_type_definition,
+            now=now,
+        )
+        return _load_ticket_for_write(conn, ticket_id)
 
 
 def drop_ticket(conn: sqlite3.Connection, ticket_id: str, *, actor: str, now: int) -> Ticket:
     with _txn(conn):
-        ticket = _load_ticket_for_write(conn, ticket_id)
+        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
+            conn, ticket_id
+        )
         decision = resolution.decide_drop(ticket, actor)
-        return _apply_decision(conn, ticket, decision, now)
+        updated = _apply_decision(conn, ticket, decision, now)
+        _write_resting_ticket_status(
+            conn,
+            updated,
+            worker_type_definition=worker_type_definition,
+            now=now,
+        )
+        return _load_ticket_for_write(conn, ticket_id)
 
 
 def delete_ticket(
@@ -1188,7 +1432,9 @@ def edit_ticket(
         title = edit["title"] if "title" in edit else ticket.title
         priority = edit["priority"] if "priority" in edit else ticket.priority
         deadline = edit["deadline"] if "deadline" in edit else ticket.deadline
-        implementer = edit["implementer"] if "implementer" in edit else ticket.implementer
+        execution_route = (
+            edit["execution_route"] if "execution_route" in edit else ticket.execution_route
+        )
         project_id = edit["project_id"] if "project_id" in edit else ticket.project_id
         sprint_id = edit["sprint_id"] if "sprint_id" in edit else ticket.sprint_id
 
@@ -1220,10 +1466,10 @@ def edit_ticket(
             ("priority", "priority", ticket.priority.value, priority.value),
             ("deadline", "deadline", ticket.deadline, deadline),
             (
-                "implementer",
-                "implementer",
-                ticket.implementer.value if ticket.implementer is not None else None,
-                implementer.value if implementer is not None else None,
+                "execution_route",
+                "execution_route",
+                ticket.execution_route.value if ticket.execution_route is not None else None,
+                execution_route.value if execution_route is not None else None,
             ),
             ("project_id", "project_id", ticket.project_id, project_id),
             ("sprint_id", "sprint_id", ticket.sprint_id, sprint_id),

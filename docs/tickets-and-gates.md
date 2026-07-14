@@ -78,15 +78,17 @@ one already populated through the explicit `panels chief` external-work commands
 is not a worker proposal and not a general Stage bypass. The operation requires a
 complete Kickoff field value, an exact settled-field prefix for the target Stage, and a Chief
 request. It refuses backward moves, pending proposals, active ticket control, and
-running chat turns. The resulting scope stops at the imported Stage, so the worker does
-not continue automatically.
+running chat turns. It moves the ceiling to the imported Stage but preserves the Ticket's
+at-cap choice: an explicit **Stop** remains Stop; otherwise **Continue** remains. The
+target Stage's effective ownership then determines whether the Ticket rests for the
+worker, the user, or paired work.
 
-The create or reconciliation writer commits all fields, Kickoff value, recap, Stage, scope,
-status normalization, and existing event signals together. A validation or concurrency
-failure leaves both the ticket and its event history unchanged. The surrounding action
-commits before it calls the best-effort Automatic Employee-step eligibility wake after
-a new imported Ticket or a real reconciliation change. An exact replay does not wake
-discovery; normalizing `errored` back to `empty` is a real change and does.
+The create or reconciliation writer commits all fields, Kickoff value, recap, Stage,
+scope, ownership-derived resting status, and event signals together. A validation or
+concurrency failure leaves both the ticket and its event history unchanged. The
+surrounding action commits before it calls the best-effort Automatic Employee-step
+eligibility wake after a new imported Ticket or a real reconciliation change. An exact
+replay does not wake discovery.
 
 Standalone tickets may point at a project by `project_id`. API responses also include
 `project`, the display name, for compatibility. A ticket under a sprint item does not
@@ -95,18 +97,48 @@ store its own project because the parent item owns that classification.
 ### Ordinary Ticket edits
 
 One ordinary edit may change a Ticket's title, priority, deadline, project,
-sprint, and implementer together. The implementer is nullable and limited to four fixed
-assignments: Khushal, Panels worker, Hermes with Codex, and Hermes with Claude. Panels
-checks the whole request before saving any of it. All requested changes succeed together
-or none do, and the history records only fields that really changed. Sending values the
-Ticket already has leaves it unchanged. Editing the implementer does not change the
-Ticket's stage or control status and does not start implementation.
+sprint, and execution route together. The route is nullable and limited to Panels worker,
+Hermes with Codex, and Hermes with Claude. Panels checks the whole request before saving
+any of it. All requested changes succeed together or none do, and the history records
+only fields that really changed. Sending values the Ticket already has leaves it
+unchanged.
 
-The current assignment is included in the actual Hermes worker prompt, not merely shown
-in the Ticket UI or Panels chat. When an accepted Plan advances a Khushal-assigned Ticket
-to implementation, control moves to user takeover for the human handoff. Agent-assigned
-Tickets continue through the existing worker path, while an unassigned Ticket keeps the
-existing behavior.
+The execution route is included in the actual Hermes worker prompt, not merely shown in
+the Ticket UI or Panels Chat. It tells the Employee how worker work should be carried out;
+it is not Stage ownership, scope, permission, account capability, or automatic model
+routing. There is no human execution route. Changing it does not change Stage or control
+status and does not start work. It is direct-write-only: an attributed worker cannot
+change its own route.
+
+### Who owns the current Stage
+
+Every non-terminal Stage has a default owner declared by its Worker type: **worker**,
+**user**, or **paired**. A Ticket may override that default for a particular Stage. The
+current Stage's override wins; without one, its default applies. Terminal Tickets have no
+current owner.
+
+- **Worker-owned** Stages rest ready for automatic eligibility. The other runtime,
+  blocker, Chat, proposal, and scope conditions must still allow a run.
+- **User-owned** Stages rest in **user takeover** and are never dispatched
+  automatically. The user does the work, then the Chief records it through external-work
+  reconciliation; there is no direct self-settle path.
+- **Paired** Stages rest in **paired work** and are never dispatched automatically.
+  Ordinary Ticket Chat continues the durable Employee conversation. A turn without a
+  proposal leaves paired work unchanged; a real proposal always parks for approval,
+  regardless of scope.
+
+**Take over** sets a `user` override for the current Stage, even if an Employee run is
+active. That run cannot undo the takeover when it settles. **Release** clears the current
+Stage override and reapplies the Stage default; there is no stack of older overrides.
+Moving to another Stage applies that Stage's own override or default.
+
+Ownership and scope answer different questions. Ownership says who drives the current
+Stage. Scope says how far a worker may advance autonomously and what it may do at the
+ceiling. Execution route is a third, separate instruction for how Employee work is
+carried out.
+
+_Code paths:_ `src/planner/tickets/logic/machine.py`, `src/planner/tickets/data.py`,
+and `src/planner/tickets/api.py`.
 
 ## The one rule: proposals and the single door
 
@@ -132,11 +164,13 @@ Every ticket carries a permission with two parts — together, its **scope**:
 
 - **The ceiling** — how far along the stages a worker may push this ticket on its own.
 - **At the cap** — what a worker may do once the ticket reaches that ceiling: either
-  **stop** (don't even suggest anything) or **propose** (draft the next step and park
-  it for approval).
+  **Stop** (don't even suggest anything) or **Continue** (draft the next step and park
+  it for approval). Continue keeps the stored `propose` value and its existing behavior.
 
-Below the ceiling, a worker's proposal is accepted automatically and the ticket
-advances. At the ceiling, the at-cap rule decides. New tickets start leashed right at
+Below the ceiling, a worker-owned Stage's proposal is accepted automatically and the
+ticket advances. A paired Stage's proposal always parks instead. At the ceiling, the
+at-cap rule decides whether a worker-owned Stage may propose. User-owned and paired
+Stages are not automatically dispatched. New tickets start leashed right at
 **Kickoff**: the ceiling is `needs_kickoff` for every Worker type, so nothing advances past
 the human-approved intake until the human grants scope onward — review before agents
 start. Every later stage behaves the same way, including the last two: an accepted
@@ -150,8 +184,8 @@ start ceiling; see `worker-types.md`.)
 Whenever the human approves a step, they must say in the same breath how far the
 worker may go next — the system refuses an approval that doesn't answer that
 question. That same scope is shown and editable right on the ticket header as a plain
-row: "approved until [a stage] then propose" — or "then stop", rendered as pills you
-can tap to change any time. A fresh approval starts on "then propose" so the worker
+row: "approved until [a stage] then Continue" — or "then Stop", rendered as pills you
+can tap to change any time. A fresh approval starts on Continue so the worker
 keeps drafting the next gated step unless the human changes it. The stages it offers
 are always the current one and the
 ones after it, never an earlier one, so you can't hand back ground the ticket has
@@ -211,8 +245,8 @@ _Code paths:_ `src/planner/core/events.py`.
 ## Handoffs
 
 - **Worker types** (`worker-types.md`) — the registry that declares this Ticket's Stage
-  set, its gates and fields, and its worker. The six Stages above are the `coding`
-  Worker type's.
+  set, its gates, fields, default ownership, and worker. The six Stages above are the
+  `coding` Worker type's.
 - **The employee runtime** (`employee-runtime.md`) — the worker that files the
   proposals and does the drafting; eligibility-affecting actions commit before calling
   its payload-free best-effort wake so discovery can check again at once.

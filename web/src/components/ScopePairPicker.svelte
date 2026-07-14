@@ -62,7 +62,7 @@
     <label class="scope-select">
       <select bind:value={atCap} aria-label="At cap behavior">
         <option value="stop">stop</option>
-        <option value="propose">propose</option>
+        <option value="propose">Continue</option>
       </select>
     </label>
   </span>

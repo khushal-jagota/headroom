@@ -7,6 +7,7 @@ export type FieldStageVisualState =
   | "completed"
   | "current-running"
   | "current-waiting"
+  | "current-paired-work"
   | "current-awaiting-approval"
   | "errored"
   | "upcoming";
@@ -46,20 +47,26 @@ export function markerLabel(value: string): string {
     "blockers-cleared": "blockers cleared",
     errored: "errored",
     frozen: "frozen",
+    "paired-work": "paired work",
     "user-takeover": "user takeover"
   };
   return labels[value] || value;
 }
 
-export function ticketStatusLabel(value: string): string {
+export function ticketStatusText(value: string): string {
   const labels: Record<string, string> = {
     empty: "empty",
     agent_running_step: "running step",
     awaiting_approval: "awaiting approval",
+    paired_work: "paired work",
     user_takeover: "user takeover",
     errored: "errored"
   };
-  return `status ${labels[value] || value.replace(/_/g, " ")}`;
+  return labels[value] || value.replace(/_/g, " ");
+}
+
+export function ticketStatusLabel(value: string): string {
+  return `status ${ticketStatusText(value)}`;
 }
 
 export function formatUnix(seconds: unknown): string {

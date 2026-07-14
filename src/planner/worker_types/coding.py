@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.contracts import (
     FieldDefinition,
     StageDefinition,
-    TransitionHook,
     WorkerProfile,
     WorkerTypeDefinition,
 )
@@ -14,15 +14,21 @@ CODING_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     worker_type="coding",
     label="Coding",
     stages=(
-        StageDefinition("needs_kickoff", "Kickoff", "kickoff", False),
-        StageDefinition("needs_success", "Success", "success", False),
-        StageDefinition("needs_approach", "Approach", "approach", False),
-        StageDefinition("needs_plan", "Plan", "plan", False),
-        StageDefinition("needs_implementation", "Implementation", "implementation", False),
-        StageDefinition("needs_closeout", "Closeout", "closeout", False),
-        StageDefinition("done", "Done", None, True),
+        StageDefinition("needs_kickoff", "Kickoff", "kickoff", False, StageOwnershipMode.worker),
+        StageDefinition("needs_success", "Success", "success", False, StageOwnershipMode.worker),
+        StageDefinition("needs_approach", "Approach", "approach", False, StageOwnershipMode.worker),
+        StageDefinition("needs_plan", "Plan", "plan", False, StageOwnershipMode.worker),
+        StageDefinition(
+            "needs_implementation",
+            "Implementation",
+            "implementation",
+            False,
+            StageOwnershipMode.worker,
+        ),
+        StageDefinition("needs_closeout", "Closeout", "closeout", False, StageOwnershipMode.worker),
+        StageDefinition("done", "Done", None, True, None),
     ),
-    dropped_stage=StageDefinition("dropped", "Dropped", None, True),
+    dropped_stage=StageDefinition("dropped", "Dropped", None, True, None),
     fields=(
         FieldDefinition("kickoff", "Kickoff"),
         FieldDefinition("success", "Success"),
@@ -36,14 +42,6 @@ CODING_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         model=None,
         reasoning_effort=None,
         toolset_profile="default",
-    ),
-    transition_hooks=(
-        TransitionHook(
-            old_stage="needs_plan",
-            new_stage="needs_implementation",
-            implementer="khushal",
-            effect="user_takeover",
-        ),
     ),
     supports_prefix_reconciliation=True,
 )

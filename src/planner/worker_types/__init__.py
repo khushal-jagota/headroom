@@ -12,7 +12,6 @@ from planner.worker_types.configuration import (
 from planner.worker_types.contracts import (
     FieldDefinition,
     StageDefinition,
-    TransitionHook,
     WorkerProfile,
     WorkerTypeDefinition,
     WorkerTypeManifest,
@@ -28,7 +27,6 @@ __all__ = [
     "PRODUCTION_WORKER_TYPE_REGISTRY",
     "FieldDefinition",
     "StageDefinition",
-    "TransitionHook",
     "WorkerProfile",
     "WorkerTypeDefinition",
     "WorkerTypeManifest",

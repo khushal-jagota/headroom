@@ -45,7 +45,6 @@ CODING_PROBE_WORKER_TYPE_DEFINITION: WorkerTypeDefinition = WorkerTypeDefinition
     dropped_stage=CODING_WORKER_TYPE_DEFINITION.dropped_stage,
     fields=CODING_WORKER_TYPE_DEFINITION.fields,
     worker_profile=CODING_WORKER_TYPE_DEFINITION.worker_profile,
-    transition_hooks=(),
     supports_prefix_reconciliation=CODING_WORKER_TYPE_DEFINITION.supports_prefix_reconciliation,
 )
 
@@ -200,8 +199,8 @@ def test_audit_stops_at_first_corrupt_id_in_order(tmp_db: Connection) -> None:
 # =====================================================================
 
 
-def test_plain_row_load_returns_stored_stage_and_worker_type_without_registry_resolution(
-    tmp_db: Connection, monkeypatch: pytest.MonkeyPatch
+def test_plain_row_load_requires_registry_to_resolve_ownership_metadata(
+    tmp_db: Connection,
 ) -> None:
     _raw_insert_ticket(
         tmp_db,
@@ -211,16 +210,10 @@ def test_plain_row_load_returns_stored_stage_and_worker_type_without_registry_re
         ceiling="needs_unregistered_work",
     )
 
-    def unexpected_resolution(*args: object, **kwargs: object) -> None:
-        raise AssertionError(f"plain row load resolved the registry: {args!r} {kwargs!r}")
-
-    monkeypatch.setattr(tickets_data, "configured_worker_type_registry", unexpected_resolution)
-
-    ticket = tickets_data.read_ticket(tmp_db, "t_load")
-
-    assert ticket.worker_type == "unregistered_worker"
-    assert ticket.stage == "needs_unregistered_work"
-    assert ticket.ceiling == "needs_unregistered_work"
+    with pytest.raises(PlannerError) as exc:
+        tickets_data.read_ticket(tmp_db, "t_load")
+    assert exc.value.code is ErrorCode.not_found
+    assert exc.value.detail == {"worker_type": "unregistered_worker"}
 
 
 def test_metadata_write_rejects_invalid_stored_tuple_before_durable_effect(
@@ -233,9 +226,6 @@ def test_metadata_write_rejects_invalid_stored_tuple_before_durable_effect(
         stage="needs_unregistered_work",
         ceiling="needs_success",
     )
-    stored = tickets_data.read_ticket(tmp_db, "t_invalid_write")
-    assert stored.worker_type == "coding"
-    assert stored.stage == "needs_unregistered_work"
     before = tuple(
         tmp_db.execute(
             "SELECT title, stage, updated_at FROM tickets WHERE id = 't_invalid_write'"
@@ -243,16 +233,10 @@ def test_metadata_write_rejects_invalid_stored_tuple_before_durable_effect(
     )
 
     with pytest.raises(PlannerError) as exc:
-        tickets_data.edit_ticket(
-            tmp_db,
-            "t_invalid_write",
-            edit={"title": "Must not persist"},
-            title_max_chars=TITLE_MAX_CHARS,
-            actor="human",
-            now=99,
-        )
+        tickets_data.read_ticket(tmp_db, "t_invalid_write")
 
     assert exc.value.code == ErrorCode.validation
+    assert exc.value.detail == {"stage": "needs_unregistered_work"}
     assert (
         tuple(
             tmp_db.execute(

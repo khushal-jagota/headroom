@@ -318,6 +318,7 @@ for (const kind of [
 
 const reviewKinds = [
   "stage_changed",
+  "stage_ownership_changed",
   "proposal_accepted",
   "proposal_superseded",
   "proposal_filed",

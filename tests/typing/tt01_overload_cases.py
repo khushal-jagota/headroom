@@ -8,7 +8,14 @@ from __future__ import annotations
 
 from typing import assert_type
 
-from planner.tickets.contracts import AtCap, ScopePair, Ticket, TicketFields, TicketStatus
+from planner.tickets.contracts import (
+    AtCap,
+    ScopePair,
+    StageOwnershipMode,
+    Ticket,
+    TicketFields,
+    TicketStatus,
+)
 from planner.tickets.logic import machine
 from planner.worker_types.contracts import WorkerTypeDefinition
 
@@ -56,11 +63,14 @@ def _cases(
         bool,
     )
     assert_type(
-        machine.plan_handoff_status(
-            ticket.implementer,
+        machine.effective_stage_ownership_mode(
             stage,
-            "needs_beta",
+            ticket.stage_ownership_overrides,
             worker_type_definition=definition,
         ),
-        TicketStatus | None,
+        StageOwnershipMode | None,
+    )
+    assert_type(
+        machine.resting_ticket_status(StageOwnershipMode.worker),
+        TicketStatus,
     )

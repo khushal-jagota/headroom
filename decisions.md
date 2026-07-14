@@ -90,6 +90,34 @@ grant picker so they can't drift. Every gating approval (Kickoff included) uses 
 contract. The default-reset logic lives in the shared picker so a previous approval's choice can't leak
 into the next same-stage proposal.
 
+## D-stage-ownership — Stage ownership, worker scope, and execution route are separate controls
+
+Each non-terminal Worker-type Stage declares whether work is normally **worker-owned**,
+**user-owned**, or **paired**; a Ticket may override that declaration for a particular Stage. The
+effective ownership determines the Ticket's inactive control state: worker work is ready for automatic
+eligibility, user work rests in `user_takeover`, and paired work rests in `paired_work` while ordinary
+Ticket Chat continues the same Employee session. A paired worker's real field proposal always parks for
+approval; paired work is not a renamed proposal or a second dispatch loop.
+
+Ownership does not absorb `(ceiling, at_cap)`. Scope still limits autonomous continuation. The stored
+`at_cap=propose` contract remains unchanged and is displayed as **Continue**; **Stop** is the explicit
+Ticket override. User-completed work returns through Chief external-work reconciliation, which preserves
+that explicit Stop instead of imposing one. The old human `khushal` implementer route is represented by a
+coding Implementation ownership override; the remaining agent choices are renamed **execution route**
+and remain direct-write-only instructions, not automatic model routing.
+
+## D-stage-ownership-integration-repair — Tests pin ownership, not retired transition hooks
+
+The stage-ownership integration repair translated old `implementer=khushal` and transition-hook tests
+to explicit ownership contracts: coding legacy `khushal` migrates to
+`stage_ownership_overrides["needs_implementation"] = "user"`, probe uses declared mixed defaults, and
+ExecutionRoute covers only `panels_worker`, `hermes_codex`, and `hermes_claude`. Plain Ticket reads now
+require the Worker-type registry because Ticket detail exposes default/effective ownership; the old
+registry-free read assertion was retired. Chief reconciliation is allowed from inactive owner states
+(`user_takeover` and `paired_work`) because user-completed work returns through Chief, while active
+worker/proposal/chat states still block it. Run settlement derives the resting owner state only when it
+actually changes, so no-op status events are not emitted.
+
 ## D-field-circles-derived — Field/stage visual state is lifecycle-derived, not value-derived
 
 A ticket field's circle (completed / current / upcoming) is a pure frontend derivation over the

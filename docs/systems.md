@@ -92,7 +92,8 @@ Tickets are the correctness center. A Ticket has a Stage and a separate control 
   `needs_kickoff`, `needs_success`, `needs_approach`, `needs_plan`,
   `needs_implementation`, `needs_closeout`, `done`, or `dropped`.
 - `ticket_status` is runtime control: `empty`, `agent_running_step`,
-  `awaiting_approval`, `user_takeover`, or `errored`. This set is universal.
+  `awaiting_approval`, `user_takeover`, `paired_work`, or `errored`. This set is
+  universal.
 
 An ordinary Ticket starts with a parked proposal on the `kickoff` field — every Worker type
 leads with Kickoff. The title is separate editable Ticket metadata; approving Kickoff
@@ -105,7 +106,19 @@ engine is the only code that can settle a proposal or advance the Ticket.
 
 Scope decides how far a worker may go without another human approval. It is the pair
 `ceiling` plus `at_cap`. Below the ceiling, a proposal can auto-accept. At the cap,
-the ticket either stops or parks the next proposal for approval.
+the ticket either stops or parks the next proposal for approval; the UI labels that
+parked-proposal choice **Continue** while the stored value remains `propose`.
+
+Stage ownership decides who drives the current Stage. Every non-terminal Stage has a
+default owner from its Worker type: worker, user, or paired. A Ticket may override one
+Stage. Worker-owned Stages can be discovered automatically when every other condition
+allows it. User-owned Stages rest in `user_takeover` and return through Chief
+external-work reconciliation. Paired Stages rest in `paired_work`; ordinary Ticket Chat
+continues the same Employee session, and any real proposal parks for approval.
+
+Execution route is separate again. It is a nullable direct instruction for how Employee
+work should be carried out: Panels worker, Hermes with Codex, or Hermes with Claude.
+There is no human execution route, and an attributed worker cannot change its own route.
 
 Code paths: `src/planner/tickets/contracts.py`,
 `src/planner/tickets/logic/machine.py`,
@@ -165,18 +178,19 @@ routes.
 The runtime keeps advisory discovery separate from step execution.
 
 One complete decision owns **Automatic Employee-step eligibility**. It returns yes
-only when all eight facts hold:
+only when all nine facts hold:
 
 1. The Ticket belongs to the supplied `planning_day_id` — today's day during
    automatic discovery.
-2. Its `ticket_status` is `empty`.
-3. Its Stage is not terminal.
-4. Its Stage has a next gated field.
-5. That field has no parked proposal.
-6. Its `ceiling` and `at_cap` allow another proposal; the Ticket is not at or beyond
+2. Its current Stage's effective ownership is `worker`.
+3. Its `ticket_status` is `empty`.
+4. Its Stage is not terminal.
+5. Its Stage has a next gated field.
+6. That field has no parked proposal.
+7. Its `ceiling` and `at_cap` allow another proposal; the Ticket is not at or beyond
    a stopping ceiling.
-7. It has no active blocker.
-8. It has no running Panels Chat turn, from either a human or an Employee step.
+8. It has no active blocker.
+9. It has no running Panels Chat turn, from either a human or an Employee step.
 
 **AutomaticEmployeeStepDiscoveryLoop** is read-only and advisory. It selects only
 Tickets that belong to today's day, then calls the complete eligibility decision for
@@ -190,8 +204,8 @@ build a prompt. After a successful claim, the runner marks the Ticket
 `agent_running_step`, resumes or creates its durable `employee_session_id`, submits
 one prompt through that Hermes conversation, and settles runtime status when the turn
 ends. A parked proposal becomes
-`awaiting_approval`; auto-accepted work can return to `empty` for another discovery
-pass.
+`awaiting_approval`; auto-accepted work or a no-proposal completion derives the next
+inactive status from the current Stage's effective owner.
 
 Human Chat admission and the final Employee claim both use SQLite's write lock and
 recheck the opposing fact inside the transaction. A human turn that wins admission
@@ -224,7 +238,8 @@ canonical. The polling-lock owner uses
 
 Chat completion, Chat error, and Pause do not send an eligibility wake. They only
 settle the visible Chat turn. The next SQLite-backed periodic scan observes that the
-eighth factor has cleared.
+running-chat factor has cleared and may run the Ticket only if ownership and every
+other condition allow it.
 
 Employee shutdown and restart recovery are owned by the Employee runtime. See
 [`employee-runtime.md`](employee-runtime.md).

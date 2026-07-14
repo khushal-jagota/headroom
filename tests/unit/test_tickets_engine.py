@@ -24,7 +24,7 @@ from planner.tickets.contracts import (
     TITLE_MAX_CHARS,
     AtCap,
     EmployeeSessionIdTransition,
-    Implementer,
+    StageOwnershipMode,
     TicketEdit,
     TicketStatus,
 )
@@ -534,32 +534,29 @@ def test_mark_run_errored_if_still_running_step_preserves_lost_ownership(
     assert t.employee_session_id == "sess-error"
 
     t = data.release_ticket(tmp_db, t.id, now=now)
-    t = _claim_eligible_automatic_step(tmp_db, t.id, now=now)
-    assert t is not None
-    t = data.take_over_ticket(tmp_db, t.id, now=now)
-    t = data.mark_run_errored_if_still_running_step(
-        tmp_db,
-        t.id,
-        error="late boom",
-        employee_session_transition=EmployeeSessionIdTransition("sess-error", "sess-late"),
-        now=now,
-    )
-
-    assert t.ticket_status is TicketStatus.user_takeover
+    assert t.ticket_status is TicketStatus.errored
+    assert _claim_eligible_automatic_step(tmp_db, t.id, now=now) is None
     assert t.employee_session_id == "sess-error"
     status_events = _events(tmp_db, cfg, t.id, EventKind.ticket_status_changed)
-    assert status_events[-1].payload == {"ticket_status": "user_takeover"}
+    assert status_events[-1].payload == {"ticket_status": "errored", "error": "boom"}
 
 
-@pytest.mark.parametrize("implementer", [*Implementer, None])
-def test_direct_plan_accept_routes_only_khushal_to_user_takeover(
+@pytest.mark.parametrize("implementation_owner", [StageOwnershipMode.user, None])
+def test_direct_plan_accept_derives_implementation_ownership_status(
     tmp_db: Connection,
     cfg: Config,
     fake_clock: TestClock,
-    implementer: Implementer | None,
+    implementation_owner: StageOwnershipMode | None,
 ) -> None:
     now = fake_clock.now_unix()
-    ticket = _create(tmp_db, cfg, fake_clock, implementer=implementer)
+    ticket = _create(tmp_db, cfg, fake_clock)
+    data.set_stage_ownership(
+        tmp_db,
+        ticket.id,
+        stage="needs_implementation",
+        ownership_mode=implementation_owner,
+        now=now,
+    )
     _scope(tmp_db, ticket, "needs_plan", AtCap.propose, fake_clock)
     for field in ("success", "approach", "plan"):
         ticket = data.file_proposal(
@@ -584,21 +581,26 @@ def test_direct_plan_accept_routes_only_khushal_to_user_takeover(
     )
 
     assert ticket.stage == "needs_implementation"
-    expected = (
-        TicketStatus.user_takeover if implementer is Implementer.khushal else TicketStatus.empty
-    )
+    expected = TicketStatus.user_takeover if implementation_owner else TicketStatus.empty
     assert ticket.ticket_status is expected
 
 
-@pytest.mark.parametrize("implementer", [*Implementer, None])
-def test_auto_accepted_plan_routes_only_khushal_to_takeover_that_survives_settlement(
+@pytest.mark.parametrize("implementation_owner", [StageOwnershipMode.user, None])
+def test_auto_accepted_plan_derives_implementation_ownership_status_after_settlement(
     tmp_db: Connection,
     cfg: Config,
     fake_clock: TestClock,
-    implementer: Implementer | None,
+    implementation_owner: StageOwnershipMode | None,
 ) -> None:
     now = fake_clock.now_unix()
-    ticket = _create(tmp_db, cfg, fake_clock, implementer=implementer)
+    ticket = _create(tmp_db, cfg, fake_clock)
+    data.set_stage_ownership(
+        tmp_db,
+        ticket.id,
+        stage="needs_implementation",
+        ownership_mode=implementation_owner,
+        now=now,
+    )
     _scope(tmp_db, ticket, "needs_implementation", AtCap.propose, fake_clock)
     for field in ("success", "approach"):
         ticket = data.file_proposal(
@@ -623,23 +625,28 @@ def test_auto_accepted_plan_routes_only_khushal_to_takeover_that_survives_settle
     assert ticket.stage == "needs_implementation"
     before_settlement = (
         TicketStatus.user_takeover
-        if implementer is Implementer.khushal
-        else TicketStatus.agent_running_step
+        if implementation_owner is StageOwnershipMode.user
+        else TicketStatus.empty
     )
     assert ticket.ticket_status is before_settlement
 
     settled = data.finish_run_if_still_running_step(tmp_db, ticket.id, now=now)
-    expected = (
-        TicketStatus.user_takeover if implementer is Implementer.khushal else TicketStatus.empty
-    )
+    expected = TicketStatus.user_takeover if implementation_owner else TicketStatus.empty
     assert settled.ticket_status is expected
 
 
-def test_current_worker_plan_proposal_routes_khushal_to_takeover_that_survives_settlement(
+def test_current_worker_plan_proposal_derives_user_owned_implementation_after_settlement(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
-    ticket = _create(tmp_db, cfg, fake_clock, implementer=Implementer.khushal)
+    ticket = _create(tmp_db, cfg, fake_clock)
+    data.set_stage_ownership(
+        tmp_db,
+        ticket.id,
+        stage="needs_implementation",
+        ownership_mode=StageOwnershipMode.user,
+        now=now,
+    )
     _scope(tmp_db, ticket, "needs_implementation", AtCap.propose, fake_clock)
     for field in ("success", "approach"):
         ticket = data.file_proposal(

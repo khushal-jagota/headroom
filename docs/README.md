@@ -56,9 +56,8 @@ its old event lines are replaced by one minimal deletion audit.
   `coding` and `new_worker`; the engine and the workers both read the Worker type
   instead of branching.
 - **The employee runtime** (`employee-runtime.md`) — the single AI worker that
-  carries each ticket forward, and the loop that fires it, watches it, and feeds an
-  approval back in. The wiring is in place; a live end-to-end worker smoke is still
-  the next proof.
+  carries each worker-owned ticket Stage forward, and the loop that fires it, watches
+  it, and feeds proposals back through the gate.
 - **Chat** (`chat.md`) — talking to a ticket's worker or the Chief of Staff, with
   server-owned live turn state and the slash menu of commands and skills.
 
@@ -86,5 +85,5 @@ its old event lines are replaced by one minimal deletion audit.
 
 ---
 
-_Last verified: 2026-07-13 · Covers the system landscape; each doc carries its own
+_Last verified: 2026-07-14 · Covers the system landscape; each doc carries its own
 code paths._

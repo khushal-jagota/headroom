@@ -154,12 +154,43 @@ def test_create_external_work_enforces_exact_settled_prefix_and_coherent_control
     ticket = response.json()
     assert ticket["stage"] == state
     assert ticket["ceiling"] == state
-    assert ticket["at_cap"] == "stop"
+    assert ticket["at_cap"] == "propose"
     assert ticket["ticket_status"] == "empty"
     expected = {
         key: body.get(key) for key in ("success", "approach", "plan", "implementation", "closeout")
     }
     assert {key: ticket["fields"][key]["value"] for key in expected} == expected
+
+
+def test_reconcile_external_work_preserves_explicit_stop(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ordinary_ticket(db_path)
+    conn = connect(str(db_path))
+    try:
+        conn.execute("UPDATE tickets SET at_cap = 'stop' WHERE id = ?", (ticket_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
+            json=_external_body("needs_plan"),
+            headers=_CHIEF,
+        )
+
+    assert response.status_code == 200, response.json()
+    ticket = response.json()
+    assert ticket["ceiling"] == "needs_plan"
+    assert ticket["at_cap"] == "stop"
+    scope_events = [
+        payload for kind, payload in _events(db_path, ticket_id) if kind == "scope_changed"
+    ]
+    assert scope_events[-1] == {
+        "ceiling": "needs_plan",
+        "at_cap": "stop",
+        "cause": "external_work",
+    }
 
 
 def test_external_work_rejects_unknown_keys_and_prefix_mismatches_without_writes(
@@ -238,7 +269,7 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
         )
     assert pending.status_code == 400
 
-    for status in ("agent_running_step", "awaiting_approval", "user_takeover"):
+    for status in ("agent_running_step", "awaiting_approval"):
         ticket_id = _ordinary_ticket(db_path)
         conn = connect(str(db_path))
         try:
@@ -322,7 +353,7 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
     ticket = response.json()
     assert ticket["ticket_status"] == "empty"
     assert ticket["ceiling"] == "needs_plan"
-    assert ticket["at_cap"] == "stop"
+    assert ticket["at_cap"] == "propose"
     assert wakes.count == 1
     new_events = _events(db_path, ticket_id)[len(before) :]
     assert [kind for kind, _ in new_events] == [
@@ -346,7 +377,7 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
     }
     assert new_events[5][1] == {
         "ceiling": "needs_plan",
-        "at_cap": "stop",
+        "at_cap": "propose",
         "cause": "external_work",
     }
 
@@ -401,7 +432,7 @@ def test_create_external_work_emits_exact_existing_events_and_wakes(tmp_path: Pa
     }
     assert events[8][1] == {
         "ceiling": "done",
-        "at_cap": "stop",
+        "at_cap": "propose",
         "cause": "external_work",
     }
 

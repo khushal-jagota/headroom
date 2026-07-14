@@ -22,7 +22,7 @@ class SprintItemChildStatus(NamedTuple):
 _DROPPED_STAGE = "dropped"
 _DONE_STAGE = "done"
 _IN_PROGRESS_TICKET_STATUSES = frozenset(
-    {"agent_running_step", "awaiting_approval", "user_takeover"}
+    {"agent_running_step", "awaiting_approval", "user_takeover", "paired_work"}
 )
 _BLOCKED_TICKET_STATUS = "errored"
 

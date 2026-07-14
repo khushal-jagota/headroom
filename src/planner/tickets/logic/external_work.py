@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from planner.core.contracts import ErrorCode, EventKind, PlannerError
-from planner.tickets.contracts import AtCap, FieldSlot, Ticket
+from planner.tickets.contracts import FieldSlot, Ticket
 from planner.tickets.logic import admission, fields_codec
 from planner.tickets.logic.decisions import Decision, EventSpec
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -109,14 +109,14 @@ def decide_external_work(
                 },
             )
         )
-    scope_changes = ticket.ceiling != target_stage or ticket.at_cap != AtCap.stop
+    scope_changes = ticket.ceiling != target_stage
     if scope_changes:
         position_events.append(
             EventSpec(
                 EventKind.scope_changed,
                 {
                     "ceiling": target_stage,
-                    "at_cap": AtCap.stop.value,
+                    "at_cap": ticket.at_cap.value,
                     "cause": CAUSE_EXTERNAL_WORK,
                 },
             )
@@ -128,6 +128,6 @@ def decide_external_work(
             events=tuple(position_events),
             new_stage=new_stage,
             new_ceiling=target_stage if scope_changes else None,
-            new_at_cap=AtCap.stop if scope_changes else None,
+            new_at_cap=None,
         ),
     )

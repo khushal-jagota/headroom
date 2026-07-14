@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 
 from planner.core import links as core_links
-from planner.tickets.contracts import AtCap, Ticket, TicketStatus
+from planner.tickets.contracts import AtCap, StageOwnershipMode, Ticket, TicketStatus
 from planner.tickets.logic import machine
 from planner.worker_types.contracts import WorkerTypeDefinition
 
@@ -33,6 +33,15 @@ def is_eligible_for_automatic_employee_step(
     if active_chat_turn is not None:
         return False
     if worker_type_definition.is_terminal(ticket.stage):
+        return False
+    if (
+        machine.effective_stage_ownership_mode(
+            ticket.stage,
+            ticket.stage_ownership_overrides,
+            worker_type_definition=worker_type_definition,
+        )
+        is not StageOwnershipMode.worker
+    ):
         return False
     if worker_type_definition.gating_field(ticket.stage) is None:
         return False

@@ -13,6 +13,8 @@
     recapVisibleFor
   } from "../lib/lifecycle";
   import type {
+    ExecutionRoute,
+    StageOwnershipMode,
     TicketDetail
   } from "../lib/types";
   import ChatPanel from "../components/ChatPanel.svelte";
@@ -52,12 +54,17 @@
 
   const emptyTicketFieldText = "Not written yet.";
   const emptyTicketRecapText = "No recap yet.";
-  const implementerOptions = [
+  const executionRouteOptions = [
     { value: "", label: "(unassigned)" },
-    { value: "khushal", label: "Khushal" },
     { value: "panels_worker", label: "Panels worker" },
     { value: "hermes_codex", label: "Hermes with Codex" },
     { value: "hermes_claude", label: "Hermes with Claude" }
+  ];
+  const stageOwnerOptions = [
+    { value: "", label: "default" },
+    { value: "worker", label: "worker" },
+    { value: "user", label: "user" },
+    { value: "paired", label: "paired" }
   ];
 
   let headerError = $state<unknown>(null);
@@ -79,6 +86,30 @@
       `/api/tickets/${stableId}/scope`,
       { method: "POST", body },
       { kind: "ticketChanged", ticketId: stableId }
+    );
+  }
+
+  function currentStageOwnershipOverride(detail: TicketDetail): StageOwnershipMode | null {
+    return detail.stage_ownership_overrides?.[detail.stage] ?? null;
+  }
+
+  function currentStageOwnerControlValue(detail: TicketDetail): "" | StageOwnershipMode {
+    return currentStageOwnershipOverride(detail) ?? "";
+  }
+
+  function hasExplicitCurrentStageUserOverride(detail: TicketDetail): boolean {
+    return currentStageOwnershipOverride(detail) === "user";
+  }
+
+  function canEditCurrentStageOwner(detail: TicketDetail): boolean {
+    return detail.default_stage_ownership_mode !== null && detail.effective_stage_ownership_mode !== null;
+  }
+
+  function saveStageOwner(detail: TicketDetail, ownershipMode: string): Promise<unknown> {
+    return mutateJsonWithResourceEffect(
+      `/api/tickets/${stableId}/stage-ownership/${encodeURIComponent(detail.stage)}`,
+      { method: "PUT", body: { ownership_mode: ownershipMode || null } },
+      { kind: "ticketReviewStateChanged", ticketId: stableId }
     );
   }
 
@@ -133,7 +164,7 @@
   }
 
   async function takeover(detail: TicketDetail): Promise<void> {
-    const action = detail.ticket_status === "user_takeover" ? "release" : "takeover";
+    const action = hasExplicitCurrentStageUserOverride(detail) ? "release" : "takeover";
     try {
       await mutateJsonWithResourceEffect(
         `/api/tickets/${stableId}/${action}`,
@@ -156,6 +187,7 @@
     if (detail.ticket_status === "agent_running_step") markers.push("agent-running-step");
     if (detail.ticket_status === "errored") markers.push("errored");
     if (detail.ticket_status === "user_takeover") markers.push("user-takeover");
+    if (detail.ticket_status === "paired_work") markers.push("paired-work");
     if (detail.blocked) markers.push("blocked");
     return markers;
   }
@@ -164,6 +196,7 @@
     empty: "empty",
     agent_running_step: "running step",
     awaiting_approval: "awaiting approval",
+    paired_work: "paired work",
     user_takeover: "user takeover",
     errored: "errored"
   };
@@ -227,18 +260,37 @@
                 if (priority !== detail.priority) void patch({ priority });
               }}
             />
-            <span data-implementer>
+            <span data-execution-route>
               <EnumPill
-                keyLabel="implementer"
-                value={detail.implementer || ""}
-                options={implementerOptions}
-                onChange={(implementer) => {
-                  if (implementer !== (detail.implementer || "")) {
-                    void patch({ implementer: implementer || null });
+                keyLabel="execution route"
+                value={detail.execution_route || ""}
+                options={executionRouteOptions}
+                onChange={(execution_route) => {
+                  if (execution_route !== (detail.execution_route || "")) {
+                    void patch({ execution_route: (execution_route || null) as ExecutionRoute | null });
                   }
                 }}
               />
             </span>
+            {#if canEditCurrentStageOwner(detail)}
+              <span
+                data-stage-owner
+                data-owner-mode={currentStageOwnerControlValue(detail) || "default"}
+                data-default-owner={detail.default_stage_ownership_mode || ""}
+                data-effective-owner={detail.effective_stage_ownership_mode || ""}
+              >
+                <EnumPill
+                  keyLabel="owner"
+                  value={currentStageOwnerControlValue(detail)}
+                  options={stageOwnerOptions}
+                  onChange={(ownershipMode) => {
+                    if (ownershipMode !== currentStageOwnerControlValue(detail)) {
+                      void saveStageOwner(detail, ownershipMode);
+                    }
+                  }}
+                />
+              </span>
+            {/if}
             <Pill keyLabel="worker type" data-worker-type={detail.worker_type}>
               {lc?.workerTypeLabel ?? labelize(detail.worker_type)}
             </Pill>
@@ -273,9 +325,9 @@
               <span data-marker={marker}><Chip variant={marker} value={marker} /></span>
             {/each}
             <span class="ticket-facts-gap"></span>
-            {#if detail.stage !== "needs_kickoff"}
+            {#if detail.stage !== "needs_kickoff" && canEditCurrentStageOwner(detail)}
               <button class="ticket-act" data-ticket-takeover-toggle="" onclick={() => void takeover(detail)}>
-                {detail.ticket_status === "user_takeover" ? "Release" : "Take over"}
+                {hasExplicitCurrentStageUserOverride(detail) ? "Release" : "Take over"}
               </button>
             {/if}
             <button class="ticket-act" data-copy="" onclick={() => void copyTicket()}>
@@ -296,7 +348,7 @@
               <span class="ticket-leash-sel" data-scope-atcap>
                 <EnumPill
                   value={detail.at_cap}
-                  options={[{ value: "stop", label: "stop" }, { value: "propose", label: "propose" }]}
+                  options={[{ value: "stop", label: "stop" }, { value: "propose", label: "Continue" }]}
                   onChange={(at_cap) => void saveScope({ ceiling: detail.ceiling, at_cap })}
                 />
               </span>

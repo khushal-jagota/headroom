@@ -68,11 +68,18 @@ def _next_step_prompt(
     its real field instead of raising 'stage outside the linear order'."""
     gating = worker_type_definition.gating_field(ticket.stage)
     field = str(gating) if gating is not None else "the next step"
-    implementer_wire = ticket.implementer.value if ticket.implementer is not None else "unassigned"
+    execution_route_wire = (
+        ticket.execution_route.value if ticket.execution_route is not None else "unassigned"
+    )
+    ownership_wire = (
+        ticket.effective_stage_ownership_mode.value
+        if ticket.effective_stage_ownership_mode is not None
+        else "terminal"
+    )
     return (
         f"Work ticket {ticket.id} — {ticket.title}. It is at Stage '{str(ticket.stage)}'; "
         f"take the next step and propose the '{field}' field for approval. "
-        f"Implementer: {implementer_wire}."
+        f"Execution route: {execution_route_wire}. Stage owner: {ownership_wire}."
     )
 
 

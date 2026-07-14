@@ -21,8 +21,13 @@ class AtCap(StrEnum):  # §4.3
     propose = "propose"
 
 
-class Implementer(StrEnum):
-    khushal = "khushal"
+class StageOwnershipMode(StrEnum):
+    worker = "worker"
+    user = "user"
+    paired = "paired"
+
+
+class ExecutionRoute(StrEnum):
     panels_worker = "panels_worker"
     hermes_codex = "hermes_codex"
     hermes_claude = "hermes_claude"
@@ -33,6 +38,7 @@ class TicketStatus(StrEnum):  # durable state-of-control, written by data-layer 
     agent_running_step = "agent_running_step"
     awaiting_approval = "awaiting_approval"
     user_takeover = "user_takeover"
+    paired_work = "paired_work"
     errored = "errored"
 
 
@@ -111,7 +117,7 @@ class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     title: str
     priority: Priority
     deadline: str | None
-    implementer: Implementer | None
+    execution_route: ExecutionRoute | None
     project_id: str | None
     sprint_id: str | None
 
@@ -196,7 +202,10 @@ class Ticket:  # §3.3 — column names match exactly
     ceiling: str  # ceiling id; a member of the type's ceiling_range
     at_cap: AtCap  # default propose (R2)
     ticket_status: TicketStatus  # durable state-of-control; transition functions write it
-    implementer: Implementer | None  # human-overridable execution route
+    execution_route: ExecutionRoute | None  # human-overridable execution route
+    stage_ownership_overrides: Mapping[str, StageOwnershipMode]
+    default_stage_ownership_mode: StageOwnershipMode | None
+    effective_stage_ownership_mode: StageOwnershipMode | None
     employee_session_id: str | None  # durable Hermes identity for this Ticket's employee
     alias: str | None  # migration "Ticket ID:" (§12), unique when present
     fields: TicketFields

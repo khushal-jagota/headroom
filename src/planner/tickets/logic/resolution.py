@@ -123,7 +123,15 @@ def decide_file_proposal(
     )
     slot = fields_codec.get_slot(ticket.fields, str(field))
     superseded_body = slot.proposal.body if slot.proposal is not None else None
+    ownership_mode = machine.effective_stage_ownership_mode(
+        ticket.stage,
+        ticket.stage_ownership_overrides,
+        worker_type_definition=worker_type_definition,
+    )
     if (
+        ownership_mode is not None
+        and ownership_mode.value == "worker"
+        and
         machine.auto_accept_target(
             ticket.stage,
             ticket.ceiling,

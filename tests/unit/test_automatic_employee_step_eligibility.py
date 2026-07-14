@@ -18,7 +18,7 @@ from planner.runtime.automatic_employee_step_eligibility import (
     is_eligible_for_automatic_employee_step,
 )
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap, Ticket, TicketStatus
+from planner.tickets.contracts import AtCap, StageOwnershipMode, Ticket, TicketStatus
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -104,6 +104,39 @@ def test_shipped_worker_types_are_eligible_at_their_real_first_employee_stage(
         conn.close()
 
 
+@pytest.mark.parametrize(
+    ("ownership_mode", "expected"),
+    [
+        (StageOwnershipMode.worker, True),
+        (StageOwnershipMode.user, False),
+        (StageOwnershipMode.paired, False),
+    ],
+)
+def test_effective_stage_ownership_controls_automatic_eligibility(
+    tmp_path: Path,
+    ownership_mode: StageOwnershipMode,
+    expected: bool,
+) -> None:
+    conn = _db(tmp_path)
+    try:
+        ticket = _ticket(conn)
+        tickets_data.set_stage_ownership(
+            conn,
+            ticket.id,
+            stage=ticket.stage,
+            ownership_mode=ownership_mode,
+            now=4,
+        )
+        # Hold every other eligibility conjunct constant so this pins ownership itself.
+        conn.execute(
+            "UPDATE tickets SET ticket_status = 'empty' WHERE id = ?",
+            (ticket.id,),
+        )
+        assert _eligible(conn, ticket) is expected
+    finally:
+        conn.close()
+
+
 def test_membership_must_match_the_explicit_planning_day(tmp_path: Path) -> None:
     conn = _db(tmp_path)
     try:
@@ -125,6 +158,7 @@ def test_membership_must_match_the_explicit_planning_day(tmp_path: Path) -> None
         TicketStatus.agent_running_step,
         TicketStatus.awaiting_approval,
         TicketStatus.user_takeover,
+        TicketStatus.paired_work,
         TicketStatus.errored,
     ],
 )
@@ -167,6 +201,14 @@ def test_non_terminal_stage_without_a_gated_field_is_ineligible(tmp_path: Path) 
             def gating_field(self, stage: str) -> None:
                 assert stage == ticket.stage
                 return None
+
+            def stage_definition(self, stage: str) -> object:
+                assert stage == ticket.stage
+                return type(
+                    "Stage",
+                    (),
+                    {"default_ownership_mode": StageOwnershipMode.worker},
+                )()
 
         assert not _eligible(
             conn,
@@ -323,6 +365,13 @@ def test_all_conjuncts_true_then_one_factor_at_a_time_false(
 
                 def gating_field(self, _stage: str) -> None:
                     return None
+
+                def stage_definition(self, _stage: str) -> object:
+                    return type(
+                        "Stage",
+                        (),
+                        {"default_ownership_mode": StageOwnershipMode.worker},
+                    )()
 
             definition = NoNextGate()
         elif break_one_conjunct == "proposal":

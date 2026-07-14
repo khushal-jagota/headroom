@@ -42,6 +42,7 @@ _TICKET_SET_FIELDS = {
     "deadline": "deadline",
     "project": "project",
     "project-id": "project_id",
+    "execution-route": "execution_route",
 }
 
 _SPRINT_FIELDS = {
@@ -615,6 +616,27 @@ def ticket_set(
             request_actor="ordinary",
         )
     http.emit(data, as_json, f"{data['id']} {field} set")
+
+
+@ticket.command("ownership")
+@click.argument("ticket_id")
+@click.option("--stage", required=True, help="Stage id to override.")
+@click.option(
+    "--mode",
+    required=True,
+    type=click.Choice(["worker", "user", "paired", "default"]),
+    help="Ownership mode; default clears the override.",
+)
+@json_option
+def ticket_ownership(ticket_id: str, stage: str, mode: str, as_json: bool) -> None:
+    data = http.send(
+        "PUT",
+        f"/api/tickets/{ticket_id}/stage-ownership/{stage}",
+        as_json=as_json,
+        json_body={"ownership_mode": None if mode == "default" else mode},
+        request_actor="ordinary",
+    )
+    http.emit(data, as_json, f"{data['id']} {stage} ownership set")
 
 
 @ticket.command("approve")

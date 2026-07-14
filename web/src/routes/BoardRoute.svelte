@@ -21,6 +21,7 @@
     { value: "empty", label: "Empty" },
     { value: "agent_running_step", label: "Running" },
     { value: "awaiting_approval", label: "Awaiting approval" },
+    { value: "paired_work", label: "Paired work" },
     { value: "user_takeover", label: "User takeover" },
     { value: "errored", label: "Errored" }
   ];
@@ -66,6 +67,9 @@
     if (stageState === "current-waiting" && card.ticket_status === "user_takeover") {
       return "user-takeover";
     }
+    if (stageState === "current-paired-work") {
+      return "paired-work";
+    }
     return null;
   }
 
@@ -85,6 +89,7 @@
     if (card.is_done) return "completed";
     if (card.ticket_status === "agent_running_step") return "current-running";
     if (card.ticket_status === "errored") return "errored";
+    if (card.ticket_status === "paired_work") return "current-paired-work";
     if (card.has_pending_proposal || card.ticket_status === "awaiting_approval") {
       return "current-awaiting-approval";
     }
