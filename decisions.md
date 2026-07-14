@@ -994,6 +994,21 @@ the new durable session. The owner carries one private, one-use force-fresh inte
 the candidate replaces any current key, attaches to the running turn, and is the live session used. After
 that binding, normal compare-and-set recovery and rotation rules resume. No other input may force a key.
 
+## D-ad07-managed-markdown-owner — One owner holds Markdown DOM lifetime
+
+AD07 keeps the existing continuous Markdown `contenteditable` and rendered file previews, but concentrates
+their mechanics in one `managedMarkdown.ts` surface owner. `MarkdownBlock` remains a read-only product
+wrapper; `InlineEdit` remains the product interaction and save-state wrapper; `FilePreview` remains the
+target-specific preview owner. None of those boundaries duplicates rendering, serialization, observer, or
+preview mount lifetime.
+
+Read-only identity is keyed by every render input value, not Svelte update frequency. Editable identity uses
+both source and dirty state: pristine same-source updates do nothing, while dirty same-source updates restore
+generated DOM. Moved/reinserted preview islands stay alive when final DOM containment says they remain in the
+host; true deletion unmounts them. Failed saves retain a wrapper-owned pending value so retry does not depend
+on the surface remaining dirty after a repaint. This is lifecycle concentration only: no visible editor,
+renderer, preview-kind, backend, resource-cache, AD08, or AD09 change is accepted.
+
 ## D-ad01-one-locked-ticket-migration — One terminal rebuild migrates every old Ticket schema
 
 AD01 replaces the sequential Ticket lifecycle, kickoff, type, and vocabulary rebuild path with one

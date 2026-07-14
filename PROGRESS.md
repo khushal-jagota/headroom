@@ -78,6 +78,10 @@ Current build stage:
   atomic previews and exact source-token serialization; one new frontend owner will concentrate hardened
   rendering, preview reconciliation, serialization, and teardown while `FilePreview` keeps target-specific
   behavior. No visual, parser, backend, resource-cache, AD08, or AD09 change is in scope.
+- AD07's delegated implementation plan is complete and contract-locked. Independent review session
+  `019f5f5e-5233-7741-8777-cee8b0322dda` reports `NO VIOLATIONS` after checking same-source dirty reset,
+  failed-save retry, final-DOM move/deletion reconciliation, read-only preview identity, exact serialization,
+  teardown, docs/assets, and the bounded allowlist. Delegated implementation is the next step.
 
 What just passed:
 
@@ -271,12 +275,16 @@ What just passed:
   source files; 714 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three
   existing warnings), production build, frontend tests; 80 Playwright e2e tests; final `VERIFY: PASS`.
   The complete transcript is retained at `data/verify/ad06-pass.log`.
+- AD07's exact owner API, lifecycle state, wrapper boundary, failed-save retry, serializer preservation,
+  preview reconciliation, deletion set, test sequence, docs/bundle work, and changed-path allowlist passed
+  independent plan review. The lock is recorded in
+  `orchestration/tickets/architecture-deepening/ad07-managed-markdown/contract-lock.md`.
 
 Next step:
 
-- Define AD07 Managed Markdown as a contract-scoped ticket, delegate its implementation plan, review and
-  lock that plan independently, then delegate implementation. AD08 resource catalogue and isolated-final
-  AD09 Employee session history remain after it.
+- Delegate AD07 implementation to the reviewed contract and bounded allowlist, independently review the
+  completed diff, integrate it, and run one canonical gate. AD08 resource catalogue and isolated-final AD09
+  Employee session history remain after it.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`
