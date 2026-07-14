@@ -11,7 +11,7 @@ from typing import Final
 
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 20
+SCHEMA_VERSION: Final = 21
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS chat_turns (
   output_role    TEXT NOT NULL CHECK (output_role IN ('assistant','system')),
   output_text    TEXT NOT NULL DEFAULT '',
   session_key    TEXT,
+  recovery_of_turn_id TEXT REFERENCES chat_turns(id),
   error          TEXT,
   started_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL,
@@ -210,6 +211,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _migrate_project_summary_column(conn)
     _migrate_derived_sprint_item_status(conn)
     _migrate_links_blocks_only(conn)
+    _migrate_chat_turn_recovery_column(conn)
     _create_indexes(conn)
     conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
@@ -878,6 +880,14 @@ def _migrate_links_blocks_only(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_links_to ON links(to_id, kind)")
 
 
+def _migrate_chat_turn_recovery_column(conn: sqlite3.Connection) -> None:
+    if "recovery_of_turn_id" not in _table_columns(conn, "chat_turns"):
+        conn.execute(
+            "ALTER TABLE chat_turns ADD COLUMN recovery_of_turn_id TEXT "
+            "REFERENCES chat_turns(id)"
+        )
+
+
 def _create_indexes(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_alias "
@@ -892,6 +902,10 @@ def _create_indexes(conn: sqlite3.Connection) -> None:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_project_id ON tickets(project_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ideas_project_id ON ideas(project_id)")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_turns_one_recovery "
+        "ON chat_turns(recovery_of_turn_id) WHERE recovery_of_turn_id IS NOT NULL"
+    )
 
 
 def _migrate_project_columns(conn: sqlite3.Connection) -> None:

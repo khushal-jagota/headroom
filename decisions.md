@@ -482,6 +482,20 @@ fresh session picked an unauthenticated default model and every prompt failed. T
 preserves worktree isolation when the DB is worktree-local and session/config identity when the DB is
 canonical. Credentials stay operator-owned; startup never copies or links them.
 
+## D-chat-terminal-outcomes — Failed and interrupted turns stay in the Panels transcript
+
+`chat_turns` remains the canonical owner of terminal status, partial output, error, and session
+identity. Chat state projects failed and interrupted turns beside the durable messages for display;
+it does not duplicate their output or status into a second canonical message record. The shared Chat
+panel labels failure and interruption distinctly and never exposes the stored internal error text.
+
+A human terminal turn can be continued only when it is the latest turn, is still bound to the entity's
+current Hermes session, no turn or Ticket Employee step is active, and no prior continuation has claimed
+it. The new turn records the exact predecessor and sends a continuation instruction through the existing
+session; it never replays the original prompt or falls back to a new session. Worker-origin outcomes remain
+visible but have no human continuation action. Day state uses the same backend contract, while the UI stays
+limited to the currently mounted Ticket and Chief Chat surfaces.
+
 ## D-chat-follow — Chat follows only while the reader is near the bottom; upward intent transfers control
 
 The shared chat panel opens at the latest message and follows rendered messages and live output while

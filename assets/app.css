@@ -1035,6 +1035,68 @@ button.list-row:hover .list-row-title {
   line-height: 1.6;
 }
 
+.chat-outcome {
+  align-self: stretch;
+  display: grid;
+  gap: var(--space-2);
+  margin-top: calc(-1 * var(--space-3));
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  border-left: var(--border-strong) solid var(--accent-error);
+}
+.chat-outcome--interrupted {
+  border-left-color: var(--accent-bright);
+}
+.chat-outcome-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--accent-error);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  line-height: 1.4;
+}
+.chat-outcome--interrupted .chat-outcome-title {
+  color: var(--accent-bright);
+}
+.chat-outcome-title strong {
+  color: inherit;
+  font-weight: 700;
+}
+.chat-outcome-title span,
+.chat-outcome-detail {
+  color: var(--text-faintest);
+}
+.chat-outcome-detail {
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  line-height: 1.45;
+}
+.chat-continue {
+  justify-self: start;
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--accent-bright);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  font-weight: 700;
+  line-height: 1;
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease);
+}
+.chat-continue:hover:not(:disabled) {
+  background: var(--accent-surface);
+  border-color: var(--accent-bright);
+  color: var(--accent-text);
+}
+.chat-continue:disabled {
+  cursor: wait;
+  color: var(--text-faintest);
+}
+
 /* thinking = inline activity and three bubble-less dots in the employee's spot */
 .chat-pending-block {
   align-self: stretch;

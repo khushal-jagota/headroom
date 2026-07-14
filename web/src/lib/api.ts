@@ -110,6 +110,13 @@ export async function startChatTurn(
   });
 }
 
+export async function continueChatTurn(entityId: string, turnId: string): Promise<unknown> {
+  return fetchJson(
+    `/api/chat/${encodeURIComponent(entityId)}/turns/${encodeURIComponent(turnId)}/continue`,
+    { method: "POST" }
+  );
+}
+
 export async function uploadChatImage(
   entityId: string,
   file: File

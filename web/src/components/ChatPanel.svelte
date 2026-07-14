@@ -1,8 +1,13 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
-  import { pauseChatTurn, startChatTurn, uploadChatImage } from "../lib/api";
+  import {
+    continueChatTurn,
+    pauseChatTurn,
+    startChatTurn,
+    uploadChatImage
+  } from "../lib/api";
   import { resourceCatalogue } from "../lib/resourceCatalogue";
-  import type { ChatStateMessage, ChatTurn } from "../lib/types";
+  import type { ChatStateMessage, ChatTurn, ChatTurnOutcome } from "../lib/types";
   import ChatComposer from "./ChatComposer.svelte";
   import ErrorLine from "./ErrorLine.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
@@ -11,6 +16,8 @@
     renderKey: string;
     who: "you" | "planner" | "system" | "worker";
     text: string;
+    turnId?: string | null;
+    outcome?: ChatTurnOutcome;
     pending?: boolean;
   };
 
@@ -35,6 +42,7 @@
   let activityExpanded = $state(false);
   let activityTurnId = $state<string | null>(null);
   let pausePending = $state(false);
+  let continuingTurnIds = $state<string[]>([]);
   let threadElement = $state<HTMLDivElement | null>(null);
   let following = $state(true);
   let jumpVisible = $state(false);
@@ -52,7 +60,48 @@
   }
 
   function messageFor(msg: ChatStateMessage): ChatMessage {
-    return { renderKey: `message:${msg.id}`, who: whoForRole(msg.role), text: msg.text };
+    return {
+      renderKey: `message:${msg.id}`,
+      who: whoForRole(msg.role),
+      text: msg.text,
+      turnId: msg.turn_id
+    };
+  }
+
+  function settledTranscript(
+    stateMessages: ChatStateMessage[],
+    outcomes: ChatTurnOutcome[]
+  ): ChatMessage[] {
+    const items = stateMessages.map(messageFor);
+    for (const outcome of outcomes) {
+      let insertAt = items.reduce(
+        (latest, item, index) => (item.turnId === outcome.turn_id ? index + 1 : latest),
+        items.length
+      );
+      const outputAlreadyVisible = stateMessages.some(
+        (message) =>
+          message.turn_id === outcome.turn_id &&
+          whoForRole(message.role) === whoForRole(outcome.output_role) &&
+          message.text === outcome.output_text
+      );
+      if (outcome.output_text.trim() && !outputAlreadyVisible) {
+        items.splice(insertAt, 0, {
+          renderKey: `turn-output:${outcome.turn_id}`,
+          who: whoForRole(outcome.output_role),
+          text: outcome.output_text,
+          turnId: outcome.turn_id
+        });
+        insertAt += 1;
+      }
+      items.splice(insertAt, 0, {
+        renderKey: `turn-outcome:${outcome.turn_id}`,
+        who: whoForRole(outcome.output_role),
+        text: "",
+        turnId: outcome.turn_id,
+        outcome
+      });
+    }
+    return items;
   }
 
   function activeMessage(turn: ChatTurn): ChatMessage | null {
@@ -68,7 +117,10 @@
   }
 
   let transcript = $derived.by<ChatMessage[]>(() => {
-    const messages = (chatState.data?.messages || []).map(messageFor);
+    const messages = settledTranscript(
+      chatState.data?.messages || [],
+      chatState.data?.outcomes || []
+    );
     const turn = chatState.data?.active_turn || null;
     const live = turn ? activeMessage(turn) : null;
     return live ? [...messages, live] : messages;
@@ -234,6 +286,22 @@
     }
   }
 
+  async function continueSettledTurn(turnId: string): Promise<void> {
+    if (continuingTurnIds.includes(turnId)) return;
+    error = null;
+    continuingTurnIds = [...continuingTurnIds, turnId];
+    try {
+      await continueChatTurn(stableEntityId, turnId);
+      await chatState.refresh();
+    } catch (err) {
+      error = err;
+    } finally {
+      continuingTurnIds = continuingTurnIds.filter(
+        (pendingTurnId) => pendingTurnId !== turnId
+      );
+    }
+  }
+
   onDestroy(() => {
     clearPoll();
     commands.dispose();
@@ -264,7 +332,46 @@
         <div class="chat-empty"><h2 class="chat-empty-h">What do you need?</h2></div>
       {:else}
         {#each transcript as msg (msg.renderKey)}
-          {#if msg.who === "you"}
+          {#if msg.outcome}
+            {@const outcomeLabel = msg.outcome.status === "errored" ? "Failed" : "Interrupted"}
+            {@const outcomePending = continuingTurnIds.includes(msg.outcome.turn_id)}
+            <section
+              class:chat-outcome--failed={msg.outcome.status === "errored"}
+              class:chat-outcome--interrupted={msg.outcome.status === "interrupted"}
+              class="chat-outcome"
+              data-chat-outcome={msg.outcome.turn_id}
+              data-chat-outcome-status={msg.outcome.status}
+              aria-label={`${outcomeLabel} chat turn`}
+            >
+              <div class="chat-outcome-title">
+                <strong>{outcomeLabel}</strong>
+                <span>
+                  {msg.outcome.status === "errored" ? "Response stopped unexpectedly" : "Response paused"}
+                </span>
+              </div>
+              <div class="chat-outcome-detail">
+                {#if msg.outcome.output_text.trim()}
+                  Partial response preserved{msg.outcome.can_continue ? " · existing session available" : ""}
+                {:else if msg.outcome.can_continue}
+                  No response received · existing session available
+                {:else}
+                  No response received. Start a new message rather than replaying it automatically.
+                {/if}
+              </div>
+              {#if msg.outcome.can_continue}
+                <button
+                  type="button"
+                  class="chat-continue"
+                  data-chat-continue={msg.outcome.turn_id}
+                  aria-label={`Continue ${outcomeLabel.toLowerCase()} response`}
+                  disabled={outcomePending}
+                  onclick={() => void continueSettledTurn(msg.outcome!.turn_id)}
+                >
+                  {outcomePending ? "Continuing…" : "Continue"}
+                </button>
+              {/if}
+            </section>
+          {:else if msg.who === "you"}
             <div class="chat-u" data-chat-msg="you"><MarkdownBlock text={msg.text} /></div>
           {:else if msg.who === "worker"}
             <div class="chat-sys" data-chat-msg="worker"><MarkdownBlock text={msg.text} /></div>

@@ -12,12 +12,12 @@ Ordinary messages and commands both enter through one request:
 then one `ChatTurnLifecycle` owns the rest of that human turn. It atomically creates
 the visible turn, delivers it to Hermes, records typed activity and output, and lets
 the first completion, error, or Pause settle it. There is no separate send, command,
-or browser streaming route. The browser
-reads one `ChatState` resource: durable visible messages plus the active turn, if
+or browser streaming route. The browser reads one `ChatState` resource: durable
+visible messages, terminal failed or interrupted outcomes, and the active turn, if
 one is running. The same resource survives navigation, remounts, reloads, WebSocket
-misses, and simple polling. It is built only from Panels-owned database rows. Reading
-it never contacts Hermes, loads Employee session history, or changes a Ticket's
-Employee session id.
+misses, and simple polling. It is built only from Panels-owned database rows.
+Reading it never contacts Hermes, loads Employee session history, or changes a
+Ticket's Employee session id.
 
 When the panel first loads, it starts at the latest message. New messages and live
 output stay in view while the reader is at or near the bottom. An upward scroll
@@ -102,6 +102,13 @@ before using it and records `employee_session_changed`. Typing exactly `/new` is
 one forced-fresh case: its newly created candidate replaces the prior id before the
 command completes. If delivery becomes uncertain, Panels reports the gateway outcome
 honestly and does not guess or retry the prompt automatically.
+
+A failed or interrupted Chat turn stays in the transcript. Safe partial output is
+kept, and the outcome row says whether the turn failed or was interrupted. Continue is
+offered only when the settled human turn is still the latest turn, is bound to the
+current stored Hermes session, has not already been continued, and no other turn is
+active. Continue sends a new instruction to the existing session. It does not resend
+the original prompt or create a fallback session.
 
 Employee session history is a separate, deliberate inspection. A direct caller asks
 for `GET /api/tickets/{ticket_id}/employee-session-history`; there is no generic Chat

@@ -2,7 +2,46 @@
 
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
-the bottom; the blow-by-blow is git's.
+bottom; the blow-by-blow is git's.
+
+## Current work cycle (2026-07-14): durable failed Chat turns
+
+Current build stage:
+
+- Ticket `t_f9ue37gz` is implemented on branch `ticket/t_f9ue37gz-failed-chat-recovery-v2`
+  in the isolated worktree `/private/tmp/panels-t_f9ue37gz-v2`. Implementation remains unmerged;
+  Closeout owns integration.
+- Failed and interrupted `chat_turns` now project into Panels Chat with partial output preserved. A
+  guarded Continue action can resume only the latest eligible human turn in its exact current Hermes
+  session, without replaying the original prompt.
+- The shared Ticket and Chief Chat panel renders quiet, distinct Failed/Interrupted outcomes. Day Chat
+  keeps the same backend state contract; no Day Chat screen was invented.
+
+What just passed:
+
+- Focused backend tests cover ordinary and partial failures, interruption, session/turn/worker races,
+  duplicate and stale recovery rejection, Ticket/Day/Chief eligibility, and the v20→v21 migration.
+- Svelte check, frontend unit tests, production build, and four focused Playwright cases pass, including
+  refresh, exact-once partial output, continuation, no-action failure, Chief interruption, and startup
+  restart recovery.
+- Independent Codex implementation review reports `NO VIOLATIONS` against the accepted contract and
+  planning artifact.
+- The complete canonical gate passes Ruff, mypy across 115 source files, 775 unit tests, compile/static
+  and CSS checks, Svelte check with zero errors and warnings, production build, frontend tests, and 93
+  Playwright tests, ending `VERIFY: PASS`. The [full transcript](/files/tickets/t_f9ue37gz/artifacts/verify.txt)
+  is retained with the ticket.
+- A [real implementation screenshot](/files/tickets/t_f9ue37gz/artifacts/implementation.png) shows the
+  preserved partial response, compact Failed outcome, safe Continue action, and unchanged composer with
+  no clipping.
+
+Next step:
+
+- Commit the verified branch and propose Implementation. Closeout owns the merge, live database backup and
+  v21 migration through the canonical startup path, post-merge verification, and worktree cleanup.
+
+Blockers:
+
+- None.
 
 ## Current work cycle (2026-07-14): managed HTML sibling assets
 

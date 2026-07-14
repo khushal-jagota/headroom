@@ -76,9 +76,9 @@ share.
   Employee session history is an explicit ordinary Ticket read, not a cached Panels
   Chat resource.
 
-  An empty Panels Chat stays empty. `ChatState` reads only durable Panels messages and
-  the live turn; it never retries with or merges Hermes history. The browser has no
-  Employee-history pane or transcript-merging control.
+  An empty Panels Chat stays empty. `ChatState` reads only durable Panels messages,
+  terminal outcomes, and the live turn; it never retries with or merges Hermes
+  history. The browser has no Employee-history pane or transcript-merging control.
 - **The markdown renderer is hardened.** Written text (briefs, notes, ideas) renders
   through a markdown pass built so a crafted link that a browser would quietly treat
   as runnable code is impossible to express.

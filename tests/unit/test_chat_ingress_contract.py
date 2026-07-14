@@ -150,7 +150,11 @@ def test_surviving_gateway_observation_contract_is_exact() -> None:
     ]
     assert [field.name for field in fields(HumanChatOutputDelta)] == ["text"]
     assert [field.name for field in fields(HumanChatCompletion)] == ["text", "role"]
-    assert [field.name for field in fields(ChatState)] == ["messages", "active_turn"]
+    assert [field.name for field in fields(ChatState)] == [
+        "messages",
+        "outcomes",
+        "active_turn",
+    ]
     turn_fields = [field.name for field in fields(ChatTurn)]
     assert "can_pause" in turn_fields
     assert "session_key" not in turn_fields

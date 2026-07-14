@@ -45,6 +45,7 @@ _IMAGE_ONLY_MODEL_CUE = "Please respond to the attached image."
 _HUMAN_RESTART_RECOVERY_MESSAGE = (
     "Panels restarted. Continue the interrupted response in this existing session."
 )
+_HUMAN_CONTINUATION_MESSAGE = "Continue the previous response in this existing session."
 
 
 @contextmanager
@@ -238,6 +239,40 @@ class ChatTurnLifecycle:
             gateway=gateway,
             force_fresh_session=mode == "command" and request.text == "/new",
             require_existing_session=False,
+        )
+        self._launch_execution(admitted)
+        return turn
+
+    def continue_human_turn(self, entity_id: str, turn_id: str) -> ChatTurn:
+        """Continue one eligible terminal turn without replaying its original prompt."""
+        now = self._now()
+        conn = self._conn_factory()
+        try:
+            entity_kind, _ = _resolve(conn, entity_id, now)
+            self._ensure_ticket_worker_not_running(conn, entity_id)
+            turn, admitted_session_key = chat_data.start_human_continuation_turn(
+                conn,
+                entity_id,
+                turn_id,
+                entity_kind=entity_kind,
+                visible_text=_HUMAN_CONTINUATION_MESSAGE,
+                now=now,
+            )
+        finally:
+            conn.close()
+        gateway = self._gateway_provider()
+        mode = cast(Literal["message", "command"], turn.mode)
+        admitted = _AdmittedHumanChatTurn(
+            entity_id=entity_id,
+            entity_kind=entity_kind,
+            turn_id=turn.id,
+            expected_session_key=admitted_session_key,
+            model_text=_HUMAN_CONTINUATION_MESSAGE,
+            mode=mode,
+            image_paths=(),
+            gateway=gateway,
+            force_fresh_session=False,
+            require_existing_session=True,
         )
         self._launch_execution(admitted)
         return turn
