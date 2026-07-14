@@ -110,7 +110,11 @@ aggregates. Explicit kind/payload logic remains only where entity identity is in
 - Day membership events carrying `ticket_id`, which affect the named Ticket and Board;
 - current-day membership, which affects Review only for today's Day, including cold start before today's id
   is cached;
-- Chat events, which affect only the matching Panels Chat state; and
+- Chat message and turn events, which affect only the matching Panels Chat state;
+- `chat_session_created`, whose currently shared Ticket session field affects both the matching Ticket and
+  Panels Chat projections until AD09 separates Employee session history; and
+- `project_updated` when its payload includes `name`, which affects every aggregate projection that embeds
+  Project names plus already-cached matching Ticket details; and
 - Review's deliberately narrower Ticket-event/title dependency from AD04.
 
 Preserve the current event debounce, batching, cursor, reconnect, unknown-prefix failure, and one cached-today
@@ -176,8 +180,9 @@ Add or replace focused frontend contract tests before rewiring production. Prove
    one real catalogue identity; unknown prefixes and unrecognized returned identities fail. A synthetic new
    kind on each known entity prefix works without a kind-list edit.
 6. **Dependency precision.** Link endpoints, blocked-target payloads, current-day membership, Review's narrow
-   inputs, Chat-only events, Sprint items, Projects, Ideas, Sprints, Ticket details, Board, and current Sprint
-   retain their exact current affected sets after nonexistent keys are removed.
+   inputs, Chat-only message/turn events, the shared `chat_session_created` Ticket/Chat dependency, Project
+   name propagation, Sprint items, Projects, Ideas, Sprints, Ticket details, Board, and current Sprint retain
+   their exact current affected sets after nonexistent keys are removed.
 7. **Cache-engine preservation.** Concurrent fetch deduplication, forced-refresh supersession, stale-response
    ignoring, last-good-data retention, subscriber refetch, disposal, structured error propagation, and
    batch de-duplication remain covered; add focused engine tests if the existing suite does not prove them.

@@ -89,6 +89,16 @@ Current build stage:
   `019f5f6d-4892-7273-8343-51122fe517b4` reports `NO VIOLATIONS`. The canonical gate is next.
 - AD07 is complete. Its committed reviewed checkpoint at `05e62a0` passes the canonical gate with 714 unit
   tests and 82 Playwright tests; the full transcript is retained at `data/verify/ad07-pass.log`.
+- AD08's corrected delegated Resource Catalogue plan is complete and contract-locked. The first independent
+  review found one High omission: Project-name updates were mapped only to Projects even though six cached
+  aggregates embed the name. The accepted correction covers Projects, Board, today's Day, backlog Sprint
+  items, Ideas, and current Sprint, plus conservatively selected opened Ticket details through a private
+  catalogue-owned index. The plan also freezes the temporary Ticket-plus-Chat `chat_session_created`
+  dependency. Fresh review session `019f5f81-89a3-7ba2-883b-bb68ce4022b1` reports `NO VIOLATIONS`.
+- The AD08 lock retains exactly 13 cached projections, nine named mutation effects, entity-first ordinary
+  invalidation, narrow Review inputs, and a semantic-free cache engine. It explicitly forbids live
+  Worker-type inference/defaults; only the existing migration may rewrite a historical pre-Worker-type row
+  to `coding`. Delegated RED-first implementation is next.
 
 What just passed:
 
@@ -298,8 +308,9 @@ What just passed:
 
 Next step:
 
-- Review and contract-lock AD08's delegated Resource Catalogue plan, then delegate its implementation.
-  Isolated-final AD09 Employee session history remains after it.
+- Delegate AD08's RED-first implementation against the reviewed lock, then run focused checks and an
+  independent implementation review before the single canonical gate. Isolated-final AD09 Employee
+  session history remains after it.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`

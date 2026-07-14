@@ -600,6 +600,31 @@ identity, read location, response type, dependencies, and refresh policy. Mutati
 reads, and startup configuration such as `/api/meta` remain ordinary requests outside the catalogue. This
 keeps the module deep and focused instead of turning it into a registry of unrelated HTTP operations.
 
+## D-ad08-resource-catalogue-lock — One definition owns cached reads and dependencies
+
+AD08 freezes one 13-entry Resource Catalogue and nine named successful-mutation effects. The generic cache
+continues to manage values and request concurrency without knowing Projects, Tickets, events, or mutation
+meaning. Routes and components may open typed catalogue entries and select closed effects, but may not
+construct keys, cached GET fetchers, invalidation arrays, or a second event vocabulary. Phantom individual
+Sprint, Sprint-item, and dated-Day identities are deleted because no production cached read owns them.
+
+The shared `chat_session_created` kind is an intentional temporary exception: until AD09, Employee claim,
+human binding, and history remint can all update the Ticket's stored session key, so that event invalidates
+exactly matching Ticket plus matching Panels Chat. The other four Chat message/turn events invalidate Chat
+only. Ordinary Ticket events do not invalidate Chat.
+
+A name-bearing Project update reaches the six real aggregate projections that embed Project names:
+Projects, Board, today's Day, backlog Sprint items, Ideas, and current Sprint. It also reaches opened Ticket
+details through a private catalogue-owned process-lifetime identity index: unresolved entries are included
+conservatively, while loaded unrelated or projectless Tickets are excluded. The cache engine remains
+semantic-free. Project creation, summary-only edits, and synthetic ordinary Project kinds remain
+Projects-only. The corrected plan passed fresh independent review with `NO VIOLATIONS` in session
+`019f5f81-89a3-7ba2-883b-bb68ce4022b1`.
+
+This catalogue does not weaken the Worker-type boundary. Live creation always requires an explicit Worker
+type, with no `coding` inference or default. Only an explicit migration may classify a historical row that
+predates stored Worker type as `coding`.
+
 ## D-shared-scrollbar-treatment — Native scrollbars, shared CSS, capability-safe hiding
 
 Panels' seven owned overflow surfaces (`.markdown pre`, Markdown `.file-preview`, `.chat-thread`,
