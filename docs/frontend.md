@@ -68,13 +68,17 @@ share.
   only. The catalogue keeps its own private process-lifetime list of opened
   parameterized resources to make this check; the cache remains generic.
 
-  Panels Chat has a narrower rule. Matching message and turn events refresh only
-  `chat:<id>`. Ticket `chat_session_created` refreshes exactly the Ticket and its Chat
-  because both projections currently read session state from the Ticket row. Ordinary
-  Ticket events do not refresh Chat, and Chat events do not refresh Board, Review, or
-  current Sprint. The ticket chat rail also refreshes while a worker is running and
-  briefly retries an empty settled transcript. Separating future Employee/Hermes
-  history from Panels Chat belongs to AD09; it is not the current read model.
+  Panels Chat has a narrower rule. The four message and turn events for a Ticket
+  refresh only `chat:<id>`. Ticket `employee_session_changed` refreshes only the
+  matching `ticket:<id>`; it never refreshes Chat, Board, Review, current Sprint, or
+  any other projection. Day and top-level-agent `chat_session_created` and Chat events
+  refresh only their matching Chat. Day Chat events do not refresh the Day projection.
+  Employee session history is an explicit ordinary Ticket read, not a cached Panels
+  Chat resource.
+
+  An empty Panels Chat stays empty. `ChatState` reads only durable Panels messages and
+  the live turn; it never retries with or merges Hermes history. The browser has no
+  Employee-history pane or transcript-merging control.
 - **The markdown renderer is hardened.** Written text (briefs, notes, ideas) renders
   through a markdown pass built so a crafted link that a browser would quietly treat
   as runnable code is impossible to express.

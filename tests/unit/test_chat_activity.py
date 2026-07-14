@@ -115,7 +115,7 @@ def test_active_turn_reads_activity_entries_in_stable_insert_order(tmp_path: Pat
         now=2,
     )
 
-    state = chat_data.read_state(conn, turn.entity_id, session_key=None)
+    state = chat_data.read_state(conn, turn.entity_id)
 
     assert state.active_turn is not None
     assert [entry.label for entry in state.active_turn.activity_entries] == [

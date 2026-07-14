@@ -1282,12 +1282,16 @@ def worker() -> None:
 @worker.command("my-ticket")
 @json_option
 def worker_my_ticket(as_json: bool) -> None:
-    key = os.environ.get("HERMES_SESSION_KEY", "").strip()
-    if not key:
+    employee_session_id = os.environ.get("HERMES_SESSION_KEY", "").strip()
+    if not employee_session_id:
         http.fail_validation(
             "no HERMES_SESSION_KEY in env; not running as a ticket worker", as_json
         )
-    data = http.send("GET", f"/api/tickets/by-session/{key}", as_json=as_json)
+    data = http.send(
+        "GET",
+        f"/api/tickets/by-employee-session/{employee_session_id}",
+        as_json=as_json,
+    )
     http.emit(
         data,
         as_json,

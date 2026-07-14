@@ -146,7 +146,7 @@ def test_fresh_schema_drops_enumerating_stage_and_ceiling_checks(tmp_path):
     conn.close()
 
 
-def test_fresh_v19_schema_rejects_ticket_fields_omission(tmp_path):
+def test_fresh_v20_schema_rejects_ticket_fields_omission(tmp_path):
     conn = connect(str(tmp_path / "fresh-fields-required.db"))
     create_schema(conn)
 
@@ -637,8 +637,8 @@ def test_kickoff_migration_rolls_back_failed_foreign_key_check_and_preserves_lin
     )
     conn.execute("PRAGMA foreign_keys=ON")
 
-    with pytest.raises(RuntimeError, match="foreign key check failed after Ticket v19 migration"):
-        db_module._migrate_tickets_to_v19_contract(conn)
+    with pytest.raises(RuntimeError, match="foreign key check failed after Ticket v20 migration"):
+        db_module._migrate_tickets_to_v20_contract(conn)
 
     tickets_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
@@ -657,7 +657,7 @@ def test_kickoff_migration_rolls_back_failed_foreign_key_check_and_preserves_lin
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
     conn.execute("DELETE FROM day_tickets WHERE ticket_id = 't_missing'")
-    db_module._migrate_tickets_to_v19_contract(conn)
+    db_module._migrate_tickets_to_v20_contract(conn)
 
     migrated = conn.execute("SELECT stage, fields FROM tickets WHERE id = 't_existing'").fetchone()
     assert migrated["stage"] == "needs_success"
@@ -1365,7 +1365,7 @@ def test_create_schema_adds_project_summary_to_existing_project_table(tmp_path):
 # The shape the kickoff migration produces and the type migration consumes: the
 # current pre-type tickets shape (no kickoff_note/kickoff_proposal, six-slot fields,
 # implementer column present, the enumerating state/ceiling CHECKs still present).
-# This is the honest INPUT to _migrate_tickets_to_v19_contract, distinct from
+# This is an honest historical input to _migrate_tickets_to_v20_contract, distinct from
 # _CURRENT_KICKOFF_TICKETS_DDL which still carries kickoff_note/kickoff_proposal.
 _POST_KICKOFF_PRE_TYPE_TICKETS_DDL = """
 CREATE TABLE tickets (
@@ -1451,7 +1451,7 @@ def _seed_kickoff_shape_relationships(conn) -> None:
     )
 
 
-def test_v19_migration_rebuilds_canonical_v18_once_and_preserves_fields_bytes(tmp_path):
+def test_v20_migration_rebuilds_canonical_v18_once_and_preserves_fields_bytes(tmp_path):
     conn = connect(str(tmp_path / "canonical-v18.db"))
     conn.execute("PRAGMA foreign_keys=OFF")
     _seed_kickoff_shape_relationships(conn)
@@ -1471,7 +1471,7 @@ def test_v19_migration_rebuilds_canonical_v18_once_and_preserves_fields_bytes(tm
     conn.execute("PRAGMA user_version=18")
     conn.execute("PRAGMA foreign_keys=ON")
 
-    db_module._migrate_tickets_to_v19_contract(conn)
+    db_module._migrate_tickets_to_v20_contract(conn)
 
     migrated = conn.execute("SELECT fields FROM tickets WHERE id = 't_v18'").fetchone()
     assert migrated["fields"] == fields_bytes
@@ -1485,7 +1485,7 @@ def test_v19_migration_rebuilds_canonical_v18_once_and_preserves_fields_bytes(tm
     ).fetchone()[0]
     rows_after_first = [tuple(row) for row in conn.execute("SELECT * FROM tickets")]
 
-    db_module._migrate_tickets_to_v19_contract(conn)
+    db_module._migrate_tickets_to_v20_contract(conn)
 
     assert (
         conn.execute(
@@ -1571,7 +1571,7 @@ def test_type_migration_preserves_every_column_and_fk_integrity(tmp_path):
 
     before = {row["id"]: dict(row) for row in conn.execute("SELECT * FROM tickets")}
 
-    db_module._migrate_tickets_to_v19_contract(conn)
+    db_module._migrate_tickets_to_v20_contract(conn)
 
     after = {row["id"]: dict(row) for row in conn.execute("SELECT * FROM tickets")}
     assert set(after) == set(before)
@@ -1581,6 +1581,7 @@ def test_type_migration_preserves_every_column_and_fk_integrity(tmp_path):
         assert after_row["stage"] == before[ticket_id]["state"]
         stripped = {k: v for k, v in after_row.items() if k not in {"worker_type", "stage"}}
         old_without_state = {k: v for k, v in before[ticket_id].items() if k != "state"}
+        old_without_state["employee_session_id"] = old_without_state.pop("chat_session_key")
         assert stripped == old_without_state
         assert after_row["fields"] == before[ticket_id]["fields"]  # byte-equal JSON
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
@@ -1613,7 +1614,7 @@ def test_post_kickoff_shape_preserves_corrupt_fields_bytes(tmp_path):
     )
     conn.execute("PRAGMA foreign_keys=ON")
 
-    db_module._migrate_tickets_to_v19_contract(conn)
+    db_module._migrate_tickets_to_v20_contract(conn)
 
     migrated = conn.execute("SELECT fields FROM tickets WHERE id = 't_corrupt_fields'").fetchone()[
         "fields"
@@ -1654,7 +1655,7 @@ def test_required_null_source_rolls_back_original_table(tmp_path, null_column: s
     rows_before = [tuple(row) for row in conn.execute("SELECT * FROM tickets")]
 
     with pytest.raises(RuntimeError, match=rf"NULL {null_column}"):
-        db_module._migrate_tickets_to_v19_contract(conn)
+        db_module._migrate_tickets_to_v20_contract(conn)
 
     assert (
         conn.execute(
@@ -1680,6 +1681,8 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(tm
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     create_schema(conn)
+    assert SCHEMA_VERSION == 20
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 20
 
     info = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(tickets)")}
     assert info["worker_type"]["notnull"] == 1
@@ -1690,6 +1693,9 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(tm
     assert info["stage"]["dflt_value"] == "'needs_kickoff'"
     assert info["fields"]["notnull"] == 1
     assert info["fields"]["dflt_value"] is None
+    assert info["employee_session_id"]["notnull"] == 0
+    assert info["employee_session_id"]["dflt_value"] is None
+    assert "chat_session_key" not in info
 
     tickets_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
@@ -1830,7 +1836,7 @@ def test_type_migration_rebuilds_partial_shape_not_skipped(tmp_path):
         updated_at=1,
     )
 
-    db_module._migrate_tickets_to_v19_contract(conn)
+    db_module._migrate_tickets_to_v20_contract(conn)
 
     tickets_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
@@ -1871,12 +1877,22 @@ def test_type_migration_rolls_back_failed_foreign_key_check_and_drops_scratch(tm
         );
         INSERT INTO day_tickets VALUES ('day_valid', 't_keep', 0);
         INSERT INTO day_tickets VALUES ('day_dangling', 't_missing', 0);
+        CREATE TABLE events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          entity_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          payload TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL
+        );
+        INSERT INTO events (entity_id, kind, payload, created_at)
+        VALUES ('t_keep', 'chat_session_created', '{"session_key":"must-roll-back"}', 9);
         """
     )
     conn.execute("PRAGMA foreign_keys=ON")
+    events_before = [tuple(row) for row in conn.execute("SELECT * FROM events")]
 
-    with pytest.raises(RuntimeError, match="foreign key check failed after Ticket v19 migration"):
-        db_module._migrate_tickets_to_v19_contract(conn)
+    with pytest.raises(RuntimeError, match="foreign key check failed after Ticket v20 migration"):
+        db_module._migrate_tickets_to_v20_contract(conn)
 
     tickets_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
@@ -1886,6 +1902,7 @@ def test_type_migration_rolls_back_failed_foreign_key_check_and_drops_scratch(tm
     assert "state IN ('needs_kickoff'" in tickets_sql
     assert "ticket_type" not in tickets_sql
     assert conn.execute("SELECT title FROM tickets WHERE id = 't_keep'").fetchone()[0] == "Keep me"
+    assert [tuple(row) for row in conn.execute("SELECT * FROM events")] == events_before
     assert (
         conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tickets_new'"
@@ -1959,7 +1976,7 @@ def test_v17_rows_preserve_actual_worker_type_and_stage(tmp_path):
     )
     conn.execute("PRAGMA foreign_keys=ON")
 
-    db_module._migrate_tickets_to_v19_contract(conn)
+    db_module._migrate_tickets_to_v20_contract(conn)
 
     assert [
         tuple(row)
@@ -1992,7 +2009,7 @@ def test_one_column_partial_ticket_shapes_complete(
     )
     conn.execute("PRAGMA foreign_keys=ON")
 
-    db_module._migrate_tickets_to_v19_contract(conn)
+    db_module._migrate_tickets_to_v20_contract(conn)
 
     row = conn.execute("SELECT worker_type, stage FROM tickets WHERE id = 't_partial'").fetchone()
     assert tuple(row) == ("new_worker", "needs_stages")
@@ -2017,7 +2034,7 @@ def test_partial_ticket_type_stage_preserves_stored_stage_and_ceiling(tmp_path):
     )
     conn.execute("PRAGMA foreign_keys=ON")
 
-    db_module._migrate_tickets_to_v19_contract(conn)
+    db_module._migrate_tickets_to_v20_contract(conn)
 
     row = conn.execute(
         "SELECT worker_type, stage, ceiling FROM tickets WHERE id = 't_partial'"
@@ -2055,7 +2072,7 @@ def test_dual_ticket_columns_fail_without_changing_original(tmp_path):
     rows_before = [tuple(row) for row in conn.execute("SELECT * FROM tickets")]
 
     with pytest.raises(RuntimeError, match="ambiguous Ticket schema"):
-        db_module._migrate_tickets_to_v19_contract(conn)
+        db_module._migrate_tickets_to_v20_contract(conn)
 
     sql_after = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
@@ -2159,7 +2176,7 @@ def test_event_rewrite_failure_rolls_back_table_rows_and_events(tmp_path, bad_pa
     events_before = [tuple(row) for row in conn.execute("SELECT * FROM events")]
 
     with pytest.raises(RuntimeError, match="legacy Ticket event"):
-        db_module._migrate_tickets_to_v19_contract(conn)
+        db_module._migrate_tickets_to_v20_contract(conn)
 
     assert (
         conn.execute(
@@ -2199,6 +2216,7 @@ def test_create_schema_reaches_only_consolidated_ticket_rebuild_after_lock(tmp_p
     create_schema(conn)
 
     begin_index = statements.index("BEGIN IMMEDIATE")
+    assert statements.count("BEGIN IMMEDIATE") == 1
     ticket_snapshot_index = next(
         index
         for index, statement in enumerate(statements)
@@ -2213,6 +2231,298 @@ def test_create_schema_reaches_only_consolidated_ticket_rebuild_after_lock(tmp_p
         "_migrate_ticket_implementer_column",
         "_migrate_ticket_kickoff_columns",
         "_migrate_ticket_type_column",
+        "_migrate_tickets_to_v19_contract",
         "_rebuild_tickets_with_project_id",
     ):
         assert retired not in source
+
+
+# --- AD09: terminal v20 Employee-session migration -----------------------------
+
+_IDENTITY_UNSET = object()
+
+
+def _v19_identity_connection(tmp_path, name: str, session_value: object = _IDENTITY_UNSET):
+    conn = connect(str(tmp_path / name))
+    conn.execute("PRAGMA foreign_keys=OFF")
+    _seed_kickoff_shape_relationships(conn)
+    conn.executescript(_CANONICAL_V18_TICKETS_DDL)
+    values = {
+        "id": "t_identity",
+        "title": "Identity",
+        "worker_type": "coding",
+        "stage": "needs_success",
+        "ceiling": "needs_success",
+        "fields": _EMPTY_CODING_FIELDS,
+        "created_at": 1,
+        "updated_at": 2,
+    }
+    if session_value is not _IDENTITY_UNSET:
+        values["chat_session_key"] = session_value
+    _insert_ticket(conn, **values)
+    conn.execute("PRAGMA user_version=19")
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
+@pytest.mark.parametrize(
+    ("name", "session_value", "expected_type"),
+    (
+        ("identity-text.db", "  employee-session\n", "text"),
+        ("identity-blob.db", sqlite3.Binary(b"\x00employee\xff"), "blob"),
+        ("identity-null.db", None, "null"),
+    ),
+)
+def test_v20_migration_preserves_v19_employee_identity_sqlite_value_exactly(
+    tmp_path, name: str, session_value: object, expected_type: str
+) -> None:
+    conn = _v19_identity_connection(tmp_path, name, session_value)
+
+    db_module._migrate_tickets_to_v20_contract(conn)
+
+    row = conn.execute(
+        "SELECT employee_session_id, typeof(employee_session_id) AS value_type "
+        "FROM tickets WHERE id = 't_identity'"
+    ).fetchone()
+    assert row["employee_session_id"] == session_value
+    assert row["value_type"] == expected_type
+    columns = {str(item["name"]): item for item in conn.execute("PRAGMA table_info(tickets)")}
+    assert columns["employee_session_id"]["notnull"] == 0
+    assert columns["employee_session_id"]["dflt_value"] is None
+    assert "chat_session_key" not in columns
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_v20_rebuild_preserves_existing_employee_session_id_value(tmp_path) -> None:
+    conn = connect(str(tmp_path / "partial-v20-identity.db"))
+    conn.execute("PRAGMA foreign_keys=OFF")
+    _seed_kickoff_shape_relationships(conn)
+    conn.executescript(
+        _CANONICAL_V18_TICKETS_DDL.replace(
+            "  chat_session_key     TEXT,", "  employee_session_id  TEXT,"
+        )
+    )
+    employee_session_id = sqlite3.Binary(b"\x00already-v20\xff")
+    _insert_ticket(
+        conn,
+        id="t_existing_v20",
+        title="Existing v20 identity",
+        worker_type="new_worker",
+        stage="needs_stages",
+        ceiling="needs_stages",
+        employee_session_id=employee_session_id,
+        fields=_EMPTY_CODING_FIELDS,
+        created_at=1,
+        updated_at=2,
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    db_module._migrate_tickets_to_v20_contract(conn)
+
+    row = conn.execute(
+        "SELECT employee_session_id, typeof(employee_session_id) AS value_type "
+        "FROM tickets WHERE id = 't_existing_v20'"
+    ).fetchone()
+    assert row["employee_session_id"] == employee_session_id
+    assert row["value_type"] == "blob"
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_v20_migration_without_identity_column_writes_null_and_uses_historical_worker_type(
+    tmp_path,
+) -> None:
+    conn = connect(str(tmp_path / "no-identity-or-worker-type.db"))
+    conn.execute("PRAGMA foreign_keys=OFF")
+    _seed_kickoff_shape_relationships(conn)
+    ddl = _POST_KICKOFF_PRE_TYPE_TICKETS_DDL.replace("  chat_session_key TEXT,\n", "")
+    conn.executescript(ddl)
+    _insert_ticket(
+        conn,
+        id="t_historical",
+        title="Historical",
+        state="needs_success",
+        ceiling="needs_success",
+        fields=_CODING_SIX_SLOT_FIELDS,
+        created_at=1,
+        updated_at=2,
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    db_module._migrate_tickets_to_v20_contract(conn)
+
+    row = conn.execute(
+        "SELECT worker_type, stage, employee_session_id FROM tickets WHERE id = 't_historical'"
+    ).fetchone()
+    assert tuple(row) == ("coding", "needs_success", None)
+    tickets_sql = str(
+        conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+        ).fetchone()["sql"]
+    )
+    assert "employee_session_id" in tickets_sql
+    assert "DEFAULT 'coding'" not in tickets_sql
+
+
+def test_v20_canonical_table_and_events_reopen_byte_identically(tmp_path) -> None:
+    conn = _v19_identity_connection(tmp_path, "canonical-v20.db", "employee-canonical")
+    conn.execute(
+        "CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, entity_id TEXT NOT NULL, "
+        "kind TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO events (entity_id, kind, payload, created_at) VALUES (?, ?, ?, ?)",
+        (
+            "t_identity",
+            "employee_session_changed",
+            '{"employee_session_id": "employee-canonical", "spacing": true}',
+            123,
+        ),
+    )
+    db_module._migrate_tickets_to_v20_contract(conn)
+    sql_before = str(
+        conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+        ).fetchone()["sql"]
+    )
+    tickets_before = [tuple(row) for row in conn.execute("SELECT * FROM tickets ORDER BY id")]
+    events_before = [tuple(row) for row in conn.execute("SELECT * FROM events ORDER BY id")]
+
+    db_module._migrate_tickets_to_v20_contract(conn)
+
+    sql_after = str(
+        conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+        ).fetchone()["sql"]
+    )
+    assert sql_after == sql_before
+    assert [
+        tuple(row) for row in conn.execute("SELECT * FROM tickets ORDER BY id")
+    ] == tickets_before
+    assert [tuple(row) for row in conn.execute("SELECT * FROM events ORDER BY id")] == events_before
+
+
+def test_v20_migration_rejects_both_employee_identity_columns_without_changes(tmp_path) -> None:
+    conn = _v19_identity_connection(tmp_path, "ambiguous-identity.db", "old")
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute("ALTER TABLE tickets ADD COLUMN employee_session_id TEXT")
+    conn.execute("UPDATE tickets SET employee_session_id = 'new'")
+    conn.execute("PRAGMA foreign_keys=ON")
+    sql_before = str(
+        conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+        ).fetchone()["sql"]
+    )
+    rows_before = [tuple(row) for row in conn.execute("SELECT * FROM tickets")]
+
+    with pytest.raises(
+        RuntimeError, match="ambiguous Ticket schema has employee_session_id and chat_session_key"
+    ):
+        db_module._migrate_tickets_to_v20_contract(conn)
+
+    assert (
+        str(
+            conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+            ).fetchone()["sql"]
+        )
+        == sql_before
+    )
+    assert [tuple(row) for row in conn.execute("SELECT * FROM tickets")] == rows_before
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+
+def test_v20_migration_rewrites_only_ticket_employee_session_events_in_place(tmp_path) -> None:
+    conn = _v19_identity_connection(tmp_path, "mixed-session-events.db", "stored")
+    conn.execute(
+        "CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, entity_id TEXT NOT NULL, "
+        "kind TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL)"
+    )
+    original_events = (
+        ("t_identity", "chat_session_created", '{"session_key":"employee-a","extra":1}', 11),
+        ("t_orphan", "chat_session_created", '{"extra":2,"session_key":"employee-orphan"}', 12),
+        ("day_2026-07-14", "chat_session_created", '{"session_key":"day-session"}', 13),
+        ("agent_chief", "chat_session_created", '{"session_key":"agent-session"}', 14),
+        ("t_identity", "ticket_updated", '{"session_key":"not-an-identity-event"}', 15),
+        (
+            "t_identity",
+            "employee_session_changed",
+            '{"employee_session_id": "already", "bytes": true}',
+            16,
+        ),
+        ("other", "chat_session_created", '{"session_key":"other-session"}', 17),
+    )
+    conn.executemany(
+        "INSERT INTO events (entity_id, kind, payload, created_at) VALUES (?, ?, ?, ?)",
+        original_events,
+    )
+    before = [dict(row) for row in conn.execute("SELECT * FROM events ORDER BY id")]
+
+    db_module._migrate_tickets_to_v20_contract(conn)
+
+    after = [dict(row) for row in conn.execute("SELECT * FROM events ORDER BY id")]
+    assert [(row["id"], row["entity_id"], row["created_at"]) for row in after] == [
+        (row["id"], row["entity_id"], row["created_at"]) for row in before
+    ]
+    assert after[0]["kind"] == "employee_session_changed"
+    assert json.loads(after[0]["payload"]) == {"employee_session_id": "employee-a", "extra": 1}
+    assert after[1]["kind"] == "employee_session_changed"
+    assert json.loads(after[1]["payload"]) == {
+        "extra": 2,
+        "employee_session_id": "employee-orphan",
+    }
+    for index in range(2, len(after)):
+        assert after[index] == before[index]
+
+
+@pytest.mark.parametrize(
+    "bad_payload",
+    (
+        "{",
+        "[]",
+        "{}",
+        '{"session_key":null}',
+        '{"session_key":7}',
+        '{"session_key":"old","employee_session_id":"new"}',
+    ),
+)
+def test_v20_employee_event_rewrite_failure_rolls_back_table_and_events(
+    tmp_path, bad_payload: str
+) -> None:
+    conn = _v19_identity_connection(tmp_path, "bad-session-event.db", "old-session")
+    conn.execute(
+        "CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, entity_id TEXT NOT NULL, "
+        "kind TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO events (entity_id, kind, payload, created_at) "
+        "VALUES ('t_identity', 'chat_session_created', ?, 91)",
+        (bad_payload,),
+    )
+    sql_before = str(
+        conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+        ).fetchone()["sql"]
+    )
+    tickets_before = [tuple(row) for row in conn.execute("SELECT * FROM tickets")]
+    events_before = [tuple(row) for row in conn.execute("SELECT * FROM events")]
+
+    with pytest.raises(RuntimeError, match="legacy Ticket employee-session event"):
+        db_module._migrate_tickets_to_v20_contract(conn)
+
+    assert (
+        str(
+            conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+            ).fetchone()["sql"]
+        )
+        == sql_before
+    )
+    assert [tuple(row) for row in conn.execute("SELECT * FROM tickets")] == tickets_before
+    assert [tuple(row) for row in conn.execute("SELECT * FROM events")] == events_before
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    assert (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tickets_new'"
+        ).fetchone()
+        is None
+    )

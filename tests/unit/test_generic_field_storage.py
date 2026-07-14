@@ -494,7 +494,7 @@ def test_probe_return_for_revision_clears_parked_proposal(
     assert t.stage == _A
     # park an alpha proposal, then attach a worker session (return needs an existing one).
     tickets_data.file_proposal(tmp_db, tid, field=_FA, body="alpha draft", actor="agent", now=now)
-    tmp_db.execute("UPDATE tickets SET chat_session_key = ? WHERE id = ?", ("probe-sess", tid))
+    tmp_db.execute("UPDATE tickets SET employee_session_id = ? WHERE id = ?", ("probe-sess", tid))
     tmp_db.commit()
 
     tickets_data.return_for_revision(tmp_db, tid, message="please revise", actor="human", now=now)
@@ -650,7 +650,7 @@ def test_decide_drop_and_jump_bookends_pure_str_stage() -> None:
             at_cap=AtCap.propose,
             ticket_status=TicketStatus.empty,
             implementer=None,
-            chat_session_key=None,
+            employee_session_id=None,
             alias=None,
             fields=TicketFields.empty(("kickoff",)),
             created_at=0,

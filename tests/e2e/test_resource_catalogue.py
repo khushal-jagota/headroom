@@ -71,7 +71,7 @@ def _park_success_proposal(server, cli, api, title: str) -> str:
     )
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
-            "UPDATE tickets SET chat_session_key = ? WHERE id = ?",
+            "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
             (f"catalogue-session-{ticket_id}", ticket_id),
         )
     api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
@@ -250,7 +250,7 @@ def test_project_name_event_refetches_only_subscribed_aggregate_set_and_matching
     assert _count(requests, server, f"/api/tickets/{ticket_id}") == 0
 
 
-def test_ticket_chat_events_have_exact_ticket_and_chat_network_dependencies(
+def test_ticket_employee_session_and_chat_events_have_exact_network_dependencies(
     server, context_factory, open_page, cli
 ) -> None:
     ticket_id = cli(
@@ -278,9 +278,9 @@ def test_ticket_chat_events_have_exact_ticket_and_chat_network_dependencies(
         _append_event(server, ticket_id, kind)
         _wait_for_flush(page, previous)
 
-    emit("chat_session_created")
+    emit("employee_session_changed")
     assert _count(requests, server, f"/api/tickets/{ticket_id}") == 1
-    assert _count(requests, server, f"/api/chat/{ticket_id}/state") == 1
+    assert _count(requests, server, f"/api/chat/{ticket_id}/state") == 0
     assert _count(requests, server, "/api/sprint/current") == 0
     assert _count(requests, server, "/api/review") == 0
 

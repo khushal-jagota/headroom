@@ -341,7 +341,7 @@ def _session_events(conn, entity_id: str) -> list[tuple[str, dict[str, object]]]
         (str(row["kind"]), json.loads(str(row["payload"])))
         for row in conn.execute(
             "SELECT kind, payload FROM events WHERE entity_id = ? "
-            "AND kind IN ('chat_session_created', 'chat_turn_updated') ORDER BY id",
+            "AND kind IN ('employee_session_changed', 'chat_turn_updated') ORDER BY id",
             (entity_id,),
         )
     ]
@@ -363,7 +363,7 @@ def test_binding_writer_is_atomic_idempotent_and_rotates_once(tmp_path: Path) ->
         assert first == "session-one"
         assert tuple(
             conn.execute(
-                "SELECT tickets.chat_session_key, chat_turns.session_key "
+                "SELECT tickets.employee_session_id, chat_turns.session_key "
                 "FROM tickets JOIN chat_turns ON chat_turns.entity_id = tickets.id "
                 "WHERE tickets.id = ?",
                 (ticket_id,),
@@ -371,7 +371,7 @@ def test_binding_writer_is_atomic_idempotent_and_rotates_once(tmp_path: Path) ->
         ) == ("session-one", "session-one")
         first_events = _session_events(conn, ticket_id)
         assert [kind for kind, _ in first_events] == [
-            "chat_session_created",
+            "employee_session_changed",
             "chat_turn_updated",
         ]
 
@@ -400,9 +400,9 @@ def test_binding_writer_is_atomic_idempotent_and_rotates_once(tmp_path: Path) ->
         )
         assert rotated == "session-two"
         assert [kind for kind, _ in _session_events(conn, ticket_id)] == [
-            "chat_session_created",
+            "employee_session_changed",
             "chat_turn_updated",
-            "chat_session_created",
+            "employee_session_changed",
             "chat_turn_updated",
         ]
     finally:
@@ -413,7 +413,7 @@ def test_binding_adopts_ordinary_winner_but_force_fresh_replaces_it(tmp_path: Pa
     conn, ticket_id, turn_id = _running_human_ticket_turn(tmp_path)
     try:
         conn.execute(
-            "UPDATE tickets SET chat_session_key = 'concurrent-winner' WHERE id = ?",
+            "UPDATE tickets SET employee_session_id = 'concurrent-winner' WHERE id = ?",
             (ticket_id,),
         )
         adopted = chat_data.bind_human_turn_session(
@@ -429,10 +429,10 @@ def test_binding_adopts_ordinary_winner_but_force_fresh_replaces_it(tmp_path: Pa
         assert adopted == "concurrent-winner"
         assert _session_events(conn, ticket_id)[-1] == (
             "chat_turn_updated",
-            {"turn_id": turn_id, "session_key": "concurrent-winner"},
+            {"turn_id": turn_id, "can_pause": True},
         )
         assert not any(
-            payload.get("session_key") == "losing-candidate"
+            payload.get("employee_session_id") == "losing-candidate"
             for _, payload in _session_events(conn, ticket_id)
         )
 
@@ -449,7 +449,7 @@ def test_binding_adopts_ordinary_winner_but_force_fresh_replaces_it(tmp_path: Pa
         assert forced == "fresh-new-session"
         assert tuple(
             conn.execute(
-                "SELECT tickets.chat_session_key, chat_turns.session_key "
+                "SELECT tickets.employee_session_id, chat_turns.session_key "
                 "FROM tickets JOIN chat_turns ON chat_turns.entity_id = tickets.id "
                 "WHERE tickets.id = ?",
                 (ticket_id,),
@@ -457,7 +457,7 @@ def test_binding_adopts_ordinary_winner_but_force_fresh_replaces_it(tmp_path: Pa
         ) == ("fresh-new-session", "fresh-new-session")
 
         conn.execute(
-            "UPDATE tickets SET chat_session_key = 'winner-after-forced-bind' WHERE id = ?",
+            "UPDATE tickets SET employee_session_id = 'winner-after-forced-bind' WHERE id = ?",
             (ticket_id,),
         )
         ordinary_next_report = chat_data.bind_human_turn_session(
@@ -473,14 +473,14 @@ def test_binding_adopts_ordinary_winner_but_force_fresh_replaces_it(tmp_path: Pa
         assert ordinary_next_report == "winner-after-forced-bind"
         assert tuple(
             conn.execute(
-                "SELECT tickets.chat_session_key, chat_turns.session_key "
+                "SELECT tickets.employee_session_id, chat_turns.session_key "
                 "FROM tickets JOIN chat_turns ON chat_turns.entity_id = tickets.id "
                 "WHERE tickets.id = ?",
                 (ticket_id,),
             ).fetchone()
         ) == ("winner-after-forced-bind", "winner-after-forced-bind")
         assert not any(
-            payload.get("session_key") == "later-candidate"
+            payload.get("employee_session_id") == "later-candidate"
             for _, payload in _session_events(conn, ticket_id)
         )
     finally:
@@ -517,7 +517,7 @@ def test_binding_rolls_back_entity_turn_and_events_together(
             )
         assert tuple(
             conn.execute(
-                "SELECT tickets.chat_session_key, chat_turns.session_key "
+                "SELECT tickets.employee_session_id, chat_turns.session_key "
                 "FROM tickets JOIN chat_turns ON chat_turns.entity_id = tickets.id "
                 "WHERE tickets.id = ?",
                 (ticket_id,),
@@ -555,7 +555,7 @@ def test_late_binding_cannot_mutate_a_settled_turn(tmp_path: Path) -> None:
             )
         assert _session_events(conn, ticket_id) == before
         assert conn.execute(
-            "SELECT chat_session_key FROM tickets WHERE id = ?", (ticket_id,)
+            "SELECT employee_session_id FROM tickets WHERE id = ?", (ticket_id,)
         ).fetchone()[0] is None
     finally:
         conn.close()

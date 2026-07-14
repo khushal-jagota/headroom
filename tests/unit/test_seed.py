@@ -6,14 +6,20 @@ parsers."""
 
 from __future__ import annotations
 
+import inspect
 import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from sqlite3 import Connection
+from types import SimpleNamespace
 
-from planner.core.contracts import Priority
-from planner.seed.contracts import SkippedSection
+import pytest
+
+from planner.core.contracts import ErrorCode, Priority
+from planner.core.errors import PlannerError
+from planner.seed import __main__ as seed_main
+from planner.seed.contracts import MigrationReport, SkippedSection
 from planner.seed.importer import seed_from_source
 from planner.seed.logic.fieldmap import resolve_priority
 from planner.seed.logic.latest import pick_latest_daily
@@ -92,7 +98,7 @@ _EXPECTED_SKIPS = [
 def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     tmp_db: Connection,
 ) -> None:
-    report = seed_from_source(tmp_db, FIXTURE, _FIXED_NOW)
+    report = seed_from_source(tmp_db, FIXTURE, worker_type="coding", now=_FIXED_NOW)
 
     # (1) report counts.
     assert (
@@ -173,7 +179,8 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     tickets = _rows_by(
         tmp_db,
         "SELECT tickets.id, tickets.alias, tickets.stage, tickets.priority, "
-        "tickets.chat_session_key, tickets.sprint_item_id, tickets.sprint_id, "
+        "tickets.worker_type, tickets.employee_session_id, tickets.sprint_item_id, "
+        "tickets.sprint_id, "
         "tickets.project_id, projects.name AS project, tickets.recap, tickets.ceiling, "
         "tickets.at_cap, tickets.deadline, tickets.fields "
         "FROM tickets LEFT JOIN projects ON projects.id = tickets.project_id",
@@ -184,19 +191,23 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert tickets["ticket-20260611-release-branch"]["stage"] == "needs_plan"
     assert tickets["ticket-20260611-import-pipeline"]["stage"] == "needs_implementation"
     for row in tickets.values():
+        assert row["worker_type"] == "coding"
         assert row["ceiling"] == row["stage"]
         assert row["at_cap"] == "propose"
         assert row["recap"] == ""
         assert row["deadline"] is None
 
-    # (6) chat session key preserved on exactly one ticket.
-    assert tickets["ticket-20260611-export-format"]["chat_session_key"] == "20260611_090000_abc123"
+    # (6) the historical Chat ID is preserved byte-for-byte as the Employee session id.
+    assert (
+        tickets["ticket-20260611-export-format"]["employee_session_id"]
+        == "20260611_090000_abc123"
+    )
     for alias in (
         "ticket-20260611-onboarding-survey",
         "ticket-20260611-release-branch",
         "ticket-20260611-import-pipeline",
     ):
-        assert tickets[alias]["chat_session_key"] is None
+        assert tickets[alias]["employee_session_id"] is None
 
     # (7) fields JSON.
     onboarding = json.loads(tickets["ticket-20260611-onboarding-survey"]["fields"])
@@ -311,7 +322,7 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert report.skipped == _EXPECTED_SKIPS
 
     # (13) idempotent re-run: zero new rows, all hits counted.
-    report2 = seed_from_source(tmp_db, FIXTURE, _FIXED_NOW)
+    report2 = seed_from_source(tmp_db, FIXTURE, worker_type="coding", now=_FIXED_NOW)
     assert (
         report2.sprints,
         report2.sprint_items,
@@ -364,7 +375,7 @@ def test_workspace_ticket_missing_readiness_is_enumerated() -> None:
         "  - Readiness: Ready\n"
         "  - Priority: P2\n"
     )
-    tickets, skipped = parse_workspace(text, "workspace.md", [])
+    tickets, skipped = parse_workspace(text, "workspace.md", [], worker_type="coding")
     assert tickets == []
     assert len(skipped) == 2
     assert {section.reason for section in skipped} == {_REASON_NO_READINESS, _REASON_TITLE_LONG}
@@ -399,16 +410,104 @@ def test_workspace_field_continuation_lines_preserved() -> None:
         "  - Success: first line\n"
         "    second continuation line\n"
     )
-    tickets, skipped = parse_workspace(text, "workspace.md", [])
+    tickets, skipped = parse_workspace(text, "workspace.md", [], worker_type="coding")
     assert skipped == []
     assert len(tickets) == 1
+    assert tickets[0].worker_type == "coding"
     assert tickets[0].success == "first line\n    second continuation line"
 
 
-def test_seed_fields_follow_the_registered_coding_definition(tmp_db: Connection) -> None:
+def test_seed_interfaces_require_keyword_only_worker_type_and_now() -> None:
+    seed_parameters = inspect.signature(seed_from_source).parameters
+    assert seed_parameters["worker_type"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert seed_parameters["worker_type"].default is inspect.Parameter.empty
+    assert seed_parameters["now"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert seed_parameters["now"].default is inspect.Parameter.empty
+
+    workspace_parameters = inspect.signature(parse_workspace).parameters
+    assert workspace_parameters["worker_type"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert workspace_parameters["worker_type"].default is inspect.Parameter.empty
+
+
+def test_standalone_seed_requires_and_forwards_exact_worker_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_config_load() -> None:
+        pytest.fail("argparse must reject a missing --worker-type before database work")
+
+    monkeypatch.setattr(seed_main, "load_config", unexpected_config_load)
+    with pytest.raises(SystemExit) as raised:
+        seed_main.main(["--source", str(FIXTURE)])
+    assert raised.value.code == 2
+
+    observed: dict[str, object] = {}
+
+    class FakeConnection:
+        def close(self) -> None:
+            observed["closed"] = True
+
+    monkeypatch.setattr(
+        seed_main,
+        "load_config",
+        lambda: SimpleNamespace(db_path="unused.db", db_busy_timeout_ms=1),
+    )
+    monkeypatch.setattr(seed_main, "connect", lambda *_args: FakeConnection())
+    monkeypatch.setattr(seed_main, "create_schema", lambda conn: observed.setdefault("conn", conn))
+    monkeypatch.setattr(
+        seed_main,
+        "build_clock",
+        lambda _config: SimpleNamespace(now_unix=lambda: _FIXED_NOW),
+    )
+
+    def fake_seed(
+        conn: object,
+        source: str,
+        *,
+        worker_type: str,
+        now: int,
+    ) -> MigrationReport:
+        observed.update(
+            conn=conn,
+            source=source,
+            worker_type=worker_type,
+            now=now,
+        )
+        return MigrationReport()
+
+    monkeypatch.setattr(seed_main, "seed_from_source", fake_seed)
+    assert (
+        seed_main.main(
+            ["--source", str(FIXTURE), "--worker-type", "seed_probe", "--json"]
+        )
+        == 0
+    )
+    assert observed["worker_type"] == "seed_probe"
+    assert observed["source"] == str(FIXTURE)
+    assert observed["now"] == _FIXED_NOW
+    assert observed["closed"] is True
+
+
+def test_unknown_seed_worker_type_fails_before_any_import_write(tmp_db: Connection) -> None:
+    before = {
+        table: _count(tmp_db, table)
+        for table in ("sprints", "sprint_items", "tickets", "ideas", "events")
+    }
+    with pytest.raises(PlannerError) as raised:
+        seed_from_source(tmp_db, FIXTURE, worker_type="ghost", now=_FIXED_NOW)
+    assert raised.value.code is ErrorCode.not_found
+    assert raised.value.detail == {"worker_type": "ghost"}
+    assert {
+        table: _count(tmp_db, table)
+        for table in ("sprints", "sprint_items", "tickets", "ideas", "events")
+    } == before
+
+
+def test_seed_fields_follow_the_explicit_registered_definition(tmp_db: Connection) -> None:
     extra_field = "seed_extra"
     definition = replace(
         CODING_WORKER_TYPE_DEFINITION,
+        worker_type="seed_probe",
+        label="Seed probe",
         stages=(
             *CODING_WORKER_TYPE_DEFINITION.stages[:-1],
             StageDefinition("needs_seed_extra", "Seed extra", extra_field, False),
@@ -426,20 +525,70 @@ def test_seed_fields_follow_the_registered_coding_definition(tmp_db: Connection)
     )
     install_worker_type_registry_for_test(registry)
     try:
-        seed_from_source(tmp_db, FIXTURE, _FIXED_NOW)
+        seed_from_source(tmp_db, FIXTURE, worker_type="seed_probe", now=_FIXED_NOW)
     finally:
         restore_production_worker_type_registry_for_test()
 
     rows = {
-        row["alias"]: json.loads(row["fields"])
-        for row in tmp_db.execute("SELECT alias, fields FROM tickets")
+        row["alias"]: row
+        for row in tmp_db.execute("SELECT alias, worker_type, fields FROM tickets")
     }
     empty_slot = {"value": None, "proposal": None, "user_note": None}
-    assert all(fields[extra_field] == empty_slot for fields in rows.values())
-    assert rows["ticket-20260611-export-format"]["kickoff"]["value"] == "- Project: Tribe"
-    assert rows["ticket-20260611-export-format"]["success"]["value"] == (
+    assert all(row["worker_type"] == "seed_probe" for row in rows.values())
+    fields_by_alias = {alias: json.loads(row["fields"]) for alias, row in rows.items()}
+    assert all(fields[extra_field] == empty_slot for fields in fields_by_alias.values())
+    assert fields_by_alias["ticket-20260611-export-format"]["kickoff"]["value"] == (
+        "- Project: Tribe"
+    )
+    assert fields_by_alias["ticket-20260611-export-format"]["success"]["value"] == (
         "a one-page format note that a second reader can implement from."
     )
-    assert rows["ticket-20260611-release-branch"]["approach"]["value"] == (
+    assert fields_by_alias["ticket-20260611-release-branch"]["approach"]["value"] == (
         "branch from main after the fixture tests pass, then tag."
     )
+
+
+def test_incompatible_explicit_worker_type_rolls_back_the_whole_import(
+    tmp_db: Connection,
+) -> None:
+    incompatible_definition = replace(
+        CODING_WORKER_TYPE_DEFINITION,
+        worker_type="seed_incompatible",
+        label="Seed incompatible",
+        stages=(
+            CODING_WORKER_TYPE_DEFINITION.stages[0],
+            replace(
+                CODING_WORKER_TYPE_DEFINITION.stages[1],
+                id="needs_seed_success",
+            ),
+            *CODING_WORKER_TYPE_DEFINITION.stages[2:],
+        ),
+    )
+    registry = WorkerTypeRegistry(
+        (incompatible_definition,),
+        known_skills=frozenset({"panels-worker-coding"}),
+        known_toolset_profiles=frozenset({"default"}),
+    )
+    install_worker_type_registry_for_test(registry)
+    try:
+        with pytest.raises(PlannerError) as raised:
+            seed_from_source(
+                tmp_db,
+                FIXTURE,
+                worker_type="seed_incompatible",
+                now=_FIXED_NOW,
+            )
+    finally:
+        restore_production_worker_type_registry_for_test()
+    assert raised.value.code is ErrorCode.validation
+    assert raised.value.message == "stage outside the linear order"
+    for table in ("sprints", "sprint_items", "tickets", "ideas", "events"):
+        assert _count(tmp_db, table) == 0
+
+
+def test_seed_has_no_http_or_panels_command_surface() -> None:
+    root = Path(__file__).resolve().parents[2]
+    server_source = (root / "src/planner/core/server.py").read_text()
+    cli_source = (root / "src/planner/cli/main.py").read_text()
+    assert "/api/seed" not in server_source
+    assert "seed" not in cli_source

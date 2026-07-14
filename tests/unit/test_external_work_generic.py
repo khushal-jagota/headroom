@@ -164,7 +164,7 @@ def _needs_kickoff_ticket(defn: WorkerTypeDefinition) -> Ticket:
         at_cap=AtCap.propose,
         ticket_status=TicketStatus.empty,
         implementer=None,
-        chat_session_key=None,
+        employee_session_id=None,
         alias=None,
         fields=TicketFields(slots),
         created_at=1,

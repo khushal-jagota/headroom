@@ -30,7 +30,11 @@ _RECOGNIZED = frozenset(
 
 
 def parse_workspace(
-    text: str, source_file: str, item_titles: Sequence[str],
+    text: str,
+    source_file: str,
+    item_titles: Sequence[str],
+    *,
+    worker_type: str,
 ) -> tuple[list[ParsedTicket], list[SkippedSection]]:
     preamble, sections = split_sections(text)
     tickets: list[ParsedTicket] = []
@@ -46,7 +50,12 @@ def parse_workspace(
                     source_file, heading, REASON_PROSE, excerpt_of("\n".join(orphans)),
                 ))
             for bullet in bullets:
-                ticket, skip = _ticket_from_bullet(bullet, source_file, item_titles)
+                ticket, skip = _ticket_from_bullet(
+                    bullet,
+                    source_file,
+                    item_titles,
+                    worker_type=worker_type,
+                )
                 if skip is not None:
                     skipped.append(skip)
                 if ticket is not None:
@@ -72,7 +81,11 @@ def _field_value(child: Bullet, base: str) -> str:
 
 
 def _ticket_from_bullet(
-    bullet: Bullet, source_file: str, item_titles: Sequence[str],
+    bullet: Bullet,
+    source_file: str,
+    item_titles: Sequence[str],
+    *,
+    worker_type: str,
 ) -> tuple[ParsedTicket | None, SkippedSection | None]:
     alias: str | None = None
     chat: str | None = None
@@ -119,10 +132,11 @@ def _ticket_from_bullet(
         parts.append(reconstructed)
     ticket = ParsedTicket(
         title=bullet.text,
+        worker_type=worker_type,
         stage=stage,
         priority=priority if priority is not None else Priority.P3,
         alias=alias,
-        chat_session_key=chat,
+        employee_session_id=chat,
         body="\n".join(parts),
         success=success,
         approach=approach,

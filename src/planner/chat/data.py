@@ -25,6 +25,8 @@ from planner.core.contracts import EventKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event
 from planner.core.ids import new_id
+from planner.tickets import data as tickets_data
+from planner.tickets.contracts import EmployeeSessionIdTransition
 
 MAX_ACTIVE_TURN_ACTIVITY_ENTRIES: Final = 100
 
@@ -77,7 +79,7 @@ def _row_to_turn(
         activity_label=row["activity_label"],
         output_role=str(row["output_role"]),
         output_text=str(row["output_text"]),
-        session_key=row["session_key"],
+        can_pause=str(row["status"]) == "running" and row["session_key"] is not None,
         error=row["error"],
         started_at=int(row["started_at"]),
         updated_at=int(row["updated_at"]),
@@ -128,9 +130,6 @@ def record_message(
 def read_state(
     conn: sqlite3.Connection,
     entity_id: str,
-    *,
-    session_key: str | None,
-    legacy_messages: tuple[ChatStateMessage, ...] = (),
 ) -> ChatState:
     rows = conn.execute(
         "SELECT id, entity_id, turn_id, role, text, created_at "
@@ -138,10 +137,8 @@ def read_state(
         (entity_id,),
     ).fetchall()
     messages = tuple(_row_to_message(row) for row in rows)
-    if not messages and legacy_messages:
-        messages = legacy_messages
     active_turn = read_active_turn(conn, entity_id)
-    return ChatState(messages=messages, active_turn=active_turn, session_key=session_key)
+    return ChatState(messages=messages, active_turn=active_turn)
 
 
 def read_active_turn(conn: sqlite3.Connection, entity_id: str) -> ChatTurn | None:
@@ -161,6 +158,20 @@ def read_active_turn(conn: sqlite3.Connection, entity_id: str) -> ChatTurn | Non
     return _row_to_turn(
         turn_row, tuple(_row_to_activity_entry(row) for row in activity_rows)
     )
+
+
+def read_running_turn_session_key(
+    conn: sqlite3.Connection,
+    turn_id: str,
+    *,
+    entity_id: str,
+) -> str | None:
+    row = conn.execute(
+        "SELECT session_key FROM chat_turns "
+        "WHERE id = ? AND entity_id = ? AND status = 'running'",
+        (turn_id, entity_id),
+    ).fetchone()
+    return None if row is None else row["session_key"]
 
 
 def record_turn_activity(
@@ -349,7 +360,7 @@ def attach_session_key(
             conn,
             entity_id,
             EventKind.chat_turn_updated,
-            {"turn_id": turn_id, "session_key": session_key},
+            {"turn_id": turn_id, "can_pause": True},
             now,
         )
 
@@ -367,11 +378,9 @@ def bind_human_turn_session(
 ) -> str:
     """Causally bind the entity and its still-running human turn to one key."""
     table_by_kind: dict[ChattableEntityKind, str] = {
-        "ticket": "tickets",
         "day": "days",
         "agent_chat_session": "agent_chat_sessions",
     }
-    table = table_by_kind[entity_kind]
     with _txn(conn):
         turn_row = conn.execute(
             "SELECT entity_id, origin, status, session_key FROM chat_turns WHERE id = ?",
@@ -388,43 +397,55 @@ def bind_human_turn_session(
                 "human chat turn is no longer running",
                 {"entity_id": entity_id, "turn_id": turn_id},
             )
-        entity_row = conn.execute(
-            f"SELECT chat_session_key FROM {table} WHERE id = ?", (entity_id,)
-        ).fetchone()
-        if entity_row is None:
-            raise PlannerError(
-                ErrorCode.not_found,
-                "chattable entity not found",
-                {"entity_id": entity_id},
-            )
-        current_session_key: str | None = entity_row["chat_session_key"]
-        if force_fresh_session:
-            effective_session_key = candidate_session_key
-        elif current_session_key == candidate_session_key:
-            effective_session_key = candidate_session_key
-        elif current_session_key == expected_session_key:
-            effective_session_key = candidate_session_key
-        elif current_session_key is not None:
-            effective_session_key = current_session_key
-        else:
-            raise PlannerError(
-                ErrorCode.already_running,
-                "chat session changed during binding",
-                {"entity_id": entity_id, "turn_id": turn_id},
-            )
-
-        if current_session_key != effective_session_key:
-            conn.execute(
-                f"UPDATE {table} SET chat_session_key = ?, updated_at = ? WHERE id = ?",
-                (effective_session_key, now, entity_id),
-            )
-            append_event(
+        if entity_kind == "ticket":
+            effective_session_key = tickets_data.write_employee_session_id_in_transaction(
                 conn,
                 entity_id,
-                EventKind.chat_session_created,
-                {"session_key": effective_session_key},
-                now,
+                transition=EmployeeSessionIdTransition(
+                    expected_employee_session_id=expected_session_key,
+                    candidate_employee_session_id=candidate_session_key,
+                ),
+                force_fresh_employee_session=force_fresh_session,
+                now=now,
             )
+        else:
+            table = table_by_kind[entity_kind]
+            entity_row = conn.execute(
+                f"SELECT chat_session_key FROM {table} WHERE id = ?", (entity_id,)
+            ).fetchone()
+            if entity_row is None:
+                raise PlannerError(
+                    ErrorCode.not_found,
+                    "chattable entity not found",
+                    {"entity_id": entity_id},
+                )
+            current_session_key: str | None = entity_row["chat_session_key"]
+            if force_fresh_session:
+                effective_session_key = candidate_session_key
+            elif current_session_key == candidate_session_key:
+                effective_session_key = candidate_session_key
+            elif current_session_key == expected_session_key:
+                effective_session_key = candidate_session_key
+            elif current_session_key is not None:
+                effective_session_key = current_session_key
+            else:
+                raise PlannerError(
+                    ErrorCode.already_running,
+                    "chat session changed during binding",
+                    {"entity_id": entity_id, "turn_id": turn_id},
+                )
+            if current_session_key != effective_session_key:
+                conn.execute(
+                    f"UPDATE {table} SET chat_session_key = ?, updated_at = ? WHERE id = ?",
+                    (effective_session_key, now, entity_id),
+                )
+                append_event(
+                    conn,
+                    entity_id,
+                    EventKind.chat_session_created,
+                    {"session_key": effective_session_key},
+                    now,
+                )
         if turn_row["session_key"] != effective_session_key:
             conn.execute(
                 "UPDATE chat_turns SET session_key = ?, updated_at = ? WHERE id = ?",
@@ -434,7 +455,7 @@ def bind_human_turn_session(
                 conn,
                 entity_id,
                 EventKind.chat_turn_updated,
-                {"turn_id": turn_id, "session_key": effective_session_key},
+                {"turn_id": turn_id, "can_pause": True},
                 now,
             )
         return effective_session_key

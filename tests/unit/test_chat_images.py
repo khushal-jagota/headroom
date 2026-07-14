@@ -12,7 +12,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from planner.chat.contracts import (
-    ChatHistory,
     GatewayStatus,
     HumanChatCompletion,
     HumanChatObservation,
@@ -26,6 +25,7 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.files.chat_images import store_chat_image
 from planner.files.logic.paths import resolve_chat_file
+from planner.tickets.contracts import EmployeeSessionHistory
 from planner.tickets.data import create_ticket
 
 PNG = base64.b64decode(
@@ -332,8 +332,10 @@ def test_chat_turn_accepts_same_entity_image_and_keeps_transcript_reference(tmp_
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
-            return ChatHistory(messages=(), session_key=session_key)
+        def read_employee_session_history(
+            self, employee_session_id: str, ticket_id: str
+        ) -> EmployeeSessionHistory:
+            return EmployeeSessionHistory(messages=(), employee_session_id=employee_session_id)
 
         def run_human_turn(
             self,
@@ -394,8 +396,10 @@ def test_chat_turn_accepts_image_only_with_nonempty_model_cue(tmp_path: Path) ->
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
-            return ChatHistory(messages=(), session_key=session_key)
+        def read_employee_session_history(
+            self, employee_session_id: str, ticket_id: str
+        ) -> EmployeeSessionHistory:
+            return EmployeeSessionHistory(messages=(), employee_session_id=employee_session_id)
 
         def run_human_turn(
             self,

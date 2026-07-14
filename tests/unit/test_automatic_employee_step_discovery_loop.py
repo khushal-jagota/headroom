@@ -131,7 +131,7 @@ def _set_status(db: str, tid: str, status: TicketStatus) -> None:
 def _set_key(db: str, tid: str, key: str) -> None:
     conn = connect(db)
     try:
-        conn.execute("UPDATE tickets SET chat_session_key = ? WHERE id = ?", (key, tid))
+        conn.execute("UPDATE tickets SET employee_session_id = ? WHERE id = ?", (key, tid))
     finally:
         conn.close()
 

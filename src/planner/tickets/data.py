@@ -11,7 +11,7 @@ import json
 import sqlite3
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from typing import Final, Protocol
+from typing import Protocol
 
 from planner.core import links as core_links
 from planner.core.contracts import EventKind, Priority
@@ -22,6 +22,7 @@ from planner.days import data as days_data
 from planner.tickets import worker_context as ticket_worker_context
 from planner.tickets.contracts import (
     AtCap,
+    EmployeeSessionIdTransition,
     FieldSlot,
     Implementer,
     NextCeiling,
@@ -42,13 +43,6 @@ from planner.tickets.logic import (
 from planner.tickets.logic.decisions import Decision
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
-
-
-class _Unset:
-    """Typed sentinel for status helpers: leave chat_session_key untouched."""
-
-
-_UNSET: Final = _Unset()
 
 
 class _AutomaticEmployeeStepEligibilityCheck(Protocol):
@@ -91,7 +85,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         at_cap=AtCap(row["at_cap"]),
         ticket_status=TicketStatus(row["ticket_status"]),
         implementer=Implementer(row["implementer"]) if row["implementer"] is not None else None,
-        chat_session_key=row["chat_session_key"],
+        employee_session_id=row["employee_session_id"],
         alias=row["alias"],
         fields=fields_codec.fields_from_json(row["fields"]),
         created_at=row["created_at"],
@@ -240,41 +234,71 @@ def _write_ticket_status(
     )
 
 
-def _persist_ticket_chat_session_key(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    session_key: str | None | _Unset,
-    now: int,
-) -> None:
-    if isinstance(session_key, _Unset):
-        return
-    conn.execute(
-        "UPDATE tickets SET chat_session_key = ?, updated_at = ? WHERE id = ?",
-        (session_key, now, ticket_id),
-    )
-
-
-def claim_running_step_chat_session_key(
+def write_employee_session_id_in_transaction(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    session_key: str,
+    transition: EmployeeSessionIdTransition,
+    force_fresh_employee_session: bool,
+    now: int,
+) -> str:
+    candidate = transition.candidate_employee_session_id
+    if not isinstance(candidate, str) or not candidate:
+        raise PlannerError(
+            ErrorCode.validation,
+            "candidate Employee session id must be a non-empty string",
+            {"ticket_id": ticket_id},
+        )
+    row = conn.execute(
+        "SELECT employee_session_id FROM tickets WHERE id = ?", (ticket_id,)
+    ).fetchone()
+    if row is None:
+        raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
+    current: str | None = row["employee_session_id"]
+    if current == candidate:
+        return candidate
+    if force_fresh_employee_session or current == transition.expected_employee_session_id:
+        pass
+    elif current is not None:
+        return current
+    else:
+        raise PlannerError(
+            ErrorCode.already_running,
+            "Employee session changed during binding",
+            {"ticket_id": ticket_id},
+        )
+    conn.execute(
+        "UPDATE tickets SET employee_session_id = ?, updated_at = ? WHERE id = ?",
+        (candidate, now, ticket_id),
+    )
+    append_event(
+        conn,
+        ticket_id,
+        EventKind.employee_session_changed,
+        {"employee_session_id": candidate},
+        now,
+    )
+    return candidate
+
+
+def claim_running_step_employee_session_id(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    transition: EmployeeSessionIdTransition,
     now: int,
 ) -> Ticket:
-    """Claim the durable Hermes session key for the active worker step."""
+    """Persist or adopt the durable Employee session for the active worker step."""
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
-        if ticket.chat_session_key == session_key:
-            return ticket
         if ticket.ticket_status is not TicketStatus.agent_running_step:
             return ticket
-        _persist_ticket_chat_session_key(conn, ticket_id, session_key, now)
-        append_event(
+        write_employee_session_id_in_transaction(
             conn,
             ticket_id,
-            EventKind.chat_session_created,
-            {"session_key": session_key},
-            now,
+            transition=transition,
+            force_fresh_employee_session=False,
+            now=now,
         )
         return _load_ticket_for_write(conn, ticket_id)
 
@@ -341,7 +365,7 @@ def create_ticket(
             "id, title, worker_type, stage, priority, deadline, project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, "
             "ticket_status, implementer, "
-            "chat_session_key, alias, fields, created_at, updated_at) "
+            "employee_session_id, alias, fields, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
@@ -455,7 +479,7 @@ def create_ticket_from_external_work(
             "INSERT INTO tickets ("
             "id, title, worker_type, stage, priority, deadline, project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, ticket_status, "
-            "chat_session_key, alias, fields, created_at, updated_at) "
+            "employee_session_id, alias, fields, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
@@ -607,18 +631,21 @@ def read_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
     return _load_ticket(conn, ticket_id)
 
 
-def read_ticket_by_session_key(conn: sqlite3.Connection, session_key: str) -> Ticket:
-    """The ticket whose durable chat_session_key matches — how a worker agent resolves
-    'my ticket' from its live HERMES_SESSION_KEY (the shared child binds it per turn)."""
+def read_ticket_by_employee_session_id(
+    conn: sqlite3.Connection, employee_session_id: str
+) -> Ticket:
+    """Resolve the Ticket that owns this durable Employee conversation."""
     row = conn.execute(
         "SELECT tickets.*, projects.name AS project_name "
         "FROM tickets LEFT JOIN projects ON projects.id = tickets.project_id "
-        "WHERE tickets.chat_session_key = ?",
-        (session_key,),
+        "WHERE tickets.employee_session_id = ?",
+        (employee_session_id,),
     ).fetchone()
     if row is None:
         raise PlannerError(
-            ErrorCode.not_found, "no ticket owns this session", {"session_key": session_key}
+            ErrorCode.not_found,
+            "no ticket owns this Employee session",
+            {"employee_session_id": employee_session_id},
         )
     return _row_to_ticket(row)
 
@@ -664,12 +691,19 @@ def finish_run_if_still_running_step(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    session_key: str | None | _Unset = _UNSET,
+    employee_session_transition: EmployeeSessionIdTransition | None = None,
     now: int,
 ) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
-        _persist_ticket_chat_session_key(conn, ticket_id, session_key, now)
+        if employee_session_transition is not None:
+            write_employee_session_id_in_transaction(
+                conn,
+                ticket_id,
+                transition=employee_session_transition,
+                force_fresh_employee_session=False,
+                now=now,
+            )
         if ticket.ticket_status is TicketStatus.agent_running_step:
             _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
         return _load_ticket_for_write(conn, ticket_id)
@@ -680,12 +714,19 @@ def mark_run_errored(
     ticket_id: str,
     *,
     error: str,
-    session_key: str | None | _Unset = _UNSET,
+    employee_session_transition: EmployeeSessionIdTransition | None = None,
     now: int,
 ) -> Ticket:
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
-        _persist_ticket_chat_session_key(conn, ticket_id, session_key, now)
+        if employee_session_transition is not None:
+            write_employee_session_id_in_transaction(
+                conn,
+                ticket_id,
+                transition=employee_session_transition,
+                force_fresh_employee_session=False,
+                now=now,
+            )
         _write_ticket_status(conn, ticket_id, TicketStatus.errored, now, error=error)
         return _load_ticket_for_write(conn, ticket_id)
 
@@ -695,13 +736,20 @@ def mark_run_errored_if_still_running_step(
     ticket_id: str,
     *,
     error: str,
-    session_key: str | None | _Unset = _UNSET,
+    employee_session_transition: EmployeeSessionIdTransition | None = None,
     now: int,
 ) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
         if ticket.ticket_status is TicketStatus.agent_running_step:
-            _persist_ticket_chat_session_key(conn, ticket_id, session_key, now)
+            if employee_session_transition is not None:
+                write_employee_session_id_in_transaction(
+                    conn,
+                    ticket_id,
+                    transition=employee_session_transition,
+                    force_fresh_employee_session=False,
+                    now=now,
+                )
             _write_ticket_status(conn, ticket_id, TicketStatus.errored, now, error=error)
         return _load_ticket_for_write(conn, ticket_id)
 

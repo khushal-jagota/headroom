@@ -69,11 +69,12 @@ then releases that handoff after commit. The revision resumes the stored Hermes
 session strictly. If that session is stale, Panels records an errored employee turn
 instead of silently creating a different conversation.
 
-One employee is one ticket session, so Hermes' per-session busy guard keeps one turn
-in flight for that ticket while the shared employee-role child can hold many sessions.
-The Ticket keeps its durable Hermes session key across stages. The lightweight Panels
-listener for that session may detach after Hermes is observed idle and no accepted
-operation remains; reopening the employee resumes the stored session. If delivery is
+One employee is one Ticket session, so Hermes' per-session busy guard keeps one turn
+in flight for that Ticket while the shared employee-role child can hold many sessions.
+The Ticket keeps its durable `employee_session_id` across stages. Human Ticket Chat
+and Employee steps both deliver through this conversation. The lightweight Panels
+listener may detach after Hermes is observed idle and no accepted operation remains;
+reopening the employee or restarting Panels resumes the stored session. If delivery is
 unknown, Panels records that honest outcome and never retries the employee prompt
 automatically. After an eligibility-affecting action commits, it calls the payload-free
 best-effort `AutomaticEmployeeStepEligibilityWake.wake()`. Runner settlement does the
@@ -122,9 +123,16 @@ acknowledged; Panels waits until that prompt's owned execution starts. A failed,
 busy, unknown, or queued-before-start submission keeps the context pending, and a
 newer revision written during a send cannot be erased by the older acknowledgement.
 
-Panels chat rows and event rows remain display and audit records. They are not this
-delivery mechanism. The generic storage, contracts, and composition live in
+Panels Chat rows and event rows remain display and audit records. They are not this
+delivery mechanism: a row alone never makes the Employee receive anything. The
+generic storage, contracts, and composition live in
 `src/planner/worker_context/`; ticket-specific keys live with the ticket domain.
+
+The explicit `GET /api/tickets/{ticket_id}/employee-session-history` route is the
+authoritative inspection of what Hermes actually received and produced for the stored
+Employee session. It may show pending context, hidden revision guidance, system or
+tool content, or other real session material absent from Panels Chat. Panels Chat state
+never loads or merges that history.
 
 ## When a run fails: errors in the event log
 
@@ -156,13 +164,14 @@ real Hermes worker.
 The full live worker loop has also been smoked against fresh non-test databases.
 A ticket placed on today was discovered by AutomaticEmployeeStepDiscoveryLoop, run by
 EmployeeStepRunner, and parked at
-`awaiting_approval` after the employee filed a proposal. The same durable Hermes
-session history showed the employee-step prompt and worker reply in ticket chat.
+`awaiting_approval` after the employee filed a proposal. The explicit Employee session
+history showed the employee-step prompt and worker reply; Panels Chat independently
+showed only its intentionally visible rows.
 
 A second smoke used a long poll interval to prove that a settled success-condition
 edit wakes discovery instead of waiting for the timer: after the edit committed, its
 eligibility wake led to the employee filing the next approach proposal.
-EmployeeStepRunner persists a created or resumed `chat_session_key` before submitting the
+EmployeeStepRunner persists a created or resumed `employee_session_id` before submitting the
 prompt, so a worker calling `panels worker my-ticket` during its own turn can resolve
 the current ticket immediately.
 
@@ -192,8 +201,8 @@ today wakes eligibility discovery without a follow-up scope edit. The ticket mov
   the product decides that Panels itself should own the schedule. See `days.md`.
 - **Chat is not queued behind an active worker step.** If you talk to the same
   employee while its worker step is already running, the send is rejected as
-  `already_running`; history remains readable. The UI still shows thinking dots,
-  then the full answer, rather than streaming token by token.
+  `already_running`; explicit Employee session history remains readable. The UI still
+  shows thinking dots, then the full answer, rather than streaming token by token.
 - **The "mind" → "employee" rename is unfinished** — some code still calls the
   employee a "mind" (`src/planner/minds/`, `MindQueue`).
 

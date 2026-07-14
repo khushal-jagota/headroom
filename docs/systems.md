@@ -187,8 +187,9 @@ each membership candidate. It does not claim Tickets, write state, or contact He
 planning day inside the transaction, and calls the same complete eligibility decision.
 A stale discovery result cannot change status, create chat state, call the gateway, or
 build a prompt. After a successful claim, the runner marks the Ticket
-`agent_running_step`, resumes or creates its Hermes session, submits one prompt, and
-settles runtime status when the turn ends. A parked proposal becomes
+`agent_running_step`, resumes or creates its durable `employee_session_id`, submits
+one prompt through that Hermes conversation, and settles runtime status when the turn
+ends. A parked proposal becomes
 `awaiting_approval`; auto-accepted work can return to `empty` for another discovery
 pass.
 
@@ -199,7 +200,7 @@ admission fail without creating a visible message or turn.
 
 A direct requested revision is different. It bypasses Automatic Employee-step
 eligibility and planning-day resolution, uses a reserved runner handoff, and strictly
-resumes the Ticket's stored Hermes session.
+resumes the Ticket's stored `employee_session_id`.
 
 Ticket, Day membership, and blocking-link actions commit first, then call
 `AutomaticEmployeeStepEligibilityWake.wake()`. Runner settlement does the same. This
@@ -231,15 +232,20 @@ observations by live Hermes session and gives each accepted Panels operation its
 consequence, so a delayed completion cannot settle a different operation. Tests use
 fake adapters and never call the real gateway.
 
-Tickets, days, and top-level agent chats store a `chat_session_key` for Hermes
-transport. Panels owns the product chat state in `chat_messages` and `chat_turns`.
-Hermes history is still readable for old sessions, but the UI reads Panels'
-`ChatState` resource.
+Each Ticket stores an `employee_session_id`. Human Ticket Chat, automatic Employee
+steps, and revisions all deliver through that durable Hermes conversation. Days and
+top-level-agent Chat instead keep their honest Chat-specific `chat_session_key`.
+The lightweight in-process listener may detach after Hermes reports idle and no Panels
+consequence remains. A later operation or process restart resumes the stored identity
+instead of replaying prior input.
 
-The stored Hermes session key is durable conversation identity. The lightweight
-in-process listener for that conversation may detach after Hermes reports idle and
-no Panels consequence remains. A later operation resumes the stored session instead
-of replaying prior input.
+Panels owns product-visible Chat state in `chat_messages` and `chat_turns`. Its
+`ChatState` read never contacts Hermes or merges Employee history. Employee session
+history is available only through the direct Ticket route
+`GET /api/tickets/{ticket_id}/employee-session-history`. That explicit result is the
+authoritative Hermes record of what the Employee received and produced, so it may
+contain internal context, revision guidance, system or tool content, or other material
+that Panels Chat intentionally does not show.
 
 Every human Hermes write uses causal session binding. A candidate created or resumed
 by Hermes is passed to the Chat data writer before a command, image attachment, or
@@ -247,10 +253,10 @@ prompt is sent. That writer atomically updates the entity and running turn and r
 the effective key. If another transaction already chose a winner, the gateway resumes
 and writes to that winner's live session. Exact `/new` is the one forced-fresh case.
 
-Panels chat state is not model context. Appending to `chat_messages` or `chat_turns`
-does not make a worker see that text. Anything the worker must read has to go
-through the Hermes gateway/session path or the actual worker prompt; the Panels chat
-row is only the UI/audit mirror.
+Panels Chat state is not model context. Appending to `chat_messages` or `chat_turns`
+does not make an Employee see that text. Anything the Employee must read has to go
+through the Hermes gateway/session path or the actual Employee prompt; a Panels row
+alone is only the UI/audit mirror, never delivery.
 
 Code paths: `src/planner/core/adapters/`, `src/planner/minds/shared_gateway.py`,
 `src/planner/minds/gateway.py`, `src/planner/minds/config.py`.
@@ -259,7 +265,8 @@ Code paths: `src/planner/core/adapters/`, `src/planner/minds/shared_gateway.py`,
 
 Ticket chat, Chief of Staff chat, and automatic worker steps use the same chat-state
 contract. A chat state is durable messages plus one optional active turn. The active
-turn carries the phase, activity label, partial output, session key, and error.
+turn carries the phase, activity label, partial output, error, and whether Pause is
+available. It does not expose durable Employee identity.
 
 Ordinary human messages and commands have one ingress:
 `POST /api/chat/{entity_id}/turns`. The Chief message endpoint is a narrow shell over
@@ -269,19 +276,21 @@ activity and output, and lets the first completion, error, or Pause settle the t
 The browser observes durable `ChatState` instead of owning a second HTTP stream.
 
 EmployeeStepRunner remains a separate lane. It stores a newly created or resumed
-session key before calling the employee-only `run_ticket_step`, so tools inside the
-worker can resolve their ticket while the turn is still active. It does not use
-`ChatTurnLifecycle` or the human transport. It also records the worker turn in chat
-state, so the UI does not infer activity from ticket status.
+`employee_session_id` before calling the employee-only `run_ticket_step`, so tools
+inside the worker can resolve their ticket while the turn is still active. It does
+not use `ChatTurnLifecycle` or the human transport. It also records the worker turn
+in chat state, so the UI does not infer activity from ticket status.
 
 Human Chat turns are rejected while `ticket_status=agent_running_step`. Automatic
 Employee-step eligibility rejects any running Panels Chat turn. The two checks happen
 again under the same transaction lock, so concurrent admission has one winner.
-History remains readable. There is no queue behind the active worker step.
+Explicit Employee session history remains readable. There is no queue behind the
+active worker step.
 
-Because the chat state is product state, backend code must not use a visible chat row
-as a substitute for worker-session delivery. Designs that depend on worker awareness
-must prove the text reached the Hermes session.
+Because Chat state is product state, backend code must not use a visible row as a
+substitute for Employee-session delivery. An empty Panels transcript stays empty even
+when Hermes has history. Designs that depend on Employee awareness must prove the text
+reached the Hermes session.
 
 Code paths: `src/planner/chat/`, `web/src/components/ChatPanel.svelte`.
 
@@ -307,12 +316,13 @@ creation and summary-only edits refresh Projects only. The catalogue keeps a pri
 process-lifetime list of resources opened through its own methods so it can inspect
 those Ticket details. The cache remains generic.
 
-Matching Panels Chat message and turn events refresh only that Chat projection.
-Ticket `chat_session_created` refreshes exactly the Ticket and its Chat because both
-currently read session state from the Ticket row. It does not refresh Board, current
-Sprint, or Review. Ordinary non-Chat Ticket events do not refresh Chat. A future AD09
-change will separate Employee/Hermes history from Panels Chat; that separation does
-not exist yet.
+For a Ticket, `employee_session_changed` refreshes only its Ticket detail. The four
+Panels Chat events — `chat_message_recorded`, `chat_turn_started`,
+`chat_turn_updated`, and `chat_turn_finished` — refresh only that Ticket's Chat.
+Neither set refreshes Board, current Sprint, or Review. Day and top-level-agent
+`chat_session_created` and those same Chat events refresh only their matching Chat;
+Day Chat events do not refresh the Day projection. Explicit Employee session history
+is an ordinary uncached read, not a Panels Chat resource.
 
 Managed Markdown has one browser-DOM owner. `managedMarkdown.ts` renders through the
 hardened renderer, mounts file previews, maintains editable atomic blocks, serializes
@@ -354,7 +364,8 @@ Code paths: `src/planner/cli/main.py`, `src/planner/cli/http.py`,
 - Ticket runtime writers own `ticket_status`.
 - Canonical writer functions own database mutations. Most live in domain `data.py`
   files; current exceptions are called out below.
-- Hermes owns chat transcripts.
+- Hermes owns Employee session history. Panels owns its intentionally visible Chat
+  messages and live turn state.
 - The frontend owns rendering and local edit drafts only. Within it,
   `managedMarkdown.ts` alone owns rendered Markdown DOM and preview lifetime.
 - The CLI is an action surface, not a decision surface.
@@ -367,10 +378,12 @@ few places where truth can change.
 These are not local style issues. They are places where the system boundaries are
 less clean than the rest.
 
-1. **Chat session-key ownership is explicit (resolved).** `ChatTurnLifecycle`
-   coordinates human admission and delivery, but `src/planner/chat/data.py` is the
-   canonical writer. Its binding transaction updates the entity and running turn
-   together and returns the effective key that the gateway must actually use.
+1. **Employee-session ownership is explicit (resolved).** `ChatTurnLifecycle`
+   coordinates human admission and delivery. The Ticket data writer is the single
+   owner of `employee_session_id`; Chat binding calls it inside the same transaction
+   that binds the running turn and returns the effective id the gateway must use.
+   Day and top-level-agent Chat keys remain Chat-owned because they are not Employee
+   identity.
 
 2. **Sprint item status is a read projection.** Sprint items no longer store their
    own status. They derive `todo`, `in_progress`, `blocked`, or `done` from child

@@ -22,7 +22,7 @@ from planner.runtime.automatic_employee_step_eligibility_wake import (
     AutomaticEmployeeStepEligibilityWake,
 )
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import Ticket, TicketStatus
+from planner.tickets.contracts import EmployeeSessionIdTransition, Ticket, TicketStatus
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
 
@@ -236,7 +236,7 @@ class EmployeeStepRunner:
                 claimed = tickets_data.read_ticket(conn, ticket_id)
                 if claimed.ticket_status is not TicketStatus.agent_running_step:
                     return False
-                if claimed.chat_session_key is None:
+                if claimed.employee_session_id is None:
                     tickets_data.mark_run_errored_if_still_running_step(
                         conn,
                         ticket_id,
@@ -248,7 +248,7 @@ class EmployeeStepRunner:
                 show_prompt_in_chat = False
                 require_existing_session = True
 
-            current_session_key = claimed.chat_session_key
+            current_employee_session_id = claimed.employee_session_id
             try:
                 worker_turn = chat_service.start_worker_turn(
                     conn,
@@ -267,26 +267,29 @@ class EmployeeStepRunner:
                     return True
                 raise
 
-            def persist_session_key(session_key: str) -> None:
-                nonlocal current_session_key
+            def persist_employee_session_id(candidate_employee_session_id: str) -> None:
+                nonlocal current_employee_session_id
                 event_now = self._clock.now_unix()
-                updated = tickets_data.claim_running_step_chat_session_key(
+                updated = tickets_data.claim_running_step_employee_session_id(
                     conn,
                     ticket_id,
-                    session_key=session_key,
+                    transition=EmployeeSessionIdTransition(
+                        expected_employee_session_id=current_employee_session_id,
+                        candidate_employee_session_id=candidate_employee_session_id,
+                    ),
                     now=event_now,
                 )
                 if (
                     updated.ticket_status is not TicketStatus.agent_running_step
-                    or updated.chat_session_key != session_key
+                    or updated.employee_session_id != candidate_employee_session_id
                 ):
                     raise _WorkerSessionClaimLost
-                current_session_key = updated.chat_session_key
+                current_employee_session_id = updated.employee_session_id
                 chat_service.attach_worker_session_key(
                     conn,
                     ticket_id,
                     worker_turn.id,
-                    session_key,
+                    candidate_employee_session_id,
                     event_now,
                 )
 
@@ -299,19 +302,24 @@ class EmployeeStepRunner:
                     self._clock.now_unix(),
                 )
 
-            def finish_running_step(session_key: str | None) -> None:
-                if session_key is None:
+            def finish_running_step(candidate_employee_session_id: str | None) -> None:
+                if candidate_employee_session_id is None:
                     tickets_data.finish_run_if_still_running_step(conn, ticket_id, now=now)
                 else:
                     tickets_data.finish_run_if_still_running_step(
                         conn,
                         ticket_id,
-                        session_key=session_key,
+                        employee_session_transition=EmployeeSessionIdTransition(
+                            expected_employee_session_id=current_employee_session_id,
+                            candidate_employee_session_id=candidate_employee_session_id,
+                        ),
                         now=now,
                     )
 
-            def mark_errored(error: str, session_key: str | None) -> None:
-                if session_key is None:
+            def mark_errored(
+                error: str, candidate_employee_session_id: str | None
+            ) -> None:
+                if candidate_employee_session_id is None:
                     tickets_data.mark_run_errored_if_still_running_step(
                         conn,
                         ticket_id,
@@ -323,27 +331,30 @@ class EmployeeStepRunner:
                         conn,
                         ticket_id,
                         error=error,
-                        session_key=session_key,
+                        employee_session_transition=EmployeeSessionIdTransition(
+                            expected_employee_session_id=current_employee_session_id,
+                            candidate_employee_session_id=candidate_employee_session_id,
+                        ),
                         now=now,
                     )
 
             try:
                 if require_existing_session:
                     result = self._gateway.run_ticket_step(
-                        claimed.chat_session_key,
+                        claimed.employee_session_id,
                         ticket_id,
                         prompt,
                         observe_gateway_event,
-                        on_session_key=persist_session_key,
+                        on_session_key=persist_employee_session_id,
                         require_existing_session=True,
                     )
                 else:
                     result = self._gateway.run_ticket_step(
-                        claimed.chat_session_key,
+                        claimed.employee_session_id,
                         ticket_id,
                         prompt,
                         observe_gateway_event,
-                        on_session_key=persist_session_key,
+                        on_session_key=persist_employee_session_id,
                     )
             except SharedGatewayBusy as exc:
                 chat_service.fail_worker_turn(
@@ -353,7 +364,7 @@ class EmployeeStepRunner:
                     "session busy",
                     self._clock.now_unix(),
                 )
-                finish_running_step(exc.session_key or current_session_key)
+                finish_running_step(exc.session_key or current_employee_session_id)
                 return True
             except _WorkerSessionClaimLost:
                 _log.info(
@@ -367,7 +378,7 @@ class EmployeeStepRunner:
                     "worker session ownership was lost",
                     self._clock.now_unix(),
                 )
-                finish_running_step(current_session_key)
+                finish_running_step(current_employee_session_id)
                 return True
             except Exception as exc:  # never leave the Ticket at agent_running_step
                 _log.exception("employee step crashed (ticket=%s)", ticket_id)
@@ -379,10 +390,10 @@ class EmployeeStepRunner:
                     error,
                     self._clock.now_unix(),
                 )
-                mark_errored(error, current_session_key)
+                mark_errored(error, current_employee_session_id)
                 return True
 
-            current_session_key = result.session_key or current_session_key
+            result_employee_session_id = result.session_key or current_employee_session_id
             if result.status == "complete":
                 chat_service.finish_worker_turn(
                     conn,
@@ -392,7 +403,7 @@ class EmployeeStepRunner:
                     "complete",
                     self._clock.now_unix(),
                 )
-                finish_running_step(current_session_key)
+                finish_running_step(result_employee_session_id)
             elif result.status == "interrupted":
                 chat_service.finish_worker_turn(
                     conn,
@@ -402,7 +413,7 @@ class EmployeeStepRunner:
                     "interrupted",
                     self._clock.now_unix(),
                 )
-                mark_errored("run interrupted", current_session_key)
+                mark_errored("run interrupted", result_employee_session_id)
             else:
                 error = result.error or "gateway run failed"
                 chat_service.fail_worker_turn(
@@ -412,7 +423,7 @@ class EmployeeStepRunner:
                     error,
                     self._clock.now_unix(),
                 )
-                mark_errored(error, current_session_key)
+                mark_errored(error, result_employee_session_id)
             return True
         finally:
             conn.close()

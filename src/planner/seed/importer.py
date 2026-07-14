@@ -32,11 +32,19 @@ from planner.seed.logic.workspace import parse_workspace
 from planner.tickets.contracts import FieldSlot, TicketFields
 from planner.tickets.logic import fields_codec
 from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 
-def seed_from_source(conn: sqlite3.Connection, source_dir: str | Path, now: int) -> MigrationReport:
+def seed_from_source(
+    conn: sqlite3.Connection,
+    source_dir: str | Path,
+    *,
+    worker_type: str,
+    now: int,
+) -> MigrationReport:
     """now is unix seconds from the caller's clock (the app clock in the server,
     a fixed instant in tests) — the importer never reads wall time itself (§13)."""
+    worker_type_definition = configured_worker_type_registry().require(worker_type)
     root = Path(source_dir)
     if not root.exists():
         raise PlannerError(ErrorCode.validation, f"seed source directory not found: {root}")
@@ -88,7 +96,10 @@ def seed_from_source(conn: sqlite3.Connection, source_dir: str | Path, now: int)
             ws_path = chosen_dir / "workspace.md"
             if ws_path.exists():
                 tickets, sk = parse_workspace(
-                    ws_path.read_text(), rel(ws_path), [item.title for item in tracking_items]
+                    ws_path.read_text(),
+                    rel(ws_path),
+                    [item.title for item in tracking_items],
+                    worker_type=worker_type,
                 )
                 skipped.extend(sk)
 
@@ -109,7 +120,15 @@ def seed_from_source(conn: sqlite3.Connection, source_dir: str | Path, now: int)
         sprint_id = _import_sprint(conn, sprint, review, report, now)
         items_by_title: dict[str, str] = {}
         _import_items(conn, tracking_items, sprint_id, items_by_title, report, now, deferred=False)
-        _import_tickets(conn, tickets, sprint_id, items_by_title, report, now)
+        _import_tickets(
+            conn,
+            tickets,
+            sprint_id,
+            items_by_title,
+            report,
+            now,
+            worker_type_definition,
+        )
         _import_items(conn, deferred_items, None, items_by_title, report, now, deferred=True)
         _import_ideas(conn, ideas, report, now)
         conn.execute("COMMIT")
@@ -233,9 +252,18 @@ def _import_tickets(
     items_by_title: dict[str, str],
     report: MigrationReport,
     now: int,
+    worker_type_definition: WorkerTypeDefinition,
 ) -> None:
-    coding_worker_type_definition = configured_worker_type_registry().require("coding")
     for ticket in tickets:
+        if ticket.worker_type != worker_type_definition.worker_type:
+            raise PlannerError(
+                ErrorCode.validation,
+                "parsed ticket worker type does not match selected worker type",
+                {
+                    "selected_worker_type": worker_type_definition.worker_type,
+                    "ticket_worker_type": ticket.worker_type,
+                },
+            )
         if ticket.alias is not None:
             row = conn.execute("SELECT id FROM tickets WHERE alias = ?", (ticket.alias,)).fetchone()
         else:
@@ -251,24 +279,24 @@ def _import_tickets(
         else:
             sprint_item_id = None
             row_sprint_id = sprint_id
-        fields = TicketFields.empty(coding_worker_type_definition.field_ids())
+        fields = TicketFields.empty(worker_type_definition.field_ids())
         for field, value in (
             ("kickoff", ticket.body),
             ("success", ticket.success),
             ("approach", ticket.approach),
         ):
             fields = fields_codec.with_slot(fields, field, FieldSlot(value=value))
-        coding_worker_type_definition.validate_ticket_position(ticket.stage, ticket.stage)
+        worker_type_definition.validate_ticket_position(ticket.stage, ticket.stage)
         conn.execute(
             "INSERT INTO tickets ("
             "id, title, worker_type, stage, priority, deadline, project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, "
-            "chat_session_key, alias, fields, created_at, updated_at) "
+            "employee_session_id, alias, fields, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ticket_id,
                 ticket.title,
-                "coding",
+                ticket.worker_type,
                 ticket.stage,
                 ticket.priority.value,
                 None,
@@ -278,7 +306,7 @@ def _import_tickets(
                 "",
                 ticket.stage,
                 "propose",
-                ticket.chat_session_key,
+                ticket.employee_session_id,
                 ticket.alias,
                 fields_codec.fields_to_json(fields),
                 now,

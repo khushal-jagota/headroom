@@ -15,7 +15,9 @@ the first completion, error, or Pause settle it. There is no separate send, comm
 or browser streaming route. The browser
 reads one `ChatState` resource: durable visible messages plus the active turn, if
 one is running. The same resource survives navigation, remounts, reloads, WebSocket
-misses, and simple polling.
+misses, and simple polling. It is built only from Panels-owned database rows. Reading
+it never contacts Hermes, loads Employee session history, or changes a Ticket's
+Employee session id.
 
 When the panel first loads, it starts at the latest message. New messages and live
 output stay in view while the reader is at or near the bottom. An upward scroll
@@ -40,15 +42,17 @@ separate: Panels attaches each saved image to the live Hermes session in order,
 then submits one prompt for that turn. A transcript preview by itself is not proof
 that the AI received the image.
 
-Hermes is still the transport. Before any human command, image attachment, or prompt
-is written, the lifecycle binds the candidate Hermes session to the still-running
-turn. The database writer compares the candidate with the entity's current key,
-updates the entity and turn together, and returns the effective key. The gateway uses
-the live Hermes session for that returned key. This means a concurrent winner is the
-session that actually receives the input, not merely the value Panels records later.
+Hermes is still the transport. Before any human Ticket command, image attachment, or
+prompt is written, the lifecycle binds the candidate Hermes session to the
+still-running turn and to the Ticket's `employee_session_id`. The database writer
+compares the candidate with the Ticket's current id, updates the Ticket and turn
+together, and returns the effective id. The gateway uses the live Hermes session for
+that returned id. This means a concurrent winner is the session that actually receives
+the input, not merely the value Panels records later. Day and top-level-agent Chat keep
+their own Chat-specific session keys because they have no Ticket employee identity.
 The visible transcript and live activity indicator belong to Panels:
 `chat_messages` records the product-facing lines, and `chat_turns` records the
-current phase, partial output, session key, error, and completion.
+current phase, partial output, error, completion, and whether Pause is available.
 
 While a turn is running, the quiet activity row shows the latest safe summary. Its
 chevron opens an ordered list of thinking phases, tool use, and commands for that
@@ -59,10 +63,10 @@ entry where Hermes supplies an identity, the list keeps at most 100 entries, and
 the entries are removed when the turn settles.
 
 That split matters: writing a row to Panels chat state does not append anything to
-the worker's Hermes conversation. A normal chat send reaches the worker because it
-goes through the gateway/session path and is then mirrored into Panels chat. Direct
-`chat_messages` or `chat_turns` writes are only UI/audit state unless the same text
-is also delivered through Hermes.
+the employee's Hermes conversation. A normal Ticket Chat send reaches the employee
+because it goes through the Ticket's `employee_session_id` and is then mirrored into
+Panels Chat. Direct `chat_messages` or `chat_turns` writes are only UI/audit state
+unless the same text is also delivered through Hermes.
 
 The EmployeeStepRunner uses the same chat-state projection but a separate delivery
 path. It claims a Ticket and calls the employee-only `run_ticket_step`; it does not
@@ -91,13 +95,21 @@ and follows Hermes's native `streaming`, `queued`, or `steered` result. The gate
 keeps each accepted send tied to its own consequence, so delayed interruption or
 completion events cannot finish the wrong visible turn.
 
-The stored chat session key names the durable Hermes conversation. A gateway restart
-resumes that key and does not replay prior input. If Hermes rotates the durable key,
-Panels binds the rotated candidate before using it and logs a
-`chat_session_created` event when the entity key changes. Typing exactly `/new` is the
-one forced-fresh case: its newly created candidate replaces the prior key before the
+For a Ticket, `employee_session_id` names the durable Hermes conversation shared by
+human Ticket Chat and Employee steps. A gateway or Panels restart resumes that id and
+does not replay prior input. If Hermes rotates it, Panels binds the rotated candidate
+before using it and records `employee_session_changed`. Typing exactly `/new` is the
+one forced-fresh case: its newly created candidate replaces the prior id before the
 command completes. If delivery becomes uncertain, Panels reports the gateway outcome
 honestly and does not guess or retry the prompt automatically.
+
+Employee session history is a separate, deliberate inspection. A direct caller asks
+for `GET /api/tickets/{ticket_id}/employee-session-history`; there is no generic Chat
+history route. The result is Hermes' authoritative record of what that employee
+actually received and produced. It may include pending internal context, revision
+guidance, system or tool content, or other material intentionally absent from Panels
+Chat. It is never copied into an empty Panels transcript. A Ticket without an Employee
+session id returns an empty history without starting Hermes.
 
 The Chief of Staff page uses the same chat state shape with its top-level entity id.
 Only the gateway routing differs: chief messages go to the `panels-chief-of-staff`
@@ -154,11 +166,11 @@ underlying worker. The commands it does show run on the ticket's own worker:
 - **Display commands render as system lines.** Picking or typing a command such as
   `/status` executes it and shows the gateway's command output in the chat trace.
 
-Typing exactly `/new` starts a fresh underlying Hermes conversation for that chat.
-Panels stores the new durable session key, shows `New session started.` as a system
-line, and sends the next ordinary message through the new session's live handle. The
-visible Panels transcript stays in place. Commands with arguments, such as
-`/new title`, continue through the ordinary command path.
+Typing exactly `/new` starts a fresh underlying Hermes conversation for that Ticket.
+Panels stores the new durable `employee_session_id`, shows `New session started.` as
+a system line, and sends the next ordinary message through the new session's live
+handle. The visible Panels transcript stays in place. Commands with arguments, such
+as `/new title`, continue through the ordinary command path.
 
 ## Handoffs
 
@@ -170,9 +182,9 @@ visible Panels transcript stays in place. Commands with arguments, such as
 ## Deferred
 
 - **Chat is not queued behind an active worker step.** Sending chat or running a
-  command while the worker step is active returns `already_running`; history remains
-  readable.
+  command while the worker step is active returns `already_running`; explicit Employee
+  session history remains readable.
 
 ---
 
-_Last verified: 2026-07-10._
+_Last verified: 2026-07-14._

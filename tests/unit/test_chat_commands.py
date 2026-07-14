@@ -79,11 +79,11 @@ def _stored_key(db_path: Path, entity_id: str) -> object:
     conn = connect(str(db_path))
     try:
         row = conn.execute(
-            "SELECT chat_session_key FROM tickets WHERE id = ?", (entity_id,)
+            "SELECT employee_session_id FROM tickets WHERE id = ?", (entity_id,)
         ).fetchone()
     finally:
         conn.close()
-    return None if row is None else row["chat_session_key"]
+    return None if row is None else row["employee_session_id"]
 
 
 def _set_ticket_status(db_path: Path, ticket_id: str, status: TicketStatus) -> None:
@@ -182,7 +182,9 @@ def test_command_skill_path_persists_key_and_one_event(tmp_path: Path) -> None:
         assert first_state["messages"][-1]["text"] == "skill /writing-plans loaded"
         # a skill run is the first message on the ticket -> mints + logs exactly one event
         assert _stored_key(db_path, tid) == "fake-sess-1"
-        assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fake-sess-1"}]
+        assert _events(db_path, tid, "employee_session_changed") == [
+            {"employee_session_id": "fake-sess-1"}
+        ]
         second = client.post(
             f"/api/chat/{tid}/turns",
             json={"text": "/writing-plans", "mode": "command"},
@@ -191,7 +193,9 @@ def test_command_skill_path_persists_key_and_one_event(tmp_path: Path) -> None:
         _wait_for_settled(client, tid)
     assert _stored_key(db_path, tid) == "fake-sess-1"
     # still exactly one event — the second run does not re-log
-    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fake-sess-1"}]
+    assert _events(db_path, tid, "employee_session_changed") == [
+        {"employee_session_id": "fake-sess-1"}
+    ]
 
 
 def test_command_alias_resolves_to_skill(tmp_path: Path) -> None:
@@ -285,7 +289,7 @@ def test_command_offline_is_503_and_no_persist(tmp_path: Path) -> None:
     assert _latest_turn(db_path, tid)["status"] == "errored"
     assert _latest_turn(db_path, tid)["error"] == "gateway offline"
     assert _stored_key(db_path, tid) is None
-    assert _events(db_path, tid, "chat_session_created") == []
+    assert _events(db_path, tid, "employee_session_changed") == []
 
 
 def test_command_lost_race_adopts_winner_key_no_event(tmp_path: Path) -> None:
@@ -306,7 +310,7 @@ def test_command_lost_race_adopts_winner_key_no_event(tmp_path: Path) -> None:
             try:
                 other.execute("BEGIN IMMEDIATE")
                 other.execute(
-                    "UPDATE tickets SET chat_session_key = ? WHERE id = ?",
+                    "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
                     ("winner-key", entity_id),
                 )
                 other.execute("COMMIT")
@@ -328,7 +332,7 @@ def test_command_lost_race_adopts_winner_key_no_event(tmp_path: Path) -> None:
     assert state["messages"][-1]["role"] == "assistant"
     assert _stored_key(db_path, tid) == "winner-key"
     assert _latest_turn(db_path, tid)["session_key"] == "winner-key"
-    assert _events(db_path, tid, "chat_session_created") == []
+    assert _events(db_path, tid, "employee_session_changed") == []
 
 
 def test_command_rejects_while_worker_step_running(tmp_path: Path) -> None:
@@ -344,7 +348,7 @@ def test_command_rejects_while_worker_step_running(tmp_path: Path) -> None:
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "already_running"
     assert _stored_key(db_path, tid) is None
-    assert _events(db_path, tid, "chat_session_created") == []
+    assert _events(db_path, tid, "employee_session_changed") == []
 
 
 def test_command_compress_surfaces_warning_as_system(tmp_path: Path) -> None:
@@ -367,14 +371,17 @@ def test_command_rotated_key_remints_and_repersists(tmp_path: Path) -> None:
     """/compress rotates the gateway's session key, but slash.exec does not return it —
     it self-heals on the NEXT message, when session.resume follows the continuation chain
     and the adapter returns a key differing from the stored one. The service's re-mint
-    branch must replace the stale key and log exactly one chat_session_created (owner #3)."""
+    branch must replace the stale key and log exactly one employee_session_changed event."""
     app, db_path, _ = _make_app(tmp_path)
     tid = _ticket(db_path)
 
     seed = connect(str(db_path))  # the pre-compress key, now the stale head of a chain
     try:
         seed.execute("BEGIN IMMEDIATE")
-        seed.execute("UPDATE tickets SET chat_session_key = ? WHERE id = ?", ("pre-compress", tid))
+        seed.execute(
+            "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+            ("pre-compress", tid),
+        )
         seed.execute("COMMIT")
     finally:
         seed.close()
@@ -407,7 +414,9 @@ def test_command_rotated_key_remints_and_repersists(tmp_path: Path) -> None:
     assert state["messages"][-1]["text"] == "exec: /status"
     assert state["messages"][-1]["role"] == "system"
     assert _stored_key(db_path, tid) == "post-compress"
-    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "post-compress"}]
+    assert _events(db_path, tid, "employee_session_changed") == [
+        {"employee_session_id": "post-compress"}
+    ]
 
 
 def test_command_busy_is_409_already_running(tmp_path: Path) -> None:

@@ -10,8 +10,6 @@ from pathlib import Path
 from typing import Literal
 
 from planner.chat.contracts import (
-    ChatHistory,
-    ChatMessage,
     CommandCatalog,
     CommandCategory,
     GatewayStatus,
@@ -21,6 +19,7 @@ from planner.chat.contracts import (
 )
 from planner.core.adapters.base import HumanSessionKeyBinder
 from planner.core.errors import ErrorCode, PlannerError
+from planner.tickets.contracts import EmployeeSessionHistory, EmployeeSessionHistoryMessage
 
 # One canned catalog for the whole test suite — two grouped categories plus a
 # Skills group. Shape mirrors the live gateway (skills are absent from categories;
@@ -47,7 +46,7 @@ class EchoGatewayAdapter:
     calls: list[tuple[str | None, str, str]] = field(default_factory=list)
     command_calls: list[tuple[str | None, str, str]] = field(default_factory=list)
     interrupt_calls: list[tuple[str, str]] = field(default_factory=list)
-    histories: dict[str, list[ChatMessage]] = field(default_factory=dict)
+    histories: dict[str, list[EmployeeSessionHistoryMessage]] = field(default_factory=dict)
     catalog_calls: int = 0                # counts real catalog() work (cache-miss proof)
     next_session: int = 1
     busy: bool = False
@@ -64,25 +63,28 @@ class EchoGatewayAdapter:
     ) -> None:
         history = self.histories.setdefault(session_key, [])
         history.append(
-            ChatMessage(
+            EmployeeSessionHistoryMessage(
                 role="user",
                 text=user_text,
                 created_at=self._next_message_time(session_key),
             )
         )
         history.append(
-            ChatMessage(
+            EmployeeSessionHistoryMessage(
                 role=reply_role,
                 text=reply_text,
                 created_at=self._next_message_time(session_key),
             )
         )
 
-    def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
-        if session_key is None:
-            return ChatHistory(messages=(), session_key=None)
-        return ChatHistory(
-            messages=tuple(self.histories.get(session_key, ())), session_key=session_key
+    def read_employee_session_history(
+        self,
+        employee_session_id: str,
+        ticket_id: str,
+    ) -> EmployeeSessionHistory:
+        return EmployeeSessionHistory(
+            messages=tuple(self.histories.get(employee_session_id, ())),
+            employee_session_id=employee_session_id,
         )
 
     def run_human_turn(
@@ -152,7 +154,11 @@ class OfflineGatewayAdapter:
     def status(self) -> GatewayStatus:
         return GatewayStatus(available=False, detail="gateway offline")
 
-    def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
+    def read_employee_session_history(
+        self,
+        employee_session_id: str,
+        ticket_id: str,
+    ) -> EmployeeSessionHistory:
         raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
 
     def run_human_turn(

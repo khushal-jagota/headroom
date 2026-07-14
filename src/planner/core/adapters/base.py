@@ -12,18 +12,22 @@ from pathlib import Path
 from typing import Protocol, TypeAlias
 
 from planner.chat.contracts import (
-    ChatHistory,
     CommandCatalog,
     GatewayStatus,
     HumanChatObservation,
 )
+from planner.tickets.contracts import EmployeeSessionHistory
 
 HumanSessionKeyBinder: TypeAlias = Callable[[str], str]  # noqa: UP040 -- frozen AD06 declaration
 
 
 class GatewayAdapter(Protocol):
     def status(self) -> GatewayStatus: ...
-    def history(self, session_key: str | None, entity_id: str) -> ChatHistory: ...
+    def read_employee_session_history(
+        self,
+        employee_session_id: str,
+        ticket_id: str,
+    ) -> EmployeeSessionHistory: ...
     def run_human_turn(
         self,
         session_key: str | None,

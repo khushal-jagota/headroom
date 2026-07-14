@@ -83,6 +83,10 @@ def test_fresh_schema_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
     assert columns["fields"][4] is None
     assert "ticket_type" not in columns
     assert "state" not in columns
+    assert "employee_session_id" in columns
+    assert columns["employee_session_id"][3] == 0
+    assert columns["employee_session_id"][4] is None
+    assert "chat_session_key" not in columns
     indexes = {row[1] for row in conn.execute("PRAGMA index_list(tickets)")}
     assert "idx_tickets_stage" in indexes
     assert "idx_tickets_worker_type_stage" in indexes
@@ -90,7 +94,7 @@ def test_fresh_schema_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
     assert "idx_tickets_type_state" not in indexes
 
 
-def _create_almost_v19_ticket_table(
+def _create_almost_v20_ticket_table(
     conn: Connection,
     *,
     recap_definition: str = "TEXT NOT NULL DEFAULT ''",
@@ -117,7 +121,7 @@ def _create_almost_v19_ticket_table(
                                      'user_takeover','errored')),
           implementer TEXT CHECK (implementer IN ('khushal','panels_worker',
                                                   'hermes_codex','hermes_claude')),
-          chat_session_key TEXT,
+          employee_session_id TEXT,
           alias TEXT,
           fields TEXT NOT NULL,
           created_at INTEGER NOT NULL,
@@ -136,7 +140,7 @@ def _create_almost_v19_ticket_table(
 
 def test_incomplete_target_constraints_are_rebuilt(tmp_path: Path) -> None:
     conn = connect(str(tmp_path / "incomplete.db"))
-    _create_almost_v19_ticket_table(
+    _create_almost_v20_ticket_table(
         conn, ceiling_definition="TEXT NOT NULL DEFAULT 'needs_success'"
     )
     create_schema(conn)
@@ -152,7 +156,7 @@ def test_incomplete_target_constraints_are_rebuilt(tmp_path: Path) -> None:
 
 def test_incomplete_non_ceiling_constraint_is_rebuilt(tmp_path: Path) -> None:
     conn = connect(str(tmp_path / "incomplete-recap.db"))
-    _create_almost_v19_ticket_table(conn, recap_definition="TEXT DEFAULT ''")
+    _create_almost_v20_ticket_table(conn, recap_definition="TEXT DEFAULT ''")
     create_schema(conn)
     columns = {row[1]: row for row in conn.execute("PRAGMA table_info(tickets)")}
     assert columns["recap"][3] == 1

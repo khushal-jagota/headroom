@@ -11,7 +11,7 @@ from typing import Final
 
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 19
+SCHEMA_VERSION: Final = 20
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS tickets (
                                                 'awaiting_approval','user_takeover','errored')),
   implementer          TEXT CHECK (implementer IN ('khushal','panels_worker',
                                                    'hermes_codex','hermes_claude')),
-  chat_session_key     TEXT,                         -- the ticket-mind's durable Hermes session_key
+  employee_session_id  TEXT,                         -- the Employee's durable Hermes session id
   alias                TEXT,                         -- migration "Ticket ID:" (seed importer dedup)
   fields               TEXT NOT NULL,
   created_at           INTEGER NOT NULL,
@@ -206,7 +206,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(DDL)
     projects_data.seed_default_projects(conn)
     _migrate_project_columns(conn)
-    _migrate_tickets_to_v19_contract(conn)
+    _migrate_tickets_to_v20_contract(conn)
     _migrate_project_summary_column(conn)
     _migrate_derived_sprint_item_status(conn)
     _migrate_links_blocks_only(conn)
@@ -218,11 +218,11 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
 
 
-# --- sealed historical-to-v19 Ticket migration --------------------------------
+# --- sealed historical-to-v20 Ticket migration --------------------------------
 # The old storage/event tokens in this section are recognition inputs only. They
 # are deliberately not accepted by any live Ticket contract after this migration.
 
-_V19_TICKETS_TABLE_SQL: Final = """
+_V20_TICKETS_TABLE_SQL: Final = """
 CREATE TABLE tickets_new (
   id                   TEXT PRIMARY KEY,
   title                TEXT NOT NULL CHECK (length(title) <= 200),
@@ -241,7 +241,7 @@ CREATE TABLE tickets_new (
                                                 'awaiting_approval','user_takeover','errored')),
   implementer          TEXT CHECK (implementer IN ('khushal','panels_worker',
                                                    'hermes_codex','hermes_claude')),
-  chat_session_key     TEXT,
+  employee_session_id  TEXT,
   alias                TEXT,
   fields               TEXT NOT NULL,
   created_at           INTEGER NOT NULL,
@@ -250,7 +250,7 @@ CREATE TABLE tickets_new (
 """
 
 
-def _tickets_table_is_v19(conn: sqlite3.Connection, sql: str) -> bool:
+def _tickets_table_is_v20(conn: sqlite3.Connection, sql: str) -> bool:
     rows = conn.execute("PRAGMA table_info(tickets)").fetchall()
     expected_columns = (
         ("id", "TEXT", 0, None, 1),
@@ -267,7 +267,7 @@ def _tickets_table_is_v19(conn: sqlite3.Connection, sql: str) -> bool:
         ("at_cap", "TEXT", 1, "'propose'", 0),
         ("ticket_status", "TEXT", 1, "'empty'", 0),
         ("implementer", "TEXT", 0, None, 0),
-        ("chat_session_key", "TEXT", 0, None, 0),
+        ("employee_session_id", "TEXT", 0, None, 0),
         ("alias", "TEXT", 0, None, 0),
         ("fields", "TEXT", 1, None, 0),
         ("created_at", "INTEGER", 1, None, 0),
@@ -391,15 +391,57 @@ def _rewrite_v18_ticket_events(conn: sqlite3.Connection) -> None:
             )
 
 
-def _migrate_tickets_to_v19_contract(conn: sqlite3.Connection) -> None:
+def _rewrite_ticket_employee_session_events(conn: sqlite3.Connection) -> None:
+    if (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'events'"
+        ).fetchone()
+        is None
+    ):
+        return
+    rows = conn.execute(
+        "SELECT id, payload FROM events "
+        "WHERE substr(entity_id, 1, 2) = 't_' AND kind = 'chat_session_created' ORDER BY id"
+    ).fetchall()
+    for row in rows:
+        raw = row["payload"]
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"legacy Ticket employee-session event {row['id']} has corrupt JSON"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError(
+                f"legacy Ticket employee-session event {row['id']} payload is not an object"
+            )
+        if "employee_session_id" in payload:
+            raise RuntimeError(
+                f"legacy Ticket employee-session event {row['id']} has conflicting identity keys"
+            )
+        if not isinstance(payload.get("session_key"), str):
+            raise RuntimeError(
+                f"legacy Ticket employee-session event {row['id']} has no string session_key"
+            )
+        rewritten = {
+            ("employee_session_id" if key == "session_key" else key): value
+            for key, value in payload.items()
+        }
+        conn.execute(
+            "UPDATE events SET kind = ?, payload = ? WHERE id = ?",
+            ("employee_session_changed", json.dumps(rewritten), int(row["id"])),
+        )
+
+
+def _migrate_tickets_to_v20_contract(conn: sqlite3.Connection) -> None:
     """Migrate every recognized Ticket schema and its affected events under one lock."""
     foreign_keys_enabled = bool(conn.execute("PRAGMA foreign_keys").fetchone()[0])
     if foreign_keys_enabled and conn.in_transaction:
-        raise RuntimeError("Ticket v19 migration requires an autocommit connection")
+        raise RuntimeError("Ticket v20 migration requires an autocommit connection")
     if foreign_keys_enabled:
         conn.execute("PRAGMA foreign_keys=OFF")
     use_savepoint = conn.in_transaction
-    savepoint = "ticket_v19_contract"
+    savepoint = "ticket_v20_contract"
     try:
         conn.execute(f"SAVEPOINT {savepoint}" if use_savepoint else "BEGIN IMMEDIATE")
         try:
@@ -412,12 +454,16 @@ def _migrate_tickets_to_v19_contract(conn: sqlite3.Connection) -> None:
             columns = _table_columns(conn, "tickets")
             if {"worker_type", "ticket_type"} <= columns:
                 raise RuntimeError("ambiguous Ticket schema has worker_type and ticket_type")
+            if {"employee_session_id", "chat_session_key"} <= columns:
+                raise RuntimeError(
+                    "ambiguous Ticket schema has employee_session_id and chat_session_key"
+                )
             if {"stage", "state"} <= columns:
                 raise RuntimeError("ambiguous Ticket schema has stage and state")
             if not ({"stage", "state"} & columns):
                 raise RuntimeError("Ticket schema has no Stage source column")
 
-            rebuild = not _tickets_table_is_v19(conn, sql)
+            rebuild = not _tickets_table_is_v20(conn, sql)
             if rebuild:
                 rows = conn.execute("SELECT * FROM tickets ORDER BY id").fetchall()
                 post_kickoff_shape = (
@@ -430,7 +476,7 @@ def _migrate_tickets_to_v19_contract(conn: sqlite3.Connection) -> None:
                     & columns
                 )
                 conn.execute("DROP TABLE IF EXISTS tickets_new")
-                conn.execute(_V19_TICKETS_TABLE_SQL)
+                conn.execute(_V20_TICKETS_TABLE_SQL)
                 for row in rows:
                     ticket_id = row["id"]
                     if ticket_id is None:
@@ -469,11 +515,12 @@ def _migrate_tickets_to_v19_contract(conn: sqlite3.Connection) -> None:
                         stage = source_stage_text
                         ceiling = ceiling_source
 
-                    worker_type_source: object = "coding"
                     if "worker_type" in columns:
                         worker_type_source = row["worker_type"]
                     elif "ticket_type" in columns:
                         worker_type_source = row["ticket_type"]
+                    else:
+                        worker_type_source = "coding"
                     if worker_type_source is None:
                         raise RuntimeError(f"Ticket {ticket_id} has NULL Worker type")
                     worker_type = str(worker_type_source)
@@ -530,11 +577,18 @@ def _migrate_tickets_to_v19_contract(conn: sqlite3.Connection) -> None:
                     else:
                         project_id = None
 
+                    if "employee_session_id" in columns:
+                        employee_session_id = row["employee_session_id"]
+                    elif "chat_session_key" in columns:
+                        employee_session_id = row["chat_session_key"]
+                    else:
+                        employee_session_id = None
+
                     conn.execute(
                         "INSERT INTO tickets_new ("
                         "id, title, worker_type, stage, priority, deadline, project_id, "
                         "sprint_item_id, sprint_id, recap, ceiling, at_cap, ticket_status, "
-                        "implementer, chat_session_key, alias, fields, created_at, updated_at"
+                        "implementer, employee_session_id, alias, fields, created_at, updated_at"
                         ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             ticket_id,
@@ -551,7 +605,7 @@ def _migrate_tickets_to_v19_contract(conn: sqlite3.Connection) -> None:
                             row["at_cap"],
                             ticket_status,
                             row["implementer"] if "implementer" in columns else None,
-                            row["chat_session_key"] if "chat_session_key" in columns else None,
+                            employee_session_id,
                             row["alias"] if "alias" in columns else None,
                             fields,
                             row["created_at"],
@@ -563,12 +617,13 @@ def _migrate_tickets_to_v19_contract(conn: sqlite3.Connection) -> None:
                 conn.execute("ALTER TABLE tickets_new RENAME TO tickets")
 
             _rewrite_v18_ticket_events(conn)
+            _rewrite_ticket_employee_session_events(conn)
             conn.execute("DROP INDEX IF EXISTS idx_tickets_state")
             conn.execute("DROP INDEX IF EXISTS idx_tickets_type_state")
             violations = conn.execute("PRAGMA foreign_key_check").fetchall()
             if violations:
                 raise RuntimeError(
-                    f"foreign key check failed after Ticket v19 migration: {violations!r}"
+                    f"foreign key check failed after Ticket v20 migration: {violations!r}"
                 )
         except BaseException:
             if use_savepoint:

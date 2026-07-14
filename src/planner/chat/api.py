@@ -15,7 +15,6 @@ from planner.chat.contracts import ChatTurnRequest, CommandCatalog
 from planner.core import authctx
 from planner.core.adapters.base import GatewayAdapter
 from planner.core.adapters.registry import Adapters
-from planner.core.clock import Clock
 from planner.core.errors import ErrorCode, PlannerError
 
 router = APIRouter()
@@ -38,29 +37,13 @@ def _cached_catalog(app: FastAPI, gateway: GatewayAdapter, refresh: bool) -> Com
         return catalog
 
 
-@router.get("/chat/{entity_id}/history")
-async def chat_history(entity_id: str, request: Request) -> dict[str, Any]:
-    authctx.require_direct_write(authctx.request_context(request))  # §11/§8: chat is direct-only.
-    clock: Clock = request.app.state.clock
-    adapters: Adapters = request.app.state.adapters
-    conn_factory: Callable[[], sqlite3.Connection] = request.app.state.conn_factory
-    conn = conn_factory()
-    try:
-        result = service.history(conn, adapters.gateway, entity_id, clock.now_unix())
-    finally:
-        conn.close()
-    return asdict(result)
-
-
 @router.get("/chat/{entity_id}/state")
 async def chat_state(entity_id: str, request: Request) -> dict[str, Any]:
     authctx.require_direct_write(authctx.request_context(request))  # §11/§8: chat is direct-only.
-    clock: Clock = request.app.state.clock
-    adapters: Adapters = request.app.state.adapters
     conn_factory: Callable[[], sqlite3.Connection] = request.app.state.conn_factory
     conn = conn_factory()
     try:
-        result = service.state(conn, adapters.gateway, entity_id, clock.now_unix())
+        result = service.state(conn, entity_id)
     finally:
         conn.close()
     return asdict(result)

@@ -21,9 +21,7 @@ from urllib.parse import quote, unquote, urlsplit
 from planner.chat import data as chat_data
 from planner.chat.contracts import (
     ChatActivityObservation,
-    ChatHistory,
     ChatState,
-    ChatStateMessage,
     ChattableEntityKind,
     ChatTurn,
     ChatTurnRequest,
@@ -34,9 +32,7 @@ from planner.chat.contracts import (
 )
 from planner.chat.logic.activity import normalize_gateway_activity
 from planner.core.adapters.base import GatewayAdapter
-from planner.core.contracts import EventKind
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.events import append_event
 from planner.days.data import read_day
 from planner.files.logic.paths import resolve_chat_file
 from planner.tickets.contracts import TicketStatus
@@ -65,11 +61,11 @@ def _resolve(
 ) -> tuple[ChattableEntityKind, str | None]:
     if entity_id.startswith("t_"):
         row = conn.execute(
-            "SELECT chat_session_key FROM tickets WHERE id = ?", (entity_id,)
+            "SELECT employee_session_id FROM tickets WHERE id = ?", (entity_id,)
         ).fetchone()
         if row is None:
             raise PlannerError(ErrorCode.not_found, "ticket not found", {"entity_id": entity_id})
-        key: str | None = row["chat_session_key"]
+        key: str | None = row["employee_session_id"]
         return "ticket", key
     if entity_id.startswith("day_"):
         # A day id is a canonical YYYY-MM-DD; round-trip the suffix because
@@ -107,123 +103,34 @@ def resolve_chattable_entity(
     return _resolve(conn, entity_id, now)
 
 
-def _persist_history_session_key(
+def _validate_chattable_entity_for_state(
     conn: sqlite3.Connection,
-    kind: ChattableEntityKind,
     entity_id: str,
-    stored_key: str | None,
-    minted_key: str,
-    now: int,
-) -> str:
-    """Persist a (re)minted session key onto the entity and log one chat_session_created
-    event, in a single transaction. Two cases: the first reply (stored_key is None), and a
-    re-mint — the adapter created a fresh session because the stored key was stale (gateway
-    restarted) or rotated, so stored_key is set but the returned key differs. Persisting the
-    re-mint is what stops the dead key being resumed forever. On a lost first-write race no
-    event is logged and the winner's key is adopted. Returns the effective key."""
-    table_by_kind = {
-        "ticket": "tickets",
-        "day": "days",
-        "agent_chat_session": "agent_chat_sessions",
-    }
-    table = table_by_kind[kind]  # fixed map, never request input
-    with _txn(conn):
-        if stored_key is None:
-            cursor = conn.execute(
-                f"UPDATE {table} SET chat_session_key = ?, updated_at = ? "
-                "WHERE id = ? AND chat_session_key IS NULL",
-                (minted_key, now, entity_id),
-            )
-            if cursor.rowcount == 1:
-                append_event(
-                    conn, entity_id, EventKind.chat_session_created,
-                    {"session_key": minted_key}, now,
-                )
-                return minted_key
-            row = conn.execute(
-                f"SELECT chat_session_key FROM {table} WHERE id = ?", (entity_id,)
-            ).fetchone()
-            winner: str = row["chat_session_key"]
-            return winner
-        # re-mint: replace the known-stale key with the fresh one (the old session is gone).
-        conn.execute(
-            f"UPDATE {table} SET chat_session_key = ?, updated_at = ? WHERE id = ?",
-            (minted_key, now, entity_id),
-        )
-        append_event(
-            conn, entity_id, EventKind.chat_session_created,
-            {"session_key": minted_key}, now,
-        )
-        return minted_key
-
-
-def history(
-    conn: sqlite3.Connection,
-    gateway: GatewayAdapter,
-    entity_id: str,
-    now: int,
-) -> ChatHistory:
-    kind, stored_key = _resolve(conn, entity_id, now)
-    if stored_key is None:
-        return ChatHistory(messages=(), session_key=None)
-    try:
-        result = gateway.history(stored_key, entity_id)
-    except PlannerError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        raise PlannerError(
-            ErrorCode.gateway_offline, "gateway unavailable", {"cause": str(exc)}
-        ) from exc
-    if result.session_key is not None and result.session_key != stored_key:
-        effective = _persist_history_session_key(
-            conn, kind, entity_id, stored_key, result.session_key, now
-        )
-        if effective != result.session_key:
-            result = ChatHistory(messages=result.messages, session_key=effective)
-    return result
-
-
-def _legacy_state_messages(history_result: ChatHistory) -> tuple[ChatStateMessage, ...]:
-    out: list[ChatStateMessage] = []
-    for index, message in enumerate(history_result.messages, start=1):
-        role = message.role.lower()
-        if role in ("user", "human"):
-            product_role = "human"
-        elif role in ("system", "tool"):
-            product_role = "system"
-        else:
-            product_role = "assistant"
-        out.append(
-            ChatStateMessage(
-                id=-index,
-                role=product_role,
-                text=message.text,
-                created_at=message.created_at,
-                turn_id=None,
-            )
-        )
-    return tuple(out)
-
-
-def state(
-    conn: sqlite3.Connection,
-    gateway: GatewayAdapter,
-    entity_id: str,
-    now: int,
-) -> ChatState:
-    kind, stored_key = _resolve(conn, entity_id, now)
-    legacy_messages: tuple[ChatStateMessage, ...] = ()
-    if stored_key is not None:
-        row = conn.execute(
-            "SELECT 1 FROM chat_messages WHERE entity_id = ? LIMIT 1", (entity_id,)
-        ).fetchone()
-        if row is None:
-            result = history(conn, gateway, entity_id, now)
-            stored_key = result.session_key
-            legacy_messages = _legacy_state_messages(result)
-    return chat_data.read_state(
-        conn, entity_id, session_key=stored_key, legacy_messages=legacy_messages
+) -> None:
+    if entity_id.startswith("t_"):
+        if conn.execute("SELECT 1 FROM tickets WHERE id = ?", (entity_id,)).fetchone() is None:
+            raise PlannerError(ErrorCode.not_found, "ticket not found", {"entity_id": entity_id})
+        return
+    if entity_id.startswith("day_"):
+        raw = entity_id[len("day_") :]
+        try:
+            canonical = date.fromisoformat(raw).isoformat() == raw
+        except ValueError:
+            canonical = False
+        if canonical:
+            return
+    if entity_id in TOP_LEVEL_AGENT_ENTITY_IDS:
+        return
+    raise PlannerError(
+        ErrorCode.not_found,
+        "no chattable entity for id",
+        {"entity_id": entity_id},
     )
+
+
+def state(conn: sqlite3.Connection, entity_id: str) -> ChatState:
+    _validate_chattable_entity_for_state(conn, entity_id)
+    return chat_data.read_state(conn, entity_id)
 
 
 def catalog(gateway: GatewayAdapter) -> CommandCatalog:
@@ -340,14 +247,19 @@ class ChatTurnLifecycle:
                 raise PlannerError(
                     ErrorCode.not_found, "no active chat turn", {"entity_id": entity_id}
                 )
-            if not active.session_key:
+            session_key = chat_data.read_running_turn_session_key(
+                conn,
+                active.id,
+                entity_id=entity_id,
+            )
+            if not session_key:
                 raise PlannerError(
                     ErrorCode.validation,
                     "active chat turn has no session key yet",
                     {"entity_id": entity_id, "turn_id": active.id},
                 )
             try:
-                self._gateway_provider().interrupt(active.session_key, entity_id)
+                self._gateway_provider().interrupt(session_key, entity_id)
             except PlannerError:
                 raise
             except Exception as exc:  # noqa: BLE001

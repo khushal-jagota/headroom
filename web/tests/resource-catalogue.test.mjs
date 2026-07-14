@@ -291,7 +291,7 @@ exact(keysForEvent(event("day_other"), { todayDayId: "day_today" }), []);
 exact(keysForEvent(event("day_cold"), { todayDayId: null }), ["day:today"]);
 exact(keysForEvent(event("idea_demo")), ["ideas"]);
 exact(keysForEvent(event("project_demo")), ["projects"]);
-exact(keysForEvent(event("agent_demo")), ["chat:agent_demo"]);
+exact(keysForEvent(event("agent_demo")), []);
 assert.throws(() => keysForEvent(event("bad")), /unknown entity_id prefix/);
 assert.throws(() => keysForEvent(event("x_demo")), /unknown entity_id prefix/);
 
@@ -303,7 +303,8 @@ for (const kind of [
 ]) {
   exact(keysForEvent(event("t_chat", kind)), ["chat:t_chat"]);
 }
-exact(keysForEvent(event("t_chat", "chat_session_created")), ["ticket:t_chat", "chat:t_chat"]);
+exact(keysForEvent(event("t_chat", "employee_session_changed")), ["ticket:t_chat"]);
+exact(keysForEvent(event("t_chat", "chat_session_created")), []);
 for (const kind of [
   "chat_session_created",
   "chat_message_recorded",
@@ -312,6 +313,7 @@ for (const kind of [
   "chat_turn_finished"
 ]) {
   exact(keysForEvent(event("agent_chat", kind)), ["chat:agent_chat"]);
+  exact(keysForEvent(event("day_chat", kind), { todayDayId: "day_chat" }), ["chat:day_chat"]);
 }
 
 const reviewKinds = [
@@ -442,7 +444,9 @@ for (const keys of [
 const backendKinds = JSON.parse(process.env.PLANNER_EVENT_KINDS || "[]");
 for (const kind of backendKinds) {
   let sample = event("t_backend", kind);
-  if (kind.startsWith("day_")) {
+  if (kind === "chat_session_created") {
+    sample = event("day_backend", kind);
+  } else if (kind.startsWith("day_")) {
     sample = event("day_today", kind, kind === "day_ticket_added" || kind === "day_ticket_removed" ? { ticket_id: "t_backend" } : {});
   } else if (["sprint_created", "sprint_updated"].includes(kind)) {
     sample = event("sp_backend", kind);

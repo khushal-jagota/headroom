@@ -23,6 +23,7 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
+    EmployeeSessionIdTransition,
     Implementer,
     TicketEdit,
     TicketStatus,
@@ -413,17 +414,27 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
     assert resolver_calls == 2
     assert eligibility_calls == 2  # no partial pre-status short circuit
 
-    t = data.finish_run_if_still_running_step(tmp_db, t.id, session_key="sess-1", now=now)
+    t = data.finish_run_if_still_running_step(
+        tmp_db,
+        t.id,
+        employee_session_transition=EmployeeSessionIdTransition(None, "sess-1"),
+        now=now,
+    )
     assert t.ticket_status is TicketStatus.empty
-    assert t.chat_session_key == "sess-1"
+    assert t.employee_session_id == "sess-1"
 
     t = _claim_eligible_automatic_step(tmp_db, t.id, now=now)
     assert t is not None
     t = data.file_proposal(tmp_db, t.id, field="success", body="parked", actor="agent", now=now)
     assert t.ticket_status is TicketStatus.awaiting_approval
-    t = data.finish_run_if_still_running_step(tmp_db, t.id, session_key="sess-2", now=now)
+    t = data.finish_run_if_still_running_step(
+        tmp_db,
+        t.id,
+        employee_session_transition=EmployeeSessionIdTransition("sess-1", "sess-2"),
+        now=now,
+    )
     assert t.ticket_status is TicketStatus.awaiting_approval
-    assert t.chat_session_key == "sess-2"
+    assert t.employee_session_id == "sess-2"
 
     t = data.accept_proposal(
         tmp_db,
@@ -451,44 +462,58 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
 
     t = data.release_ticket(tmp_db, t.id, now=now)
     assert t.ticket_status is TicketStatus.empty
-    t = data.mark_run_errored(tmp_db, t.id, error="boom", session_key="sess-3", now=now)
+    t = data.mark_run_errored(
+        tmp_db,
+        t.id,
+        error="boom",
+        employee_session_transition=EmployeeSessionIdTransition("sess-2", "sess-3"),
+        now=now,
+    )
     assert t.ticket_status is TicketStatus.errored
-    assert t.chat_session_key == "sess-3"
+    assert t.employee_session_id == "sess-3"
 
     status_events = _events(tmp_db, cfg, t.id, EventKind.ticket_status_changed)
     assert all("worker" not in e.payload for e in status_events)
     assert status_events[-1].payload == {"ticket_status": "errored", "error": "boom"}
 
 
-def test_claim_running_step_chat_session_key_logs_lookup_event(
+def test_claim_running_step_employee_session_id_logs_lookup_event(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
     _claim_eligible_automatic_step(tmp_db, t.id, now=now)
 
-    updated = data.claim_running_step_chat_session_key(
-        tmp_db, t.id, session_key="sess-early", now=now
+    updated = data.claim_running_step_employee_session_id(
+        tmp_db,
+        t.id,
+        transition=EmployeeSessionIdTransition(None, "sess-early"),
+        now=now,
     )
 
-    assert updated.chat_session_key == "sess-early"
-    assert data.read_ticket_by_session_key(tmp_db, "sess-early").id == t.id
-    events = _events(tmp_db, cfg, t.id, EventKind.chat_session_created)
-    assert [event.payload for event in events] == [{"session_key": "sess-early"}]
+    assert updated.employee_session_id == "sess-early"
+    assert data.read_ticket_by_employee_session_id(tmp_db, "sess-early").id == t.id
+    events = _events(tmp_db, cfg, t.id, EventKind.employee_session_changed)
+    assert [event.payload for event in events] == [
+        {"employee_session_id": "sess-early"}
+    ]
 
 
-def test_claim_running_step_chat_session_key_does_not_overwrite_non_running_ticket(
+def test_claim_running_step_employee_session_id_does_not_overwrite_non_running_ticket(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
 
-    updated = data.claim_running_step_chat_session_key(
-        tmp_db, t.id, session_key="sess-early", now=now
+    updated = data.claim_running_step_employee_session_id(
+        tmp_db,
+        t.id,
+        transition=EmployeeSessionIdTransition(None, "sess-early"),
+        now=now,
     )
 
-    assert updated.chat_session_key is None
-    events = _events(tmp_db, cfg, t.id, EventKind.chat_session_created)
+    assert updated.employee_session_id is None
+    events = _events(tmp_db, cfg, t.id, EventKind.employee_session_changed)
     assert events == []
 
 
@@ -499,21 +524,29 @@ def test_mark_run_errored_if_still_running_step_preserves_lost_ownership(
     t = _create(tmp_db, cfg, fake_clock)
     _claim_eligible_automatic_step(tmp_db, t.id, now=now)
     t = data.mark_run_errored_if_still_running_step(
-        tmp_db, t.id, error="boom", session_key="sess-error", now=now
+        tmp_db,
+        t.id,
+        error="boom",
+        employee_session_transition=EmployeeSessionIdTransition(None, "sess-error"),
+        now=now,
     )
     assert t.ticket_status is TicketStatus.errored
-    assert t.chat_session_key == "sess-error"
+    assert t.employee_session_id == "sess-error"
 
     t = data.release_ticket(tmp_db, t.id, now=now)
     t = _claim_eligible_automatic_step(tmp_db, t.id, now=now)
     assert t is not None
     t = data.take_over_ticket(tmp_db, t.id, now=now)
     t = data.mark_run_errored_if_still_running_step(
-        tmp_db, t.id, error="late boom", session_key="sess-late", now=now
+        tmp_db,
+        t.id,
+        error="late boom",
+        employee_session_transition=EmployeeSessionIdTransition("sess-error", "sess-late"),
+        now=now,
     )
 
     assert t.ticket_status is TicketStatus.user_takeover
-    assert t.chat_session_key == "sess-error"
+    assert t.employee_session_id == "sess-error"
     status_events = _events(tmp_db, cfg, t.id, EventKind.ticket_status_changed)
     assert status_events[-1].payload == {"ticket_status": "user_takeover"}
 
@@ -1307,11 +1340,13 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
     assert len(_events(tmp_db, cfg, t4.id, EventKind.scope_changed)) == scopes_before
 
 
-def test_read_ticket_by_session_key(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
+def test_read_ticket_by_employee_session_id(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
     """A worker resolves its own ticket from its live session key; unknown key -> not_found."""
     t = _create(tmp_db, cfg, fake_clock)
-    tmp_db.execute("UPDATE tickets SET chat_session_key = ? WHERE id = ?", ("sess_abc", t.id))
-    assert data.read_ticket_by_session_key(tmp_db, "sess_abc").id == t.id
+    tmp_db.execute("UPDATE tickets SET employee_session_id = ? WHERE id = ?", ("sess_abc", t.id))
+    assert data.read_ticket_by_employee_session_id(tmp_db, "sess_abc").id == t.id
     with pytest.raises(PlannerError) as exc:
-        data.read_ticket_by_session_key(tmp_db, "no_such_session")
+        data.read_ticket_by_employee_session_id(tmp_db, "no_such_session")
     assert exc.value.code is ErrorCode.not_found

@@ -557,12 +557,19 @@ def test_semantic_modules_have_no_optional_definition_or_coding_fallback() -> No
                     ), (path, node.name)
 
 
-def test_seed_constructs_fields_from_the_coding_definition() -> None:
+def test_seed_is_definition_driven_without_worker_type_fallbacks() -> None:
     root = Path(__file__).resolve().parents[2]
-    path = root / "src/planner/seed/importer.py"
-    source = path.read_text()
-    tree = ast.parse(source, filename=str(path))
-    assert "TicketFields.empty(coding_worker_type_definition.field_ids())" in source
+    seed_paths = (
+        root / "src/planner/seed/__main__.py",
+        root / "src/planner/seed/contracts.py",
+        root / "src/planner/seed/importer.py",
+        root / "src/planner/seed/logic/workspace.py",
+    )
+    importer_source = seed_paths[2].read_text()
+    assert "TicketFields.empty(worker_type_definition.field_ids())" in importer_source
+    assert importer_source.count("configured_worker_type_registry().require(worker_type)") == 1
+    assert 'require("coding")' not in importer_source
+    assert "coding_worker_type_definition" not in importer_source
     complete_coding_fields = {
         "kickoff",
         "success",
@@ -571,12 +578,30 @@ def test_seed_constructs_fields_from_the_coding_definition() -> None:
         "implementation",
         "closeout",
     }
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-            continue
-        literal_strings = {
-            element.value
-            for element in node.elts
-            if isinstance(element, ast.Constant) and isinstance(element.value, str)
-        }
-        assert literal_strings != complete_coding_fields
+    for path in seed_paths:
+        source = path.read_text()
+        tree = ast.parse(source, filename=str(path))
+        assert '"coding"' not in source
+        assert "'coding'" not in source
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for argument, default in zip(
+                    node.args.kwonlyargs,
+                    node.args.kw_defaults,
+                    strict=True,
+                ):
+                    if argument.arg == "worker_type":
+                        assert default is None, (path, node.name)
+            if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+                assert not any(
+                    isinstance(value, ast.Name) and value.id == "worker_type"
+                    for value in node.values
+                ), (path, ast.unparse(node))
+            if not isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+                continue
+            literal_strings = {
+                element.value
+                for element in node.elts
+                if isinstance(element, ast.Constant) and isinstance(element.value, str)
+            }
+            assert literal_strings != complete_coding_fields

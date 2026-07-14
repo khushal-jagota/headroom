@@ -16,14 +16,6 @@ _CONTEXT_START = "\n\n[Pending worker context]\n"
 _CONTEXT_END = "\n[/Pending worker context]"
 
 
-def visible_prompt_text(model_text: str) -> str:
-    """Remove the internal context suffix before exposing Hermes history to Panels."""
-    if not model_text.endswith(_CONTEXT_END):
-        return model_text
-    start = model_text.rfind(_CONTEXT_START)
-    return model_text[:start] if start >= 0 else model_text
-
-
 def _prepare_prompt(prompt_text: str, snapshot: WorkerContextSnapshot) -> PreparedWorkerPrompt:
     if not snapshot.items:
         return PreparedWorkerPrompt(model_text=prompt_text, receipts=())

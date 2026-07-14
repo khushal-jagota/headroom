@@ -14,8 +14,6 @@ from pathlib import Path
 from typing import Any
 
 from planner.chat.contracts import (
-    ChatHistory,
-    ChatMessage,
     CommandCatalog,
     CommandCategory,
     GatewayStatus,
@@ -45,8 +43,9 @@ from planner.minds.sessions import (
     LiveSessionManager,
     PendingSubmission,
 )
+from planner.tickets.contracts import EmployeeSessionHistory, EmployeeSessionHistoryMessage
 from planner.worker_context.contracts import PreparedWorkerPrompt, WorkerContextService
-from planner.worker_context.service import EmptyWorkerContextService, visible_prompt_text
+from planner.worker_context.service import EmptyWorkerContextService
 
 SESSION_COLS = 100
 SESSION_SOURCE = "planner"
@@ -84,8 +83,15 @@ class EntityRoutingGateway:
     def status_for_entity(self, entity_id: str) -> GatewayStatus:
         return self._gateway_for(entity_id).status()
 
-    def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
-        return self._gateway_for(entity_id).history(session_key, entity_id)
+    def read_employee_session_history(
+        self,
+        employee_session_id: str,
+        ticket_id: str,
+    ) -> EmployeeSessionHistory:
+        return self._gateway_for(ticket_id).read_employee_session_history(
+            employee_session_id,
+            ticket_id,
+        )
 
     def run_human_turn(
         self,
@@ -181,26 +187,28 @@ class SharedGateway:
         child = self._child
         return GatewayStatus(available=child is None or child.alive)
 
-    def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
-        if session_key is None:
-            return ChatHistory(messages=(), session_key=None)
+    def read_employee_session_history(
+        self,
+        employee_session_id: str,
+        ticket_id: str,
+    ) -> EmployeeSessionHistory:
         try:
             child = self._child_or_spawn()
             resumed = child.request(
                 "session.resume",
                 {
-                    "session_id": session_key,
+                    "session_id": employee_session_id,
                     "cols": SESSION_COLS,
                     "lazy": True,
                     "source": CHAT_SOURCE,
                 },
                 timeout=self._request_timeout,
             )
-            stored = str(resumed.get("resumed") or session_key)
+            stored = str(resumed.get("resumed") or employee_session_id)
             self._remember_session_identity(
                 child,
                 str(resumed.get("session_id") or ""),
-                session_key,
+                employee_session_id,
                 stored,
             )
             self._bind_live_session(
@@ -210,21 +218,23 @@ class SharedGateway:
                 resumed,
             )
             raw_messages = resumed.get("messages")
-            messages = self._normalize_history_messages(raw_messages)
-            return ChatHistory(messages=messages, session_key=stored)
+            messages = self._normalize_employee_session_history_messages(raw_messages)
+            return EmployeeSessionHistory(messages=messages, employee_session_id=stored)
         except GatewayRpcError as exc:
             if exc.code == NOT_FOUND_CODE:
-                return ChatHistory(messages=(), session_key=session_key)
+                return EmployeeSessionHistory(
+                    messages=(), employee_session_id=employee_session_id
+                )
             raise PlannerError(
                 ErrorCode.gateway_offline,
-                "chat gateway history failed",
-                {"detail": str(exc), "entity_id": entity_id},
+                "Employee session history failed",
+                {"detail": str(exc), "ticket_id": ticket_id},
             ) from exc
         except GatewayError as exc:
             raise PlannerError(
                 ErrorCode.gateway_offline,
-                "chat gateway history failed",
-                {"detail": str(exc), "entity_id": entity_id},
+                "Employee session history failed",
+                {"detail": str(exc), "ticket_id": ticket_id},
             ) from exc
 
     def run_ticket_step(
@@ -888,10 +898,12 @@ class SharedGateway:
         return CommandCatalog(categories=categories, skills=skills, canon=canon, sub=sub)
 
     @classmethod
-    def _normalize_history_messages(cls, raw_messages: Any) -> tuple[ChatMessage, ...]:
+    def _normalize_employee_session_history_messages(
+        cls, raw_messages: Any
+    ) -> tuple[EmployeeSessionHistoryMessage, ...]:
         if not isinstance(raw_messages, list):
             return ()
-        messages: list[ChatMessage] = []
+        messages: list[EmployeeSessionHistoryMessage] = []
         for index, raw in enumerate(raw_messages, start=1):
             if not isinstance(raw, dict):
                 continue
@@ -899,10 +911,10 @@ class SharedGateway:
             if not text:
                 continue
             role = str(raw.get("role") or raw.get("author") or raw.get("type") or "assistant")
-            if role.lower() in ("user", "human"):
-                text = visible_prompt_text(text)
             created_at = cls._message_created_at(raw, index)
-            messages.append(ChatMessage(role=role, text=text, created_at=created_at))
+            messages.append(
+                EmployeeSessionHistoryMessage(role=role, text=text, created_at=created_at)
+            )
         return tuple(messages)
 
     @classmethod

@@ -362,7 +362,7 @@ def test_review_return_for_revision_starts_agent_without_chat_copy(
     )
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
-            "UPDATE tickets SET chat_session_key = ? WHERE id = ?",
+            "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
             ("existing-worker-session", tid),
         )
 
@@ -833,7 +833,7 @@ def test_e26_chat_panel_echo_and_offline(
     page.wait_for_function("f => window.__plannerDebug.flushes > f", arg=f0, timeout=WAIT_MS)
     page.wait_for_selector("[data-chat] [data-chat-input]", timeout=WAIT_MS)
 
-    assert api.get(server, f"/api/tickets/{tid}")["chat_session_key"] == "fake-sess-1"
+    assert api.get(server, f"/api/tickets/{tid}")["employee_session_id"] == "fake-sess-1"
 
     page.fill("[data-chat] [data-chat-input]", "hello from e2e")
     page.click("[data-chat] [data-chat-send]")
@@ -850,7 +850,7 @@ def test_e26_chat_panel_echo_and_offline(
         timeout=WAIT_MS,
     )
 
-    history = api.get(server, f"/api/chat/{tid}/history")
+    history = api.get(server, f"/api/tickets/{tid}/employee-session-history")
     assert [msg["text"] for msg in history["messages"]] == [
         "warmup",
         "echo: warmup",
@@ -864,7 +864,7 @@ def test_e26_chat_panel_echo_and_offline(
     page.click("[data-chat] [data-chat-send]")
     _wait_chat_text(page, "planner", "history line 23")
 
-    # The transcript is gateway history, not component-local state. Leaving the ticket,
+    # The transcript is durable Panels rows, not component-local state. Leaving the ticket,
     # returning, and a hard reload must all recover the visible turns.
     page.goto(server.base + "/#/workspace")
     page.wait_for_selector('section[data-screen="workspace"]', timeout=WAIT_MS)

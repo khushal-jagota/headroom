@@ -191,8 +191,8 @@ def test_new_worker_has_no_transition_hooks() -> None:
 
 
 def _worker_session_exists(conn: Connection, tid: str) -> bool:
-    row = conn.execute("SELECT chat_session_key FROM tickets WHERE id = ?", (tid,)).fetchone()
-    if row["chat_session_key"] is not None:
+    row = conn.execute("SELECT employee_session_id FROM tickets WHERE id = ?", (tid,)).fetchone()
+    if row["employee_session_id"] is not None:
         return True
     turns = conn.execute("SELECT 1 FROM chat_turns WHERE entity_id = ? LIMIT 1", (tid,)).fetchone()
     return turns is not None

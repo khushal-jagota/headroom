@@ -296,7 +296,7 @@ def decide_return_for_revision(
             "terminal tickets cannot be returned for revision",
             {"stage": str(ticket.stage)},
         )
-    if ticket.chat_session_key is None:
+    if ticket.employee_session_id is None:
         raise PlannerError(
             ErrorCode.validation,
             "ticket has no existing worker session",

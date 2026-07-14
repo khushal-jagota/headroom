@@ -108,6 +108,22 @@ test-only Worker types part of the shipped catalog.
 
 No registry position means “default.” Order is composition and presentation order only.
 
+## The one-time seed boundary
+
+The retained legacy importer is run directly, not through the server or `panels`:
+
+```text
+python -m planner.seed --source <dir> --worker-type <id>
+```
+
+The command requires an explicit Worker type. The importer resolves that exact registry
+definition once, then uses its Stage order and field set to validate every imported
+Ticket. It stores the same Worker type on every Ticket in that run. It never defaults to
+`coding`, uses registry order, or infers a type from the source document. If a legacy
+Stage is incompatible with the selected definition, the whole import rolls back.
+
+There is no `/api/seed` route or `panels seed` command.
+
 ## The served manifest and frontend
 
 `GET /api/worker-types` lists the configured registry and calls its `manifest` method for

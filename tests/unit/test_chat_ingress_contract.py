@@ -9,7 +9,12 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from planner.chat.contracts import HumanChatCompletion, HumanChatOutputDelta
+from planner.chat.contracts import (
+    ChatState,
+    ChatTurn,
+    HumanChatCompletion,
+    HumanChatOutputDelta,
+)
 from planner.core.adapters.base import GatewayAdapter
 from planner.core.adapters.registry import build_adapters
 from planner.core.clock import build_clock
@@ -72,6 +77,13 @@ def test_retired_chat_ingress_routes_are_absent(tmp_path: Path) -> None:
     }
     assert ("/api/chat/{entity_id}/turns", "POST") in route_keys
     assert ("/api/messages/chief", "POST") in route_keys
+    assert ("/api/chat/{entity_id}/history", "GET") not in route_keys
+    assert ("/api/tickets/{ticket_id}/employee-session-history", "GET") in route_keys
+    assert ("/api/tickets/by-session/{session_key}", "GET") not in route_keys
+    assert (
+        "/api/tickets/by-employee-session/{employee_session_id}",
+        "GET",
+    ) in route_keys
     for retired_path in (
         "/api/chat/{entity_id}/send",
         "/api/chat/{entity_id}/stream",
@@ -91,7 +103,7 @@ def test_retired_chat_ingress_routes_are_absent(tmp_path: Path) -> None:
 
 
 def test_retired_chat_services_results_and_adapter_methods_are_absent() -> None:
-    assert {"send", "stream", "run_command"}.isdisjoint(
+    assert {"send", "stream", "run_command", "history"}.isdisjoint(
         _top_level_functions("src/planner/chat/service.py")
     )
     contract_classes = {
@@ -99,7 +111,14 @@ def test_retired_chat_services_results_and_adapter_methods_are_absent() -> None:
         for node in _tree("src/planner/chat/contracts.py").body
         if isinstance(node, ast.ClassDef)
     }
-    assert {"ChatSendResult", "CommandRunResult"}.isdisjoint(contract_classes)
+    assert {
+        "ChatSendResult",
+        "CommandRunResult",
+        "ChatMessage",
+        "ChatHistory",
+        "ChatHistoryMessage",
+        "ChatHistoryResponse",
+    }.isdisjoint(contract_classes)
 
     implementations = (
         ("src/planner/core/adapters/base.py", "GatewayAdapter"),
@@ -114,6 +133,8 @@ def test_retired_chat_services_results_and_adapter_methods_are_absent() -> None:
             _class_methods(path, class_name)
         )
         assert "run_human_turn" in _class_methods(path, class_name)
+        assert "history" not in _class_methods(path, class_name)
+        assert "read_employee_session_history" in _class_methods(path, class_name)
 
 
 def test_surviving_gateway_observation_contract_is_exact() -> None:
@@ -128,6 +149,10 @@ def test_surviving_gateway_observation_contract_is_exact() -> None:
     ]
     assert [field.name for field in fields(HumanChatOutputDelta)] == ["text"]
     assert [field.name for field in fields(HumanChatCompletion)] == ["text", "role"]
+    assert [field.name for field in fields(ChatState)] == ["messages", "active_turn"]
+    turn_fields = [field.name for field in fields(ChatTurn)]
+    assert "can_pause" in turn_fields
+    assert "session_key" not in turn_fields
 
 
 def test_http_sse_browser_helper_and_live_documentation_are_absent() -> None:

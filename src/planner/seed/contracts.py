@@ -73,10 +73,11 @@ class ParsedItem:  # sprint-tracking.md item or deferred.md item
 @dataclass
 class ParsedTicket:  # workspace.md ticket
     title: str
+    worker_type: str
     stage: str
     priority: Priority
     alias: str | None = None  # "Ticket ID:"
-    chat_session_key: str | None = None  # "Chat ID:"
+    employee_session_id: str | None = None  # historical "Chat ID:"
     body: str = ""  # -> ticket fields.kickoff intake context
     success: str | None = None
     approach: str | None = None

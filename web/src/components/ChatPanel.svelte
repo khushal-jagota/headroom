@@ -350,7 +350,7 @@
       catalog={commands.data}
       submitDisabled={pending}
       pauseMode={pending}
-      pauseDisabled={!activeTurn?.session_key}
+      pauseDisabled={!activeTurn?.can_pause}
       {pausePending}
       initialText={draft}
       placeholder={label === "employee" ? "Message the employee..." : `Message ${label}...`}

@@ -90,6 +90,8 @@ type EventFacts = Readonly<{
   prefix: EventEntityPrefix;
   context: ResourceEventContext;
   ticketChatKind: boolean;
+  panelsChatKind: boolean;
+  employeeSessionChanged: boolean;
   projectNameChanged: boolean;
   relatedEntityIds: readonly string[];
   membershipTicketId: string | null;
@@ -117,11 +119,15 @@ const ENTITY_PREFIXES: readonly EventEntityPrefix[] = [
 ];
 
 const TICKET_CHAT_KINDS = new Set([
-  "chat_session_created",
   "chat_message_recorded",
   "chat_turn_started",
   "chat_turn_updated",
   "chat_turn_finished"
+]);
+
+const PANELS_CHAT_KINDS = new Set([
+  "chat_session_created",
+  ...TICKET_CHAT_KINDS
 ]);
 
 const REVIEW_TICKET_EVENT_KINDS = new Set([
@@ -187,7 +193,12 @@ function relatedHasPrefix(facts: EventFacts, prefix: EventEntityPrefix): boolean
 }
 
 function ordinaryTicketEvent(facts: EventFacts): boolean {
-  return facts.prefix === "t" && !facts.ticketChatKind;
+  return (
+    facts.prefix === "t" &&
+    !facts.ticketChatKind &&
+    !facts.employeeSessionChanged &&
+    facts.event.kind !== "chat_session_created"
+  );
 }
 
 function projectNameAggregate(facts: EventFacts): boolean {
@@ -235,7 +246,8 @@ const RESOURCE_DEFINITIONS = {
   todayDay: staticDefinition<DayResponse>("day:today", "/api/day/today", {
     eventInvalidated: true,
     affectedByEvent: (facts) =>
-      (eventEntityId(facts, "day") && facts.currentDayEvent) || projectNameAggregate(facts)
+      (eventEntityId(facts, "day") && facts.currentDayEvent && !facts.panelsChatKind) ||
+      projectNameAggregate(facts)
         ? ["day:today"]
         : []
   }),
@@ -287,8 +299,7 @@ const RESOURCE_DEFINITIONS = {
       affectedByEvent: (facts) => {
         const identities: CatalogueResourceIdentity[] = [];
         if (
-          ordinaryTicketEvent(facts) ||
-          (facts.prefix === "t" && facts.event.kind === "chat_session_created")
+          ordinaryTicketEvent(facts) || facts.employeeSessionChanged
         ) {
           identities.push(`ticket:${facts.event.entity_id}`);
         }
@@ -310,7 +321,9 @@ const RESOURCE_DEFINITIONS = {
       eventInvalidated: true,
       refreshCachedOnOpen: true,
       affectedByEvent: (facts) => {
-        if (facts.prefix === "agent") return [`chat:${facts.event.entity_id}`];
+        if ((facts.prefix === "day" || facts.prefix === "agent") && facts.panelsChatKind) {
+          return [`chat:${facts.event.entity_id}`];
+        }
         return facts.prefix === "t" && facts.ticketChatKind
           ? [`chat:${facts.event.entity_id}`]
           : [];
@@ -449,6 +462,8 @@ function factsForEvent(
     prefix,
     context: resolvedContext,
     ticketChatKind: prefix === "t" && TICKET_CHAT_KINDS.has(event.kind),
+    panelsChatKind: PANELS_CHAT_KINDS.has(event.kind),
+    employeeSessionChanged: prefix === "t" && event.kind === "employee_session_changed",
     projectNameChanged: isProjectNameChange(event, prefix),
     relatedEntityIds: relatedEntityIds(event),
     membershipTicketId: membership,

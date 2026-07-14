@@ -9,17 +9,6 @@ export type GatewayStatus = {
   available: boolean;
 };
 
-export type ChatHistoryMessage = {
-  role: string;
-  text: string;
-  created_at: number;
-};
-
-export type ChatHistoryResponse = {
-  messages: ChatHistoryMessage[];
-  session_key?: string | null;
-};
-
 export type ChatStateMessage = {
   id: number;
   role: "human" | "assistant" | "system" | "worker" | string;
@@ -50,7 +39,7 @@ export type ChatTurn = {
   activity_entries: ChatActivityEntry[];
   output_role: "assistant" | "system" | string;
   output_text: string;
-  session_key?: string | null;
+  can_pause: boolean;
   error?: string | null;
   started_at: number;
   updated_at: number;
@@ -59,8 +48,7 @@ export type ChatTurn = {
 
 export type ChatStateResponse = {
   messages: ChatStateMessage[];
-  active_turn?: ChatTurn | null;
-  session_key?: string | null;
+  active_turn: ChatTurn | null;
 };
 
 export type ChatImageUploadResponse = {
@@ -148,7 +136,7 @@ export type TicketDetail = {
   sprint_item_id?: string | null;
   ticket_status?: string;
   implementer: Implementer | null;
-  chat_session_key?: string | null;
+  employee_session_id: string | null;
   day_ids?: string[];
   blocked?: boolean;
   blocker_summary?: BlockerSummary;

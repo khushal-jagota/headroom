@@ -14,8 +14,6 @@ from fastapi.testclient import TestClient
 from planner.chat import data as chat_data
 from planner.chat.contracts import (
     ChatActivityObservation,
-    ChatHistory,
-    ChatMessage,
     GatewayStatus,
     HumanChatCompletion,
     HumanChatObservation,
@@ -31,7 +29,13 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
 from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.shared_gateway import SharedGateway
-from planner.tickets.contracts import NO_FURTHER, AtCap, TicketStatus
+from planner.tickets.contracts import (
+    NO_FURTHER,
+    AtCap,
+    EmployeeSessionHistory,
+    EmployeeSessionHistoryMessage,
+    TicketStatus,
+)
 from planner.tickets.data import accept_proposal, create_ticket
 
 
@@ -115,18 +119,18 @@ def _events(db_path: Path, entity_id: str, kind: str) -> list[dict[str, object]]
 def _stored_key(db_path: Path, table: str, entity_id: str) -> object:
     conn = connect(str(db_path))
     try:
-        row = conn.execute(
-            f"SELECT chat_session_key FROM {table} WHERE id = ?", (entity_id,)
-        ).fetchone()
+        column = "employee_session_id" if table == "tickets" else "chat_session_key"
+        row = conn.execute(f"SELECT {column} FROM {table} WHERE id = ?", (entity_id,)).fetchone()
     finally:
         conn.close()
-    return None if row is None else row["chat_session_key"]
+    return None if row is None else row[column]
 
 
 def _set_stored_key(db_path: Path, table: str, entity_id: str, key: str) -> None:
     conn = connect(str(db_path))
     try:
-        conn.execute(f"UPDATE {table} SET chat_session_key = ? WHERE id = ?", (key, entity_id))
+        column = "employee_session_id" if table == "tickets" else "chat_session_key"
+        conn.execute(f"UPDATE {table} SET {column} = ? WHERE id = ?", (key, entity_id))
     finally:
         conn.close()
 
@@ -156,20 +160,20 @@ def _latest_turn(db_path: Path, entity_id: str) -> dict[str, object]:
     return dict(row)
 
 
-def test_chat_history_empty_without_session(tmp_path: Path) -> None:
+def test_employee_session_history_empty_without_session(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)
 
     with TestClient(app) as client:
-        response = client.get(f"/api/chat/{tid}/history")
+        response = client.get(f"/api/tickets/{tid}/employee-session-history")
 
     assert response.status_code == 200
-    assert response.json() == {"messages": [], "session_key": None}
+    assert response.json() == {"messages": [], "employee_session_id": None}
     assert _stored_key(db_path, "tickets", tid) is None
-    assert _events(db_path, tid, "chat_session_created") == []
+    assert _events(db_path, tid, "employee_session_changed") == []
 
 
-def test_chat_history_reads_full_fake_trace(tmp_path: Path) -> None:
+def test_employee_session_history_reads_full_fake_trace(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)
 
@@ -184,7 +188,7 @@ def test_chat_history_reads_full_fake_trace(tmp_path: Path) -> None:
         )
         assert second.status_code == 200
         _wait_for_settled(client, tid)
-        history = client.get(f"/api/chat/{tid}/history")
+        history = client.get(f"/api/tickets/{tid}/employee-session-history")
 
     assert history.status_code == 200
     assert history.json() == {
@@ -194,8 +198,49 @@ def test_chat_history_reads_full_fake_trace(tmp_path: Path) -> None:
             {"role": "user", "text": "again", "created_at": 3},
             {"role": "assistant", "text": "echo: again", "created_at": 4},
         ],
-        "session_key": "fake-sess-1",
+        "employee_session_id": "fake-sess-1",
     }
+
+
+def test_panels_state_is_database_only_and_does_not_materialize_empty_entities(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ticket(db_path)
+
+    class NoGatewayCalls:
+        def __getattr__(self, name: str) -> object:
+            raise AssertionError(f"state called gateway method {name}")
+
+    _replace_gateway(app, NoGatewayCalls())
+    conn = connect(str(db_path))
+    try:
+        before_events = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        for entity_id in (
+            ticket_id,
+            "day_2099-01-01",
+            CHIEF_OF_STAFF_ENTITY_ID,
+        ):
+            response = client.get(f"/api/chat/{entity_id}/state")
+            assert response.status_code == 200
+            assert response.json() == {"messages": [], "active_turn": None}
+
+    conn = connect(str(db_path))
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == before_events
+        assert conn.execute(
+            "SELECT 1 FROM days WHERE id = 'day_2099-01-01'"
+        ).fetchone() is None
+        assert conn.execute(
+            "SELECT 1 FROM agent_chat_sessions WHERE id = ?",
+            (CHIEF_OF_STAFF_ENTITY_ID,),
+        ).fetchone() is None
+    finally:
+        conn.close()
 
 
 def test_chat_state_records_server_owned_human_turn(tmp_path: Path) -> None:
@@ -233,7 +278,9 @@ def test_chat_state_records_server_owned_human_turn(tmp_path: Path) -> None:
     ]
     assert body["messages"][0]["turn_id"] == body["messages"][1]["turn_id"]
     assert _stored_key(db_path, "tickets", tid) == "fake-sess-1"
-    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fake-sess-1"}]
+    assert _events(db_path, tid, "employee_session_changed") == [
+        {"employee_session_id": "fake-sess-1"}
+    ]
     assert _events(db_path, tid, "chat_turn_started")
     assert _events(db_path, tid, "chat_turn_finished") == [
         {"turn_id": body["messages"][0]["turn_id"], "status": "complete"}
@@ -321,8 +368,10 @@ def test_chat_state_shows_active_turn_while_gateway_is_running(tmp_path: Path) -
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
-            return ChatHistory(messages=(), session_key=session_key)
+        def read_employee_session_history(
+            self, employee_session_id: str, ticket_id: str
+        ) -> EmployeeSessionHistory:
+            return EmployeeSessionHistory(messages=(), employee_session_id=employee_session_id)
 
         def run_human_turn(
             self,
@@ -356,7 +405,8 @@ def test_chat_state_shows_active_turn_while_gateway_is_running(tmp_path: Path) -
         assert state["messages"][0]["role"] == "human"
         assert active["status"] == "running"
         assert active["phase"] == "responding"
-        assert active["session_key"] == "blocked-session"
+        assert active["can_pause"] is True
+        assert "session_key" not in active
         assert _stored_key(db_path, "tickets", tid) == "blocked-session"
         release.set()
         for _ in range(20):
@@ -378,8 +428,10 @@ def test_chat_state_shows_active_turn_activity_label(tmp_path: Path) -> None:
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
-            return ChatHistory(messages=(), session_key=session_key)
+        def read_employee_session_history(
+            self, employee_session_id: str, ticket_id: str
+        ) -> EmployeeSessionHistory:
+            return EmployeeSessionHistory(messages=(), employee_session_id=employee_session_id)
 
         def run_human_turn(
             self,
@@ -445,8 +497,10 @@ def test_pause_active_turn_interrupts_chat_without_touching_ticket_status(tmp_pa
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
-            return ChatHistory(messages=(), session_key=session_key)
+        def read_employee_session_history(
+            self, employee_session_id: str, ticket_id: str
+        ) -> EmployeeSessionHistory:
+            return EmployeeSessionHistory(messages=(), employee_session_id=employee_session_id)
 
         def interrupt(self, session_key: str, entity_id: str) -> None:
             self.interrupt_calls.append((session_key, entity_id))
@@ -569,31 +623,34 @@ def test_pause_then_immediate_human_turn_keeps_late_old_completion_out_of_new_tu
     ]
 
 
-def test_chat_history_rejects_agents(tmp_path: Path) -> None:
+def test_employee_session_history_rejects_agents(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)
 
     with TestClient(app) as client:
-        response = client.get(f"/api/chat/{tid}/history", headers={"X-Plan-Actor": "agent"})
+        response = client.get(
+            f"/api/tickets/{tid}/employee-session-history",
+            headers={"X-Plan-Actor": "agent"},
+        )
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "agent_forbidden"
 
 
-def test_chat_history_offline_is_503_when_session_exists(tmp_path: Path) -> None:
+def test_employee_session_history_offline_is_503_when_session_exists(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path, gateway="offline")
     tid = _ticket(db_path)
     _set_stored_key(db_path, "tickets", tid, "stored-key")
 
     with TestClient(app) as client:
-        response = client.get(f"/api/chat/{tid}/history")
+        response = client.get(f"/api/tickets/{tid}/employee-session-history")
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "gateway_offline"
     assert _stored_key(db_path, "tickets", tid) == "stored-key"
 
 
-def test_chat_history_rotated_key_repersists(tmp_path: Path) -> None:
+def test_employee_session_history_rotated_id_repersists(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)
     _set_stored_key(db_path, "tickets", tid, "old-key")
@@ -602,25 +659,33 @@ def test_chat_history_rotated_key_repersists(tmp_path: Path) -> None:
         def status(self) -> GatewayStatus:
             return GatewayStatus(available=True)
 
-        def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
-            assert session_key == "old-key"
-            assert entity_id == tid
-            return ChatHistory(
-                messages=(ChatMessage(role="system", text="worker prompt", created_at=7),),
-                session_key="fresh-key",
+        def read_employee_session_history(
+            self, employee_session_id: str, ticket_id: str
+        ) -> EmployeeSessionHistory:
+            assert employee_session_id == "old-key"
+            assert ticket_id == tid
+            return EmployeeSessionHistory(
+                messages=(
+                    EmployeeSessionHistoryMessage(
+                        role="system", text="worker prompt", created_at=7
+                    ),
+                ),
+                employee_session_id="fresh-key",
             )
 
     _replace_gateway(app, RotatingHistoryGateway())
     with TestClient(app) as client:
-        response = client.get(f"/api/chat/{tid}/history")
+        response = client.get(f"/api/tickets/{tid}/employee-session-history")
 
     assert response.status_code == 200
     assert response.json() == {
         "messages": [{"role": "system", "text": "worker prompt", "created_at": 7}],
-        "session_key": "fresh-key",
+        "employee_session_id": "fresh-key",
     }
     assert _stored_key(db_path, "tickets", tid) == "fresh-key"
-    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fresh-key"}]
+    assert _events(db_path, tid, "employee_session_changed") == [
+        {"employee_session_id": "fresh-key"}
+    ]
 
 
 def test_second_human_turn_reuses_key_without_new_event(tmp_path: Path) -> None:
@@ -645,7 +710,9 @@ def test_second_human_turn_reuses_key_without_new_event(tmp_path: Path) -> None:
         ("assistant", "echo: again"),
     ]
     assert _stored_key(db_path, "tickets", tid) == "fake-sess-1"
-    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fake-sess-1"}]
+    assert _events(db_path, tid, "employee_session_changed") == [
+        {"employee_session_id": "fake-sess-1"}
+    ]
 
 
 def test_human_turn_offline_settles_failed_without_key(tmp_path: Path) -> None:
@@ -662,7 +729,7 @@ def test_human_turn_offline_settles_failed_without_key(tmp_path: Path) -> None:
     assert _latest_turn(db_path, tid)["status"] == "errored"
     assert _latest_turn(db_path, tid)["error"] == "gateway offline"
     assert _stored_key(db_path, "tickets", tid) is None
-    assert _events(db_path, tid, "chat_session_created") == []
+    assert _events(db_path, tid, "employee_session_changed") == []
 
 
 @pytest.mark.parametrize("entity_kind", ["ticket", "day", "chief"])
@@ -690,21 +757,15 @@ def test_human_turn_supports_each_chattable_entity(tmp_path: Path, entity_kind: 
     assert _stored_key(db_path, table, entity_id) == "fake-sess-1"
     if entity_kind == "day":
         assert _events(db_path, entity_id, "day_created") == [{}]
-    assert _events(db_path, entity_id, "chat_session_created") == [
-        {"session_key": "fake-sess-1"}
-    ]
-
-
-def test_chat_history_chief_of_staff_empty_without_ticket_or_day(tmp_path: Path) -> None:
-    app, db_path = _make_app(tmp_path)
-
-    with TestClient(app) as client:
-        response = client.get(f"/api/chat/{CHIEF_OF_STAFF_ENTITY_ID}/history")
-
-    assert response.status_code == 200
-    assert response.json() == {"messages": [], "session_key": None}
-    assert _stored_key(db_path, "agent_chat_sessions", CHIEF_OF_STAFF_ENTITY_ID) is None
-    assert _events(db_path, CHIEF_OF_STAFF_ENTITY_ID, "chat_session_created") == []
+    expected_kind = (
+        "employee_session_changed" if entity_kind == "ticket" else "chat_session_created"
+    )
+    expected_payload = (
+        {"employee_session_id": "fake-sess-1"}
+        if entity_kind == "ticket"
+        else {"session_key": "fake-sess-1"}
+    )
+    assert _events(db_path, entity_id, expected_kind) == [expected_payload]
 
 
 @pytest.mark.parametrize("entity_id", ["agent_other", "t_missing", "xyz", "day_bogus"])
@@ -759,7 +820,7 @@ def test_human_turn_lost_first_write_race_adopts_winner_key(tmp_path: Path) -> N
             try:
                 other.execute("BEGIN IMMEDIATE")
                 other.execute(
-                    "UPDATE tickets SET chat_session_key = ? WHERE id = ?",
+                    "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
                     ("winner-key", entity_id),
                 )
                 other.execute("COMMIT")
@@ -778,7 +839,7 @@ def test_human_turn_lost_first_write_race_adopts_winner_key(tmp_path: Path) -> N
 
     assert _stored_key(db_path, "tickets", tid) == "winner-key"
     assert _latest_turn(db_path, tid)["session_key"] == "winner-key"
-    assert _events(db_path, tid, "chat_session_created") == []
+    assert _events(db_path, tid, "employee_session_changed") == []
 
 
 def test_human_turn_stale_session_remints_and_repersists(tmp_path: Path) -> None:
@@ -791,7 +852,7 @@ def test_human_turn_stale_session_remints_and_repersists(tmp_path: Path) -> None
     seed = connect(str(db_path))  # a prior session the gateway has since forgotten
     try:
         seed.execute("BEGIN IMMEDIATE")
-        seed.execute("UPDATE tickets SET chat_session_key = ? WHERE id = ?", ("stale-key", tid))
+        seed.execute("UPDATE tickets SET employee_session_id = ? WHERE id = ?", ("stale-key", tid))
         seed.execute("COMMIT")
     finally:
         seed.close()
@@ -825,7 +886,9 @@ def test_human_turn_stale_session_remints_and_repersists(tmp_path: Path) -> None
 
     assert _stored_key(db_path, "tickets", tid) == "fresh-key"
     assert _latest_turn(db_path, tid)["session_key"] == "fresh-key"
-    assert _events(db_path, tid, "chat_session_created") == [{"session_key": "fresh-key"}]
+    assert _events(db_path, tid, "employee_session_changed") == [
+        {"employee_session_id": "fresh-key"}
+    ]
 
 
 def test_ticket_chat_does_not_change_ticket_status(tmp_path: Path) -> None:
@@ -864,7 +927,7 @@ def test_human_turn_rejects_while_worker_step_running(tmp_path: Path) -> None:
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "already_running"
     assert _stored_key(db_path, "tickets", tid) is None
-    assert _events(db_path, tid, "chat_session_created") == []
+    assert _events(db_path, tid, "employee_session_changed") == []
 
 
 def test_human_turn_gateway_busy_settles_failed(tmp_path: Path) -> None:

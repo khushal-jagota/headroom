@@ -778,12 +778,12 @@ def test_ticket_by_session_exposes_resolved_blocker_summary(tmp_path: Path) -> N
     blocker = _create_direct(db_path, title="Worker blocker")
     target = _create_direct(db_path, title="Worker target")
     conn = connect(str(db_path))
-    conn.execute("UPDATE tickets SET chat_session_key = ? WHERE id = ?", ("sess_worker", target))
+    conn.execute("UPDATE tickets SET employee_session_id = ? WHERE id = ?", ("sess_worker", target))
     core_links.add_link(conn, blocker, target, LinkKind.blocks, 1)
     conn.close()
 
     with TestClient(app) as client:
-        response = client.get("/api/tickets/by-session/sess_worker")
+        response = client.get("/api/tickets/by-employee-session/sess_worker")
 
     assert response.status_code == 200, response.text
     body = response.json()

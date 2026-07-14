@@ -1,6 +1,6 @@
 """t_tt05 — `panels worker my-ticket` returns the ticket's worker specialist.
 
-The by-session endpoint resolves the worker name from the ticket's TYPE through the
+The by-employee-session endpoint resolves the worker name from the ticket's TYPE through the
 registry, so a coding ticket routes to ``panels-worker-coding`` and a probe ticket
 (exercised via the fixture registry) routes to ``probe-worker``. This is the agent's
 self-routing cue — computed, not hardcoded.
@@ -47,7 +47,7 @@ def _bind_session(db_path: Path, ticket_id: str, session_key: str) -> None:
     conn = connect(str(db_path))
     try:
         conn.execute(
-            "UPDATE tickets SET chat_session_key = ? WHERE id = ?",
+            "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
             (session_key, ticket_id),
         )
         conn.commit()
@@ -79,7 +79,7 @@ def test_my_ticket_returns_coding_specialist(tmp_path: Path) -> None:
         ticket_id = created.json()["id"]
         _bind_session(db_path, ticket_id, "sess_coding")
 
-        response = client.get("/api/tickets/by-session/sess_coding")
+        response = client.get("/api/tickets/by-employee-session/sess_coding")
 
     assert response.status_code == 200, response.text
     body = response.json()
@@ -104,7 +104,7 @@ def test_my_ticket_returns_probe_specialist(
         ticket_id = created.json()["id"]
         _bind_session(db_path, ticket_id, "sess_probe")
 
-        response = client.get("/api/tickets/by-session/sess_probe")
+        response = client.get("/api/tickets/by-employee-session/sess_probe")
 
     assert response.status_code == 200, response.text
     body = response.json()

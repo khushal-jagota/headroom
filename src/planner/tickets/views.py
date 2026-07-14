@@ -73,7 +73,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "at_cap": ticket.at_cap.value,
         "ticket_status": ticket.ticket_status.value,
         "implementer": ticket.implementer.value if ticket.implementer is not None else None,
-        "chat_session_key": ticket.chat_session_key,
+        "employee_session_id": ticket.employee_session_id,
         "alias": ticket.alias,
         "fields": json.loads(fields_codec.fields_to_json(ticket.fields)),
         "created_at": ticket.created_at,

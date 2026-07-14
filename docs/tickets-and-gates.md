@@ -56,6 +56,21 @@ value path.
 
 _Code paths:_ `src/planner/tickets/` (the Ticket Stage and its fields).
 
+### The durable Employee conversation
+
+A Ticket stores one `employee_session_id`. Human Ticket Chat and automatic or
+revision Employee steps all deliver through that durable Hermes conversation. Panels
+resumes the stored id after a restart instead of replaying input or inventing a new
+conversation.
+
+Panels Chat is separate durable product state: the messages and live turn intended
+for the human to see. Its rows are never worker context and a row alone is not proof
+that Hermes received anything. The explicit direct-only
+`GET /api/tickets/{ticket_id}/employee-session-history` route instead returns the
+authoritative Hermes history. That history may include internal context, revision
+guidance, system or tool content, or other real material absent from Panels Chat; it
+is never silently merged into the visible transcript.
+
 ### Work completed outside Panels
 
 When work was completed elsewhere, the Chief can reconcile an existing ticket or create
@@ -145,13 +160,13 @@ and the approval screen, so the two can never disagree.
 
 The Review screen can also send a ticket back instead of accepting it, whatever field
 is currently gated. The human writes short guidance in the review card. Panels sends
-that guidance directly to the ticket's existing Hermes session as the user message
-that starts a worker turn. It is not copied into ticket chat and no later generic
-worker prompt is sent. The ticket's stage never changes: a pending gated proposal is
-cleared, settled values remain, and the ticket leaves Review while its control status
-is **agent running step**. The gated field can therefore be revised while the ticket
-remains at its current stage; it returns to Review when the worker submits the
-revision.
+that guidance directly to the Ticket's existing `employee_session_id` as the user
+message that starts a worker turn. It is not copied into ticket chat and no later
+generic worker prompt is sent. The ticket's stage never changes: a pending gated
+proposal is cleared, settled values remain, and the ticket leaves Review while its
+control status is **agent running step**. The gated field can therefore be revised
+while the ticket remains at its current stage; it returns to Review when the worker
+submits the revision.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the scope row),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`
@@ -172,7 +187,7 @@ endpoint ids so clients can refresh them.
 
 The deletion also replaces that ticket's old event history with one small deletion
 record containing its identity, the direct actor, and the time. This is the only
-exception to normal append-only event history. The separate stored Hermes session is
+exception to normal append-only event history. The separate stored Employee session is
 outside Panels' record and is not erased; once the ticket row is gone, Panels no
 longer has a route that resolves or resumes it.
 

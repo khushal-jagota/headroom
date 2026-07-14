@@ -196,8 +196,10 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
     # 7. No worker session/turn was ever created — the whole drive is human/API-only.
     conn = connect(str(db_path))
     try:
-        row = conn.execute("SELECT chat_session_key FROM tickets WHERE id = ?", (tid,)).fetchone()
-        assert row["chat_session_key"] is None
+        row = conn.execute(
+            "SELECT employee_session_id FROM tickets WHERE id = ?", (tid,)
+        ).fetchone()
+        assert row["employee_session_id"] is None
         turns = conn.execute(
             "SELECT count(*) AS n FROM chat_turns WHERE entity_id = ?", (tid,)
         ).fetchone()

@@ -36,10 +36,12 @@ from planner.runtime.automatic_employee_step_eligibility_wake import (
 from planner.runtime.employee_step_runner import EmployeeStepRunner, _next_step_prompt
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
+from planner.tickets import employee_session_history
 from planner.tickets import views as tickets_views
 from planner.tickets.contracts import (
     NO_FURTHER,
     AtCap,
+    EmployeeSessionIdTransition,
     Implementer,
     TicketStatus,
 )
@@ -206,7 +208,12 @@ def _needs_closeout_ticket(db_path: str) -> str:
 def _set_key(db_path: str, ticket_id: str, key: str) -> None:
     conn = connect(db_path)
     try:
-        tickets_data.finish_run_if_still_running_step(conn, ticket_id, session_key=key, now=0)
+        tickets_data.finish_run_if_still_running_step(
+            conn,
+            ticket_id,
+            employee_session_transition=EmployeeSessionIdTransition(None, key),
+            now=0,
+        )
     finally:
         conn.close()
 
@@ -271,7 +278,7 @@ def test_kickoff_parked_proposal_awaits_approval(tmp_path: Path) -> None:
 
     ticket = _read(db, tid)
     assert ticket.ticket_status == TicketStatus.awaiting_approval
-    assert ticket.chat_session_key == STORED_KEY
+    assert ticket.employee_session_id == STORED_KEY
     assert fields_codec.get_slot(ticket.fields, "success").proposal is not None
     assert fake.sent_methods() == ["session.create", "prompt.submit"]
     evs = _status_events(db, tid)
@@ -373,7 +380,7 @@ def test_complete_with_no_proposal_is_empty_not_errored(tmp_path: Path) -> None:
 
     ticket = _read(db, tid)
     assert ticket.ticket_status == TicketStatus.empty
-    assert ticket.chat_session_key == STORED_KEY
+    assert ticket.employee_session_id == STORED_KEY
     assert [e["ticket_status"] for e in _status_events(db, tid)] == [
         "agent_running_step",
         "empty",
@@ -504,8 +511,10 @@ def test_worker_step_prompt_and_reply_are_visible_in_chat_history(tmp_path: Path
         assert runner.wait_idle(10.0)
         conn = connect(db)
         try:
-            history = chat_service.history(conn, gateway, tid, 0)
-            state = chat_service.state(conn, gateway, tid, 0)
+            history = employee_session_history.read_employee_session_history(
+                conn, gateway, tid, 0
+            )
+            state = chat_service.state(conn, tid)
         finally:
             conn.close()
     finally:
@@ -513,7 +522,7 @@ def test_worker_step_prompt_and_reply_are_visible_in_chat_history(tmp_path: Path
 
     submit_frame = next(frame for frame in fake.sent if frame.get("method") == "prompt.submit")
     assert submit_frame["params"]["text"] == prompt
-    assert _read(db, tid).chat_session_key == STORED_KEY
+    assert _read(db, tid).employee_session_id == STORED_KEY
     assert [(msg.role, msg.text) for msg in history.messages] == [
         ("user", prompt),
         ("assistant", "worker reply"),
@@ -587,7 +596,7 @@ def test_queued_employee_waits_past_prior_interruption_before_settling(
         time.sleep(0.05)
         conn = connect(db)
         try:
-            in_flight_state = chat_service.state(conn, gateway, tid, 1)
+            in_flight_state = chat_service.state(conn, tid)
         finally:
             conn.close()
         assert _read(db, tid).ticket_status is TicketStatus.agent_running_step
@@ -610,7 +619,7 @@ def test_queued_employee_waits_past_prior_interruption_before_settling(
 
         conn = connect(db)
         try:
-            settled_state = chat_service.state(conn, gateway, tid, 2)
+            settled_state = chat_service.state(conn, tid)
         finally:
             conn.close()
     finally:
@@ -660,7 +669,7 @@ def test_claimed_rejection_turn_revises_closeout_in_same_session_without_chat_co
         assert runner.wait_idle(10.0)
         conn = connect(db)
         try:
-            state = chat_service.state(conn, gateway, tid, 2)
+            state = chat_service.state(conn, tid)
             day_id = "day_2026-07-09"
             days_data.add_day_ticket(conn, day_id, tid, 4)
             review = tickets_views.review_view(conn, day_id=day_id)
@@ -712,7 +721,10 @@ def test_created_session_key_is_queryable_before_prompt_submit(tmp_path: Path) -
             if frame.get("method") == "prompt.submit":
                 conn = connect(db)
                 try:
-                    assert tickets_data.read_ticket_by_session_key(conn, STORED_KEY).id == tid
+                    assert (
+                        tickets_data.read_ticket_by_employee_session_id(conn, STORED_KEY).id
+                        == tid
+                    )
                 finally:
                     conn.close()
             super().send(line)
@@ -723,7 +735,7 @@ def test_created_session_key_is_queryable_before_prompt_submit(tmp_path: Path) -
     runner.try_run_automatic_step(tid)
     assert runner.wait_idle(10.0)
 
-    assert _read(db, tid).chat_session_key == STORED_KEY
+    assert _read(db, tid).employee_session_id == STORED_KEY
 
 
 def test_worker_does_not_prompt_if_session_key_claim_is_lost(tmp_path: Path) -> None:
@@ -766,7 +778,7 @@ def test_worker_does_not_prompt_if_session_key_claim_is_lost(tmp_path: Path) -> 
     ticket = _read(db, tid)
     assert gateway.prompted is False
     assert ticket.ticket_status == TicketStatus.user_takeover
-    assert ticket.chat_session_key is None
+    assert ticket.employee_session_id is None
     assert eligibility_wake.calls == 1
 
 
@@ -812,7 +824,7 @@ def test_worker_rechecks_existing_session_key_ownership_before_prompt(tmp_path: 
     ticket = _read(db, tid)
     assert gateway.prompted is False
     assert ticket.ticket_status == TicketStatus.user_takeover
-    assert ticket.chat_session_key == STORED_KEY
+    assert ticket.employee_session_id == STORED_KEY
     assert eligibility_wake.calls == 1
 
 
@@ -852,7 +864,7 @@ def test_worker_error_does_not_overwrite_lost_ownership(tmp_path: Path) -> None:
 
     ticket = _read(db, tid)
     assert ticket.ticket_status == TicketStatus.user_takeover
-    assert ticket.chat_session_key == STORED_KEY
+    assert ticket.employee_session_id == STORED_KEY
     assert [e["ticket_status"] for e in _status_events(db, tid)] == [
         "agent_running_step",
         "user_takeover",
@@ -930,7 +942,7 @@ def test_unknown_employee_submit_fails_once_and_ignores_later_completion(
         assert runner.wait_idle(5.0)
         conn = connect(db)
         try:
-            state_before = chat_service.state(conn, gateway, tid, 1)
+            state_before = chat_service.state(conn, tid)
         finally:
             conn.close()
 
@@ -938,7 +950,7 @@ def test_unknown_employee_submit_fails_once_and_ignores_later_completion(
         time.sleep(0.05)
         conn = connect(db)
         try:
-            state_after = chat_service.state(conn, gateway, tid, 2)
+            state_after = chat_service.state(conn, tid)
         finally:
             conn.close()
     finally:
@@ -987,7 +999,7 @@ def test_steered_employee_submit_errors_without_claiming_active_completion(
         assert runner.wait_idle(5.0)
         conn = connect(db)
         try:
-            state_before = chat_service.state(conn, gateway, tid, 1)
+            state_before = chat_service.state(conn, tid)
         finally:
             conn.close()
 
@@ -995,7 +1007,7 @@ def test_steered_employee_submit_errors_without_claiming_active_completion(
         time.sleep(0.05)
         conn = connect(db)
         try:
-            state_after = chat_service.state(conn, gateway, tid, 2)
+            state_after = chat_service.state(conn, tid)
         finally:
             conn.close()
     finally:
@@ -1028,7 +1040,7 @@ def test_gateway_busy_4009_is_skip_not_error(tmp_path: Path) -> None:
 
     ticket = _read(db, tid)
     assert ticket.ticket_status == TicketStatus.empty
-    assert ticket.chat_session_key == STORED_KEY
+    assert ticket.employee_session_id == STORED_KEY
     assert [e["ticket_status"] for e in _status_events(db, tid)] == [
         "agent_running_step",
         "empty",
@@ -1081,7 +1093,7 @@ def test_existing_key_is_resumed_and_rotated_tip_persisted(tmp_path: Path) -> No
 
     resume_frame = next(f for f in fake.sent if f.get("method") == "session.resume")
     assert resume_frame["params"]["session_id"] == STORED_KEY
-    assert _read(db, tid).chat_session_key == "rotated-key"
+    assert _read(db, tid).employee_session_id == "rotated-key"
 
 
 def test_spawn_crash_errors_never_stuck_running(tmp_path: Path) -> None:

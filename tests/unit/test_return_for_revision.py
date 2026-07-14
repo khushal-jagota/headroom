@@ -28,7 +28,7 @@ from planner.runtime.automatic_employee_step_eligibility_wake import (
 )
 from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, AtCap
+from planner.tickets.contracts import NO_FURTHER, AtCap, EmployeeSessionIdTransition
 from planner.tickets.data import (
     change_scope,
     create_ticket,
@@ -163,7 +163,14 @@ def _ticket_with_pending_plan(db_path: Path) -> str:
         file_proposal(conn, ticket.id, field="success", body="success", actor="agent", now=0)
         file_proposal(conn, ticket.id, field="approach", body="approach", actor="agent", now=0)
         file_proposal(conn, ticket.id, field="plan", body="bad plan", actor="agent", now=0)
-        finish_run_if_still_running_step(conn, ticket.id, session_key=f"session-{ticket.id}", now=0)
+        finish_run_if_still_running_step(
+            conn,
+            ticket.id,
+            employee_session_transition=EmployeeSessionIdTransition(
+                None, f"session-{ticket.id}"
+            ),
+            now=0,
+        )
     finally:
         conn.close()
     return ticket.id
@@ -216,7 +223,14 @@ def _ticket_with_pending_closeout(db_path: Path) -> str:
             actor="agent",
             now=0,
         )
-        finish_run_if_still_running_step(conn, ticket.id, session_key=f"session-{ticket.id}", now=0)
+        finish_run_if_still_running_step(
+            conn,
+            ticket.id,
+            employee_session_transition=EmployeeSessionIdTransition(
+                None, f"session-{ticket.id}"
+            ),
+            now=0,
+        )
     finally:
         conn.close()
     return ticket.id
@@ -433,7 +447,7 @@ def test_return_for_revision_requires_existing_worker_session(tmp_path: Path) ->
     tid = _ticket_with_pending_plan(db_path)
     conn = connect(str(db_path))
     try:
-        conn.execute("UPDATE tickets SET chat_session_key = NULL WHERE id = ?", (tid,))
+        conn.execute("UPDATE tickets SET employee_session_id = NULL WHERE id = ?", (tid,))
         conn.commit()
     finally:
         conn.close()
@@ -455,7 +469,7 @@ def test_db_validation_after_real_reservation_cancels_without_prompt(
     tid = _ticket_with_pending_plan(db_path)
     conn = connect(str(db_path))
     try:
-        conn.execute("UPDATE tickets SET chat_session_key = NULL WHERE id = ?", (tid,))
+        conn.execute("UPDATE tickets SET employee_session_id = NULL WHERE id = ?", (tid,))
     finally:
         conn.close()
     fake = FakeGateway({})
@@ -600,7 +614,7 @@ def test_stale_revision_session_never_remints_and_settles_ticket_errored(
         session_events_before = int(
             conn.execute(
                 "SELECT COUNT(*) AS n FROM events WHERE entity_id = ? AND kind = ?",
-                (tid, EventKind.chat_session_created.value),
+                (tid, EventKind.employee_session_changed.value),
             ).fetchone()["n"]
         )
     finally:
@@ -651,13 +665,13 @@ def test_stale_revision_session_never_remints_and_settles_ticket_errored(
             session_events_after = int(
                 conn.execute(
                     "SELECT COUNT(*) AS n FROM events WHERE entity_id = ? AND kind = ?",
-                    (tid, EventKind.chat_session_created.value),
+                    (tid, EventKind.employee_session_changed.value),
                 ).fetchone()["n"]
             )
         finally:
             conn.close()
         assert ticket.ticket_status.value == "errored"
-        assert ticket.chat_session_key == stale_key
+        assert ticket.employee_session_id == stale_key
         assert fields_codec.get_slot(ticket.fields, "plan").proposal is None
         assert turn is not None and turn["status"] == "errored"
         assert [(row["context_key"], row["revision"]) for row in pending] == pending_before

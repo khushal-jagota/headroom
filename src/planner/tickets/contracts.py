@@ -197,11 +197,30 @@ class Ticket:  # §3.3 — column names match exactly
     at_cap: AtCap  # default propose (R2)
     ticket_status: TicketStatus  # durable state-of-control; transition functions write it
     implementer: Implementer | None  # human-overridable execution route
-    chat_session_key: str | None  # the ticket-mind's durable Hermes session_key
+    employee_session_id: str | None  # durable Hermes identity for this Ticket's employee
     alias: str | None  # migration "Ticket ID:" (§12), unique when present
     fields: TicketFields
     created_at: int
     updated_at: int
+
+
+@dataclass(frozen=True)
+class EmployeeSessionIdTransition:
+    expected_employee_session_id: str | None
+    candidate_employee_session_id: str
+
+
+@dataclass(frozen=True)
+class EmployeeSessionHistoryMessage:
+    role: str
+    text: str
+    created_at: int
+
+
+@dataclass(frozen=True)
+class EmployeeSessionHistory:
+    messages: tuple[EmployeeSessionHistoryMessage, ...]
+    employee_session_id: str | None
 
 
 @dataclass(frozen=True)

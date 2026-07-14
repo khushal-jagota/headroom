@@ -18,6 +18,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import asdict
 from enum import StrEnum
 from typing import Annotated, Any, cast
 
@@ -44,6 +45,7 @@ from planner.runtime.automatic_employee_step_eligibility_wake import (
 from planner.runtime.contracts import EmployeeRevisionRunner
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
+from planner.tickets import employee_session_history
 from planner.tickets import views as tickets_views
 from planner.tickets.contracts import (
     NO_FURTHER,
@@ -521,10 +523,14 @@ async def list_tickets(
     }
 
 
-@router.get("/tickets/by-session/{session_key}")
-async def get_my_ticket(session_key: str, conn: DbConn, clk: Clk) -> JsonDict:
-    """A worker agent's own ticket, resolved from its Hermes session key."""
-    ticket = tickets_data.read_ticket_by_session_key(conn, session_key)
+@router.get("/tickets/by-employee-session/{employee_session_id}")
+async def get_my_ticket(
+    employee_session_id: str,
+    conn: DbConn,
+    clk: Clk,
+) -> JsonDict:
+    """A worker agent's own Ticket, resolved from its Employee session id."""
+    ticket = tickets_data.read_ticket_by_employee_session_id(conn, employee_session_id)
     detail = tickets_views.ticket_detail(conn, ticket.id, clk.now_unix())
     detail["worker"] = (
         configured_worker_type_registry()
@@ -532,6 +538,24 @@ async def get_my_ticket(session_key: str, conn: DbConn, clk: Clk) -> JsonDict:
         .worker_profile.specialist_skill
     )
     return detail
+
+
+@router.get("/tickets/{ticket_id}/employee-session-history")
+async def get_employee_session_history(
+    ticket_id: str,
+    request: Request,
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+) -> JsonDict:
+    require_direct_write(ctx)
+    result = employee_session_history.read_employee_session_history(
+        conn,
+        request.app.state.adapters.gateway,
+        ticket_id,
+        clk.now_unix(),
+    )
+    return asdict(result)
 
 
 @router.get("/tickets/{ticket_id}")

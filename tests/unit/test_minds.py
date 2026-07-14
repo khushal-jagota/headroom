@@ -14,7 +14,6 @@ import pytest
 import planner.minds as minds
 from planner.chat.contracts import (
     ChatActivityObservation,
-    ChatHistory,
     CommandCatalog,
     GatewayStatus,
     HumanChatCompletion,
@@ -43,6 +42,7 @@ from planner.minds.shared_gateway import (
     SharedGatewayBusy,
 )
 from planner.minds.smoke import _check_distinct_sessions_demux
+from planner.tickets.contracts import EmployeeSessionHistory
 from planner.worker_context.contracts import (
     PendingWorkerContext,
     PreparedWorkerPrompt,
@@ -198,9 +198,13 @@ class RecordingChatGateway:
         self.calls.append(("status", ""))
         return GatewayStatus(available=True)
 
-    def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
-        self.calls.append(("history", entity_id))
-        return ChatHistory(messages=(), session_key=session_key)
+    def read_employee_session_history(
+        self, employee_session_id: str, ticket_id: str
+    ) -> EmployeeSessionHistory:
+        self.calls.append(("read_employee_session_history", ticket_id))
+        return EmployeeSessionHistory(
+            messages=(), employee_session_id=employee_session_id
+        )
 
     def run_human_turn(
         self,
@@ -584,7 +588,7 @@ def test_run_step_resume_path_issues_resume_not_create() -> None:
     assert res.status == "complete"
 
 
-def test_shared_gateway_history_resumes_and_preserves_full_trace() -> None:
+def test_shared_gateway_employee_session_history_resumes_and_preserves_full_trace() -> None:
     fake = FakeGateway(
         {
             "session.resume": [
@@ -620,7 +624,7 @@ def test_shared_gateway_history_resumes_and_preserves_full_trace() -> None:
     )
     gateway = shared(fake)
     try:
-        history = gateway.history(STORED_KEY, "t_demo")
+        history = gateway.read_employee_session_history(STORED_KEY, "t_demo")
     finally:
         gateway.shutdown()
 
@@ -631,9 +635,14 @@ def test_shared_gateway_history_resumes_and_preserves_full_trace() -> None:
         "lazy": True,
         "source": CHAT_SOURCE,
     }
-    assert history.session_key == "20260708_090000_rotated"
+    assert history.employee_session_id == "20260708_090000_rotated"
     assert [(msg.role, msg.text, msg.created_at) for msg in history.messages] == [
-        ("user", "human asks", 10),
+        (
+            "user",
+            "human asks\n\n[Pending worker context]\n- Ticket changed."
+            "\n[/Pending worker context]",
+            10,
+        ),
         ("system", "worker prompt\ncontext", 11),
         ("assistant", "worker replies", 12),
         ("tool", "tool output", 13),
