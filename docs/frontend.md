@@ -100,11 +100,15 @@ share.
   managed links until a fixed depth or self-link bound turns them back into compact
   preview cards. Embedded HTML files render as cards with a fetched `srcdoc` iframe
   whose sandbox permits the file's scripts but does not grant same-origin or other
-  host-page privileges. A new-tab action opens the Panels preview route. On that
-  route, HTML is no longer wrapped in preview-card chrome: the route fetches the
-  document, gives the iframe a short-lived Blob URL, revokes the old URL when the
-  target changes or unmounts, and fills the available page with the same isolated
-  script-enabled iframe. Images, video, and audio render inline; unknown files stay as
+  host-page privileges. Before HTML enters either iframe lifecycle, the shared
+  preview helper anchors the document's base URL to that HTML file's absolute managed
+  URL, so relative stylesheet, script, image, and root-relative managed-file
+  references resolve as they would if the file were opened from its `/files/...` URL.
+  A new-tab action opens the Panels preview route. On that route, HTML is no longer
+  wrapped in preview-card chrome: the route fetches the document, gives the iframe a
+  short-lived Blob URL, revokes the old URL when the target changes or unmounts, and
+  fills the available page with the same isolated script-enabled iframe. Images,
+  video, and audio render inline; unknown files stay as
   download cards; ordinary external links stay external-link cards with deterministic host
   text. The full preview route is
   `#/preview?source=ticket&ticket=<id>&path=<path>`. Chat images under

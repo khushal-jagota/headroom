@@ -4,6 +4,41 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 the bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-14): managed HTML sibling assets
+
+Current build stage:
+
+- Ticket `t_z79gfuuf` is implemented on branch `ticket/t_z79gfuuf-managed-html-assets` in the
+  isolated worktree `planning-v2-worktrees/t_z79gfuuf-managed-html-assets` and is awaiting final review,
+  canonical verification, and its Implementation proposal.
+- Both managed HTML preview lifecycles now prepare fetched HTML through one shared absolute managed-base
+  helper before assigning it to embedded `srcdoc` or the full-page Blob URL. The iframe sandbox remains
+  exactly `allow-scripts`; fetch cancellation, source cleanup, and Blob revocation are unchanged.
+- The focused Playwright fixture covers relative and root-relative images and stylesheets in both preview
+  surfaces. The frontend system doc describes the same contract.
+
+What just passed:
+
+- The new focused browser case passes after the shared base helper was added, including the corrected
+  HTML-aware insertion case with a false `<head>` token before the real document head. The complete frontend
+  unit script and Svelte check also pass.
+- The first independent review found that raw string matching could mistake `<head>` text inside a comment
+  for the real document head. The helper now parses HTML, prepends the managed base to the actual head, and
+  serializes the document; the new false-token regression passes. Fresh corrected-diff Codex review reports
+  `NO VIOLATIONS`.
+- The canonical gate passes Ruff; mypy across 115 source files; 760 unit tests; compile/static, CSS, and
+  frontend checks; production build; all frontend tests; and 91 Playwright tests, ending `VERIFY: PASS`.
+  The full transcript is `data/verify/t_z79gfuuf-pass.log`.
+
+Next step:
+
+- Propose Implementation for approval with the branch, behavior, focused regression, corrected independent
+  review, and canonical verification evidence.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-14): slate-blue brand accent
 
 Current build stage:

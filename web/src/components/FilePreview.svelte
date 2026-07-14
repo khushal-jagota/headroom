@@ -4,6 +4,7 @@
   import {
     MANAGED_HTML_PREVIEW_SANDBOX,
     markdownExpansionFor,
+    prepareManagedHtmlPreviewDocument,
     resolvePreview
   } from "../lib/filePreview";
   import Button from "./Button.svelte";
@@ -42,7 +43,10 @@
         return response.text();
       })
       .then((body) => {
-        text = body;
+        text =
+          current.kind === "html"
+            ? prepareManagedHtmlPreviewDocument(body, current.href)
+            : body;
       })
       .catch((err) => {
         if (!controller.signal.aborted) error = err instanceof Error ? err.message : String(err);

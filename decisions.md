@@ -539,6 +539,16 @@ Managed Markdown expansion uses a fixed depth and visited bound, and a tokenized
 `tokens.css`) so long previews scroll and short ones keep natural height — a component-level visual
 bound, not a truncation contract.
 
+## D-managed-html-document-base — Preview assets resolve through the browser, not a new file transport
+
+Fetched managed HTML is prepared once with an absolute base pointing at the HTML file's own managed URL,
+and both the embedded `srcdoc` and full-page Blob lifecycles consume that same document. This preserves the
+existing `allow-scripts`-only opaque-origin sandbox and lifecycle cleanup while letting the browser resolve
+relative and root-relative same-tree assets. A proxy or per-attribute URL rewriting would duplicate the
+managed-file boundary and miss URL-bearing HTML/CSS forms, so neither is added. Implementation was delegated
+to Codex in an isolated ticket branch and independently reviewed; no visual planning artifact was created
+because this changes resource resolution without changing layout or interaction design.
+
 ## D-chat-images — Chat images are managed by chat and delivered through Hermes native vision
 
 Uploaded images are stored under `files/chats/<entity_id>/` for every chattable entity (not in ticket

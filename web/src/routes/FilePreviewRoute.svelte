@@ -4,6 +4,7 @@
   import {
     MANAGED_HTML_PREVIEW_SANDBOX,
     chatFileTarget,
+    prepareManagedHtmlPreviewDocument,
     resolvePreview,
     ticketFileTarget
   } from "../lib/filePreview";
@@ -42,7 +43,8 @@
       })
       .then((body) => {
         if (controller.signal.aborted) return;
-        objectUrl = URL.createObjectURL(new Blob([body], { type: "text/html" }));
+        const documentBody = prepareManagedHtmlPreviewDocument(body, current.href);
+        objectUrl = URL.createObjectURL(new Blob([documentBody], { type: "text/html" }));
         htmlFrameHref = objectUrl;
       })
       .catch((err) => {
