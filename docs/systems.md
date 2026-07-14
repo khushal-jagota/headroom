@@ -245,12 +245,17 @@ Ticket chat, Chief of Staff chat, and automatic worker steps use the same chat-s
 contract. A chat state is durable messages plus one optional active turn. The active
 turn carries the phase, activity label, partial output, session key, and error.
 
+Ordinary human messages and commands have one ingress:
+`POST /api/chat/{entity_id}/turns`. The Chief message endpoint is a narrow shell over
+the same service. After admission, the server-owned turn consumes the gateway stream;
+the browser observes durable `ChatState` instead of owning a second HTTP stream.
+
 EmployeeStepRunner stores a newly created or resumed session key before submitting the worker
 prompt, so tools inside the worker can resolve their ticket while the turn is still
 active. It also records the worker turn in chat state, so the UI does not infer
 activity from ticket status.
 
-Human chat sends are rejected while `ticket_status=agent_running_step`. History
+Human Chat turns are rejected while `ticket_status=agent_running_step`. History
 remains readable. There is no queue behind the active worker step.
 
 Because the chat state is product state, backend code must not use a visible chat row

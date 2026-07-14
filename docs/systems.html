@@ -811,15 +811,27 @@
             </summary>
             <div class="detail-body">
               <p>
-                Ticket chat and automatic worker steps use the same durable ticket
-                session. EmployeeStepRunner stores a new or resumed session key before
-                submitting the worker prompt, so worker tools can resolve their
-                ticket during the turn.
+                Ticket chat, Chief of Staff chat, and automatic worker steps use the
+                same durable chat-state contract. Ordinary messages and commands enter
+                through one <code>POST /api/chat/{entity_id}/turns</code> request. The
+                Chief message endpoint is a narrow shell over that same service.
               </p>
               <p>
-                Human chat sends are rejected while
+                After admission, the server-owned turn consumes the gateway stream.
+                The browser observes durable <code>ChatState</code> instead of owning a
+                second HTTP stream. EmployeeStepRunner separately stores a new or
+                resumed session key before submitting the worker prompt, so worker
+                tools can resolve their ticket during the turn.
+              </p>
+              <p>
+                Human Chat turns are rejected while
                 <code>ticket_status=agent_running_step</code>. History stays
                 readable. There is no queue behind the active worker step.
+              </p>
+              <p>
+                Panels chat rows are product-visible state, not model context. Text a
+                worker must read has to reach the Hermes gateway session or the actual
+                worker prompt.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/chat/</code>,

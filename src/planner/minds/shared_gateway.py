@@ -16,11 +16,9 @@ from typing import Any
 from planner.chat.contracts import (
     ChatHistory,
     ChatMessage,
-    ChatSendResult,
     ChatStreamChunk,
     CommandCatalog,
     CommandCategory,
-    CommandRunResult,
     GatewayStatus,
 )
 from planner.chat.logic.activity import normalize_gateway_activity
@@ -86,15 +84,6 @@ class EntityRoutingGateway:
     def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
         return self._gateway_for(entity_id).history(session_key, entity_id)
 
-    def send(
-        self,
-        session_key: str | None,
-        entity_id: str,
-        text: str,
-        on_session_key: Callable[[str], None] | None = None,
-    ) -> ChatSendResult:
-        return self._gateway_for(entity_id).send(session_key, entity_id, text, on_session_key)
-
     def stream(
         self,
         session_key: str | None,
@@ -117,17 +106,6 @@ class EntityRoutingGateway:
 
     def catalog(self) -> CommandCatalog:
         return self._default_gateway.catalog()
-
-    def run_command(
-        self,
-        session_key: str | None,
-        entity_id: str,
-        command: str,
-        on_session_key: Callable[[str], None] | None = None,
-    ) -> CommandRunResult:
-        return self._gateway_for(entity_id).run_command(
-            session_key, entity_id, command, on_session_key
-        )
 
     def shutdown(self) -> None:
         seen: set[int] = set()
@@ -279,43 +257,6 @@ class SharedGateway:
         except GatewayError as exc:
             return RunResult("errored", "", None, resolved_key, str(exc))
 
-    def send(
-        self,
-        session_key: str | None,
-        entity_id: str,
-        text: str,
-        on_session_key: Callable[[str], None] | None = None,
-    ) -> ChatSendResult:
-        try:
-            child = self._child_or_spawn()
-            _, stored = self._resume_or_create(
-                child,
-                session_key,
-                CHAT_SOURCE,
-                reuse_live_session=True,
-            )
-            if on_session_key is not None:
-                on_session_key(stored)
-            result = self._submit_human_and_drain(
-                stored,
-                entity_id,
-                text,
-            )
-            resolved_stored = result.session_key or stored
-            if on_session_key is not None and resolved_stored != stored:
-                on_session_key(resolved_stored)
-        except SharedGatewayBusy as exc:
-            raise PlannerError(
-                ErrorCode.already_running,
-                "an agent is already running on this ticket",
-                {"entity_id": entity_id, "session_key": exc.session_key},
-            ) from exc
-        except GatewayError as exc:
-            raise PlannerError(
-                ErrorCode.gateway_offline, "chat gateway send failed", {"detail": str(exc)}
-            ) from exc
-        return ChatSendResult(reply_text=result.text, session_key=resolved_stored)
-
     def stream(
         self,
         session_key: str | None,
@@ -328,12 +269,12 @@ class SharedGateway:
         try:
             child = self._child_or_spawn()
             if mode == "command" and text == "/new":
-                result = self._start_new_chat_session(child, on_session_key)
-                yield ChatStreamChunk(type="session", session_key=result.session_key)
+                stored = self._start_new_chat_session(child, on_session_key)
+                yield ChatStreamChunk(type="session", session_key=stored)
                 yield from self._stream_done(
-                    result.reply_text,
-                    result.session_key,
-                    result.kind,
+                    "New session started.",
+                    stored,
+                    "system",
                 )
                 return
             _, stored = self._resume_or_create(
@@ -413,71 +354,15 @@ class SharedGateway:
                 ErrorCode.gateway_offline, "chat gateway catalog failed", {"detail": str(exc)}
             ) from exc
 
-    def run_command(
-        self,
-        session_key: str | None,
-        entity_id: str,
-        command: str,
-        on_session_key: Callable[[str], None] | None = None,
-    ) -> CommandRunResult:
-        try:
-            child = self._child_or_spawn()
-            if command == "/new":
-                return self._start_new_chat_session(child, on_session_key)
-            _, stored = self._resume_or_create(
-                child,
-                session_key,
-                CHAT_SOURCE,
-                reuse_live_session=True,
-            )
-            if on_session_key is not None:
-                on_session_key(stored)
-            pending, prepared, reply, kind, resolved_stored = (
-                self._begin_human_command_operation(
-                    stored,
-                    entity_id,
-                    command,
-                )
-            )
-            if on_session_key is not None and resolved_stored != stored:
-                on_session_key(resolved_stored)
-            if pending is not None and prepared is not None:
-                accepted = self._accept_pending_submission(
-                    pending,
-                    prepared,
-                    resolved_stored,
-                    entity_id,
-                )
-                reply = self._drain_accepted_submission(accepted, resolved_stored).text
-            return CommandRunResult(
-                reply_text=reply,
-                session_key=resolved_stored,
-                kind=kind,
-            )
-        except SharedGatewayBusy as exc:
-            raise PlannerError(
-                ErrorCode.already_running,
-                "an agent is already running on this ticket",
-                {"entity_id": entity_id, "session_key": exc.session_key},
-            ) from exc
-        except GatewayError as exc:
-            raise PlannerError(
-                ErrorCode.gateway_offline, "chat gateway command failed", {"detail": str(exc)}
-            ) from exc
-
     def _start_new_chat_session(
         self,
         child: GatewayChild,
         on_session_key: Callable[[str], None] | None,
-    ) -> CommandRunResult:
+    ) -> str:
         _, stored_session_key = self._resume_or_create(child, None, CHAT_SOURCE)
         if on_session_key is not None:
             on_session_key(stored_session_key)
-        return CommandRunResult(
-            reply_text="New session started.",
-            session_key=stored_session_key,
-            kind="system",
-        )
+        return stored_session_key
 
     def _stream_done(self, reply: str, stored: str, kind: str) -> Iterator[ChatStreamChunk]:
         if reply:
@@ -850,66 +735,6 @@ class SharedGateway:
                 usage_raw = observation.payload.get("usage")
                 usage = usage_raw if isinstance(usage_raw, dict) else None
                 status = str(observation.payload.get("status") or "complete")
-                if status == "complete":
-                    return RunResult("complete", text_out, usage, stored_key, None)
-                if status == "interrupted":
-                    return RunResult("interrupted", text_out, usage, stored_key, None)
-                return RunResult(
-                    "errored",
-                    text_out,
-                    usage,
-                    stored_key,
-                    text_out or "run ended with status=error",
-                )
-        finally:
-            accepted.consequence.release()
-
-    def _submit_human_and_drain(
-        self,
-        stored_key: str,
-        entity_id: str,
-        text: str,
-    ) -> RunResult:
-        prepared = self._worker_context.prepare(entity_id, text)
-        try:
-            accepted, resolved_stored_key = self._submit_human_consequence(
-                stored_key,
-                prepared.model_text,
-            )
-        except GatewayRpcError as exc:
-            if exc.code == BUSY_CODE:
-                raise SharedGatewayBusy(stored_key) from exc
-            raise
-        if isinstance(accepted, TransportUnknown):
-            raise GatewayError(accepted.detail)
-        if prepared.receipts:
-            self._worker_context.acknowledge(entity_id, prepared.receipts)
-        return self._drain_accepted_submission(accepted, resolved_stored_key)
-
-    def _drain_accepted_submission(
-        self,
-        accepted: AcceptedSubmission,
-        stored_key: str,
-    ) -> RunResult:
-        try:
-            while True:
-                observation = accepted.consequence.next_observation()
-                event_type = observation.event_type
-                payload = observation.payload
-                if event_type == "error":
-                    return RunResult(
-                        "errored",
-                        "",
-                        None,
-                        stored_key,
-                        str(payload.get("message") or "gateway error event"),
-                    )
-                if event_type != "message.complete":
-                    continue
-                text_out = str(payload.get("text") or "")
-                usage_raw = payload.get("usage")
-                usage = usage_raw if isinstance(usage_raw, dict) else None
-                status = str(payload.get("status") or "complete")
                 if status == "complete":
                     return RunResult("complete", text_out, usage, stored_key, None)
                 if status == "interrupted":

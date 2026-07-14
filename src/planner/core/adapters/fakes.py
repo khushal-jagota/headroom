@@ -11,11 +11,9 @@ from pathlib import Path
 from planner.chat.contracts import (
     ChatHistory,
     ChatMessage,
-    ChatSendResult,
     ChatStreamChunk,
     CommandCatalog,
     CommandCategory,
-    CommandRunResult,
     GatewayStatus,
 )
 from planner.core.errors import ErrorCode, PlannerError
@@ -83,29 +81,6 @@ class EchoGatewayAdapter:
             messages=tuple(self.histories.get(session_key, ())), session_key=session_key
         )
 
-    def send(
-        self,
-        session_key: str | None,
-        entity_id: str,
-        text: str,
-        on_session_key: Callable[[str], None] | None = None,
-    ) -> ChatSendResult:
-        self.calls.append((session_key, entity_id, text))
-        if self.busy:
-            raise PlannerError(
-                ErrorCode.already_running,
-                "an agent is already running on this ticket",
-                {"entity_id": entity_id, "session_key": session_key},
-            )
-        if session_key is None:
-            session_key = f"fake-sess-{self.next_session}"
-            self.next_session += 1
-        if on_session_key is not None:
-            on_session_key(session_key)
-        reply_text = f"echo: {text}"
-        self._append_turn(session_key, text, reply_text, "assistant")
-        return ChatSendResult(reply_text=reply_text, session_key=session_key)
-
     def stream(
         self,
         session_key: str | None,
@@ -116,43 +91,9 @@ class EchoGatewayAdapter:
         image_paths: tuple[Path, ...] = (),
     ) -> Iterator[ChatStreamChunk]:
         if mode == "command":
-            result = self.run_command(session_key, entity_id, text, on_session_key)
+            self.command_calls.append((session_key, entity_id, text))
         else:
-            send_result = self.send(session_key, entity_id, text, on_session_key)
-            result = CommandRunResult(
-                reply_text=send_result.reply_text,
-                session_key=send_result.session_key,
-                kind="assistant",
-            )
-        yield ChatStreamChunk(type="session", session_key=result.session_key)
-        midpoint = max(1, len(result.reply_text) // 2)
-        for token in (result.reply_text[:midpoint], result.reply_text[midpoint:]):
-            if token:
-                yield ChatStreamChunk(type="token", text=token)
-        if self.stream_delay_seconds > 0:
-            time.sleep(self.stream_delay_seconds)
-        yield ChatStreamChunk(
-            type="done",
-            reply_text=result.reply_text,
-            session_key=result.session_key,
-            kind=result.kind,
-        )
-
-    def interrupt(self, session_key: str, entity_id: str) -> None:
-        self.interrupt_calls.append((session_key, entity_id))
-
-    def catalog(self) -> CommandCatalog:
-        self.catalog_calls += 1
-        return CANNED_CATALOG
-
-    def run_command(
-        self,
-        session_key: str | None,
-        entity_id: str,
-        command: str,
-        on_session_key: Callable[[str], None] | None = None,
-    ) -> CommandRunResult:
-        self.command_calls.append((session_key, entity_id, command))
+            self.calls.append((session_key, entity_id, text))
         if self.busy:
             raise PlannerError(
                 ErrorCode.already_running,
@@ -164,29 +105,44 @@ class EchoGatewayAdapter:
             self.next_session += 1
         if on_session_key is not None:
             on_session_key(session_key)
-        parts = command.strip().split(maxsplit=1)
-        token = parts[0].lower() if parts else ""
-        name = CANNED_CATALOG.canon.get(token, token)
-        if name in _CANNED_SKILL_NAMES:  # skill -> command.dispatch -> prompt.submit (a model turn)
-            reply_text = f"skill {name} loaded"
-            self._append_turn(session_key, command.strip(), reply_text, "assistant")
-            return CommandRunResult(
-                reply_text=reply_text, session_key=session_key, kind="assistant"
-            )
-        if name == "/compress":
-            # /compress's real feedback rides in slash.exec's `warning`; the real adapter
-            # combines output + warning (real.py). Model that combined system line here.
-            output, warning = "(no output)", "compressed 40 → 8 messages"
-            reply = (output + "\n" + warning).strip() if warning else output
-            self._append_turn(session_key, command.strip(), reply, "system")
-            return CommandRunResult(reply_text=reply, session_key=session_key, kind="system")
-        # everything else -> slash.exec display output (no model turn)
-        reply_text = f"exec: {command.strip()}"
-        self._append_turn(session_key, command.strip(), reply_text, "system")
-        return CommandRunResult(
-            reply_text=reply_text, session_key=session_key, kind="system"
+
+        kind = "assistant"
+        reply_text = f"echo: {text}"
+        if mode == "command":
+            parts = text.strip().split(maxsplit=1)
+            token = parts[0].lower() if parts else ""
+            name = CANNED_CATALOG.canon.get(token, token)
+            if name in _CANNED_SKILL_NAMES:
+                reply_text = f"skill {name} loaded"
+            elif name == "/compress":
+                reply_text = "(no output)\ncompressed 40 → 8 messages"
+                kind = "system"
+            else:
+                reply_text = f"exec: {text.strip()}"
+                kind = "system"
+        visible_text = text.strip() if mode == "command" else text
+        self._append_turn(session_key, visible_text, reply_text, kind)
+
+        yield ChatStreamChunk(type="session", session_key=session_key)
+        midpoint = max(1, len(reply_text) // 2)
+        for token in (reply_text[:midpoint], reply_text[midpoint:]):
+            if token:
+                yield ChatStreamChunk(type="token", text=token)
+        if self.stream_delay_seconds > 0:
+            time.sleep(self.stream_delay_seconds)
+        yield ChatStreamChunk(
+            type="done",
+            reply_text=reply_text,
+            session_key=session_key,
+            kind=kind,
         )
 
+    def interrupt(self, session_key: str, entity_id: str) -> None:
+        self.interrupt_calls.append((session_key, entity_id))
+
+    def catalog(self) -> CommandCatalog:
+        self.catalog_calls += 1
+        return CANNED_CATALOG
 
 @dataclass
 class OfflineGatewayAdapter:
@@ -194,15 +150,6 @@ class OfflineGatewayAdapter:
         return GatewayStatus(available=False, detail="gateway offline")
 
     def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
-        raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
-
-    def send(
-        self,
-        session_key: str | None,
-        entity_id: str,
-        text: str,
-        on_session_key: Callable[[str], None] | None = None,
-    ) -> ChatSendResult:
         raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
 
     def stream(
@@ -220,13 +167,4 @@ class OfflineGatewayAdapter:
         raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
 
     def catalog(self) -> CommandCatalog:
-        raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
-
-    def run_command(
-        self,
-        session_key: str | None,
-        entity_id: str,
-        command: str,
-        on_session_key: Callable[[str], None] | None = None,
-    ) -> CommandRunResult:
         raise PlannerError(ErrorCode.gateway_offline, "gateway offline")

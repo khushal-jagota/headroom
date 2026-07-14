@@ -463,16 +463,23 @@ def test_patch_day_agent_is_forbidden_unattributed_succeeds(tmp_path: Path) -> N
     assert unattributed.json()["focus"] == "Direct focus"
 
 
-# --- POST /chat/{id}/send: direct-only (§8/§11) ---------------------------------
+# --- POST /chat/{id}/turns: direct-only -----------------------------------------
 
 
-def test_chat_send_agent_is_forbidden_unattributed_succeeds(tmp_path: Path) -> None:
+def test_chat_turn_agent_is_forbidden_unattributed_succeeds(tmp_path: Path) -> None:
     app, _db_path = _make_app(tmp_path)
     entity = "day_2026-07-05"  # a chattable day entity (materializes on read)
     with TestClient(app) as client:
-        agent = client.post(f"/api/chat/{entity}/send", json={"text": "hi"}, headers=_AGENT)
+        agent = client.post(
+            f"/api/chat/{entity}/turns",
+            json={"text": "hi", "mode": "message"},
+            headers=_AGENT,
+        )
         assert agent.status_code == 400
         assert agent.json()["error"]["code"] == "agent_forbidden"
-        unattributed = client.post(f"/api/chat/{entity}/send", json={"text": "hi"})
+        unattributed = client.post(
+            f"/api/chat/{entity}/turns", json={"text": "hi", "mode": "message"}
+        )
     assert unattributed.status_code == 200
-    assert unattributed.json()["reply_text"] == "echo: hi"
+    assert unattributed.json()["status"] == "running"
+    assert unattributed.json()["mode"] == "message"

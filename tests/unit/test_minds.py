@@ -15,10 +15,8 @@ import planner.minds as minds
 from planner.chat.contracts import (
     ChatActivityObservation,
     ChatHistory,
-    ChatSendResult,
     ChatStreamChunk,
     CommandCatalog,
-    CommandRunResult,
     GatewayStatus,
 )
 from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
@@ -177,10 +175,6 @@ class RecordingChatGateway:
         self.calls.append(("history", entity_id))
         return ChatHistory(messages=(), session_key=session_key)
 
-    def send(self, session_key: str | None, entity_id: str, text: str, on_session_key=None):
-        self.calls.append(("send", entity_id))
-        return ChatSendResult(reply_text=f"{self.name}: {text}", session_key=f"{self.name}-key")
-
     def stream(
         self,
         session_key: str | None,
@@ -188,29 +182,26 @@ class RecordingChatGateway:
         text: str,
         mode: str,
         on_session_key=None,
+        image_paths: tuple[Path, ...] = (),
     ):
         self.calls.append(("stream", entity_id))
-        yield from ()
+        yield ChatStreamChunk(type="session", session_key=f"{self.name}-key")
+        yield ChatStreamChunk(
+            type="done",
+            reply_text=f"{self.name}: {text}",
+            session_key=f"{self.name}-key",
+            kind="assistant",
+        )
 
     def catalog(self) -> CommandCatalog:
         self.calls.append(("catalog", ""))
         return CommandCatalog(categories=(), skills=(), canon={}, sub={})
 
-    def run_command(
-        self,
-        session_key: str | None,
-        entity_id: str,
-        command: str,
-        on_session_key=None,
-    ):
-        self.calls.append(("run_command", entity_id))
-        return ChatSendResult(reply_text=f"{self.name}: {command}", session_key=f"{self.name}-key")
-
     def shutdown(self) -> None:
         self.closed = True
 
 
-def test_entity_routing_gateway_sends_chief_entity_to_chief_gateway() -> None:
+def test_entity_routing_gateway_streams_each_entity_through_its_role_gateway() -> None:
     worker = RecordingChatGateway("worker")
     chief = RecordingChatGateway("chief")
     gateway = EntityRoutingGateway(
@@ -218,21 +209,13 @@ def test_entity_routing_gateway_sends_chief_entity_to_chief_gateway() -> None:
         {CHIEF_OF_STAFF_ENTITY_ID: chief},  # type: ignore[dict-item]
     )
 
-    chief_result = gateway.send(None, CHIEF_OF_STAFF_ENTITY_ID, "hello")
-    ticket_result = gateway.send(None, "t_demo", "hello")
+    chief_chunks = list(gateway.stream(None, CHIEF_OF_STAFF_ENTITY_ID, "hello", "message"))
+    ticket_chunks = list(gateway.stream(None, "t_demo", "hello", "message"))
     gateway.status_for_entity(CHIEF_OF_STAFF_ENTITY_ID)
 
-    assert chief_result.reply_text == "chief: hello"
-    assert ticket_result.reply_text == "worker: hello"
-    assert chief.calls == [("send", CHIEF_OF_STAFF_ENTITY_ID), ("status", "")]
-    assert worker.calls == [("send", "t_demo")]
-
-
-def test_entity_routing_gateway_keeps_ordinary_stream_caller_compatible() -> None:
-    worker = RecordingChatGateway("worker")
-    gateway = EntityRoutingGateway(worker, {})  # type: ignore[arg-type]
-
-    assert list(gateway.stream(None, "t_demo", "hello", "message")) == []
+    assert chief_chunks[-1].reply_text == "chief: hello"
+    assert ticket_chunks[-1].reply_text == "worker: hello"
+    assert chief.calls == [("stream", CHIEF_OF_STAFF_ENTITY_ID), ("status", "")]
     assert worker.calls == [("stream", "t_demo")]
 
 
@@ -703,7 +686,7 @@ def test_shared_gateway_respawns_after_child_death() -> None:
     assert fake2.closed is True
 
 
-def test_shared_gateway_delivers_and_acknowledges_context_for_sync_and_stream_human_sends() -> None:
+def test_shared_gateway_delivers_and_acknowledges_context_for_human_message_streams() -> None:
     context = RecordingWorkerContext()
     context.set(
         "t_sync",
@@ -725,7 +708,7 @@ def test_shared_gateway_delivers_and_acknowledges_context_for_sync_and_stream_hu
     )
     gateway = shared(fake, context)
     try:
-        sync = gateway.send(None, "t_sync", "original sync")
+        first = list(gateway.stream(None, "t_sync", "original sync", "message"))
         streamed = list(gateway.stream(None, "t_stream", "original stream", "message"))
     finally:
         gateway.shutdown()
@@ -741,7 +724,7 @@ def test_shared_gateway_delivers_and_acknowledges_context_for_sync_and_stream_hu
         "original stream\n\n[Pending worker context]\n- Ticket changed."
         "\n[/Pending worker context]",
     ]
-    assert sync.reply_text == "sync reply"
+    assert first[-1].reply_text == "sync reply"
     assert streamed[-1].reply_text == "stream reply"
     assert context.prepare_calls == [
         ("t_sync", "original sync"),
@@ -856,7 +839,7 @@ def test_unknown_human_submit_retains_context_without_retry_or_image_detach(
     assert context.pending["t_demo"]
 
 
-def test_shared_gateway_delivers_context_for_sync_and_stream_model_backed_commands_only() -> None:
+def test_shared_gateway_delivers_context_for_model_backed_command_streams_only() -> None:
     context = RecordingWorkerContext()
     for entity_id in ("t_sync_command", "t_stream_command", "t_pure_command"):
         context.set(entity_id, PendingWorkerContext("ticket_changed", "Ticket changed.", 1))
@@ -880,9 +863,9 @@ def test_shared_gateway_delivers_context_for_sync_and_stream_model_backed_comman
     )
     gateway = shared(fake, context)
     try:
-        sync = gateway.run_command(None, "t_sync_command", "/skill")
+        first = list(gateway.stream(None, "t_sync_command", "/skill", "command"))
         streamed = list(gateway.stream(None, "t_stream_command", "/skill", "command"))
-        pure = gateway.run_command(None, "t_pure_command", "/status")
+        pure = list(gateway.stream(None, "t_pure_command", "/status", "command"))
     finally:
         gateway.shutdown()
 
@@ -897,9 +880,9 @@ def test_shared_gateway_delivers_context_for_sync_and_stream_model_backed_comman
         "stream command prompt\n\n[Pending worker context]\n- Ticket changed."
         "\n[/Pending worker context]",
     ]
-    assert sync.kind == "assistant"
+    assert first[-1].kind == "assistant"
     assert streamed[-1].kind == "assistant"
-    assert pure.reply_text == "pure output"
+    assert pure[-1].reply_text == "pure output"
     assert context.prepare_calls == [
         ("t_sync_command", "sync command prompt"),
         ("t_stream_command", "stream command prompt"),
@@ -907,56 +890,18 @@ def test_shared_gateway_delivers_context_for_sync_and_stream_model_backed_comman
     assert context.pending["t_pure_command"]
 
 
-def test_literal_new_sync_starts_fresh_session_and_next_message_uses_live_handle() -> None:
+@pytest.mark.parametrize("prior_session_key", [STORED_KEY, None])
+def test_literal_new_stream_starts_one_bound_fresh_session_reused_by_next_message(
+    prior_session_key: str | None,
+) -> None:
     fake = FakeGateway(
         {
             "session.create": [create_reply(OTHER_SID, OTHER_KEY)],
-            "prompt.submit": [submit_reply(complete_ev(OTHER_SID, text="reply from new session"))],
+            "prompt.submit": [
+                submit_reply(complete_ev(OTHER_SID, text="reply from new session"))
+            ],
         }
     )
-    gateway = shared(fake)
-    callback_keys: list[str] = []
-
-    def record_bound_key(session_key: str) -> None:
-        live_session = gateway.live_session(session_key)
-        assert live_session is not None
-        assert live_session.live_session_id == OTHER_SID
-        callback_keys.append(session_key)
-
-    try:
-        command_result = gateway.run_command(
-            STORED_KEY,
-            "t_demo",
-            "/new",
-            on_session_key=record_bound_key,
-        )
-        send_result = gateway.send(OTHER_KEY, "t_demo", "hello new session")
-    finally:
-        gateway.shutdown()
-
-    assert command_result == CommandRunResult(
-        reply_text="New session started.",
-        session_key=OTHER_KEY,
-        kind="system",
-    )
-    assert send_result == ChatSendResult(
-        reply_text="reply from new session",
-        session_key=OTHER_KEY,
-    )
-    assert callback_keys == [OTHER_KEY]
-    assert fake.sent_methods() == ["session.create", "prompt.submit"]
-    assert fake.sent[0]["params"] == {"source": CHAT_SOURCE, "cols": SESSION_COLS}
-    assert fake.sent[1]["params"] == {
-        "session_id": OTHER_SID,
-        "text": "hello new session",
-    }
-
-
-@pytest.mark.parametrize("prior_session_key", [STORED_KEY, None])
-def test_literal_new_stream_starts_one_bound_fresh_session(
-    prior_session_key: str | None,
-) -> None:
-    fake = FakeGateway({"session.create": [create_reply(OTHER_SID, OTHER_KEY)]})
     gateway = shared(fake)
     callback_keys: list[str] = []
 
@@ -976,6 +921,9 @@ def test_literal_new_stream_starts_one_bound_fresh_session(
                 on_session_key=record_bound_key,
             )
         )
+        next_chunks = list(
+            gateway.stream(OTHER_KEY, "t_demo", "hello new session", "message")
+        )
     finally:
         gateway.shutdown()
 
@@ -990,12 +938,16 @@ def test_literal_new_stream_starts_one_bound_fresh_session(
         ),
     ]
     assert callback_keys == [OTHER_KEY]
-    assert fake.sent_methods() == ["session.create"]
+    assert next_chunks[-1].reply_text == "reply from new session"
+    assert fake.sent_methods() == ["session.create", "prompt.submit"]
     assert fake.sent[0]["params"] == {"source": CHAT_SOURCE, "cols": SESSION_COLS}
+    assert fake.sent[1]["params"] == {
+        "session_id": OTHER_SID,
+        "text": "hello new session",
+    }
 
 
-@pytest.mark.parametrize("entrypoint", ["sync", "stream"])
-def test_new_with_arguments_keeps_generic_command_path(entrypoint: str) -> None:
+def test_new_with_arguments_keeps_generic_command_stream_path() -> None:
     fake = FakeGateway(
         {
             "session.create": [create_reply()],
@@ -1005,21 +957,13 @@ def test_new_with_arguments_keeps_generic_command_path(entrypoint: str) -> None:
     gateway = shared(fake)
 
     try:
-        if entrypoint == "sync":
-            result = gateway.run_command(None, "t_demo", "/new title")
-            assert result == CommandRunResult(
-                reply_text="generic output",
-                session_key=STORED_KEY,
-                kind="system",
-            )
-        else:
-            chunks = list(gateway.stream(None, "t_demo", "/new title", "command"))
-            assert chunks[-1] == ChatStreamChunk(
-                type="done",
-                reply_text="generic output",
-                session_key=STORED_KEY,
-                kind="system",
-            )
+        chunks = list(gateway.stream(None, "t_demo", "/new title", "command"))
+        assert chunks[-1] == ChatStreamChunk(
+            type="done",
+            reply_text="generic output",
+            session_key=STORED_KEY,
+            kind="system",
+        )
     finally:
         gateway.shutdown()
 
@@ -1603,14 +1547,14 @@ def test_completed_released_human_session_reopens_through_resume() -> None:
     gateway = shared(fake)
 
     try:
-        first = gateway.send(None, "t_demo", "first")
-        second = gateway.send(STORED_KEY, "t_demo", "second")
+        first = list(gateway.stream(None, "t_demo", "first", "message"))
+        second = list(gateway.stream(STORED_KEY, "t_demo", "second", "message"))
     finally:
         gateway.shutdown()
 
-    assert first.reply_text == "first reply"
-    assert second.reply_text == "second reply"
-    assert second.session_key == STORED_KEY
+    assert first[-1].reply_text == "first reply"
+    assert second[-1].reply_text == "second reply"
+    assert second[-1].session_key == STORED_KEY
     assert fake.sent_methods() == [
         "session.create",
         "prompt.submit",
@@ -1690,7 +1634,9 @@ def test_role_gateway_child_death_does_not_stop_sibling_role() -> None:
         assert worker_fake.wait_sent(2, 5.0)
         worker_fake.kill()
         worker_call.join(5.0)
-        chief_result = chief.send(None, "chief-of-staff", "still there?")
+        chief_result = list(
+            chief.stream(None, "chief-of-staff", "still there?", "message")
+        )
     finally:
         worker.shutdown()
         chief.shutdown()
@@ -1699,7 +1645,7 @@ def test_role_gateway_child_death_does_not_stop_sibling_role() -> None:
     assert len(worker_results) == 1
     assert worker_results[0].status == "errored"
     assert worker_fake.sent_methods().count("prompt.submit") == 1
-    assert chief_result.reply_text == "chief reply"
+    assert chief_result[-1].reply_text == "chief reply"
     assert chief_fake.sent_methods() == ["session.create", "prompt.submit"]
 
 
@@ -1711,7 +1657,7 @@ def test_new_gateway_resumes_stored_session_without_replaying_prior_input() -> N
         }
     )
     first_gateway = shared(first_fake)
-    first_result = first_gateway.send(None, "t_demo", "first input")
+    first_result = list(first_gateway.stream(None, "t_demo", "first input", "message"))
     first_gateway.shutdown()
 
     second_fake = FakeGateway(
@@ -1722,15 +1668,16 @@ def test_new_gateway_resumes_stored_session_without_replaying_prior_input() -> N
     )
     second_gateway = shared(second_fake)
     try:
-        second_result = second_gateway.send(
-            first_result.session_key,
+        second_result = list(second_gateway.stream(
+            first_result[-1].session_key,
             "t_demo",
             "second input",
-        )
+            "message",
+        ))
     finally:
         second_gateway.shutdown()
 
-    assert second_result.reply_text == "second reply"
+    assert second_result[-1].reply_text == "second reply"
     assert second_fake.sent_methods() == ["session.resume", "prompt.submit"]
     assert [
         frame["params"]["text"]
@@ -1870,7 +1817,7 @@ def test_stream_retry_persists_rotated_key_after_reused_session_detaches(
     assert fake.sent[-1]["params"]["session_id"] == OTHER_SID
 
 
-def test_send_retry_persists_rotated_key_after_prepare_time_detach() -> None:
+def test_stream_retry_persists_rotated_key_after_prepare_time_detach() -> None:
     second_prepare_entered = threading.Event()
     allow_second_prepare = threading.Event()
 
@@ -1904,7 +1851,7 @@ def test_send_retry_persists_rotated_key_after_prepare_time_detach() -> None:
     )
     gateway = shared(fake, BlockingSecondPrepareContext())
     first_chunks: list[Any] = []
-    second_results: list[ChatSendResult] = []
+    second_results: list[ChatStreamChunk] = []
     second_session_keys: list[str] = []
     first = threading.Thread(
         target=lambda: first_chunks.extend(
@@ -1912,11 +1859,12 @@ def test_send_retry_persists_rotated_key_after_prepare_time_detach() -> None:
         )
     )
     second = threading.Thread(
-        target=lambda: second_results.append(
-            gateway.send(
+        target=lambda: second_results.extend(
+            gateway.stream(
                 STORED_KEY,
                 "t_demo",
                 "second",
+                "message",
                 on_session_key=second_session_keys.append,
             )
         )
@@ -1938,9 +1886,12 @@ def test_send_retry_persists_rotated_key_after_prepare_time_detach() -> None:
         gateway.shutdown()
 
     assert not second.is_alive()
-    assert second_results == [
-        ChatSendResult(reply_text="second reply", session_key=OTHER_KEY)
-    ]
+    assert second_results[-1] == ChatStreamChunk(
+        type="done",
+        reply_text="second reply",
+        session_key=OTHER_KEY,
+        kind="assistant",
+    )
     assert second_session_keys == [STORED_KEY, OTHER_KEY]
     assert fake.sent_methods() == [
         "session.create",
@@ -1951,10 +1902,8 @@ def test_send_retry_persists_rotated_key_after_prepare_time_detach() -> None:
     ]
 
 
-@pytest.mark.parametrize("sync", [False, True])
 @pytest.mark.parametrize("alias", [False, True])
 def test_model_command_to_derived_prompt_write_is_one_ordered_operation(
-    sync: bool,
     alias: bool,
 ) -> None:
     prepare_entered = threading.Event()
@@ -1991,12 +1940,9 @@ def test_model_command_to_derived_prompt_write_is_one_ordered_operation(
     message_results: list[Any] = []
 
     def run_command_call() -> None:
-        if sync:
-            command_results.append(gateway.run_command(None, "t_demo", "/alias arg"))
-        else:
-            command_results.extend(
-                gateway.stream(None, "t_demo", "/alias arg", "command")
-            )
+        command_results.extend(
+            gateway.stream(None, "t_demo", "/alias arg", "command")
+        )
 
     command_thread = threading.Thread(target=run_command_call)
     message_thread = threading.Thread(

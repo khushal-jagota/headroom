@@ -13,10 +13,8 @@ from typing import TYPE_CHECKING
 
 from planner.chat.contracts import (
     ChatHistory,
-    ChatSendResult,
     ChatStreamChunk,
     CommandCatalog,
-    CommandRunResult,
     GatewayStatus,
 )
 from planner.core.errors import ErrorCode, PlannerError
@@ -49,15 +47,6 @@ class RealGatewayAdapter:
     def history(self, session_key: str | None, entity_id: str) -> ChatHistory:
         raise self._offline()
 
-    def send(
-        self,
-        session_key: str | None,
-        entity_id: str,
-        text: str,
-        on_session_key: Callable[[str], None] | None = None,
-    ) -> ChatSendResult:
-        raise self._offline()
-
     def stream(
         self,
         session_key: str | None,
@@ -73,13 +62,4 @@ class RealGatewayAdapter:
         raise self._offline()
 
     def catalog(self) -> CommandCatalog:
-        raise self._offline()
-
-    def run_command(
-        self,
-        session_key: str | None,
-        entity_id: str,
-        command: str,
-        on_session_key: Callable[[str], None] | None = None,
-    ) -> CommandRunResult:
         raise self._offline()

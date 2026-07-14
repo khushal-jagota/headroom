@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import threading
 from datetime import timedelta
 from pathlib import Path
 from sqlite3 import Connection
@@ -8,9 +9,6 @@ from sqlite3 import Connection
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    LoopAutomaticEmployeeStepEligibilityWake,
-)
 
 from planner.core import clock as planner_clock
 from planner.core import links as core_links
@@ -21,6 +19,9 @@ from planner.core.contracts import LinkKind
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.days import data as days_data
+from planner.runtime.automatic_employee_step_eligibility_wake import (
+    LoopAutomaticEmployeeStepEligibilityWake,
+)
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
@@ -984,9 +985,26 @@ def test_successful_excluded_parentage_project_sprint_and_chat_writes_do_not_wak
         assert unparented.status_code == 200, unparented.text
         assert unparented.json()["rollup"]["needs_success"] == 0
 
-        chat = client.post("/api/chat/day_2099-05-03/send", json={"text": "hello"})
+        chat = client.post(
+            "/api/chat/day_2099-05-03/turns",
+            json={"text": "hello", "mode": "message"},
+        )
         assert chat.status_code == 200, chat.text
-        assert chat.json()["reply_text"] == "echo: hello"
+        assert chat.json()["status"] == "running"
+        assert chat.json()["mode"] == "message"
+        for _ in range(40):
+            conn = connect(str(db_path))
+            try:
+                row = conn.execute(
+                    "SELECT status FROM chat_turns WHERE id = ?", (chat.json()["id"],)
+                ).fetchone()
+            finally:
+                conn.close()
+            if row is not None and row["status"] != "running":
+                break
+            threading.Event().wait(0.05)
+        else:
+            raise AssertionError("chat turn did not settle")
 
     assert eligibility_wake.calls == 0
 

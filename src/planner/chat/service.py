@@ -1,8 +1,9 @@
-"""The chat passthrough (§11). Resolves the chat entity (ticket or day), sends
-through the gateway adapter, and — on the first reply only — persists the minted
-session key onto the entity and logs one chat_session_created event in a single
-transaction. Framework-free: no FastAPI/pydantic (SPEC §14 / server.py docstring).
-Times arrive as unix-second ints from the caller's clock."""
+"""Server-owned Chat turns and durable Chat state.
+
+Human ingress resolves a chattable entity, records one turn, and consumes the
+gateway stream in the background. The first announced session key is persisted
+before prompt delivery. Framework-free: no FastAPI or Pydantic.
+"""
 
 from __future__ import annotations
 
@@ -18,13 +19,10 @@ from urllib.parse import quote, unquote, urlsplit
 from planner.chat import data as chat_data
 from planner.chat.contracts import (
     ChatHistory,
-    ChatSendResult,
     ChatState,
     ChatStateMessage,
-    ChatStreamChunk,
     ChatTurn,
     CommandCatalog,
-    CommandRunResult,
     GatewayStatus,
 )
 from planner.chat.logic.activity import normalize_gateway_activity
@@ -178,53 +176,6 @@ def _persist_key(
         return minted_key
 
 
-def send(
-    conn: sqlite3.Connection,
-    gateway: GatewayAdapter,
-    entity_id: str,
-    text: str,
-    now: int,
-) -> ChatSendResult:
-    _reject_if_ticket_worker_running(conn, entity_id)
-    kind, stored_key = _resolve(conn, entity_id, now)
-    effective_key = stored_key
-
-    def persist_session_before_prompt(session_key: str) -> None:
-        nonlocal effective_key
-        if session_key == effective_key:
-            _reject_if_ticket_worker_running(conn, entity_id)
-            return
-        effective_key = _persist_key(
-            conn,
-            kind,
-            entity_id,
-            effective_key,
-            session_key,
-            now,
-            reject_running_ticket=True,
-        )
-
-    # The gateway call is IO; it runs outside any transaction.
-    try:
-        result = gateway.send(stored_key, entity_id, text, persist_session_before_prompt)
-    except PlannerError:
-        raise  # already structured (offline adapter raises gateway_offline)
-    except Exception as exc:  # noqa: BLE001
-        raise PlannerError(
-            ErrorCode.gateway_offline, "gateway unavailable", {"cause": str(exc)}
-        ) from exc
-    if result.session_key != effective_key:  # callback-free adapters still persist here
-        effective_key = _persist_key(conn, kind, entity_id, effective_key, result.session_key, now)
-    if effective_key != result.session_key:  # lost the first-write race; adopt the winner
-        result = ChatSendResult(reply_text=result.reply_text, session_key=effective_key)
-    chat_data.record_message(conn, entity_id, role="human", text=text, now=now)
-    if result.reply_text:
-        chat_data.record_message(
-            conn, entity_id, role="assistant", text=result.reply_text, now=now
-        )
-    return result
-
-
 def history(
     conn: sqlite3.Connection,
     gateway: GatewayAdapter,
@@ -335,78 +286,6 @@ def catalog(gateway: GatewayAdapter) -> CommandCatalog:
     return gateway.catalog()
 
 
-def stream(
-    conn: sqlite3.Connection,
-    gateway: GatewayAdapter,
-    entity_id: str,
-    text: str,
-    mode: str,
-    now: int,
-) -> Iterator[ChatStreamChunk]:
-    """Stream a chat message or command and persist the completed session key.
-
-    The gateway owns live token production; this service owns the same session-key
-    persistence rule used by send()/run_command(). A streaming gateway yields an
-    internal ``session`` chunk before the prompt starts so worker tools can resolve
-    their ticket while the turn is still running.
-    """
-    _reject_if_ticket_worker_running(conn, entity_id)
-    entity_kind, stored_key = _resolve(conn, entity_id, now)
-    effective_key = stored_key
-    chat_data.record_message(conn, entity_id, role="human", text=text, now=now)
-
-    def persist_session_before_prompt(session_key: str) -> None:
-        nonlocal effective_key
-        if session_key == effective_key:
-            _reject_if_ticket_worker_running(conn, entity_id)
-            return
-        effective_key = _persist_key(
-            conn,
-            entity_kind,
-            entity_id,
-            effective_key,
-            session_key,
-            now,
-            reject_running_ticket=True,
-        )
-
-    try:
-        chunks = gateway.stream(stored_key, entity_id, text, mode, persist_session_before_prompt)
-        for chunk in chunks:
-            if chunk.type == "session":
-                if chunk.session_key and chunk.session_key != effective_key:
-                    persist_session_before_prompt(chunk.session_key)
-                continue
-            if chunk.type != "done":
-                yield chunk
-                continue
-            session_key = chunk.session_key
-            if session_key != effective_key:
-                session_key = _persist_key(
-                    conn, entity_kind, entity_id, effective_key, session_key, now
-                )
-            if chunk.reply_text:
-                chat_data.record_message(
-                    conn,
-                    entity_id,
-                    role="system" if chunk.kind == "system" else "assistant",
-                    text=chunk.reply_text,
-                    now=now,
-                )
-            yield ChatStreamChunk(
-                type="done",
-                reply_text=chunk.reply_text,
-                session_key=session_key,
-                kind=chunk.kind,
-            )
-    except PlannerError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        raise PlannerError(
-            ErrorCode.gateway_offline, "gateway unavailable", {"cause": str(exc)}
-        ) from exc
-
-
 def start_human_turn(
     conn_factory: Callable[[], sqlite3.Connection],
     gateway: GatewayAdapter,
@@ -478,26 +357,31 @@ def _run_human_turn(
         _reject_if_ticket_worker_running(conn, entity_id)
         entity_kind, stored_key = _resolve(conn, entity_id, now)
         effective_key = stored_key
+        announced_session_key: str | None = None
 
         def persist_session_before_prompt(session_key: str) -> None:
-            nonlocal effective_key
-            if session_key == effective_key:
+            nonlocal announced_session_key, effective_key
+            if session_key == announced_session_key:
                 _reject_if_ticket_worker_running(conn, entity_id)
             else:
-                effective_key = _persist_key(
-                    conn,
-                    entity_kind,
-                    entity_id,
-                    effective_key,
-                    session_key,
-                    now_fn(),
-                    reject_running_ticket=True,
-                )
+                announced_session_key = session_key
+                if session_key == effective_key:
+                    _reject_if_ticket_worker_running(conn, entity_id)
+                else:
+                    effective_key = _persist_key(
+                        conn,
+                        entity_kind,
+                        entity_id,
+                        effective_key,
+                        session_key,
+                        now_fn(),
+                        reject_running_ticket=True,
+                    )
+            assert effective_key is not None
             chat_data.attach_session_key(
-                conn, turn_id, entity_id=entity_id, session_key=session_key, now=now_fn()
+                conn, turn_id, entity_id=entity_id, session_key=effective_key, now=now_fn()
             )
 
-        output_role = "system" if mode == "command" else "assistant"
         if not image_paths:
             chunks = gateway.stream(
                 stored_key, entity_id, text, mode, persist_session_before_prompt
@@ -545,9 +429,13 @@ def _run_human_turn(
             if chunk.type == "done":
                 session_key = chunk.session_key
                 if session_key and session_key != effective_key:
-                    session_key = _persist_key(
-                        conn, entity_kind, entity_id, effective_key, session_key, now
-                    )
+                    if session_key == announced_session_key:
+                        assert effective_key is not None
+                        session_key = effective_key
+                    else:
+                        session_key = _persist_key(
+                            conn, entity_kind, entity_id, effective_key, session_key, now
+                        )
                     chat_data.attach_session_key(
                         conn, turn_id, entity_id=entity_id, session_key=session_key, now=now
                     )
@@ -699,62 +587,6 @@ def fail_worker_turn(
     conn: sqlite3.Connection, entity_id: str, turn_id: str, error: str, now: int
 ) -> None:
     chat_data.fail_turn(conn, turn_id, entity_id=entity_id, error=error, now=now)
-
-
-def run_command(
-    conn: sqlite3.Connection,
-    gateway: GatewayAdapter,
-    entity_id: str,
-    command: str,
-    now: int,
-) -> CommandRunResult:
-    """Run a /command on the entity's own mind. Same first-reply key-persist + one
-    chat_session_created event as send (a command can be the very first message)."""
-    _reject_if_ticket_worker_running(conn, entity_id)
-    kind, stored_key = _resolve(conn, entity_id, now)
-    effective_key = stored_key
-
-    def persist_session_before_prompt(session_key: str) -> None:
-        nonlocal effective_key
-        if session_key == effective_key:
-            _reject_if_ticket_worker_running(conn, entity_id)
-            return
-        effective_key = _persist_key(
-            conn,
-            kind,
-            entity_id,
-            effective_key,
-            session_key,
-            now,
-            reject_running_ticket=True,
-        )
-
-    try:
-        result = gateway.run_command(
-            stored_key, entity_id, command, persist_session_before_prompt
-        )
-    except PlannerError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        raise PlannerError(
-            ErrorCode.gateway_offline, "gateway unavailable", {"cause": str(exc)}
-        ) from exc
-    if result.session_key != effective_key:
-        effective_key = _persist_key(conn, kind, entity_id, effective_key, result.session_key, now)
-    if effective_key != result.session_key:
-        result = CommandRunResult(
-            reply_text=result.reply_text, session_key=effective_key, kind=result.kind
-        )
-    chat_data.record_message(conn, entity_id, role="human", text=command, now=now)
-    if result.reply_text:
-        chat_data.record_message(
-            conn,
-            entity_id,
-            role="system" if result.kind == "system" else "assistant",
-            text=result.reply_text,
-            now=now,
-        )
-    return result
 
 
 def status(gateway: GatewayAdapter) -> GatewayStatus:

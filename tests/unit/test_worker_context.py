@@ -4,8 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from planner.chat import service as chat_service
-from planner.chat.contracts import ChatSendResult, ChatStreamChunk, CommandRunResult
 from planner.core.contracts import Priority
 from planner.core.db import connect
 from planner.tickets import data as tickets_data
@@ -129,7 +127,6 @@ def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(tmp
         now=3,
     )
     assert _pending(tmp_db, ticket.id) == ()
-
     tickets_data.edit_ticket(
         tmp_db,
         ticket.id,
@@ -297,74 +294,3 @@ def test_deleting_ticket_removes_its_pending_context(tmp_db) -> None:
     tickets_data.delete_ticket(tmp_db, ticket.id, actor="human", now=41)
 
     assert _pending(tmp_db, ticket.id) == ()
-
-
-def test_legacy_chat_paths_persist_original_visible_text_without_gateway_history(tmp_db) -> None:
-    class Gateway:
-        def history(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
-            raise AssertionError("local visible messages should prevent Hermes history fallback")
-
-        def send(self, session_key, entity_id, text, on_session_key=None):  # noqa: ANN001, ANN201
-            return ChatSendResult(reply_text="send reply", session_key=f"session-{entity_id}")
-
-        def run_command(
-            self,
-            session_key,
-            entity_id,
-            command,
-            on_session_key=None,  # noqa: ANN001
-        ) -> CommandRunResult:
-            return CommandRunResult(
-                reply_text="command reply", session_key=f"session-{entity_id}", kind="assistant"
-            )
-
-        def stream(
-            self,
-            session_key,
-            entity_id,
-            text,
-            mode,
-            on_session_key=None,  # noqa: ANN001
-        ):
-            key = f"session-{entity_id}"
-            yield ChatStreamChunk(type="session", session_key=key)
-            yield ChatStreamChunk(
-                type="done", reply_text="stream reply", session_key=key, kind="assistant"
-            )
-
-    gateway = Gateway()
-    send_ticket = _ticket(tmp_db)
-    command_ticket = _ticket(tmp_db)
-    stream_ticket = _ticket(tmp_db)
-
-    chat_service.send(tmp_db, gateway, send_ticket.id, "original send", 50)  # type: ignore[arg-type]
-    chat_service.run_command(
-        tmp_db,
-        gateway,
-        command_ticket.id,
-        "/model-backed",
-        51,  # type: ignore[arg-type]
-    )
-    list(
-        chat_service.stream(
-            tmp_db,
-            gateway,
-            stream_ticket.id,
-            "original stream",
-            "message",
-            52,  # type: ignore[arg-type]
-        )
-    )
-
-    assert [
-        message.text
-        for message in chat_service.state(tmp_db, gateway, send_ticket.id, 53).messages  # type: ignore[arg-type]
-    ] == ["original send", "send reply"]
-    assert [
-        message.text
-        for message in chat_service.state(tmp_db, gateway, command_ticket.id, 53).messages  # type: ignore[arg-type]
-    ] == ["/model-backed", "command reply"]
-    assert [
-        message.text
-        for message in chat_service.state(tmp_db, gateway, stream_ticket.id, 53).messages  # type: ignore[arg-type]
-    ] == ["original stream", "stream reply"]

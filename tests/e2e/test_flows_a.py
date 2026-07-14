@@ -999,8 +999,8 @@ def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
 
 
 def test_slash_menu_runs_skill(server, context_factory, open_page, cli, api):
-    # The "/" menu is a read of the gateway command catalog; selecting a Skill runs
-    # it on the ticket's own mind via POST /command (fake gateway -> a scripted reply).
+    # The "/" menu is a read of the gateway command catalog; selecting a Skill starts
+    # a canonical command-mode turn on the ticket's own mind.
     tid = cli(server, "ticket", "create", "--worker-type", "coding", "--title", "T18 slash ticket")[
         "id"
     ]
@@ -1051,8 +1051,8 @@ def test_slash_menu_runs_skill(server, context_factory, open_page, cli, api):
 
 
 def test_slash_menu_runs_display_command(server, context_factory, open_page, cli, api):
-    # A non-skill display command (/status) executes on the ticket's own mind via POST
-    # /command and renders as a system line — on BOTH the menu-pick and the typed-Send
+    # A non-skill display command (/status) starts a canonical command-mode turn and
+    # renders as a system line — on BOTH the menu-pick and the typed-Send
     # path. The Exit category stays out of the menu (a web chat can't quit the mind).
     tid = cli(
         server, "ticket", "create", "--worker-type", "coding", "--title", "T18 display ticket"

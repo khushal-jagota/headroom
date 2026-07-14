@@ -6,10 +6,13 @@ a real conversation with that ticket's employee.
 
 ## The ticket chat
 
-The chat panel on a ticket is a real conversation with that ticket's employee. When
-you send a message it starts a server-owned chat turn. The browser reads one
-`ChatState` resource: durable visible messages plus the active turn, if one is
-running. The same resource survives navigation, remounts, reloads, WebSocket
+The chat panel on a ticket is a real conversation with that ticket's employee.
+Ordinary messages and commands both enter through one request:
+`POST /api/chat/{entity_id}/turns`. That request starts a server-owned chat turn,
+then the gateway stream delivers it to Hermes and reports its progress back to the
+turn. There is no separate send, command, or browser streaming route. The browser
+reads one `ChatState` resource: durable visible messages plus the active turn, if
+one is running. The same resource survives navigation, remounts, reloads, WebSocket
 misses, and simple polling.
 
 When the panel first loads, it starts at the latest message. New messages and live
@@ -83,7 +86,9 @@ prompt automatically.
 
 The Chief of Staff page uses the same chat state shape with its top-level entity id.
 Only the gateway routing differs: chief messages go to the `panels-chief-of-staff`
-role, while ticket and day chat keep the worker gateway.
+role, while ticket and day chat keep the worker gateway. The hosted
+`POST /api/messages/chief` endpoint is a narrow shell over the same human-turn
+service, not a second delivery path.
 
 Hosted clients can send a plain HTTP Chief message without using the local Panels
 CLI:
