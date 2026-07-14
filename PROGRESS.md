@@ -27,6 +27,10 @@ Current build stage:
   wake, lock, and shutdown ownership follow the frozen contract. The accepted missing no-gated-field stale
   regression is fixed, the qualifying read-only corrected-diff review reports `NO VIOLATIONS`, and the
   committed checkpoint passes the canonical gate.
+- AD04's Ticket-only Review implementation plan is complete and contract-locked. Three review rounds found
+  and corrected the file-preview selector omission, overbroad event and mutation invalidation, missing
+  current-day/cold-start handling, and the Ticket-creation companion-event contradiction. The final fresh
+  read-only re-review, session `019f5eca-4772-7771-8727-515fd60e285e`, reports `NO VIOLATIONS`.
 
 What just passed:
 
@@ -178,12 +182,16 @@ What just passed:
   source files; 687 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three
   existing warnings), production build, frontend tests; 80 Playwright e2e tests; final `VERIFY: PASS`.
   The complete transcript is retained at `data/verify/ad03-pass.log`.
+- AD04 now has an exact backend/TypeScript response, Ticket-only UI, event/mutation invalidation, deletion,
+  preservation, test, and changed-path contract in `ad04-ticket-only-review/contract-lock.md`. Its final
+  correction explicitly allows only migration-time historical Worker-type classification: live Ticket
+  creation and all canonical storage continue to require an explicit Worker type with no coding default.
 
 Next step:
 
-- Delegate the AD04 Ticket-only Review implementation plan from
-  `ad04-ticket-only-review/ticket.md`, then obtain independent plan review before freezing its exact public
-  and internal contract.
+- Commit the isolated AD04 plan/review/contract checkpoint, then delegate implementation against that lock.
+  The worker will add RED tests first, change only the bounded allowlist, run focused checks, and leave the
+  product diff unstaged for independent Codex review before the one canonical `./verify`.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`

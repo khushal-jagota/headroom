@@ -888,6 +888,29 @@ AD03 follows the existing implementation-scope rule from `D-ad01-review-scope-is
 `PROGRESS.md`, `decisions.md`, and review evidence are orchestrator outputs, not delegated product paths.
 They are committed as an isolated review/memory checkpoint before the corrected product-diff re-review.
 
+## D-ad04-review-is-one-ticket-read-model — Review exposes only parked Ticket decisions and running workers
+
+AD04 replaces the generic Queue interface with one Ticket-specific Review read model. Its public payload is
+exactly `ticket_decisions` plus the global `running_worker_count`; each decision is exactly a Ticket id,
+gated field, title, and waiting timestamp. Sprint-item approvals, overdue calculation, generic entity
+dispatch, `/api/queues`, the `queues` resource, and all compatibility aliases are deleted in the same
+replacement. The stored Stage is read directly; the Ticket's explicit stored Worker type is resolved only
+to interpret which field that Stage gates.
+
+Event and mutation invalidation follow actual Review dependencies as far as the existing event contract can
+express them. Ticket chat/session/turn, note, recap, value, scope, link, metadata, and Sprint-item changes do
+not refresh Review. Current-day membership does; a known off-day membership change does not. Cold-start
+event handling uses the existing `includeTodayAlias` option only while the cached day id is unknown. Ticket
+creation's companion proposal/status events conservatively refresh Review because those payloads carry no
+day-membership snapshot; adding an event distinction solely to avoid that bounded refetch has not earned its
+existence.
+
+The first three plan reviews found five real gaps: the file-preview Review selector, overbroad Ticket event
+mapping, Sprint-item mutation invalidation, the shared Ticket mutation list, and current-day gating. A final
+review exposed the creation-companion contradiction. All are accepted in the corrected plan; the final
+read-only re-review reports `NO VIOLATIONS`. The exact read, response, UI, invalidation, deletion, and
+preservation boundaries are frozen in `ad04-ticket-only-review/contract-lock.md`.
+
 ## D-ad01-one-locked-ticket-migration — One terminal rebuild migrates every old Ticket schema
 
 AD01 replaces the sequential Ticket lifecycle, kickoff, type, and vocabulary rebuild path with one

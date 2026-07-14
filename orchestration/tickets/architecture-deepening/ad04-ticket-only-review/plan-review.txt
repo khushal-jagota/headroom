@@ -1,0 +1,79 @@
+AD04 implementation plan review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5ebf-3de2-7971-bf31-3f43439beade
+
+Findings
+
+High: the bounded allowlist omitted `tests/e2e/test_ticket_file_previews.py`, whose live Review selector
+uses `data-entity-id`. The Ticket-specific card contract must replace that with `data-ticket-id`; otherwise
+the e2e fails or generic Review markup survives.
+
+Medium: the plan said Review invalidation should cover only actual inputs but also retained `review` for
+every Ticket entity event. Ticket ids own Chat/session/turn events that do not change the Review response,
+so this would preserve an unearned refetch and violate the exact invalidation requirement.
+
+Disposition
+
+Both accepted. The corrected plan adds the file-preview e2e path for its Review selector only, freezes
+`data-ticket-id`/`data-field`, and rejects `data-entity-id`/`data-kind`. It also removes Review from the
+prefix-only Ticket mapping and enumerates only proposal, Stage, status, deletion, title-edit, and current-day
+membership events that can change the response. Chat, note, recap, value, scope, link, creation-before-day,
+and Sprint-item events do not invalidate Review.
+
+Corrected-plan re-review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5ec2-15bb-7f71-9194-bb5d2f4aa4bf
+
+Findings
+
+Medium: `BacklogRoute.svelte` creates Sprint items. Its obsolete `queues` key must be deleted without adding
+`review`; Sprint-item creation cannot change Review.
+
+Medium: `TicketRoute.svelte` shares one invalidation list across mutations with different effects. Replacing
+`queues` with `review` in that list would refetch Review for scope, notes, field values, recaps, and unrelated
+metadata edits.
+
+Medium: `day_ticket_added` and `day_ticket_removed` affect Review only for today's day. The mapping must use
+the existing `todayId` / `includeTodayAlias` options and omit Review for other days.
+
+Disposition
+
+All accepted. The corrected plan deletes `queues` from Backlog without a replacement, splits Ticket mutation
+invalidations by whether the mutation changes a Review input, and gates day-membership invalidation on the
+existing current-day condition. The tests now require each inclusion and exclusion explicitly.
+
+Final corrected-plan review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5ec5-d4f3-7912-b53a-7c1d38ee0532
+
+Finding
+
+Medium: the plan required `proposal_filed` and `ticket_status_changed` to invalidate Review while also
+claiming creation before day placement did not invalidate it. Ticket creation emits both companion events
+before placement, so the claim and test contract contradicted the live writer.
+
+Disposition
+
+Accepted. `ticket_created` itself omits Review, while its proposal/status companion events conservatively
+invalidate it because their payloads do not carry day membership and the same event kinds can change an
+already-placed Ticket. The plan now states and tests that limitation instead of claiming impossible
+precision. The related cold-start path is explicit too: the event stream uses `includeTodayAlias` only while
+the cached today id is unknown, so direct Review cannot miss a current-day membership update and known
+off-day events remain excluded.
+
+Final corrected-plan re-review
+Date: 2026-07-14
+Reviewer: Codex CLI gpt-5.5, read-only, high reasoning effort
+Session: 019f5eca-4772-7771-8727-515fd60e285e
+
+Result
+
+NO VIOLATIONS
+
+The review rechecked every recorded finding against the corrected plan and the live creation, event
+mapping, event-stream, Ticket-mutation, and Backlog-mutation paths. It confirmed the bounded allowlist and
+tests cover the creation companion events, cold-start unknown-today fallback, known off-day exclusion,
+Ticket mutation split, Sprint-item exclusion, and Review-card selector replacement.
