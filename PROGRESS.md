@@ -22,15 +22,11 @@ Current build stage:
   `afa57fd`.
 - AD02 is complete on the branch at `05e2fda`. Its delegated implementation and corrected diff passed
   independent review with `NO VIOLATIONS`, and the committed checkpoint passes the canonical gate.
-- AD03's delegated implementation is complete and fully unstaged apart from orchestrator-owned review and
-  memory records, which are isolated from the bounded product diff. The production path has passed the
-  orchestrator's load-bearing spot-check: membership-only discovery and the final `BEGIN IMMEDIATE` claim
-  call the same complete seven-factor function; direct revision stays separate; wake, lock, and shutdown
-  ownership follow the frozen contract. Independent implementation review found one Medium test gap: the
-  stale-claim no-side-effect matrix proves six factors but omits the distinct no-gated-field factor. The
-  finding is accepted; the test-only correction passes its focused checks. A first corrected-review setup
-  audit found only that the new orchestrator records needed isolation, so a fresh qualifying read-only
-  corrected-diff review will run from the isolated memory checkpoint.
+- AD03 is complete on the branch at `d3dcc29`. Membership-only discovery and the final
+  `BEGIN IMMEDIATE` claim call the same complete seven-factor function; direct revision stays separate;
+  wake, lock, and shutdown ownership follow the frozen contract. The accepted missing no-gated-field stale
+  regression is fixed, the qualifying read-only corrected-diff review reports `NO VIOLATIONS`, and the
+  committed checkpoint passes the canonical gate.
 
 What just passed:
 
@@ -170,11 +166,23 @@ What just passed:
   `git diff --check`, and the empty-index check all pass. These are focused checks, not the canonical
   completeness claim. Independent reviewer session `019f5ea0-46f2-76e1-a78f-cae334227de9` found only the
   missing stale no-gated-field downstream-side-effect regression; no production-path violation was found.
+- The accepted AD03 test gap is corrected without production changes. The stale-claim matrix now supplies a
+  test-only ungated non-terminal definition at the final claim seam while leaving the exact shared function
+  untouched, and proves no status/event, Panels Chat message/turn, gateway/prompt, or wake. The focused
+  correction plus function-identity proof passes 2 tests; Ruff and diff checks pass.
+- The qualifying fresh read-only corrected-diff review, session
+  `019f5ea6-d03f-7bc1-b527-f334a3f594d5`, reports `NO VIOLATIONS`. It reconfirmed all seven factors,
+  transaction timing, direct revision, wake/composition/shutdown ownership, deleted compatibility names,
+  bounded paths, timer backstop, and docs parity.
+- The committed AD03 checkpoint passes canonical `PYTHONPATH="$PWD/src" ./verify`: Ruff; mypy across 114
+  source files; 687 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three
+  existing warnings), production build, frontend tests; 80 Playwright e2e tests; final `VERIFY: PASS`.
+  The complete transcript is retained at `data/verify/ad03-pass.log`.
 
 Next step:
 
-- Run a fresh read-only corrected-diff review from the isolated AD03 review/memory checkpoint. Run the
-  canonical gate only after that corrected review reports no violations.
+- Decompose AD04 Ticket-only Review against its contract surfaces, delegate the implementation plan, and
+  obtain independent plan review before freezing the next contract.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`
