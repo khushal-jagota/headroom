@@ -103,7 +103,9 @@ Current build stage:
   nine immediate mutation effects, and event dependencies; the generic cache remains semantic-free; phantom
   identities and forwarding modules are deleted; and the served bundle is current. The focused type, Node,
   unit, and 68-test browser evidence is green. Independent implementation review session
-  `019f5f98-5fd1-7610-9cd5-92d2cf2a32a8` reports `NO VIOLATIONS`. The canonical gate is next.
+  `019f5f98-5fd1-7610-9cd5-92d2cf2a32a8` reports `NO VIOLATIONS`.
+- AD08 is complete. Its committed reviewed checkpoint at `4e267c6` passes the canonical gate with 714 unit
+  tests and 86 Playwright tests; the full transcript is retained at `data/verify/ad08-pass.log`.
 
 What just passed:
 
