@@ -194,8 +194,11 @@ Add focused contract tests before rewiring production. Prove all of the followin
 2. **Explicit authority.** The Employee-history endpoint returns the actual Hermes messages only when
    explicitly requested, including an actual delivered prompt that differs from its Panels-visible mirror.
    It never inserts synthetic Panels messages.
-3. **No-session and failure purity.** Missing Employee id returns empty without spawning Hermes. Offline,
-   malformed, missing-Ticket, and agent-auth cases preserve the existing error envelope and write nothing.
+3. **No-session and failure purity.** Missing Employee id returns empty without spawning Hermes. The
+   gateway's existing lenient normalization remains exact: a non-list history is empty and malformed
+   entries are skipped, with no write. Missing-Ticket and agent-auth cases keep their existing envelopes;
+   `gateway_offline` remains reserved for transport/RPC failure. Every failure or malformed-history read
+   writes nothing.
 4. **Rotation and races.** A rotated history id persists through the canonical writer and one new event; a
    stale concurrent history result cannot overwrite a newer winner. Repeated reads are idempotent.
 5. **Delivery parity.** Automatic work, direct revision, human message/command/image, `/new`, Pause, busy
