@@ -126,8 +126,8 @@ chevrons so they read as clickable; the bottom action row is gone.
   The serif voice does the work of making it feel like a considered decision
   rather than a form.
 - **Workspace** — the current rail + right pane. Rows stay sans instruments with
-  the existing mark vocabulary; the chief's messages are serif. Filters compress
-  to one quiet line.
+  the existing mark vocabulary; the chief's messages are serif. The Hide done
+  toggle sits alone on one quiet line.
 - **Ticket** — the document earns the name: serif title (28px) and serif prose
   throughout; one sans facts line (status · priority · due · project · sprint ·
   take over/copy); the leash sentence; recap open at the top; then the spine of

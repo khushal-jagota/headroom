@@ -4,6 +4,43 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-14): Workspace Hide done as the only visibility filter
+
+Current build stage:
+
+- Ticket `t_834r0tz6` is implemented on branch `ticket/t_834r0tz6-workspace-filters` in isolated
+  worktree `/private/tmp/panels-t_834r0tz6`. Implementation is the current gated field; nothing is
+  merged, deployed, or restarted.
+- A fresh Workspace now starts with **Hide done** on. Turning it off reveals done tickets, and the
+  existing app-level state preserves the choice across in-app navigation. The Ticket-status control,
+  local state, filtering branch, status-only styles, and orphaned label helper are removed; every
+  Ticket status remains visible. Grouping, Worker-type/Stage/activity ordering, collapse, selection,
+  URL navigation, and row presentation stay on their existing paths.
+- Live frontend documentation, the standing decision, and current Workspace redesign intent now describe
+  the same one-toggle contract.
+
+What just passed:
+
+- The focused browser regression was RED against the old fresh default, then passed with the new default,
+  absent status control, reveal-done behavior, and both navigation-persistent toggle states. Existing
+  Chief, ownership, routing, collapse, row, and marker scenarios pass after removing only obsolete
+  status-filter setup; two marker tests explicitly reveal done rows before asserting their terminal marks.
+- The first independent Codex review found stale redesign intent and the now-orphaned `ticketStatusLabel`;
+  both were removed. Two corrected-diff reviews with model `gpt-5.5`, read-only sandbox, and high reasoning
+  report `NO VIOLATIONS`.
+- The final canonical `./verify` passes Ruff; mypy across 116 source files; 799 unit tests; compile/static
+  and CSS checks; Svelte check with zero errors and warnings; production build; frontend tests; and 96
+  Playwright tests, ending `VERIFY: PASS`. The full transcript is
+  `[implementation verify transcript](/files/tickets/t_834r0tz6/artifacts/verify.txt)`.
+
+Next step:
+
+- Propose Implementation for approval. Merge, deployment, restart, and branch cleanup wait for Closeout.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-14): shutdown `0.0s` repair
 
 Current build stage:

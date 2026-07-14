@@ -22,7 +22,7 @@
   const review = resourceCatalogue.review();
 
   let route = $state<Route>(parseRoute());
-  let workspaceHideDone = $state(false);
+  let workspaceHideDone = $state(true);
 
   function decodeRouteSegment(segment: string): string {
     try {

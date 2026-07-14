@@ -5,7 +5,7 @@ notes + fidelity audit (chat header = availability dot + label; pending row =
 three dots + activity label — both already live behavior).
 
 ## Outcome
-The workspace matches the mockup: restyled rail (chief row, one-line filters,
+The workspace matches the mockup: restyled rail (chief row, one-line Hide done control,
 project sections, slim rows with the existing mark vocabulary, needs-you rows
 one step stronger), and the chief pane in the serif voice.
 
@@ -13,11 +13,10 @@ one step stronger), and the chief pane in the serif voice.
 1. **Rail** (`BoardRoute.svelte` + styles): Chief of Staff as the top row
    (quiet row treatment, active = overlay background;
    `data-chief-of-staff-button` + `aria-pressed` preserved — e2e asserts both).
-   Filters compress to one quiet line: the status select (keeps
-   `data-status-filter`, `data-filter-group`, options and labels unchanged) and
-   the Hide done toggle (keeps `data-hide-done-toggle` and checkbox semantics —
-   it may be visually restyled as text but must remain the same input). The
-   "Filters" heading text is dropped (visual only).
+   The Hide done toggle sits on one quiet line and keeps `data-hide-done-toggle`
+   plus checkbox semantics — it may be visually restyled as text but remains the
+   same input. It starts on and is the only visibility filter; there is no status
+   or Stage selector and no "Filters" heading.
 2. **Project sections**: collapsible as today (`data-project-section`,
    `data-project-key`, `.section-heading-label` preserved — e2e reads the label
    text and counts `.board-workspace-stage-mark` per row). Uppercase label +
@@ -34,7 +33,7 @@ one step stronger), and the chief pane in the serif voice.
 
 ## e2e / selector notes
 Grep for `data-chief-of-staff-button`, `data-workspace-filters`,
-`data-status-filter`, `data-hide-done-toggle`, `data-project-section`,
+`data-hide-done-toggle`, `data-project-section`,
 `data-card`, `board-workspace-stage-mark`, `list-row-title` — all preserved.
 
 ## Acceptance

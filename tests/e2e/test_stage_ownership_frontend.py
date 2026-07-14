@@ -81,7 +81,7 @@ def test_ticket_facts_edit_current_stage_owner_without_execution_route(
     assert page.inner_text("[data-ticket-takeover-toggle]") == "Take over"
 
 
-def test_workspace_filter_and_stage_mark_render_paired_work_on_desktop_and_mobile(
+def test_workspace_stage_mark_renders_paired_work_on_desktop_and_mobile(
     server, context_factory, cli, api
 ) -> None:
     ticket_id = cli(
@@ -110,11 +110,11 @@ def test_workspace_filter_and_stage_mark_render_paired_work_on_desktop_and_mobil
             "() => window.__plannerDebug && window.__plannerDebug.flushes >= 1",
             timeout=WAIT_MS,
         )
-        page.select_option('[aria-label="Ticket status"]', "paired_work")
         card = f'[data-card][data-ticket-id="{ticket_id}"]'
         page.wait_for_selector(card, timeout=WAIT_MS)
+        assert page.is_checked("[data-hide-done-toggle]")
+        assert page.locator('[aria-label="Ticket status"]').count() == 0
         assert page.get_attribute(card, "data-ticket-status") == "paired_work"
-        assert page.inner_text(".board-workspace-filter-value") == "Paired work"
         assert page.inner_text(f"{card} .board-workspace-row-stage") == "Success"
         assert (
             page.get_attribute(

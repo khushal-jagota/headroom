@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { resourceCatalogue } from "../lib/resourceCatalogue";
-  import { labelize, ticketStatusLabel } from "../lib/ui";
+  import { labelize } from "../lib/ui";
   import type { FieldStageVisualState } from "../lib/ui";
   import { lifecycleFor, type WorkerTypesResponse } from "../lib/lifecycle";
   import Button from "../components/Button.svelte";
@@ -12,37 +12,18 @@
   import StageMark from "../components/StageMark.svelte";
   import TicketRoute from "./TicketRoute.svelte";
 
-  let { hideDone = $bindable(false), ticketId }: { hideDone?: boolean; ticketId?: string } = $props();
+  let { hideDone = $bindable(true), ticketId }: { hideDone?: boolean; ticketId?: string } = $props();
 
   const chiefOfStaffEntityId = "agent_panels_chief_of_staff";
   const noProjectKey = "__no_project__";
-  const ticketStatusFilters = [
-    { value: "all", label: "All" },
-    { value: "empty", label: "Empty" },
-    { value: "agent_running_step", label: "Running" },
-    { value: "awaiting_approval", label: "Awaiting approval" },
-    { value: "paired_work", label: "Paired work" },
-    { value: "user_takeover", label: "User takeover" },
-    { value: "errored", label: "Errored" }
-  ];
   const board = resourceCatalogue.board();
   const chiefChatStatus = resourceCatalogue.chatGatewayStatus(chiefOfStaffEntityId);
   const manifest = resourceCatalogue.workerTypeManifests();
   let columns = $derived(board.data?.columns || []);
-  let statusFilter = $state<string>("all");
-  // The unfiltered rail reads "All statuses" (the mockup's wording); the select's
-  // own option list keeps the short "All".
-  let statusFilterLabel = $derived(
-    statusFilter === "all"
-      ? "All statuses"
-      : (ticketStatusFilters.find((filter) => filter.value === statusFilter)?.label ?? "All statuses")
-  );
   let allCards = $derived(columns.flatMap((column) => column.cards));
   let selectedCard = $derived(allCards.find((card) => card.id === ticketId) || null);
   let rightPaneMode = $derived<"chief" | "ticket">(selectedCard ? "ticket" : "chief");
-  let projectSections = $derived(
-    buildProjectSections(columns, statusFilter, hideDone, manifest.data)
-  );
+  let projectSections = $derived(buildProjectSections(columns, hideDone, manifest.data));
 
   $effect(() => {
     if (ticketId && board.data && !board.loading && !board.stale && !selectedCard) {
@@ -130,7 +111,6 @@
 
   function buildProjectSections(
     sourceColumns: Array<{ stage: string; cards: Record<string, any>[] }>,
-    activeStatusFilter: string,
     shouldHideDone: boolean,
     workerTypes: WorkerTypesResponse | undefined
   ): Array<{ key: string; label: string; cards: Record<string, any>[] }> {
@@ -140,7 +120,6 @@
     for (const column of sourceColumns) {
       for (const card of column.cards) {
         if (shouldHideDone && column.stage === "done") continue;
-        if (activeStatusFilter !== "all" && card.ticket_status !== activeStatusFilter) continue;
         const key = card.group_project_id || noProjectKey;
         const label = card.group_project || "No project";
         if (!groups.has(key)) groups.set(key, { key, label, cards: [] });
@@ -204,25 +183,6 @@
           </div>
 
           <div class="board-workspace-filters" data-workspace-filters>
-            <label class="board-workspace-filter-group" data-filter-group="ticket-status">
-              <span class="board-workspace-filter-value">{statusFilterLabel}</span>
-              <select
-                aria-label="Ticket status"
-                class="board-workspace-filter-select"
-                data-status-filter={statusFilter}
-                bind:value={statusFilter}
-              >
-                {#each ticketStatusFilters as filter}
-                  <option
-                    value={filter.value}
-                    title={filter.value === "all" ? "All ticket statuses" : ticketStatusLabel(filter.value)}
-                  >
-                    {filter.label}
-                  </option>
-                {/each}
-              </select>
-            </label>
-
             <label class="board-workspace-hide-done-toggle" class:board-workspace-hide-done-toggle--on={hideDone}>
               <input
                 type="checkbox"
