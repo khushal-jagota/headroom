@@ -101,11 +101,14 @@ share.
   preview cards. Embedded HTML files render as cards with a fetched `srcdoc` iframe
   whose sandbox permits the file's scripts but does not grant same-origin or other
   host-page privileges. A new-tab action opens the Panels preview route. On that
-  route, HTML is no longer wrapped in preview-card chrome: the route fetches the
-  document, gives the iframe a short-lived Blob URL, revokes the old URL when the
-  target changes or unmounts, and fills the available page with the same isolated
-  script-enabled iframe. Images, video, and audio render inline; unknown files stay as
-  download cards; ordinary external links stay external-link cards with deterministic host
+  route, HTML and Markdown are no longer wrapped in preview-card chrome. HTML is
+  fetched as a document, given to the iframe through a short-lived Blob URL, revoked
+  when the target changes or unmounts, and fills the available page with the same
+  isolated script-enabled iframe. Markdown is fetched as source and rendered directly
+  through `MarkdownBlock` in the full-page document area, so managed links keep the
+  same nested-preview and self-link bounds as embedded Markdown without repeating the
+  file title, metadata, or open action. Images, video, and audio render inline; unknown
+  files stay as download cards; ordinary external links stay external-link cards with deterministic host
   text. The full preview route is
   `#/preview?source=ticket&ticket=<id>&path=<path>`. Chat images under
   `/files/chats/<entity-id>/...` use this same component and resolver rather than a

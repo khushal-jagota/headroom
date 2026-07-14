@@ -1,5 +1,6 @@
 <script lang="ts">
   import FilePreview from "../components/FilePreview.svelte";
+  import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import type { FilePreviewTarget } from "../lib/filePreview";
   import {
     MANAGED_HTML_PREVIEW_SANDBOX,
@@ -25,13 +26,17 @@
   let target = $derived(parseTarget());
   let resolved = $derived(target ? resolvePreview(target) : null);
   let htmlFrameHref = $state<string | null>(null);
+  let markdownSource = $state<string | null>(null);
   let error = $state("");
+  let isDocumentPreview = $derived(resolved?.kind === "html" || resolved?.kind === "markdown");
+  let markdownVisited = $derived(resolved?.kind === "markdown" ? [resolved.href] : []);
 
   $effect(() => {
     const current = resolved;
     htmlFrameHref = null;
+    markdownSource = null;
     error = "";
-    if (!current || current.kind !== "html") return;
+    if (!current || (current.kind !== "html" && current.kind !== "markdown")) return;
 
     const controller = new AbortController();
     let objectUrl: string | null = null;
@@ -42,8 +47,12 @@
       })
       .then((body) => {
         if (controller.signal.aborted) return;
-        objectUrl = URL.createObjectURL(new Blob([body], { type: "text/html" }));
-        htmlFrameHref = objectUrl;
+        if (current.kind === "html") {
+          objectUrl = URL.createObjectURL(new Blob([body], { type: "text/html" }));
+          htmlFrameHref = objectUrl;
+        } else {
+          markdownSource = body;
+        }
       })
       .catch((err) => {
         if (!controller.signal.aborted) error = err instanceof Error ? err.message : String(err);
@@ -57,7 +66,7 @@
 </script>
 
 <section
-  class={`file-preview-route${resolved?.kind === "html" ? " file-preview-route--document" : ""}`}
+  class={`file-preview-route${isDocumentPreview ? " file-preview-route--document" : ""}`}
   data-file-preview-route
 >
   {#if resolved?.kind === "html"}
@@ -71,6 +80,16 @@
         sandbox={MANAGED_HTML_PREVIEW_SANDBOX}
         title={resolved.label}
       ></iframe>
+    {:else}
+      <div class="quiet-line">Loading preview...</div>
+    {/if}
+  {:else if resolved?.kind === "markdown"}
+    {#if error}
+      <div class="quiet-line">{error}</div>
+    {:else if markdownSource !== null}
+      <article class="file-preview-markdown-document" data-file-preview-markdown>
+        <MarkdownBlock text={markdownSource} depth={1} visited={markdownVisited} />
+      </article>
     {:else}
       <div class="quiet-line">Loading preview...</div>
     {/if}
