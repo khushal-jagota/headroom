@@ -42,7 +42,7 @@ they do not inherit that choice from registry order or another definition.
 
 This makes the definition the one authority for both the data and behavior of that
 workflow. Ticket contracts still own universal Ticket facts such as status, per-Ticket
-ownership overrides, and execution route, but they do not define a coding lifecycle.
+ownership overrides, and scope, but they do not define a coding lifecycle.
 
 _Code paths:_ `src/planner/worker_types/contracts.py` contains the immutable declaration
 types and behavior. `src/planner/worker_types/coding.py` and
@@ -199,7 +199,7 @@ prefix, and reconciliation support before changing state.
 ## Handoffs
 
 - **Tickets and gates** (`tickets-and-gates.md`) explains scope, proposals, resolution,
-  Stage ownership and per-Ticket overrides, execution routes, and approval.
+  Stage ownership and per-Ticket overrides, scope, and approval.
 - **The employee runtime** (`employee-runtime.md`) explains how a worker owns one Ticket
   step and reaches its specialist.
 - **The frontend** (`frontend.md`) explains the screens driven by the served manifest.

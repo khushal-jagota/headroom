@@ -23,7 +23,6 @@ from planner.tickets import worker_context as ticket_worker_context
 from planner.tickets.contracts import (
     AtCap,
     EmployeeSessionIdTransition,
-    ExecutionRoute,
     FieldSlot,
     NextCeiling,
     Proposal,
@@ -121,9 +120,6 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         ceiling=str(row["ceiling"]),
         at_cap=AtCap(row["at_cap"]),
         ticket_status=TicketStatus(row["ticket_status"]),
-        execution_route=(
-            ExecutionRoute(row["execution_route"]) if row["execution_route"] is not None else None
-        ),
         stage_ownership_overrides=overrides,
         default_stage_ownership_mode=default_ownership,
         effective_stage_ownership_mode=effective_ownership,
@@ -396,7 +392,6 @@ def create_ticket(
     deadline: str | None = None,
     sprint_id: str | None = None,
     sprint_item_id: str | None = None,
-    execution_route: ExecutionRoute | None = None,
     worker_type: str,
 ) -> Ticket:
     admission.validate_title(title, title_max_chars)
@@ -444,9 +439,9 @@ def create_ticket(
             "INSERT INTO tickets ("
             "id, title, worker_type, stage, priority, deadline, project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, "
-            "ticket_status, execution_route, stage_ownership_overrides, "
+            "ticket_status, stage_ownership_overrides, "
             "employee_session_id, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -460,7 +455,6 @@ def create_ticket(
                 default_ceiling,
                 AtCap.propose.value,
                 TicketStatus.awaiting_approval.value,
-                execution_route.value if execution_route is not None else None,
                 "{}",
                 fields_json,
                 now,
@@ -1432,9 +1426,7 @@ def edit_ticket(
         title = edit["title"] if "title" in edit else ticket.title
         priority = edit["priority"] if "priority" in edit else ticket.priority
         deadline = edit["deadline"] if "deadline" in edit else ticket.deadline
-        execution_route = (
-            edit["execution_route"] if "execution_route" in edit else ticket.execution_route
-        )
+
         project_id = edit["project_id"] if "project_id" in edit else ticket.project_id
         sprint_id = edit["sprint_id"] if "sprint_id" in edit else ticket.sprint_id
 
@@ -1465,12 +1457,6 @@ def edit_ticket(
             ("title", "title", ticket.title, title),
             ("priority", "priority", ticket.priority.value, priority.value),
             ("deadline", "deadline", ticket.deadline, deadline),
-            (
-                "execution_route",
-                "execution_route",
-                ticket.execution_route.value if ticket.execution_route is not None else None,
-                execution_route.value if execution_route is not None else None,
-            ),
             ("project_id", "project_id", ticket.project_id, project_id),
             ("sprint_id", "sprint_id", ticket.sprint_id, sprint_id),
         )

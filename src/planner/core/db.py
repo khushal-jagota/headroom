@@ -11,7 +11,7 @@ from typing import Final
 
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 21
+SCHEMA_VERSION: Final = 22
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -73,8 +73,6 @@ CREATE TABLE IF NOT EXISTS tickets (
                        CHECK (ticket_status IN ('empty','agent_running_step',
                                                 'awaiting_approval','user_takeover',
                                                 'paired_work','errored')),
-  execution_route      TEXT CHECK (execution_route IN ('panels_worker',
-                                                       'hermes_codex','hermes_claude')),
   stage_ownership_overrides TEXT NOT NULL DEFAULT '{}',
   employee_session_id  TEXT,                         -- the Employee's durable Hermes session id
   alias                TEXT,                         -- migration "Ticket ID:" (seed importer dedup)
@@ -216,11 +214,11 @@ def create_schema(conn: sqlite3.Connection) -> None:
     ticket_schema = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
     ).fetchone()
-    if ticket_schema is None or ticket_schema[0] is None or not _tickets_table_is_v21(
-        conn, str(ticket_schema[0])
-    ):
-        _migrate_tickets_to_v20_contract(conn)
-    _migrate_tickets_to_v21_stage_ownership(conn)
+    ticket_sql = "" if ticket_schema is None or ticket_schema[0] is None else str(ticket_schema[0])
+    if not _tickets_table_is_v22(conn, ticket_sql):
+        if not _tickets_table_is_v21(conn, ticket_sql):
+            _migrate_tickets_to_v20_contract(conn)
+        _migrate_tickets_to_v22_without_execution_route(conn)
     _migrate_project_summary_column(conn)
     _migrate_derived_sprint_item_status(conn)
     _migrate_links_blocks_only(conn)
@@ -727,10 +725,11 @@ def _migrate_tickets_to_v21_stage_ownership(conn: sqlite3.Connection) -> None:
                         execution_route = str(implementer)
                     elif implementer == "khushal" and worker_type == "coding":
                         overrides["needs_implementation"] = "user"
-                    elif (
-                        "execution_route" in columns
-                        and row["execution_route"] in {"panels_worker", "hermes_codex", "hermes_claude"}
-                    ):
+                    elif "execution_route" in columns and row["execution_route"] in {
+                        "panels_worker",
+                        "hermes_codex",
+                        "hermes_claude",
+                    }:
                         execution_route = str(row["execution_route"])
                     if "stage_ownership_overrides" in columns:
                         raw_overrides = row["stage_ownership_overrides"]
@@ -788,6 +787,129 @@ def _migrate_tickets_to_v21_stage_ownership(conn: sqlite3.Connection) -> None:
             if violations:
                 raise RuntimeError(
                     f"foreign key check failed after Ticket v21 migration: {violations!r}"
+                )
+        except BaseException:
+            if use_savepoint:
+                conn.execute(f"ROLLBACK TO {savepoint}")
+                conn.execute(f"RELEASE {savepoint}")
+            else:
+                conn.rollback()
+            conn.execute("DROP TABLE IF EXISTS tickets_new")
+            raise
+        else:
+            conn.execute(f"RELEASE {savepoint}" if use_savepoint else "COMMIT")
+    finally:
+        if foreign_keys_enabled:
+            conn.execute("PRAGMA foreign_keys=ON")
+
+
+_V22_TICKETS_TABLE_SQL: Final = """
+CREATE TABLE tickets_new (
+  id                   TEXT PRIMARY KEY,
+  title                TEXT NOT NULL CHECK (length(title) <= 200),
+  worker_type          TEXT NOT NULL,
+  stage                TEXT NOT NULL DEFAULT 'needs_kickoff',
+  priority             TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
+  deadline             TEXT,
+  project_id           TEXT REFERENCES projects(id),
+  sprint_item_id       TEXT REFERENCES sprint_items(id),
+  sprint_id            TEXT REFERENCES sprints(id),
+  recap                TEXT NOT NULL DEFAULT '',
+  ceiling              TEXT NOT NULL,
+  at_cap               TEXT NOT NULL DEFAULT 'propose' CHECK (at_cap IN ('stop','propose')),
+  ticket_status        TEXT NOT NULL DEFAULT 'empty'
+                       CHECK (ticket_status IN ('empty','agent_running_step',
+                                                'awaiting_approval','user_takeover',
+                                                'paired_work','errored')),
+  stage_ownership_overrides TEXT NOT NULL DEFAULT '{}',
+  employee_session_id  TEXT,
+  alias                TEXT,
+  fields               TEXT NOT NULL,
+  created_at           INTEGER NOT NULL,
+  updated_at           INTEGER NOT NULL
+)
+"""
+
+
+def _tickets_table_is_v22(conn: sqlite3.Connection, sql: str) -> bool:
+    columns = _table_columns(conn, "tickets")
+    return (
+        "stage_ownership_overrides" in columns
+        and "execution_route" not in columns
+        and "implementer" not in columns
+        and "paired_work" in sql
+        and "khushal" not in sql
+    )
+
+
+def _migrate_tickets_to_v22_without_execution_route(conn: sqlite3.Connection) -> None:
+    foreign_keys_enabled = bool(conn.execute("PRAGMA foreign_keys").fetchone()[0])
+    if foreign_keys_enabled and conn.in_transaction:
+        raise RuntimeError("Ticket v22 migration requires an autocommit connection")
+    if foreign_keys_enabled:
+        conn.execute("PRAGMA foreign_keys=OFF")
+    use_savepoint = conn.in_transaction
+    savepoint = "ticket_v22_without_execution_route"
+    try:
+        conn.execute(f"SAVEPOINT {savepoint}" if use_savepoint else "BEGIN IMMEDIATE")
+        try:
+            schema_row = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+            ).fetchone()
+            if schema_row is None or schema_row[0] is None:
+                raise RuntimeError("tickets table is missing")
+            sql = str(schema_row[0])
+            if not _tickets_table_is_v22(conn, sql):
+                rows = conn.execute("SELECT * FROM tickets ORDER BY id").fetchall()
+                conn.execute("DROP TABLE IF EXISTS tickets_new")
+                conn.execute(_V22_TICKETS_TABLE_SQL)
+                for row in rows:
+                    row_columns = set(row.keys())
+                    if "stage_ownership_overrides" in row_columns:
+                        ownership_overrides = row["stage_ownership_overrides"]
+                    elif (
+                        "implementer" in row_columns
+                        and row["implementer"] == "khushal"
+                        and row["worker_type"] == "coding"
+                    ):
+                        ownership_overrides = json.dumps({"needs_implementation": "user"})
+                    else:
+                        ownership_overrides = "{}"
+                    conn.execute(
+                        "INSERT INTO tickets_new ("
+                        "id, title, worker_type, stage, priority, deadline, project_id, "
+                        "sprint_item_id, sprint_id, recap, ceiling, at_cap, ticket_status, "
+                        "stage_ownership_overrides, employee_session_id, alias, fields, "
+                        "created_at, updated_at"
+                        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            row["id"],
+                            row["title"],
+                            row["worker_type"],
+                            row["stage"],
+                            row["priority"],
+                            row["deadline"],
+                            row["project_id"],
+                            row["sprint_item_id"],
+                            row["sprint_id"],
+                            row["recap"],
+                            row["ceiling"],
+                            row["at_cap"],
+                            row["ticket_status"],
+                            ownership_overrides,
+                            row["employee_session_id"],
+                            row["alias"],
+                            row["fields"],
+                            row["created_at"],
+                            row["updated_at"],
+                        ),
+                    )
+                conn.execute("DROP TABLE tickets")
+                conn.execute("ALTER TABLE tickets_new RENAME TO tickets")
+            violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                raise RuntimeError(
+                    f"foreign key check failed after Ticket v22 migration: {violations!r}"
                 )
         except BaseException:
             if use_savepoint:
@@ -1045,8 +1167,7 @@ def _migrate_links_blocks_only(conn: sqlite3.Connection) -> None:
 def _migrate_chat_turn_recovery_column(conn: sqlite3.Connection) -> None:
     if "recovery_of_turn_id" not in _table_columns(conn, "chat_turns"):
         conn.execute(
-            "ALTER TABLE chat_turns ADD COLUMN recovery_of_turn_id TEXT "
-            "REFERENCES chat_turns(id)"
+            "ALTER TABLE chat_turns ADD COLUMN recovery_of_turn_id TEXT REFERENCES chat_turns(id)"
         )
 
 

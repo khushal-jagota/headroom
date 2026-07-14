@@ -43,7 +43,6 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     AtCap,
     EmployeeSessionIdTransition,
-    ExecutionRoute,
     TicketStatus,
 )
 from planner.tickets.logic import fields_codec
@@ -135,12 +134,7 @@ def _db(tmp_path: Path) -> str:
     return str(db_path)
 
 
-def _new_ticket(
-    db_path: str,
-    *,
-    ceiling: str | None = None,
-    execution_route: ExecutionRoute | None = None,
-) -> str:
+def _new_ticket(db_path: str, *, ceiling: str | None = None) -> str:
     conn = connect(db_path)
     try:
         ticket = tickets_data.create_ticket(
@@ -150,7 +144,6 @@ def _new_ticket(
             actor="human",
             now=0,
             title_max_chars=200,
-            execution_route=execution_route,
         )
         ticket = _accept_kickoff_field(conn, ticket.id)
         _delete_kickoff_setup_events(conn, ticket.id)
@@ -409,39 +402,28 @@ def test_complete_with_no_proposal_is_empty_not_errored(tmp_path: Path) -> None:
     assert eligibility_wake.calls == 1
 
 
-def test_next_step_prompt_includes_execution_route_and_stage_owner(tmp_path: Path) -> None:
+def test_next_step_prompt_includes_stage_owner_without_execution_route(tmp_path: Path) -> None:
     db = _db(tmp_path)
     conn = connect(db)
     try:
-        assigned = tickets_data.create_ticket(
+        ticket = tickets_data.create_ticket(
             conn,
             worker_type="coding",
             title="T",
             actor="human",
             now=0,
             title_max_chars=200,
-            execution_route=ExecutionRoute.hermes_claude,
         )
-        assigned = _accept_kickoff_field(conn, assigned.id)
-        _delete_kickoff_setup_events(conn, assigned.id)
-        unassigned = tickets_data.create_ticket(
-            conn, worker_type="coding", title="T", actor="human", now=0, title_max_chars=200
-        )
-        unassigned = _accept_kickoff_field(conn, unassigned.id)
-        _delete_kickoff_setup_events(conn, unassigned.id)
+        ticket = _accept_kickoff_field(conn, ticket.id)
+        _delete_kickoff_setup_events(conn, ticket.id)
     finally:
         conn.close()
 
     worker_type_definition = configured_worker_type_registry().require("coding")
-    assert _next_step_prompt(assigned, worker_type_definition=worker_type_definition) == (
-        f"Work ticket {assigned.id} — T. It is at Stage 'needs_success'; "
+    assert _next_step_prompt(ticket, worker_type_definition=worker_type_definition) == (
+        f"Work ticket {ticket.id} — T. It is at Stage 'needs_success'; "
         "take the next step and propose the 'success' field for approval. "
-        "Execution route: hermes_claude. Stage owner: worker."
-    )
-    assert _next_step_prompt(unassigned, worker_type_definition=worker_type_definition) == (
-        f"Work ticket {unassigned.id} — T. It is at Stage 'needs_success'; "
-        "take the next step and propose the 'success' field for approval. "
-        "Execution route: unassigned. Stage owner: worker."
+        "Stage owner: worker."
     )
 
 
@@ -480,18 +462,17 @@ def test_next_step_prompt_reads_novel_stage_field_for_new_worker(tmp_path: Path)
         worker_type_definition=configured_worker_type_registry().require(ticket.worker_type),
     ) == (
         f"Work ticket {ticket.id} — Design a worker. It is at Stage 'needs_stages'; "
-        "take the next step and propose the 'stages' field for approval. "
-        "Execution route: unassigned. Stage owner: worker."
+        "take the next step and propose the 'stages' field for approval. Stage owner: worker."
     )
 
 
 def test_worker_step_prompt_and_reply_are_visible_in_chat_history(tmp_path: Path) -> None:
     db = _db(tmp_path)
-    tid = _new_ticket(db, execution_route=ExecutionRoute.hermes_codex)
+    tid = _new_ticket(db)
     prompt = (
         f"Work ticket {tid} — T. It is at Stage 'needs_success'; "
         "take the next step and propose the 'success' field for approval. "
-        "Execution route: hermes_codex. Stage owner: worker."
+        "Stage owner: worker."
     )
     fake = FakeGateway(
         {
@@ -532,9 +513,7 @@ def test_worker_step_prompt_and_reply_are_visible_in_chat_history(tmp_path: Path
         assert runner.wait_idle(10.0)
         conn = connect(db)
         try:
-            history = employee_session_history.read_employee_session_history(
-                conn, gateway, tid, 0
-            )
+            history = employee_session_history.read_employee_session_history(conn, gateway, tid, 0)
             state = chat_service.state(conn, tid)
         finally:
             conn.close()
@@ -567,8 +546,7 @@ def test_queued_employee_waits_past_prior_interruption_before_settling(
     _set_key(db, tid, STORED_KEY)
     prompt = (
         f"Work ticket {tid} — T. It is at Stage 'needs_success'; "
-        "take the next step and propose the 'success' field for approval. "
-        "Execution route: unassigned. Stage owner: worker."
+        "take the next step and propose the 'success' field for approval. Stage owner: worker."
     )
     fake = ManualEventFake(
         {
@@ -743,8 +721,7 @@ def test_created_session_key_is_queryable_before_prompt_submit(tmp_path: Path) -
                 conn = connect(db)
                 try:
                     assert (
-                        tickets_data.read_ticket_by_employee_session_id(conn, STORED_KEY).id
-                        == tid
+                        tickets_data.read_ticket_by_employee_session_id(conn, STORED_KEY).id == tid
                     )
                 finally:
                     conn.close()
@@ -1466,9 +1443,7 @@ def test_late_complete_after_ordinary_interruption_marks_ticket_errored(
             assert on_session_key is not None
             assert on_event is not None
             on_session_key(STORED_KEY)
-            on_event(
-                ev("message.delta", LIVE_SID, {"text": "partial before pause"})["params"]
-            )
+            on_event(ev("message.delta", LIVE_SID, {"text": "partial before pause"})["params"])
             entered.set()
             assert release.wait(5.0)
             return RunResult("complete", "late complete output", None, STORED_KEY, None)
@@ -1853,9 +1828,7 @@ def test_recovery_resumes_running_ticket_session_with_owner_message(
         conn.close()
     monkeypatch.setattr(
         "planner.runtime.employee_step_runner._next_step_prompt",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            AssertionError("original prompt replayed")
-        ),
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("original prompt replayed")),
     )
     fake = _ProposingFake(
         _resume_script(STORED_KEY, _complete_ev()),
@@ -1961,9 +1934,7 @@ def test_recovery_rejects_stale_worker_turn_session_mismatch_without_gateway(
         stale_turn = chat_service.start_worker_turn(
             conn, tid, visible_text="original worker prompt", now=2
         )
-        chat_service.attach_worker_session_key(
-            conn, tid, stale_turn.id, "wrong-session", 2
-        )
+        chat_service.attach_worker_session_key(conn, tid, stale_turn.id, "wrong-session", 2)
     finally:
         conn.close()
     fake = FakeGateway({})

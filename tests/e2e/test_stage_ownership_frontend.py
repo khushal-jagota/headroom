@@ -16,7 +16,7 @@ def _put_stage_owner(server, ticket_id: str, stage: str, mode: str | None) -> di
     return response.json()
 
 
-def test_ticket_facts_edit_execution_route_and_current_stage_owner(
+def test_ticket_facts_edit_current_stage_owner_without_execution_route(
     server, context_factory, open_page, cli, api
 ) -> None:
     ticket_id = cli(
@@ -31,15 +31,13 @@ def test_ticket_facts_edit_execution_route_and_current_stage_owner(
     ready = f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]'
     page = open_page(context_factory(), server, f"#/ticket/{ticket_id}", ready, settled=True)
 
-    execution_route = ".ticket-facts [data-execution-route]"
     owner = ".ticket-facts [data-stage-owner]"
-    assert page.locator(execution_route).count() == 1
+    assert page.locator(".ticket-facts [data-execution-route]").count() == 0
     assert page.locator(owner).count() == 1
     assert page.locator(".ticket-facts [data-implementer]").count() == 0
-    assert page.locator(f'{execution_route} option[value="khushal"]').count() == 0
 
     detail = api.get(server, f"/api/tickets/{ticket_id}")
-    assert detail["execution_route"] is None
+    assert "execution_route" not in detail
     assert detail["stage_ownership_overrides"] == {}
     assert detail["default_stage_ownership_mode"] == "worker"
     assert detail["effective_stage_ownership_mode"] == "worker"
@@ -49,21 +47,10 @@ def test_ticket_facts_edit_execution_route_and_current_stage_owner(
     assert page.inner_text("[data-ticket-takeover-toggle]") == "Take over"
 
     with page.expect_response(
-        lambda response: response.request.method == "PATCH"
-        and response.url.endswith(f"/api/tickets/{ticket_id}")
-    ):
-        page.select_option(f"{execution_route} select", "hermes_codex")
-    page.wait_for_function(
-        """({ selector }) => document.querySelector(selector)?.querySelector('select')?.value
-            === 'hermes_codex'""",
-        arg={"selector": execution_route},
-        timeout=WAIT_MS,
-    )
-    assert api.get(server, f"/api/tickets/{ticket_id}")["execution_route"] == "hermes_codex"
-
-    with page.expect_response(
-        lambda response: response.request.method == "PUT"
-        and f"/api/tickets/{ticket_id}/stage-ownership/" in response.url
+        lambda response: (
+            response.request.method == "PUT"
+            and f"/api/tickets/{ticket_id}/stage-ownership/" in response.url
+        )
     ):
         page.select_option(f"{owner} select", "user")
     page.wait_for_function(
@@ -77,8 +64,10 @@ def test_ticket_facts_edit_execution_route_and_current_stage_owner(
     assert page.inner_text("[data-ticket-takeover-toggle]") == "Release"
 
     with page.expect_response(
-        lambda response: response.request.method == "PUT"
-        and f"/api/tickets/{ticket_id}/stage-ownership/" in response.url
+        lambda response: (
+            response.request.method == "PUT"
+            and f"/api/tickets/{ticket_id}/stage-ownership/" in response.url
+        )
     ):
         page.select_option(f"{owner} select", "")
     page.wait_for_function(

@@ -96,19 +96,11 @@ store its own project because the parent item owns that classification.
 
 ### Ordinary Ticket edits
 
-One ordinary edit may change a Ticket's title, priority, deadline, project,
-sprint, and execution route together. The route is nullable and limited to Panels worker,
-Hermes with Codex, and Hermes with Claude. Panels checks the whole request before saving
-any of it. All requested changes succeed together or none do, and the history records
+One ordinary edit may change a Ticket's title, priority, deadline, project, and
+sprint together. Panels checks the whole request before saving any of it. All requested
+changes succeed together or none do, and the history records
 only fields that really changed. Sending values the Ticket already has leaves it
 unchanged.
-
-The execution route is included in the actual Hermes worker prompt, not merely shown in
-the Ticket UI or Panels Chat. It tells the Employee how worker work should be carried out;
-it is not Stage ownership, scope, permission, account capability, or automatic model
-routing. There is no human execution route. Changing it does not change Stage or control
-status and does not start work. It is direct-write-only: an attributed worker cannot
-change its own route.
 
 ### Who owns the current Stage
 
@@ -134,8 +126,7 @@ Moving to another Stage applies that Stage's own override or default.
 
 Ownership and scope answer different questions. Ownership says who drives the current
 Stage. Scope says how far a worker may advance autonomously and what it may do at the
-ceiling. Execution route is a third, separate instruction for how Employee work is
-carried out.
+ceiling. The Worker type chooses the specialist skill used for that work.
 
 _Code paths:_ `src/planner/tickets/logic/machine.py`, `src/planner/tickets/data.py`,
 and `src/planner/tickets/api.py`.

@@ -27,12 +27,6 @@ class StageOwnershipMode(StrEnum):
     paired = "paired"
 
 
-class ExecutionRoute(StrEnum):
-    panels_worker = "panels_worker"
-    hermes_codex = "hermes_codex"
-    hermes_claude = "hermes_claude"
-
-
 class TicketStatus(StrEnum):  # durable state-of-control, written by data-layer transitions
     empty = "empty"
     agent_running_step = "agent_running_step"
@@ -117,7 +111,6 @@ class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     title: str
     priority: Priority
     deadline: str | None
-    execution_route: ExecutionRoute | None
     project_id: str | None
     sprint_id: str | None
 
@@ -202,7 +195,6 @@ class Ticket:  # §3.3 — column names match exactly
     ceiling: str  # ceiling id; a member of the type's ceiling_range
     at_cap: AtCap  # default propose (R2)
     ticket_status: TicketStatus  # durable state-of-control; transition functions write it
-    execution_route: ExecutionRoute | None  # human-overridable execution route
     stage_ownership_overrides: Mapping[str, StageOwnershipMode]
     default_stage_ownership_mode: StageOwnershipMode | None
     effective_stage_ownership_mode: StageOwnershipMode | None

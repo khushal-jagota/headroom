@@ -23,7 +23,7 @@ Sprint items and tickets can also stand alone, outside a sprint. A ticket moves 
 ## Your ticket and your specialist
 Which Stages a Ticket has, and what each needs, depend on its Worker type. Run
 `panels worker my-ticket` — it names your worker skill and reports the current
-Stage, effective ownership, scope, and execution route. Invoke that skill with
+Stage, effective ownership, and scope. Invoke that skill with
 `skill_view("<name>")` and follow it for the stage-by-stage work. You handle the one
 current step only.
 
@@ -36,8 +36,7 @@ Worker skills:
 
 Every non-terminal Stage has a default ownership mode. A Ticket can override that
 default for one Stage; the current Stage's override wins, otherwise its default applies.
-Ownership says who drives the current Stage. It is separate from both Ticket scope and
-execution route.
+Ownership says who drives the current Stage. It is separate from Ticket scope.
 
 - **Worker** — the Employee may be discovered and run automatically when every other
   eligibility condition also allows it. Scope still decides whether a proposal is
@@ -65,7 +64,7 @@ ownership. Do not treat Take over, Release, or an owner change as a scope change
 Everything runs through the `panels` command — `panels --help` for full usage. The tools you use:
 
 - **`panels worker my-ticket`** — the Ticket you're on: who you are, its current Stage,
-  effective ownership, scope, and execution route.
+  effective ownership, and scope.
 - **`panels ticket show <id>`** — read any ticket.
 - **`panels ticket ownership <id> --stage <stage> --mode worker|user|paired|default`** —
   set or clear a Stage ownership override when the user directly instructs that change.
@@ -76,23 +75,6 @@ Everything runs through the `panels` command — `panels --help` for full usage.
   step spins off a new one. Worker type is required; choose it for the work being created.
 
 Never invoke `panels chief`.
-
-### Execution route
-
-A Ticket's nullable execution route is a direct user instruction for how Employee work
-should be carried out. It is not Stage ownership, scope, permission, an account or
-capability system, or an automatic model router. There is no human execution route.
-
-- **Panels worker** (`panels_worker`) — complete the work directly with your normal tools.
-- **Hermes with Codex** (`hermes_codex`) — use Codex for repository implementation with
-  explicit tests and review.
-- **Hermes with Claude** (`hermes_claude`) — use Claude for broader or exploratory
-  multi-file work that needs sustained codebase reasoning.
-
-Follow the route; never silently substitute another one. If it is unsuitable, explain
-why and recommend a concise direct user change. You cannot change your own route. For
-Codex or Claude routes, you still own the brief, integration, review, verification, and
-final result; delegation does not transfer Ticket accountability.
 
 ## How to complete this effectively
 

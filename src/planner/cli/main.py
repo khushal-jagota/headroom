@@ -42,7 +42,6 @@ _TICKET_SET_FIELDS = {
     "deadline": "deadline",
     "project": "project",
     "project-id": "project_id",
-    "execution-route": "execution_route",
 }
 
 _SPRINT_FIELDS = {

@@ -90,7 +90,7 @@ grant picker so they can't drift. Every gating approval (Kickoff included) uses 
 contract. The default-reset logic lives in the shared picker so a previous approval's choice can't leak
 into the next same-stage proposal.
 
-## D-stage-ownership — Stage ownership, worker scope, and execution route are separate controls
+## D-stage-ownership — Stage ownership and worker scope are separate controls
 
 Each non-terminal Worker-type Stage declares whether work is normally **worker-owned**,
 **user-owned**, or **paired**; a Ticket may override that declaration for a particular Stage. The
@@ -103,15 +103,15 @@ Ownership does not absorb `(ceiling, at_cap)`. Scope still limits autonomous con
 `at_cap=propose` contract remains unchanged and is displayed as **Continue**; **Stop** is the explicit
 Ticket override. User-completed work returns through Chief external-work reconciliation, which preserves
 that explicit Stop instead of imposing one. The old human `khushal` implementer route is represented by a
-coding Implementation ownership override; the remaining agent choices are renamed **execution route**
-and remain direct-write-only instructions, not automatic model routing.
+coding Implementation ownership override. Tickets carry no separate execution-route selector; the Worker
+type chooses the specialist skill.
 
 ## D-stage-ownership-integration-repair — Tests pin ownership, not retired transition hooks
 
 The stage-ownership integration repair translated old `implementer=khushal` and transition-hook tests
 to explicit ownership contracts: coding legacy `khushal` migrates to
 `stage_ownership_overrides["needs_implementation"] = "user"`, probe uses declared mixed defaults, and
-ExecutionRoute covers only `panels_worker`, `hermes_codex`, and `hermes_claude`. Plain Ticket reads now
+the v22 migration discards the retired agent-route values. Plain Ticket reads now
 require the Worker-type registry because Ticket detail exposes default/effective ownership; the old
 registry-free read assertion was retired. Chief reconciliation is allowed from inactive owner states
 (`user_takeover` and `paired_work`) because user-completed work returns through Chief, while active

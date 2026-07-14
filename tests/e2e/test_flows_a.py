@@ -1256,7 +1256,7 @@ def test_settled_kickoff_field_renders_as_canonical_intake_block(
     )
 
 
-def test_ticket_execution_route_edits_in_facts_without_changing_workflow(
+def test_ticket_facts_have_owner_without_execution_route(
     server, context_factory, open_page, cli, api
 ):
     tid = cli(
@@ -1266,7 +1266,7 @@ def test_ticket_execution_route_edits_in_facts_without_changing_workflow(
         "--worker-type",
         "coding",
         "--title",
-        "Execution route UI ticket",
+        "Owner-only Ticket facts",
     )["id"]
     ready = f'section[data-screen="ticket"][data-ticket-id="{tid}"]'
     page = open_page(
@@ -1276,89 +1276,7 @@ def test_ticket_execution_route_edits_in_facts_without_changing_workflow(
         ready,
         settled=True,
     )
-    execution_route = ".ticket-facts [data-execution-route]"
 
-    # The route is one inline selector in the existing facts row, not a new
-    # edit/save/cancel flow.
-    assert page.locator(execution_route).count() == 1
-    assert page.locator(f'{execution_route} option[value="khushal"]').count() == 0
-    initial = api.get(server, f"/api/tickets/{tid}")
-    initial_stage = initial["stage"]
-    initial_ticket_status = initial["ticket_status"]
-    assert initial["execution_route"] is None
-
-    def wait_for_assignment(value: str, label: str) -> None:
-        page.wait_for_function(
-            """({ selector, value, label }) => {
-                const root = document.querySelector(selector);
-                const select = root?.querySelector('select');
-                const pill = root?.querySelector('.pill');
-                const visibleLabel = pill
-                    ? Array.from(pill.childNodes)
-                        .filter(node => node.nodeType === Node.TEXT_NODE)
-                        .map(node => node.textContent || '')
-                        .join('')
-                        .trim()
-                    : '';
-                return select?.value === value && visibleLabel === label;
-            }""",
-            arg={"selector": execution_route, "value": value, "label": label},
-            timeout=WAIT_MS,
-        )
-
-    def assert_assignment_without_workflow_change(expected: str | None) -> None:
-        detail = api.get(server, f"/api/tickets/{tid}")
-        assert detail["execution_route"] == expected
-        assert detail["stage"] == initial_stage
-        assert detail["ticket_status"] == initial_ticket_status
-        assert page.get_attribute(ready, "data-stage") == initial_stage
-        assert (
-            page.get_attribute("[data-ticket-status]", "data-ticket-status")
-            == initial_ticket_status
-        )
-        assert page.locator(f"{execution_route} button").count() == 0
-        assert (
-            page.locator(
-                f"{execution_route} [data-edit], "
-                f"{execution_route} [data-save], "
-                f"{execution_route} [data-cancel]"
-            ).count()
-            == 0
-        )
-        for action in ("Edit", "Save", "Cancel"):
-            assert page.get_by_role("button", name=action, exact=True).count() == 0
-
-    wait_for_assignment("", "(unassigned)")
-    assert_assignment_without_workflow_change(None)
-
-    with page.expect_response(
-        lambda response: (
-            response.request.method == "PATCH" and response.url.endswith(f"/api/tickets/{tid}")
-        )
-    ):
-        page.select_option(f"{execution_route} select", "panels_worker")
-    wait_for_assignment("panels_worker", "Panels worker")
-    assert_assignment_without_workflow_change("panels_worker")
-
-    with page.expect_response(
-        lambda response: (
-            response.request.method == "PATCH" and response.url.endswith(f"/api/tickets/{tid}")
-        )
-    ):
-        page.select_option(f"{execution_route} select", "hermes_codex")
-    wait_for_assignment("hermes_codex", "Hermes with Codex")
-    assert_assignment_without_workflow_change("hermes_codex")
-
-    with page.expect_response(
-        lambda response: (
-            response.request.method == "PATCH" and response.url.endswith(f"/api/tickets/{tid}")
-        )
-    ):
-        page.select_option(f"{execution_route} select", "")
-    wait_for_assignment("", "(unassigned)")
-    assert_assignment_without_workflow_change(None)
-
-    page.reload()
-    page.wait_for_selector(f"{ready} {execution_route}", timeout=WAIT_MS)
-    wait_for_assignment("", "(unassigned)")
-    assert_assignment_without_workflow_change(None)
+    assert page.locator(".ticket-facts [data-execution-route]").count() == 0
+    assert page.locator(".ticket-facts [data-stage-owner]").count() == 1
+    assert "execution_route" not in api.get(server, f"/api/tickets/{tid}")

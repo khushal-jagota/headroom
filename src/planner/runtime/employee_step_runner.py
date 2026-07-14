@@ -62,15 +62,14 @@ def _next_step_prompt(
 ) -> str:
     """Describe what to advance; the worker role skill owns how to do the work.
 
-    Route selection/suitability guidance lives in the panels-worker skill, not here.
+    The Worker type selects the specialist skill; this prompt carries only the current
+    Stage ownership and the gated field to advance.
     The gating field is resolved against the ticket's OWN type definition (not the
     coding default), so a novel-stage type (e.g. new_worker at needs_stages) reads
     its real field instead of raising 'stage outside the linear order'."""
     gating = worker_type_definition.gating_field(ticket.stage)
     field = str(gating) if gating is not None else "the next step"
-    execution_route_wire = (
-        ticket.execution_route.value if ticket.execution_route is not None else "unassigned"
-    )
+
     ownership_wire = (
         ticket.effective_stage_ownership_mode.value
         if ticket.effective_stage_ownership_mode is not None
@@ -79,7 +78,7 @@ def _next_step_prompt(
     return (
         f"Work ticket {ticket.id} — {ticket.title}. It is at Stage '{str(ticket.stage)}'; "
         f"take the next step and propose the '{field}' field for approval. "
-        f"Execution route: {execution_route_wire}. Stage owner: {ownership_wire}."
+        f"Stage owner: {ownership_wire}."
     )
 
 
@@ -245,9 +244,7 @@ class EmployeeStepRunner:
             self._accepting = False
             first_stop = not self._stopping
             self._stopping = True
-            active_ticket_ids = (
-                tuple(sorted(self._active_ticket_ids)) if first_stop else ()
-            )
+            active_ticket_ids = tuple(sorted(self._active_ticket_ids)) if first_stop else ()
 
         matched_session_turns: list[_MatchedEmployeeSessionTurnSnapshot] = []
         for ticket_id in active_ticket_ids:
@@ -587,9 +584,7 @@ class EmployeeStepRunner:
                         now=now,
                     )
 
-            def mark_errored(
-                error: str, candidate_employee_session_id: str | None
-            ) -> None:
+            def mark_errored(error: str, candidate_employee_session_id: str | None) -> None:
                 if candidate_employee_session_id is None:
                     tickets_data.mark_run_errored_if_still_running_step(
                         conn,
@@ -689,11 +684,7 @@ class EmployeeStepRunner:
                     if self._is_stopping():
                         return False
                     mark_errored(
-                        (
-                            settled_worker_turn.error
-                            if settled_worker_turn is not None
-                            else None
-                        )
+                        (settled_worker_turn.error if settled_worker_turn is not None else None)
                         or "run interrupted",
                         result_employee_session_id,
                     )

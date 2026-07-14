@@ -54,7 +54,6 @@ from planner.tickets.contracts import (
     AtCap,
     CreateTicketBody,
     CreateTicketFromExternalWorkBody,
-    ExecutionRoute,
     LinkBody,
     NoteBody,
     ProposeBody,
@@ -80,7 +79,6 @@ _TICKET_DIRECT_ONLY_FIELDS = (
     "title",
     "project",
     "project_id",
-    "execution_route",
 )
 
 
@@ -599,7 +597,6 @@ async def patch_ticket(
         "title",
         "priority",
         "deadline",
-        "execution_route",
         "project",
         "project_id",
         "sprint_id",
@@ -618,13 +615,7 @@ async def patch_ticket(
         edit["priority"] = parse_enum(Priority, body_str(body, "priority"), "priority")
     if "deadline" in body:
         edit["deadline"] = body_opt_str(body, "deadline")
-    if "execution_route" in body:
-        execution_route_raw = body_opt_str(body, "execution_route")
-        edit["execution_route"] = (
-            parse_enum(ExecutionRoute, execution_route_raw, "execution_route")
-            if execution_route_raw is not None
-            else None
-        )
+
     if "project" in body or "project_id" in body:
         project_raw = body_opt_str(body, "project")
         project_id_raw = body_opt_str(body, "project_id")

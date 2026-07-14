@@ -156,9 +156,7 @@ def test_connect_applies_busy_timeout_to_initial_connect_and_pragma(
     db_path = str(tmp_path / "bounded-connect.db")
     conn = connect(db_path, busy_timeout_ms=275)
     try:
-        assert initial_connect_calls == [
-            ((db_path,), {"isolation_level": None, "timeout": 0.275})
-        ]
+        assert initial_connect_calls == [((db_path,), {"isolation_level": None, "timeout": 0.275})]
         assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 275
     finally:
         conn.close()
@@ -203,38 +201,23 @@ def test_fresh_v20_schema_rejects_ticket_fields_omission(tmp_path):
     conn.close()
 
 
-def test_fresh_schema_has_nullable_checked_ticket_execution_route(tmp_path):
-    db_path = tmp_path / "fresh-execution-route.db"
+def test_fresh_schema_has_no_ticket_execution_route(tmp_path):
+    db_path = tmp_path / "fresh-without-execution-route.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
     create_schema(conn)
 
-    execution_route_column = next(
-        row
-        for row in conn.execute("PRAGMA table_info(tickets)")
-        if row["name"] == "execution_route"
-    )
-    assert execution_route_column["notnull"] == 0
-    assert execution_route_column["dflt_value"] is None
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(tickets)")}
+    assert "execution_route" not in columns
     conn.execute(
         "INSERT INTO tickets (id, title, worker_type, ceiling, fields, created_at, updated_at) "
         "VALUES ('t_assignment', 'A', 'coding', 'needs_success', ?, 1, 1)",
         (_EMPTY_CODING_FIELDS,),
     )
-    assert (
-        conn.execute("SELECT execution_route FROM tickets WHERE id = 't_assignment'").fetchone()[0]
-        is None
+    assert conn.execute("SELECT id FROM tickets WHERE id = 't_assignment'").fetchone()[0] == (
+        "t_assignment"
     )
-    for value in ("panels_worker", "hermes_codex", "hermes_claude"):
-        conn.execute("UPDATE tickets SET execution_route = ? WHERE id = 't_assignment'", (value,))
-    conn.execute("UPDATE tickets SET execution_route = NULL WHERE id = 't_assignment'")
-    for invalid in ("khushal", "other"):
-        with pytest.raises(sqlite3.IntegrityError):
-            conn.execute(
-                "UPDATE tickets SET execution_route = ? WHERE id = 't_assignment'",
-                (invalid,),
-            )
     conn.close()
 
 
@@ -297,9 +280,7 @@ def test_create_schema_migrates_v20_chat_turn_recovery_column_and_index(tmp_path
     create_schema(conn)
     create_schema(conn)
 
-    columns = [
-        str(row["name"]) for row in conn.execute("PRAGMA table_info(chat_turns)")
-    ]
+    columns = [str(row["name"]) for row in conn.execute("PRAGMA table_info(chat_turns)")]
     assert columns.count("recovery_of_turn_id") == 1
     preserved = conn.execute(
         "SELECT output_text, session_key, recovery_of_turn_id FROM chat_turns "
@@ -482,8 +463,8 @@ def test_create_schema_rebuilds_legacy_links_after_sprint_blocker_conversion(tmp
     conn.close()
 
 
-def test_create_schema_adds_execution_route_after_lifecycle_migration_idempotently(tmp_path):
-    db_path = tmp_path / "old-lifecycle-execution-route.db"
+def test_create_schema_removes_execution_route_after_lifecycle_migration_idempotently(tmp_path):
+    db_path = tmp_path / "old-lifecycle-with-execution-route.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.executescript(_OLD_TICKETS_DDL)
@@ -504,24 +485,22 @@ def test_create_schema_adds_execution_route_after_lifecycle_migration_idempotent
 
     assert tuple(
         conn.execute(
-            "SELECT stage, execution_route, stage_ownership_overrides "
-            "FROM tickets WHERE id = 't_existing'"
+            "SELECT stage, stage_ownership_overrides FROM tickets WHERE id = 't_existing'"
         ).fetchone()
-    ) == ("needs_success", None, "{}")
+    ) == ("needs_success", "{}")
     columns = [str(row["name"]) for row in conn.execute("PRAGMA table_info(tickets)")]
     assert "implementer" not in columns
-    assert columns.count("execution_route") == 1
-    conn.execute("UPDATE tickets SET execution_route = 'hermes_codex' WHERE id = 't_existing'")
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute("UPDATE tickets SET execution_route = 'khushal' WHERE id = 't_existing'")
+    assert "execution_route" not in columns
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 22
     conn.close()
 
 
-def test_v21_migration_maps_every_implementer_and_preserves_active_statuses(tmp_path):
+def test_v22_migration_maps_legacy_human_owner_and_drops_agent_routes(tmp_path):
     conn = connect(str(tmp_path / "v21-stage-ownership.db"))
+    create_schema(conn)
     conn.execute("PRAGMA foreign_keys=OFF")
-    _seed_kickoff_shape_relationships(conn)
-    conn.executescript(_CANONICAL_V18_TICKETS_DDL)
+    conn.execute("DROP TABLE tickets")
+    conn.execute(db_module._V20_TICKETS_TABLE_SQL.replace("tickets_new", "tickets"))
     cases = [
         ("t_khushal_coding", "coding", "agent_running_step", "khushal"),
         ("t_khushal_other", "new_worker", "awaiting_approval", "khushal"),
@@ -544,32 +523,98 @@ def test_v21_migration_maps_every_implementer_and_preserves_active_statuses(tmp_
             updated_at=2,
         )
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA user_version=20")
 
-    db_module._migrate_tickets_to_v20_contract(conn)
-    db_module._migrate_tickets_to_v21_stage_ownership(conn)
+    create_schema(conn)
 
     rows = {
         row["id"]: row
         for row in conn.execute(
-            "SELECT id, ticket_status, execution_route, stage_ownership_overrides "
-            "FROM tickets ORDER BY id"
+            "SELECT id, ticket_status, stage_ownership_overrides FROM tickets ORDER BY id"
         )
     }
     assert rows["t_khushal_coding"]["ticket_status"] == "agent_running_step"
-    assert rows["t_khushal_coding"]["execution_route"] is None
+
     assert json.loads(rows["t_khushal_coding"]["stage_ownership_overrides"]) == {
         "needs_implementation": "user"
     }
     assert rows["t_khushal_other"]["ticket_status"] == "awaiting_approval"
-    assert rows["t_khushal_other"]["execution_route"] is None
+
     assert json.loads(rows["t_khushal_other"]["stage_ownership_overrides"]) == {}
     assert rows["t_panels"]["ticket_status"] == "user_takeover"
-    assert rows["t_panels"]["execution_route"] == "panels_worker"
     assert rows["t_codex"]["ticket_status"] == "errored"
-    assert rows["t_codex"]["execution_route"] == "hermes_codex"
     assert rows["t_claude"]["ticket_status"] == "empty"
-    assert rows["t_claude"]["execution_route"] == "hermes_claude"
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(tickets)")}
+    assert "implementer" not in columns
+    assert "execution_route" not in columns
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    conn.close()
+
+
+def test_v22_migration_drops_execution_route_and_preserves_ticket_state(tmp_path):
+    conn = connect(str(tmp_path / "v22-no-execution-route.db"))
+    create_schema(conn)
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute("DROP TABLE tickets")
+    conn.execute(db_module._V21_TICKETS_TABLE_SQL.replace("tickets_new", "tickets"))
+    conn.execute(
+        "INSERT INTO tickets ("
+        "id, title, worker_type, stage, priority, deadline, project_id, sprint_item_id, "
+        "sprint_id, recap, ceiling, at_cap, ticket_status, execution_route, "
+        "stage_ownership_overrides, employee_session_id, alias, fields, created_at, updated_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "t_v21",
+            "Legacy route",
+            "coding",
+            "needs_plan",
+            "P1",
+            None,
+            None,
+            None,
+            None,
+            "Preserve me",
+            "needs_closeout",
+            "stop",
+            "user_takeover",
+            "hermes_codex",
+            json.dumps({"needs_plan": "user"}),
+            "employee-session",
+            "legacy-alias",
+            _EMPTY_CODING_FIELDS,
+            1,
+            2,
+        ),
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA user_version=21")
+
+    create_schema(conn)
+    create_schema(conn)
+
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(tickets)")}
+    assert "execution_route" not in columns
+    row = conn.execute(
+        "SELECT stage, priority, recap, ceiling, at_cap, ticket_status, "
+        "stage_ownership_overrides, employee_session_id, alias, fields, created_at, updated_at "
+        "FROM tickets WHERE id = 't_v21'"
+    ).fetchone()
+    assert tuple(row) == (
+        "needs_plan",
+        "P1",
+        "Preserve me",
+        "needs_closeout",
+        "stop",
+        "user_takeover",
+        json.dumps({"needs_plan": "user"}),
+        "employee-session",
+        "legacy-alias",
+        _EMPTY_CODING_FIELDS,
+        1,
+        2,
+    )
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 22
     conn.close()
 
 
@@ -1881,7 +1926,7 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(tm
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     create_schema(conn)
-    assert SCHEMA_VERSION == 21
+    assert SCHEMA_VERSION == 22
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     info = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(tickets)")}
@@ -1895,8 +1940,7 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(tm
     assert info["fields"]["dflt_value"] is None
     assert info["employee_session_id"]["notnull"] == 0
     assert info["employee_session_id"]["dflt_value"] is None
-    assert info["execution_route"]["notnull"] == 0
-    assert info["execution_route"]["dflt_value"] is None
+    assert "execution_route" not in info
     assert info["stage_ownership_overrides"]["notnull"] == 1
     assert info["stage_ownership_overrides"]["dflt_value"] == "'{}'"
     assert "chat_session_key" not in info
@@ -1916,7 +1960,7 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(tm
     assert "at_cap IN ('stop','propose')" in tickets_sql
     assert "ticket_status IN ('empty'" in tickets_sql
     assert "paired_work" in tickets_sql
-    assert "execution_route IN ('panels_worker'" in tickets_sql
+    assert "execution_route" not in tickets_sql
     assert "khushal" not in tickets_sql
 
     index_names = {str(row["name"]) for row in conn.execute("PRAGMA index_list(tickets)")}

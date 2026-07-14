@@ -116,9 +116,8 @@ allows it. User-owned Stages rest in `user_takeover` and return through Chief
 external-work reconciliation. Paired Stages rest in `paired_work`; ordinary Ticket Chat
 continues the same Employee session, and any real proposal parks for approval.
 
-Execution route is separate again. It is a nullable direct instruction for how Employee
-work should be carried out: Panels worker, Hermes with Codex, or Hermes with Claude.
-There is no human execution route, and an attributed worker cannot change its own route.
+The Worker type selects the Employee's specialist skill. Tickets do not carry a separate
+execution-route selector.
 
 Code paths: `src/planner/tickets/contracts.py`,
 `src/planner/tickets/logic/machine.py`,

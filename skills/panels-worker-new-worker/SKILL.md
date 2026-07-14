@@ -46,7 +46,7 @@ This is where the worker's value is decided; a thin pass here makes a worthless 
    accountable manual ownership; completed work will be recorded through Chief
    external-work reconciliation. Choose `paired` when the work should advance through
    user-originated Ticket Chat with the same Employee and every resulting proposal needs
-   approval. Ownership is not scope or execution route. Do not recreate Take over,
+   approval. Ownership is not scope. Do not recreate Take over,
    Release, dispatch, Chat, approval, or reconciliation mechanics in the specialist;
    `panels-worker` owns those shared rules.
 3. **The standard each stage's skill enforces** — the specific discipline the new skill teaches, per stage. This is the raw material drafting turns into the skill.

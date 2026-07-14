@@ -12,11 +12,7 @@
     lifecycleFor,
     recapVisibleFor
   } from "../lib/lifecycle";
-  import type {
-    ExecutionRoute,
-    StageOwnershipMode,
-    TicketDetail
-  } from "../lib/types";
+  import type { StageOwnershipMode, TicketDetail } from "../lib/types";
   import ChatPanel from "../components/ChatPanel.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
@@ -54,12 +50,7 @@
 
   const emptyTicketFieldText = "Not written yet.";
   const emptyTicketRecapText = "No recap yet.";
-  const executionRouteOptions = [
-    { value: "", label: "(unassigned)" },
-    { value: "panels_worker", label: "Panels worker" },
-    { value: "hermes_codex", label: "Hermes with Codex" },
-    { value: "hermes_claude", label: "Hermes with Claude" }
-  ];
+
   const stageOwnerOptions = [
     { value: "", label: "default" },
     { value: "worker", label: "worker" },
@@ -260,18 +251,7 @@
                 if (priority !== detail.priority) void patch({ priority });
               }}
             />
-            <span data-execution-route>
-              <EnumPill
-                keyLabel="execution route"
-                value={detail.execution_route || ""}
-                options={executionRouteOptions}
-                onChange={(execution_route) => {
-                  if (execution_route !== (detail.execution_route || "")) {
-                    void patch({ execution_route: (execution_route || null) as ExecutionRoute | null });
-                  }
-                }}
-              />
-            </span>
+
             {#if canEditCurrentStageOwner(detail)}
               <span
                 data-stage-owner

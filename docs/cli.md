@@ -29,10 +29,8 @@ generic Stage setter.
   tickets. `ticket create` requires `--worker-type` and can take a `--kickoff-note` /
   `--kickoff-note-file` intake body for the Kickoff field. `ticket list --stage`
   compares the stored Stage directly. `ticket set` names one field (`title`, `kickoff-note`, `priority`, `deadline`,
-  `project` / `project-id`, or `execution-route`). An execution route is nullable; its
-  values are `panels_worker`, `hermes_codex`, and `hermes_claude`. It tells the Employee
-  how to carry out worker work and does not change Stage ownership. Sprint placement is
-  a sprint command, not a ticket setter. `ticket delete` is a permanent direct operation
+  or `project` / `project-id`). Sprint placement is a sprint command, not a ticket setter.
+  `ticket delete` is a permanent direct operation
   and requires `--yes`.
 - **`ticket ownership <id> --stage <stage> --mode worker|user|paired|default`** — set or
   clear one Stage's ownership override. `default` clears the override so the Worker

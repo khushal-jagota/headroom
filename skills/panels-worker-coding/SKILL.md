@@ -20,9 +20,8 @@ Each stage is named for what the ticket needs next; your step is to give it that
 ### How to complete ticket stages effectively
 
 - **needs_success** — a good **success** says plainly what "done" means for this ticket, grounded in the real work. Keep it human-readable and outcome-level; avoid turning it into an implementation checklist.
-- **needs_approach** — a good **approach** names the method and, when it matters, the
-  execution route. Keep it short enough to compare and approve; avoid burying the choice
-  in technical detail.
+- **needs_approach** — a good **approach** names the method. Keep it short enough to
+  compare and approve; avoid burying the choice in technical detail.
 - **needs_plan** — a good **plan** is concrete enough that the work can start from it. It should be concise and sequenced, not an exhaustive engineering spec.
 - **needs_implementation** — do the actual work, then package it so the user can review the result rather than read a work log. Make three things clear:
   - **Intent:** the outcome of the ticket this work fulfills.

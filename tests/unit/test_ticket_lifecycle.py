@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from planner.tickets import contracts as ticket_contracts
 from planner.tickets import data
 from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
-    ExecutionRoute,
+    Ticket,
+    TicketEdit,
 )
 from planner.tickets.logic import fields_codec
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
@@ -38,18 +40,10 @@ def _create(conn: Connection, clock: TestClock, **kw: Any) -> Ticket:
     )
 
 
-def test_ticket_execution_route_contract_and_nullable_create_storage(
-    tmp_db: Connection, cfg: Config, fake_clock: TestClock
-) -> None:
-    assert [route.value for route in ExecutionRoute] == [
-        "panels_worker",
-        "hermes_codex",
-        "hermes_claude",
-    ]
-    for execution_route in (*ExecutionRoute, None):
-        ticket = _create(tmp_db, fake_clock, execution_route=execution_route)
-        assert ticket.execution_route is execution_route
-        assert data.read_ticket(tmp_db, ticket.id).execution_route is execution_route
+def test_ticket_contract_has_no_execution_route() -> None:
+    assert not hasattr(ticket_contracts, "ExecutionRoute")
+    assert "execution_route" not in Ticket.__dataclass_fields__
+    assert "execution_route" not in TicketEdit.__annotations__
 
 
 def test_canonical_states_and_fields_include_kickoff_as_first_ordinary_field() -> None:

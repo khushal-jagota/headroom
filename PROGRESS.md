@@ -117,28 +117,28 @@ Blockers:
 
 Current build stage:
 
-- Ticket `t_ue4pt9ru` has approved Success, Approach, and Plan and is in Implementation on isolated
-  branch `ticket/t_ue4pt9ru-stage-ownership` at worktree
-  `/Users/khushaljagota/.hermes/worktrees/planning-v2-t_ue4pt9ru`.
-- The implementation now covers Worker/User/Paired Stage ownership defaults and overrides, canonical
-  resting-status resolution, automatic eligibility, paired Ticket Chat, Chief external-work reconciliation,
-  ExecutionRoute migration, API/CLI/UI controls, Workspace/Sprint lifecycle presentation, skills, and docs.
-- Two complete-diff Codex reviews produced six accepted findings. All are corrected and recorded in
-  `orchestration/tickets/t_ue4pt9ru-stage-ownership/review-disposition.md`; the final read-only re-review
-  reports `NO VIOLATIONS`.
+- Ticket `t_ue4pt9ru` is integrated into `main` by merge commit `1595cf7`. During Closeout the user
+  rejected the remaining Ticket-level Execution route, so its removal is now being completed directly
+  on `main` without touching unrelated owner edits in the checkout.
+- Stage ownership and scope remain separate. Worker type now selects the specialist skill; Tickets no
+  longer persist, serialize, edit, prompt with, or display a separate execution route.
+- Schema v22 removes the retired column while preserving Ticket state and the legacy `khushal` coding
+  ownership mapping. The UI retains only Owner and Continue/Stop controls.
 
 What just passed:
 
-- Full unit suite: `PYTHONPATH="$PWD/src:$PWD" .venv/bin/pytest -q tests/unit`.
-- Python quality gates: `ruff check src tests` and `mypy src/planner` (113 source files).
-- Frontend quality gates: `npm --prefix web run check` and `npm --prefix web test`.
-- Focused Playwright coverage for execution route, Stage owner editing, `paired_work`, desktop/mobile
-  Workspace filtering, and StageMark presentation.
-- Final Codex implementation review: `NO VIOLATIONS`.
+- Focused RED/GREEN coverage passed for schema creation and migration, Ticket contracts and API rejection,
+  worker prompts, and the Owner-only Ticket facts UI.
+- Canonical `./verify` passes Ruff; mypy across 115 source files; 797 unit tests; compile/static and CSS
+  checks; Svelte check with zero errors and warnings; production build; frontend tests; and 96 Playwright
+  tests, ending `VERIFY: PASS`.
+- Independent read-only review found no blocking logic or security issues. Its two suggestions were resolved:
+  the worker-prompt docstring now names Worker-type skill selection, and legacy `khushal` mapping is covered
+  through the full `create_schema` migration path.
 
 Next step:
 
-- Commit the reviewed implementation, run exactly one canonical `./verify`, then propose Implementation.
+- Commit only the scoped removal, then replace the pending Closeout proposal.
 
 Blockers:
 
