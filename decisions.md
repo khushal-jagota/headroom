@@ -825,6 +825,21 @@ No partial stage is merged: AD01 through AD09 each land as reviewed branch check
 receives the final canonical verification, and only then is it merged serially into `main` and verified in
 the integrated checkout. This authorization does not include pushing or opening a pull request.
 
+## D-ad09-explicit-employee-history — Hermes history is explicit and Panels state stays Panels-owned
+
+AD09 gives the Ticket's durable Hermes identity the exact name `employee_session_id`. Panels Chat reads only
+its own durable visible messages and active turn; it never fills an empty transcript from Hermes or rotates
+an Employee id as a state-read side effect. Hermes history remains authoritative for what the Employee
+actually received and produced, including internal context and after restart, but a caller must request it
+through the explicit Ticket-only Employee-history route. No UI history pane or copied transcript is added.
+
+The retained standalone seed importer is live Python, not the terminal database migration. It therefore
+requires an explicit Worker type on the command and every programmatic/parser call, and passes that exact id
+through definition-driven field and Stage validation. It may not choose `coding`. The terminal lock-held
+Ticket migration remains the sole place allowed to assign `coding` automatically to a genuinely historical
+row that predates stored Worker type. This live-boundary ruling supersedes the seed carveout recorded in
+`D-ad02-ingress-and-seed-authority` without changing its migration translation rules.
+
 ## D-ad02-definition-owns-workflow — A resolved Worker-type definition interprets its workflow
 
 AD02 replaces the shallow definition/views/registry-forwarder/bridge stack with one immutable

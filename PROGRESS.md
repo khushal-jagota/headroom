@@ -106,6 +106,11 @@ Current build stage:
   `019f5f98-5fd1-7610-9cd5-92d2cf2a32a8` reports `NO VIOLATIONS`.
 - AD08 is complete. Its committed reviewed checkpoint at `4e267c6` passes the canonical gate with 714 unit
   tests and 86 Playwright tests; the full transcript is retained at `data/verify/ad08-pass.log`.
+- AD09's delegated Employee-session-history plan is corrected and contract-locked. The first independent
+  review found that the plan still blessed the retained live seed importer as a `coding` default. The
+  correction makes Worker type a required seed command/programmatic argument and passes it through exactly;
+  only the terminal v20 migration may classify a genuinely old row with no stored Worker type as `coding`.
+  Fresh review session `019f5fa7-9f49-7322-b33d-a91ccee643f1` reports `NO VIOLATIONS`.
 
 What just passed:
 
@@ -315,9 +320,8 @@ What just passed:
 
 Next step:
 
-- Delegate AD08's RED-first implementation against the reviewed lock, then run focused checks and an
-  independent implementation review before the single canonical gate. Isolated-final AD09 Employee
-  session history remains after it.
+- Delegate AD09's RED-first implementation against the reviewed lock, then run its focused checks and an
+  independent implementation review before the single canonical gate.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`
