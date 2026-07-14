@@ -82,6 +82,11 @@ Current build stage:
   `019f5f5e-5233-7741-8777-cee8b0322dda` reports `NO VIOLATIONS` after checking same-source dirty reset,
   failed-save retry, final-DOM move/deletion reconciliation, read-only preview identity, exact serialization,
   teardown, docs/assets, and the bounded allowlist. Delegated implementation is the next step.
+- AD07's delegated implementation is committed at `30edca4`. One `managedMarkdown.ts` owner now holds
+  hardened rendering, atomic preview islands, exact serialization, reconciliation, and teardown; the two
+  wrappers keep product presentation/edit-save state; `FilePreview` keeps target-specific behavior; and the
+  two old lifecycle modules are deleted. Independent implementation review session
+  `019f5f6d-4892-7273-8343-51122fe517b4` reports `NO VIOLATIONS`. The canonical gate is next.
 
 What just passed:
 
@@ -279,12 +284,17 @@ What just passed:
   preview reconciliation, deletion set, test sequence, docs/bundle work, and changed-path allowlist passed
   independent plan review. The lock is recorded in
   `orchestration/tickets/architecture-deepening/ad07-managed-markdown/contract-lock.md`.
+- AD07 focused implementation evidence is green: frontend tests pass; Svelte check has zero errors and the
+  three existing Ticket-route warnings; both new browser regressions pass; all 13 file-preview browser tests
+  pass; and `git diff --check` is clean. The independent reviewer inspected the complete source, test, docs,
+  and served-bundle diff and returned exactly `NO VIOLATIONS`. These are pre-gate checks, not the canonical
+  completeness claim.
 
 Next step:
 
-- Delegate AD07 implementation to the reviewed contract and bounded allowlist, independently review the
-  completed diff, integrate it, and run one canonical gate. AD08 resource catalogue and isolated-final AD09
-  Employee session history remain after it.
+- Run AD07's one canonical gate from the committed checkpoint and record its full transcript. AD08's ticket
+  is already defined and its delegated plan is in progress; isolated-final AD09 Employee session history
+  remains after it.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`
