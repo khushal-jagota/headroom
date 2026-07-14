@@ -145,9 +145,43 @@ Legacy seed ticket body text imports into the ticket-level `user_note`, not any 
 The body is intake context for the ticket as a whole; keeping the field notes empty avoids mixing
 preserved context with canonical gated outputs or step-specific direction.
 
+## D-review-ticket-only — Review contains Ticket decisions and running workers
+
+Review is focused on parked Ticket proposals awaiting a human decision and the current running-worker
+count. The unused Sprint-item approval branches and overdue digest are deleted: item approvals already
+return no entries, and the frontend has no overdue contract or consumer. The current `/api/queues` route,
+`queues` resource key, and generic Queue names become Review names in the same replacement; no compatibility
+adapter preserves the shallower model.
+
 ---
 
-# Ticket types (the type-registry machinery)
+# Worker types (the current implementation calls these ticket types)
+
+## D-worker-type-language — Worker type is the domain name
+
+The required classification chosen when a Ticket is created is its **Worker type**, not its Ticket
+type. It names the kind of AI employee assigned to the Ticket and therefore determines the staged
+workflow and specialist behavior used to work it. Existing `ticket_type` fields, `ticket_types` modules,
+and prose are implementation debt to rename as part of the deepening program; they do not justify a
+second domain term or a compatibility alias.
+
+## D-worker-type-immutable — Worker type does not change after Ticket creation
+
+Worker type is immutable once the Ticket is created. `needs_kickoff` is not a safe mutability window:
+creation has already built Worker-type-specific fields and scope, and a rejected kickoff can be revised by
+a worker or discussed through Chat while the Ticket remains at that Stage, creating durable session and
+transcript state. A safe exception would need a new “never used” invariant and a reset protocol for fields,
+scope, sessions, transcripts, and pending context. That machinery has not earned its existence. The choice
+can change before creation; afterward, correcting it means replacing the Ticket.
+
+## D-stored-stage-is-authoritative — Reading a Ticket's Stage is a direct value read
+
+A Ticket stores its current **Stage** directly. Anything that only wants to display, compare, or return
+that Stage uses the stored value; it does not consult the Worker type registry, resolve a worker, or accept
+a second type parameter. The Worker type's workflow is needed only to interpret relationships or rules
+around the Stage, such as its gated field or successor. Existing lifecycle uses of `state`, `TicketState`,
+and `ticket.state` are naming debt to address in the deepening program; Ticket control status remains a
+separate concept.
 
 // migrate to docs/ticket-types.md when it lands
 ## D-ticket-types-registry — The type registry is a sibling domain that imports only leaves
@@ -242,6 +276,15 @@ are agent skills a human reads as prose, not a fetch surface.
 
 # Runtime (readiness loop + employee step runner)
 
+## D-automatic-employee-step-eligibility — One complete automatic-start decision
+
+**Automatic Employee-step eligibility** is the whole answer to whether Planner may automatically start a
+Ticket's next Employee step now. It includes today's board membership, empty control status, a non-terminal
+Stage, no parked proposal, scope permission, and no active blocker. Discovery and the final transactional
+claim use this same concept; the claim remains the race-safe authority. Directly requested revision turns
+bypass it. Existing `readiness`, `is_runnable`, `TicketReadinessLoop`, and readiness-doorbell names are
+rename debt; `EmployeeStepRunner` remains separate because it owns execution rather than eligibility.
+
 ## D-runtime-names — Responsibility names, and direct employee turns go straight to the runner
 
 `SystemA`/`SystemB` are named for what they do: **`TicketReadinessLoop`** discovers runnable tickets
@@ -297,6 +340,26 @@ rotation on compaction is handled by re-persisting rotated keys.
 ---
 
 # Hermes gateway, sessions, and chat delivery
+
+## D-canonical-human-chat-ingress — One server-owned turn replaces legacy human Chat paths
+
+Human Chat has one ingress: the server-owned turn already named by `D-live-chat-state`. The legacy
+`/send`, `/stream`, and `/command` routes and their parallel service paths may be deleted after repository
+callers and tests migrate. They do not remain as compatibility adapters because doing so would preserve
+duplicate admission, session persistence, transcript mutation, settlement, and error handling. Exact
+`/new` behavior remains part of the canonical turn. This changes only human Chat ingress; Panels transcript
+rows remain UI/audit state and worker delivery still occurs only through the Hermes gateway/session path.
+
+## D-panels-chat-and-employee-history — Visible Chat and employee history are separate truths
+
+**Panels Chat** is the durable product-visible conversation; **Employee session history** is the
+authoritative record of what the employee actually received and produced. Employee history remains useful
+for continuity, inspection, and deliberate recovery, so its interface is retained. It is never used as a
+silent fallback to populate an empty Panels Chat: model prompts can contain hidden revision guidance,
+worker context, system/tool content, and native image delivery that are not the visible transcript. Ordinary
+restart continuity already uses the stored durable session key and persisted Panels rows. The separation is
+the final, finicky ticket in the architecture program and lands in its own isolated commit so restart,
+rotation, and recovery behavior are independently reviewable and reversible.
 
 ## D-session-ingress — One ordered, gapless session ingress; Panels never guesses Hermes state
 
@@ -430,6 +493,15 @@ pre-growth follow decision.
 
 # Managed files, previews, and chat images
 
+## D-managed-markdown-behavior — One owner, unchanged visible behavior
+
+Managed Markdown consolidates safe rendering, preview reconciliation, edit serialization, and teardown
+behind one owner. It does not redesign the editor or alter visible behavior: current appearance and
+interactions, every preview kind, exact Markdown token round-tripping, stable preview identity during
+unrelated Chat updates, recursive-preview limits, and existing safety rules remain fixed. The existing
+`FilePreviewTarget` + `FilePreview` seam and the hardened Markdown renderer keep the responsibilities they
+already earn; read and edit callers stop coordinating their lifecycle themselves.
+
 ## D-file-preview-contract — Ticket files are managed content behind one preview contract
 
 Canonical ticket fields, notes, proposals, results, and chat stay SQLite text. Standalone work
@@ -503,6 +575,23 @@ emits `project_created`, and there is intentionally no rename/delete/archive in 
 ---
 
 # Frontend architecture and UI
+
+## D-resource-refresh-two-signals — Canonical events plus immediate targeted refresh
+
+The server event stream remains the canonical invalidation source. A successful UI write also keeps an
+immediate targeted refresh so the visible result does not wait for event delivery and remains correct when
+the socket misses or disconnects. The resource catalogue owns the affected-resource effect; routes do not
+repeat free-form key arrays. Both paths invalidate only the exact resource and aggregates affected, never a
+whole screen. Review's advance flow awaits one catalogue-owned refresh rather than starting and aborting
+duplicate reads.
+
+## D-resource-catalogue-scope — Catalogue cached UI reads, not every request
+
+The resource catalogue contains only server projections the UI caches and refreshes, such as Tickets,
+board, Review, sprints, days, Panels Chat, projects, ideas, and Worker-type manifests. Each entry owns its
+identity, read location, response type, dependencies, and refresh policy. Mutations, uploads, managed-file
+reads, and startup configuration such as `/api/meta` remain ordinary requests outside the catalogue. This
+keeps the module deep and focused instead of turning it into a registry of unrelated HTTP operations.
 
 ## D-shared-scrollbar-treatment — Native scrollbars, shared CSS, capability-safe hiding
 
@@ -660,6 +749,125 @@ framing — the underlying code identifiers were not renamed by this decision.
 ---
 
 # Documentation and orchestration hygiene
+
+## D-architecture-review-scope — Advance all six candidates to implementation
+
+The owner selected all six deepening candidates and confirmed the shared model through a one-decision-at-a-
+time design interview. They land as independently reviewable stages in dependency order; Employee session
+history is deliberately last and isolated. No implementation stage may weaken the deletion decisions or
+preserve rejected terminology through compatibility aliases.
+
+## D-architecture-review-exploration — Split the read-only architecture scan by system
+
+The 2026-07-13 deepening review used three non-writing exploration lanes: Tickets/Worker types/runtime,
+Hermes sessions/chat/worker context, and planning domains/frontend. These areas had distinct call and test
+surfaces, so they could be inspected in parallel without file overlap. The orchestrator owned the
+cross-system deletion test, decision-conflict check, candidate ranking, and temporary HTML report.
+
+## D-architecture-review-ranking — Rank Worker workflow interpretation first
+
+The deepening review ranks Worker workflow interpretation above the other five candidates. It sits in the
+correctness core, each new Worker type multiplies its leverage, and three real call sites already missed the
+row's Worker type, including one path that could abort a whole eligibility poll. The implementation must
+concentrate Worker-type resolution and lifecycle knowledge behind the existing sibling-domain seam.
+
+## D-architecture-program-isolation — Build the deepening program on one external worktree
+
+The architecture-deepening stages share public contracts and must land serially, so they use branch
+`codex/architecture-deepening` in the external worktree
+`/Users/khushaljagota/.hermes/planning-v2-worktrees/architecture-deepening`. Keeping the worktree outside
+the source checkout avoids presenting the entire child checkout as an untracked change on `main`. Each
+stage still receives its own reviewed commit; AD09 remains a deliberately isolated final commit.
+
+## D-ad01-one-locked-ticket-migration — One terminal rebuild migrates every old Ticket schema
+
+AD01 replaces the sequential Ticket lifecycle, kickoff, type, and vocabulary rebuild path with one
+terminal v18 rebuild. That rebuild recognizes every old Ticket-table shape already supported, performs
+the same legacy lifecycle and kickoff transformations, renames Worker type and Stage, and rewrites affected
+events while one write lock is held across snapshot, copy, and swap. Repairing only the final rename would
+leave older live databases exposed to the existing pre-lock snapshot windows; repairing three separate
+rebuilds would retain unnecessary migration machinery and duplicate the safety envelope.
+
+## D-ad01-contract-lock — The reviewed vocabulary is fixed before consumer rewiring
+
+AD01's contract skeleton uses required `worker_type` and stored `stage`, coding-only `CodingStage`
+tables, `stage_changed`, the Worker-type manifest, and matching frontend names before implementation
+rewires consumers. Internal `WorkflowDefinition.type_id` and the `planner.ticket_types` package stay for
+AD02, but `TransitionHook.old_stage`/`new_stage` use Stage language now because they are contract fields
+that directly name Ticket workflow positions. The implementation may complete the SQLite migration body;
+it may not change the locked declarations or add compatibility aliases.
+
+## D-ad01-fixture-allowlist — Direct creation fixtures may supply the required Worker type
+
+AD01's implementation allowlist also includes `tests/unit/test_authctx_routes.py` and
+`tests/unit/test_trusted_ingress.py`, plus legacy HTTP creation fixtures in
+`tests/unit/test_projects.py` and `tests/unit/test_worker_my_ticket.py`. The first pair calls
+`tickets.data.create_ticket` directly, so the locked removal of its implicit Worker-type default
+requires the fixture-only argument `worker_type="coding"`; the second pair changes only the old create
+key to `worker_type`. These are mechanical contract-consumer updates: the project, security,
+trusted-ingress, and worker-command behaviours under test stay unchanged, and no production scope is
+added.
+
+## D-ad01-stage-filter-is-direct — Listing by Stage needs no Worker type
+
+The Ticket-list Stage filter compares directly with the stored `tickets.stage` string. The old
+list-only type parameter merely validated or disambiguated a lifecycle value; it did not filter rows.
+That boundary contradicts the owner's ruling that a Stage read should return or compare what is already
+stored without requiring Worker-type interpretation. AD01 therefore deletes the list `worker_type`
+query and CLI flag instead of renaming the old disambiguation parameter. Ticket creation still requires
+Worker type, and operations that interpret workflow meaning still resolve it.
+
+## D-ad01-approval-stage-prop — The shared Ticket approval prop uses Stage language
+
+`web/src/components/ApprovalBlock.svelte` is added to AD01's bounded frontend allowlist so its
+Ticket-lifecycle prop can be renamed `newState` → `newStage` together with
+`ScopePairPicker.svelte`. `TicketStageSection` is the component's only caller, so retaining the old
+prop as a destructuring alias would be rejected compatibility vocabulary, not a generic UI state.
+
+## D-ad01-generic-ticket-read — A stored Ticket row decodes without Worker-type resolution
+
+`src/planner/tickets/logic/fields_codec.py` is added to AD01's bounded backend allowlist. Its
+no-definition decode path reads every stored field slot without choosing a workflow definition, allowing
+`_row_to_ticket` to return the stored `worker_type`, `stage`, ceiling, and fields without a Registry call.
+Definition-supplied decoding remains strict for boot audit and semantic interpretation, while write doors
+continue to validate the Ticket's Worker type, Stage, ceiling, and affected fields before persistence.
+The obsolete read-door tests that expected a Registry error from plain row loading are corrected; the
+startup audit and write-door rejection tests remain.
+
+## D-ad01-delete-retired-state-helper — Do not rename an unused duplicate blocker helper
+
+The static deletion scan found `sprints.logic.blockers`, an exported but uncalled legacy helper whose
+entire interface is `ticket_states` plus coding-only terminal values. Current reads already use
+`core.links.blocker_summary`. AD01 deletes the helper and its unused package export instead of preserving
+rejected State vocabulary through a rename. `days/data.py` is also in scope for one comment correction
+from “ticket state untouched” to “Ticket untouched”; neither change alters runtime behaviour.
+
+## D-ad01-review-scope-isolation — Program memory is separate from the bounded implementation
+
+The AD01 implementation diff may contain only its reviewed allowlist. `CONTEXT.md`, `PROGRESS.md`, and
+`decisions.md` are still required orchestrator-owned domain and current-cycle records, so they are kept in
+a separate architecture-program commit rather than folded into the delegated AD01 implementation commit.
+This accepts the independent review's path-scope finding without pretending the live memory files are
+implementation files or deleting decisions the operating model requires us to retain.
+
+## D-ad01-served-frontend-bundle — Generated dist is part of the public replacement
+
+FastAPI serves the checked-in `web/dist` entrypoint and hashed JavaScript, not the Svelte source tree.
+AD01 therefore keeps the production build output generated from its reviewed source changes. The output
+paths are added to the bounded allowlist only as build artifacts: they are produced by the existing Vite
+build, never hand-edited. Reverting them after a successful build would leave the deleted
+`/api/ticket-types` route and `ticket_type`/`state` response contract live in the product.
+
+## D-ad01-verify-chat-scroll-fixture — Synchronize the unrelated flaky scroll fixture separately
+
+The post-AD01 canonical gate exposed a pre-existing race in the echo half of the chat-follow e2e test:
+the fixture assigned `scrollTop = 0` and immediately sent a message without dispatching `scroll`, so
+under full-suite load the transcript render could snapshot `following=true` before the browser delivered
+its asynchronous native event and snap back to the bottom. The product component and relevant test
+sequence are unchanged by AD01. Ten natural focused runs passed; suppressing native delivery reproduced
+the exact failure 3/3, while a synchronous event passed 3/3 target-reaching controls. The fixture now
+dispatches the same event as the stronger cases beside it. This one-line, behavior-neutral stabilization
+is a trivial collapsed ticket and an isolated commit before AD01, not part of the architecture contract.
 
 ## D-docs-are-map-plus-audit — The systems doc is a map plus boundary audit, honest about actual boundaries
 

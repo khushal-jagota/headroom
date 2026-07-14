@@ -4,6 +4,119 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 the bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-13): architecture deepening implementation
+
+Current build stage:
+
+- Shared understanding is confirmed for all six architecture candidates. Implementation is isolated on
+  branch `codex/architecture-deepening` in
+  `/Users/khushaljagota/.hermes/planning-v2-worktrees/architecture-deepening`, based on current `main` at
+  `b7ca44a`.
+- The resolved domain model is Worker type, stored Stage, Review, Panels Chat, Employee session history,
+  and Automatic Employee-step eligibility. Worker type is required and immutable; reading Stage is direct.
+- Landing order is Worker workflow → Automatic Employee-step eligibility → Review → canonical Chat turn →
+  managed Markdown → resource catalogue → Employee session history. The last item is an isolated final
+  commit because its restart/session behavior is the most finicky.
+
+What just passed:
+
+- The architecture report passed the prior canonical `./verify` with 654 unit and 70 e2e tests. The design
+  interview resolved deletion posture, domain language, behavior-preservation constraints, refresh policy,
+  catalogue scope, and the explicit separation between Panels Chat and Employee session history.
+- The new branch and worktree were created without carrying unrelated dirty files from the original
+  worktree.
+- AD01 now has a delegated implementation plan covering the exact public vocabulary, a v18 all-shape
+  migration, historical event rewriting, RED/static tests, and a bounded implementation allowlist. The
+  worktree was moved outside the source tree before implementation so it does not appear as an untracked
+  child of `main`.
+- Independent read-only plan review found two violations: the plan still passed ancient schemas through
+  pre-lock lifecycle/kickoff rebuilds, and it omitted the live coding-worker skill from its allowlist. Both
+  findings are accepted. The delegated revision is consolidating every recognized Ticket schema into one
+  lock-held terminal rebuild and adding the missing skill as a vocabulary-only edit.
+- The corrected plan passed the independent read-only re-review with `NO VIOLATIONS`. Its exact naming map,
+  consolidated migration, behavior-preservation tests, and implementation allowlist are now the locked AD01
+  contract.
+- The orchestrator generated the AD01 contract skeleton in the five Python/TypeScript contract files plus
+  the canonical v18 SQLite DDL and indexes. `contract-lock.md` records the exact declarations; consumer and
+  migration implementation is now ready for delegated work. The tree is intentionally RED until consumers
+  are rewired, so no canonical `./verify` has been run.
+- The delegated implementation has made the new Worker-type/Stage contract test green (3 tests) and wired
+  the core Ticket data, API, view, resolution, machine, manifest, event, and v18 migration paths. A bounded
+  allowlist gap was found in two direct-creation test fixtures; those two test paths are now explicitly in
+  scope for only `worker_type="coding"` fixture arguments. No production boundary or locked contract changed.
+- A broad unit pass found two further legacy HTTP-create fixtures in the project and worker-command tests.
+  Their paths are added for only the old create key → `worker_type` update; no tested behaviour changes.
+- Orchestrator spot-checking found the Ticket-list boundary still planned a Worker-type parameter solely to
+  interpret a Stage filter. This conflicts with the owner ruling that Stage reads use the stored value
+  directly. The plan is corrected: list filtering accepts only `stage`; the list query/CLI Worker-type
+  disambiguation surface is deleted. Creation remains the Worker-type choice point.
+- A frontend boundary scan found `ApprovalBlock.newState` feeding only Ticket lifecycle scope. The
+  component is added to the bounded allowlist for the exact `newState` → `newStage` prop rename; no alias
+  remains and its rendering/approval behaviour is unchanged.
+- Focused implementation evidence is now green: the Worker-type/Stage contract, manifest, ingress, and
+  persistence set passes 37 tests; `tests/unit/test_db.py` passes 37 migration tests; mypy passes across
+  120 files; and the frontend passes `svelte-check`, its Node tests, and a production build (three existing
+  Svelte warnings only). The canonical `./verify` remains intentionally unrun until independent diff review.
+- Migration spot-checking added byte-preservation for corrupt post-kickoff field JSON, explicit rollback on
+  NULL required inputs, both one-column partial shapes, real `new_worker` values, historical event recovery,
+  event rollback, repeated-open idempotence, and an assertion that no Ticket row is read before the v18 lock.
+- A final direct-read audit found `_row_to_ticket` still resolving Worker type to decode fields. The codec is
+  now explicitly in scope: generic no-definition decoding reads stored slots as stored, so plain Ticket reads
+  need no Registry lookup. Definition-supplied audit/interpretation and every write door stay validated.
+- The live-vocabulary scan found one unused exported sprint blocker helper whose interface still spoke in
+  Ticket States. It duplicates the canonical link summary and has no callers, so it is deleted rather than
+  renamed; one day-membership comment is corrected to say the Ticket itself is untouched.
+- The delegated AD01 implementation is complete. Pre-review checks pass: 699 unit tests, Ruff, mypy over
+  119 source files, frontend `svelte-check` (three existing warnings), frontend tests, production build,
+  documentation rename assertion, and `git diff --check`. Generated `web/dist` output is clean. These are
+  focused/pre-review checks, not the canonical completeness claim.
+- Independent implementation review found two migration violations: an existing `stage` in a partial
+  schema was still passed through the legacy `state` conversion, and nullable legacy `status` was rejected
+  instead of taking the reviewed `else empty` path. Both are accepted and delegated for focused regression
+  fixes. The review's path-scope finding is also accepted: orchestrator-owned domain and memory files will
+  be committed separately from the bounded AD01 implementation diff.
+- Both migration findings are fixed. Lifecycle Stage, ceiling, and field conversion now runs only from a
+  legacy `state` source; an existing `stage` and ceiling are copied exactly. Legacy NULL and unknown
+  `status` values map to `empty`, while canonical NULL `ticket_status` remains rejected. The expanded
+  migration suite passes 38 tests, Ruff passes on both touched files, and `git diff --check` is clean.
+- The domain and current-cycle memory files are isolated in an architecture-program commit, removing
+  them from the bounded AD01 implementation diff. The independent corrected-diff re-review is running from
+  that base.
+- Corrected-diff re-review confirmed both migration fixes, then found one High shipping violation: FastAPI
+  serves checked-in `web/dist`, but the delegated frontend build had reverted its generated output, leaving
+  the old route and response contract live. The finding is accepted. Generated `web/dist/index.html` and
+  its hashed JavaScript add/delete are now explicitly build-only paths in the bounded allowlist and are
+  regenerated from the reviewed Svelte source.
+- The final corrected-diff review reports `NO VIOLATIONS`: the migration fixes, immutable Worker type
+  boundary, direct stored-Stage reads/filtering, retired public vocabulary removal, served bundle, and
+  changed-path allowlist are clean.
+- The first canonical `./verify` execution passed Ruff, mypy over 119 source files, 700 unit tests, compile
+  and static checks, Svelte check/build/tests, then failed 13 of 77 e2e tests. Every failure is the same
+  missed fixture rename in two already-allowed files: direct test setup still executes `UPDATE tickets SET
+  state = ?` after the canonical column became `stage`. No product assertion ran or failed in those cases.
+  A fixture-only repair is delegated; the gate must be rerun after focused review.
+- The two stale-Stage e2e helpers are repaired and independently reviewed with `NO VIOLATIONS`; their
+  focused browser set passes 14/14. The next full gate passed every prior layer and those 13 cases, then
+  exposed one unrelated chat-follow fixture race (`scrollTop` returned to 1436 instead of staying 0).
+- Bug-diagnosis proved the chat failure is test synchronization, not AD01 product behavior: the unchanged
+  exact test passed 10/10 naturally; delaying native scroll delivery reproduced the exact failure 3/3;
+  synchronously dispatching the scroll event passed 3/3 target-reaching controls. `ChatPanel.svelte` is
+  unchanged. The one-line fixture fix passes the focused test, Ruff, diff-check, and independent review
+  with `NO VIOLATIONS`; it will be committed separately as trivial test stabilization.
+- The post-fix canonical `PYTHONPATH="$PWD/src" ./verify` is clean: Ruff; mypy across 119 source files;
+  700 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three existing
+  warnings), production build, frontend tests; 77 Playwright e2e tests; final `VERIFY: PASS`. The full
+  transcript is retained at `data/verify/ad01-pass.log`.
+
+Next step:
+
+- Isolate the one-line chat-fixture stabilization commit, commit the reviewed and verified AD01 contract,
+  then advance to AD02.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-13): safe interactivity in ticket HTML previews
 
 Current build stage:
