@@ -1,47 +1,66 @@
-"""t_tt01 strict-mypy overload cases (review F2/F4), updated for t_tt02b.
+"""Strict-mypy cases for the explicit Worker-type machine boundary.
 
-This module is TYPE-CHECKED, not run: `./verify` invokes strict mypy over it so the
-machine.py overloads are genuinely enforced (assert_type is a runtime no-op, so a
-pytest test would give false confidence). If a Tier-1 overload stops narrowing as
-designed (e.g. widening the enum overload to `CodingStage | str`) this file fails the
-mypy gate.
-
-t_tt02b widens the Tier-2 scope surface: `resolve_scope.new_stage` and
-`has_pending_gating_proposal.state` are now `str` (a foreign stage id flows), so a bare
-`str` new_stage is accepted by design — the honest N-ary contract, no longer a guarded
-error.
-
-Pure typing surface: no runtime behavior, no fixtures.
+This module is type-checked, not run. Every semantic machine call supplies the
+required behavior-bearing definition, and every Stage/field id is a plain string.
 """
 
 from __future__ import annotations
 
 from typing import assert_type
 
-from planner.tickets.contracts import AtCap, CodingStage, FieldName, ScopePair, TicketFields
+from planner.tickets.contracts import AtCap, ScopePair, Ticket, TicketFields, TicketStatus
 from planner.tickets.logic import machine
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 
-def _cases() -> None:
-    a_state: CodingStage = CodingStage.needs_success
-    a_str: str = "needs_success"
-    fields = TicketFields()
+def _cases(
+    ticket: Ticket,
+    fields: TicketFields,
+    definition: WorkerTypeDefinition,
+) -> None:
+    stage: str = "needs_alpha"
+    field: str = "alpha"
 
-    # advance_target: a CodingStage arg narrows to CodingStage; a str arg widens.
-    assert_type(machine.advance_target(a_state), CodingStage)
-    assert_type(machine.advance_target(a_str), CodingStage | str)
-
-    # gating_field: a CodingStage arg narrows to FieldName | None.
-    assert_type(machine.gating_field(a_state), FieldName | None)
-
-    # auto_accept_target: a CodingStage arg narrows to CodingStage | None.
-    aat = machine.auto_accept_target(a_state, "needs_success", "success")
-    assert_type(aat, CodingStage | None)
-
-    # has_pending_gating_proposal is Tier-2 generic: it accepts a str state and returns
-    # bool; a foreign stage id is a valid arg (no enum narrowing required).
-    assert_type(machine.has_pending_gating_proposal(a_str, fields), bool)
-
-    # resolve_scope is Tier-2 generic (t_tt02b): a bare str new_stage is accepted and
-    # yields a ScopePair carrying a str ceiling id — no bare-str guard remains.
-    assert_type(machine.resolve_scope(a_str, "none", AtCap.propose), ScopePair)
+    assert_type(
+        machine.field_is_passed(field, stage, worker_type_definition=definition),
+        bool,
+    )
+    assert_type(
+        machine.auto_accept_target(
+            stage,
+            "needs_beta",
+            field,
+            worker_type_definition=definition,
+        ),
+        str | None,
+    )
+    assert_type(
+        machine.at_or_beyond_ceiling(stage, "needs_beta", worker_type_definition=definition),
+        bool,
+    )
+    assert_type(
+        machine.resolve_scope(
+            stage,
+            "none",
+            AtCap.propose,
+            worker_type_definition=definition,
+        ),
+        ScopePair,
+    )
+    assert_type(
+        machine.has_pending_gating_proposal(stage, fields, worker_type_definition=definition),
+        bool,
+    )
+    assert_type(
+        machine.has_pending_parked_proposal(ticket, worker_type_definition=definition),
+        bool,
+    )
+    assert_type(
+        machine.plan_handoff_status(
+            ticket.implementer,
+            stage,
+            "needs_beta",
+            worker_type_definition=definition,
+        ),
+        TicketStatus | None,
+    )

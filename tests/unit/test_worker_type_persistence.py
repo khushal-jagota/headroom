@@ -3,15 +3,11 @@ audit, per-type default ceiling, and the injectable-registry seam.
 
 These tests assert acceptance items 4 (startup audit), 5 (validation doors), 6
 (per-type default ceiling), and demonstrate the review-F6 boundary via a
-coding-SHAPED second type installed through ``coding_bridge.set_registry_for_test``.
+coding-shaped second type installed through the explicit test configuration seam.
 
-The second type reuses coding's exact stages and fields (so the fixed six-slot
-codec accepts it and its stage/ceiling ids round-trip ``CodingStage``) with a
-different ``type_id`` — this proves per-row type resolution, the unknown-type door,
-and per-type ``default_ceiling`` sourcing, and demonstrates that a coding-shaped
-non-coding row reaches the coding-DEFAULT engine paths (the binding reason no
-second PRODUCTION type may be registered until t_tt02b threads the definition
-through resolution/external-work)."""
+The second type reuses coding's exact Stages and fields with a different Worker-type
+id. This proves per-row resolution, the unknown-type door, and per-type default
+ceiling sourcing through the same definition-backed paths."""
 
 from __future__ import annotations
 
@@ -25,37 +21,39 @@ import pytest
 from planner.core.clock import TestClock
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect, create_schema
-from planner.ticket_types.coding import CODING_DEFINITION
-from planner.ticket_types.contracts import WorkflowDefinition
-from planner.ticket_types.registry import build_registry
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
-    CodingStage,
-    FieldName,
 )
-from planner.tickets.logic import coding_bridge
+from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
+from planner.worker_types.configuration import (
+    configured_worker_type_registry,
+    install_worker_type_registry_for_test,
+    restore_production_worker_type_registry_for_test,
+)
+from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.registry import WorkerTypeRegistry
 
-# A coding-SHAPED second type: coding's exact stages/fields (so the codec accepts it
-# and its stage/ceiling ids are CodingStage members), different type_id.
-CODING_PROBE_DEFINITION: WorkflowDefinition = WorkflowDefinition(
-    type_id="coding_probe",
+# A coding-shaped second type with the same Stage and field declarations but a
+# different Worker-type id.
+CODING_PROBE_WORKER_TYPE_DEFINITION: WorkerTypeDefinition = WorkerTypeDefinition(
+    worker_type="coding_probe",
     label="Coding Probe",
-    stages=CODING_DEFINITION.stages,
-    dropped_stage=CODING_DEFINITION.dropped_stage,
-    fields=CODING_DEFINITION.fields,
-    worker_profile=CODING_DEFINITION.worker_profile,
+    stages=CODING_WORKER_TYPE_DEFINITION.stages,
+    dropped_stage=CODING_WORKER_TYPE_DEFINITION.dropped_stage,
+    fields=CODING_WORKER_TYPE_DEFINITION.fields,
+    worker_profile=CODING_WORKER_TYPE_DEFINITION.worker_profile,
     transition_hooks=(),
-    supports_prefix_reconciliation=CODING_DEFINITION.supports_prefix_reconciliation,
+    supports_prefix_reconciliation=CODING_WORKER_TYPE_DEFINITION.supports_prefix_reconciliation,
 )
 
 
 def _two_type_registry():
-    return build_registry(
-        [CODING_DEFINITION, CODING_PROBE_DEFINITION],
-        # CODING_PROBE_DEFINITION inherits coding's profile (specialist_skill=
+    return WorkerTypeRegistry(
+        (CODING_WORKER_TYPE_DEFINITION, CODING_PROBE_WORKER_TYPE_DEFINITION),
+        # CODING_PROBE_WORKER_TYPE_DEFINITION inherits coding's profile (specialist_skill=
         # "panels-worker-coding"), so the catalog must carry it or R14 fails.
         known_skills=frozenset({"panels-worker", "panels-worker-coding"}),
         known_toolset_profiles=frozenset({"default"}),
@@ -65,12 +63,12 @@ def _two_type_registry():
 @pytest.fixture
 def two_type_registry():
     """Install a registry carrying coding + a coding-shaped second type for the
-    persistence doors, then restore production coding-only after the test."""
-    coding_bridge.set_registry_for_test(_two_type_registry())
+    persistence doors, then restore production composition after the test."""
+    install_worker_type_registry_for_test(_two_type_registry())
     try:
         yield
     finally:
-        coding_bridge.set_registry_for_test(None)
+        restore_production_worker_type_registry_for_test()
 
 
 @pytest.fixture
@@ -216,11 +214,7 @@ def test_plain_row_load_returns_stored_stage_and_worker_type_without_registry_re
     def unexpected_resolution(*args: object, **kwargs: object) -> None:
         raise AssertionError(f"plain row load resolved the registry: {args!r} {kwargs!r}")
 
-    monkeypatch.setattr(
-        tickets_data.ticket_type_guard,
-        "resolve_and_validate",
-        unexpected_resolution,
-    )
+    monkeypatch.setattr(tickets_data, "configured_worker_type_registry", unexpected_resolution)
 
     ticket = tickets_data.read_ticket(tmp_db, "t_load")
 
@@ -259,14 +253,20 @@ def test_metadata_write_rejects_invalid_stored_tuple_before_durable_effect(
         )
 
     assert exc.value.code == ErrorCode.validation
-    assert tuple(
+    assert (
+        tuple(
+            tmp_db.execute(
+                "SELECT title, stage, updated_at FROM tickets WHERE id = 't_invalid_write'"
+            ).fetchone()
+        )
+        == before
+    )
+    assert (
         tmp_db.execute(
-            "SELECT title, stage, updated_at FROM tickets WHERE id = 't_invalid_write'"
-        ).fetchone()
-    ) == before
-    assert tmp_db.execute(
-        "SELECT COUNT(*) FROM events WHERE entity_id = 't_invalid_write'"
-    ).fetchone()[0] == 0
+            "SELECT COUNT(*) FROM events WHERE entity_id = 't_invalid_write'"
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_metadata_write_rejects_missing_declared_field_before_durable_effect(
@@ -279,9 +279,7 @@ def test_metadata_write_rejects_missing_declared_field_before_durable_effect(
         ticket_id="t_missing_field_write",
         fields=json.dumps(payload),
     )
-    assert "closeout" not in tickets_data.read_ticket(
-        tmp_db, "t_missing_field_write"
-    ).fields.slots
+    assert "closeout" not in tickets_data.read_ticket(tmp_db, "t_missing_field_write").fields.slots
 
     with pytest.raises(PlannerError, match="corrupt ticket fields JSON"):
         tickets_data.edit_ticket(
@@ -293,12 +291,16 @@ def test_metadata_write_rejects_missing_declared_field_before_durable_effect(
             now=99,
         )
 
-    assert tmp_db.execute(
-        "SELECT title FROM tickets WHERE id = 't_missing_field_write'"
-    ).fetchone()[0] == "T"
-    assert tmp_db.execute(
-        "SELECT COUNT(*) FROM events WHERE entity_id = 't_missing_field_write'"
-    ).fetchone()[0] == 0
+    assert (
+        tmp_db.execute("SELECT title FROM tickets WHERE id = 't_missing_field_write'").fetchone()[0]
+        == "T"
+    )
+    assert (
+        tmp_db.execute(
+            "SELECT COUNT(*) FROM events WHERE entity_id = 't_missing_field_write'"
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_persist_door_rejects_out_of_range_ceiling(
@@ -326,7 +328,7 @@ def test_persist_door_rejects_out_of_range_ceiling(
         tickets_data._apply_decision(
             tmp_db,
             before,
-            Decision(events=(), new_ceiling=CodingStage.dropped),
+            Decision(events=(), new_ceiling="dropped"),
             now,
         )
     assert exc.value.code == ErrorCode.scope_invalid
@@ -358,8 +360,8 @@ def test_external_work_create_door_rejects_unknown_type(
         tickets_data.create_ticket_from_external_work(
             tmp_db,
             title="Bad type",
-            target_stage=CodingStage.needs_success,
-            provided_values={FieldName.success: "s"},
+            target_stage="needs_success",
+            provided_values={"success": "s"},
             actor="human",
             now=now,
             title_max_chars=TITLE_MAX_CHARS,
@@ -376,8 +378,8 @@ def test_note_door_rejects_undeclared_field(tmp_db: Connection, fake_clock: Test
         tmp_db,
         worker_type="coding",
         title="Note target",
-        target_stage=CodingStage.needs_approach,
-        provided_values={FieldName.success: "success value"},
+        target_stage="needs_approach",
+        provided_values={"success": "success value"},
         actor="human",
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
@@ -415,7 +417,7 @@ def test_created_coding_ticket_ceiling_is_registry_default(
         title_max_chars=TITLE_MAX_CHARS,
         project_id="project_vylo",
     )
-    assert str(ticket.ceiling) == coding_bridge.default_ceiling("coding")
+    assert ticket.ceiling == configured_worker_type_registry().require("coding").default_ceiling()
     assert str(ticket.ceiling) == "needs_kickoff"
 
 
@@ -435,7 +437,10 @@ def test_created_second_type_ticket_ceiling_is_its_registry_default(
         worker_type="coding_probe",
     )
     assert ticket.worker_type == "coding_probe"
-    assert str(ticket.ceiling) == coding_bridge.default_ceiling("coding_probe")
+    assert (
+        ticket.ceiling
+        == configured_worker_type_registry().require("coding_probe").default_ceiling()
+    )
 
 
 # =====================================================================
@@ -458,7 +463,7 @@ def test_second_type_row_round_trips_plain_stored_values(
     )
     ticket = tickets_data.read_ticket(tmp_db, "t_probe")
     assert ticket.worker_type == "coding_probe"
-    assert ticket.stage == CodingStage.needs_success
+    assert ticket.stage == "needs_success"
 
 
 def test_second_type_reaches_coding_default_engine_paths(
@@ -484,10 +489,10 @@ def test_second_type_reaches_coding_default_engine_paths(
     accepted = tickets_data.accept_proposal(
         tmp_db,
         ticket.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
     )
-    assert accepted.stage == CodingStage.needs_success
+    assert accepted.stage == "needs_success"

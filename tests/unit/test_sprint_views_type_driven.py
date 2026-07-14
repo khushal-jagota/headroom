@@ -1,6 +1,6 @@
 """t_tt04a Seam 4 — item_tickets decodes each child against its OWN type.
 
-A probe child is decoded against PROBE_DEFINITION (never coding), so it does not throw
+A probe child is decoded against PROBE_WORKER_TYPE_DEFINITION (never coding), so it does not throw
 on ``needs_alpha`` and its ``has_pending_proposal`` reflects probe's registry gating
 field. Children go in through the real create_ticket door; this module carries its OWN
 local ``probe_registry`` fixture (Codex F3).
@@ -23,13 +23,13 @@ from tests.support.probe import (
 from planner.core.clock import TestClock
 from planner.sprints.data import create_item
 from planner.sprints.views import item_tickets
-from planner.ticket_types.contracts import WorkflowDefinition
-from planner.tickets.contracts import AtCap, FieldName
+from planner.tickets.contracts import AtCap
 from planner.tickets.data import accept_proposal, create_ticket, file_proposal
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 
 @pytest.fixture
-def probe_registry() -> Iterator[WorkflowDefinition]:
+def probe_registry() -> Iterator[WorkerTypeDefinition]:
     definition = install_probe_registry()
     try:
         yield definition
@@ -38,7 +38,7 @@ def probe_registry() -> Iterator[WorkflowDefinition]:
 
 
 def test_item_tickets_probe_child_decodes(
-    tmp_db: Connection, probe_registry: WorkflowDefinition
+    tmp_db: Connection, probe_registry: WorkerTypeDefinition
 ) -> None:
     clock = TestClock(datetime(2026, 7, 4, 12, 0, 0).astimezone())
     item = create_item(tmp_db, title="Item", project_id="project_vylo", clock=clock)
@@ -57,7 +57,7 @@ def test_item_tickets_probe_child_decodes(
     accept_proposal(
         tmp_db,
         probe.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=2,
         next_ceiling=NEEDS_ALPHA,
@@ -92,17 +92,17 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
     )
     # Accept kickoff (default ceiling is now needs_kickoff, so kickoff parks until
     # accepted), expanding the ceiling to needs_success; a success proposal then parks.
-    file_proposal(tmp_db, child.id, field=FieldName.kickoff, body="k", actor="agent", now=2)
+    file_proposal(tmp_db, child.id, field="kickoff", body="k", actor="agent", now=2)
     accept_proposal(
         tmp_db,
         child.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=2,
         next_ceiling="needs_success",
         at_cap=AtCap.propose,
     )
-    file_proposal(tmp_db, child.id, field=FieldName.success, body="s", actor="agent", now=3)
+    file_proposal(tmp_db, child.id, field="success", body="s", actor="agent", now=3)
 
     rows = item_tickets(tmp_db, item.id)
     assert len(rows) == 1

@@ -25,8 +25,6 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
-    CodingStage,
-    FieldName,
 )
 from planner.tickets.logic import fields_codec
 
@@ -85,7 +83,7 @@ def _create_direct(db_path: Path, *, title: str = "Ready") -> str:
         return tickets_data.accept_proposal(
             conn,
             ticket.id,
-            field=FieldName.kickoff,
+            field="kickoff",
             actor="human",
             now=1,
             next_ceiling=NO_FURTHER,
@@ -329,7 +327,7 @@ def test_every_approved_ticket_control_action_rings_once_and_failures_ring_zero(
         tickets_data.file_proposal(
             conn,
             accept_id,
-            field=FieldName.success,
+            field="success",
             body="proposal",
             actor="agent",
             now=2,
@@ -361,12 +359,12 @@ def test_every_approved_ticket_control_action_rings_once_and_failures_ring_zero(
             worker_type="coding",
             title="Approve",
             kickoff_note="external note",
-            target_stage=CodingStage.needs_closeout,
+            target_stage="needs_closeout",
             provided_values={
-                FieldName.success: "success",
-                FieldName.approach: "approach",
-                FieldName.plan: "plan",
-                FieldName.implementation: "implementation",
+                "success": "success",
+                "approach": "approach",
+                "plan": "plan",
+                "implementation": "implementation",
             },
             actor="chief",
             now=3,
@@ -375,7 +373,7 @@ def test_every_approved_ticket_control_action_rings_once_and_failures_ring_zero(
         tickets_data.change_scope(
             conn,
             review.id,
-            ceiling=CodingStage.needs_closeout,
+            ceiling="needs_closeout",
             at_cap=AtCap.propose,
             actor="human",
             now=3,
@@ -383,7 +381,7 @@ def test_every_approved_ticket_control_action_rings_once_and_failures_ring_zero(
         tickets_data.file_proposal(
             conn,
             review.id,
-            field=FieldName.closeout,
+            field="closeout",
             body="closeout",
             actor="agent",
             now=3,
@@ -416,8 +414,8 @@ def test_every_approved_ticket_control_action_rings_once_and_failures_ring_zero(
             worker_type="coding",
             title="Edit value",
             kickoff_note="external note",
-            target_stage=CodingStage.needs_approach,
-            provided_values={FieldName.success: "old"},
+            target_stage="needs_approach",
+            provided_values={"success": "old"},
             actor="chief",
             now=4,
             title_max_chars=TITLE_MAX_CHARS,
@@ -797,7 +795,7 @@ def test_reactivating_source_rejects_active_blocks_cycle_and_does_not_ring(
     source = _create_direct(db_path, title="Source")
     target = _create_direct(db_path, title="Target")
     conn = connect(str(db_path))
-    tickets_data.set_stage(conn, source, new_stage=CodingStage.done, actor="human", now=1)
+    tickets_data.set_stage(conn, source, new_stage="done", actor="human", now=1)
     core_links.add_link(conn, source, target, LinkKind.blocks, 1)
     core_links.add_link(conn, target, source, LinkKind.blocks, 1)
     conn.close()
@@ -874,8 +872,8 @@ def test_successful_excluded_ticket_and_day_writes_do_not_ring(tmp_path: Path) -
         worker_type="coding",
         title="Recap-ready",
         kickoff_note="external note",
-        target_stage=CodingStage.needs_approach,
-        provided_values={FieldName.success: "success"},
+        target_stage="needs_approach",
+        provided_values={"success": "success"},
         actor="chief",
         now=2,
         title_max_chars=TITLE_MAX_CHARS,

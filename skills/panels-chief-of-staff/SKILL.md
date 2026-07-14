@@ -71,6 +71,27 @@ Before running a `panels chief` command, export `PLAN_ACTOR=chief` so the CLI se
 4. Supply the exact settled field prefix required by the target Stage. Valid Stages
    depend on the Ticket's Worker type — for `coding`: `needs_success`,
    `needs_approach`, `needs_plan`, `needs_implementation`, `needs_closeout`, `done`.
+   Use repeatable `--field-file FIELD=PATH` for definition-specific fields, including
+   fields belonging to non-coding Worker types. The named `--success-file`,
+   `--approach-file`, `--plan-file`, `--implementation-file`, and `--closeout-file`
+   options remain conveniences for coding fields. Never supply the same field more than
+   once, whether through two `--field-file` options or through both forms. For example,
+   external `new_worker` work settled through Thinking can be created at Drafting with:
+
+   ```sh
+   panels chief create-ticket-from-external-work \
+     --title "Add a research worker" \
+     --worker-type new_worker \
+     --stage needs_drafting \
+     --kickoff-note-file /tmp/kickoff.md \
+     --field-file stages=/tmp/stages.md \
+     --field-file thinking=/tmp/thinking.md \
+     --json
+   ```
+
+   Always provide the complete settled prefix for the requested Stage. Do not infer that
+   a field belongs to a Worker type or that a prefix is valid from these examples; Panels'
+   API response is authoritative.
    External intake leaves the Ticket stopped at that Stage; it does not create
    proposals or imitate worker progress.
 5. Add the reconciled or newly created external-work ticket to **today** with `panels day add-ticket <ticket-id> --json`, unless the user explicitly says the work belongs in backlog/later or should not appear on today's board. Work the user is reporting now is presumed to belong on today's record.

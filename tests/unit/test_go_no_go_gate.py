@@ -1,19 +1,18 @@
 """t_tt03 — the go/no-go gate: the falsifiable proof that the CLI/API ingress is
 genuinely type-driven.
 
-A ``probe`` ticket (the synthetic SECOND type, ``tests/support/probe.py``) is
+A ``probe`` ticket (the synthetic test-only type in ``tests/support/probe.py``) is
 created and driven through REAL propose/accept to ``done`` via the in-process
 FastAPI ``TestClient`` — real routes -> real marshallers -> per-type parse -> real
 writers -> real events. A missed ingress point (a surviving global-enum coercion)
-fails HERE, because probe's middle stages (``needs_alpha``/``needs_beta``) and
-fields (``alpha``/``beta``) are not ``CodingStage``/``FieldName`` members.
+fails here because probe's middle stages (``needs_alpha``/``needs_beta``) and
+fields (``alpha``/``beta``) are novel plain strings.
 
-Transport note (D-note): the probe registry is installed process-globally via
-``set_registry_for_test`` (the probe fixture), which the in-process app resolves
-through ``coding_bridge.registry()``. It CANNOT reach a spawned CLI subprocess, so
-this gate drives the API layer; the CLI-subprocess proof stays coding-only. This
-is a deliberate, correct coverage boundary — the API ingress IS the ingress under
-test.
+Transport note (D-note): the probe registry is installed process-globally through
+the explicit test configuration seam. It cannot reach a spawned CLI subprocess, so
+this gate drives the API layer; shipped Worker types have separate CLI subprocess
+coverage. This is a deliberate coverage boundary: the API ingress is the seam under
+test here.
 
 Every assertion is a concrete value: exact state / ceiling / at_cap, the field the
 registry selects, the cleared proposal, and the EXACT emitted event kind order.
@@ -40,8 +39,12 @@ PROBE_MANIFEST = {
     "worker_type": "probe",
     "label": "Probe",
     "stages": [
-        {"id": "needs_kickoff", "label": "Kickoff", "gating_field": "kickoff",
-         "is_terminal": False},
+        {
+            "id": "needs_kickoff",
+            "label": "Kickoff",
+            "gating_field": "kickoff",
+            "is_terminal": False,
+        },
         {"id": "needs_alpha", "label": "Alpha", "gating_field": "alpha", "is_terminal": False},
         {"id": "needs_beta", "label": "Beta", "gating_field": "beta", "is_terminal": False},
         {"id": "done", "label": "Done", "gating_field": None, "is_terminal": True},
@@ -108,9 +111,7 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
     with TestClient(app) as client:
         # 1. Manifest endpoint serves probe's exact shape.
         served = client.get("/api/worker-types").json()
-        probe_manifest = next(
-            m for m in served["worker_types"] if m["worker_type"] == "probe"
-        )
+        probe_manifest = next(m for m in served["worker_types"] if m["worker_type"] == "probe")
         assert probe_manifest == PROBE_MANIFEST
 
         # 1. Create a probe ticket — exact initial state/ceiling/type/fields.
@@ -122,7 +123,7 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
         body = created.json()
         tid = body["id"]
         assert body["stage"] == "needs_kickoff"
-        assert body["ceiling"] == "needs_kickoff"        # leading default ceiling
+        assert body["ceiling"] == "needs_kickoff"  # leading default ceiling
         assert body["worker_type"] == "probe"
         assert list(body["fields"].keys()) == ["kickoff", "alpha", "beta"]
         assert body["fields"]["kickoff"]["proposal"] is not None
@@ -243,7 +244,7 @@ def test_gate_invalid_inputs_return_exact_codes(app_db, probe_installed: None) -
         assert missing.json()["error"]["code"] == "validation"
         assert missing.json()["error"]["detail"] == {
             "worker_type": "",
-            "worker_types": ["coding", "probe"],
+            "worker_types": ["coding", "new_worker", "probe"],
         }
 
         # 8. unknown type on create -> the type list.
@@ -252,13 +253,11 @@ def test_gate_invalid_inputs_return_exact_codes(app_db, probe_installed: None) -
         assert unknown.json()["error"]["code"] == "validation"
         assert unknown.json()["error"]["detail"] == {
             "worker_type": "nonesuch",
-            "worker_types": ["coding", "probe"],
+            "worker_types": ["coding", "new_worker", "probe"],
         }
 
 
-def test_gate_error_precedence_not_found_beats_invalid_field(
-    app_db, probe_installed: None
-) -> None:
+def test_gate_error_precedence_not_found_beats_invalid_field(app_db, probe_installed: None) -> None:
     # Resolving the ticket's type before validating the field means a missing ticket
     # is reported as not_found — it beats an invalid-field error.
     app, _db_path = app_db
@@ -269,9 +268,7 @@ def test_gate_error_precedence_not_found_beats_invalid_field(
         assert resp.json()["error"]["detail"] == {"ticket_id": "t_missing"}
 
 
-def test_gate_external_work_create_and_reconcile_both_types(
-    app_db, probe_installed: None
-) -> None:
+def test_gate_external_work_create_and_reconcile_both_types(app_db, probe_installed: None) -> None:
     app, _db_path = app_db
     chief = {"X-Plan-Actor": "chief"}
     with TestClient(app) as client:
@@ -292,9 +289,14 @@ def test_gate_external_work_create_and_reconcile_both_types(
         assert coding.status_code == 200, coding.json()
         cf = coding.json()["fields"]
         assert coding.json()["stage"] == "needs_plan"
-        assert {k: cf[k]["value"] for k in ("success", "approach", "plan", "implementation",
-                                            "closeout")} == {
-            "success": "s", "approach": "a", "plan": None, "implementation": None, "closeout": None
+        assert {
+            k: cf[k]["value"] for k in ("success", "approach", "plan", "implementation", "closeout")
+        } == {
+            "success": "s",
+            "approach": "a",
+            "plan": None,
+            "implementation": None,
+            "closeout": None,
         }
 
         # 9. probe external-work create at needs_beta — prefix kickoff+alpha, beta empty.

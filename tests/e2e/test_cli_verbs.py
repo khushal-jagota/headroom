@@ -125,6 +125,28 @@ def test_ticket_approval_copy_events_and_worker_note_shape(server, cli, api) -> 
     detail = api.get(server, f"/api/tickets/{tid}")
     assert detail["fields"]["approach"]["user_note"] == "approach note"
 
+    new_worker_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "new_worker",
+        "--title",
+        "CLI new worker note",
+    )["id"]
+    cli(
+        server,
+        "worker",
+        "note",
+        new_worker_id,
+        "stages",
+        "--body-file",
+        "-",
+        stdin="stages note",
+    )
+    new_worker_detail = api.get(server, f"/api/tickets/{new_worker_id}")
+    assert new_worker_detail["fields"]["stages"]["user_note"] == "stages note"
+
     copied = cli(server, "ticket", "copy", tid)
     assert "CLI approve ticket" in copied["text"]
     assert "updated intake" in copied["text"]

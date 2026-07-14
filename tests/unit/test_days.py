@@ -14,6 +14,11 @@ from planner.days.data import (
     remove_day_ticket,
 )
 from planner.days.logic.dates import planning_date
+from planner.tickets.contracts import TicketFields
+from planner.tickets.logic.fields_codec import fields_to_json
+from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
+
+_EMPTY_CODING_FIELDS = fields_to_json(TicketFields.empty(CODING_WORKER_TYPE_DEFINITION.field_ids()))
 
 
 def _mk_ticket(
@@ -29,9 +34,9 @@ def _mk_ticket(
     schema defaults."""
     conn.execute(
         "INSERT INTO tickets (id, title, worker_type, stage, priority, deadline, project_id, "
-        "ceiling, created_at, updated_at) "
-        "VALUES (?, ?, 'coding', ?, ?, ?, 'project_vylo', 'needs_success', 0, 0)",
-        (ticket_id, title, stage, priority, deadline),
+        "ceiling, fields, created_at, updated_at) "
+        "VALUES (?, ?, 'coding', ?, ?, ?, 'project_vylo', 'needs_success', ?, 0, 0)",
+        (ticket_id, title, stage, priority, deadline, _EMPTY_CODING_FIELDS),
     )
 
 

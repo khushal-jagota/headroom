@@ -32,7 +32,8 @@ from planner.sprints.logic import (
     derive_sprint_item_status,
     find_overlap,
 )
-from planner.tickets.logic import coding_bridge
+from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 
 class ItemRead(NamedTuple):
@@ -229,9 +230,7 @@ def set_sprint_dates(
         try:
             date.fromisoformat(value)
         except ValueError as exc:
-            raise PlannerError(
-                ErrorCode.validation, f"invalid {label}", {label: value}
-            ) from exc
+            raise PlannerError(ErrorCode.validation, f"invalid {label}", {label: value}) from exc
     if new_start > new_end:
         raise PlannerError(
             ErrorCode.validation,
@@ -342,12 +341,12 @@ def create_idea(
         append_event(conn, idea_id, EventKind.idea_created, {"title": title, "source": "api"}, now)
     row = cast(
         sqlite3.Row | None,
-            conn.execute(
-                "SELECT ideas.*, projects.name AS project_name "
-                "FROM ideas LEFT JOIN projects ON projects.id = ideas.project_id "
-                "WHERE ideas.id = ?",
-                (idea_id,),
-            ).fetchone(),
+        conn.execute(
+            "SELECT ideas.*, projects.name AS project_name "
+            "FROM ideas LEFT JOIN projects ON projects.id = ideas.project_id "
+            "WHERE ideas.id = ?",
+            (idea_id,),
+        ).fetchone(),
     )
     assert row is not None
     return row
@@ -417,7 +416,7 @@ def assign_item_sprint(
 # --- reads ----------------------------------------------------------------------
 
 
-def _child_stage_in_progress(worker_type: str, stage: str) -> bool:
+def _child_stage_in_progress(worker_type_definition: WorkerTypeDefinition, stage: str) -> bool:
     """Per-type "in progress by stage": a non-terminal linear stage strictly past the
     type's first worker stage (its first real-work stage — needs_success for coding,
     needs_stages for new_worker). Resolves the row's own definition so the pure
@@ -430,12 +429,11 @@ def _child_stage_in_progress(worker_type: str, stage: str) -> bool:
     Terminality is checked FIRST so ``and`` short-circuits: ``dropped`` is outside the
     linear order and ``stage_index`` raises on it, so the index is never computed for a
     terminal (done/dropped) stage."""
-    defn = coding_bridge.require(worker_type)
-    terminal = coding_bridge.views.is_terminal(defn, stage)
-    first_worker_idx = coding_bridge.views.stage_index(
-        defn, coding_bridge.views.first_worker_stage(defn)
+    terminal = worker_type_definition.is_terminal(stage)
+    first_worker_idx = worker_type_definition.stage_index(
+        worker_type_definition.first_worker_stage()
     )
-    return (not terminal) and coding_bridge.views.stage_index(defn, stage) > first_worker_idx
+    return (not terminal) and worker_type_definition.stage_index(stage) > first_worker_idx
 
 
 def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
@@ -452,13 +450,14 @@ def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:
         """,
         (item_id,),
     ).fetchall()
+    registry = configured_worker_type_registry()
     children = [
         SprintItemChildStatus(
             stage=str(row["stage"]),
             ticket_status=str(row["ticket_status"]),
             blocked=core_links.blocker_summary(conn, str(row["id"])).blocked,
             stage_in_progress=_child_stage_in_progress(
-                str(row["worker_type"]), str(row["stage"])
+                registry.require(str(row["worker_type"])), str(row["stage"])
             ),
         )
         for row in child_rows

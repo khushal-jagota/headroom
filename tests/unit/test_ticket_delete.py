@@ -20,7 +20,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
 from planner.days import data as days_data
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, TITLE_MAX_CHARS, AtCap, FieldName
+from planner.tickets.contracts import NO_FURTHER, TITLE_MAX_CHARS, AtCap
 
 
 def _create(
@@ -43,7 +43,7 @@ def _create(
     return tickets_data.accept_proposal(
         conn,
         ticket.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=clock.now_unix(),
         next_ceiling=NO_FURTHER,

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import fields
 from pathlib import Path
 from sqlite3 import Connection
+from typing import get_type_hints
 
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
@@ -15,7 +16,8 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.tickets.contracts import CodingStage, Ticket
+from planner.tickets.contracts import Ticket
+from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 
 _EMPTY_FIELDS_DEFAULT = (
     '{"kickoff":{"value":null,"proposal":null,"user_note":null},'
@@ -50,7 +52,12 @@ def test_ticket_contract_requires_worker_type_and_stored_stage() -> None:
     assert "ticket_type" not in ticket_fields
     assert "state" not in ticket_fields
     assert ticket_fields["worker_type"].default is ticket_fields["stage"].default
-    assert [stage.value for stage in CodingStage] == [
+    type_hints = get_type_hints(Ticket)
+    assert type_hints["worker_type"] is str
+    assert type_hints["stage"] is str
+    assert list(CODING_WORKER_TYPE_DEFINITION.stage_ids()) + [
+        CODING_WORKER_TYPE_DEFINITION.dropped_stage.id
+    ] == [
         "needs_kickoff",
         "needs_success",
         "needs_approach",
@@ -72,6 +79,8 @@ def test_fresh_schema_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
     assert "stage" in columns
     assert columns["stage"][3] == 1
     assert columns["stage"][4] == "'needs_kickoff'"
+    assert columns["fields"][3] == 1
+    assert columns["fields"][4] is None
     assert "ticket_type" not in columns
     assert "state" not in columns
     indexes = {row[1] for row in conn.execute("PRAGMA index_list(tickets)")}
@@ -81,7 +90,7 @@ def test_fresh_schema_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
     assert "idx_tickets_type_state" not in indexes
 
 
-def _create_almost_v18_ticket_table(
+def _create_almost_v19_ticket_table(
     conn: Connection,
     *,
     recap_definition: str = "TEXT NOT NULL DEFAULT ''",
@@ -110,15 +119,15 @@ def _create_almost_v18_ticket_table(
                                                   'hermes_codex','hermes_claude')),
           chat_session_key TEXT,
           alias TEXT,
-          fields TEXT NOT NULL DEFAULT '{_EMPTY_FIELDS_DEFAULT}',
+          fields TEXT NOT NULL,
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL
         );
         INSERT INTO tickets (
-          id, title, worker_type, stage, ceiling, created_at, updated_at
+          id, title, worker_type, stage, ceiling, fields, created_at, updated_at
         ) VALUES (
           't_incomplete', 'Incomplete', 'coding', 'needs_success', 'needs_success',
-          1, 1
+          '{_EMPTY_FIELDS_DEFAULT}', 1, 1
         );
         """
     )
@@ -127,7 +136,7 @@ def _create_almost_v18_ticket_table(
 
 def test_incomplete_target_constraints_are_rebuilt(tmp_path: Path) -> None:
     conn = connect(str(tmp_path / "incomplete.db"))
-    _create_almost_v18_ticket_table(
+    _create_almost_v19_ticket_table(
         conn, ceiling_definition="TEXT NOT NULL DEFAULT 'needs_success'"
     )
     create_schema(conn)
@@ -143,7 +152,7 @@ def test_incomplete_target_constraints_are_rebuilt(tmp_path: Path) -> None:
 
 def test_incomplete_non_ceiling_constraint_is_rebuilt(tmp_path: Path) -> None:
     conn = connect(str(tmp_path / "incomplete-recap.db"))
-    _create_almost_v18_ticket_table(conn, recap_definition="TEXT DEFAULT ''")
+    _create_almost_v19_ticket_table(conn, recap_definition="TEXT DEFAULT ''")
     create_schema(conn)
     columns = {row[1]: row for row in conn.execute("PRAGMA table_info(tickets)")}
     assert columns["recap"][3] == 1

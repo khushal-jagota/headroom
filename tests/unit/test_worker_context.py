@@ -13,8 +13,6 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
-    CodingStage,
-    FieldName,
     TicketEdit,
 )
 from planner.tickets.worker_context import TICKET_CHANGED_CONTEXT_KEY, TICKET_CHANGED_TEXT
@@ -94,7 +92,7 @@ def _ticket(tmp_db):
     return tickets_data.accept_proposal(
         tmp_db,
         ticket.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=1,
         next_ceiling=NO_FURTHER,
@@ -125,7 +123,7 @@ def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(tmp
     tickets_data.set_field_user_note(
         tmp_db,
         ticket.id,
-        field=FieldName.success,
+        field="success",
         user_note="agent note",
         actor="agent",
         now=3,
@@ -143,7 +141,7 @@ def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(tmp
     tickets_data.edit_field_value(
         tmp_db,
         ticket.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         new_body="ticket guidance",
         actor="human",
         now=5,
@@ -151,7 +149,7 @@ def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(tmp
     tickets_data.set_field_user_note(
         tmp_db,
         ticket.id,
-        field=FieldName.success,
+        field="success",
         user_note="field guidance",
         actor="human",
         now=6,
@@ -164,20 +162,20 @@ def test_human_ticket_edits_coalesce_but_agent_writes_do_not_produce_context(tmp
 @pytest.mark.parametrize(
     ("field", "prior_fields"),
     [
-        (FieldName.success, ()),
-        (FieldName.approach, (FieldName.success,)),
-        (FieldName.plan, (FieldName.success, FieldName.approach)),
+        ("success", ()),
+        ("approach", ("success",)),
+        ("plan", ("success", "approach")),
     ],
 )
 def test_only_edited_approval_produces_context_at_each_approval_gate(
-    tmp_db, field: FieldName, prior_fields: tuple[FieldName, ...]
+    tmp_db, field: str, prior_fields: tuple[str, ...]
 ) -> None:
     def parked_ticket(edited: bool):
         ticket = _ticket(tmp_db)
         ceiling = {
-            FieldName.success: CodingStage.needs_success,
-            FieldName.approach: CodingStage.needs_approach,
-            FieldName.plan: CodingStage.needs_plan,
+            "success": "needs_success",
+            "approach": "needs_approach",
+            "plan": "needs_plan",
         }[field]
         tickets_data.change_scope(
             tmp_db,
@@ -189,7 +187,7 @@ def test_only_edited_approval_produces_context_at_each_approval_gate(
         )
         for prior in prior_fields:
             tickets_data.file_proposal(
-                tmp_db, ticket.id, field=prior, body=prior.value, actor="agent", now=11
+                tmp_db, ticket.id, field=prior, body=prior, actor="agent", now=11
             )
         tickets_data.file_proposal(
             tmp_db, ticket.id, field=field, body="draft", actor="agent", now=12
@@ -221,21 +219,21 @@ def test_direct_value_and_scope_edits_produce_context_but_plain_accept_does_not(
     tickets_data.change_scope(
         tmp_db,
         ticket.id,
-        ceiling=CodingStage.needs_closeout,
+        ceiling="needs_closeout",
         at_cap=AtCap.propose,
         actor="human",
         now=20,
     )
-    for field in (FieldName.success, FieldName.approach, FieldName.plan, FieldName.implementation):
+    for field in ("success", "approach", "plan", "implementation"):
         tickets_data.file_proposal(
-            tmp_db, ticket.id, field=field, body=field.value, actor="agent", now=21
+            tmp_db, ticket.id, field=field, body=field, actor="agent", now=21
         )
     _clear(tmp_db, ticket.id)
 
     tickets_data.edit_field_value(
         tmp_db,
         ticket.id,
-        field=FieldName.success,
+        field="success",
         new_body="edited success",
         actor="human",
         now=22,
@@ -244,13 +242,13 @@ def test_direct_value_and_scope_edits_produce_context_but_plain_accept_does_not(
     _clear(tmp_db, ticket.id)
 
     tickets_data.file_proposal(
-        tmp_db, ticket.id, field=FieldName.closeout, body="closeout draft", actor="agent", now=23
+        tmp_db, ticket.id, field="closeout", body="closeout draft", actor="agent", now=23
     )
     _clear(tmp_db, ticket.id)
     tickets_data.accept_proposal(
         tmp_db,
         ticket.id,
-        field=FieldName.closeout,
+        field="closeout",
         actor="human",
         now=24,
         next_ceiling=NO_FURTHER,
@@ -262,16 +260,16 @@ def test_direct_value_and_scope_edits_produce_context_but_plain_accept_does_not(
 def test_human_recap_marks_context_but_agent_recap_does_not(tmp_db) -> None:
     ticket = _ticket(tmp_db)
     tickets_data.file_proposal(
-        tmp_db, ticket.id, field=FieldName.success, body="success", actor="agent", now=28
+        tmp_db, ticket.id, field="success", body="success", actor="agent", now=28
     )
     tickets_data.accept_proposal(
         tmp_db,
         ticket.id,
-        field=FieldName.success,
+        field="success",
         actor="human",
         now=29,
         edited_body=None,
-        next_ceiling=CodingStage.needs_plan,
+        next_ceiling="needs_plan",
         at_cap=AtCap.propose,
     )
 

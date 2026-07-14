@@ -11,7 +11,7 @@ from typing import Final
 
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 18
+SCHEMA_VERSION: Final = 19
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS tickets (
                                                    'hermes_codex','hermes_claude')),
   chat_session_key     TEXT,                         -- the ticket-mind's durable Hermes session_key
   alias                TEXT,                         -- migration "Ticket ID:" (seed importer dedup)
-  fields               TEXT NOT NULL DEFAULT '{"kickoff":{"value":null,"proposal":null,"user_note":null},"success":{"value":null,"proposal":null,"user_note":null},"approach":{"value":null,"proposal":null,"user_note":null},"plan":{"value":null,"proposal":null,"user_note":null},"implementation":{"value":null,"proposal":null,"user_note":null},"closeout":{"value":null,"proposal":null,"user_note":null}}',
+  fields               TEXT NOT NULL,
   created_at           INTEGER NOT NULL,
   updated_at           INTEGER NOT NULL
 );
@@ -206,7 +206,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(DDL)
     projects_data.seed_default_projects(conn)
     _migrate_project_columns(conn)
-    _migrate_tickets_to_v18_contract(conn)
+    _migrate_tickets_to_v19_contract(conn)
     _migrate_project_summary_column(conn)
     _migrate_derived_sprint_item_status(conn)
     _migrate_links_blocks_only(conn)
@@ -218,11 +218,11 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
 
 
-# --- sealed v18 Ticket migration ----------------------------------------------
+# --- sealed historical-to-v19 Ticket migration --------------------------------
 # The old storage/event tokens in this section are recognition inputs only. They
 # are deliberately not accepted by any live Ticket contract after this migration.
 
-_V18_TICKETS_TABLE_SQL: Final = """
+_V19_TICKETS_TABLE_SQL: Final = """
 CREATE TABLE tickets_new (
   id                   TEXT PRIMARY KEY,
   title                TEXT NOT NULL CHECK (length(title) <= 200),
@@ -243,14 +243,14 @@ CREATE TABLE tickets_new (
                                                    'hermes_codex','hermes_claude')),
   chat_session_key     TEXT,
   alias                TEXT,
-  fields               TEXT NOT NULL DEFAULT '{"kickoff":{"value":null,"proposal":null,"user_note":null},"success":{"value":null,"proposal":null,"user_note":null},"approach":{"value":null,"proposal":null,"user_note":null},"plan":{"value":null,"proposal":null,"user_note":null},"implementation":{"value":null,"proposal":null,"user_note":null},"closeout":{"value":null,"proposal":null,"user_note":null}}',
+  fields               TEXT NOT NULL,
   created_at           INTEGER NOT NULL,
   updated_at           INTEGER NOT NULL
 )
 """
 
 
-def _tickets_table_is_v18(conn: sqlite3.Connection, sql: str) -> bool:
+def _tickets_table_is_v19(conn: sqlite3.Connection, sql: str) -> bool:
     rows = conn.execute("PRAGMA table_info(tickets)").fetchall()
     expected_columns = (
         ("id", "TEXT", 0, None, 1),
@@ -269,18 +269,7 @@ def _tickets_table_is_v18(conn: sqlite3.Connection, sql: str) -> bool:
         ("implementer", "TEXT", 0, None, 0),
         ("chat_session_key", "TEXT", 0, None, 0),
         ("alias", "TEXT", 0, None, 0),
-        (
-            "fields",
-            "TEXT",
-            1,
-            "'{\"kickoff\":{\"value\":null,\"proposal\":null,\"user_note\":null},"
-            "\"success\":{\"value\":null,\"proposal\":null,\"user_note\":null},"
-            "\"approach\":{\"value\":null,\"proposal\":null,\"user_note\":null},"
-            "\"plan\":{\"value\":null,\"proposal\":null,\"user_note\":null},"
-            "\"implementation\":{\"value\":null,\"proposal\":null,\"user_note\":null},"
-            "\"closeout\":{\"value\":null,\"proposal\":null,\"user_note\":null}}'",
-            0,
-        ),
+        ("fields", "TEXT", 1, None, 0),
         ("created_at", "INTEGER", 1, None, 0),
         ("updated_at", "INTEGER", 1, None, 0),
     )
@@ -349,9 +338,12 @@ def _ensure_legacy_ticket_project(conn: sqlite3.Connection, label: str) -> str:
 
 
 def _rewrite_v18_ticket_events(conn: sqlite3.Connection) -> None:
-    if conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'events'"
-    ).fetchone() is None:
+    if (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'events'"
+        ).fetchone()
+        is None
+    ):
         return
     rows = conn.execute(
         "SELECT id, kind, payload FROM events "
@@ -385,9 +377,7 @@ def _rewrite_v18_ticket_events(conn: sqlite3.Connection) -> None:
             changed = True
         elif kind == "ticket_created" and "state" in payload:
             if "stage" in payload:
-                raise RuntimeError(
-                    f"legacy Ticket event {row['id']} has conflicting state/stage"
-                )
+                raise RuntimeError(f"legacy Ticket event {row['id']} has conflicting state/stage")
             payload["stage"] = payload.pop("state")
             changed = True
         elif kind == "item_children_changed" and payload.get("reason") == "state":
@@ -401,15 +391,15 @@ def _rewrite_v18_ticket_events(conn: sqlite3.Connection) -> None:
             )
 
 
-def _migrate_tickets_to_v18_contract(conn: sqlite3.Connection) -> None:
+def _migrate_tickets_to_v19_contract(conn: sqlite3.Connection) -> None:
     """Migrate every recognized Ticket schema and its affected events under one lock."""
     foreign_keys_enabled = bool(conn.execute("PRAGMA foreign_keys").fetchone()[0])
     if foreign_keys_enabled and conn.in_transaction:
-        raise RuntimeError("Ticket v18 migration requires an autocommit connection")
+        raise RuntimeError("Ticket v19 migration requires an autocommit connection")
     if foreign_keys_enabled:
         conn.execute("PRAGMA foreign_keys=OFF")
     use_savepoint = conn.in_transaction
-    savepoint = "ticket_v18_contract"
+    savepoint = "ticket_v19_contract"
     try:
         conn.execute(f"SAVEPOINT {savepoint}" if use_savepoint else "BEGIN IMMEDIATE")
         try:
@@ -427,16 +417,20 @@ def _migrate_tickets_to_v18_contract(conn: sqlite3.Connection) -> None:
             if not ({"stage", "state"} & columns):
                 raise RuntimeError("Ticket schema has no Stage source column")
 
-            rebuild = not _tickets_table_is_v18(conn, sql)
+            rebuild = not _tickets_table_is_v19(conn, sql)
             if rebuild:
                 rows = conn.execute("SELECT * FROM tickets ORDER BY id").fetchall()
-                post_kickoff_shape = "implementer" in columns and not {
-                    "kickoff_note",
-                    "kickoff_proposal",
-                    "user_note",
-                } & columns
+                post_kickoff_shape = (
+                    "implementer" in columns
+                    and not {
+                        "kickoff_note",
+                        "kickoff_proposal",
+                        "user_note",
+                    }
+                    & columns
+                )
                 conn.execute("DROP TABLE IF EXISTS tickets_new")
-                conn.execute(_V18_TICKETS_TABLE_SQL)
+                conn.execute(_V19_TICKETS_TABLE_SQL)
                 for row in rows:
                     ticket_id = row["id"]
                     if ticket_id is None:
@@ -455,9 +449,7 @@ def _migrate_tickets_to_v18_contract(conn: sqlite3.Connection) -> None:
                                 f"Ticket schema has no {required_column} source column"
                             )
                         if row[required_column] is None:
-                            raise RuntimeError(
-                                f"Ticket {ticket_id} has NULL {required_column}"
-                            )
+                            raise RuntimeError(f"Ticket {ticket_id} has NULL {required_column}")
                     if "recap" in columns and row["recap"] is None:
                         raise RuntimeError(f"Ticket {ticket_id} has NULL recap")
 
@@ -523,9 +515,7 @@ def _migrate_tickets_to_v18_contract(conn: sqlite3.Connection) -> None:
                         if stage == "needs_kickoff":
                             ticket_status = "awaiting_approval"
 
-                    sprint_item_id = (
-                        row["sprint_item_id"] if "sprint_item_id" in columns else None
-                    )
+                    sprint_item_id = row["sprint_item_id"] if "sprint_item_id" in columns else None
                     if "project_id" in columns:
                         project_id = row["project_id"]
                     elif "project" in columns:
@@ -578,7 +568,7 @@ def _migrate_tickets_to_v18_contract(conn: sqlite3.Connection) -> None:
             violations = conn.execute("PRAGMA foreign_key_check").fetchall()
             if violations:
                 raise RuntimeError(
-                    f"foreign key check failed after Ticket v18 migration: {violations!r}"
+                    f"foreign key check failed after Ticket v19 migration: {violations!r}"
                 )
         except BaseException:
             if use_savepoint:
@@ -840,8 +830,7 @@ def _create_indexes(conn: sqlite3.Connection) -> None:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_stage ON tickets(stage)")
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_tickets_worker_type_stage "
-        "ON tickets(worker_type, stage)"
+        "CREATE INDEX IF NOT EXISTS idx_tickets_worker_type_stage ON tickets(worker_type, stage)"
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_sprint_items_project_id ON sprint_items(project_id)"
@@ -851,10 +840,9 @@ def _create_indexes(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_project_columns(conn: sqlite3.Connection) -> None:
-    needs_migration = (
-        "project" in _table_columns(conn, "sprint_items")
-        or "project" in _table_columns(conn, "ideas")
-    )
+    needs_migration = "project" in _table_columns(
+        conn, "sprint_items"
+    ) or "project" in _table_columns(conn, "ideas")
     if not needs_migration:
         return
     _ensure_projects_for_existing_labels(conn)
@@ -884,9 +872,12 @@ def _ensure_projects_for_existing_labels(conn: sqlite3.Connection) -> None:
         ).fetchall()
         labels.update(str(row["project"]) for row in rows)
     for label in sorted(labels, key=str.lower):
-        if conn.execute(
-            "SELECT 1 FROM projects WHERE name = ? COLLATE NOCASE", (label,)
-        ).fetchone() is not None:
+        if (
+            conn.execute(
+                "SELECT 1 FROM projects WHERE name = ? COLLATE NOCASE", (label,)
+            ).fetchone()
+            is not None
+        ):
             continue
         project_id = projects_data.project_id_for_name(label)
         base_id = project_id
@@ -905,9 +896,7 @@ def _ensure_projects_for_existing_labels(conn: sqlite3.Connection) -> None:
 
 def _project_id_expr(table_alias: str = "") -> str:
     prefix = f"{table_alias}." if table_alias else ""
-    return (
-        f"(SELECT id FROM projects WHERE name = trim({prefix}project) COLLATE NOCASE LIMIT 1)"
-    )
+    return f"(SELECT id FROM projects WHERE name = trim({prefix}project) COLLATE NOCASE LIMIT 1)"
 
 
 def _rebuild_sprint_items_with_project_id(conn: sqlite3.Connection) -> None:

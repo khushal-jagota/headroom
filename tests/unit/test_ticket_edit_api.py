@@ -18,7 +18,7 @@ from planner.core.db import connect, create_schema
 from planner.core.events import read_events_since
 from planner.core.server import create_app
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, AtCap, FieldName
+from planner.tickets.contracts import NO_FURTHER, AtCap
 from planner.worker_context import data as worker_context_data
 
 
@@ -73,7 +73,7 @@ def _create_ticket(db_path: Path, **values: Any) -> str:
         ticket = tickets_data.accept_proposal(
             conn,
             ticket.id,
-            field=FieldName.kickoff,
+            field="kickoff",
             actor="unattributed",
             now=1,
             next_ceiling=NO_FURTHER,

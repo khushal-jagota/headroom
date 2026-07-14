@@ -11,13 +11,18 @@ from planner.core.contracts import (
 )
 from planner.core.errors import ErrorCode, PlannerError
 from planner.tickets import views as ticket_views
+from planner.tickets.contracts import TicketFields
+from planner.tickets.logic.fields_codec import fields_to_json
+from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
+
+_EMPTY_CODING_FIELDS = fields_to_json(TicketFields.empty(CODING_WORKER_TYPE_DEFINITION.field_ids()))
 
 
 def _ticket(conn, ticket_id: str, stage: str = "needs_success") -> None:
     conn.execute(
-        "INSERT INTO tickets (id, title, worker_type, stage, ceiling, created_at, updated_at) "
-        "VALUES (?, ?, 'coding', ?, 'needs_success', 1, 1)",
-        (ticket_id, ticket_id, stage),
+        "INSERT INTO tickets (id, title, worker_type, stage, ceiling, fields, "
+        "created_at, updated_at) VALUES (?, ?, 'coding', ?, 'needs_success', ?, 1, 1)",
+        (ticket_id, ticket_id, stage, _EMPTY_CODING_FIELDS),
     )
 
 

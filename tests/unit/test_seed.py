@@ -7,6 +7,7 @@ parsers."""
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from sqlite3 import Connection
@@ -18,6 +19,13 @@ from planner.seed.logic.fieldmap import resolve_priority
 from planner.seed.logic.latest import pick_latest_daily
 from planner.seed.logic.tracking import parse_tracking
 from planner.seed.logic.workspace import match_item_title, parse_workspace
+from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
+from planner.worker_types.configuration import (
+    install_worker_type_registry_for_test,
+    restore_production_worker_type_registry_for_test,
+)
+from planner.worker_types.contracts import FieldDefinition, StageDefinition
+from planner.worker_types.registry import WorkerTypeRegistry
 
 FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "planning-md"
 
@@ -45,29 +53,38 @@ def _rows_by(conn: Connection, sql: str, key: str) -> dict[str, object]:
 _EXPECTED_SKIPS = [
     SkippedSection("sprints/current/daily/2026-06-10", None, _REASON_DAILY, ""),
     SkippedSection(
-        "sprints/current/daily/2026-06-11/overview.md", None, _REASON_FILE,
+        "sprints/current/daily/2026-06-11/overview.md",
+        None,
+        _REASON_FILE,
         "# Overview Date: 2026-06-11 ## Brief Take Latest overview content; "
         "enumerated as skipped, never imported.",
     ),
     SkippedSection(
-        "sprints/current/daily/2026-06-11/tracker.md", None, _REASON_FILE,
+        "sprints/current/daily/2026-06-11/tracker.md",
+        None,
+        _REASON_FILE,
         "# Daily Date: 2026-06-11 ## Focus Latest tracker content; "
         "enumerated as skipped, never imported.",
     ),
     SkippedSection(
-        "sprints/current/daily/2026-06-11/workspace.md", "Necessary Calls", _REASON_SECTION,
+        "sprints/current/daily/2026-06-11/workspace.md",
+        "Necessary Calls",
+        _REASON_SECTION,
         "- Pick one lane for the day and hold it. - Recommended call: "
         "finish the import pipeline before touching polish.",
     ),
     SkippedSection(
-        "deferred.md", None, _REASON_PREAMBLE,
+        "deferred.md",
+        None,
+        _REASON_PREAMBLE,
         "Important work not in the current sprint. Rules: "
         "- Group by project. - Priority is not urgency.",
     ),
     SkippedSection(
-        "ideas.md", None, _REASON_PREAMBLE,
-        "Interesting concepts worth exploring later. Rules: "
-        "- Keep entries readable standalone.",
+        "ideas.md",
+        None,
+        _REASON_PREAMBLE,
+        "Interesting concepts worth exploring later. Rules: - Keep entries readable standalone.",
     ),
 ]
 
@@ -79,8 +96,13 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
 
     # (1) report counts.
     assert (
-        report.sprints, report.sprint_items, report.deferred_items,
-        report.tickets, report.ideas, report.links, report.duplicates_skipped,
+        report.sprints,
+        report.sprint_items,
+        report.deferred_items,
+        report.tickets,
+        report.ideas,
+        report.links,
+        report.duplicates_skipped,
     ) == (1, 5, 4, 4, 3, 0, 0)
 
     # (2) DB row counts.
@@ -210,9 +232,12 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
             assert slot["proposal"] is None
 
     # (8) decoy is absent.
-    assert tmp_db.execute(
-        "SELECT COUNT(*) FROM tickets WHERE alias = 'ticket-20260610-decoy'"
-    ).fetchone()[0] == 0
+    assert (
+        tmp_db.execute(
+            "SELECT COUNT(*) FROM tickets WHERE alias = 'ticket-20260610-decoy'"
+        ).fetchone()[0]
+        == 0
+    )
     assert _count(tmp_db, "tickets") == 4
 
     # (9) link + parentage.
@@ -251,7 +276,9 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
         "Tune the retrieval cache.": ("P2", "Vylo", "- Watch the hit rate for a week first."),
         "Rotate the leaked staging key.": ("P0", "Vylo", ""),
         "Read the WAL internals paper.": (
-            "P3", "Learning", "- Take notes for the wiki.\n  - File under storage engines.",
+            "P3",
+            "Learning",
+            "- Take notes for the wiki.\n  - File under storage engines.",
         ),
     }
     for title, (priority, project, body) in expected_deferred.items():
@@ -286,8 +313,12 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     # (13) idempotent re-run: zero new rows, all hits counted.
     report2 = seed_from_source(tmp_db, FIXTURE, _FIXED_NOW)
     assert (
-        report2.sprints, report2.sprint_items, report2.deferred_items,
-        report2.tickets, report2.ideas, report2.links,
+        report2.sprints,
+        report2.sprint_items,
+        report2.deferred_items,
+        report2.tickets,
+        report2.ideas,
+        report2.links,
     ) == (0, 0, 0, 0, 0, 0)
     assert report2.duplicates_skipped == 17
     assert report2.skipped == _EXPECTED_SKIPS
@@ -351,7 +382,9 @@ def test_orphan_prose_in_recognized_section_is_enumerated() -> None:
     assert [item.title for item in items] == ["Real item."]
     assert skipped == [
         SkippedSection(
-            "sprint-tracking.md", "Todo", _REASON_PROSE,
+            "sprint-tracking.md",
+            "Todo",
+            _REASON_PROSE,
             "A stray prose paragraph that is not an item.",
         )
     ]
@@ -370,3 +403,43 @@ def test_workspace_field_continuation_lines_preserved() -> None:
     assert skipped == []
     assert len(tickets) == 1
     assert tickets[0].success == "first line\n    second continuation line"
+
+
+def test_seed_fields_follow_the_registered_coding_definition(tmp_db: Connection) -> None:
+    extra_field = "seed_extra"
+    definition = replace(
+        CODING_WORKER_TYPE_DEFINITION,
+        stages=(
+            *CODING_WORKER_TYPE_DEFINITION.stages[:-1],
+            StageDefinition("needs_seed_extra", "Seed extra", extra_field, False),
+            CODING_WORKER_TYPE_DEFINITION.stages[-1],
+        ),
+        fields=(
+            *CODING_WORKER_TYPE_DEFINITION.fields,
+            FieldDefinition(extra_field, "Seed extra"),
+        ),
+    )
+    registry = WorkerTypeRegistry(
+        (definition,),
+        known_skills=frozenset({"panels-worker-coding"}),
+        known_toolset_profiles=frozenset({"default"}),
+    )
+    install_worker_type_registry_for_test(registry)
+    try:
+        seed_from_source(tmp_db, FIXTURE, _FIXED_NOW)
+    finally:
+        restore_production_worker_type_registry_for_test()
+
+    rows = {
+        row["alias"]: json.loads(row["fields"])
+        for row in tmp_db.execute("SELECT alias, fields FROM tickets")
+    }
+    empty_slot = {"value": None, "proposal": None, "user_note": None}
+    assert all(fields[extra_field] == empty_slot for fields in rows.values())
+    assert rows["ticket-20260611-export-format"]["kickoff"]["value"] == "- Project: Tribe"
+    assert rows["ticket-20260611-export-format"]["success"]["value"] == (
+        "a one-page format note that a second reader can implement from."
+    )
+    assert rows["ticket-20260611-release-branch"]["approach"]["value"] == (
+        "branch from main after the fixture tests pass, then tag."
+    )

@@ -800,6 +800,11 @@ shaped JSON default is removed through a v19 forward migration that rewrites rec
 the proven lock-held migration envelope and preserves every stored field value. An omitted field map must
 fail rather than silently produce a coding-shaped row for another Worker type.
 
+This does not forbid migrations from translating historical data. A recognized old Ticket row that
+predates a stored Worker type is backfilled as `coding`, because coding is the workflow that created that
+shape. That classification exists only inside the migration. No Python signature, request boundary, or
+canonical SQLite column supplies `coding` when live input omits Worker type.
+
 ## D-ad02-ingress-and-seed-authority — Every field set comes from the resolved definition
 
 AD02's first independent plan review found two remaining coding-shaped edges. The historical seed importer
@@ -832,6 +837,18 @@ changes.
 `tests/support/__init__.py` is added to AD02's allowlist for a docstring-only correction. Its old
 “ticket type” term and “production stays coding-only” statement are both false after the already-locked
 Worker-type model and shipped `new_worker` definition. No executable test support or behavior changes.
+
+## D-ad02-chief-fixed-keys — Generic Worker fields cannot replace fixed request structure
+
+Chief's `--field-file` transport carries Worker-type-owned fields, not the request envelope. Reconcile
+therefore rejects collisions with its fixed `stage`, `kickoff_note`, and `recap` keys; create additionally
+rejects its title, Worker type, placement, and metadata keys. Rejection happens before file reads or HTTP
+delivery. The reserved set stays command-specific so a create-only name on reconcile still reaches the API,
+where the resolved Worker-type definition remains the authority on whether it is a declared field.
+
+The corrected AD02 implementation passed independent read-only re-review with `NO VIOLATIONS` after this
+repair. That review also confirmed the explicit definition boundary, registry-free stored reads, v19
+historical-only backfill, deleted compatibility stack, and bounded changed-path set.
 
 ## D-ad01-one-locked-ticket-migration — One terminal rebuild migrates every old Ticket schema
 

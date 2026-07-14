@@ -47,7 +47,7 @@ Genericity test: any sentence equally true of a different worker isn't done — 
 From the approved thinking, write the two files:
 
 - The new worker's **`SKILL.md`** — front matter plus one guidance section per stage, mirroring this skill and `panels-worker-coding`.
-- Its **Worker type definition** — the `WorkflowDefinition`: Stages, ordered fields,
+- Its **Worker type definition** — the `WorkerTypeDefinition`: Stages, ordered fields,
   ceiling range, worker profile, any handoff. Novel ids are plain strings; reuse the
   shared `needs_kickoff`/`kickoff`, `needs_closeout`/`closeout`, `done`, `dropped`.
 
@@ -58,8 +58,9 @@ Point the reviewer at both files and note briefly how they realize the thinking.
 The mechanical recipe for adding a worker to the running system:
 
 1. Place the `SKILL.md` under `skills/<name>/`.
-2. Add the definition module under `src/planner/ticket_types/`.
-3. Register it: the definition into the production registry, its skill into the known-skills catalog.
+2. Add the `WorkerTypeDefinition` module under `src/planner/worker_types/`.
+3. Register it once in `src/planner/worker_types/configuration.py`: add its skill to the
+   known-skills catalog and its definition to the production configuration tuple.
 4. Provision it: add the skill dir to the planner skill list. On restart this **symlinks the skill into the worker's Hermes home — the step that lets a worker `skill_view` it**. The file must exist before the restart, or startup fails.
 5. Confirm it validates at build and the skill is shipped + provisioned.
 6. Announce the Worker type to the agent front doors: add the new specialist to

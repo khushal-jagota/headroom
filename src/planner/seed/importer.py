@@ -5,7 +5,6 @@ idempotent by alias (tickets) / title (items, ideas) / name (sprints)."""
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from pathlib import Path
 from typing import cast
@@ -30,11 +29,12 @@ from planner.seed.logic.kickoff import parse_kickoff, parse_review
 from planner.seed.logic.latest import pick_latest_daily
 from planner.seed.logic.tracking import parse_tracking
 from planner.seed.logic.workspace import parse_workspace
-from planner.tickets.logic import ticket_type_guard
+from planner.tickets.contracts import FieldSlot, TicketFields
+from planner.tickets.logic import fields_codec
+from planner.worker_types.configuration import configured_worker_type_registry
 
 
-def seed_from_source(conn: sqlite3.Connection, source_dir: str | Path,
-                     now: int) -> MigrationReport:
+def seed_from_source(conn: sqlite3.Connection, source_dir: str | Path, now: int) -> MigrationReport:
     """now is unix seconds from the caller's clock (the app clock in the server,
     a fixed instant in tests) — the importer never reads wall time itself (§13)."""
     root = Path(source_dir)
@@ -77,9 +77,7 @@ def seed_from_source(conn: sqlite3.Connection, source_dir: str | Path,
         ]
         chosen, skipped_folders = pick_latest_daily(folders)
         for name in skipped_folders:
-            skipped.append(
-                SkippedSection(f"sprints/current/daily/{name}", None, REASON_DAILY, "")
-            )
+            skipped.append(SkippedSection(f"sprints/current/daily/{name}", None, REASON_DAILY, ""))
         if chosen is not None:
             chosen_dir = daily_dir / chosen
             for file in sorted(chosen_dir.iterdir()):
@@ -139,18 +137,32 @@ def _import_sprint(
         "carry_forward, created_at, updated_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            sprint_id, sprint.name, sprint.date_start, sprint.date_end,
-            sprint.limiting_factor, sprint.primary_bet, sprint.supports, sprint.premortem,
-            review.get("outcomes", ""), review.get("solo_reflection", ""),
-            review.get("joint_discussion", ""), review.get("updates_to_thinking", ""),
-            review.get("carry_forward", ""), now, now,
+            sprint_id,
+            sprint.name,
+            sprint.date_start,
+            sprint.date_end,
+            sprint.limiting_factor,
+            sprint.primary_bet,
+            sprint.supports,
+            sprint.premortem,
+            review.get("outcomes", ""),
+            review.get("solo_reflection", ""),
+            review.get("joint_discussion", ""),
+            review.get("updates_to_thinking", ""),
+            review.get("carry_forward", ""),
+            now,
+            now,
         ),
     )
     append_event(
-        conn, sprint_id, EventKind.sprint_created,
+        conn,
+        sprint_id,
+        EventKind.sprint_created,
         {
-            "name": sprint.name, "date_start": sprint.date_start,
-            "date_end": sprint.date_end, "source": "seed",
+            "name": sprint.name,
+            "date_start": sprint.date_start,
+            "date_end": sprint.date_end,
+            "source": "seed",
         },
         now,
     )
@@ -168,9 +180,7 @@ def _import_items(
     deferred: bool,
 ) -> None:
     for item in items:
-        row = conn.execute(
-            "SELECT id FROM sprint_items WHERE title = ?", (item.title,)
-        ).fetchone()
+        row = conn.execute("SELECT id FROM sprint_items WHERE title = ?", (item.title,)).fetchone()
         if row is not None:
             report.duplicates_skipped += 1
             items_by_title[item.title] = cast(str, row["id"])
@@ -187,14 +197,25 @@ def _import_items(
             "sprint_id, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                item_id, item.title, item.body, item.priority.value,
-                item.deadline, project.id, item_sprint_id, now, now,
+                item_id,
+                item.title,
+                item.body,
+                item.priority.value,
+                item.deadline,
+                project.id,
+                item_sprint_id,
+                now,
+                now,
             ),
         )
         append_event(
-            conn, item_id, EventKind.sprint_item_created,
+            conn,
+            item_id,
+            EventKind.sprint_item_created,
             {
-                "title": item.title, "sprint_id": item_sprint_id, "source": "seed",
+                "title": item.title,
+                "sprint_id": item_sprint_id,
+                "source": "seed",
             },
             now,
         )
@@ -213,6 +234,7 @@ def _import_tickets(
     report: MigrationReport,
     now: int,
 ) -> None:
+    coding_worker_type_definition = configured_worker_type_registry().require("coding")
     for ticket in tickets:
         if ticket.alias is not None:
             row = conn.execute("SELECT id FROM tickets WHERE alias = ?", (ticket.alias,)).fetchone()
@@ -229,20 +251,14 @@ def _import_tickets(
         else:
             sprint_item_id = None
             row_sprint_id = sprint_id
-        fields = {
-            "kickoff": {"value": ticket.body, "proposal": None, "user_note": None},
-            "success": {"value": ticket.success, "proposal": None, "user_note": None},
-            "approach": {"value": ticket.approach, "proposal": None, "user_note": None},
-            "plan": {"value": None, "proposal": None, "user_note": None},
-            "implementation": {"value": None, "proposal": None, "user_note": None},
-            "closeout": {"value": None, "proposal": None, "user_note": None},
-        }
-        # Seed door: the (Worker type, Stage, ceiling) it is about to write must be
-        # registry-valid, so a malformed seed Stage fails with the specific error
-        # rather than a bad row. Reaches the registry only through coding_bridge (F6).
-        ticket_type_guard.resolve_and_validate(
-            "coding", stage=ticket.stage.value, ceiling=ticket.stage.value
-        )
+        fields = TicketFields.empty(coding_worker_type_definition.field_ids())
+        for field, value in (
+            ("kickoff", ticket.body),
+            ("success", ticket.success),
+            ("approach", ticket.approach),
+        ):
+            fields = fields_codec.with_slot(fields, field, FieldSlot(value=value))
+        coding_worker_type_definition.validate_ticket_position(ticket.stage, ticket.stage)
         conn.execute(
             "INSERT INTO tickets ("
             "id, title, worker_type, stage, priority, deadline, project_id, sprint_item_id, "
@@ -250,16 +266,34 @@ def _import_tickets(
             "chat_session_key, alias, fields, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                ticket_id, ticket.title, "coding", ticket.stage.value, ticket.priority.value,
-                None, None, sprint_item_id, row_sprint_id, "", ticket.stage.value, "propose",
-                ticket.chat_session_key, ticket.alias, json.dumps(fields), now, now,
+                ticket_id,
+                ticket.title,
+                "coding",
+                ticket.stage,
+                ticket.priority.value,
+                None,
+                None,
+                sprint_item_id,
+                row_sprint_id,
+                "",
+                ticket.stage,
+                "propose",
+                ticket.chat_session_key,
+                ticket.alias,
+                fields_codec.fields_to_json(fields),
+                now,
+                now,
             ),
         )
         append_event(
-            conn, ticket_id, EventKind.ticket_created,
+            conn,
+            ticket_id,
+            EventKind.ticket_created,
             {
-                "title": ticket.title, "stage": ticket.stage.value,
-                "alias": ticket.alias, "source": "seed",
+                "title": ticket.title,
+                "stage": ticket.stage,
+                "alias": ticket.alias,
+                "source": "seed",
             },
             now,
         )
@@ -285,12 +319,18 @@ def _import_ideas(
             "INSERT INTO ideas (id, title, body, project_id, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (
-                idea_id, idea.title, idea.body,
-                project.id if project is not None else None, now, now,
+                idea_id,
+                idea.title,
+                idea.body,
+                project.id if project is not None else None,
+                now,
+                now,
             ),
         )
         append_event(
-            conn, idea_id, EventKind.idea_created,
+            conn,
+            idea_id,
+            EventKind.idea_created,
             {"title": idea.title, "source": "seed"},
             now,
         )

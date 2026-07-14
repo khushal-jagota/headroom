@@ -20,8 +20,7 @@ from tests.support.probe import (
     uninstall_probe_registry,
 )
 
-from planner.ticket_types.contracts import WorkflowDefinition
-from planner.tickets.contracts import AtCap, FieldName
+from planner.tickets.contracts import AtCap
 from planner.tickets.data import (
     accept_proposal,
     create_ticket,
@@ -29,6 +28,7 @@ from planner.tickets.data import (
     set_field_user_note,
 )
 from planner.tickets.views import copy_text
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 # The permanent copy_text golden: coding's six field blocks in exact order, with a
 # settled kickoff value and a success user-note so the golden discriminates per-field
@@ -59,7 +59,7 @@ _CODING_COPY_TEXT_GOLDEN = (
 
 
 @pytest.fixture
-def probe_registry() -> Iterator[WorkflowDefinition]:
+def probe_registry() -> Iterator[WorkerTypeDefinition]:
     definition = install_probe_registry()
     try:
         yield definition
@@ -76,29 +76,27 @@ def test_copy_text_coding_is_byte_identical_golden(tmp_db: Connection) -> None:
         now=1,
         title_max_chars=200,
     )
-    file_proposal(
-        tmp_db, ticket.id, field=FieldName.kickoff, body="kickoff body", actor="agent", now=2
-    )
+    file_proposal(tmp_db, ticket.id, field="kickoff", body="kickoff body", actor="agent", now=2)
     # Accept kickoff so its value settles and the ticket advances to needs_success (the
     # default ceiling is now needs_kickoff, so kickoff parks until accepted — the golden
     # pins a SETTLED kickoff value, so we accept and expand the ceiling onward).
     accept_proposal(
         tmp_db,
         ticket.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=3,
         next_ceiling="needs_success",
         at_cap=AtCap.propose,
     )
     set_field_user_note(
-        tmp_db, ticket.id, field=FieldName.success, user_note="success note", actor="human", now=4
+        tmp_db, ticket.id, field="success", user_note="success note", actor="human", now=4
     )
     assert copy_text(tmp_db, ticket.id) == _CODING_COPY_TEXT_GOLDEN
 
 
 def test_copy_text_probe_renders_own_fields(
-    tmp_db: Connection, probe_registry: WorkflowDefinition
+    tmp_db: Connection, probe_registry: WorkerTypeDefinition
 ) -> None:
     ticket = create_ticket(
         tmp_db,

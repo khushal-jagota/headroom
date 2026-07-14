@@ -35,12 +35,11 @@ from planner.tickets import views as tickets_views
 from planner.tickets.contracts import (
     NO_FURTHER,
     AtCap,
-    CodingStage,
-    FieldName,
     Implementer,
     TicketStatus,
 )
 from planner.tickets.logic import fields_codec
+from planner.worker_types.configuration import configured_worker_type_registry
 
 HOME = "/tmp/planner-home"
 HERMES_PY = sys.executable
@@ -63,7 +62,7 @@ def _accept_kickoff_field(conn: sqlite3.Connection, ticket_id: str):
     return tickets_data.accept_proposal(
         conn,
         ticket_id,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=0,
         next_ceiling=NO_FURTHER,
@@ -128,7 +127,7 @@ def _db(tmp_path: Path) -> str:
 def _new_ticket(
     db_path: str,
     *,
-    ceiling: CodingStage | None = None,
+    ceiling: str | None = None,
     implementer: Implementer | None = None,
 ) -> str:
     conn = connect(db_path)
@@ -166,9 +165,7 @@ def _read(db_path: str, ticket_id: str) -> Any:
 def _file_proposal(db_path: str, ticket_id: str, field: str, body: str) -> None:
     conn = connect(db_path)
     try:
-        tickets_data.file_proposal(
-            conn, ticket_id, field=FieldName(field), body=body, actor="agent", now=0
-        )
+        tickets_data.file_proposal(conn, ticket_id, field=field, body=body, actor="agent", now=0)
     finally:
         conn.close()
 
@@ -189,7 +186,7 @@ def _file_current_proposal(db_path: str, ticket_id: str, body: str) -> None:
 
 
 def _needs_closeout_ticket(db_path: str) -> str:
-    tid = _new_ticket(db_path, ceiling=CodingStage.needs_closeout)
+    tid = _new_ticket(db_path, ceiling="needs_closeout")
     _file_proposal(db_path, tid, "success", "success")
     _file_proposal(db_path, tid, "approach", "approach")
     _file_proposal(db_path, tid, "plan", "plan")
@@ -297,7 +294,7 @@ def test_pending_kickoff_is_rechecked_before_runner_claim(tmp_path: Path) -> Non
     assert runner.wait_idle(10.0)
 
     unchanged = _read(db, ticket.id)
-    assert unchanged.stage == CodingStage.needs_kickoff
+    assert unchanged.stage == "needs_kickoff"
     assert unchanged.ticket_status is TicketStatus.awaiting_approval
     assert fake.sent_methods() == []
     statuses = [event["ticket_status"] for event in _status_events(db, ticket.id)]
@@ -306,7 +303,7 @@ def test_pending_kickoff_is_rechecked_before_runner_claim(tmp_path: Path) -> Non
 
 def test_auto_accepted_proposal_completion_clears_to_empty(tmp_path: Path) -> None:
     db = _db(tmp_path)
-    tid = _new_ticket(db, ceiling=CodingStage.needs_plan)
+    tid = _new_ticket(db, ceiling="needs_plan")
 
     fake = _ProposingFake(
         _create_script(_complete_ev()),
@@ -317,7 +314,7 @@ def test_auto_accepted_proposal_completion_clears_to_empty(tmp_path: Path) -> No
     assert runner.wait_idle(10.0)
 
     ticket = _read(db, tid)
-    assert ticket.stage == CodingStage.needs_approach
+    assert ticket.stage == "needs_approach"
     assert fields_codec.get_slot(ticket.fields, "success").value == "the success body"
     assert fields_codec.get_slot(ticket.fields, "success").proposal is None
     assert ticket.ticket_status == TicketStatus.empty
@@ -366,12 +363,13 @@ def test_next_step_prompt_includes_implementer_wire_value_or_unassigned(tmp_path
     finally:
         conn.close()
 
-    assert _next_step_prompt(assigned) == (
+    worker_type_definition = configured_worker_type_registry().require("coding")
+    assert _next_step_prompt(assigned, worker_type_definition=worker_type_definition) == (
         f"Work ticket {assigned.id} — T. It is at Stage 'needs_success'; "
         "take the next step and propose the 'success' field for approval. "
         "Implementer: hermes_claude."
     )
-    assert _next_step_prompt(unassigned) == (
+    assert _next_step_prompt(unassigned, worker_type_definition=worker_type_definition) == (
         f"Work ticket {unassigned.id} — T. It is at Stage 'needs_success'; "
         "take the next step and propose the 'success' field for approval. "
         "Implementer: unassigned."
@@ -398,7 +396,7 @@ def test_next_step_prompt_reads_novel_stage_field_for_new_worker(tmp_path: Path)
         ticket = tickets_data.accept_proposal(
             conn,
             ticket.id,
-            field=FieldName.kickoff,
+            field="kickoff",
             actor="human",
             now=0,
             next_ceiling=NO_FURTHER,
@@ -408,7 +406,10 @@ def test_next_step_prompt_reads_novel_stage_field_for_new_worker(tmp_path: Path)
         conn.close()
 
     assert ticket.stage == "needs_stages"
-    assert _next_step_prompt(ticket) == (
+    assert _next_step_prompt(
+        ticket,
+        worker_type_definition=configured_worker_type_registry().require(ticket.worker_type),
+    ) == (
         f"Work ticket {ticket.id} — Design a worker. It is at Stage 'needs_stages'; "
         "take the next step and propose the 'stages' field for approval. "
         "Implementer: unassigned."
@@ -613,7 +614,7 @@ def test_claimed_rejection_turn_revises_closeout_in_same_session_without_chat_co
             )
         finally:
             conn.close()
-        assert ticket.stage == CodingStage.needs_closeout
+        assert ticket.stage == "needs_closeout"
         assert ticket.ticket_status is TicketStatus.agent_running_step
         assert runner.wait_idle(10.0)
         conn = connect(db)
@@ -639,7 +640,7 @@ def test_claimed_rejection_turn_revises_closeout_in_same_session_without_chat_co
         "The user rejected your proposal and provided the following guidance:\n\nAdd evidence."
     )
     revised = _read(db, tid)
-    assert revised.stage == CodingStage.needs_closeout
+    assert revised.stage == "needs_closeout"
     assert revised.ticket_status is TicketStatus.awaiting_approval
     assert fields_codec.get_slot(revised.fields, "closeout").value is None
     assert fields_codec.get_slot(revised.fields, "closeout").proposal is not None
@@ -655,7 +656,7 @@ def test_claimed_rejection_turn_revises_closeout_in_same_session_without_chat_co
         approved = tickets_data.accept_proposal(
             conn,
             tid,
-            field=FieldName.closeout,
+            field="closeout",
             actor="human",
             now=2,
             next_ceiling=NO_FURTHER,
@@ -663,7 +664,7 @@ def test_claimed_rejection_turn_revises_closeout_in_same_session_without_chat_co
         )
     finally:
         conn.close()
-    assert approved.stage == CodingStage.done
+    assert approved.stage == "done"
     assert approved.ticket_status is TicketStatus.empty
 
 
@@ -1097,7 +1098,7 @@ def test_runner_rechecks_today_membership_before_claim(tmp_path: Path) -> None:
     assert runner.wait_idle(10.0)
 
     ticket = _read(db, tid)
-    assert ticket.stage == CodingStage.needs_success
+    assert ticket.stage == "needs_success"
     assert ticket.ticket_status == TicketStatus.empty
     assert fake.sent_methods() == []
     assert _status_events(db, tid) == []
@@ -1114,16 +1115,19 @@ def test_runner_rechecks_readiness_predicate_before_claim(tmp_path: Path) -> Non
             "SELECT 1 FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
             (today_id, tid),
         ).fetchone()
-        assert readiness.is_runnable(conn, tickets_data.read_ticket(conn, tid))
+        ticket = tickets_data.read_ticket(conn, tid)
+        definition = configured_worker_type_registry().require(ticket.worker_type)
+        assert readiness.is_runnable(conn, ticket, worker_type_definition=definition)
         tickets_data.change_scope(
             conn,
             tid,
-            ceiling=CodingStage.needs_success,
+            ceiling="needs_success",
             at_cap=AtCap.stop,
             actor="human",
             now=1,
         )
-        assert not readiness.is_runnable(conn, tickets_data.read_ticket(conn, tid))
+        ticket = tickets_data.read_ticket(conn, tid)
+        assert not readiness.is_runnable(conn, ticket, worker_type_definition=definition)
     finally:
         conn.close()
 
@@ -1134,7 +1138,7 @@ def test_runner_rechecks_readiness_predicate_before_claim(tmp_path: Path) -> Non
     assert runner.wait_idle(10.0)
 
     ticket = _read(db, tid)
-    assert ticket.stage == CodingStage.needs_success
+    assert ticket.stage == "needs_success"
     assert ticket.ticket_status == TicketStatus.empty
     assert fake.sent_methods() == []
     assert _status_events(db, tid) == []

@@ -25,7 +25,6 @@ from planner.cli import http
 from planner.tickets.contracts import AtCap
 
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
-_FIELDS = ["success", "approach", "plan", "implementation", "closeout"]
 _TICKET_ID_ENV = "PLAN_TICKET_ID"
 
 _DAY_FIELDS = {
@@ -182,8 +181,8 @@ def _current_sprint_id(as_json: bool) -> str:
 
 
 # The manifest arrives as a plain JSON body across the HTTP boundary, so the CLI holds
-# it as a plain dict — importing the ticket_types ManifestDict contract here would
-# breach the F6 import seam (only coding_bridge may import planner.ticket_types).
+# it as a plain dict. Keeping the transport shape local leaves CLI request construction
+# independent of Worker-type interpretation.
 def _worker_types(as_json: bool) -> dict[str, dict[str, Any]]:
     """The served manifests keyed by Worker type — the single source for Stage order /
     gates / fields / ceiling range per type (no parallel lifecycle encoding in the CLI)."""
@@ -539,9 +538,7 @@ def ticket_delete(ticket_id: str | None, yes: bool, as_json: bool) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
     if not yes:
         http.fail_validation("permanent deletion requires --yes", as_json)
-    data = http.send(
-        "DELETE", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary"
-    )
+    data = http.send("DELETE", f"/api/tickets/{tid}", as_json=as_json, request_actor="ordinary")
     http.emit(data, as_json, f"{tid} permanently deleted")
 
 
@@ -731,9 +728,7 @@ def ticket_copy(ticket_id: str | None, as_json: bool) -> None:
 @json_option
 def ticket_events(ticket_id: str | None, as_json: bool) -> None:
     tid = resolve_ticket_id(ticket_id, as_json)
-    data = http.send(
-        "GET", f"/api/tickets/{tid}/events", as_json=as_json, request_actor="ordinary"
-    )
+    data = http.send("GET", f"/api/tickets/{tid}/events", as_json=as_json, request_actor="ordinary")
     http.emit(
         data,
         as_json,
@@ -810,9 +805,7 @@ def sprint_show(sprint_id: str | None, as_json: bool) -> None:
             else f"{current['id']} {current['date_start']}..{current['date_end']} {current['name']}"
         )
         http.emit(data, as_json, human)
-    data = http.send(
-        "GET", f"/api/sprints/{sprint_id}", as_json=as_json, request_actor="ordinary"
-    )
+    data = http.send("GET", f"/api/sprints/{sprint_id}", as_json=as_json, request_actor="ordinary")
     human = f"{data['id']} {data['date_start']}..{data['date_end']} {data['name']}"
     http.emit(data, as_json, human)
 
@@ -948,12 +941,14 @@ def sprint_item_list(
     sprint: str | None,
     as_json: bool,
 ) -> None:
-    params = _drop_none({
-        "status": status,
-        "project": project,
-        "project_id": project_id,
-        "sprint_id": sprint_value_for_filter(sprint, as_json),
-    })
+    params = _drop_none(
+        {
+            "status": status,
+            "project": project,
+            "project_id": project_id,
+            "sprint_id": sprint_value_for_filter(sprint, as_json),
+        }
+    )
     data = http.send("GET", "/api/items", as_json=as_json, params=params, request_actor="ordinary")
     http.emit(
         data,
@@ -1064,6 +1059,20 @@ def sprint_item_unblock(item_id: str, blocker_id: str, as_json: bool) -> None:
 
 # --- chief --------------------------------------------------------------------
 
+_EXTERNAL_WORK_RECONCILE_FIXED_KEYS = frozenset({"stage", "kickoff_note", "recap"})
+_EXTERNAL_WORK_CREATE_FIXED_KEYS = _EXTERNAL_WORK_RECONCILE_FIXED_KEYS | frozenset(
+    {
+        "title",
+        "worker_type",
+        "priority",
+        "deadline",
+        "project",
+        "project_id",
+        "sprint_id",
+        "sprint_item_id",
+    }
+)
+
 
 def _external_work_body(
     *,
@@ -1075,14 +1084,12 @@ def _external_work_body(
     plan_file: str | None,
     implementation_file: str | None,
     closeout_file: str | None,
+    field_files: tuple[str, ...],
+    reserved_fixed_keys: frozenset[str],
     as_json: bool,
 ) -> dict[str, Any]:
-    body: dict[str, Any] = {
-        "stage": stage,
-        "kickoff_note": read_required_option_body(kickoff_note_file, as_json, "kickoff-note"),
-    }
-    for key, source in (
-        ("recap", recap_file),
+    field_sources: dict[str, str] = {}
+    for field, source in (
         ("success", success_file),
         ("approach", approach_file),
         ("plan", plan_file),
@@ -1090,7 +1097,27 @@ def _external_work_body(
         ("closeout", closeout_file),
     ):
         if source is not None:
-            body[key] = _read_source(source, as_json)
+            field_sources[field] = source
+    for occurrence in field_files:
+        if "=" not in occurrence:
+            http.fail_validation(f"field file must be FIELD=PATH: {occurrence}", as_json)
+        field, source = occurrence.split("=", 1)
+        if not field or not source:
+            http.fail_validation(f"field file must be FIELD=PATH: {occurrence}", as_json)
+        if field in reserved_fixed_keys:
+            http.fail_validation(f"field file conflicts with fixed request key: {field}", as_json)
+        if field in field_sources:
+            http.fail_validation(f"field file provided more than once: {field}", as_json)
+        field_sources[field] = source
+
+    body: dict[str, Any] = {
+        "stage": stage,
+        "kickoff_note": read_required_option_body(kickoff_note_file, as_json, "kickoff-note"),
+    }
+    if recap_file is not None:
+        body["recap"] = _read_source(recap_file, as_json)
+    for field, source in field_sources.items():
+        body[field] = _read_source(source, as_json)
     return body
 
 
@@ -1113,6 +1140,12 @@ def chief() -> None:
     "--implementation-file", default=None, help="Read settled implementation from this file, or -."
 )
 @click.option("--closeout-file", default=None, help="Read settled closeout from this file, or -.")
+@click.option(
+    "--field-file",
+    "field_files",
+    multiple=True,
+    help="Read a definition-specific settled field from FIELD=PATH (repeatable).",
+)
 @json_option
 def chief_reconcile_ticket_from_external_work(
     ticket_id: str,
@@ -1124,6 +1157,7 @@ def chief_reconcile_ticket_from_external_work(
     plan_file: str | None,
     implementation_file: str | None,
     closeout_file: str | None,
+    field_files: tuple[str, ...],
     as_json: bool,
 ) -> None:
     body = _external_work_body(
@@ -1135,6 +1169,8 @@ def chief_reconcile_ticket_from_external_work(
         plan_file=plan_file,
         implementation_file=implementation_file,
         closeout_file=closeout_file,
+        field_files=field_files,
+        reserved_fixed_keys=_EXTERNAL_WORK_RECONCILE_FIXED_KEYS,
         as_json=as_json,
     )
     data = http.send(
@@ -1166,6 +1202,12 @@ def chief_reconcile_ticket_from_external_work(
     "--implementation-file", default=None, help="Read settled implementation from this file, or -."
 )
 @click.option("--closeout-file", default=None, help="Read settled closeout from this file, or -.")
+@click.option(
+    "--field-file",
+    "field_files",
+    multiple=True,
+    help="Read a definition-specific settled field from FIELD=PATH (repeatable).",
+)
 @click.option("--priority", type=click.Choice(_PRIORITIES), default=None, help="Priority label.")
 @click.option("--deadline", default=None, help="Due date in YYYY-MM-DD form.")
 @click.option("--project", default=None, help="Project name.")
@@ -1184,6 +1226,7 @@ def chief_create_ticket_from_external_work(
     plan_file: str | None,
     implementation_file: str | None,
     closeout_file: str | None,
+    field_files: tuple[str, ...],
     priority: str | None,
     deadline: str | None,
     project: str | None,
@@ -1201,6 +1244,8 @@ def chief_create_ticket_from_external_work(
         plan_file=plan_file,
         implementation_file=implementation_file,
         closeout_file=closeout_file,
+        field_files=field_files,
+        reserved_fixed_keys=_EXTERNAL_WORK_CREATE_FIXED_KEYS,
         as_json=as_json,
     )
     body["title"] = title
@@ -1302,12 +1347,34 @@ def worker_note(args: tuple[str, ...], body_file: str | None, as_json: bool) -> 
         field = args[1]
     else:
         http.fail_validation("usage: worker note [ticket-id] <field>", as_json)
-    if field not in _FIELDS:
+    tid = resolve_ticket_id(ticket_id, as_json)
+    detail = http.send("GET", f"/api/tickets/{tid}", as_json=as_json)
+    manifests = http.send("GET", "/api/worker-types", as_json=as_json)
+    worker_type = detail.get("worker_type")
+    manifest = next(
+        (
+            candidate
+            for candidate in manifests.get("worker_types", [])
+            if candidate.get("worker_type") == worker_type
+        ),
+        None,
+    )
+    fields = (
+        [
+            candidate.get("id")
+            for candidate in manifest.get("fields", [])
+            if candidate.get("id") != "kickoff"
+        ]
+        if isinstance(manifest, dict)
+        else []
+    )
+    if field not in fields:
         http.fail_validation(
-            "field must be success, approach, plan, implementation, or closeout", as_json
+            f"field must be {', '.join(str(candidate) for candidate in fields[:-1])}"
+            f"{', or ' if len(fields) > 1 else ''}{fields[-1] if fields else ''}",
+            as_json,
         )
     body = read_body(ticket_id, body_file, as_json)
-    tid = resolve_ticket_id(ticket_id, as_json)
     data = http.send(
         "PUT", f"/api/tickets/{tid}/notes/{field}", as_json=as_json, json_body={"user_note": body}
     )

@@ -13,7 +13,6 @@ from planner.runtime.readiness_doorbell import ReadinessDoorbell
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     AtCap,
-    FieldName,
     NextCeiling,
     Ticket,
     TicketDeletion,
@@ -140,7 +139,7 @@ def accept_proposal(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    field: FieldName | str,
+    field: str,
     actor: str,
     now: int,
     readiness_doorbell: ReadinessDoorbell,
@@ -166,7 +165,7 @@ def edit_field_value(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    field: FieldName | str,
+    field: str,
     new_body: str,
     actor: str,
     now: int,

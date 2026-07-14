@@ -35,9 +35,10 @@ from planner.core.clock import TestClock
 from planner.sprints.contracts import ItemStatus
 from planner.sprints.data import _child_stage_in_progress, create_item, read_item
 from planner.sprints.logic import SprintItemChildStatus, derive_sprint_item_status
-from planner.ticket_types.contracts import WorkflowDefinition
-from planner.tickets.contracts import AtCap, FieldName
+from planner.tickets.contracts import AtCap
 from planner.tickets.data import accept_proposal, create_ticket, file_proposal
+from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 # PERMANENT GOLDEN 1 — coding's "in progress by stage" map, every stage + the two
 # terminals. Reproduces the retired _IN_PROGRESS_STATES exactly; done/dropped are
@@ -55,7 +56,7 @@ _CODING_STATE_IN_PROGRESS: dict[str, bool] = {
 
 
 @pytest.fixture
-def probe_registry() -> Iterator[WorkflowDefinition]:
+def probe_registry() -> Iterator[WorkerTypeDefinition]:
     definition = install_probe_registry()
     try:
         yield definition
@@ -68,7 +69,9 @@ def _child(stage: str, *, worker_type: str = "coding") -> SprintItemChildStatus:
         stage=stage,
         ticket_status="empty",
         blocked=False,
-        stage_in_progress=_child_stage_in_progress(worker_type, stage),
+        stage_in_progress=_child_stage_in_progress(
+            configured_worker_type_registry().require(worker_type), stage
+        ),
     )
 
 
@@ -76,7 +79,10 @@ def test_stage_in_progress_coding_buckets_golden() -> None:
     # The child-level primitive matches the permanent golden for every coding stage,
     # and done/dropped do not raise.
     for stage, expected in _CODING_STATE_IN_PROGRESS.items():
-        assert _child_stage_in_progress("coding", stage) is expected
+        assert (
+            _child_stage_in_progress(configured_worker_type_registry().require("coding"), stage)
+            is expected
+        )
 
 
 def test_derive_sprint_item_status_coding_buckets_golden() -> None:
@@ -97,12 +103,12 @@ def test_derive_sprint_item_status_coding_buckets_golden() -> None:
         assert derive_sprint_item_status(directly_blocked=False, children=[_child(stage)]) is status
 
 
-def test_probe_midstage_rolls_up(probe_registry: WorkflowDefinition) -> None:
+def test_probe_midstage_rolls_up(probe_registry: WorkerTypeDefinition) -> None:
     # needs_beta is strictly past probe's default ceiling (needs_alpha) -> in progress;
     # needs_alpha (== the ceiling) and needs_kickoff are not.
-    assert _child_stage_in_progress("probe", NEEDS_BETA) is True
-    assert _child_stage_in_progress("probe", "needs_alpha") is False
-    assert _child_stage_in_progress("probe", "needs_kickoff") is False
+    assert _child_stage_in_progress(probe_registry, NEEDS_BETA) is True
+    assert _child_stage_in_progress(probe_registry, "needs_alpha") is False
+    assert _child_stage_in_progress(probe_registry, "needs_kickoff") is False
 
     assert (
         derive_sprint_item_status(
@@ -119,7 +125,7 @@ def test_probe_midstage_rolls_up(probe_registry: WorkflowDefinition) -> None:
 
 
 def test_rollup_probe_child_via_read_item(
-    tmp_db: Connection, probe_registry: WorkflowDefinition
+    tmp_db: Connection, probe_registry: WorkerTypeDefinition
 ) -> None:
     clock = TestClock(datetime(2026, 7, 4, 12, 0, 0).astimezone())
     item = create_item(tmp_db, title="Item", project_id="project_vylo", clock=clock)
@@ -137,7 +143,7 @@ def test_rollup_probe_child_via_read_item(
     accept_proposal(
         tmp_db,
         probe.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=2,
         next_ceiling=NEEDS_BETA,
@@ -168,12 +174,12 @@ def test_rollup_coding_child_via_read_item_unchanged(
     accept_proposal(
         tmp_db,
         child.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=2,
         next_ceiling="needs_approach",
         at_cap=AtCap.propose,
     )
-    file_proposal(tmp_db, child.id, field=FieldName.success, body="s", actor="agent", now=3)
+    file_proposal(tmp_db, child.id, field="success", body="s", actor="agent", now=3)
 
     assert read_item(tmp_db, item.id).status is ItemStatus.in_progress

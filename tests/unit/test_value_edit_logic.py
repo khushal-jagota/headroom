@@ -18,8 +18,6 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
-    CodingStage,
-    FieldName,
     FieldSlot,
     Proposal,
     Ticket,
@@ -27,6 +25,7 @@ from planner.tickets.contracts import (
     TicketStatus,
 )
 from planner.tickets.logic import fields_codec, resolution
+from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 
 if TYPE_CHECKING:
     from sqlite3 import Connection
@@ -41,9 +40,7 @@ def _fields(**slots: FieldSlot) -> TicketFields:
     return TicketFields({fid: slots.get(fid, FieldSlot()) for fid in ids})
 
 
-def _ticket(
-    stage: CodingStage, fields: TicketFields, *, ceiling: CodingStage = CodingStage.done
-) -> Ticket:
+def _ticket(stage: str, fields: TicketFields, *, ceiling: str = "done") -> Ticket:
     return Ticket(
         id="t_test",
         title="T",
@@ -65,6 +62,16 @@ def _ticket(
         fields=fields,
         created_at=0,
         updated_at=0,
+    )
+
+
+def _decide_edit_value(ticket: Ticket, field: str, body: str, actor: str):
+    return resolution.decide_edit_value(
+        ticket,
+        field,
+        body,
+        actor,
+        worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
     )
 
 
@@ -90,22 +97,18 @@ def _passed_ticket(conn: Connection, cfg: Config, clock: TestClock) -> Ticket:
     t = data.accept_proposal(
         conn,
         t.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
     )
     t = data.change_scope(
-        conn, t.id, ceiling=CodingStage.needs_plan, at_cap=AtCap.propose, actor="human", now=now
+        conn, t.id, ceiling="needs_plan", at_cap=AtCap.propose, actor="human", now=now
     )
-    t = data.file_proposal(
-        conn, t.id, field=FieldName.success, body="success v1", actor="agent", now=now
-    )
-    t = data.file_proposal(
-        conn, t.id, field=FieldName.approach, body="approach v1", actor="agent", now=now
-    )
-    assert t.stage == CodingStage.needs_plan
+    t = data.file_proposal(conn, t.id, field="success", body="success v1", actor="agent", now=now)
+    t = data.file_proposal(conn, t.id, field="approach", body="approach v1", actor="agent", now=now)
+    assert t.stage == "needs_plan"
     assert fields_codec.get_slot(t.fields, "success").value == "success v1"
     assert fields_codec.get_slot(t.fields, "approach").value == "approach v1"
     return t
@@ -114,11 +117,11 @@ def _passed_ticket(conn: Connection, cfg: Config, clock: TestClock) -> Ticket:
 def test_edit_passed_field_succeeds(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
     # Decision shape: exactly one field_value_edited event; Stage/ceiling/at_cap left None.
     ticket = _ticket(
-        CodingStage.needs_plan,
+        "needs_plan",
         _fields(success=FieldSlot(value="old success", user_note="keep me")),
-        ceiling=CodingStage.needs_plan,
+        ceiling="needs_plan",
     )
-    decision = resolution.decide_edit_value(ticket, FieldName.success, "new success", "human")
+    decision = _decide_edit_value(ticket, "success", "new success", "human")
     assert decision.new_stage is None
     assert decision.new_ceiling is None
     assert decision.new_at_cap is None
@@ -135,11 +138,11 @@ def test_edit_passed_field_succeeds(tmp_db: Connection, cfg: Config, fake_clock:
     now = fake_clock.now_unix()
     t = _passed_ticket(tmp_db, cfg, fake_clock)
     t = data.edit_field_value(
-        tmp_db, t.id, field=FieldName.success, new_body="success EDITED", actor="human", now=now
+        tmp_db, t.id, field="success", new_body="success EDITED", actor="human", now=now
     )
     assert fields_codec.get_slot(t.fields, "success").value == "success EDITED"
-    assert t.stage == CodingStage.needs_plan
-    assert t.ceiling == CodingStage.needs_plan
+    assert t.stage == "needs_plan"
+    assert t.ceiling == "needs_plan"
     assert t.at_cap is AtCap.propose
     logged = _events(tmp_db, cfg, t.id, EventKind.field_value_edited)
     assert len(logged) == 1
@@ -147,16 +150,16 @@ def test_edit_passed_field_succeeds(tmp_db: Connection, cfg: Config, fake_clock:
 
 
 def test_edit_unset_value_rejected() -> None:
-    ticket = _ticket(CodingStage.needs_approach, _fields(success=FieldSlot(value=None)))
+    ticket = _ticket("needs_approach", _fields(success=FieldSlot(value=None)))
     with pytest.raises(PlannerError) as exc:
-        resolution.decide_edit_value(ticket, FieldName.success, "x", "human")
+        _decide_edit_value(ticket, "success", "x", "human")
     assert exc.value.code is ErrorCode.validation
     assert exc.value.detail == {"field": "success"}
 
 
 def test_edit_field_with_live_proposal_rejected() -> None:
     ticket = _ticket(
-        CodingStage.needs_plan,
+        "needs_plan",
         _fields(
             success=FieldSlot(
                 value="settled",
@@ -165,7 +168,7 @@ def test_edit_field_with_live_proposal_rejected() -> None:
         ),
     )
     with pytest.raises(PlannerError) as exc:
-        resolution.decide_edit_value(ticket, FieldName.success, "x", "human")
+        _decide_edit_value(ticket, "success", "x", "human")
     assert exc.value.code is ErrorCode.validation
     assert exc.value.detail == {"field": "success"}
 
@@ -173,12 +176,12 @@ def test_edit_field_with_live_proposal_rejected() -> None:
 def test_edit_current_gating_field_rejected() -> None:
     # plan gates needs_plan; at needs_plan it is not yet passed even with a settled value.
     ticket = _ticket(
-        CodingStage.needs_plan,
+        "needs_plan",
         _fields(plan=FieldSlot(value="plan value")),
-        ceiling=CodingStage.needs_plan,
+        ceiling="needs_plan",
     )
     with pytest.raises(PlannerError) as exc:
-        resolution.decide_edit_value(ticket, FieldName.plan, "x", "human")
+        _decide_edit_value(ticket, "plan", "x", "human")
     assert exc.value.code is ErrorCode.validation
     assert exc.value.detail == {"field": "plan", "stage": "needs_plan"}
 
@@ -186,27 +189,27 @@ def test_edit_current_gating_field_rejected() -> None:
 def test_edit_future_field_with_value_rejected() -> None:
     # Backward-Stage-jump hazard: stage=needs_approach but plan already holds a value.
     ticket = _ticket(
-        CodingStage.needs_approach,
+        "needs_approach",
         _fields(plan=FieldSlot(value="plan value")),
     )
     with pytest.raises(PlannerError) as exc:
-        resolution.decide_edit_value(ticket, FieldName.plan, "x", "human")
+        _decide_edit_value(ticket, "plan", "x", "human")
     assert exc.value.code is ErrorCode.validation
     assert exc.value.detail == {"field": "plan", "stage": "needs_approach"}
 
 
 def test_edit_dropped_ticket_rejected() -> None:
-    ticket = _ticket(CodingStage.dropped, _fields(success=FieldSlot(value="settled")))
+    ticket = _ticket("dropped", _fields(success=FieldSlot(value="settled")))
     with pytest.raises(PlannerError) as exc:
-        resolution.decide_edit_value(ticket, FieldName.success, "x", "human")
+        _decide_edit_value(ticket, "success", "x", "human")
     assert exc.value.code is ErrorCode.validation
     assert exc.value.detail == {"stage": "dropped"}
 
 
 def test_edit_agent_actor_forbidden() -> None:
-    ticket = _ticket(CodingStage.needs_plan, _fields(success=FieldSlot(value="settled")))
+    ticket = _ticket("needs_plan", _fields(success=FieldSlot(value="settled")))
     with pytest.raises(PlannerError) as exc:
-        resolution.decide_edit_value(ticket, FieldName.success, "x", "agent")
+        _decide_edit_value(ticket, "success", "x", "agent")
     assert exc.value.code is ErrorCode.agent_forbidden
 
 
@@ -227,33 +230,31 @@ def test_accept_dropped_ticket_with_pending_proposal_rejected(
     t = data.accept_proposal(
         tmp_db,
         t.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
     )
     t = data.change_scope(
-        tmp_db, t.id, ceiling=CodingStage.needs_plan, at_cap=AtCap.propose, actor="human", now=now
+        tmp_db, t.id, ceiling="needs_plan", at_cap=AtCap.propose, actor="human", now=now
     )
-    t = data.file_proposal(tmp_db, t.id, field=FieldName.success, body="s", actor="agent", now=now)
-    assert t.stage == CodingStage.needs_approach
+    t = data.file_proposal(tmp_db, t.id, field="success", body="s", actor="agent", now=now)
+    assert t.stage == "needs_approach"
     # plan is non-gating at needs_approach and below the ceiling: the proposal stays pending.
-    t = data.file_proposal(
-        tmp_db, t.id, field=FieldName.plan, body="plan draft", actor="agent", now=now
-    )
-    assert t.stage == CodingStage.needs_approach
+    t = data.file_proposal(tmp_db, t.id, field="plan", body="plan draft", actor="agent", now=now)
+    assert t.stage == "needs_approach"
     plan_slot = fields_codec.get_slot(t.fields, "plan")
     assert plan_slot.proposal is not None and plan_slot.value is None
     t = data.drop_ticket(tmp_db, t.id, actor="human", now=now)
-    assert t.stage == CodingStage.dropped
+    assert t.stage == "dropped"
 
     count_before = len(_events(tmp_db, cfg, t.id))
     with pytest.raises(PlannerError) as exc:
         data.accept_proposal(
             tmp_db,
             t.id,
-            field=FieldName.plan,
+            field="plan",
             actor="human",
             now=now,
             next_ceiling=NO_FURTHER,

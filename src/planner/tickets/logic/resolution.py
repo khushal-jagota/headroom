@@ -6,13 +6,11 @@ EventSpecs. Together with data._apply_decision (the sole appender) this is the
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
 from planner.core.contracts import ErrorCode, EventKind, PlannerError
 from planner.tickets.contracts import (
     AtCap,
-    CodingStage,
-    FieldName,
     FieldSlot,
     NextCeiling,
     Proposal,
@@ -22,9 +20,7 @@ from planner.tickets.contracts import (
 )
 from planner.tickets.logic import admission, fields_codec, machine
 from planner.tickets.logic.decisions import Decision, EventSpec
-
-if TYPE_CHECKING:
-    from planner.tickets.logic.coding_bridge import WorkflowDefinition
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 CAUSE_AUTO_ACCEPT: Final[str] = "auto_accept"
 CAUSE_DIRECT_ACCEPT: Final[str] = "direct_accept"
@@ -44,7 +40,7 @@ def _stage_change(old: str, new: str, cause: str) -> EventSpec:
 
 def _accept_gating_proposal(
     ticket: Ticket,
-    field: FieldName | str,
+    field: str,
     stored_body: str,
     resolved_by: str,
     edited: bool,
@@ -52,12 +48,18 @@ def _accept_gating_proposal(
     cause: str,
     superseded_body: str | None = None,
     *,
-    definition: WorkflowDefinition | None = None,
+    worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
     slot = fields_codec.get_slot(ticket.fields, str(field))
     new_slot = FieldSlot(value=stored_body, proposal=None, user_note=slot.user_note)
     new_fields = fields_codec.with_slot(ticket.fields, str(field), new_slot)
-    new_stage = machine.advance_target(ticket.stage, definition=definition)
+    new_stage = worker_type_definition.advance_target(ticket.stage)
+    if new_stage is None:
+        raise PlannerError(
+            ErrorCode.validation,
+            "stage has no advance target",
+            {"stage": ticket.stage},
+        )
     events: list[EventSpec] = []
     if superseded_body is not None:
         events.append(
@@ -104,21 +106,30 @@ def _accept_gating_proposal(
 
 def decide_file_proposal(
     ticket: Ticket,
-    field: FieldName | str,
+    field: str,
     body: str,
     actor: str,
     now: int,
     *,
-    definition: WorkflowDefinition | None = None,
+    worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
     admission.validate_body(body, "proposal body")
     admission.check_agent_proposal(
-        ticket.stage, ticket.ceiling, ticket.at_cap, field, definition=definition
+        ticket.stage,
+        ticket.ceiling,
+        ticket.at_cap,
+        field,
+        worker_type_definition=worker_type_definition,
     )
     slot = fields_codec.get_slot(ticket.fields, str(field))
     superseded_body = slot.proposal.body if slot.proposal is not None else None
     if (
-        machine.auto_accept_target(ticket.stage, ticket.ceiling, field, definition=definition)
+        machine.auto_accept_target(
+            ticket.stage,
+            ticket.ceiling,
+            field,
+            worker_type_definition=worker_type_definition,
+        )
         is not None
     ):
         return _accept_gating_proposal(
@@ -130,7 +141,7 @@ def decide_file_proposal(
             scope=None,
             cause=CAUSE_AUTO_ACCEPT,
             superseded_body=superseded_body,
-            definition=definition,
+            worker_type_definition=worker_type_definition,
         )
     new_slot = FieldSlot(
         value=slot.value,
@@ -157,19 +168,19 @@ def decide_file_proposal(
 
 def decide_accept(
     ticket: Ticket,
-    field: FieldName | str,
+    field: str,
     actor: str,
     edited_body: str | None,
     next_ceiling: NextCeiling | None,
     at_cap: AtCap | None,
     *,
-    definition: WorkflowDefinition | None = None,
+    worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
     admission.require_direct_actor(actor, "accept_proposal")
     if edited_body is not None:
         admission.validate_body(edited_body, "edit-accept text")
     edited = edited_body is not None
-    if ticket.stage == CodingStage.dropped:
+    if ticket.stage == "dropped":
         raise PlannerError(
             ErrorCode.validation, "dropped tickets cannot be accepted", {"stage": "dropped"}
         )
@@ -181,9 +192,20 @@ def decide_accept(
             {"ticket_id": ticket.id, "field": str(field)},
         )
     stored_body = edited_body if edited_body is not None else slot.proposal.body
-    if str(field) == str(machine.gating_field(ticket.stage, definition=definition)):
-        new_stage = machine.advance_target(ticket.stage, definition=definition)
-        scope = machine.resolve_scope(new_stage, next_ceiling, at_cap, definition=definition)
+    if field == worker_type_definition.gating_field(ticket.stage):
+        new_stage = worker_type_definition.advance_target(ticket.stage)
+        if new_stage is None:
+            raise PlannerError(
+                ErrorCode.validation,
+                "stage has no advance target",
+                {"stage": ticket.stage},
+            )
+        scope = machine.resolve_scope(
+            new_stage,
+            next_ceiling,
+            at_cap,
+            worker_type_definition=worker_type_definition,
+        )
         return _accept_gating_proposal(
             ticket,
             field,
@@ -192,7 +214,7 @@ def decide_accept(
             edited=edited,
             scope=scope,
             cause=CAUSE_DIRECT_ACCEPT,
-            definition=definition,
+            worker_type_definition=worker_type_definition,
         )
     new_slot = FieldSlot(value=stored_body, proposal=None, user_note=slot.user_note)
     new_fields = fields_codec.with_slot(ticket.fields, str(field), new_slot)
@@ -212,11 +234,11 @@ def decide_accept(
 
 def decide_edit_value(
     ticket: Ticket,
-    field: FieldName | str,
+    field: str,
     new_body: str,
     actor: str,
     *,
-    definition: WorkflowDefinition | None = None,
+    worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
     """§4.2 direct edit of an already-*passed* settled value. The value stays written
     solely by the resolution engine; this is a tightly-guarded direct write path that
@@ -224,7 +246,7 @@ def decide_edit_value(
     carrying a live proposal, and the current gating or any future field."""
     admission.require_direct_actor(actor, "edit_field_value")
     admission.validate_body(new_body, "field value")
-    if ticket.stage == CodingStage.dropped:
+    if ticket.stage == "dropped":
         raise PlannerError(
             ErrorCode.validation, "dropped tickets cannot be edited", {"stage": "dropped"}
         )
@@ -237,7 +259,11 @@ def decide_edit_value(
         raise PlannerError(
             ErrorCode.validation, "field has a pending proposal", {"field": str(field)}
         )
-    if not machine.field_is_passed(field, ticket.stage, definition=definition):
+    if not machine.field_is_passed(
+        field,
+        ticket.stage,
+        worker_type_definition=worker_type_definition,
+    ):
         raise PlannerError(
             ErrorCode.validation,
             "field is not yet passed",
@@ -252,7 +278,10 @@ def decide_edit_value(
 
 
 def decide_return_for_revision(
-    ticket: Ticket, actor: str, *, definition: WorkflowDefinition | None = None
+    ticket: Ticket,
+    actor: str,
+    *,
+    worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
     admission.require_direct_actor(actor, "return_for_revision")
     if ticket.ticket_status is TicketStatus.agent_running_step:
@@ -261,7 +290,7 @@ def decide_return_for_revision(
             "the ticket worker is already revising this proposal",
             {"ticket_id": ticket.id},
         )
-    if ticket.stage in (CodingStage.done, CodingStage.dropped):
+    if ticket.stage in ("done", "dropped"):
         raise PlannerError(
             ErrorCode.validation,
             "terminal tickets cannot be returned for revision",
@@ -273,7 +302,7 @@ def decide_return_for_revision(
             "ticket has no existing worker session",
             {"ticket_id": ticket.id},
         )
-    field = machine.gating_field(ticket.stage, definition=definition)
+    field = worker_type_definition.gating_field(ticket.stage)
     if field is None:
         raise PlannerError(
             ErrorCode.validation,
@@ -299,14 +328,11 @@ def decide_stage_jump(ticket: Ticket, new_stage: str, actor: str) -> Decision:
     # type; the ingress has already validated new_stage is a linear stage of the
     # ticket's type (or is dropped), so guarding on the bookend strings is type-safe.
     # No definition is needed: only the universal bookends and the equality guard run.
-    if str(new_stage) == CodingStage.dropped.value:
+    if new_stage == "dropped":
         raise PlannerError(ErrorCode.validation, "use the drop action")
-    if str(ticket.stage) == CodingStage.dropped.value:
+    if ticket.stage == "dropped":
         raise PlannerError(ErrorCode.validation, "dropped is terminal")
-    if (
-        str(ticket.stage) == CodingStage.needs_kickoff.value
-        or str(new_stage) == CodingStage.needs_kickoff.value
-    ):
+    if ticket.stage == "needs_kickoff" or new_stage == "needs_kickoff":
         raise PlannerError(
             ErrorCode.validation,
             "kickoff stage changes only through kickoff approval",
@@ -319,14 +345,14 @@ def decide_stage_jump(ticket: Ticket, new_stage: str, actor: str) -> Decision:
 
 def decide_drop(ticket: Ticket, actor: str) -> Decision:
     admission.require_direct_actor(actor, "drop_ticket")
-    if ticket.stage == CodingStage.done:
+    if ticket.stage == "done":
         raise PlannerError(
             ErrorCode.validation, "done tickets cannot be dropped", {"stage": "done"}
         )
-    if ticket.stage == CodingStage.dropped:
+    if ticket.stage == "dropped":
         raise PlannerError(ErrorCode.validation, "ticket is already dropped", {"stage": "dropped"})
-    events = (_stage_change(ticket.stage, CodingStage.dropped, CAUSE_DROP),)
-    return Decision(events=events, new_stage=CodingStage.dropped)
+    events = (_stage_change(ticket.stage, "dropped", CAUSE_DROP),)
+    return Decision(events=events, new_stage="dropped")
 
 
 def decide_scope_change(
@@ -335,10 +361,15 @@ def decide_scope_change(
     at_cap: AtCap,
     actor: str,
     *,
-    definition: WorkflowDefinition | None = None,
+    worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
     admission.require_direct_actor(actor, "change_scope")
-    machine.validate_ceiling(ceiling, definition=definition)
+    if ceiling not in worker_type_definition.ceiling_range():
+        raise PlannerError(
+            ErrorCode.scope_invalid,
+            "ceiling must be a linear stage",
+            {"ceiling": ceiling},
+        )
     events = (
         EventSpec(
             EventKind.scope_changed,

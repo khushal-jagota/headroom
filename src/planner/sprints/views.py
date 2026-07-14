@@ -13,9 +13,9 @@ from planner.sprints import data as sprints_data
 from planner.sprints.contracts import ItemStatus, Sprint, SprintItem
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import CodingStage
-from planner.tickets.logic import coding_bridge, fields_codec, machine
+from planner.tickets.logic import fields_codec, machine
 from planner.tickets.views import ticket_json
+from planner.worker_types.configuration import configured_worker_type_registry
 
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
 
@@ -89,7 +89,14 @@ def idea_json(row: sqlite3.Row) -> JsonDict:
 
 
 def item_rollup(conn: sqlite3.Connection, item_id: str) -> dict[str, int]:
-    rollup: dict[str, int] = {s.value: 0 for s in CodingStage}
+    coding_worker_type_definition = configured_worker_type_registry().require("coding")
+    rollup: dict[str, int] = {
+        stage: 0
+        for stage in (
+            *coding_worker_type_definition.stage_ids(),
+            coding_worker_type_definition.dropped_stage.id,
+        )
+    }
     rows = conn.execute(
         "SELECT stage, COUNT(*) AS n FROM tickets WHERE sprint_item_id = ? GROUP BY stage",
         (item_id,),
@@ -111,10 +118,13 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
         (item_id,),
     ).fetchall()
     result: list[JsonDict] = []
+    registry = configured_worker_type_registry()
     for r in rows:
         stage = str(r["stage"])
-        defn = coding_bridge.require(str(r["worker_type"]))
-        fields = fields_codec.fields_from_json(str(r["fields"]), defn)
+        worker_type_definition = registry.require(str(r["worker_type"]))
+        fields = fields_codec.declared_fields_from_json(
+            str(r["fields"]), worker_type_definition.field_ids()
+        )
         result.append(
             {
                 "id": str(r["id"]),
@@ -122,7 +132,9 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
                 "stage": stage,
                 "priority": str(r["priority"]),
                 "has_pending_proposal": machine.has_pending_gating_proposal(
-                    stage, fields, definition=defn
+                    stage,
+                    fields,
+                    worker_type_definition=worker_type_definition,
                 ),
                 "ticket_status": str(r["ticket_status"]),
             }
@@ -134,9 +146,7 @@ def blocked_by_titles(conn: sqlite3.Connection, blocked_by: list[str]) -> list[s
     """Resolve active/read blocker ids to titles, preserving order."""
     titles: list[str] = []
     for ticket_id in blocked_by:
-        row = conn.execute(
-            "SELECT title FROM tickets WHERE id = ?", (ticket_id,)
-        ).fetchone()
+        row = conn.execute("SELECT title FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
         if row is not None:
             titles.append(str(row["title"]))
     return titles
@@ -173,14 +183,16 @@ def list_items(
         read = sprints_data.read_item(conn, str(row["id"]))
         if status is not None and read.status is not status:
             continue
-        result.append({
-            **item_json(
-                read.item,
-                status=read.status,
-                blocking_ticket_ids=read.blocking_ticket_ids,
-            ),
-            "blockers_cleared": read.blockers_cleared,
-        })
+        result.append(
+            {
+                **item_json(
+                    read.item,
+                    status=read.status,
+                    blocking_ticket_ids=read.blocking_ticket_ids,
+                ),
+                "blockers_cleared": read.blockers_cleared,
+            }
+        )
     return result
 
 

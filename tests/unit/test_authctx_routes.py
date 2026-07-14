@@ -20,7 +20,7 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.sprints.data import create_item, create_sprint
-from planner.tickets.contracts import NO_FURTHER, AtCap, FieldName
+from planner.tickets.contracts import NO_FURTHER, AtCap
 from planner.tickets.data import accept_proposal, create_ticket
 
 _AGENT = {"X-Plan-Actor": "agent"}  # an agent context (X-Plan-Actor set)
@@ -52,13 +52,17 @@ def _ticket(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
         ticket = create_ticket(
-            conn, title="Patch me.", actor="unattributed", now=0, title_max_chars=200,
+            conn,
+            title="Patch me.",
+            actor="unattributed",
+            now=0,
+            title_max_chars=200,
             worker_type="coding",
         )
         ticket = accept_proposal(
             conn,
             ticket.id,
-            field=FieldName.kickoff,
+            field="kickoff",
             actor="unattributed",
             now=0,
             next_ceiling=NO_FURTHER,
@@ -127,8 +131,7 @@ def _ticket_edit_effects(db_path: Path, ticket_id: str) -> tuple[Any, ...]:
         ).fetchone()
         assert ticket is not None
         events = conn.execute(
-            "SELECT kind, payload, created_at FROM events "
-            "WHERE entity_id = ? ORDER BY id",
+            "SELECT kind, payload, created_at FROM events WHERE entity_id = ? ORDER BY id",
             (ticket_id,),
         ).fetchall()
         context = conn.execute(
@@ -338,9 +341,7 @@ def test_patch_item_status_write_is_rejected(tmp_path: Path) -> None:
     iid = _item(db_path)
     with TestClient(app) as client:
         response = client.patch(f"/api/items/{iid}", json={"status": "in_progress"})
-        agent = client.patch(
-            f"/api/items/{iid}", json={"status": "in_progress"}, headers=_AGENT
-        )
+        agent = client.patch(f"/api/items/{iid}", json={"status": "in_progress"}, headers=_AGENT)
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "validation"
     assert response.json()["error"]["detail"]["field"] == "status"
@@ -398,9 +399,7 @@ def test_item_ticket_routes_are_direct_only(tmp_path: Path) -> None:
     iid = _item_in_sprint(db_path, sid)
     tid = _ticket(db_path)
     with TestClient(app) as client:
-        added = client.post(
-            f"/api/items/{iid}/tickets", json={"ticket_id": tid}, headers=_AGENT
-        )
+        added = client.post(f"/api/items/{iid}/tickets", json={"ticket_id": tid}, headers=_AGENT)
         removed = client.delete(f"/api/items/{iid}/tickets/{tid}", headers=_AGENT)
     assert added.status_code == 400
     assert added.json()["error"]["code"] == "agent_forbidden"
@@ -444,9 +443,7 @@ def test_patch_sprint_marshals_bad_field_types(tmp_path: Path) -> None:
         assert nul.json()["error"]["code"] == "validation"
         assert _col(db_path, "sprints", sid, "premortem") == ""  # unchanged, no crash
 
-        ok = client.patch(
-            f"/api/sprints/{sid}", json={"mid_where_we_stand": "Halfway, tracking."}
-        )
+        ok = client.patch(f"/api/sprints/{sid}", json={"mid_where_we_stand": "Halfway, tracking."})
     assert ok.status_code == 200
     assert ok.json()["mid_where_we_stand"] == "Halfway, tracking."
     assert _col(db_path, "sprints", sid, "mid_where_we_stand") == "Halfway, tracking."
@@ -458,9 +455,7 @@ def test_patch_sprint_marshals_bad_field_types(tmp_path: Path) -> None:
 def test_patch_day_agent_is_forbidden_unattributed_succeeds(tmp_path: Path) -> None:
     app, _db_path = _make_app(tmp_path)
     with TestClient(app) as client:
-        agent = client.patch(
-            "/api/day/2026-07-05", json={"focus": "Agent focus"}, headers=_AGENT
-        )
+        agent = client.patch("/api/day/2026-07-05", json={"focus": "Agent focus"}, headers=_AGENT)
         assert agent.status_code == 400
         assert agent.json()["error"]["code"] == "agent_forbidden"
         unattributed = client.patch("/api/day/2026-07-05", json={"focus": "Direct focus"})
@@ -475,9 +470,7 @@ def test_chat_send_agent_is_forbidden_unattributed_succeeds(tmp_path: Path) -> N
     app, _db_path = _make_app(tmp_path)
     entity = "day_2026-07-05"  # a chattable day entity (materializes on read)
     with TestClient(app) as client:
-        agent = client.post(
-            f"/api/chat/{entity}/send", json={"text": "hi"}, headers=_AGENT
-        )
+        agent = client.post(f"/api/chat/{entity}/send", json={"text": "hi"}, headers=_AGENT)
         assert agent.status_code == 400
         assert agent.json()["error"]["code"] == "agent_forbidden"
         unattributed = client.post(f"/api/chat/{entity}/send", json={"text": "hi"})

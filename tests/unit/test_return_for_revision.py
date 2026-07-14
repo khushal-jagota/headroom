@@ -25,7 +25,7 @@ from planner.minds.shared_gateway import SharedGateway
 from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.runtime.readiness_doorbell import NoOpReadinessDoorbell
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, AtCap, CodingStage, FieldName
+from planner.tickets.contracts import NO_FURTHER, AtCap
 from planner.tickets.data import (
     change_scope,
     create_ticket,
@@ -142,7 +142,7 @@ def _ticket_with_pending_plan(db_path: Path) -> str:
         ticket = tickets_data.accept_proposal(
             conn,
             ticket.id,
-            field=FieldName.kickoff,
+            field="kickoff",
             actor="human",
             now=0,
             next_ceiling=NO_FURTHER,
@@ -151,18 +151,14 @@ def _ticket_with_pending_plan(db_path: Path) -> str:
         change_scope(
             conn,
             ticket.id,
-            ceiling=CodingStage.needs_plan,
+            ceiling="needs_plan",
             at_cap=AtCap.propose,
             actor="human",
             now=0,
         )
-        file_proposal(
-            conn, ticket.id, field=FieldName.success, body="success", actor="agent", now=0
-        )
-        file_proposal(
-            conn, ticket.id, field=FieldName.approach, body="approach", actor="agent", now=0
-        )
-        file_proposal(conn, ticket.id, field=FieldName.plan, body="bad plan", actor="agent", now=0)
+        file_proposal(conn, ticket.id, field="success", body="success", actor="agent", now=0)
+        file_proposal(conn, ticket.id, field="approach", body="approach", actor="agent", now=0)
+        file_proposal(conn, ticket.id, field="plan", body="bad plan", actor="agent", now=0)
         finish_run_if_still_running_step(conn, ticket.id, session_key=f"session-{ticket.id}", now=0)
     finally:
         conn.close()
@@ -183,7 +179,7 @@ def _ticket_with_pending_closeout(db_path: Path) -> str:
         ticket = tickets_data.accept_proposal(
             conn,
             ticket.id,
-            field=FieldName.kickoff,
+            field="kickoff",
             actor="human",
             now=0,
             next_ceiling=NO_FURTHER,
@@ -192,22 +188,18 @@ def _ticket_with_pending_closeout(db_path: Path) -> str:
         change_scope(
             conn,
             ticket.id,
-            ceiling=CodingStage.needs_closeout,
+            ceiling="needs_closeout",
             at_cap=AtCap.propose,
             actor="human",
             now=0,
         )
-        file_proposal(
-            conn, ticket.id, field=FieldName.success, body="success", actor="agent", now=0
-        )
-        file_proposal(
-            conn, ticket.id, field=FieldName.approach, body="approach", actor="agent", now=0
-        )
-        file_proposal(conn, ticket.id, field=FieldName.plan, body="plan", actor="agent", now=0)
+        file_proposal(conn, ticket.id, field="success", body="success", actor="agent", now=0)
+        file_proposal(conn, ticket.id, field="approach", body="approach", actor="agent", now=0)
+        file_proposal(conn, ticket.id, field="plan", body="plan", actor="agent", now=0)
         file_proposal(
             conn,
             ticket.id,
-            field=FieldName.implementation,
+            field="implementation",
             body="implementation",
             actor="agent",
             now=0,
@@ -215,7 +207,7 @@ def _ticket_with_pending_closeout(db_path: Path) -> str:
         file_proposal(
             conn,
             ticket.id,
-            field=FieldName.closeout,
+            field="closeout",
             body="bad closeout",
             actor="agent",
             now=0,
@@ -246,7 +238,7 @@ def test_http_revision_uses_real_runner_without_readiness_loop_and_returns_befor
                     tickets_data.file_proposal(
                         conn,
                         tid,
-                        field=FieldName.plan,
+                        field="plan",
                         body="revised plan",
                         actor="agent",
                         now=3,

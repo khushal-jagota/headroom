@@ -21,28 +21,30 @@ from planner.runtime import readiness
 from planner.runtime.readiness_doorbell import ReadinessDoorbell
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import Ticket, TicketStatus
-from planner.tickets.logic import coding_bridge, machine
+from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 _log = logging.getLogger(__name__)
 
-_REVISION_GUIDANCE_PREFIX = (
-    "The user rejected your proposal and provided the following guidance:"
-)
+_REVISION_GUIDANCE_PREFIX = "The user rejected your proposal and provided the following guidance:"
 
 
 class _WorkerSessionClaimLost(Exception):
     """The Ticket stopped owning the worker session before prompt submission."""
 
 
-def _next_step_prompt(ticket: Ticket) -> str:
+def _next_step_prompt(
+    ticket: Ticket,
+    *,
+    worker_type_definition: WorkerTypeDefinition,
+) -> str:
     """Describe what to advance; the worker role skill owns how to do the work.
 
     Route selection/suitability guidance lives in the panels-worker skill, not here.
     The gating field is resolved against the ticket's OWN type definition (not the
     coding default), so a novel-stage type (e.g. new_worker at needs_stages) reads
     its real field instead of raising 'stage outside the linear order'."""
-    defn = coding_bridge.require(ticket.worker_type)
-    gating = machine.gating_field(ticket.stage, definition=defn)
+    gating = worker_type_definition.gating_field(ticket.stage)
     field = str(gating) if gating is not None else "the next step"
     implementer_wire = ticket.implementer.value if ticket.implementer is not None else "unassigned"
     return (
@@ -126,9 +128,7 @@ class EmployeeStepRunner:
                 self._active_cond.notify_all()
                 raise
 
-    def reserve_revision(
-        self, ticket_id: str, guidance: str
-    ) -> _EmployeeRevisionHandoff:
+    def reserve_revision(self, ticket_id: str, guidance: str) -> _EmployeeRevisionHandoff:
         """Return only after a counted employee thread is parked for this revision."""
         with self._active_cond:
             if not self._accepting or not self._gateway_available():
@@ -204,17 +204,22 @@ class EmployeeStepRunner:
         try:
             now = self._clock.now_unix()
             if revision_guidance is None:
+
                 def ready_on_today(
-                    _conn: sqlite3.Connection, ticket: Ticket
+                    _conn: sqlite3.Connection,
+                    ticket: Ticket,
+                    worker_type_definition: WorkerTypeDefinition,
                 ) -> bool:
-                    today_id = dates.resolve_day_id(
-                        "today", self._clock.now(), self._boundary_hour
-                    )
+                    today_id = dates.resolve_day_id("today", self._clock.now(), self._boundary_hour)
                     on_today = _conn.execute(
                         "SELECT 1 FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
                         (today_id, ticket.id),
                     ).fetchone()
-                    return on_today is not None and readiness.is_runnable(_conn, ticket)
+                    return on_today is not None and readiness.is_runnable(
+                        _conn,
+                        ticket,
+                        worker_type_definition=worker_type_definition,
+                    )
 
                 claimed = tickets_data.start_run_if_runnable(
                     conn,
@@ -228,7 +233,13 @@ class EmployeeStepRunner:
                         ticket_id,
                     )
                     return False
-                prompt = _next_step_prompt(claimed)
+                worker_type_definition = configured_worker_type_registry().require(
+                    claimed.worker_type
+                )
+                prompt = _next_step_prompt(
+                    claimed,
+                    worker_type_definition=worker_type_definition,
+                )
                 show_prompt_in_chat = True
                 require_existing_session = False
             else:
@@ -300,9 +311,7 @@ class EmployeeStepRunner:
 
             def finish_running_step(session_key: str | None) -> None:
                 if session_key is None:
-                    tickets_data.finish_run_if_still_running_step(
-                        conn, ticket_id, now=now
-                    )
+                    tickets_data.finish_run_if_still_running_step(conn, ticket_id, now=now)
                 else:
                     tickets_data.finish_run_if_still_running_step(
                         conn,

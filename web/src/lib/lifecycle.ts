@@ -1,5 +1,5 @@
 // The per-Worker-type lifecycle: a derived, memoized view over one served manifest.
-// This is the framework-free mirror of the backend's ticket_types views.
+// This is frontend behavior derived from the served worker_types manifest.
 // The retired ui.ts lifecycle constants/functions live here as Lifecycle-first-arg
 // variants so stage rendering + the scope leash are driven by the served manifest,
 // keyed by each Ticket's own worker_type, instead of a hardcoded coding table.
@@ -14,7 +14,7 @@ import {
 } from "./ui";
 import type { TicketDetail } from "./types";
 
-// --- served manifest shapes (mirror ticket_types/contracts ManifestDict) --------
+// --- served worker_types manifest shapes ----------------------------------------
 
 export type ManifestStage = {
   id: string;

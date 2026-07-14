@@ -41,9 +41,8 @@ def test_chief_external_work_help_lists_stage_and_worker_type_options(server) ->
         result = _run(server, "chief", command, "--help", actor=None)
         assert result.returncode == 0, result.stderr
         assert "--stage" in result.stdout
-    create_help = _run(
-        server, "chief", "create-ticket-from-external-work", "--help", actor=None
-    )
+        assert "--field-file" in result.stdout
+    create_help = _run(server, "chief", "create-ticket-from-external-work", "--help", actor=None)
     assert "--worker-type" in create_help.stdout
 
 
@@ -107,6 +106,194 @@ def test_chief_external_work_cli_create_and_reconcile(server, tmp_path: Path) ->
     assert reconciled_json["stage"] == "done"
 
 
+def test_chief_external_work_cli_carries_new_worker_fields(server, tmp_path: Path) -> None:
+    note = _file(tmp_path, "new-worker-note.md", "Design imported outside Panels")
+    stages = _file(tmp_path, "stages.md", "needs_thinking, needs_drafting")
+    thinking = _file(tmp_path, "thinking.md", "Worker reasoning contract")
+
+    created = _run(
+        server,
+        "chief",
+        "create-ticket-from-external-work",
+        "--title",
+        "Imported worker design",
+        "--worker-type",
+        "new_worker",
+        "--stage",
+        "needs_thinking",
+        "--kickoff-note-file",
+        note,
+        "--field-file",
+        f"stages={stages}",
+        "--json",
+    )
+    assert created.returncode == 0, created.stderr
+    created_json = json.loads(created.stdout)
+    assert created_json["stage"] == "needs_thinking"
+    assert created_json["fields"]["stages"]["value"] == "needs_thinking, needs_drafting"
+    assert created_json["fields"]["thinking"]["value"] is None
+
+    reconciled = _run(
+        server,
+        "chief",
+        "reconcile-ticket-from-external-work",
+        created_json["id"],
+        "--stage",
+        "needs_drafting",
+        "--kickoff-note-file",
+        note,
+        "--field-file",
+        f"thinking={thinking}",
+        "--json",
+    )
+    assert reconciled.returncode == 0, reconciled.stderr
+    reconciled_json = json.loads(reconciled.stdout)
+    assert reconciled_json["stage"] == "needs_drafting"
+    assert reconciled_json["fields"]["stages"]["value"] == "needs_thinking, needs_drafting"
+    assert reconciled_json["fields"]["thinking"]["value"] == "Worker reasoning contract"
+
+
+def test_chief_field_file_rejects_ambiguity_before_read_or_request(server) -> None:
+    before = _run(server, "ticket", "list", "--json")
+    assert before.returncode == 0, before.stderr
+    before_ids = {ticket["id"] for ticket in json.loads(before.stdout)["tickets"]}
+
+    cases = (
+        (
+            ["--field-file", "stages=/missing-one", "--field-file", "stages=/missing-two"],
+            "field file provided more than once: stages",
+        ),
+        (
+            ["--success-file", "/missing-one", "--field-file", "success=/missing-two"],
+            "field file provided more than once: success",
+        ),
+        (["--field-file", "malformed"], "field file must be FIELD=PATH: malformed"),
+    )
+    for options, message in cases:
+        rejected = _run(
+            server,
+            "chief",
+            "create-ticket-from-external-work",
+            "--title",
+            "Must not be created",
+            "--worker-type",
+            "new_worker",
+            "--stage",
+            "needs_thinking",
+            "--kickoff-note-file",
+            "/also-missing",
+            *options,
+            "--json",
+        )
+        assert rejected.returncode == 1
+        assert json.loads(rejected.stderr)["error"]["message"] == message
+
+    after = _run(server, "ticket", "list", "--json")
+    assert after.returncode == 0, after.stderr
+    assert {ticket["id"] for ticket in json.loads(after.stdout)["tickets"]} == before_ids
+
+
+def test_chief_field_file_rejects_command_fixed_keys_before_read_or_request(
+    server, tmp_path: Path
+) -> None:
+    existing = _run(
+        server,
+        "ticket",
+        "create",
+        "--title",
+        "Reserved-key reconciliation target",
+        "--worker-type",
+        "coding",
+        "--json",
+        actor=None,
+    )
+    assert existing.returncode == 0, existing.stderr
+    ticket_id = json.loads(existing.stdout)["id"]
+    before = _run(server, "ticket", "list", "--json")
+    assert before.returncode == 0, before.stderr
+    before_ids = {ticket["id"] for ticket in json.loads(before.stdout)["tickets"]}
+
+    common_fixed_keys = ("stage", "kickoff_note", "recap")
+    create_only_fixed_keys = (
+        "title",
+        "worker_type",
+        "priority",
+        "deadline",
+        "project",
+        "project_id",
+        "sprint_id",
+        "sprint_item_id",
+    )
+    for key in common_fixed_keys:
+        rejected = _run(
+            server,
+            "chief",
+            "reconcile-ticket-from-external-work",
+            ticket_id,
+            "--stage",
+            "needs_kickoff",
+            "--kickoff-note-file",
+            "/missing-kickoff-note",
+            "--field-file",
+            f"{key}=/missing-field-value",
+            "--json",
+        )
+        assert rejected.returncode == 1
+        assert json.loads(rejected.stderr)["error"]["message"] == (
+            f"field file conflicts with fixed request key: {key}"
+        )
+
+    for key in (*common_fixed_keys, *create_only_fixed_keys):
+        rejected = _run(
+            server,
+            "chief",
+            "create-ticket-from-external-work",
+            "--title",
+            "Must not be created",
+            "--worker-type",
+            "coding",
+            "--stage",
+            "needs_success",
+            "--kickoff-note-file",
+            "/missing-kickoff-note",
+            "--field-file",
+            f"{key}=/missing-field-value",
+            "--json",
+        )
+        assert rejected.returncode == 1
+        assert json.loads(rejected.stderr)["error"]["message"] == (
+            f"field file conflicts with fixed request key: {key}"
+        )
+
+    # A create-only key remains generic for reconcile and reaches the API, which owns
+    # Worker-type field validity. Coding does not declare "title", so the API rejects it.
+    note = _file(tmp_path, "reserved-note.md", "Complete external-work note")
+    title_field = _file(tmp_path, "title-field.md", "Definition-owned title value")
+    api_rejected = _run(
+        server,
+        "chief",
+        "reconcile-ticket-from-external-work",
+        ticket_id,
+        "--stage",
+        "needs_kickoff",
+        "--kickoff-note-file",
+        note,
+        "--field-file",
+        f"title={title_field}",
+        "--json",
+    )
+    assert api_rejected.returncode == 1
+    assert json.loads(api_rejected.stderr)["error"] == {
+        "code": "validation",
+        "message": "unknown external-work field",
+        "detail": {"field": "title"},
+    }
+
+    after = _run(server, "ticket", "list", "--json")
+    assert after.returncode == 0, after.stderr
+    assert {ticket["id"] for ticket in json.loads(after.stdout)["tickets"]} == before_ids
+
+
 def test_real_server_chief_external_work_terse_output_and_actor_rejection(
     server, tmp_path: Path
 ) -> None:
@@ -133,8 +320,15 @@ def test_real_server_chief_external_work_terse_output_and_actor_rejection(
     assert "needs_success" in created.stdout
 
     ordinary = _run(
-        server, "ticket", "create", "--title", "To reconcile", "--worker-type", "coding",
-        "--json", actor=None,
+        server,
+        "ticket",
+        "create",
+        "--title",
+        "To reconcile",
+        "--worker-type",
+        "coding",
+        "--json",
+        actor=None,
     )
     assert ordinary.returncode == 0, ordinary.stderr
     ordinary_id = json.loads(ordinary.stdout)["id"]

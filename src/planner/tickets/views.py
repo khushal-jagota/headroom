@@ -15,16 +15,16 @@ from planner.core.contracts import BlockerSummary, JsonDict
 from planner.sprints.contracts import ItemStatus
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
-    CodingStage,
     FieldSlot,
     Ticket,
     TicketStatus,
 )
-from planner.tickets.logic import coding_bridge, fields_codec, machine
+from planner.tickets.logic import fields_codec, machine
+from planner.worker_types.configuration import configured_worker_type_registry
 
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
-_TICKET_CLOSED = {CodingStage.done.value, CodingStage.dropped.value}
+_TICKET_CLOSED = {"done", "dropped"}
 _ITEM_CLOSED = {ItemStatus.done.value}
 
 
@@ -167,7 +167,7 @@ def list_events_for_entity(conn: sqlite3.Connection, entity_id: str, limit: int)
 def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
     ticket = tickets_data.read_ticket(conn, ticket_id)
     fields = ticket.fields
-    defn = coding_bridge.require(ticket.worker_type)
+    worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
 
     def show(value: str | None) -> str:
         return value if value else "(none)"
@@ -180,8 +180,7 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
     blocks_rows = blocker_summary.blocks
     blocked_by_block = (
         "\n".join(
-            f"- {'active' if row.active else 'cleared'}: {row.title} "
-            f"({row.ticket_id}, {row.stage})"
+            f"- {'active' if row.active else 'cleared'}: {row.title} ({row.ticket_id}, {row.stage})"
             for row in blocked_by_rows
         )
         if blocked_by_rows
@@ -200,7 +199,7 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"{field_id}:\n{show(slot(field_id).value)}\n"
         f"{field_id}_user_note:\n{show(slot(field_id).user_note)}\n"
         f"\n"
-        for field_id in coding_bridge.views.field_ids(defn)
+        for field_id in worker_type_definition.field_ids()
     )
     return (
         f"{ticket.title}\n"
@@ -234,7 +233,8 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
         "AND tickets.id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?)",
         (day_id,),
     ).fetchall()
-    coding_order = coding_bridge.views.stage_ids(coding_bridge.coding_definition())
+    registry = configured_worker_type_registry()
+    coding_order = registry.require("coding").stage_ids()
     column_order: list[str] = list(coding_order)
     by_stage: dict[str, list[tuple[tuple[int, int, str, int], JsonDict]]] = {
         sid: [] for sid in column_order
@@ -244,11 +244,15 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
         priority = str(row["priority"])
         deadline = str(row["deadline"]) if row["deadline"] is not None else None
         worker_type = str(row["worker_type"])
-        defn = coding_bridge.require(worker_type)
-        fields = fields_codec.fields_from_json(str(row["fields"]), defn)
-        gating_field_id = coding_bridge.views.gating_field(defn, stage)
-        gating_field_label = next(
-            (f.label for f in defn.fields if f.id == gating_field_id), None
+        worker_type_definition = registry.require(worker_type)
+        fields = fields_codec.declared_fields_from_json(
+            str(row["fields"]), worker_type_definition.field_ids()
+        )
+        gating_field_id = worker_type_definition.gating_field(stage)
+        gating_field_label = (
+            worker_type_definition.field_definition(gating_field_id).label
+            if gating_field_id is not None
+            else None
         )
         parent_project_id = (
             str(row["parent_project_id"]) if row["parent_project_id"] is not None else None
@@ -272,16 +276,18 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
             "group_project": group_project_name,
             "activity_at": int(row["updated_at"]),
             "has_pending_proposal": machine.has_pending_gating_proposal(
-                stage, fields, definition=defn
+                stage,
+                fields,
+                worker_type_definition=worker_type_definition,
             ),
             "ticket_status": str(row["ticket_status"]),
             "worker_type": worker_type,
             "stage": stage,
-            "stage_label": coding_bridge.views.require_stage(defn, stage).label,
+            "stage_label": worker_type_definition.stage_definition(stage).label,
             "gating_field": gating_field_id,
             "gating_field_label": gating_field_label,
-            "is_done": stage == coding_bridge.views.linear_terminal_stage_id(defn),
-            "is_dropped": stage == defn.dropped_stage.id,
+            "is_done": stage == worker_type_definition.completed_stage(),
+            "is_dropped": stage == worker_type_definition.dropped_stage.id,
         }
         sort_key = (
             _prio_rank(priority),
@@ -312,12 +318,13 @@ def _entity_type(entity_id: str) -> str:
 
 def _approval_digest(tickets: list[JsonDict], items: list[JsonDict]) -> list[JsonDict]:
     digest: list[JsonDict] = []
+    registry = configured_worker_type_registry()
     for row in tickets:
         stage = str(row["stage"])
         if row.get("ticket_status") == TicketStatus.agent_running_step.value:
             continue
-        defn = coding_bridge.require(str(row.get("worker_type")))
-        gating_field_id = coding_bridge.views.gating_field(defn, stage)
+        worker_type_definition = registry.require(str(row.get("worker_type")))
+        gating_field_id = worker_type_definition.gating_field(stage)
         if gating_field_id is None:
             continue
         fields = row["fields"]
@@ -454,11 +461,7 @@ def _overdue(
                 "id": eid,
                 "entity_type": etype,
                 "title": entry["title"],
-                **(
-                    {"stage": entry["stage"]}
-                    if etype == "ticket"
-                    else {"status": entry["status"]}
-                ),
+                **({"stage": entry["stage"]} if etype == "ticket" else {"status": entry["status"]}),
                 "priority": entry["priority"],
                 "deadline": deadline,
             }

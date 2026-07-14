@@ -22,10 +22,9 @@ These tests assert the ticket's acceptance items with concrete values:
 - T7: a probe ticket survives create + reload (the P0 _row_to_ticket str() fix).
 - Coding parity: drop/state-jump bookend `==` comparisons survive the str flip.
 
-The probe definition uses stage/field ids that are NOT CodingStage/FieldName members
-(alpha/beta), built with "".join(...) so interning cannot mask an identity comparison.
-Registered test-only via coding_bridge.set_registry_for_test; production stays
-coding-only.
+The probe definition uses novel Stage/field ids (alpha/beta), built with
+``"".join(...)`` so interning cannot mask an identity comparison. It is registered
+through the explicit test configuration seam; production composition stays unchanged.
 """
 
 from __future__ import annotations
@@ -48,14 +47,11 @@ from planner.core.clock import TestClock
 from planner.core.contracts import ErrorCode, EventKind, PlannerError
 from planner.core.db import connect, create_schema
 from planner.core.events import read_events_since
-from planner.ticket_types.contracts import WorkflowDefinition
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
-    CodingStage,
-    FieldName,
     FieldSlot,
     Implementer,
     Priority,
@@ -65,13 +61,15 @@ from planner.tickets.contracts import (
     TicketFields,
     TicketStatus,
 )
-from planner.tickets.logic import coding_bridge, fields_codec, machine, resolution
+from planner.tickets.logic import fields_codec, machine, resolution
+from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 
 @pytest.fixture
-def probe_registry() -> Iterator[WorkflowDefinition]:
-    """Install the canonical coding + probe registry for the persistence/engine
-    doors, then restore production coding-only after the test."""
+def probe_registry() -> Iterator[WorkerTypeDefinition]:
+    """Install the canonical test registry for the persistence/engine doors, then
+    restore production composition after the test."""
     definition = install_probe_registry()
     try:
         yield definition
@@ -108,7 +106,7 @@ _CODING_GOLDEN_SUCCESS_S = (
 
 
 def test_coding_fields_to_json_bytes_are_golden() -> None:
-    fields = TicketFields.empty(coding_bridge.field_ids(coding_bridge.coding_definition()))
+    fields = TicketFields.empty(CODING_WORKER_TYPE_DEFINITION.field_ids())
     fields = fields_codec.with_slot(fields, "success", FieldSlot(value="s"))
     # The exact byte string the pre-widening hardcoded codec emitted (key order + spacing).
     assert fields_codec.fields_to_json(fields) == _CODING_GOLDEN_SUCCESS_S
@@ -146,19 +144,19 @@ def test_coding_stored_fields_bytes_after_drive_are_golden(
     t = tickets_data.accept_proposal(
         tmp_db,
         t.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
     )
     tickets_data.file_proposal(
-        tmp_db, t.id, field=FieldName.success, body="the success", actor="agent", now=now
+        tmp_db, t.id, field="success", body="the success", actor="agent", now=now
     )
     t = tickets_data.accept_proposal(
         tmp_db,
         t.id,
-        field=FieldName.success,
+        field="success",
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
@@ -173,7 +171,7 @@ def test_coding_stored_fields_bytes_after_drive_are_golden(
 # =====================================================================
 
 
-def test_generic_storage_round_trip_and_copy_on_write(probe_registry: WorkflowDefinition) -> None:
+def test_generic_storage_round_trip_and_copy_on_write(probe_registry: WorkerTypeDefinition) -> None:
     f = TicketFields.empty(_PROBE_FIELD_IDS)
     f2 = fields_codec.with_slot(f, _FA, FieldSlot(value="A"))
 
@@ -184,7 +182,7 @@ def test_generic_storage_round_trip_and_copy_on_write(probe_registry: WorkflowDe
     assert fields_codec.get_slot(f, _FA).value is None
 
     raw = fields_codec.fields_to_json(f2)
-    reloaded = fields_codec.fields_from_json(raw, probe_registry)
+    reloaded = fields_codec.declared_fields_from_json(raw, probe_registry.field_ids())
     assert fields_codec.get_slot(reloaded, _FA).value == "A"
     # declared key order preserved in the JSON.
     assert list(json.loads(raw).keys()) == list(_PROBE_FIELD_IDS)
@@ -201,24 +199,28 @@ def test_generic_storage_round_trip_and_copy_on_write(probe_registry: WorkflowDe
 # =====================================================================
 
 
-def test_boundary_lifted_and_require_coding_field_gone(probe_registry: WorkflowDefinition) -> None:
+def test_boundary_lifted_and_require_coding_field_gone(
+    probe_registry: WorkerTypeDefinition,
+) -> None:
     payload = {
         "kickoff": {"value": "k", "proposal": None, "user_note": None},
         _FA: {"value": "a", "proposal": None, "user_note": None},
         _FB: {"value": None, "proposal": None, "user_note": None},
     }
-    decoded = fields_codec.fields_from_json(json.dumps(payload), probe_registry)
+    decoded = fields_codec.declared_fields_from_json(
+        json.dumps(payload), probe_registry.field_ids()
+    )
     assert fields_codec.get_slot(decoded, _FA).value == "a"
 
     # STRICT-on-missing-declared preserved.
     missing = {k: v for k, v in payload.items() if k != _FB}
     with pytest.raises(PlannerError) as exc:
-        fields_codec.fields_from_json(json.dumps(missing), probe_registry)
+        fields_codec.declared_fields_from_json(json.dumps(missing), probe_registry.field_ids())
     assert exc.value.code == ErrorCode.validation
 
     # LENIENT-on-extra preserved (a top-level "result" key is ignored).
     extra = {**payload, "result": "legacy"}
-    ok = fields_codec.fields_from_json(json.dumps(extra), probe_registry)
+    ok = fields_codec.declared_fields_from_json(json.dumps(extra), probe_registry.field_ids())
     assert fields_codec.get_slot(ok, _FA).value == "a"
 
     # the coding-bound boundary function no longer exists.
@@ -230,26 +232,32 @@ def test_boundary_lifted_and_require_coding_field_gone(probe_registry: WorkflowD
 # =====================================================================
 
 
-def test_tier2_scope_generic(probe_registry: WorkflowDefinition) -> None:
-    assert machine.resolve_scope(_A, _B, AtCap.stop, definition=probe_registry) == ScopePair(
-        next_ceiling=_B, at_cap=AtCap.stop
-    )
+def test_tier2_scope_generic(probe_registry: WorkerTypeDefinition) -> None:
     assert machine.resolve_scope(
-        _A, NO_FURTHER, AtCap.propose, definition=probe_registry
+        _A,
+        _B,
+        AtCap.stop,
+        worker_type_definition=probe_registry,
+    ) == ScopePair(next_ceiling=_B, at_cap=AtCap.stop)
+    assert machine.resolve_scope(
+        _A,
+        NO_FURTHER,
+        AtCap.propose,
+        worker_type_definition=probe_registry,
     ) == ScopePair(next_ceiling=_A, at_cap=AtCap.propose)
 
     # a ceiling before the new state is rejected.
     with pytest.raises(PlannerError) as exc:
-        machine.resolve_scope(_B, _A, AtCap.stop, definition=probe_registry)
+        machine.resolve_scope(
+            _B,
+            _A,
+            AtCap.stop,
+            worker_type_definition=probe_registry,
+        )
     assert exc.value.code == ErrorCode.scope_invalid
 
-    # validate_ceiling operates on probe's ceiling range. needs_kickoff is now IN the
-    # range (the leading default); needs_ghost is not a stage, so it is out of range.
-    machine.validate_ceiling(_B, definition=probe_registry)  # in range: no raise
-    machine.validate_ceiling("needs_kickoff", definition=probe_registry)  # now in range
-    with pytest.raises(PlannerError) as exc:
-        machine.validate_ceiling("needs_ghost", definition=probe_registry)
-    assert exc.value.code == ErrorCode.scope_invalid
+    assert _B in probe_registry.ceiling_range()
+    assert "needs_kickoff" in probe_registry.ceiling_range()
 
     # has_pending_gating_proposal reads probe's gate (_FA), not coding's.
     parked = fields_codec.with_slot(
@@ -257,11 +265,21 @@ def test_tier2_scope_generic(probe_registry: WorkflowDefinition) -> None:
         _FA,
         FieldSlot(proposal=Proposal(body="p", proposed_by="agent", created_at=1)),
     )
-    assert machine.has_pending_gating_proposal(_A, parked, definition=probe_registry) is True
+    assert (
+        machine.has_pending_gating_proposal(
+            _A,
+            parked,
+            worker_type_definition=probe_registry,
+        )
+        is True
+    )
 
     # coding parity (no definition): unchanged.
     assert machine.resolve_scope(
-        CodingStage.needs_approach, CodingStage.needs_plan, AtCap.stop
+        "needs_approach",
+        "needs_plan",
+        AtCap.stop,
+        worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
     ) == ScopePair(next_ceiling="needs_plan", at_cap=AtCap.stop)
 
 
@@ -270,24 +288,27 @@ def test_resolve_scope_distinguishes_unknown_from_too_early_coding_payloads() ->
     # DISTINCT with their exact pre-widening payloads.
     # (a) an id outside the ceiling range -> "unknown next_ceiling".
     with pytest.raises(PlannerError) as unknown:
-        machine.resolve_scope(CodingStage.needs_approach, "bogus", AtCap.stop)
+        machine.resolve_scope(
+            "needs_approach",
+            "bogus",
+            AtCap.stop,
+            worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
+        )
     assert unknown.value.code == ErrorCode.scope_invalid
     assert unknown.value.message == "unknown next_ceiling"
     assert unknown.value.detail == {"next_ceiling": "bogus"}
 
     # (b) a valid ceiling whose index precedes new_stage -> "at or beyond the new state".
     with pytest.raises(PlannerError) as too_early:
-        machine.resolve_scope(CodingStage.needs_plan, CodingStage.needs_approach, AtCap.stop)
+        machine.resolve_scope(
+            "needs_plan",
+            "needs_approach",
+            AtCap.stop,
+            worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
+        )
     assert too_early.value.code == ErrorCode.scope_invalid
     assert too_early.value.message == "next_ceiling must be at or beyond the new stage"
     assert too_early.value.detail == {"next_ceiling": "needs_approach", "new_stage": "needs_plan"}
-
-    # validate_ceiling's coding payload is unchanged by the str() widening. needs_kickoff
-    # is now a valid ceiling (the leading default), so needs_ghost is the out-of-range id.
-    with pytest.raises(PlannerError) as bad_ceiling:
-        machine.validate_ceiling("needs_ghost")  # not a linear stage -> out of range
-    assert bad_ceiling.value.message == "ceiling must be a linear stage"
-    assert bad_ceiling.value.detail == {"ceiling": "needs_ghost"}
 
 
 # =====================================================================
@@ -320,7 +341,7 @@ def _kinds_after(tmp_db: Connection, tid: str, since: int) -> list[tuple[str, di
 
 
 def test_probe_data_layer_drive_to_done_exact_events(
-    tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkflowDefinition
+    tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkerTypeDefinition
 ) -> None:
     now = fake_clock.now_unix()
     # implementer=khushal so the probe transition hook (needs_alpha->needs_beta) fires.
@@ -337,7 +358,7 @@ def test_probe_data_layer_drive_to_done_exact_events(
     t = tickets_data.accept_proposal(
         tmp_db,
         tid,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=now,
         next_ceiling=_B,
@@ -425,7 +446,7 @@ def test_probe_data_layer_drive_to_done_exact_events(
 
 
 def test_probe_recap_path_infers_gating_field(
-    tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkflowDefinition
+    tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkerTypeDefinition
 ) -> None:
     # file_current_proposal_with_recap infers the current gating field from the PROBE
     # definition (_FA at needs_alpha) and writes the recap atomically.
@@ -434,7 +455,7 @@ def test_probe_recap_path_infers_gating_field(
     t = tickets_data.accept_proposal(
         tmp_db,
         tid,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
@@ -455,7 +476,7 @@ def test_probe_recap_path_infers_gating_field(
 
 
 def test_probe_return_for_revision_clears_parked_proposal(
-    tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkflowDefinition
+    tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkerTypeDefinition
 ) -> None:
     # return_for_revision on a probe ticket clears the parked proposal on the type's own
     # gating field (_FA), threading the probe definition into gating_field.
@@ -464,7 +485,7 @@ def test_probe_return_for_revision_clears_parked_proposal(
     t = tickets_data.accept_proposal(
         tmp_db,
         tid,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
@@ -483,7 +504,7 @@ def test_probe_return_for_revision_clears_parked_proposal(
 
 
 def test_probe_admission_error_payload(
-    tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkflowDefinition
+    tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkerTypeDefinition
 ) -> None:
     # An agent proposing a NON-gating field at the ceiling is rejected against PROBE's
     # own gate (_FA), with a clean PlannerError payload (not an AttributeError).
@@ -492,7 +513,7 @@ def test_probe_admission_error_payload(
     t = tickets_data.accept_proposal(
         tmp_db,
         tid,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
@@ -509,7 +530,7 @@ def test_probe_admission_error_payload(
 
 
 def test_probe_at_cap_stop_error_payload(
-    tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkflowDefinition
+    tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkerTypeDefinition
 ) -> None:
     # at_cap=stop at the ceiling rejects an agent proposal with the exact probe payload.
     now = fake_clock.now_unix()
@@ -517,7 +538,7 @@ def test_probe_at_cap_stop_error_payload(
     t = tickets_data.accept_proposal(
         tmp_db,
         tid,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
@@ -531,14 +552,14 @@ def test_probe_at_cap_stop_error_payload(
 
 
 def test_probe_drive_to_dropped(
-    tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkflowDefinition
+    tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkerTypeDefinition
 ) -> None:
     now = fake_clock.now_unix()
     tid = _create_probe(tmp_db, now)
     t = tickets_data.accept_proposal(
         tmp_db,
         tid,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
@@ -556,11 +577,11 @@ def test_probe_drive_to_dropped(
 
 
 def test_probe_survives_create_and_reload(
-    tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkflowDefinition
+    tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkerTypeDefinition
 ) -> None:
     now = fake_clock.now_unix()
     tid = _create_probe(tmp_db, now)
-    # _row_to_ticket must NOT raise (the str(row) fix; CodingStage("needs_alpha") would ValueError).
+    # _row_to_ticket must NOT raise (the str(row) fix; str("needs_alpha") would ValueError).
     ticket = tickets_data.read_ticket(tmp_db, tid)
     assert ticket.stage == "needs_kickoff"
     assert ticket.ceiling == "needs_kickoff"  # leading default ceiling (still a bare str)
@@ -588,22 +609,20 @@ def test_coding_bookend_comparisons_survive_str_flip(
     t = tickets_data.accept_proposal(
         tmp_db,
         t.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
     )
     # a state jump reaches needs_approach; its bookend guards still fire on a str state.
-    t = tickets_data.set_stage(
-        tmp_db, t.id, new_stage=CodingStage.needs_approach, actor="human", now=now
-    )
-    assert t.stage == CodingStage.needs_approach
+    t = tickets_data.set_stage(tmp_db, t.id, new_stage="needs_approach", actor="human", now=now)
+    assert t.stage == "needs_approach"
     assert t.stage == "needs_approach"
 
-    # drop: the `== CodingStage.done/.dropped` bookends still hold with ticket.stage a str.
+    # drop: the `== "done"/.dropped` bookends still hold with ticket.stage a str.
     t = tickets_data.drop_ticket(tmp_db, t.id, actor="human", now=now)
-    assert t.stage == CodingStage.dropped
+    assert t.stage == "dropped"
     # dropped is terminal: a further drop raises via the surviving `==` guard.
     with pytest.raises(PlannerError) as exc:
         tickets_data.drop_ticket(tmp_db, t.id, actor="human", now=now)
@@ -638,8 +657,8 @@ def test_decide_drop_and_jump_bookends_pure_str_stage() -> None:
             updated_at=0,
         )
 
-    # a bare-str "dropped" state is recognized as terminal (== CodingStage.dropped).
+    # a bare-str "dropped" state is recognized as terminal (== "dropped").
     with pytest.raises(PlannerError):
         resolution.decide_drop(_t("dropped"), "human")
     with pytest.raises(PlannerError):
-        resolution.decide_stage_jump(_t("dropped"), CodingStage.needs_approach, "human")
+        resolution.decide_stage_jump(_t("dropped"), "needs_approach", "human")

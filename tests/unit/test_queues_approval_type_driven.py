@@ -21,17 +21,17 @@ from tests.support.probe import (
 
 from planner.days import data as days_data
 from planner.sprints import views as sprints_views
-from planner.ticket_types.contracts import WorkflowDefinition
-from planner.tickets.contracts import AtCap, FieldName
+from planner.tickets.contracts import AtCap
 from planner.tickets.data import accept_proposal, create_ticket, file_proposal
 from planner.tickets.views import queues_view
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 TODAY_DAY_ID = "day_2026-07-04"
 YESTERDAY_DAY_ID = "day_2026-07-03"
 
 
 @pytest.fixture
-def probe_registry() -> Iterator[WorkflowDefinition]:
+def probe_registry() -> Iterator[WorkerTypeDefinition]:
     definition = install_probe_registry()
     try:
         yield definition
@@ -57,17 +57,17 @@ def test_approval_digest_coding_kind_unchanged(tmp_db: Connection) -> None:
     )
     # Accept kickoff (default ceiling is now needs_kickoff, so kickoff parks until
     # accepted), expanding the ceiling to needs_success; a success proposal then parks.
-    file_proposal(tmp_db, ticket.id, field=FieldName.kickoff, body="k", actor="agent", now=2)
+    file_proposal(tmp_db, ticket.id, field="kickoff", body="k", actor="agent", now=2)
     accept_proposal(
         tmp_db,
         ticket.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=2,
         next_ceiling="needs_success",
         at_cap=AtCap.propose,
     )
-    file_proposal(tmp_db, ticket.id, field=FieldName.success, body="s", actor="agent", now=3)
+    file_proposal(tmp_db, ticket.id, field="success", body="s", actor="agent", now=3)
     days_data.add_day_ticket(tmp_db, TODAY_DAY_ID, ticket.id, 3)
 
     approvals = _approvals(tmp_db)
@@ -78,7 +78,7 @@ def test_approval_digest_coding_kind_unchanged(tmp_db: Connection) -> None:
 
 
 def test_approval_digest_probe_surfaces_on_registry_field(
-    tmp_db: Connection, probe_registry: WorkflowDefinition
+    tmp_db: Connection, probe_registry: WorkerTypeDefinition
 ) -> None:
     probe = create_ticket(
         tmp_db,
@@ -93,7 +93,7 @@ def test_approval_digest_probe_surfaces_on_registry_field(
     accept_proposal(
         tmp_db,
         probe.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=2,
         next_ceiling=NEEDS_ALPHA,
@@ -122,7 +122,7 @@ def test_ticket_approvals_are_limited_to_today_and_appear_when_added(
         accept_proposal(
             tmp_db,
             ticket.id,
-            field=FieldName.kickoff,
+            field="kickoff",
             actor="human",
             now=now,
             next_ceiling="needs_success",
@@ -131,7 +131,7 @@ def test_ticket_approvals_are_limited_to_today_and_appear_when_added(
         file_proposal(
             tmp_db,
             ticket.id,
-            field=FieldName.success,
+            field="success",
             body=f"{ticket.title} proposal",
             actor="agent",
             now=now,

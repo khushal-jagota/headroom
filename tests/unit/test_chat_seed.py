@@ -32,7 +32,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
 from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.shared_gateway import SharedGateway
-from planner.tickets.contracts import NO_FURTHER, AtCap, FieldName, TicketStatus
+from planner.tickets.contracts import NO_FURTHER, AtCap, TicketStatus
 from planner.tickets.data import accept_proposal, create_ticket
 
 
@@ -67,7 +67,7 @@ def _ticket(db_path: Path) -> str:
         ticket = accept_proposal(
             conn,
             ticket.id,
-            field=FieldName.kickoff,
+            field="kickoff",
             actor="human",
             now=0,
             next_ceiling=NO_FURTHER,

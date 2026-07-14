@@ -15,10 +15,10 @@ from tests.support.probe import (
 from planner.core.contracts import Priority
 from planner.days.data import add_day_ticket
 from planner.sprints.data import create_item
-from planner.ticket_types.contracts import WorkflowDefinition
-from planner.tickets.contracts import AtCap, FieldName
+from planner.tickets.contracts import AtCap
 from planner.tickets.data import accept_proposal, create_ticket
 from planner.tickets.views import board_view
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 # The 7 coding columns, in order — a coding-only board reproduces exactly these,
 # even the empty ones, with no appended column.
@@ -60,7 +60,7 @@ _ENRICHMENT_CARD_KEYS = [
 
 
 @pytest.fixture
-def probe_registry() -> Iterator[WorkflowDefinition]:
+def probe_registry() -> Iterator[WorkerTypeDefinition]:
     definition = install_probe_registry()
     try:
         yield definition
@@ -157,7 +157,7 @@ def test_board_coding_card_keys_superset_and_columns_unchanged(tmp_db: Connectio
 
 
 def test_board_mixed_coding_probe_does_not_throw(
-    tmp_db: Connection, probe_registry: WorkflowDefinition
+    tmp_db: Connection, probe_registry: WorkerTypeDefinition
 ) -> None:
     coding_id = _ticket(tmp_db, "Coding board ticket", 1)
     probe = create_ticket(
@@ -172,7 +172,7 @@ def test_board_mixed_coding_probe_does_not_throw(
     accept_proposal(
         tmp_db,
         probe.id,
-        field=FieldName.kickoff,
+        field="kickoff",
         actor="human",
         now=2,
         next_ceiling=NEEDS_BETA,
@@ -196,7 +196,7 @@ def test_board_mixed_coding_probe_does_not_throw(
     ]
     assert len(probe_cards) == 1
     probe_card = probe_cards[0]
-    # Probe card decoded against PROBE_DEFINITION — enrichment is probe-correct.
+    # Probe card decoded against PROBE_WORKER_TYPE_DEFINITION — enrichment is probe-correct.
     assert probe_card["stage"] == "needs_alpha"
     assert probe_card["stage_label"] == "Alpha"
     assert probe_card["gating_field"] == "alpha"

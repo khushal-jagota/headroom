@@ -20,8 +20,8 @@ Current build stage:
 - AD01 is complete on the branch at `f9246d5`. The independently reviewed Worker-type/stored-Stage
   replacement follows the program-memory commit `aa1f29d` and the separately isolated test stabilization
   `afa57fd`.
-- AD02's delegated implementation plan has passed corrected independent review and its exact contract is
-  locked. Implementation is the next serial step; no product files have changed yet.
+- AD02's delegated implementation is complete and its corrected diff has passed independent review with
+  `NO VIOLATIONS`. The reviewed checkpoint is ready to commit before the canonical gate.
 
 What just passed:
 
@@ -127,17 +127,34 @@ What just passed:
 - A final static wording scan found `tests/support/__init__.py` still used “ticket type” and claimed
   production was coding-only. It is added for that docstring-only correction; executable support stays
   unchanged.
+- The delegated AD02 implementation replaces the forwarding stack with one immutable
+  `WorkerTypeDefinition`, a narrow registry, and explicit production/test configuration. All semantic
+  rules require a resolved definition; direct stored Stage and field reads remain registry-free. The old
+  `ticket_types` package, coding bridge, guard, coding enums/tables, and optional-definition paths are
+  deleted.
+- Schema v19 rebuilds recognized historical Ticket tables under the existing lock-held migration envelope,
+  preserves stored field JSON, and removes SQLite's coding-shaped `fields` default. Sanctioned live creation
+  must supply Worker type and derives every slot from that definition. A migration may classify an old row
+  without a stored Worker type as `coding`; that is historical data conversion, never a live default.
+- Focused implementation evidence is green: Ruff and diff-check pass; mypy passes across 114 source files;
+  650 unit tests pass; the focused database suite passes 60 tests; the affected browser suite passes; and
+  the production frontend build is byte-identical. These are pre-gate checks, not the completeness claim.
+- Independent implementation review found one High transport violation: generic Chief `--field-file`
+  entries could overwrite fixed request keys. The accepted correction rejects command-specific reserved
+  keys before reading a file or sending a request, while leaving Worker-type field validity with the API.
+  Focused CLI browser tests pass 6/6, including every reserved key and a create-only name reaching the
+  reconcile API. Corrected-diff re-review reports `NO VIOLATIONS`.
 
 Next step:
 
-- Delegate AD02 implementation from its reviewed plan and contract lock. The implementation agent owns
-  only the bounded allowlist; the orchestrator will inspect the definition boundary and v19 migration,
-  obtain independent diff review, then run the canonical gate once after review fixes.
+- Commit the independently reviewed AD02 checkpoint, then run the one canonical
+  `PYTHONPATH="$PWD/src" ./verify`. If it is clean, record the full transcript and advance serially to AD03.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
-- The owner confirmed AD02 has no implicit defaults at any layer. SQLite's coding-shaped `fields` default
-  must be removed with a lock-held v19 forward migration; old tables may be rewritten, but all existing
-  field JSON and related data must be preserved.
+- The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`
+  default is removed by the lock-held v19 forward migration. Migrations may rewrite old tables and assign
+  `coding` only when converting a historical row that predates stored Worker type; existing field JSON and
+  related data remain preserved.
 
 Blockers:
 

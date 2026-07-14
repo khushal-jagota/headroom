@@ -65,7 +65,8 @@ from planner.tickets.contracts import (
     TicketEdit,
     ValueEditBody,
 )
-from planner.tickets.logic import coding_bridge
+from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.contracts import WorkerTypeDefinition
 
 router = APIRouter()
 
@@ -103,9 +104,7 @@ def get_readiness_doorbell(request: Request) -> ReadinessDoorbell:
 
 
 def get_employee_revision_runner(request: Request) -> EmployeeRevisionRunner | None:
-    runner: EmployeeRevisionRunner | None = getattr(
-        request.app.state, "employee_step_runner", None
-    )
+    runner: EmployeeRevisionRunner | None = getattr(request.app.state, "employee_step_runner", None)
     return runner
 
 
@@ -114,9 +113,7 @@ Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
 Clk = Annotated[Clock, Depends(get_clock)]
 Doorbell = Annotated[ReadinessDoorbell, Depends(get_readiness_doorbell)]
-EmployeeRunner = Annotated[
-    EmployeeRevisionRunner | None, Depends(get_employee_revision_runner)
-]
+EmployeeRunner = Annotated[EmployeeRevisionRunner | None, Depends(get_employee_revision_runner)]
 
 
 @contextmanager
@@ -168,10 +165,11 @@ def body_opt_str(body: JsonDict, key: str) -> str | None:
 # real routes. Reserved bookends (needs_kickoff/done/dropped) are shared by every
 # Worker type (PLAN invariant 1); the Worker-type-specific middle Stages/fields are not.
 
+
 def _require_create_worker_type(raw: JsonDict) -> str:
     """A create's Worker type, required and known before any writer runs."""
     worker_type = body_str(raw, "worker_type")
-    known = coding_bridge.registry().type_ids()
+    known = configured_worker_type_registry().registered_worker_types()
     if worker_type not in known:
         raise PlannerError(
             ErrorCode.validation,
@@ -181,21 +179,21 @@ def _require_create_worker_type(raw: JsonDict) -> str:
     return worker_type
 
 
-def _resolve_worker_type(
+def _ticket_and_worker_type_definition(
     conn: sqlite3.Connection, ticket_id: str
-) -> tuple[Ticket, coding_bridge.WorkflowDefinition]:
+) -> tuple[Ticket, WorkerTypeDefinition]:
     """Load the Ticket and resolve its Worker type for workflow interpretation."""
     ticket = tickets_data.read_ticket(conn, ticket_id)
-    return ticket, coding_bridge.require(ticket.worker_type)
+    return ticket, configured_worker_type_registry().require(ticket.worker_type)
 
 
-def _validate_field(defn: coding_bridge.WorkflowDefinition, field: str) -> str:
+def _validate_field(worker_type_definition: WorkerTypeDefinition, field: str) -> str:
     """A field id validated against the type's declared fields; raises validation."""
-    if not coding_bridge.has_field(defn, field):
+    if not worker_type_definition.has_field(field):
         raise PlannerError(
             ErrorCode.validation,
             "unknown ticket field",
-            {"field": field, "worker_type": defn.type_id},
+            {"field": field, "worker_type": worker_type_definition.worker_type},
         )
     return field
 
@@ -235,10 +233,12 @@ _EXTERNAL_FIXED_CREATE_KEYS = _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(
 )
 
 
-def _external_field_keys(defn: coding_bridge.WorkflowDefinition) -> tuple[str, ...]:
+def _external_field_keys(
+    worker_type_definition: WorkerTypeDefinition,
+) -> tuple[str, ...]:
     """The type's field-value body keys: its declared field ids minus kickoff (which
     arrives as kickoff_note)."""
-    return tuple(fid for fid in coding_bridge.field_ids(defn) if fid != "kickoff")
+    return tuple(field for field in worker_type_definition.field_ids() if field != "kickoff")
 
 
 def _reject_unknown_external_keys(raw: JsonDict, allowed: frozenset[str]) -> None:
@@ -252,12 +252,10 @@ def _reject_unknown_external_keys(raw: JsonDict, allowed: frozenset[str]) -> Non
 
 
 def _marshal_external_reconcile(
-    raw: JsonDict, defn: coding_bridge.WorkflowDefinition
+    raw: JsonDict, worker_type_definition: WorkerTypeDefinition
 ) -> ReconcileTicketFromExternalWorkBody:
-    field_keys = _external_field_keys(defn)
-    _reject_unknown_external_keys(
-        raw, _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(field_keys)
-    )
+    field_keys = _external_field_keys(worker_type_definition)
+    _reject_unknown_external_keys(raw, _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(field_keys))
     missing = [key for key in ("stage", "kickoff_note") if key not in raw]
     if missing:
         raise PlannerError(
@@ -275,12 +273,10 @@ def _marshal_external_reconcile(
 
 
 def _marshal_external_create(
-    raw: JsonDict, defn: coding_bridge.WorkflowDefinition
+    raw: JsonDict, worker_type_definition: WorkerTypeDefinition
 ) -> CreateTicketFromExternalWorkBody:
-    field_keys = _external_field_keys(defn)
-    _reject_unknown_external_keys(
-        raw, _EXTERNAL_FIXED_CREATE_KEYS | frozenset(field_keys)
-    )
+    field_keys = _external_field_keys(worker_type_definition)
+    _reject_unknown_external_keys(raw, _EXTERNAL_FIXED_CREATE_KEYS | frozenset(field_keys))
     if "title" not in raw:
         raise PlannerError(
             ErrorCode.validation,
@@ -289,7 +285,7 @@ def _marshal_external_create(
         )
     common_keys = _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(field_keys)
     common_raw = {key: value for key, value in raw.items() if key in common_keys}
-    common = _marshal_external_reconcile(common_raw, defn)
+    common = _marshal_external_reconcile(common_raw, worker_type_definition)
     body = CreateTicketFromExternalWorkBody(
         stage=common["stage"],
         kickoff_note=common["kickoff_note"],
@@ -314,27 +310,27 @@ def _marshal_external_create(
 
 
 def _external_values(
-    raw: JsonDict, kickoff_note: str, defn: coding_bridge.WorkflowDefinition
+    raw: JsonDict,
+    kickoff_note: str,
+    worker_type_definition: WorkerTypeDefinition,
 ) -> dict[str, str]:
     """The provided settled values keyed by field id: kickoff from kickoff_note, then
     each declared non-kickoff field present in the raw body (validated as a str). The
     field keys are type-declared, so this is genuinely per-type."""
     values: dict[str, str] = {"kickoff": kickoff_note}
-    for key in _external_field_keys(defn):
+    for key in _external_field_keys(worker_type_definition):
         if key in raw:
             values[key] = body_str(raw, key)
     return values
 
 
-def _validate_external_stage(
-    stage: str, defn: coding_bridge.WorkflowDefinition
-) -> str:
+def _validate_external_stage(stage: str, worker_type_definition: WorkerTypeDefinition) -> str:
     """An external-work target Stage validated against the Worker type's Stages.
 
     A Stage that is neither linear nor the reserved ``dropped`` is rejected at
     the ingress; a linear-but-out-of-range target (needs_kickoff / dropped) is left for
     ``decide_external_work`` to reject with its exact message (coding parity)."""
-    if stage in coding_bridge.views.stage_ids(defn) or stage == defn.dropped_stage.id:
+    if worker_type_definition.is_known_stage(stage):
         return stage
     raise PlannerError(ErrorCode.validation, "invalid stage", {"stage": stage})
 
@@ -351,16 +347,14 @@ def _marshal_accept(raw: JsonDict) -> AcceptBody:
 
 
 def _parse_next_ceiling(
-    raw: str | None, defn: coding_bridge.WorkflowDefinition
+    raw: str | None, worker_type_definition: WorkerTypeDefinition
 ) -> str | None:
     if raw is None:
         return None
     if raw == NO_FURTHER:
         return NO_FURTHER
-    if raw not in coding_bridge.views.ceiling_range(defn):
-        raise PlannerError(
-            ErrorCode.scope_invalid, "unknown next_ceiling", {"next_ceiling": raw}
-        )
+    if raw not in worker_type_definition.ceiling_range():
+        raise PlannerError(ErrorCode.scope_invalid, "unknown next_ceiling", {"next_ceiling": raw})
     return raw
 
 
@@ -377,12 +371,16 @@ def _parse_scope_at_cap(raw: str | None) -> AtCap | None:
 
 
 @router.post("/tickets")
-async def create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
-                        clk: Clk, readiness_doorbell: Doorbell) -> JsonDict:
+async def create_ticket(
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk, readiness_doorbell: Doorbell
+) -> JsonDict:
     body = _marshal_create_ticket(raw)
     now = clk.now_unix()
-    priority = parse_enum(Priority, body["priority"], "priority") \
-        if body["priority"] is not None else Priority.P3
+    priority = (
+        parse_enum(Priority, body["priority"], "priority")
+        if body["priority"] is not None
+        else Priority.P3
+    )
     project = projects_data.resolve_project(
         conn,
         project_id=body["project_id"],
@@ -408,19 +406,20 @@ async def create_ticket(raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg,
 
 @router.post("/chief/tickets/from-external-work")
 async def create_ticket_from_external_work(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
     readiness_doorbell: Doorbell,
 ) -> JsonDict:
     require_chief(ctx)
     worker_type = _require_create_worker_type(raw)
-    defn = coding_bridge.require(worker_type)
-    body = _marshal_external_create(raw, defn)
-    target_stage = _validate_external_stage(body["stage"], defn)
+    worker_type_definition = configured_worker_type_registry().require(worker_type)
+    body = _marshal_external_create(raw, worker_type_definition)
+    target_stage = _validate_external_stage(body["stage"], worker_type_definition)
     priority_raw = body.get("priority")
     priority = (
-        parse_enum(Priority, priority_raw, "priority")
-        if priority_raw is not None
-        else Priority.P3
+        parse_enum(Priority, priority_raw, "priority") if priority_raw is not None else Priority.P3
     )
     project = projects_data.resolve_project(
         conn,
@@ -433,7 +432,7 @@ async def create_ticket_from_external_work(
         title=body["title"],
         kickoff_note=body["kickoff_note"],
         target_stage=target_stage,
-        provided_values=_external_values(raw, body["kickoff_note"], defn),
+        provided_values=_external_values(raw, body["kickoff_note"], worker_type_definition),
         recap=body.get("recap"),
         actor=ctx.actor,
         now=now,
@@ -451,20 +450,24 @@ async def create_ticket_from_external_work(
 
 @router.post("/chief/tickets/{ticket_id}/reconcile-from-external-work")
 async def reconcile_ticket_from_external_work(
-    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk,
+    ticket_id: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
     readiness_doorbell: Doorbell,
 ) -> JsonDict:
     require_chief(ctx)
-    _ticket, defn = _resolve_worker_type(conn, ticket_id)
-    body = _marshal_external_reconcile(raw, defn)
-    target_stage = _validate_external_stage(body["stage"], defn)
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
+    body = _marshal_external_reconcile(raw, worker_type_definition)
+    target_stage = _validate_external_stage(body["stage"], worker_type_definition)
     now = clk.now_unix()
     ticket = tickets_actions.reconcile_ticket_from_external_work(
         conn,
         ticket_id,
         kickoff_note=body["kickoff_note"],
         target_stage=target_stage,
-        provided_values=_external_values(raw, body["kickoff_note"], defn),
+        provided_values=_external_values(raw, body["kickoff_note"], worker_type_definition),
         recap=body.get("recap"),
         actor=ctx.actor,
         now=now,
@@ -510,7 +513,11 @@ async def get_my_ticket(session_key: str, conn: DbConn, clk: Clk) -> JsonDict:
     """A worker agent's own ticket, resolved from its Hermes session key."""
     ticket = tickets_data.read_ticket_by_session_key(conn, session_key)
     detail = tickets_views.ticket_detail(conn, ticket.id, clk.now_unix())
-    detail["worker"] = coding_bridge.require(ticket.worker_type).worker_profile.specialist_skill
+    detail["worker"] = (
+        configured_worker_type_registry()
+        .require(ticket.worker_type)
+        .worker_profile.specialist_skill
+    )
     return detail
 
 
@@ -521,7 +528,10 @@ async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk) -> JsonDict:
 
 @router.delete("/tickets/{ticket_id}")
 async def delete_ticket(
-    ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk,
+    ticket_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
     readiness_doorbell: Doorbell,
 ) -> JsonDict:
     require_direct_write(ctx)
@@ -544,11 +554,17 @@ async def delete_ticket(
 
 
 @router.patch("/tickets/{ticket_id}")
-async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
-                       cfg: Cfg, clk: Clk) -> JsonDict:
+async def patch_ticket(
+    ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk
+) -> JsonDict:
     recognized = (
-        "title", "priority", "deadline", "implementer",
-        "project", "project_id", "sprint_id",
+        "title",
+        "priority",
+        "deadline",
+        "implementer",
+        "project",
+        "project_id",
+        "sprint_id",
     )
     for key in body:
         if key not in recognized:
@@ -594,8 +610,9 @@ async def patch_ticket(ticket_id: str, body: dict[str, Any], conn: DbConn, ctx: 
 
 
 @router.post("/tickets/{ticket_id}/propose")
-async def propose_current_field(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                                clk: Clk) -> JsonDict:
+async def propose_current_field(
+    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
     body = ProposeWithRecapBody(
         body=body_str(raw, "body"),
         recap=body_str(raw, "recap"),
@@ -613,11 +630,12 @@ async def propose_current_field(ticket_id: str, raw: dict[str, Any], conn: DbCon
 
 
 @router.post("/tickets/{ticket_id}/propose/{field}")
-async def propose_field(ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                        clk: Clk) -> JsonDict:
+async def propose_field(
+    ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
     body = ProposeBody(body=body_str(raw, "body"))
-    _ticket, defn = _resolve_worker_type(conn, ticket_id)
-    _validate_field(defn, field)
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
+    _validate_field(worker_type_definition, field)
     now = clk.now_unix()
     ticket = tickets_data.file_proposal(
         conn, ticket_id, field=field, body=body["body"], actor=ctx.actor, now=now
@@ -626,14 +644,21 @@ async def propose_field(ticket_id: str, field: str, raw: dict[str, Any], conn: D
 
 
 @router.post("/tickets/{ticket_id}/accept/{field}")
-async def accept_field(ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                       clk: Clk, readiness_doorbell: Doorbell) -> JsonDict:
+async def accept_field(
+    ticket_id: str,
+    field: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    readiness_doorbell: Doorbell,
+) -> JsonDict:
     body = _marshal_accept(raw)
     require_direct_write(ctx)
-    _ticket, defn = _resolve_worker_type(conn, ticket_id)
-    _validate_field(defn, field)
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
+    _validate_field(worker_type_definition, field)
     now = clk.now_unix()
-    next_ceiling = _parse_next_ceiling(body["next_ceiling"], defn)
+    next_ceiling = _parse_next_ceiling(body["next_ceiling"], worker_type_definition)
     at_cap = _parse_scope_at_cap(body["at_cap"])
     ticket = tickets_actions.accept_proposal(
         conn,
@@ -673,13 +698,14 @@ async def return_ticket_for_revision(
 
 
 @router.put("/tickets/{ticket_id}/notes/{field}")
-async def put_notes(ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                    clk: Clk) -> JsonDict:
+async def put_notes(
+    ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
     body = NoteBody(note=body_opt_str(raw, "note"), user_note=body_opt_str(raw, "user_note"))
     if "note" in raw and "user_note" in raw:
         raise PlannerError(ErrorCode.validation, "use note or user_note, not both", {})
-    _ticket, defn = _resolve_worker_type(conn, ticket_id)
-    _validate_field(defn, field)
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
+    _validate_field(worker_type_definition, field)
     now = clk.now_unix()
     ticket = tickets_data.set_note(
         conn,
@@ -693,8 +719,9 @@ async def put_notes(ticket_id: str, field: str, raw: dict[str, Any], conn: DbCon
 
 
 @router.put("/tickets/{ticket_id}/recap")
-async def put_recap(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                    clk: Clk) -> JsonDict:
+async def put_recap(
+    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
     body = RecapBody(body=body_str(raw, "body"))
     now = clk.now_unix()
     ticket = tickets_data.write_recap(conn, ticket_id, body=body["body"], actor=ctx.actor, now=now)
@@ -702,12 +729,19 @@ async def put_recap(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
 
 
 @router.put("/tickets/{ticket_id}/value/{field}")
-async def put_value(ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                    clk: Clk, readiness_doorbell: Doorbell) -> JsonDict:
+async def put_value(
+    ticket_id: str,
+    field: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    readiness_doorbell: Doorbell,
+) -> JsonDict:
     body = ValueEditBody(body=body_str(raw, "body"))
     require_direct_write(ctx)
-    _ticket, defn = _resolve_worker_type(conn, ticket_id)
-    _validate_field(defn, field)
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
+    _validate_field(worker_type_definition, field)
     now = clk.now_unix()
     ticket = tickets_actions.edit_field_value(
         conn,
@@ -722,24 +756,31 @@ async def put_value(ticket_id: str, field: str, raw: dict[str, Any], conn: DbCon
 
 
 @router.post("/tickets/{ticket_id}/scope")
-async def scope_ticket(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                       clk: Clk, readiness_doorbell: Doorbell) -> JsonDict:
+async def scope_ticket(
+    ticket_id: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    readiness_doorbell: Doorbell,
+) -> JsonDict:
     body = ScopeBody(ceiling=body_opt_str(raw, "ceiling"), at_cap=body_opt_str(raw, "at_cap"))
     require_direct_write(ctx)
     now = clk.now_unix()
     ceiling_raw = body["ceiling"]
     at_cap_raw = body["at_cap"]
     if ceiling_raw is None or at_cap_raw is None:
-        missing = [name for name, value in (("ceiling", ceiling_raw), ("at_cap", at_cap_raw))
-                   if value is None]
+        missing = [
+            name
+            for name, value in (("ceiling", ceiling_raw), ("at_cap", at_cap_raw))
+            if value is None
+        ]
         raise PlannerError(
             ErrorCode.scope_missing, "scope requires ceiling and at_cap", {"missing": missing}
         )
-    _ticket, defn = _resolve_worker_type(conn, ticket_id)
-    if ceiling_raw not in coding_bridge.views.ceiling_range(defn):
-        raise PlannerError(
-            ErrorCode.scope_invalid, "unknown ceiling", {"ceiling": ceiling_raw}
-        )
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
+    if ceiling_raw not in worker_type_definition.ceiling_range():
+        raise PlannerError(ErrorCode.scope_invalid, "unknown ceiling", {"ceiling": ceiling_raw})
     try:
         at_cap = AtCap(at_cap_raw)
     except ValueError:
@@ -759,16 +800,22 @@ async def scope_ticket(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: C
 
 
 @router.post("/tickets/{ticket_id}/stage")
-async def set_stage(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                    clk: Clk, readiness_doorbell: Doorbell) -> JsonDict:
+async def set_stage(
+    ticket_id: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    readiness_doorbell: Doorbell,
+) -> JsonDict:
     body = StageBody(to_stage=body_str(raw, "to_stage"))
     require_direct_write(ctx)
-    _ticket, defn = _resolve_worker_type(conn, ticket_id)
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     to_stage = body["to_stage"]
     # A linear stage of the type, or the reserved dropped (the writer rejects dropped
     # with "use the drop action"); anything else is foreign to the type.
-    if to_stage != defn.dropped_stage.id:
-        coding_bridge.views.stage_index(defn, to_stage)
+    if to_stage != worker_type_definition.dropped_stage.id:
+        worker_type_definition.stage_index(to_stage)
     now = clk.now_unix()
     ticket = tickets_actions.set_stage(
         conn,
@@ -783,7 +830,10 @@ async def set_stage(ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
 
 @router.post("/tickets/{ticket_id}/drop")
 async def drop_ticket(
-    ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk,
+    ticket_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
     readiness_doorbell: Doorbell,
 ) -> JsonDict:
     require_direct_write(ctx)
@@ -800,7 +850,10 @@ async def drop_ticket(
 
 @router.post("/tickets/{ticket_id}/takeover")
 async def take_over_ticket(
-    ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk,
+    ticket_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
     readiness_doorbell: Doorbell,
 ) -> JsonDict:
     require_direct_write(ctx)
@@ -816,7 +869,10 @@ async def take_over_ticket(
 
 @router.post("/tickets/{ticket_id}/release")
 async def release_ticket(
-    ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk,
+    ticket_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
     readiness_doorbell: Doorbell,
 ) -> JsonDict:
     require_direct_write(ctx)
@@ -843,7 +899,10 @@ async def ticket_copy_text(ticket_id: str, conn: DbConn) -> str:
 
 @router.post("/links")
 async def add_link(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
     readiness_doorbell: Doorbell,
 ) -> JsonDict:
     require_direct_write(ctx)
@@ -866,9 +925,15 @@ async def add_link(
 
 
 @router.delete("/links")
-async def remove_link(conn: DbConn, ctx: Ctx, clk: Clk,
-                      readiness_doorbell: Doorbell, from_id: str, to_id: str,
-                      kind: str) -> JsonDict:
+async def remove_link(
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    readiness_doorbell: Doorbell,
+    from_id: str,
+    to_id: str,
+    kind: str,
+) -> JsonDict:
     require_direct_write(ctx)
     kind_enum = parse_enum(LinkKind, kind, "kind")
     now = clk.now_unix()

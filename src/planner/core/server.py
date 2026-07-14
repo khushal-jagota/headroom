@@ -37,8 +37,11 @@ from planner.projects.api import router as projects_router
 from planner.runtime.readiness_doorbell import NoOpReadinessDoorbell
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
-from planner.tickets.logic import coding_bridge
 from planner.worker_context.contracts import WorkerContextService
+from planner.worker_types.configuration import (
+    PRODUCTION_WORKER_TYPE_REGISTRY,
+    configured_worker_type_registry,
+)
 
 _log = logging.getLogger("planner.server")
 
@@ -60,9 +63,9 @@ def svelte_index_html() -> str:
     if _WEB_INDEX.is_file():
         return _WEB_INDEX.read_text(encoding="utf-8")
     return (
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         "<title>Panels</title></head><body>"
-        "<div id=\"app\" data-svelte-app>"
+        '<div id="app" data-svelte-app>'
         "web/dist is missing; run npm --prefix web run build."
         "</div></body></html>"
     )
@@ -112,7 +115,9 @@ def create_app(
         Path(config.logs_dir).mkdir(parents=True, exist_ok=True)
         # Build and validate the Worker-type registry once at startup so a malformed
         # definition refuses to boot loudly rather than failing on the first ticket op.
-        coding_bridge.coding_registry()
+        # Importing the eagerly composed production registry validates shipped
+        # definitions before the application begins serving.
+        _ = PRODUCTION_WORKER_TYPE_REGISTRY
         # One integrity scan over the migrated tickets table: a corrupt live row
         # (unknown type, bad state/ceiling, malformed fields) fails boot loudly here,
         # after the registry is built and before any background loop touches a ticket.
@@ -230,8 +235,12 @@ def create_app(
         # The single source of stage order / labels / gates / fields / ceiling range
         # per registered type, served from the ACTIVE registry (a test-installed probe
         # registry in-process). One entry per internal definition id.
-        reg = coding_bridge.registry()
-        return {"worker_types": [reg.manifest(tid) for tid in reg.type_ids()]}
+        registry = configured_worker_type_registry()
+        return {
+            "worker_types": [
+                registry.manifest(worker_type) for worker_type in registry.registered_worker_types()
+            ]
+        }
 
     @app.websocket("/api/events")
     async def events_ws(websocket: WebSocket, since: int = 0) -> None:

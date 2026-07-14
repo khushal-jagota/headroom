@@ -12,6 +12,7 @@ from planner.runtime import readiness
 from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import Ticket
+from planner.worker_types.configuration import configured_worker_type_registry
 
 _log = logging.getLogger(__name__)
 
@@ -55,9 +56,15 @@ class TicketReadinessLoop:
         try:
             rows = conn.execute(_CANDIDATE_SQL, (today_id,)).fetchall()
             ready: list[Ticket] = []
+            registry = configured_worker_type_registry()
             for row in rows:
                 ticket = tickets_data.read_ticket(conn, str(row["id"]))
-                if readiness.is_runnable(conn, ticket):
+                worker_type_definition = registry.require(ticket.worker_type)
+                if readiness.is_runnable(
+                    conn,
+                    ticket,
+                    worker_type_definition=worker_type_definition,
+                ):
                     ready.append(ticket)
         finally:
             conn.close()

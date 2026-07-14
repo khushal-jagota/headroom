@@ -1,10 +1,8 @@
 """t_tt03 — GET /api/worker-types serves the registry's manifests.
 
-Production is coding-only, so the endpoint returns exactly one entry (coding's
-serialized manifest). With a test registry installed (probe), it returns both, in
-type_ids() insertion order (coding, probe). The served coding entry is asserted as
-the exact serialize_definition dict and to JSON-round-trip — this is the single
-source the CLI (and later the web) consume, so its shape is pinned here.
+Production serves coding then new_worker. With the test registry installed it serves
+coding, new_worker, then probe in registration order. The JSON response round-trips
+unchanged because it is the single manifest source consumed by the CLI and web.
 """
 
 from __future__ import annotations
@@ -23,9 +21,7 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.ticket_types.coding import CODING_DEFINITION
-from planner.ticket_types.logic.manifest import serialize_definition
-from planner.ticket_types.new_worker import NEW_WORKER_DEFINITION
+from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
 
 
 @pytest.fixture
@@ -59,8 +55,8 @@ def test_production_serves_coding_and_new_worker(app) -> None:
         served = client.get("/api/worker-types").json()
     assert served == {
         "worker_types": [
-            serialize_definition(CODING_DEFINITION),
-            serialize_definition(NEW_WORKER_DEFINITION),
+            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding"),
+            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("new_worker"),
         ]
     }
 
@@ -75,5 +71,9 @@ def test_coding_entry_json_roundtrips(app) -> None:
 def test_installed_probe_appears_after_coding(app, probe_installed: None) -> None:
     with TestClient(app) as client:
         served = client.get("/api/worker-types").json()
-    assert [m["worker_type"] for m in served["worker_types"]] == ["coding", "probe"]
-    assert served["worker_types"][0] == serialize_definition(CODING_DEFINITION)
+    assert [m["worker_type"] for m in served["worker_types"]] == [
+        "coding",
+        "new_worker",
+        "probe",
+    ]
+    assert served["worker_types"][0] == PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")
