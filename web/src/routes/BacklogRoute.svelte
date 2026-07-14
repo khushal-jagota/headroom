@@ -66,8 +66,7 @@
       await mutateJson("/api/items", { method: "POST", body: payload }, [
         "items:backlog",
         "sprint:current",
-        "board",
-        "queues"
+        "board"
       ]);
       title = "";
       deadline = "";

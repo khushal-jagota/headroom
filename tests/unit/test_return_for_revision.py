@@ -11,9 +11,6 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    NoOpAutomaticEmployeeStepEligibilityWake,
-)
 
 from planner.chat import data as chat_data
 from planner.chat import service as chat_service
@@ -26,6 +23,9 @@ from planner.core.server import create_app
 from planner.minds.fake import FakeGateway, Reply, ev
 from planner.minds.shared_gateway import SharedGateway
 from planner.runtime import automatic_employee_step_eligibility
+from planner.runtime.automatic_employee_step_eligibility_wake import (
+    NoOpAutomaticEmployeeStepEligibilityWake,
+)
 from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import NO_FURTHER, AtCap
@@ -295,11 +295,11 @@ def test_http_revision_bypasses_automatic_eligibility_and_returns_before_complet
 
             before_completion = client.get(f"/api/tickets/{tid}").json()
             events = client.get(f"/api/tickets/{tid}/events").json()["events"]
-            approvals = client.get("/api/queues").json()["approvals"]
+            ticket_decisions = client.get("/api/review").json()["ticket_decisions"]
 
             assert before_completion["ticket_status"] == "agent_running_step"
             assert before_completion["fields"]["plan"]["proposal"] is None
-            assert approvals == []
+            assert ticket_decisions == []
             assert eligibility_wake.calls == 0
             claimed = [
                 event
@@ -374,7 +374,7 @@ def test_return_for_revision_clears_proposal_after_accepting_employee_handoff(
         ticket = response.json()
         chat = client.get(f"/api/chat/{tid}/state").json()
         events = client.get(f"/api/tickets/{tid}/events").json()["events"]
-        approvals = client.get("/api/queues").json()["approvals"]
+        ticket_decisions = client.get("/api/review").json()["ticket_decisions"]
         duplicate = client.post(
             f"/api/tickets/{tid}/return-for-revision",
             json={"message": "Duplicate send."},
@@ -391,7 +391,7 @@ def test_return_for_revision_clears_proposal_after_accepting_employee_handoff(
         (tid, "Make it shorter.", "released"),
         (tid, "Duplicate send.", "cancelled"),
     ]
-    assert approvals == []
+    assert ticket_decisions == []
     assert duplicate.status_code == 409
     assert duplicate.json()["error"]["code"] == "already_running"
 
@@ -425,7 +425,7 @@ def test_return_for_revision_keeps_closeout_gate_after_accepted_handoff(
     assert _wait_until(lambda: len(employee_runner.decisions) == 1)
     assert employee_runner.decisions == [(tid, "The closeout needs evidence.", "released")]
     with TestClient(app) as client:
-        assert client.get("/api/queues").json()["approvals"] == []
+        assert client.get("/api/review").json()["ticket_decisions"] == []
 
 
 def test_return_for_revision_requires_existing_worker_session(tmp_path: Path) -> None:

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { keysForEvent } from "../src/lib/eventMapping.mjs";
 
 const FALLBACK_KINDS = [
@@ -131,7 +132,7 @@ assert.deepEqual(
     payload: { from_id: "t_left", to_id: "si_right", kind: "blocks" },
     created_at: 1
   }).sort(),
-  ["board", "chat:t_left", "item:si_right", "queues", "sprint:current", "ticket:t_left"].sort()
+  ["board", "chat:t_left", "item:si_right", "sprint:current", "ticket:t_left"].sort()
 );
 
 assert.deepEqual(
@@ -142,7 +143,7 @@ assert.deepEqual(
     payload: { ticket_id: "t_deleted", title: "Mistake", actor: "human" },
     created_at: 2
   }).sort(),
-  ["board", "chat:t_deleted", "queues", "sprint:current", "ticket:t_deleted"].sort()
+  ["board", "chat:t_deleted", "review", "sprint:current", "ticket:t_deleted"].sort()
 );
 
 assert.deepEqual(
@@ -159,7 +160,7 @@ assert.deepEqual(
     "board",
     "chat:t_source",
     "item:si_blocked",
-    "queues",
+    "review",
     "sprint:current",
     "ticket:t_blocked",
     "ticket:t_source"
@@ -175,6 +176,114 @@ for (const kind of ["day_ticket_added", "day_ticket_removed"]) {
       payload: { ticket_id: "t_demo" },
       created_at: 4
     }, { todayId: "day_2026-07-04" }).sort(),
-    ["board", "day:2026-07-04", "day:today", "queues", "ticket:t_demo"].sort()
+    ["board", "day:2026-07-04", "day:today", "review", "ticket:t_demo"].sort()
+  );
+
+  const knownOffDay = keysForEvent({
+    id: 5,
+    entity_id: "day_2026-07-03",
+    kind,
+    payload: { ticket_id: "t_demo" },
+    created_at: 5
+  }, { todayId: "day_2026-07-04" });
+  assert.ok(!knownOffDay.includes("review"), `${kind} invalidated Review for a known off-day`);
+
+  const coldStart = keysForEvent({
+    id: 6,
+    entity_id: "day_2026-07-04",
+    kind,
+    payload: { ticket_id: "t_demo" },
+    created_at: 6
+  }, { todayId: null, includeTodayAlias: true });
+  assert.ok(coldStart.includes("review"), `${kind} missed Review during cold start`);
+}
+
+for (const kind of [
+  "stage_changed",
+  "proposal_accepted",
+  "proposal_superseded",
+  "proposal_filed",
+  "kickoff_proposal_filed",
+  "kickoff_accepted",
+  "approval_returned",
+  "ticket_status_changed",
+  "ticket_deleted"
+]) {
+  assert.ok(
+    keysForEvent(sampleEvent(kind)).includes("review"),
+    `${kind} did not invalidate Review`
   );
 }
+
+assert.ok(!keysForEvent(sampleEvent("ticket_created")).includes("review"));
+assert.ok(keysForEvent(sampleEvent("proposal_filed")).includes("review"));
+assert.ok(keysForEvent(sampleEvent("ticket_status_changed")).includes("review"));
+
+for (const kind of ["sprint_item_created", "item_updated", "item_children_changed"]) {
+  assert.ok(!keysForEvent(sampleEvent(kind)).includes("review"));
+}
+
+for (const kind of [
+  "chat_session_created",
+  "chat_message_recorded",
+  "chat_turn_started",
+  "chat_turn_updated",
+  "chat_turn_finished",
+  "note_updated",
+  "recap_updated",
+  "scope_changed",
+  "field_value_edited",
+  "link_added",
+  "link_removed"
+]) {
+  assert.ok(!keysForEvent(sampleEvent(kind)).includes("review"), `${kind} invalidated Review`);
+}
+
+assert.ok(keysForEvent({
+  id: 7,
+  entity_id: "t_demo",
+  kind: "ticket_updated",
+  payload: { field: "title" },
+  created_at: 7
+}).includes("review"));
+assert.ok(!keysForEvent({
+  id: 8,
+  entity_id: "t_demo",
+  kind: "ticket_updated",
+  payload: { field: "priority" },
+  created_at: 8
+}).includes("review"));
+
+for (const kind of kinds) {
+  assert.ok(!keysForEvent(sampleEvent(kind)).includes("queues"), `${kind} emitted queues`);
+}
+
+function between(source, start, end) {
+  return source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
+}
+
+const ticketRoute = readFileSync(new URL("../src/routes/TicketRoute.svelte", import.meta.url), "utf8");
+const patchSource = between(ticketRoute, "function patch", "function saveScope");
+const scopeSource = between(ticketRoute, "function saveScope", "function saveNote");
+const noteSource = between(ticketRoute, "function saveNote", "function saveValue");
+const valueSource = between(ticketRoute, "function saveValue", "function acceptField");
+const acceptSource = between(ticketRoute, "function acceptField", "function writeClipboard");
+const takeoverSource = between(ticketRoute, "async function takeover", "function sprintLabel");
+assert.match(patchSource, /"title" in body/);
+assert.match(patchSource, /reviewTicketInvalidations/);
+assert.doesNotMatch(scopeSource, /reviewTicketInvalidations|"review"/);
+assert.doesNotMatch(noteSource, /reviewTicketInvalidations|"review"/);
+assert.doesNotMatch(valueSource, /reviewTicketInvalidations|"review"/);
+assert.match(acceptSource, /reviewTicketInvalidations/);
+assert.match(takeoverSource, /reviewTicketInvalidations/);
+assert.match(ticketRoute, /\/recap[\s\S]*?baseTicketInvalidations/);
+
+const backlogRoute = readFileSync(new URL("../src/routes/BacklogRoute.svelte", import.meta.url), "utf8");
+assert.doesNotMatch(backlogRoute, /"queues"|"review"/);
+
+const wsSource = readFileSync(new URL("../src/lib/ws.ts", import.meta.url), "utf8");
+assert.equal((wsSource.match(/const cachedTodayId = todayId\(\)/g) || []).length, 1);
+assert.match(
+  wsSource,
+  /keysForEvent\(plannerEvent, \{\s*todayId: cachedTodayId,\s*includeTodayAlias: cachedTodayId === null\s*\}\)/
+);

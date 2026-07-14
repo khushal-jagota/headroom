@@ -61,7 +61,8 @@
     )
   );
 
-  const ticketInvalidations = [`ticket:${id}`, "board", "queues", "sprint:current"];
+  const baseTicketInvalidations = [`ticket:${id}`, "board", "sprint:current"];
+  const reviewTicketInvalidations = [...baseTicketInvalidations, "review"];
   const emptyTicketFieldText = "Not written yet.";
   const emptyTicketRecapText = "No recap yet.";
   const implementerOptions = [
@@ -80,14 +81,15 @@
   ]);
 
   function patch(body: Record<string, unknown>): Promise<unknown> {
-    return mutateJson(`/api/tickets/${id}`, { method: "PATCH", body }, ticketInvalidations);
+    const invalidations = "title" in body ? reviewTicketInvalidations : baseTicketInvalidations;
+    return mutateJson(`/api/tickets/${id}`, { method: "PATCH", body }, invalidations);
   }
 
   function saveScope(body: Record<string, unknown>): Promise<unknown> {
     return mutateJson(
       `/api/tickets/${id}/scope`,
       { method: "POST", body },
-      ticketInvalidations
+      baseTicketInvalidations
     );
   }
 
@@ -95,7 +97,7 @@
     return mutateJson(
       `/api/tickets/${id}/notes/${field}`,
       { method: "PUT", body: { user_note: note } },
-      ticketInvalidations
+      baseTicketInvalidations
     );
   }
 
@@ -103,7 +105,7 @@
     return mutateJson(
       `/api/tickets/${id}/value/${field}`,
       { method: "PUT", body: { body } },
-      ticketInvalidations
+      baseTicketInvalidations
     );
   }
 
@@ -111,7 +113,7 @@
     return mutateJson(
       `/api/tickets/${id}/accept/${field}`,
       { method: "POST", body },
-      ticketInvalidations
+      reviewTicketInvalidations
     );
   }
 
@@ -144,7 +146,11 @@
   async function takeover(detail: TicketDetail): Promise<void> {
     const action = detail.ticket_status === "user_takeover" ? "release" : "takeover";
     try {
-      await mutateJson(`/api/tickets/${id}/${action}`, { method: "POST" }, ticketInvalidations);
+      await mutateJson(
+        `/api/tickets/${id}/${action}`,
+        { method: "POST" },
+        reviewTicketInvalidations
+      );
     } catch (err) {
       headerError = err;
     }
@@ -323,7 +329,7 @@
                     mutateJson(
                       `/api/tickets/${id}/recap`,
                       { method: "PUT", body: { body: raw } },
-                      ticketInvalidations
+                      baseTicketInvalidations
                     )}
                 />
               {:else}

@@ -200,27 +200,19 @@ def test_ordinary_create_parks_ordinary_kickoff_field_proposal(
     )
 
 
-def test_review_queue_exposes_kickoff_as_ordinary_field_approval(
+def test_review_exposes_kickoff_as_ordinary_ticket_decision(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     t = _create(tmp_db, cfg, fake_clock, settle_kickoff=False)
     day_id = "day_2026-07-04"
     days_data.add_day_ticket(tmp_db, day_id, t.id, fake_clock.now_unix())
 
-    queues = ticket_views.queues_view(
-        tmp_db,
-        now=fake_clock.now_unix(),
-        today_iso="2026-07-04",
-        item_approval_rows=[],
-        item_overdue_rows=[],
-        day_id=day_id,
-    )
+    review = ticket_views.review_view(tmp_db, day_id=day_id)
 
-    assert queues["approvals"] == [
+    assert review["ticket_decisions"] == [
         {
-            "entity_id": t.id,
-            "entity_type": "ticket",
-            "kind": "kickoff",
+            "ticket_id": t.id,
+            "field": "kickoff",
             "title": t.title,
             "waiting_since": fields_codec.get_slot(t.fields, "kickoff").proposal.created_at,
         }

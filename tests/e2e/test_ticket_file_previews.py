@@ -1194,7 +1194,7 @@ def test_loaded_preview_proposal_approves_without_edited_body(
         ticket_id=ticket_id,
         stdin=body,
     )
-    card = f'[data-review-card][data-entity-id="{ticket_id}"]'
+    card = f'[data-review-card][data-ticket-id="{ticket_id}"]'
     page = open_page(context_factory(), server, "#/review", card, settled=True)
     page.locator(f"{card} [data-file-preview-kind='markdown'] h1").first.wait_for(
         state="visible", timeout=WAIT_MS

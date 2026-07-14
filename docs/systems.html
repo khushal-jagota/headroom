@@ -837,8 +837,12 @@
               <p>
                 The browser does not keep a canonical client store. Screens
                 subscribe to resources such as <code>ticket:&lt;id&gt;</code>,
-                <code>board</code>, <code>queues</code>, <code>day:today</code>,
+                <code>board</code>, <code>review</code>, <code>day:today</code>,
                 and <code>sprint:current</code>.
+              </p>
+              <p>
+                Review contains only today’s parked Ticket proposals and the
+                global running-worker count.
               </p>
               <p>
                 WebSocket event batches map to resource keys. The browser refetches

@@ -1,8 +1,6 @@
 """Sprint / sprint-item / idea read-view assembly: per-entity serializers, item
-rollups, the sprint-current view (§5/§6.1), and the two item-row helpers the queues
-view consumes. Pure read assembly — no FastAPI, no writes. This is the only module
-that imports across the views layer (tickets/views ticket_json + tickets/data
-read_ticket) to render a sprint's loose tickets; tickets/views never imports back."""
+rollups, and the sprint-current view (§5/§6.1). Pure read assembly — no FastAPI or
+writes."""
 
 from __future__ import annotations
 
@@ -225,33 +223,6 @@ def list_ideas(conn: sqlite3.Connection, *, project_id: str | None = None) -> li
     )
     rows = conn.execute(sql, params).fetchall()
     return [idea_json(r) for r in rows]
-
-
-# --- item rows fed to the queues view (tickets/views) --------------------------
-
-
-def approval_item_rows(conn: sqlite3.Connection) -> list[JsonDict]:
-    return []
-
-
-def overdue_item_rows(conn: sqlite3.Connection) -> list[JsonDict]:
-    rows = conn.execute(
-        "SELECT id, title, priority, deadline FROM sprint_items WHERE deadline IS NOT NULL "
-        "ORDER BY deadline ASC, id"
-    ).fetchall()
-    result: list[JsonDict] = []
-    for row in rows:
-        read = sprints_data.read_item(conn, str(row["id"]))
-        result.append(
-            {
-                "id": str(row["id"]),
-                "title": str(row["title"]),
-                "status": read.status.value,
-                "priority": str(row["priority"]),
-                "deadline": str(row["deadline"]) if row["deadline"] is not None else None,
-            }
-        )
-    return result
 
 
 # --- sprint-current view (§5) --------------------------------------------------

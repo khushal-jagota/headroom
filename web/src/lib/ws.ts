@@ -83,7 +83,11 @@ function connect(): void {
     const keys: string[] = [];
     for (const plannerEvent of events) {
       try {
-        keys.push(...keysForEvent(plannerEvent, { todayId: todayId() }));
+        const cachedTodayId = todayId();
+        keys.push(...keysForEvent(plannerEvent, {
+          todayId: cachedTodayId,
+          includeTodayAlias: cachedTodayId === null
+        }));
       } catch (err) {
         console.debug("[planner] event mapping failed", err);
       }

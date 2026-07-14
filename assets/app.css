@@ -1431,7 +1431,7 @@ select {
 
 /* Skip / Open ticket sit top-right as quiet text with chevrons — the whole
  * outside-actions row moved up here, no queue position. */
-.review-queue-line {
+.review-ticket-decision-line {
   display: flex;
   align-items: baseline;
   justify-content: flex-end;
@@ -1439,8 +1439,8 @@ select {
   padding: var(--space-6) 0 var(--space-2);
 }
 
-.review-queue-line button,
-.review-queue-line a {
+.review-ticket-decision-line button,
+.review-ticket-decision-line a {
   background: none;
   border: 0;
   padding: 0;
@@ -1452,8 +1452,8 @@ select {
   transition: color var(--motion-base) var(--motion-ease);
 }
 
-.review-queue-line button:hover,
-.review-queue-line a:hover {
+.review-ticket-decision-line button:hover,
+.review-ticket-decision-line a:hover {
   color: var(--text-default);
 }
 

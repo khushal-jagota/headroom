@@ -186,11 +186,11 @@ def test_review_tracks_today_membership_without_reload(
         "--kickoff-note",
         "Review this premise",
     )["id"]
-    card = f'[data-review-card][data-entity-id="{tid}"]'
+    card = f'[data-review-card][data-ticket-id="{tid}"]'
     page = open_page(context_factory(), server, "#/review", "[data-review-empty]", settled=True)
     badge = page.locator('a[data-screen="review"] .nav-badge')
 
-    assert api.get(server, "/api/queues")["approvals"] == []
+    assert api.get(server, "/api/review")["ticket_decisions"] == []
     assert "hidden" in (badge.get_attribute("class") or "").split()
     flushes = page.evaluate("window.__plannerDebug.flushes")
     review_url = page.url
@@ -214,7 +214,7 @@ def test_review_tracks_today_membership_without_reload(
         ".classList.contains('hidden')",
         timeout=WAIT_MS,
     )
-    assert api.get(server, "/api/queues")["approvals"] == []
+    assert api.get(server, "/api/review")["ticket_decisions"] == []
     assert page.url == review_url
 
     _add_to_today(api, server, tid)
@@ -254,9 +254,8 @@ def test_kickoff_accepts_from_review_without_worker_revision_control(
         "Review this premise",
     )["id"]
     _add_to_today(api, server, tid)
-    card = f'[data-review-card][data-entity-id="{tid}"]'
+    card = f'[data-review-card][data-ticket-id="{tid}"]'
     page = open_page(context_factory(), server, "#/review", card, settled=True)
-    assert page.get_attribute(card, "data-kind") == "kickoff"
     assert page.get_attribute(card, "data-field") == "kickoff"
     assert page.locator(f'{card} [data-field="kickoff"] [data-approval-block]').count() == 1
     assert page.locator(f"{card} [data-review-revision]").count() == 0
@@ -300,9 +299,9 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
     )
 
     _add_to_today(api, server, tid)
-    card = f'[data-review-card][data-entity-id="{tid}"]'
+    card = f'[data-review-card][data-ticket-id="{tid}"]'
     page_a = open_page(context_factory(), server, "#/review", card, settled=True)
-    assert page_a.get_attribute(card, "data-kind") == "success"
+    assert page_a.get_attribute(card, "data-field") == "success"
 
     # Second context watches the ticket page for the flip.
     page_b = open_page(
@@ -319,9 +318,9 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
     _wait_enabled(page_a, f"{card} [data-accept]")
     page_a.click(f"{card} [data-accept]")
 
-    # Queue departure (only entry on a fresh DB).
+    # Review departure (only decision on a fresh DB).
     page_a.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
-    assert api.get(server, "/api/queues")["approvals"] == []
+    assert api.get(server, "/api/review")["ticket_decisions"] == []
 
     # Second context updates without reload — the flip arrives via the WS flush.
     page_b.wait_for_function(
@@ -368,7 +367,7 @@ def test_review_return_for_revision_starts_agent_without_chat_copy(
         )
 
     _add_to_today(api, server, tid)
-    card = f'[data-review-card][data-entity-id="{tid}"]'
+    card = f'[data-review-card][data-ticket-id="{tid}"]'
     page = open_page(context_factory(), server, "#/review", card, settled=True)
     page.fill(f"{card} [data-review-revision-input]", "Make it shorter.")
     page.click(f"{card} [data-review-revision-send]")
@@ -379,7 +378,7 @@ def test_review_return_for_revision_starts_agent_without_chat_copy(
     assert ticket["ticket_status"] == "agent_running_step"
     assert ticket["fields"]["success"]["value"] is None
     assert ticket["fields"]["success"]["proposal"] is None
-    assert api.get(server, "/api/queues")["approvals"] == []
+    assert api.get(server, "/api/review")["ticket_decisions"] == []
     chat = api.get(server, f"/api/chat/{tid}/state")
     assert chat["messages"] == []
 
@@ -409,7 +408,7 @@ def test_markdown_approval_focus_noop_keeps_raw_source(
     )
 
     _add_to_today(api, server, tid)
-    card = f'[data-review-card][data-entity-id="{tid}"]'
+    card = f'[data-review-card][data-ticket-id="{tid}"]'
     page = open_page(context_factory(), server, "#/review", card, settled=True)
 
     # Untouched focus/blur keeps the rendered structure in place and must not
@@ -462,7 +461,7 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
     )
 
     _add_to_today(api, server, tid)
-    card = f'[data-review-card][data-entity-id="{tid}"]'
+    card = f'[data-review-card][data-ticket-id="{tid}"]'
     page = open_page(context_factory(), server, "#/review", card, settled=True)
 
     # The proposal remains one contenteditable surface. Escape discards an active
@@ -528,7 +527,7 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
 
 def test_review_keyboard_shortcuts(server, context_factory, open_page, cli, api):
     # The review chamber's global shortcuts (s skip, o open, cmd/ctrl+enter approve)
-    # must never fire from inside an editable. Two queued tickets so a skip leaves a
+    # must never fire from inside an editable. Two Review decisions so a skip leaves a
     # card behind, and so cmd/ctrl+enter inside the editor is proven not to approve.
     first = cli(
         server,
@@ -574,7 +573,7 @@ def test_review_keyboard_shortcuts(server, context_factory, open_page, cli, api)
     _add_to_today(api, server, first, second)
     card = "[data-review-card]"
     page = open_page(context_factory(), server, "#/review", card, settled=True)
-    entity_before = page.get_attribute(card, "data-entity-id")
+    ticket_before = page.get_attribute(card, "data-ticket-id")
 
     # Track every accept/approve POST so the negative assertion is deterministic —
     # no sleep. If the in-editor shortcut approved, a request would appear here.
@@ -599,13 +598,13 @@ def test_review_keyboard_shortcuts(server, context_factory, open_page, cli, api)
     # Flush the browser's network: this awaited round-trip resolves only after any
     # request the (synchronous) keydown handler dispatched has already fired its
     # request event, so approve_requests is authoritative without a sleep.
-    page.evaluate("() => fetch('/api/queues').then(r => r.text())")
+    page.evaluate("() => fetch('/api/review').then(r => r.text())")
     page.wait_for_load_state("networkidle")
     assert approve_requests == []
     assert api.get(server, f"/api/tickets/{first}")["fields"]["success"]["proposal"] is not None
     assert api.get(server, f"/api/tickets/{second}")["fields"]["success"]["proposal"] is not None
     assert page.locator("[data-review-empty]").count() == 0
-    assert page.get_attribute(card, "data-entity-id") == entity_before
+    assert page.get_attribute(card, "data-ticket-id") == ticket_before
 
     # 'o' typed inside the editor is a keystroke, not open-ticket: still on /review.
     editor.focus()
@@ -617,30 +616,30 @@ def test_review_keyboard_shortcuts(server, context_factory, open_page, cli, api)
     page.keyboard.press("s")
     page.keyboard.press("o")
     assert page.url.endswith("#/review")
-    assert page.get_attribute(card, "data-entity-id") == entity_before
+    assert page.get_attribute(card, "data-ticket-id") == ticket_before
 
-    # With focus outside any editable, 's' skips to the next card (entity changes).
+    # With focus outside any editable, 's' skips to the next Ticket decision.
     page.locator(".review-keys").click()
     page.keyboard.press("s")
     page.wait_for_function(
         "(prev) => { const el = document.querySelector('[data-review-card]');"
-        " return !!el && el.getAttribute('data-entity-id') !== prev; }",
-        arg=entity_before,
+        " return !!el && el.getAttribute('data-ticket-id') !== prev; }",
+        arg=ticket_before,
         timeout=WAIT_MS,
     )
 
     # cmd/ctrl+enter outside an editable approves via the same path as the button.
     _wait_enabled(page, f"{card} [data-accept]")
-    approved_entity = page.get_attribute(card, "data-entity-id")
+    approved_ticket = page.get_attribute(card, "data-ticket-id")
     page.locator(".review-keys").click()
     page.keyboard.press("Meta+Enter")
     page.wait_for_function(
         "(prev) => { const el = document.querySelector('[data-review-card]');"
-        " return !el || el.getAttribute('data-entity-id') !== prev; }",
-        arg=approved_entity,
+        " return !el || el.getAttribute('data-ticket-id') !== prev; }",
+        arg=approved_ticket,
         timeout=WAIT_MS,
     )
-    approved = api.get(server, f"/api/tickets/{approved_entity}")
+    approved = api.get(server, f"/api/tickets/{approved_ticket}")
     assert approved["fields"]["success"]["proposal"] is None
 
 
@@ -989,14 +988,14 @@ def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
     assert d["fields"]["plan"]["proposal"] is not None
 
     _add_to_today(api, server, tid)
-    q = api.get(server, "/api/queues")["approvals"]
-    assert len(q) == 1, q
-    assert q[0]["entity_id"] == tid, q
-    assert q[0]["kind"] == "plan", q
+    decisions = api.get(server, "/api/review")["ticket_decisions"]
+    assert len(decisions) == 1, decisions
+    assert decisions[0]["ticket_id"] == tid, decisions
+    assert decisions[0]["field"] == "plan", decisions
 
-    card = f'[data-review-card][data-entity-id="{tid}"]'
+    card = f'[data-review-card][data-ticket-id="{tid}"]'
     page = open_page(context_factory(), server, "#/review", card, settled=True)
-    assert page.get_attribute(card, "data-kind") == "plan"
+    assert page.get_attribute(card, "data-field") == "plan"
 
 
 def test_slash_menu_runs_skill(server, context_factory, open_page, cli, api):

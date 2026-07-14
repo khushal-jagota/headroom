@@ -1,4 +1,15 @@
 const ENTITY_PREFIXES = new Set(["t", "si", "sp", "day", "idea", "project", "agent"]);
+const REVIEW_TICKET_EVENT_KINDS = new Set([
+  "stage_changed",
+  "proposal_accepted",
+  "proposal_superseded",
+  "proposal_filed",
+  "kickoff_proposal_filed",
+  "kickoff_accepted",
+  "approval_returned",
+  "ticket_status_changed",
+  "ticket_deleted"
+]);
 
 /**
  * @typedef {{id: number, entity_id: string, kind: string, payload: Record<string, unknown>, created_at: number}} PlannerEvent
@@ -36,10 +47,10 @@ function keysForEntity(entityId, options = {}) {
     throw new Error(`unknown entity_id prefix: ${entityId}`);
   }
   if (prefix === "t") {
-    return [`ticket:${entityId}`, `chat:${entityId}`, "board", "queues", "sprint:current"];
+    return [`ticket:${entityId}`, `chat:${entityId}`, "board", "sprint:current"];
   }
   if (prefix === "si") {
-    return [`item:${entityId}`, "items:backlog", "sprint:current", "board", "queues"];
+    return [`item:${entityId}`, "items:backlog", "sprint:current", "board"];
   }
   if (prefix === "sp") {
     return [`sprint:${entityId}`, "sprint:current", "sprints"];
@@ -87,17 +98,24 @@ export function keysForEvent(event, options = {}) {
   const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
   const keys = keysForEntity(entityId, options);
 
+  if (REVIEW_TICKET_EVENT_KINDS.has(kind)) {
+    keys.push("review");
+  }
+  if (kind === "ticket_updated" && payload.field === "title") {
+    keys.push("review");
+  }
+
   if (kind === "link_added" || kind === "link_removed") {
     if (payload.from_id) keys.push(...endpointEntityKeys(String(payload.from_id)));
     if (payload.to_id) keys.push(...endpointEntityKeys(String(payload.to_id)));
-    keys.push("board", "queues", "sprint:current");
+    keys.push("board", "sprint:current");
   }
 
   if (Array.isArray(payload.affected_blocked_target_ids)) {
     for (const targetId of payload.affected_blocked_target_ids) {
       keys.push(...endpointEntityKeys(String(targetId)));
     }
-    keys.push("board", "queues", "sprint:current");
+    keys.push("board", "sprint:current");
   }
 
   if (
@@ -112,8 +130,11 @@ export function keysForEvent(event, options = {}) {
 
   if (kind.startsWith("day_") && payload.ticket_id) {
     keys.push(`ticket:${payload.ticket_id}`, "board");
-    if (kind === "day_ticket_added" || kind === "day_ticket_removed") {
-      keys.push("queues");
+    if (
+      (kind === "day_ticket_added" || kind === "day_ticket_removed") &&
+      (options.todayId === entityId || options.includeTodayAlias)
+    ) {
+      keys.push("review");
     }
   }
 

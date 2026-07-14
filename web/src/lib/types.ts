@@ -172,16 +172,16 @@ export type CurrentSprintResponse = {
   loose_tickets: AnyRecord[];
 };
 
-export type QueueEntry = {
-  entity_id: string;
-  entity_type: "ticket" | "item";
-  kind: string;
+export type ReviewTicketDecision = {
+  ticket_id: string;
+  field: string;
   title: string;
+  waiting_since: number;
 };
 
-export type QueuesResponse = {
-  approvals: QueueEntry[];
-  running_agents: number;
+export type ReviewResponse = {
+  ticket_decisions: ReviewTicketDecision[];
+  running_worker_count: number;
 };
 
 export type BoardResponse = {

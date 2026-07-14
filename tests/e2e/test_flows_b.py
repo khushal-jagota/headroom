@@ -310,14 +310,14 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
         timeout=WAIT_MS,
     )
 
-    # Approval queue + approve via the Review card, ordinary field path.
-    card = f'[data-review-card][data-entity-id="{mid}"]'
+    # Review decision + approve via the Review card, ordinary field path.
+    card = f'[data-review-card][data-ticket-id="{mid}"]'
     rpage = open_page(context_factory(), server, "#/review", card, settled=True)
-    assert rpage.get_attribute(card, "data-kind") == "implementation"
-    approvals = api.get(server, "/api/queues")["approvals"]
-    assert len(approvals) == 1, approvals
-    assert approvals[0]["entity_id"] == mid, approvals
-    assert approvals[0]["kind"] == "implementation", approvals
+    assert rpage.get_attribute(card, "data-field") == "implementation"
+    decisions = api.get(server, "/api/review")["ticket_decisions"]
+    assert len(decisions) == 1, decisions
+    assert decisions[0]["ticket_id"] == mid, decisions
+    assert decisions[0]["field"] == "implementation", decisions
 
     assert rpage.locator(f"{card} [data-scope-ceiling]").input_value() == "needs_closeout"
     rpage.click(f"{card} [data-accept]")
@@ -347,9 +347,9 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     assert r2["stage"] == "needs_closeout", r2
     assert r2["fields"]["closeout"]["proposal"]["body"] == E30_CLOSEOUT, r2
 
-    card2 = f'[data-review-card][data-entity-id="{mid}"]'
+    card2 = f'[data-review-card][data-ticket-id="{mid}"]'
     rpage2 = open_page(context_factory(), server, "#/review", card2, settled=True)
-    assert rpage2.get_attribute(card2, "data-kind") == "closeout"
+    assert rpage2.get_attribute(card2, "data-field") == "closeout"
     assert rpage2.locator(f"{card2} [data-scope-ceiling]").input_value() == "done"
     rpage2.click(f"{card2} [data-accept]")
     rpage2.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)

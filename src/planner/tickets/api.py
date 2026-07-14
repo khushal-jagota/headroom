@@ -1,5 +1,5 @@
 """Ticket routes (§9), plus the ticket-anchored links and the ticket-centric
-derived views (board, queues). Thin HTTP shells over the stage-3 writers and the
+derived views (board, Review). Thin HTTP shells over the stage-3 writers and the
 pure read views: every handler is parse -> auth -> writer -> serialize. No route
 re-implements a domain rule and no route appends events.
 
@@ -36,13 +36,12 @@ from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.contracts import JsonDict, LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days.logic.dates import planning_date, resolve_day_id
+from planner.days.logic.dates import resolve_day_id
 from planner.projects import data as projects_data
 from planner.runtime.automatic_employee_step_eligibility_wake import (
     AutomaticEmployeeStepEligibilityWake,
 )
 from planner.runtime.contracts import EmployeeRevisionRunner
-from planner.sprints import views as sprints_views
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
@@ -968,19 +967,7 @@ async def board(conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
     return tickets_views.board_view(conn, clk.now_unix(), day_id=day_id)
 
 
-@router.get("/queues")
-async def queues(conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
-    now = clk.now_unix()
-    current = clk.now()
-    today_iso = planning_date(current, cfg.boundary_hour).isoformat()
-    day_id = resolve_day_id("today", current, cfg.boundary_hour)
-    item_approval_rows = sprints_views.approval_item_rows(conn)
-    item_overdue_rows = sprints_views.overdue_item_rows(conn)
-    return tickets_views.queues_view(
-        conn,
-        now,
-        today_iso,
-        item_approval_rows,
-        item_overdue_rows,
-        day_id=day_id,
-    )
+@router.get("/review")
+async def review(conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
+    day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
+    return tickets_views.review_view(conn, day_id=day_id)

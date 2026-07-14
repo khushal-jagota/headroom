@@ -1,9 +1,6 @@
-"""Ticket read-view assembly: the per-entity serializers (ticket/run/event JSON),
-the ticket-detail composite, the board (§10.3), the queues (§4.5), and the copy-text
-block (§10.4). Pure read assembly — no FastAPI, no pydantic, no writes, and no import
-of any api module or of sprints/views. The api layer wires sprint item rows into the
-queue functions as parameters, which keeps the import graph acyclic (sprints/views ->
-tickets/views is the only cross-views edge)."""
+"""Ticket read-view assembly: per-entity serializers, Ticket detail, the board,
+Ticket-only Review, and copy text. Pure read assembly — no FastAPI, pydantic, writes,
+or imports from an API module."""
 
 from __future__ import annotations
 
@@ -12,7 +9,6 @@ import sqlite3
 
 from planner.core import links as core_links
 from planner.core.contracts import BlockerSummary, JsonDict
-from planner.sprints.contracts import ItemStatus
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     FieldSlot,
@@ -24,8 +20,6 @@ from planner.worker_types.configuration import configured_worker_type_registry
 
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
-_TICKET_CLOSED = {"done", "dropped"}
-_ITEM_CLOSED = {ItemStatus.done.value}
 
 
 def _prio_rank(priority: str) -> int:
@@ -309,180 +303,59 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
     return {"columns": columns}
 
 
-# --- queues (§4.5) -------------------------------------------------------------
+# --- Review --------------------------------------------------------------------
 
 
-def _entity_type(entity_id: str) -> str:
-    return "ticket" if entity_id.split("_", 1)[0] == "t" else "item"
-
-
-def _approval_digest(tickets: list[JsonDict], items: list[JsonDict]) -> list[JsonDict]:
-    digest: list[JsonDict] = []
+def _ticket_decisions(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
+    rows = conn.execute(
+        "SELECT id, title, stage, worker_type, ticket_status, fields FROM tickets "
+        "WHERE id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?) ORDER BY id",
+        (day_id,),
+    ).fetchall()
     registry = configured_worker_type_registry()
-    for row in tickets:
+    decisions: list[JsonDict] = []
+    for row in rows:
+        worker_type_definition = registry.require(str(row["worker_type"]))
         stage = str(row["stage"])
-        if row.get("ticket_status") == TicketStatus.agent_running_step.value:
+        if worker_type_definition.is_terminal(stage):
             continue
-        worker_type_definition = registry.require(str(row.get("worker_type")))
-        gating_field_id = worker_type_definition.gating_field(stage)
-        if gating_field_id is None:
+        if str(row["ticket_status"]) == TicketStatus.agent_running_step.value:
             continue
-        fields = row["fields"]
+        field = worker_type_definition.gating_field(stage)
+        if field is None:
+            continue
+        fields = json.loads(str(row["fields"]))
         if not isinstance(fields, dict):
             continue
-        slot = fields.get(gating_field_id)
+        slot = fields.get(field)
         if not isinstance(slot, dict):
             continue
         proposal = slot.get("proposal")
         if not isinstance(proposal, dict):
             continue
-        digest.append(
+        decisions.append(
             {
-                "entity_id": row["id"],
-                "kind": gating_field_id,
+                "ticket_id": str(row["id"]),
+                "field": field,
+                "title": str(row["title"]),
                 "waiting_since": proposal["created_at"],
             }
         )
-    digest.sort(key=lambda entry: entry["waiting_since"])
-    return digest
+    decisions.sort(key=lambda decision: (decision["waiting_since"], decision["ticket_id"]))
+    return decisions
 
 
-def _overdue_digest(
-    tickets: list[JsonDict], items: list[JsonDict], today_iso: str
-) -> list[JsonDict]:
-    result: list[JsonDict] = []
-    for row in tickets:
-        deadline = row["deadline"]
-        stage = str(row["stage"])
-        if deadline is not None and str(deadline) < today_iso and stage not in _TICKET_CLOSED:
-            result.append(
-                {
-                    "id": row["id"],
-                    "title": row["title"],
-                    "stage": stage,
-                    "priority": row["priority"],
-                }
-            )
-    for row in items:
-        deadline = row["deadline"]
-        status = str(row["status"])
-        if deadline is not None and str(deadline) < today_iso and status not in _ITEM_CLOSED:
-            result.append(
-                {
-                    "id": row["id"],
-                    "title": row["title"],
-                    "status": status,
-                    "priority": row["priority"],
-                }
-            )
-    return result
-
-
-def _approvals(
+def review_view(
     conn: sqlite3.Connection,
-    item_approval_rows: list[JsonDict],
-    *,
-    day_id: str,
-) -> list[JsonDict]:
-    ticket_rows = conn.execute(
-        "SELECT id, title, stage, worker_type, ticket_status, fields, updated_at FROM tickets "
-        "WHERE stage NOT IN ('done','dropped') "
-        "AND id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?) ORDER BY id",
-        (day_id,),
-    ).fetchall()
-    ticket_digest: list[dict[str, object]] = []
-    ticket_title: dict[str, str] = {}
-    for r in ticket_rows:
-        tid = str(r["id"])
-        ticket_digest.append(
-            {
-                "id": tid,
-                "stage": str(r["stage"]),
-                "worker_type": str(r["worker_type"]),
-                "ticket_status": str(r["ticket_status"]),
-                "fields": json.loads(str(r["fields"])),
-                "updated_at": int(r["updated_at"]),
-            }
-        )
-        ticket_title[tid] = str(r["title"])
-    item_digest: list[dict[str, object]] = []
-    item_title: dict[str, str] = {}
-    for r in item_approval_rows:
-        iid = str(r["id"])
-        item_digest.append({"id": iid})
-        item_title[iid] = str(r["title"])
-    digest = _approval_digest(ticket_digest, item_digest)
-    digest.sort(key=lambda e: e["waiting_since"])
-    result: list[JsonDict] = []
-    for entry in digest:
-        eid = str(entry["entity_id"])
-        etype = _entity_type(eid)
-        title = ticket_title.get(eid) if etype == "ticket" else item_title.get(eid)
-        result.append(
-            {
-                "entity_id": eid,
-                "entity_type": etype,
-                "kind": entry["kind"],
-                "title": title,
-                "waiting_since": entry["waiting_since"],
-            }
-        )
-    return result
-
-
-def _overdue(
-    conn: sqlite3.Connection, today_iso: str, item_overdue_rows: list[JsonDict]
-) -> list[JsonDict]:
-    ticket_rows = conn.execute(
-        "SELECT id, title, stage, priority, deadline FROM tickets WHERE deadline IS NOT NULL "
-        "ORDER BY deadline ASC, id"
-    ).fetchall()
-    ticket_dicts: list[dict[str, object]] = [
-        {
-            "id": str(r["id"]),
-            "title": str(r["title"]),
-            "stage": str(r["stage"]),
-            "priority": str(r["priority"]),
-            "deadline": str(r["deadline"]) if r["deadline"] is not None else None,
-        }
-        for r in ticket_rows
-    ]
-    item_dicts: list[dict[str, object]] = [dict(r) for r in item_overdue_rows]
-    digest = _overdue_digest(ticket_dicts, item_dicts, today_iso)
-    ticket_deadline = {str(d["id"]): d["deadline"] for d in ticket_dicts}
-    item_deadline = {str(d["id"]): d["deadline"] for d in item_dicts}
-    result: list[JsonDict] = []
-    for entry in digest:
-        eid = str(entry["id"])
-        etype = _entity_type(eid)
-        deadline = ticket_deadline.get(eid) if etype == "ticket" else item_deadline.get(eid)
-        result.append(
-            {
-                "id": eid,
-                "entity_type": etype,
-                "title": entry["title"],
-                **({"stage": entry["stage"]} if etype == "ticket" else {"status": entry["status"]}),
-                "priority": entry["priority"],
-                "deadline": deadline,
-            }
-        )
-    return result
-
-
-def queues_view(
-    conn: sqlite3.Connection,
-    now: int,
-    today_iso: str,
-    item_approval_rows: list[JsonDict],
-    item_overdue_rows: list[JsonDict],
     *,
     day_id: str,
 ) -> JsonDict:
-    running_agents = conn.execute(
+    running_workers = conn.execute(
         "SELECT COUNT(*) AS count FROM tickets WHERE ticket_status = 'agent_running_step'"
     ).fetchone()
     return {
-        "approvals": _approvals(conn, item_approval_rows, day_id=day_id),
-        "overdue": _overdue(conn, today_iso, item_overdue_rows),
-        "running_agents": int(running_agents["count"] if running_agents is not None else 0),
+        "ticket_decisions": _ticket_decisions(conn, day_id=day_id),
+        "running_worker_count": int(
+            running_workers["count"] if running_workers is not None else 0
+        ),
     }

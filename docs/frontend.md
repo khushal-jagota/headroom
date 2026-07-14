@@ -12,7 +12,7 @@ One screen per part of the system:
 
 - **Day** — the day overview: focus, brief take, watchout, and what makes the day
   land. Read top to bottom in the serif voice, flat, with no boxes.
-- **Review** — the one-at-a-time approval chamber: one centred decision with Skip and
+- **Review** — the one-at-a-time chamber for parked Ticket proposals: one centred decision with Skip and
   Open-ticket top-right, a labelled recap, the ask surface, and a send-back row.
   Keyboard shortcuts drive it (skip, open, approve) when the cursor is not in a text
   field, and each decision fades in as it arrives. The approve button physically
@@ -43,7 +43,7 @@ One screen per part of the system:
   unboxed serif idiom (see `backlog-and-ideas.md`).
 
 The shell itself carries a presence readout — a small spinner and "N working" — from
-the running-agent count, alongside the amber Review badge.
+the global running-worker count, alongside the amber Review badge.
 
 Each screen is a projection of a backend; the behaviour behind it is documented with
 that backend, not here. This doc owns the shell and the rendering rules the screens
@@ -52,7 +52,7 @@ share.
 ## The two rules that shape it
 
 - **Keyed invalidation, no canonical client store.** The event log is a doorbell.
-  Each event maps to resource keys such as `ticket:<id>`, `board`, `queues`, and
+  Each event maps to resource keys such as `ticket:<id>`, `board`, `review`, and
   `sprint:current`; ticket events also map to `chat:<id>` so the ticket chat rail
   can reload the worker's full Hermes trace. Project events map to `projects`, which
   refreshes project selectors. Only those resources refetch. There

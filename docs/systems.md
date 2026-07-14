@@ -263,7 +263,8 @@ Code paths: `src/planner/chat/`, `web/src/components/ChatPanel.svelte`.
 
 The Svelte app is a set of resource projections. It does not keep a canonical client
 store. Each screen subscribes to named resources such as `ticket:<id>`, `board`,
-`queues`, `day:today`, and `sprint:current`.
+`review`, `day:today`, and `sprint:current`. Review contains only today's parked
+Ticket proposals and the global running-worker count.
 
 The WebSocket sends event batches. The browser maps each event to resource keys and
 refetches only those keys. This is why adding a backend event kind must be covered by
