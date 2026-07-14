@@ -22,6 +22,9 @@ Current build stage:
   `afa57fd`.
 - AD02 is complete on the branch at `05e2fda`. Its delegated implementation and corrected diff passed
   independent review with `NO VIOLATIONS`, and the committed checkpoint passes the canonical gate.
+- AD03 is decomposed in `ad03-automatic-employee-step-eligibility/ticket.md`. Its locked direction is one
+  complete eligibility function shared by discovery and the final transactional claim, plus descriptive
+  discovery-loop and wake names; delegated planning is the next pipeline step.
 
 What just passed:
 
@@ -153,8 +156,9 @@ What just passed:
 
 Next step:
 
-- Decompose AD03 around the single Automatic Employee-step eligibility decision, delegate its plan, and
-  review that plan against the runtime contract before any implementation.
+- Delegate the AD03 implementation plan, then independently review it against the complete eligibility,
+  transaction-time planning-day, direct-revision bypass, and commit-before-wake contracts before any
+  implementation.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`

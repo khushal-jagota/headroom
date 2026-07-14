@@ -850,6 +850,22 @@ The corrected AD02 implementation passed independent read-only re-review with `N
 repair. That review also confirmed the explicit definition boundary, registry-free stored reads, v19
 historical-only backfill, deleted compatibility stack, and bounded changed-path set.
 
+## D-ad03-one-complete-eligibility-decision — Discovery and claim ask the same whole question
+
+AD03 names the rule `is_eligible_for_automatic_employee_step`. It includes current planning-day
+membership and empty Ticket control status as well as the Stage, gated field, parked proposal, scope, and
+blocker checks. Discovery may use today's membership only to bound its candidate query, but may not repeat
+status, Stage, proposal, scope, or blocker rules in SQL. Every candidate still goes through the complete
+function. The runner resolves today's planning day inside the final claim transaction and calls that same
+function, preserving the planning-boundary and stale-discovery guarantees.
+
+The runtime responsibilities become `AutomaticEmployeeStepDiscoveryLoop`, `EmployeeStepRunner`, and the
+best-effort `AutomaticEmployeeStepEligibilityWake`. The wake operation is `wake()`, not a readiness
+`ring()`. `tickets.data.claim_automatic_employee_step` requires the eligibility callback and has no
+optional guard or bypass. Direct revision remains a different, explicitly requested runner path and does
+not use automatic eligibility. These names are long because each says what the thing actually does; no
+old-name facade or compatibility alias is justified.
+
 ## D-ad01-one-locked-ticket-migration — One terminal rebuild migrates every old Ticket schema
 
 AD01 replaces the sequential Ticket lifecycle, kickoff, type, and vocabulary rebuild path with one
