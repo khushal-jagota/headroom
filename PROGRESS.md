@@ -57,6 +57,10 @@ Current build stage:
   literal `/new`; and the private execution value was not declared. The ticket and decisions now require one
   eight-factor eligibility rule, cross-origin visible Pause control, one-use force-fresh `/new` binding, and
   an exact private execution dataclass. A corrected delegated plan and fresh re-review are required.
+- A read-only audit of the owner's explicit Worker-type invariant found no executable violation: all live
+  creation paths require a stored Worker type and reads return it without fallback. Two stale docs still
+  called `coding` the default; those sentences were corrected as a small integration repair. Historical
+  migration/cutover classification remains the only allowed implicit coding assignment.
 
 What just passed:
 

@@ -8,9 +8,9 @@ door — the resolution engine.
 
 The Stage set is not fixed for all Tickets — it is declared by the Ticket's **Worker
 type** (see `worker-types.md`). The lifecycle below is the **`coding`** Worker type's,
-the default; another Worker type walks its own Stages the same way. What every Worker
-type shares is the leading Kickoff, the `done`/`dropped` bookends, and the single-door
-rule.
+shown here as one concrete example; another Worker type walks its own Stages the same
+way. Every Worker type shares the leading Kickoff, the `done`/`dropped` bookends, and
+the single-door rule.
 
 ```
    THE CODING STAGES

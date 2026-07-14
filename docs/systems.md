@@ -87,7 +87,7 @@ Tickets are the correctness center. A Ticket has a Stage and a separate control 
 
 - `stage` is the stored work Stage. Which Stages exist is set by the Ticket's **Worker
   type**, not fixed for all Tickets; the gate reads each row's Stage order, gates, and
-  fields from the Worker type registry (see `worker-types.md`). For the default
+  fields from the Worker type registry (see `worker-types.md`). For the
   `coding` Worker type the Stages are
   `needs_kickoff`, `needs_success`, `needs_approach`, `needs_plan`,
   `needs_implementation`, `needs_closeout`, `done`, or `dropped`.
