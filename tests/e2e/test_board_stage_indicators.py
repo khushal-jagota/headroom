@@ -150,6 +150,7 @@ def test_workspace_row_byline_shows_registered_type_active_stage_and_mark(
         < 1
     )
 
+    page.uncheck("[data-hide-done-toggle]")
     done_card = f'[data-card][data-ticket-id="{done}"]'
     page.wait_for_selector(done_card, timeout=WAIT_MS)
     assert page.text_content(f"{done_card} .board-workspace-row-byline").strip() == (
@@ -280,6 +281,7 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
         'section[data-screen="workspace"]',
         settled=True,
     )
+    page.uncheck("[data-hide-done-toggle]")
 
     waiting_card = f'[data-card][data-ticket-id="{waiting}"]'
     pending_card = f'[data-card][data-ticket-id="{pending}"]'
@@ -345,7 +347,7 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
     )
 
 
-def test_workspace_groups_by_project_orders_by_type_stage_and_activity_and_filters_status(
+def test_workspace_groups_and_orders_tickets_with_hide_done_as_its_only_filter(
     server, context_factory, open_page, cli, api
 ) -> None:
     coding_success = cli(
@@ -469,6 +471,9 @@ def test_workspace_groups_by_project_orders_by_type_stage_and_activity_and_filte
     page.wait_for_selector('[data-project-key="project_learning"]', timeout=WAIT_MS)
     page.wait_for_selector('[data-project-key="project_vylo"]', timeout=WAIT_MS)
     page.wait_for_selector('[data-project-key="__no_project__"]', timeout=WAIT_MS)
+    assert page.is_checked("[data-hide-done-toggle]")
+    assert page.locator('[aria-label="Ticket status"]').count() == 0
+    assert page.locator(f'[data-card][data-ticket-id="{done_activity}"]').count() == 0
     headers = page.eval_on_selector_all(
         "[data-project-section] .board-workspace-index-heading-main .section-heading-label",
         "els => els.map(el => el.textContent.trim())",
@@ -483,7 +488,6 @@ def test_workspace_groups_by_project_orders_by_type_stage_and_activity_and_filte
         "Vylo coding success",
         "Vylo newer activity",
         "Vylo older activity",
-        "Vylo done activity",
         "Vylo new worker stages",
         "Vylo new worker thinking",
     ]
@@ -493,29 +497,7 @@ def test_workspace_groups_by_project_orders_by_type_stage_and_activity_and_filte
         "els => els.every(el => el.querySelectorAll('.board-workspace-stage-mark').length === 1)",
     )
 
-    page.select_option('[data-filter-group="ticket-status"] select', "errored")
     page.wait_for_selector(f'[data-card][data-ticket-id="{learning}"]', timeout=WAIT_MS)
-    visible_titles = page.eval_on_selector_all(
-        "[data-card] .list-row-title",
-        "els => els.map(el => el.textContent.trim())",
-    )
-    assert visible_titles == ["Learning errored ticket"]
-
-    page.select_option('[data-filter-group="ticket-status"] select', "all")
-    page.wait_for_selector(f'[data-card][data-ticket-id="{newer_activity}"]', timeout=WAIT_MS)
-
-    page.check("[data-hide-done-toggle]")
-    page.wait_for_selector(
-        f'[data-card][data-ticket-id="{done_activity}"]',
-        state="detached",
-        timeout=WAIT_MS,
-    )
-    visible_titles = page.eval_on_selector_all(
-        "[data-card] .list-row-title",
-        "els => els.map(el => el.textContent.trim())",
-    )
-    assert "Vylo done activity" not in visible_titles
-
     page.click('.shell-links a[data-screen="day"]')
     page.wait_for_selector('section[data-screen="day"]', timeout=WAIT_MS)
     page.click('.shell-links a[data-screen="workspace"]')

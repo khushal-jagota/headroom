@@ -53,9 +53,6 @@ body{background:var(--bg);color:var(--fg2);font:400 15px/1.6 var(--f);-webkit-fo
 .chief:hover{background:var(--overlay);color:var(--fg1)}
 .chief.on{background:var(--overlay);color:var(--fg1)}
 .roster-filter{display:flex;align-items:center;gap:12px;padding:14px 12px 6px;font-size:12px;color:var(--fg5)}
-.roster-filter .sel{position:relative;cursor:pointer;color:var(--fg4);transition:color var(--dur)}
-.roster-filter .sel:hover{color:var(--fg2)}
-.roster-filter .sel select{position:absolute;inset:0;opacity:0;width:100%;cursor:pointer}
 .roster-filter .toggle{margin-left:auto;cursor:pointer;transition:color var(--dur)}
 .roster-filter .toggle:hover{color:var(--fg2)}
 .roster-filter .toggle.on{color:var(--fg3)}
@@ -124,26 +121,23 @@ body{background:var(--bg);color:var(--fg2);font:400 15px/1.6 var(--f);-webkit-fo
       <button class="chief on">Chief of Staff</button>
 
       <div class="roster-filter">
-        <span class="sel">All statuses<select><option selected>All</option><option>Empty</option><option>Running</option><option>Awaiting approval</option><option>User takeover</option><option>Errored</option></select></span>
         <span class="toggle on">Hide done</span>
       </div>
 
       <section class="project">
-        <h2>Panels <span class="n">6</span></h2>
+        <h2>Panels <span class="n">5</span></h2>
         <div class="trow hot"><span class="t">Readiness doorbell for the ticket loop</span><span class="mark needs"></span></div>
         <div class="trow"><span class="t">Deepen employee runtime ownership</span><span class="spin"></span></div>
         <div class="trow"><span class="t">Chat auto-scroll and Latest button</span><span class="spin"></span></div>
         <div class="trow hot"><span class="t">Return-for-revision on review surface</span><span class="mark wait"></span></div>
         <div class="trow"><span class="t">Sprint kickoff freeze flow</span><span class="mark idle"></span></div>
-        <div class="trow settled"><span class="t">Markdown link previews</span><span class="mark done"></span></div>
       </section>
 
       <section class="project">
-        <h2>Vylo <span class="n">4</span></h2>
+        <h2>Vylo <span class="n">3</span></h2>
         <div class="trow hot"><span class="t">Ship the waitlist capture flow</span><span class="mark needs"></span></div>
         <div class="trow"><span class="t">Funnel events for the hero page</span><span class="spin"></span></div>
         <div class="trow"><span class="t">Consent copy for double opt-in</span><span class="mark err"></span></div>
-        <div class="trow settled"><span class="t">Resend adapter cleanup</span><span class="mark done"></span></div>
       </section>
 
       <section class="project">

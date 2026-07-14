@@ -19,10 +19,11 @@ One screen per part of the system:
   refuses to work until "how far may the worker go next" has been answered, both
   halves.
 - **Workspace** — today's tickets in a left rail backed by the board resource. The
-  rail groups tickets by project, orders rows by recent ticket activity inside each
-  project, shows one current-stage/status dot per ticket, filters visible rows by
-  `ticket_status`, and can hide done tickets separately. The hide-done choice stays
-  in place when the human visits another screen and returns.
+  rail groups tickets by project, then orders rows by Worker type, that type's Stage,
+  and recent activity. It shows one current-stage/status dot per ticket and includes
+  every Ticket status. Done tickets are hidden in a fresh session; the human can turn
+  off **Hide done** to reveal them, and that choice stays in place when they visit
+  another screen and return.
 
   The right side opens on the Chief of Staff chat. Selecting a ticket switches it to
   the same complete ticket screen used by a direct ticket link while leaving the

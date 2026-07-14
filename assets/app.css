@@ -1853,9 +1853,7 @@ select {
   color: var(--text-strong);
 }
 
-/* Filters compress to one quiet line: the status select reads as plain faint
- * text (a transparent native <select> overlays it), and Hide done is a text
- * toggle pushed to the right that strengthens when on. No "Filters" heading. */
+/* The filter row keeps Hide done as a quiet text toggle aligned to the right. */
 .board-workspace-filters {
   display: flex;
   align-items: center;
@@ -1865,35 +1863,7 @@ select {
   font-size: var(--type-xs);
 }
 
-.board-workspace-filter-group {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  color: var(--text-faint);
-  cursor: pointer;
-  transition: color var(--motion-fast) var(--motion-ease);
-}
-
-.board-workspace-filter-group:hover {
-  color: var(--text-default);
-}
-
-.board-workspace-filter-value {
-  white-space: nowrap;
-}
-
-.board-workspace-filter-select {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  opacity: 0;
-  cursor: pointer;
-}
-
-/* The overlaid native controls are invisible, so keyboard focus shows on the
- * visible wrapper instead. */
-.board-workspace-filter-group:focus-within,
+/* The transparent checkbox keeps keyboard focus visible on its label. */
 .board-workspace-hide-done-toggle:focus-within {
   outline: var(--border-strong) solid var(--accent-bright);
   outline-offset: var(--border-hairline);

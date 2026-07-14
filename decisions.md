@@ -763,10 +763,10 @@ readiness loop polls; renaming them would be unrelated contract churn. Workspace
 directly in its right pane, keyed by selected ticket id, so the route's id-bound resources recreate on
 selection while the standalone `#/ticket/<id>` route is unchanged. The optional `#/workspace/<ticket-id>`
 segment is the single selection source of truth; every Workspace variant shares one screen key so
-switching tickets doesn't reset the rail's filters/collapsed-groups/hide-done. Once a settled board
+switching tickets doesn't reset the rail's collapsed groups or hide-done choice. Once a settled board
 proves a routed ticket absent, Workspace replaces the stale entry with `#/workspace`. The left rail
 groups by effective project (parented tickets group under their item's project via `group_project_id`
-without changing their own `project_id`) and shows all four ticket-stage dots. Hide-done defaults off.
+without changing their own `project_id`) and shows all four ticket-stage dots. Hide-done defaults on.
 Chief of Staff is embedded in Workspace, not a primary nav tab (the `#/chief` route stays for direct
 links).
 
@@ -776,8 +776,17 @@ Within each existing Workspace project category, rows follow the served Worker-t
 then that type's own served Stage order, then `activity_at` newest first. The prior board sequence is
 the final deterministic fallback only. Workspace treats both the board and Worker-type manifest as
 required resources before rendering rows, so it never briefly presents the retired activity-first
-order while the manifest is loading. Category grouping and order, filters, collapse state, row
+order while the manifest is loading. Category grouping and order, hide-done behavior, collapse state, row
 content, selection, navigation, and presentation do not change.
+
+## D-workspace-hide-done-only — Hide done is Workspace's only visibility filter
+
+A fresh app session starts Workspace with **Hide done** on, so its normal today scope emphasizes active
+work. Turning it off reveals done tickets, and the existing app-level state preserves that choice while
+navigating between screens; no new browser or server persistence is added. Workspace otherwise shows every
+Ticket status. The status selector, its local state, and its filtering branch are removed rather than
+replaced with a Stage selector or another visibility control, because fixed statuses do not usefully span
+multiple Worker types and Stage lifecycles.
 
 ## D-shared-component-set — One component set; consolidate, don't redesign
 

@@ -41,7 +41,7 @@ const {
 } = await import(lifecyclePath);
 await rm(dir, { recursive: true, force: true });
 
-const { ticketStatusText, ticketStatusLabel } = uiModule;
+const { ticketStatusText } = uiModule;
 
 // lifecycleFor is imported above from the REAL lifecycle.ts (not a copy) so Part B
 // exercises the production selector + memoization (Codex F6).
@@ -265,7 +265,6 @@ assert.equal(
   "current-paired-work"
 );
 assert.equal(ticketStatusText("paired_work"), "paired work");
-assert.equal(ticketStatusLabel("paired_work"), "status paired work");
 assert.equal(
   ticketStageVisualStateFor(coding, {
     ticketStage: "needs_approach",
