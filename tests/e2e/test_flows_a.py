@@ -880,7 +880,10 @@ def test_e26_chat_panel_echo_and_offline(
     )
     assert abs(initial_scroll["top"] - initial_scroll["max"]) <= 1, initial_scroll
 
-    page.eval_on_selector(thread_selector, "el => { el.scrollTop = 0; }")
+    page.eval_on_selector(
+        thread_selector,
+        "el => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); }",
+    )
     page.fill("[data-chat] [data-chat-input]", "do not move my scroll")
     page.click("[data-chat] [data-chat-send]")
     _wait_chat_text(page, "planner", "echo: do not move my scroll")
