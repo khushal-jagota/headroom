@@ -31,10 +31,11 @@ Current build stage:
   and corrected the file-preview selector omission, overbroad event and mutation invalidation, missing
   current-day/cold-start handling, and the Ticket-creation companion-event contradiction. The final fresh
   read-only re-review, session `019f5eca-4772-7771-8727-515fd60e285e`, reports `NO VIOLATIONS`.
-- AD04 implementation is complete in the working tree. The initial independent diff review found two
+- AD04 is complete on the branch at `0037933`. The initial independent diff review found two
   frontend naming/type violations: the Ticket detail still used `AnyRecord`, and a Worker-count helper still
   said Agent. Both are corrected through the delegated path. The fresh corrected-diff review, session
-  `019f5ede-7f24-78a2-b59a-4a6c51223672`, reports `NO VIOLATIONS`.
+  `019f5ede-7f24-78a2-b59a-4a6c51223672`, reports `NO VIOLATIONS`, and the committed checkpoint passes the
+  canonical gate.
 
 What just passed:
 
@@ -197,12 +198,15 @@ What just passed:
 - The independent AD04 implementation review's accepted `AnyRecord` and Agent-helper findings are fixed.
   The regenerated served bundle points to `index-DzbUvGPe.js`, and the corrected full diff has no review
   violations.
+- The committed AD04 checkpoint passes canonical `PYTHONPATH="$PWD/src" ./verify`: Ruff; mypy across 114
+  source files; 692 unit tests; compile/static and CSS/Markdown checks; Svelte check (zero errors, three
+  existing warnings), production build, frontend tests; 80 Playwright e2e tests; final `VERIFY: PASS`.
+  The complete transcript is retained at `data/verify/ad04-pass.log`.
 
 Next step:
 
-- Commit the isolated AD04 implementation-review memory, commit the clean bounded product checkpoint, then
-  run the one canonical `PYTHONPATH="$PWD/src" ./verify`. If the gate passes, update closeout memory and move
-  to AD05's canonical human Chat-ingress ticket.
+- Define AD05's canonical human Chat-ingress ticket from the live route, service, contract, caller, test,
+  and documentation surfaces. Then delegate its implementation plan before independent plan review.
 - The owner has authorized merging only after AD09 and the complete branch pass final review and canonical
   verification; no partial program merge or push is authorized.
 - The owner confirmed AD02 has no implicit live defaults at any layer. SQLite's coding-shaped `fields`
