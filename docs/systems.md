@@ -392,6 +392,16 @@ proposals/recaps/notes without exposing runtime controls. The exceptional Chief 
 has two external-work operations that establish a coherent imported Stage; it is not a
 generic Stage setter.
 
+`panels serve` stays in the foreground while it replaces the running Panels application.
+It remembers the installed copy that started it. `panels restart` asks it to stop that
+application cleanly and waits for the stop to finish before starting the replacement
+from the same installed copy. Running the command from another working folder cannot
+change that choice, and the command never searches the machine for a server to stop.
+
+Stopping `panels serve` also stops the application cleanly. If the application exits on
+its own, `serve` exits with an error instead of starting it again. The existing application
+shutdown and Employee recovery paths still own unfinished work.
+
 The server classifies a missing `X-Plan-Actor` as **unattributed**, not human. `chief` is
 the explicit Chief role; every other non-empty value is an attributed non-Chief agent.
 Direct-only routes allow unattributed and Chief requests while rejecting worker agents.
@@ -399,7 +409,7 @@ Hosted Tailscale user requests deliberately ignore `X-Plan-Actor`; same-host int
 requests still use it as provenance.
 
 Code paths: `src/planner/cli/main.py`, `src/planner/cli/http.py`,
-`src/planner/core/authctx.py`.
+`src/planner/server_lifecycle/`, `src/planner/core/authctx.py`.
 
 ## Boundaries That Matter
 

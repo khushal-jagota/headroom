@@ -1,0 +1,143 @@
+$ PYTHONPATH="$PWD/src" ./verify
+
+=== /Users/khushaljagota/.hermes/worktrees/planning-v2-panels-restart-supervisor/.venv/bin/ruff check . ===
+All checks passed!
+
+=== /Users/khushaljagota/.hermes/worktrees/planning-v2-panels-restart-supervisor/.venv/bin/mypy src/ tests/typing/ ===
+Success: no issues found in 122 source files
+
+=== /Users/khushaljagota/.hermes/worktrees/planning-v2-panels-restart-supervisor/.venv/bin/pytest tests/unit --junitxml=/Users/khushaljagota/.hermes/worktrees/planning-v2-panels-restart-supervisor/data/verify/unit.xml ===
+........................................................................ [  8%]
+........................................................................ [ 16%]
+........................................................................ [ 25%]
+........................................................................ [ 33%]
+........................................................................ [ 42%]
+........................................................................ [ 50%]
+........................................................................ [ 59%]
+........................................................................ [ 67%]
+........................................................................ [ 75%]
+........................................................................ [ 84%]
+........................................................................ [ 92%]
+..............................................................           [100%]
+=============================== warnings summary ===============================
+../../planning-v2/.venv/lib/python3.14/site-packages/fastapi/testclient.py:1
+  /Users/khushaljagota/.hermes/planning-v2/.venv/lib/python3.14/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+src/planner/core/clock.py:27
+  /Users/khushaljagota/.hermes/worktrees/planning-v2-panels-restart-supervisor/src/planner/core/clock.py:27: PytestCollectionWarning: cannot collect test class 'TestClock' because it has a __init__ constructor (from: tests/unit/test_automatic_employee_step_discovery_loop.py)
+    class TestClock:
+
+src/planner/core/clock.py:27
+  /Users/khushaljagota/.hermes/worktrees/planning-v2-panels-restart-supervisor/src/planner/core/clock.py:27: PytestCollectionWarning: cannot collect test class 'TestClock' because it has a __init__ constructor (from: tests/unit/test_core_loops.py)
+    class TestClock:
+
+src/planner/core/clock.py:27
+  /Users/khushaljagota/.hermes/worktrees/planning-v2-panels-restart-supervisor/src/planner/core/clock.py:27: PytestCollectionWarning: cannot collect test class 'TestClock' because it has a __init__ constructor (from: tests/unit/test_generic_field_storage.py)
+    class TestClock:
+
+src/planner/core/clock.py:27
+  /Users/khushaljagota/.hermes/worktrees/planning-v2-panels-restart-supervisor/src/planner/core/clock.py:27: PytestCollectionWarning: cannot collect test class 'TestClock' because it has a __init__ constructor (from: tests/unit/test_new_worker_type.py)
+    class TestClock:
+
+src/planner/core/clock.py:27
+  /Users/khushaljagota/.hermes/worktrees/planning-v2-panels-restart-supervisor/src/planner/core/clock.py:27: PytestCollectionWarning: cannot collect test class 'TestClock' because it has a __init__ constructor (from: tests/unit/test_probe_type.py)
+    class TestClock:
+
+src/planner/core/clock.py:27
+  /Users/khushaljagota/.hermes/worktrees/planning-v2-panels-restart-supervisor/src/planner/core/clock.py:27: PytestCollectionWarning: cannot collect test class 'TestClock' because it has a __init__ constructor (from: tests/unit/test_sprint_item_status_buckets.py)
+    class TestClock:
+
+src/planner/core/clock.py:27
+  /Users/khushaljagota/.hermes/worktrees/planning-v2-panels-restart-supervisor/src/planner/core/clock.py:27: PytestCollectionWarning: cannot collect test class 'TestClock' because it has a __init__ constructor (from: tests/unit/test_sprint_views_type_driven.py)
+    class TestClock:
+
+src/planner/core/clock.py:27
+  /Users/khushaljagota/.hermes/worktrees/planning-v2-panels-restart-supervisor/src/planner/core/clock.py:27: PytestCollectionWarning: cannot collect test class 'TestClock' because it has a __init__ constructor (from: tests/unit/test_worker_type_persistence.py)
+    class TestClock:
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+854 passed, 9 warnings in 19.51s
+
+=== /Users/khushaljagota/.hermes/planning-v2/.venv/bin/python -m compileall -q src/ ===
+
+=== css check /Users/khushaljagota/.hermes/worktrees/planning-v2-panels-restart-supervisor/assets/app.css ===
+
+=== node --check /Users/khushaljagota/.hermes/worktrees/planning-v2-panels-restart-supervisor/assets/markdown.js ===
+
+=== css check /Users/khushaljagota/.hermes/worktrees/planning-v2-panels-restart-supervisor/assets/tokens.css ===
+
+=== npm --prefix web run check ===
+
+> check
+> svelte-check --tsconfig ./tsconfig.json
+
+Loading svelte-check in workspace: /Users/khushaljagota/.hermes/worktrees/planning-v2-panels-restart-supervisor/web
+Getting Svelte diagnostics...
+
+svelte-check found 0 errors and 0 warnings
+
+=== npm --prefix web run build ===
+
+> build
+> vite build
+
+vite v6.4.3 building for production...
+<script src="/assets/markdown.js"> in "/index.html" can't be bundled without type="module" attribute
+
+/assets/tokens.css doesn't exist at build time, it will remain unchanged to be resolved at runtime
+
+/assets/app.css doesn't exist at build time, it will remain unchanged to be resolved at runtime
+transforming...
+✓ 154 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                                0.75 kB │ gzip:  0.38 kB
+dist/assets/newsreader-vietnamese-400-normal-DdKr49mV.woff2    5.43 kB
+dist/assets/newsreader-vietnamese-500-normal-CL6a8tp2.woff2    5.44 kB
+dist/assets/newsreader-vietnamese-600-normal-CaH84vfx.woff2    5.50 kB
+dist/assets/newsreader-vietnamese-400-normal-BekUZro8.woff     6.97 kB
+dist/assets/newsreader-vietnamese-500-normal-BEAbKU8A.woff     7.04 kB
+dist/assets/newsreader-vietnamese-600-normal-CVAR0otO.woff     7.06 kB
+dist/assets/newsreader-latin-ext-400-normal-svq1FPys.woff2    14.21 kB
+dist/assets/newsreader-latin-ext-500-normal-BNHmvKvI.woff2    15.07 kB
+dist/assets/newsreader-latin-ext-600-normal-BXv5iMHi.woff2    15.17 kB
+dist/assets/newsreader-latin-ext-400-normal-DYA1XoQK.woff     18.38 kB
+dist/assets/newsreader-latin-ext-500-normal-CZruMFou.woff     19.30 kB
+dist/assets/newsreader-latin-ext-600-normal-BrbfzHZ5.woff     19.39 kB
+dist/assets/newsreader-latin-400-normal-BFBkh4jY.woff2        22.48 kB
+dist/assets/newsreader-latin-500-normal-B66TYsaK.woff2        23.62 kB
+dist/assets/newsreader-latin-600-normal-30OJ_TG_.woff2        23.88 kB
+dist/assets/newsreader-latin-400-normal-gRTjlS2D.woff         28.29 kB
+dist/assets/newsreader-latin-500-normal-DFwuUcdu.woff         29.64 kB
+dist/assets/newsreader-latin-600-normal-DUnT2r2g.woff         29.78 kB
+dist/assets/index-CnGWKYPD.css                                 3.83 kB │ gzip:  0.66 kB
+dist/assets/index-BKICWA5O.js                                173.37 kB │ gzip: 58.91 kB
+✓ built in 611ms
+
+=== npm --prefix web test ===
+
+> test
+> node tests/resource-catalogue.test.mjs && node tests/resource-cache.test.mjs && node tests/ws-connection.test.mjs && node tests/file-preview.test.mjs && node tests/lifecycle.test.mjs && node tests/managed-markdown.test.mjs && node tests/markdown-renderer.test.mjs && node tests/chat-images.test.mjs
+
+resource-catalogue.test.mjs: all assertions passed
+resource-cache.test.mjs: all assertions passed
+[planner] ws open since=0
+[planner] flush 1
+[planner] ws open since=1
+ws-connection.test.mjs: all assertions passed
+lifecycle.test.mjs: all assertions passed
+
+=== /Users/khushaljagota/.hermes/worktrees/planning-v2-panels-restart-supervisor/.venv/bin/pytest tests/e2e --junitxml=/Users/khushaljagota/.hermes/worktrees/planning-v2-panels-restart-supervisor/data/verify/e2e.xml ===
+........................................................................ [ 63%]
+..........................................                               [100%]
+114 passed in 161.44s (0:02:41)
+
+[verify] gate ruff: ok
+[verify] gate mypy: ok
+[verify] gate unit suite: ok
+[verify] gate build check: ok
+[verify] gate frontend: ok
+[verify] gate e2e suite: ok
+
+VERIFY: PASS

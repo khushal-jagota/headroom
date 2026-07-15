@@ -12,7 +12,6 @@ The command tree mirrors the product model:
 from __future__ import annotations
 
 import os
-import sqlite3
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -284,32 +283,43 @@ def main() -> None:
 @main.command("serve")
 def serve() -> None:
     """Start the web server and background planner runtime."""
-    import os
+    from planner.server_lifecycle.contracts import ServerLifecycleError
+    from planner.server_lifecycle.supervisor import run_server_supervisor
 
-    import uvicorn
+    try:
+        result = run_server_supervisor()
+    except ServerLifecycleError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if result != 0:
+        raise click.ClickException("Panels application exited unexpectedly.")
 
-    from planner.core.adapters.registry import build_adapters
-    from planner.core.clock import build_clock
-    from planner.core.config import HOST, load_config
-    from planner.core.db import connect, create_schema
-    from planner.core.server import create_app
 
-    repo_root = Path(__file__).resolve().parents[3]
-    os.chdir(repo_root)
-    config = load_config(str(repo_root / "config.yaml"))
-    os.makedirs(os.path.dirname(config.db_path) or ".", exist_ok=True)
-    os.makedirs(config.logs_dir, exist_ok=True)
-    with connect(config.db_path, config.db_busy_timeout_ms) as bootstrap:
-        create_schema(bootstrap)
+@main.command("restart")
+def restart() -> None:
+    """Ask the foreground Panels supervisor to replace its application child."""
+    from planner.core.config import load_config
+    from planner.server_lifecycle.contracts import (
+        ServerRestartConnectionError,
+        ServerRestartProtocolError,
+    )
+    from planner.server_lifecycle.control import (
+        request_server_restart,
+        resolve_server_control_socket_path,
+    )
+    from planner.server_lifecycle.supervisor import resolve_planner_launch_root
 
-    clock = build_clock(config)
-    adapters = build_adapters(config)
-
-    def conn_factory() -> sqlite3.Connection:
-        return connect(config.db_path, config.db_busy_timeout_ms)
-
-    app = create_app(config, clock, adapters, conn_factory)
-    uvicorn.run(app, host=HOST, port=config.port)
+    launch_root = resolve_planner_launch_root()
+    config = load_config(str(launch_root / "config.yaml"))
+    control_socket_path = resolve_server_control_socket_path(
+        config.port,
+        os.environ,
+        launch_root,
+    )
+    try:
+        request_server_restart(control_socket_path)
+    except (ServerRestartConnectionError, ServerRestartProtocolError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo("Panels restart accepted.")
 
 
 # --- project ------------------------------------------------------------------

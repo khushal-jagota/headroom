@@ -2594,6 +2594,28 @@ def test_provision_planner_home_skills_symlinks_repo_skills(tmp_path: Path) -> N
     assert (sprint_planning / "SKILL.md").exists()
 
 
+def test_provisioned_worker_skills_do_not_let_workers_own_the_panels_server(
+    tmp_path: Path,
+) -> None:
+    provision_planner_home_skills(tmp_path)
+
+    shared = (tmp_path / "skills" / "panels-worker" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    new_worker = (
+        tmp_path / "skills" / "panels-worker-new-worker" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    for required in (
+        "Never stop, signal, replace, or launch the Panels server",
+        "Do not use `kill`, `pkill`, `lsof`, or `panels serve`",
+        "report that a restart is required and stop",
+    ):
+        assert required in shared
+    assert "Run `panels restart` only after every pre-restart write is durable" in new_worker
+    assert "Never discover or signal a server PID" in new_worker
+
+
 def test_panels_worker_exploration_is_provisioned_as_readable_repo_skill(tmp_path: Path) -> None:
     provision_planner_home_skills(tmp_path)
 

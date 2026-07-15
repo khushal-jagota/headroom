@@ -127,12 +127,17 @@ on its Ticket, and its visible reply is marked interrupted, so the next start ca
 the same conversation. If the time has already run out, cleanup checks without waiting;
 that alone does not mean a healthy connection is stuck.
 
+A controlled restart uses this same shutdown and recovery path. A worker finishes its
+durable writes before requesting one. If the command is unavailable, the worker reports
+that restart is required and stops. Server ownership is described in `docs/systems.md`.
+
 _Code paths:_ `src/planner/runtime/automatic_employee_step_eligibility.py`,
 `src/planner/runtime/automatic_employee_step_discovery_loop.py`,
 `src/planner/runtime/automatic_employee_step_eligibility_wake.py`,
 `src/planner/runtime/employee_step_runner.py`,
 `src/planner/tickets/actions.py`, `src/planner/days/actions.py`,
 `src/planner/core/link_actions.py`,
+`src/planner/server_lifecycle/`,
 `src/planner/minds/` (the employee primitive: the shared gateway child and its
 per-session busy guard).
 

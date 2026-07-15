@@ -77,6 +77,19 @@ Everything runs through the `panels` command — `panels --help` for full usage.
 
 Never invoke `panels chief`.
 
+### Server ownership
+
+The foreground Panels server belongs to the operator, not to a Ticket worker.
+Never stop, signal, replace, or launch the Panels server.
+Do not use `kill`, `pkill`, `lsof`, or `panels serve` to perform or prepare a restart,
+and do not start a replacement from your Ticket worktree.
+
+When approved work requires a restart, finish every write and recap that must survive
+the process boundary first. Use the documented `panels restart` command only when it is
+available in `panels --help` and the specialist skill calls for it. If that command is
+unavailable, report that a restart is required and stop. A Panels-visible Chat row or
+recap does not perform the restart.
+
 ## How to complete this effectively
 
 ### Cross-cutting disciplines

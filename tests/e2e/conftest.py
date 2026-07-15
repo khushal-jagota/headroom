@@ -17,6 +17,7 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
@@ -28,7 +29,7 @@ import pytest
 from playwright.sync_api import Browser, BrowserContext, Page
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PLAN_BIN = REPO_ROOT / ".venv" / "bin" / "panels"
+PLAN_BIN = Path(sys.executable).parent / "panels"
 FAKE_NOW = "2026-07-04T12:00:00"
 WAIT_MS = 10_000          # every Playwright wait
 BOOT_BUDGET_S = 15.0      # server readiness budget
@@ -40,6 +41,8 @@ class ServerHandle:
     proc: subprocess.Popen[bytes]
     db_path: Path
     log_path: Path
+    port: int
+    control_socket_path: Path
 
 
 def _free_port() -> int:
@@ -125,7 +128,17 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
             )
         finally:
             log.close()                       # the child keeps its own dup'd fd
-        handle = ServerHandle(base=base, proc=proc, db_path=db_path, log_path=log_path)
+        from planner.server_lifecycle.control import resolve_server_control_socket_path
+
+        control_socket_path = resolve_server_control_socket_path(port, env, REPO_ROOT)
+        handle = ServerHandle(
+            base=base,
+            proc=proc,
+            db_path=db_path,
+            log_path=log_path,
+            port=port,
+            control_socket_path=control_socket_path,
+        )
         handles.append(handle)
 
         deadline = time.time() + BOOT_BUDGET_S
@@ -159,6 +172,8 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
     yield make
 
     for handle in handles:
+        if handle.proc.poll() is not None:
+            continue
         handle.proc.terminate()
         try:
             handle.proc.wait(timeout=5)

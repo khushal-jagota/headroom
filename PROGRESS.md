@@ -4,6 +4,53 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-15): controlled Panels restart supervisor
+
+Current build stage:
+
+- The verified `codex/panels-restart-supervisor` branch is approved and integrated into
+  `main`. `panels serve` is now the stable foreground owner of one replaceable
+  application process, and `panels restart` requests replacement through a local
+  versioned control exchange. The server launch root, interpreter, environment, and log
+  streams come only from the original `serve` process; a Ticket worktree cannot choose
+  the replacement.
+- Stopgap commit `430cf92` separately makes the server operator-owned in the shared and
+  new-worker skills. Workers never discover or signal a PID, run `panels serve`, or launch
+  a worktree replacement. Until the controlled command is available, they report that a
+  restart is required and stop.
+- The verified landing includes `main` through merge `ddaf5c1`. No live server was
+  stopped or restarted as part of implementation or integration.
+
+What just passed:
+
+- Focused lifecycle acceptance passes 12 real-process cases. They cover duplicate
+  ownership, same-socket safety, acknowledgement ordering, operator shutdown during
+  incomplete and accepted requests, unexpected-child priority over queued restart,
+  serial generations, captured-root restart, unexpected exit, and cleanup.
+- The integrated control/shutdown/provisioned-skill bundle passes 95 tests. Ruff is
+  clean, mypy reports no issues across 120 source files, and `git diff --check` is clean.
+- The corrected implementation reviews report `NO FINDINGS` on both Standards and Spec.
+  Two read-only Codex implementation reviews report `NO VIOLATIONS`.
+- The clean canonical completion run passes Ruff, mypy across 122 source files, 854
+  unit tests with nine existing warnings, compile/static/CSS checks, Svelte with zero
+  errors or warnings, the production build, all frontend tests, and 114 browser tests.
+  Every gate is `ok` and the run ends `VERIFY: PASS`. The full transcript is
+  `orchestration/tickets/panels-restart-supervisor/verify-final.txt`, SHA-256
+  `2ccfe2a325214e276abd717cc1e6116fb9d8c05cbb7ec500d5c997b7f00e5ce3`.
+- The first verifier attempt exposed only that the borrowed main-worktree virtualenv's
+  editable install resolved the old main source. Running the same gate with this
+  worktree's `src` first on `PYTHONPATH` corrected the test environment; no product
+  change was needed.
+
+Next step:
+
+- The next operator-started `panels serve` process will use the landed supervisor. Do
+  not start, stop, or restart the live server merely to complete this integration.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-15): paired new-worker Understanding Stage
 
 Current build stage:

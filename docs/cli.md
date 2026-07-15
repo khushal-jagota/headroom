@@ -60,11 +60,15 @@ generic Stage setter.
   operations move the ceiling to the imported Stage, preserve an explicit Stop
   (otherwise Continue remains), and apply that Stage's effective ownership.
 - **`serve`** — run the server and background worker runtime in the foreground.
-  It may be launched from outside the repository; the app shell, static assets, and
-  checked-in config are resolved from the repository root.
+  It keeps ownership while Panels restarts, so the same terminal continues to show the
+  server logs.
+- **`restart`** — ask that running `serve` command to load the current Panels code again.
+  The command reports when the request is accepted. If `serve` is not running, it reports
+  the connection error and stops.
 
 _Code paths:_ `src/planner/cli/main.py` (the verbs), `src/planner/cli/http.py`
-(the HTTP call, output, and exit codes).
+(the HTTP call, output, and exit codes), `src/planner/server_lifecycle/` (foreground
+ownership and controlled restart).
 
 Project-aware commands accept `--project-id` as the preferred selector and keep
 `--project` as legacy name compatibility. Passing both is allowed only when they
@@ -112,4 +116,4 @@ lease; the employee runtime runs one step at a time and writes status itself (se
 
 ---
 
-_Last verified: 2026-07-14._
+_Last verified: 2026-07-15._
