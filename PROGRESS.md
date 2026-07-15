@@ -8,20 +8,27 @@ bottom; the blow-by-blow is git's.
 
 Current build stage:
 
-- Ticket `t_ycpcb619` has approved Implementation commit `fe7f0c1`. Closeout is integrating that
-  verified change with current `main` through `integrate/t_ycpcb619`; the cherry-pick retained current
-  main's newer progress ledger and will rebuild one combined production bundle.
+- Ticket `t_ycpcb619` has approved Implementation commit `fe7f0c1`. The current-main integration is
+  complete on `integrate/t_ycpcb619` through feature commit `e3d77c4` and checked-in configuration
+  correction `a1c00f2`; it retains newer main work and serves combined bundle `index-BKICWA5O.js`.
 - The existing event WebSocket emits configured quiet heartbeats and owns the browser's
   Connected/Reconnecting/Offline lifecycle. Recovery preserves cursor replay and keyed invalidation,
   then performs one catalogue-owned refresh of currently subscribed resources. Navigation keeps this
   signal separate from worker presence on desktop and mobile.
-- Pre-integration implementation review finished `NO VIOLATIONS`, and the implementation branch passed
-  the canonical gate with 796 unit tests and 95 Playwright tests.
+- Current-main integration review found the missing checked-in heartbeat default and stale bundle
+  evidence; both were corrected, the config gap has a RED/GREEN regression, and the final fresh review
+  reports `NO VIOLATIONS`.
+- Post-integration canonical `./verify` passes Ruff; mypy across 116 source files; 817 unit tests with
+  nine existing warnings; compile/static and CSS checks; Svelte with zero errors/warnings; production
+  build; the complete frontend suite; and 100 Playwright tests. The run ends `VERIFY: PASS`; transcript
+  `data/verify/t_ycpcb619-closeout-pass.log` has SHA-256
+  `ada673c7a925d66fb26bd6cd4529197b504c9038622121a840004563ea9c301e`.
 
 Next step:
 
-- Finish the integration build, review the current-main diff, rerun canonical verification, then merge
-  into `main` and propose Closeout. No deployment, restart, migration, or follow-up applies.
+- Merge the verified integration into `main`, preserve unrelated local main edits, remove only this
+  Ticket's temporary branches/worktree, and propose Closeout. No deployment, restart, migration, or
+  follow-up applies.
 
 Blockers:
 
