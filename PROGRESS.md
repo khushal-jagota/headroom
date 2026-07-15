@@ -8,17 +8,18 @@ bottom; the blow-by-blow is git's.
 
 Current build stage:
 
-- The implementation is complete on isolated branch `codex/panels-restart-supervisor`.
-  `panels serve` is now the stable foreground owner of one replaceable application
-  process, and `panels restart` requests replacement through a local versioned control
-  exchange. The server launch root, interpreter, environment, and log streams come only
-  from the original `serve` process; a Ticket worktree cannot choose the replacement.
+- The verified `codex/panels-restart-supervisor` branch is approved and integrated into
+  `main`. `panels serve` is now the stable foreground owner of one replaceable
+  application process, and `panels restart` requests replacement through a local
+  versioned control exchange. The server launch root, interpreter, environment, and log
+  streams come only from the original `serve` process; a Ticket worktree cannot choose
+  the replacement.
 - Stopgap commit `430cf92` separately makes the server operator-owned in the shared and
   new-worker skills. Workers never discover or signal a PID, run `panels serve`, or launch
   a worktree replacement. Until the controlled command is available, they report that a
   restart is required and stop.
-- The branch includes current `main` through merge `ddaf5c1`; the feature has not been
-  merged into `main`, and no live server was stopped or restarted.
+- The verified landing includes `main` through merge `ddaf5c1`. No live server was
+  stopped or restarted as part of implementation or integration.
 
 What just passed:
 
@@ -43,8 +44,8 @@ What just passed:
 
 Next step:
 
-- Await the user's instruction before merging the verified isolated branch into `main`.
-  Do not start, stop, or restart the live server as part of this handoff.
+- The next operator-started `panels serve` process will use the landed supervisor. Do
+  not start, stop, or restart the live server merely to complete this integration.
 
 Blockers:
 

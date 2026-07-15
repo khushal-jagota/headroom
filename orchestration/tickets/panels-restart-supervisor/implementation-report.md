@@ -9,10 +9,10 @@ uses only the versioned Unix-socket protocol, prints acceptance only after valid
 the supervisor response, and cannot choose the replacement root, interpreter, or
 environment.
 
-The stopgap commit `430cf92` remains intact. The implementation is committed on the
-isolated `codex/panels-restart-supervisor` branch, which includes current `main` through
-merge `ddaf5c1`. Nothing was merged into `main`, no live Panels server was stopped or
-restarted, and the corrected canonical `./verify` run passes every gate.
+The stopgap commit `430cf92` remains intact. The verified
+`codex/panels-restart-supervisor` branch, including current `main` through merge
+`ddaf5c1`, is integrated into `main`. No live Panels server was stopped or restarted,
+and the corrected canonical `./verify` run passes every gate.
 
 ## RED -> GREEN record
 
@@ -153,8 +153,7 @@ boundary regression is green.
 
 ## Unresolved issues
 
-No known product, focused-test, review, or verification issue remains. The isolated
-branch is ready for the user's merge instruction.
+No known product, focused-test, review, verification, or integration issue remains.
 
 ## Orchestrator integration repair
 
