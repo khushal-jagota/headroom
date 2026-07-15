@@ -8,9 +8,8 @@ bottom; the blow-by-blow is git's.
 
 Current build stage:
 
-- Ticket `t_834r0tz6` is implemented on branch `ticket/t_834r0tz6-workspace-filters` in isolated
-  worktree `/private/tmp/panels-t_834r0tz6`. Implementation is the current gated field; nothing is
-  merged, deployed, or restarted.
+- Ticket `t_834r0tz6` is integrated with current main through merge commit `fb67232`; verified
+  implementation commit `b0cc921` is its second parent. No deployment or restart applies.
 - A fresh Workspace now starts with **Hide done** on. Turning it off reveals done tickets, and the
   existing app-level state preserves the choice across in-app navigation. The Ticket-status control,
   local state, filtering branch, status-only styles, and orphaned label helper are removed; every
@@ -18,6 +17,8 @@ Current build stage:
   URL navigation, and row presentation stay on their existing paths.
 - Live frontend documentation, the standing decision, and current Workspace redesign intent now describe
   the same one-toggle contract.
+- The merge retained current main's full-page managed Markdown preview source and rebuilt one combined
+  production bundle.
 
 What just passed:
 
@@ -26,16 +27,16 @@ What just passed:
   Chief, ownership, routing, collapse, row, and marker scenarios pass after removing only obsolete
   status-filter setup; two marker tests explicitly reveal done rows before asserting their terminal marks.
 - The first independent Codex review found stale redesign intent and the now-orphaned `ticketStatusLabel`;
-  both were removed. Two corrected-diff reviews with model `gpt-5.5`, read-only sandbox, and high reasoning
-  report `NO VIOLATIONS`.
-- The final canonical `./verify` passes Ruff; mypy across 116 source files; 799 unit tests; compile/static
+  both were removed. Corrected implementation reviews and the post-merge integration review with model
+  `gpt-5.5`, read-only sandbox, and high reasoning report `NO VIOLATIONS`.
+- The post-merge canonical `./verify` passes Ruff; mypy across 116 source files; 799 unit tests; compile/static
   and CSS checks; Svelte check with zero errors and warnings; production build; frontend tests; and 96
   Playwright tests, ending `VERIFY: PASS`. The full transcript is
-  `[implementation verify transcript](/files/tickets/t_834r0tz6/artifacts/verify.txt)`.
+  `[closeout verification transcript](/files/tickets/t_834r0tz6/artifacts/verify-closeout.txt)`.
 
 Next step:
 
-- Propose Implementation for approval. Merge, deployment, restart, and branch cleanup wait for Closeout.
+- Propose Closeout for approval. No deployment, restart, migration, or follow-up ticket applies.
 
 Blockers:
 
