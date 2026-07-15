@@ -9,6 +9,8 @@ from tests.support.probe import (
     NEEDS_BETA,
     PROBE_WORKER_TYPE_DEFINITION,
     build_probe_registry,
+    install_probe_registry,
+    uninstall_probe_registry,
 )
 
 from planner.core.contracts import ErrorCode, PlannerError
@@ -157,7 +159,7 @@ def test_ownership_override_set_clear_takeover_release_derives_resting_status(
         now=4,
     )
     assert ticket.effective_stage_ownership_mode is StageOwnershipMode.paired
-    assert ticket.ticket_status is TicketStatus.paired_work
+    assert ticket.ticket_status is TicketStatus.empty
 
     ticket = data.release_ticket(tmp_db, ticket.id, now=5)
     assert ticket.stage_ownership_overrides == {}
@@ -209,5 +211,142 @@ def test_future_stage_ownership_event_reports_that_stages_effective_mode(tmp_db)
     assert json.loads(row["payload"]) == {
         "stage": "needs_plan",
         "ownership_mode": "paired",
+        "previous_effective_ownership_mode": "worker",
         "effective_ownership_mode": "paired",
     }
+
+
+def test_current_stage_same_effective_explicit_override_persists_without_status_change(
+    tmp_db,
+) -> None:
+    ticket = data.create_ticket(
+        tmp_db,
+        actor="human",
+        now=1,
+        title="same effective paired",
+        title_max_chars=TITLE_MAX_CHARS,
+        kickoff_note="go",
+        worker_type="new_worker",
+    )
+    ticket = data.accept_proposal(
+        tmp_db,
+        ticket.id,
+        field="kickoff",
+        actor="human",
+        now=2,
+        next_ceiling="needs_understanding",
+        at_cap=AtCap.propose,
+    )
+    assert ticket.stage == "needs_understanding"
+    assert ticket.effective_stage_ownership_mode is StageOwnershipMode.paired
+    assert ticket.ticket_status is TicketStatus.empty
+
+    updated = data.set_stage_ownership(
+        tmp_db,
+        ticket.id,
+        stage="needs_understanding",
+        ownership_mode=StageOwnershipMode.paired,
+        now=3,
+    )
+
+    assert updated.stage_ownership_overrides == {
+        "needs_understanding": StageOwnershipMode.paired
+    }
+    assert updated.effective_stage_ownership_mode is StageOwnershipMode.paired
+    assert updated.ticket_status is TicketStatus.empty
+    row = tmp_db.execute(
+        "SELECT payload FROM events "
+        "WHERE entity_id = ? AND kind = 'stage_ownership_changed' ORDER BY id DESC LIMIT 1",
+        (ticket.id,),
+    ).fetchone()
+    assert row is not None
+    assert json.loads(row["payload"]) == {
+        "stage": "needs_understanding",
+        "ownership_mode": "paired",
+        "previous_effective_ownership_mode": "paired",
+        "effective_ownership_mode": "paired",
+    }
+
+    again = data.set_stage_ownership(
+        tmp_db,
+        ticket.id,
+        stage="needs_understanding",
+        ownership_mode=StageOwnershipMode.paired,
+        now=4,
+    )
+    assert again == updated
+    assert (
+        tmp_db.execute(
+            "SELECT COUNT(*) FROM events "
+            "WHERE entity_id = ? AND kind = 'stage_ownership_changed'",
+            (ticket.id,),
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_takeover_and_release_persist_explicit_user_override_when_default_is_user(
+    tmp_db,
+) -> None:
+    install_probe_registry()
+    try:
+        ticket = data.create_ticket(
+            tmp_db,
+            actor="human",
+            now=1,
+            title="probe user default",
+            title_max_chars=TITLE_MAX_CHARS,
+            kickoff_note="go",
+            worker_type="probe",
+        )
+        ticket = data.accept_proposal(
+            tmp_db,
+            ticket.id,
+            field="kickoff",
+            actor="human",
+            now=2,
+            next_ceiling=NEEDS_ALPHA,
+            at_cap=AtCap.propose,
+        )
+        assert ticket.stage == NEEDS_ALPHA
+        assert ticket.effective_stage_ownership_mode is StageOwnershipMode.user
+        tmp_db.execute(
+            "UPDATE tickets SET ticket_status = 'empty', updated_at = 2 WHERE id = ?",
+            (ticket.id,),
+        )
+
+        taken = data.take_over_ticket(tmp_db, ticket.id, now=3)
+        assert taken.stage_ownership_overrides == {NEEDS_ALPHA: StageOwnershipMode.user}
+        assert taken.effective_stage_ownership_mode is StageOwnershipMode.user
+        assert taken.ticket_status is TicketStatus.empty
+
+        released = data.release_ticket(tmp_db, ticket.id, now=4)
+        assert released.stage_ownership_overrides == {}
+        assert released.effective_stage_ownership_mode is StageOwnershipMode.user
+        assert released.ticket_status is TicketStatus.empty
+
+        assert data.release_ticket(tmp_db, ticket.id, now=5) == released
+        payloads = [
+            json.loads(row["payload"])
+            for row in tmp_db.execute(
+                "SELECT payload FROM events "
+                "WHERE entity_id = ? AND kind = 'stage_ownership_changed' ORDER BY id",
+                (ticket.id,),
+            )
+        ]
+        assert payloads == [
+            {
+                "stage": NEEDS_ALPHA,
+                "ownership_mode": "user",
+                "previous_effective_ownership_mode": "user",
+                "effective_ownership_mode": "user",
+            },
+            {
+                "stage": NEEDS_ALPHA,
+                "ownership_mode": None,
+                "previous_effective_ownership_mode": "user",
+                "effective_ownership_mode": "user",
+            },
+        ]
+    finally:
+        uninstall_probe_registry()

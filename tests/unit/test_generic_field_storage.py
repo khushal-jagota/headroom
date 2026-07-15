@@ -397,13 +397,12 @@ def test_probe_data_layer_drive_to_done_exact_events(
     assert fields_codec.get_slot(t.fields, _FA).value == "alpha body"
     assert fields_codec.get_slot(t.fields, _FA).proposal is None  # proposal cleared
     # Probe's mixed ownership fired for the FOREIGN type:
-    # worker-owned needs_alpha auto-accepted into paired needs_beta.
-    assert t.ticket_status == TicketStatus.paired_work
+    # worker-owned needs_alpha auto-accepted into newly eligible paired needs_beta.
+    assert t.ticket_status == TicketStatus.empty
     kinds = _kinds_after(tmp_db, tid, before)
     assert [k for k, _ in kinds] == [
         EventKind.proposal_accepted.value,
         EventKind.stage_changed.value,
-        EventKind.ticket_status_changed.value,
     ]
     assert kinds[0][1] == {
         "field": _FA,
@@ -412,7 +411,6 @@ def test_probe_data_layer_drive_to_done_exact_events(
         "edited": False,
     }
     assert kinds[1][1] == {"from_stage": _A, "to_stage": _B, "cause": "auto_accept"}
-    assert kinds[2][1] == {"ticket_status": "paired_work"}
 
     # --- at needs_beta (ceiling _B ==): propose beta -> PARKS (value None, proposal set).
     before = len(_events(tmp_db, tid))

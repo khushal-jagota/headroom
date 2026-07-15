@@ -27,7 +27,12 @@ from planner.runtime.automatic_employee_step_eligibility_wake import (
     AutomaticEmployeeStepEligibilityWake,
 )
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import EmployeeSessionIdTransition, Ticket, TicketStatus
+from planner.tickets.contracts import (
+    EmployeeSessionIdTransition,
+    StageOwnershipMode,
+    Ticket,
+    TicketStatus,
+)
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
 
@@ -75,6 +80,14 @@ def _next_step_prompt(
         if ticket.effective_stage_ownership_mode is not None
         else "terminal"
     )
+    if ticket.effective_stage_ownership_mode is StageOwnershipMode.paired:
+        return (
+            f"Work ticket {ticket.id} — {ticket.title}. It is at Stage '{str(ticket.stage)}'; "
+            f"open the paired discussion for the '{field}' field. "
+            "Ask bounded questions or resume the Stage conversation, and do not file a "
+            "proposal until the discussion has enough shared understanding. "
+            f"Stage owner: {ownership_wire}."
+        )
     return (
         f"Work ticket {ticket.id} — {ticket.title}. It is at Stage '{str(ticket.stage)}'; "
         f"take the next step and propose the '{field}' field for approval. "
@@ -630,8 +643,24 @@ class EmployeeStepRunner:
                     "session busy",
                     self._clock.now_unix(),
                 )
-                finish_running_step(exc.session_key or current_employee_session_id)
-                return True
+                busy_employee_session_id = exc.session_key or current_employee_session_id
+                if busy_employee_session_id is None:
+                    tickets_data.release_run_claim_to_empty_if_still_running_step(
+                        conn,
+                        ticket_id,
+                        now=self._clock.now_unix(),
+                    )
+                else:
+                    tickets_data.release_run_claim_to_empty_if_still_running_step(
+                        conn,
+                        ticket_id,
+                        employee_session_transition=EmployeeSessionIdTransition(
+                            expected_employee_session_id=current_employee_session_id,
+                            candidate_employee_session_id=busy_employee_session_id,
+                        ),
+                        now=self._clock.now_unix(),
+                    )
+                return False
             except _WorkerSessionClaimLost:
                 _log.info(
                     "employee runner skipped an unowned worker session (ticket=%s)",

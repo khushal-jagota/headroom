@@ -167,9 +167,9 @@ that skill with `skill_view` and follows its Stage-specific guidance:
 
 For `new_worker`, the visible lifecycle after universal Kickoff is
 Understanding, Stages, Thinking, Drafting, Closeout, Done. Understanding is paired:
-ordinary Ticket Chat continues the durable Employee session, automatic dispatch does not
-run, and an Understanding proposal waits for approval before the Ticket advances to
-Stages.
+Panels dispatches one automatic opening turn into the durable Employee session, ordinary
+Ticket Chat continues that same session, and an Understanding proposal waits for approval
+before the Ticket advances to Stages.
 
 Startup provisions the listed skill directories into the planner Hermes home. A new
 specialist must therefore be both known to Worker type configuration and included in the

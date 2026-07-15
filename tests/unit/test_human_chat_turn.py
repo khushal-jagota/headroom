@@ -631,6 +631,49 @@ def _wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> bool:
     return False
 
 
+def _complete_automatic_opening(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    session_id: str,
+    now: int,
+) -> None:
+    turn = chat_data.start_turn(
+        conn,
+        ticket_id,
+        origin="worker",
+        mode="worker_step",
+        visible_role="worker",
+        visible_text="automatic opening",
+        output_role="assistant",
+        phase="thinking",
+        activity_label="Thinking",
+        now=now,
+    )
+    chat_data.attach_session_key(
+        conn,
+        turn.id,
+        entity_id=ticket_id,
+        session_key=session_id,
+        now=now,
+    )
+    chat_data.settle_chat_turn(
+        conn,
+        turn.id,
+        entity_id=ticket_id,
+        status="complete",
+        reply_text="opened",
+        output_role="assistant",
+        error=None,
+        now=now + 1,
+    )
+    conn.execute(
+        "UPDATE tickets SET employee_session_id = ?, ticket_status = 'paired_work' "
+        "WHERE id = ?",
+        (session_id, ticket_id),
+    )
+
+
 class _BlockingHumanGateway:
     def __init__(self) -> None:
         self.entered = threading.Event()
@@ -708,7 +751,8 @@ def test_paired_ticket_chat_reuses_employee_session_and_stays_paired_without_pro
             ownership_mode=StageOwnershipMode.paired,
             now=4,
         )
-        assert ticket.ticket_status is TicketStatus.paired_work
+        assert ticket.ticket_status is TicketStatus.empty
+        _complete_automatic_opening(conn, ticket_id, session_id="paired-session", now=5)
     finally:
         conn.close()
 
@@ -798,7 +842,8 @@ def test_new_worker_understanding_chat_route_reuses_session_and_proposal_parks(
             at_cap=AtCap.propose,
         )
         assert ticket.stage == "needs_understanding"
-        assert ticket.ticket_status is TicketStatus.paired_work
+        assert ticket.ticket_status is TicketStatus.empty
+        _complete_automatic_opening(conn, ticket.id, session_id="fake-sess-1", now=3)
         ticket_id = ticket.id
     finally:
         conn.close()
@@ -824,9 +869,9 @@ def test_new_worker_understanding_chat_route_reuses_session_and_proposal_parks(
                 "employee_session_id": row["employee_session_id"],
                 "ticket_status": row["ticket_status"],
                 "fields": json.loads(row["fields"]),
-                "complete_turns": check.execute(
+                "human_complete_turns": check.execute(
                     "SELECT COUNT(*) AS count FROM chat_turns "
-                    "WHERE entity_id = ? AND status = 'complete'",
+                    "WHERE entity_id = ? AND origin = 'human' AND status = 'complete'",
                     (ticket_id,),
                 ).fetchone()["count"],
             }
@@ -841,7 +886,7 @@ def test_new_worker_understanding_chat_route_reuses_session_and_proposal_parks(
         assert first.status_code == 200, first.text
         assert _wait_until(
             lambda: stored_ticket()["employee_session_id"] == "fake-sess-1"
-            and stored_ticket()["complete_turns"] == 1
+            and stored_ticket()["human_complete_turns"] == 1
         )
         after_first = stored_ticket()
         assert after_first["ticket_status"] == "paired_work"
@@ -854,7 +899,7 @@ def test_new_worker_understanding_chat_route_reuses_session_and_proposal_parks(
         assert second.status_code == 200, second.text
         assert _wait_until(
             lambda: stored_ticket()["employee_session_id"] == "fake-sess-1"
-            and stored_ticket()["complete_turns"] == 2
+            and stored_ticket()["human_complete_turns"] == 2
         )
         after_second = stored_ticket()
         assert after_second["ticket_status"] == "paired_work"

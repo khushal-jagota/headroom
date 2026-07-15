@@ -660,7 +660,7 @@ def test_poll_sets_off_today_ticket_after_approval_advance(tmp_path: Path) -> No
     assert _read(db, tid).ticket_status == TicketStatus.awaiting_approval
 
 
-def test_new_worker_paired_understanding_is_not_automatically_dispatched(
+def test_new_worker_paired_understanding_dispatches_one_opening_and_not_a_second(
     tmp_path: Path,
 ) -> None:
     db = _db(tmp_path)
@@ -688,14 +688,16 @@ def test_new_worker_paired_understanding_is_not_automatically_dispatched(
         conn.close()
 
     runner = _runner(db, _ProposingFake(_create_script(_complete_ev())))
+    loop = _loop(db, runner)
 
     assert _read(db, ticket.id).stage == "needs_understanding"
-    assert _loop(db, runner).poll_once() == []
-    _file_proposal(db, ticket.id, "understanding", "bounded understanding")
+    assert loop.poll_once() == [ticket.id]
+    assert runner.wait_idle(10.0)
     stored = _read(db, ticket.id)
     assert stored.stage == "needs_understanding"
-    assert fields_codec.get_slot(stored.fields, "understanding").proposal is not None
-    assert stored.ticket_status is TicketStatus.awaiting_approval
+    assert fields_codec.get_slot(stored.fields, "understanding").proposal is None
+    assert stored.ticket_status is TicketStatus.paired_work
+    assert loop.poll_once() == []
 
 
 def test_new_worker_discovery_runs_after_understanding_is_approved(tmp_path: Path) -> None:

@@ -11,8 +11,9 @@ import pytest
 
 from planner.chat import data as chat_data
 from planner.core import links as core_links
-from planner.core.contracts import LinkKind
+from planner.core.contracts import EventKind, LinkKind
 from planner.core.db import connect, create_schema
+from planner.core.events import append_event
 from planner.days import data as days_data
 from planner.runtime.automatic_employee_step_eligibility import (
     is_eligible_for_automatic_employee_step,
@@ -82,11 +83,68 @@ def _eligible(
     )
 
 
+def _worker_turn(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    now: int,
+    status: str = "complete",
+) -> None:
+    turn = chat_data.start_turn(
+        conn,
+        ticket_id,
+        origin="worker",
+        mode="worker_step",
+        visible_role="worker",
+        visible_text="automatic opening",
+        output_role="assistant",
+        phase="thinking",
+        activity_label="Thinking",
+        now=now,
+    )
+    if status != "running":
+        chat_data.settle_chat_turn(
+            conn,
+            turn.id,
+            entity_id=ticket_id,
+            status=status,  # type: ignore[arg-type]
+            reply_text="opened",
+            output_role="assistant",
+            error=None,
+            now=now + 1,
+        )
+
+
+def _human_turn(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> None:
+    turn = chat_data.start_turn(
+        conn,
+        ticket_id,
+        origin="human",
+        mode="message",
+        visible_role="human",
+        visible_text="earlier paired discussion",
+        output_role="assistant",
+        phase="thinking",
+        activity_label="Thinking",
+        now=now,
+    )
+    chat_data.settle_chat_turn(
+        conn,
+        turn.id,
+        entity_id=ticket_id,
+        status="complete",
+        reply_text="continued",
+        output_role="assistant",
+        error=None,
+        now=now + 1,
+    )
+
+
 @pytest.mark.parametrize(
     ("worker_type", "first_stage", "expected_eligible", "definition"),
     [
         ("coding", "needs_success", True, CODING_WORKER_TYPE_DEFINITION),
-        ("new_worker", "needs_understanding", False, NEW_WORKER_TYPE_DEFINITION),
+        ("new_worker", "needs_understanding", True, NEW_WORKER_TYPE_DEFINITION),
     ],
 )
 def test_shipped_worker_types_use_their_real_first_employee_stage_ownership(
@@ -110,7 +168,7 @@ def test_shipped_worker_types_use_their_real_first_employee_stage_ownership(
     [
         (StageOwnershipMode.worker, True),
         (StageOwnershipMode.user, False),
-        (StageOwnershipMode.paired, False),
+        (StageOwnershipMode.paired, True),
     ],
 )
 def test_effective_stage_ownership_controls_automatic_eligibility(
@@ -153,13 +211,244 @@ def test_membership_must_match_the_explicit_planning_day(tmp_path: Path) -> None
         conn.close()
 
 
+@pytest.mark.parametrize("employee_session_id", [None, "existing-session"])
+def test_paired_work_without_current_stage_opening_is_eligible(
+    tmp_path: Path,
+    employee_session_id: str | None,
+) -> None:
+    conn = _db(tmp_path)
+    try:
+        ticket = _ticket(conn, worker_type="new_worker")
+        conn.execute(
+            "UPDATE tickets SET ticket_status = ?, employee_session_id = ? WHERE id = ?",
+            (TicketStatus.paired_work.value, employee_session_id, ticket.id),
+        )
+        assert _eligible(conn, ticket)
+    finally:
+        conn.close()
+
+
+def test_paired_work_existing_session_is_eligible_for_later_silent_paired_stage(
+    tmp_path: Path,
+) -> None:
+    conn = _db(tmp_path)
+    try:
+        ticket = _ticket(conn, worker_type="exploration", ceiling="needs_answer")
+        _human_turn(conn, ticket.id, now=4)
+        conn.execute(
+            "UPDATE tickets SET stage = 'needs_answer', ticket_status = 'paired_work', "
+            "employee_session_id = 'existing-session' WHERE id = ?",
+            (ticket.id,),
+        )
+        append_event(
+            conn,
+            ticket.id,
+            EventKind.stage_changed,
+            {"from_stage": "needs_research", "to_stage": "needs_answer", "cause": "test"},
+            10,
+        )
+
+        assert _eligible(
+            conn,
+            ticket,
+            definition=configured_worker_type_registry().require("exploration"),
+        )
+    finally:
+        conn.close()
+
+
+def test_paired_work_existing_session_is_not_eligible_after_current_stage_opening(
+    tmp_path: Path,
+) -> None:
+    conn = _db(tmp_path)
+    try:
+        ticket = _ticket(conn, worker_type="exploration", ceiling="needs_answer")
+        conn.execute(
+            "UPDATE tickets SET stage = 'needs_answer', ticket_status = 'paired_work', "
+            "employee_session_id = 'existing-session' WHERE id = ?",
+            (ticket.id,),
+        )
+        append_event(
+            conn,
+            ticket.id,
+            EventKind.stage_changed,
+            {"from_stage": "needs_research", "to_stage": "needs_answer", "cause": "test"},
+            10,
+        )
+        _worker_turn(conn, ticket.id, now=11)
+
+        assert not _eligible(
+            conn,
+            ticket,
+            definition=configured_worker_type_registry().require("exploration"),
+        )
+    finally:
+        conn.close()
+
+
+def test_new_same_effective_paired_event_is_not_a_second_opening_marker(
+    tmp_path: Path,
+) -> None:
+    conn = _db(tmp_path)
+    try:
+        ticket = _ticket(conn, worker_type="new_worker")
+        append_event(
+            conn,
+            ticket.id,
+            EventKind.stage_ownership_changed,
+            {
+                "stage": "needs_understanding",
+                "ownership_mode": "paired",
+                "effective_ownership_mode": "paired",
+            },
+            3,
+        )
+        _worker_turn(conn, ticket.id, now=4)
+        conn.execute(
+            "UPDATE tickets SET ticket_status = 'paired_work', employee_session_id = ? "
+            "WHERE id = ?",
+            ("existing-session", ticket.id),
+        )
+        append_event(
+            conn,
+            ticket.id,
+            EventKind.stage_ownership_changed,
+            {
+                "stage": "needs_understanding",
+                "ownership_mode": "paired",
+                "previous_effective_ownership_mode": "paired",
+                "effective_ownership_mode": "paired",
+            },
+            6,
+        )
+
+        assert not _eligible(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
+    finally:
+        conn.close()
+
+
+def test_historical_paired_event_without_previous_effective_mode_remains_a_marker(
+    tmp_path: Path,
+) -> None:
+    conn = _db(tmp_path)
+    try:
+        ticket = _ticket(conn, worker_type="new_worker")
+        _worker_turn(conn, ticket.id, now=3)
+        conn.execute(
+            "UPDATE tickets SET ticket_status = 'paired_work', employee_session_id = ? "
+            "WHERE id = ?",
+            ("existing-session", ticket.id),
+        )
+        append_event(
+            conn,
+            ticket.id,
+            EventKind.stage_ownership_changed,
+            {
+                "stage": "needs_understanding",
+                "ownership_mode": "paired",
+                "effective_ownership_mode": "paired",
+            },
+            5,
+        )
+
+        assert _eligible(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    "break_one_conjunct",
+    [
+        "membership",
+        "active_chat_turn",
+        "terminal",
+        "next_gate",
+        "proposal",
+        "scope",
+        "blocker",
+    ],
+)
+def test_paired_stage_preserves_every_non_ownership_eligibility_factor(
+    tmp_path: Path, break_one_conjunct: str
+) -> None:
+    conn = _db(tmp_path)
+    try:
+        ticket = _ticket(
+            conn,
+            worker_type="new_worker",
+            ceiling="needs_understanding",
+            at_cap=AtCap.propose,
+        )
+        assert _eligible(conn, ticket)
+
+        definition: WorkerTypeDefinition | Any = NEW_WORKER_TYPE_DEFINITION
+        if break_one_conjunct == "membership":
+            days_data.remove_day_ticket(conn, PLANNING_DAY_ID, ticket.id, 5)
+        elif break_one_conjunct == "active_chat_turn":
+            chat_data.start_turn(
+                conn,
+                ticket.id,
+                origin="human",
+                mode="message",
+                visible_role="human",
+                visible_text="hello",
+                output_role="assistant",
+                phase="thinking",
+                activity_label="Thinking",
+                now=5,
+            )
+        elif break_one_conjunct == "terminal":
+            conn.execute("UPDATE tickets SET stage = 'done' WHERE id = ?", (ticket.id,))
+        elif break_one_conjunct == "next_gate":
+
+            class NoNextGate:
+                def is_terminal(self, _stage: str) -> bool:
+                    return False
+
+                def gating_field(self, _stage: str) -> None:
+                    return None
+
+                def stage_definition(self, _stage: str) -> object:
+                    return type(
+                        "Stage",
+                        (),
+                        {"default_ownership_mode": StageOwnershipMode.paired},
+                    )()
+
+            definition = NoNextGate()
+        elif break_one_conjunct == "proposal":
+            tickets_data.file_proposal(
+                conn,
+                ticket.id,
+                field="understanding",
+                body="parked",
+                actor="agent",
+                now=5,
+            )
+        elif break_one_conjunct == "scope":
+            tickets_data.change_scope(
+                conn,
+                ticket.id,
+                ceiling="needs_understanding",
+                at_cap=AtCap.stop,
+                actor="human",
+                now=5,
+            )
+        else:
+            blocker = _ticket(conn, planning_day_id=None)
+            core_links.add_link(conn, blocker.id, ticket.id, LinkKind.blocks, 5)
+
+        assert not _eligible(conn, ticket, definition=definition)
+    finally:
+        conn.close()
+
+
 @pytest.mark.parametrize(
     "ticket_status",
     [
         TicketStatus.agent_running_step,
         TicketStatus.awaiting_approval,
         TicketStatus.user_takeover,
-        TicketStatus.paired_work,
         TicketStatus.errored,
     ],
 )
@@ -439,7 +728,7 @@ def test_new_worker_novel_stage_is_never_interpreted_as_coding(tmp_path: Path) -
     try:
         ticket = _ticket(conn, worker_type="new_worker")
         assert ticket.stage == "needs_understanding"
-        assert not _eligible(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
+        assert _eligible(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
         conn.execute("UPDATE tickets SET ticket_status = 'empty' WHERE id = ?", (ticket.id,))
         with pytest.raises(Exception, match="stage outside the linear order"):
             _eligible(conn, ticket, definition=CODING_WORKER_TYPE_DEFINITION)

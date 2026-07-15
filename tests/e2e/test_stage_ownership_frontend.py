@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 import httpx
 from tests.e2e.conftest import WAIT_MS
 
@@ -95,7 +97,15 @@ def test_workspace_stage_mark_renders_paired_work_on_desktop_and_mobile(
     )["id"]
     api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
     detail = _put_stage_owner(server, ticket_id, "needs_success", "paired")
-    assert detail["ticket_status"] == "paired_work"
+    assert detail["ticket_status"] == "empty"
+    # Automatic opening is covered through the real runner in the new-worker public flow.
+    # This test isolates rendering of the post-opening paired resting state.
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "UPDATE tickets SET ticket_status = 'paired_work', employee_session_id = ? "
+            "WHERE id = ?",
+            ("paired-render-session", ticket_id),
+        )
 
     for viewport in ({"width": 1440, "height": 900}, {"width": 390, "height": 844}):
         page = context_factory().new_page()
