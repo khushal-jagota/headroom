@@ -8,7 +8,7 @@
 ## Disposition
 
 1. **Accepted and corrected.** A deterministic fake-WebSocket test was added first. It reproduced the stale-callback failure (`reconnecting` instead of `connected`, with stale state effects). `onopen`, `onmessage`, and `onclose` now return unless their socket is still the current socket and the stream is running. The new test passes and is part of `npm --prefix web test`.
-2. **Accepted and corrected.** `frontend-report.md` now names `index-BdxCKt4n.js`, the 500 ms fixture heartbeat, the outside-sandbox Playwright result, and the stale-handler RED/GREEN correction.
+2. **Accepted and corrected.** `frontend-report.md` records the served generated bundle and deterministic fixture heartbeat. Current-main closeout refreshes that evidence after the combined bundle rebuild.
 
 A fresh read-only full-diff re-review follows after these corrections.
 

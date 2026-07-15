@@ -150,3 +150,10 @@ def test_ws_heartbeat_ms_can_be_overridden_by_environment() -> None:
     cfg = load_config(path=None, env={"PLAN_WS_HEARTBEAT_MS": "125"})
 
     assert cfg.ws_heartbeat_ms == 125
+
+
+def test_checked_in_config_exposes_ws_heartbeat_cadence() -> None:
+    path = Path(__file__).parents[2] / "config.yaml"
+
+    assert "ws_heartbeat_ms: 15000" in path.read_text()
+    assert load_config(path=str(path), env={}).ws_heartbeat_ms == 15000

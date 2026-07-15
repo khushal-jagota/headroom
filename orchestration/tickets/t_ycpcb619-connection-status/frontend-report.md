@@ -15,8 +15,8 @@
 - `tests/e2e/test_connection_status.py`
 - `docs/frontend.md`
 - `web/dist/index.html`
-- `web/dist/assets/index-BdxCKt4n.js`
-- removed old built chunk `web/dist/assets/index-Lgae3D_0.js`
+- `web/dist/assets/index-BKICWA5O.js`
+- removed prior current-main built chunk `web/dist/assets/index-BjBI2u8N.js`
 
 No backend production files, `PROGRESS.md`, `decisions.md`, commits, merges, deploys, or live state were touched by this frontend slice.
 
@@ -129,4 +129,4 @@ All checks passed!
 
 The focused Playwright case was rerun outside the Codex sandbox and passes in Chromium. It records the complete `reconnecting → connected → reconnecting → offline → connected` sequence, cursor replay from the prior confirmed cursor, keyed event invalidation, one subscribed-resource reconciliation for state changed without an event frame, stable screen identity, and desktop/mobile status geometry.
 
-Independent implementation review found that callbacks from a superseded WebSocket could still change global health, cursor, invalidations, or retry state. A deterministic fake-WebSocket regression was added first and failed with stale callbacks leaving the state `reconnecting`; guards were then added to `onopen`, `onmessage`, and `onclose`, after which `ws-connection.test.mjs` passes. The final production bundle is `index-BdxCKt4n.js` and the e2e heartbeat fixture is 500 ms.
+Independent implementation review found that callbacks from a superseded WebSocket could still change global health, cursor, invalidations, or retry state. A deterministic fake-WebSocket regression was added first and failed with stale callbacks leaving the state `reconnecting`; guards were then added to `onopen`, `onmessage`, and `onclose`, after which `ws-connection.test.mjs` passes. Current-main closeout rebuilt the combined production bundle as `index-BKICWA5O.js`; the e2e heartbeat fixture is 500 ms.
