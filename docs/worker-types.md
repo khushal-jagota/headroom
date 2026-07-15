@@ -9,10 +9,12 @@ Panels stores that choice on the Ticket for its whole life. A read returns the T
 stored Stage and Worker type as they are; it does not substitute coding behavior or ask a
 registry to reinterpret them.
 
-Two Worker types ship today:
+Three Worker types ship today:
 
 - **`coding`** handles product and repository work.
 - **`new_worker`** designs and lands a new kind of worker.
+- **`exploration`** turns an under-defined premise into a grounded answer, then applies
+  only the follow-up the user approves.
 
 Tests also register **`probe`**. It has deliberately unfamiliar Stage and field names so
 the test suite catches code that still assumes every Ticket is coding-shaped. It is not a
@@ -36,17 +38,20 @@ advance targets, identify gates and terminals, calculate the default ceiling and
 working Stage, validate a Ticket position, and provide the field order used for
 external-work reconciliation.
 
-The shipped `coding` and `new_worker` definitions currently default every non-terminal
-Stage to worker ownership. New Worker types still choose deliberately for each Stage;
-they do not inherit that choice from registry order or another definition.
+The shipped `coding` and `new_worker` definitions default every non-terminal Stage to
+worker ownership. `exploration` uses paired ownership for Understanding and Answer, where
+the user and worker establish the frame and reach the decision together. Its other
+non-terminal Stages default to worker ownership. Every Worker type chooses deliberately
+for each Stage; it does not inherit that choice from registry order or another definition.
 
 This makes the definition the one authority for both the data and behavior of that
 workflow. Ticket contracts still own universal Ticket facts such as status, per-Ticket
 ownership overrides, and scope, but they do not define a coding lifecycle.
 
 _Code paths:_ `src/planner/worker_types/contracts.py` contains the immutable declaration
-types and behavior. `src/planner/worker_types/coding.py` and
-`src/planner/worker_types/new_worker.py` contain the two shipped definitions.
+types and behavior. `src/planner/worker_types/coding.py`,
+`src/planner/worker_types/new_worker.py`, and
+`src/planner/worker_types/exploration.py` contain the three shipped definitions.
 
 ## Validation and the narrow registry
 
@@ -104,7 +109,7 @@ behavior is needed. Rules under `src/planner/tickets/logic/` receive
 Application composition lives in `src/planner/worker_types/configuration.py`. It owns the
 catalogs of known specialist skills and toolset profiles, the ordered tuple of shipped
 definitions, and the production registry built from them. The shipped tuple currently
-contains `coding` and `new_worker`; its order is also the manifest order.
+contains `coding`, `new_worker`, and `exploration`; its order is also the manifest order.
 
 Tests use the explicit configuration test seam to install a registry containing the
 additional `probe` definition, then restore the production registry. Production code and
@@ -138,8 +143,9 @@ its default ownership mode; terminal Stages carry none. The Ticket response supp
 current Stage's default and effective ownership, so clients do not reconstruct the rule.
 
 The frontend derives one lifecycle per Worker type from this served manifest. It renders a
-Ticket against the entry matching the Ticket's stored `worker_type`. A coding Ticket and a
-`new_worker` Ticket therefore show different Stage spines without a frontend coding table.
+Ticket against the entry matching the Ticket's stored `worker_type`. Coding, `new_worker`,
+and `exploration` Tickets therefore show their own Stage spines without frontend type
+tables.
 
 _Code paths:_ `src/planner/core/server.py` serves the registry manifest;
 `web/src/lib/lifecycle.ts` derives the frontend lifecycle.
@@ -155,6 +161,7 @@ that skill with `skill_view` and follows its Stage-specific guidance:
 
 - `panels-worker-coding` guides coding Tickets.
 - `panels-worker-new-worker` guides `new_worker` Tickets.
+- `panels-worker-exploration` guides `exploration` Tickets.
 
 Startup provisions the listed skill directories into the planner Hermes home. A new
 specialist must therefore be both known to Worker type configuration and included in the
@@ -207,4 +214,4 @@ prefix, and reconciliation support before changing state.
 
 ---
 
-_Last verified: 2026-07-14._
+_Last verified: 2026-07-15._

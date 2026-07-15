@@ -30,6 +30,7 @@ current step only.
 Worker skills:
 - `panels-worker-coding` — coding tickets.
 - `panels-worker-new-worker` — new_worker tickets (designing another worker).
+- `panels-worker-exploration` — exploration tickets.
 - `probe-worker` — the probe fixture Worker type (test genericity proof).
 
 ### Who owns the current Stage

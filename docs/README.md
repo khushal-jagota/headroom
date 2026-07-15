@@ -52,9 +52,9 @@ its old event lines are replaced by one minimal deletion audit.
   it moves through, and the resolution engine, scope, and approval gate that govern
   every advance. The correctness heart of the system.
 - **Worker types** (`worker-types.md`) — the registry that declares each workflow: one
-  Worker type's Stages, gates, fields, and its worker (a specialist skill). Two ship —
-  `coding` and `new_worker`; the engine and the workers both read the Worker type
-  instead of branching.
+  Worker type's Stages, gates, fields, and its worker (a specialist skill). Three ship —
+  `coding`, `new_worker`, and `exploration`; the engine and the workers both read the
+  Worker type instead of branching.
 - **The employee runtime** (`employee-runtime.md`) — the single AI worker that
   carries each worker-owned ticket Stage forward, and the loop that fires it, watches
   it, and feeds proposals back through the gate.
@@ -85,5 +85,5 @@ its old event lines are replaced by one minimal deletion audit.
 
 ---
 
-_Last verified: 2026-07-14 · Covers the system landscape; each doc carries its own
+_Last verified: 2026-07-15 · Covers the system landscape; each doc carries its own
 code paths._

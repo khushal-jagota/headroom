@@ -1,9 +1,8 @@
 """Job B — the shipped ``new_worker`` Worker type: its contract, its exact manifest,
 and a compact drive-to-done through the real ``data.*`` writers.
 
-``new_worker`` is the second production type (registered in the production
-Worker-type configuration alongside ``coding``). Its worker designs and
-lands ANOTHER worker; its lifecycle is a bespoke thinking scaffold
+``new_worker`` is the production type for designing another worker. Its worker
+designs and lands ANOTHER worker; its lifecycle is a bespoke thinking scaffold
 (``needs_kickoff -> needs_stages -> needs_thinking -> needs_drafting ->
 needs_closeout -> done``) whose three middle stages/fields are novel. This module proves:
 - the definition validates and serializes to its exact manifest (default_ceiling is
@@ -38,8 +37,8 @@ from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
 from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
 from planner.worker_types.registry import WorkerTypeRegistry
 
-# The skills the production registry validator needs (R14): the two shipped worker
-# specialists plus the base role.
+# The isolated new_worker validator needs its specialist, coding's specialist, and the
+# base role. This fixture does not compose the complete production registry.
 _KNOWN_SKILLS = frozenset({"panels-worker", "panels-worker-coding", "panels-worker-new-worker"})
 _KNOWN_TOOLSET_PROFILES = frozenset({"default"})
 
@@ -73,8 +72,12 @@ def test_registry_validates_new_worker() -> None:
 
 
 def test_production_registry_carries_new_worker() -> None:
-    # new_worker ships in the production singleton alongside coding.
-    assert PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types() == ("coding", "new_worker")
+    # new_worker ships in the production singleton alongside coding and exploration.
+    assert PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types() == (
+        "coding",
+        "new_worker",
+        "exploration",
+    )
     assert PRODUCTION_WORKER_TYPE_REGISTRY.require("new_worker").worker_type == "new_worker"
 
 
