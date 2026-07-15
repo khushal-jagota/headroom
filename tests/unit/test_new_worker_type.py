@@ -4,7 +4,7 @@ and a compact drive-to-done through the real ``data.*`` writers.
 ``new_worker`` is the production type for designing another worker. Its worker
 designs and lands ANOTHER worker; its lifecycle is a bespoke thinking scaffold
 (``needs_kickoff -> needs_understanding -> needs_stages -> needs_thinking -> needs_drafting ->
-needs_closeout -> done``) whose three middle stages/fields are novel. This module proves:
+needs_closeout -> done``) whose four middle stages/fields are novel. This module proves:
 - the definition validates and serializes to its exact manifest (default_ceiling is
   the leading ``needs_kickoff``; first worker stage is ``needs_understanding``);
 - a ``new_worker`` ticket is created and driven stage-by-stage (propose -> approve ->
