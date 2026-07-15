@@ -344,6 +344,21 @@ are agent skills a human reads as prose, not a fetch surface.
 
 # Runtime (readiness loop + employee step runner)
 
+## D-server-lifecycle-owner — The foreground serve command owns controlled replacement
+
+`panels serve` is the stable process owner; the FastAPI application and Employee runtime
+run in one replaceable child. `panels restart` can ask that owner for a replacement but
+cannot supply a PID, worktree, interpreter, environment, or launch command. The owner
+acknowledges first, lets the existing application shutdown settle through its one current
+deadline, waits for that exact child to exit, and only then starts the next generation
+from the launch state captured by `serve`.
+
+Workers finish durable pre-restart writes before using the command. They never inspect
+or signal the server process and never start `panels serve` from a Ticket worktree. When
+the controlled command is unavailable, the worker reports the operator action and stops.
+This is an operational safety seam, not an OS security sandbox; same-user hostile-process
+isolation remains out of scope.
+
 ## D-automatic-employee-step-eligibility — One complete automatic-start decision
 
 **Automatic Employee-step eligibility** is the whole answer to whether Planner may automatically start a

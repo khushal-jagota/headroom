@@ -4,6 +4,42 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-15): controlled Panels restart supervisor
+
+Current build stage:
+
+- The implementation is complete on isolated branch `codex/panels-restart-supervisor`.
+  `panels serve` is now the stable foreground owner of one replaceable application
+  process, and `panels restart` requests replacement through a local versioned control
+  exchange. The server launch root, interpreter, environment, and log streams come only
+  from the original `serve` process; a Ticket worktree cannot choose the replacement.
+- Stopgap commit `430cf92` separately makes the server operator-owned in the shared and
+  new-worker skills. Workers never discover or signal a PID, run `panels serve`, or launch
+  a worktree replacement. Until the controlled command is available, they report that a
+  restart is required and stop.
+- The branch includes current `main` through merge `ddaf5c1`; the feature has not been
+  merged into `main`, and no live server was stopped or restarted.
+
+What just passed:
+
+- Focused lifecycle acceptance passes 12 real-process cases. They cover duplicate
+  ownership, same-socket safety, acknowledgement ordering, operator shutdown during
+  incomplete and accepted requests, unexpected-child priority over queued restart,
+  serial generations, captured-root restart, unexpected exit, and cleanup.
+- The integrated control/shutdown/provisioned-skill bundle passes 95 tests. Ruff is
+  clean, mypy reports no issues across 120 source files, and `git diff --check` is clean.
+- The corrected implementation reviews report `NO FINDINGS` on both Standards and Spec.
+  Two read-only Codex implementation reviews report `NO VIOLATIONS`.
+
+Next step:
+
+- Run the single canonical `./verify`, record its full output, then commit the final
+  evidence and hand the isolated branch to the user without merging it into `main`.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-15): paired new-worker Understanding Stage
 
 Current build stage:

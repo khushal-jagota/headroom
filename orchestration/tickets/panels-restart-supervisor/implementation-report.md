@@ -9,8 +9,10 @@ uses only the versioned Unix-socket protocol, prints acceptance only after valid
 the supervisor response, and cannot choose the replacement root, interpreter, or
 environment.
 
-The stopgap commit `430cf92` remains intact. No live Panels server was stopped or
-restarted. No commit or merge was made, and `./verify` was not run.
+The stopgap commit `430cf92` remains intact. The implementation is committed on the
+isolated `codex/panels-restart-supervisor` branch, which includes current `main` through
+merge `ddaf5c1`. Nothing was merged into `main`, no live Panels server was stopped or
+restarted, and `./verify` has not yet run.
 
 ## RED -> GREEN record
 
@@ -227,3 +229,27 @@ Success: no issues found in 122 source files
 ```
 
 `git diff --check` is also clean.
+
+## Current-main integration and closing review
+
+The isolated branch was merged with current `main` at `d6d5d1a` without conflict. The
+skill stopgap remains present after that integration. The integrated focused results are:
+
+```text
+tests/e2e/test_server_lifecycle.py
+............                                                             [100%]
+
+tests/unit/test_server_lifecycle_control.py tests/unit/test_minds.py tests/unit/test_server_shutdown_process.py
+........................................................................ [ 75%]
+.......................                                                  [100%]
+
+ruff
+All checks passed!
+
+mypy
+Success: no issues found in 120 source files
+```
+
+The final Standards and Spec reviews both report `NO FINDINGS`. The final read-only
+Codex implementation review reports `NO VIOLATIONS`. The canonical `./verify` remains
+the only outstanding completion gate.

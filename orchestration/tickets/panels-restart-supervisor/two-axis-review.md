@@ -73,3 +73,16 @@ Every finding is accepted.
   control request. A queued request can no longer turn an already-dead child into a
   replacement generation.
 - Both lifecycle races have RED-first real-process regressions.
+
+## Closing re-reviews
+
+The first corrected re-review returned `NO FINDINGS` on the Spec axis. Standards found
+two remaining cleanup items: developer vocabulary in `docs/systems.md` and duplicated
+signal-aware selector loops inside the supervisor. Both were accepted. The system doc
+now uses plain user language, and one lifecycle-aware receive function owns both the
+incomplete-request and accepted-client waits.
+
+Final results:
+
+- Standards: `NO FINDINGS`
+- Spec: `NO FINDINGS`
