@@ -27,6 +27,9 @@ What just passed:
   compile/static/CSS checks, Svelte with zero errors or warnings, the production build,
   all frontend tests, and 114 browser tests. Every gate is `ok` and the run ends
   `VERIFY: PASS`.
+- A post-merge read-only Codex review of the live-session identity commit reports
+  `NO VIOLATIONS` across identity mapping, ambiguity handling, adapter composition,
+  fallback behavior, API contracts, and regression coverage.
 
 Next step:
 
