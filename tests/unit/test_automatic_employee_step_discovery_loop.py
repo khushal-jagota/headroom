@@ -660,7 +660,9 @@ def test_poll_sets_off_today_ticket_after_approval_advance(tmp_path: Path) -> No
     assert _read(db, tid).ticket_status == TicketStatus.awaiting_approval
 
 
-def test_new_worker_discovery_runs_the_real_novel_stage_proposal_flow(tmp_path: Path) -> None:
+def test_new_worker_paired_understanding_is_not_automatically_dispatched(
+    tmp_path: Path,
+) -> None:
     db = _db(tmp_path)
     conn = connect(db)
     try:
@@ -676,6 +678,59 @@ def test_new_worker_discovery_runs_the_real_novel_stage_proposal_flow(tmp_path: 
             conn,
             ticket.id,
             field="kickoff",
+            actor="human",
+            now=0,
+            next_ceiling="needs_stages",
+            at_cap=AtCap.propose,
+        )
+        days_data.add_day_ticket(conn, TODAY_DAY_ID, ticket.id, 0)
+    finally:
+        conn.close()
+
+    runner = _runner(db, _ProposingFake(_create_script(_complete_ev())))
+
+    assert _read(db, ticket.id).stage == "needs_understanding"
+    assert _loop(db, runner).poll_once() == []
+    _file_proposal(db, ticket.id, "understanding", "bounded understanding")
+    stored = _read(db, ticket.id)
+    assert stored.stage == "needs_understanding"
+    assert fields_codec.get_slot(stored.fields, "understanding").proposal is not None
+    assert stored.ticket_status is TicketStatus.awaiting_approval
+
+
+def test_new_worker_discovery_runs_after_understanding_is_approved(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    conn = connect(db)
+    try:
+        ticket = tickets_data.create_ticket(
+            conn,
+            worker_type="new_worker",
+            title="Design a worker",
+            actor="human",
+            now=0,
+            title_max_chars=200,
+        )
+        ticket = tickets_data.accept_proposal(
+            conn,
+            ticket.id,
+            field="kickoff",
+            actor="human",
+            now=0,
+            next_ceiling="needs_stages",
+            at_cap=AtCap.propose,
+        )
+        tickets_data.file_proposal(
+            conn,
+            ticket.id,
+            field="understanding",
+            body="bounded understanding",
+            actor="agent",
+            now=0,
+        )
+        ticket = tickets_data.accept_proposal(
+            conn,
+            ticket.id,
+            field="understanding",
             actor="human",
             now=0,
             next_ceiling="needs_stages",

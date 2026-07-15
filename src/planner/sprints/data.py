@@ -419,7 +419,7 @@ def assign_item_sprint(
 def _child_stage_in_progress(worker_type_definition: WorkerTypeDefinition, stage: str) -> bool:
     """Per-type "in progress by stage": a non-terminal linear stage strictly past the
     type's first worker stage (its first real-work stage — needs_success for coding,
-    needs_stages for new_worker). Resolves the row's own definition so the pure
+    needs_understanding for new_worker). Resolves the row's own definition so the pure
     ``derive_sprint_item_status`` consumes only a precomputed boolean.
 
     Keyed off first_worker_stage, NOT default_ceiling (which is now the leading

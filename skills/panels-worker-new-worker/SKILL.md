@@ -10,18 +10,38 @@ skill that guides it. A worker is a short lifecycle — ordered Stages, each wit
 gated field and one default ownership mode — plus the skill that teaches an agent to
 do each Stage well.
 
-The hard part isn't writing files; it's the **thinking** — what the worker is for, what shape its lifecycle takes, what "good" means at each stage, and who does the work. Each stage below is a thinking beat the human reviews before you move on.
+The hard part isn't writing files; it's the **thinking** — what the worker is for, what shape its lifecycle takes, what "good" means at each stage, and who does the work. Understanding is the paired beat after universal Kickoff: use the same Ticket Chat conversation to learn enough with the human before you design the lifecycle. Each later stage is a thinking beat the human reviews before you move on.
 
 ### The stages
 
-**Stages → Thinking → Drafting → Closeout → Done**
+**Understanding → Stages → Thinking → Drafting → Closeout → Done**
 
+- **needs_understanding** — the short paired conversation that captures what this worker is for, where the hard judgment lives, and the boundaries the lifecycle must respect.
 - **needs_stages** — the new worker's lifecycle: its ordered stages, what each one needs, and who owns each Stage by default.
 - **needs_thinking** — the design substance: what a good result looks like, who does the work, the standard each stage holds.
 - **needs_drafting** — the artifacts: the new worker's `SKILL.md` and its Worker type definition.
 - **needs_closeout** — landing it: files placed, registered, provisioned; a restart makes it live.
 
 (`needs_kickoff`, `done`, and `dropped` are the universal bookends every worker shares.)
+
+### needs_understanding — understand the worker before designing it
+
+This is paired work. Stay in the ordinary Ticket Chat conversation with the same Employee.
+Do not recreate or restate chat, session, approval, Take over, Release, or dispatch
+machinery here; panels-worker owns those shared rules.
+
+Begin with a small purposeful core set. Cover:
+
+- **purpose/outcome** — what the worker is for, who uses it, and what a successful run leaves behind.
+- **hard, ambiguous, or risky work and human judgment** — where the worker needs judgment, accountability, external access, or a reviewer decision.
+- **constraints, examples, and boundaries** — concrete examples, non-goals, source or tool limits, wording/style constraints, and what must never happen.
+
+Follow up only when an answer exposes a material gap. Do not ask for polish, preference, or
+extra detail that will not change the lifecycle. Stop when those categories are sufficiently understood to design the lifecycle and its ownership defaults.
+
+Propose a concise durable Understanding result. It should carry forward only the facts
+the later Stages need: the worker's purpose/outcome, the hard judgment points, the
+constraints/examples/boundaries, and any open risk that should shape the lifecycle.
 
 ### needs_stages — shape the lifecycle
 

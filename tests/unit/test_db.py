@@ -7,6 +7,7 @@ import pytest
 
 from planner.core import db as db_module
 from planner.core.db import SCHEMA_VERSION, connect, create_schema
+from planner.tickets import data as tickets_data
 
 _EMPTY_CODING_FIELDS = json.dumps(
     {
@@ -992,6 +993,205 @@ def test_kickoff_migration_rolls_back_failed_foreign_key_check_and_preserves_lin
     ] == [("day_valid", "t_existing")]
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    conn.close()
+
+
+def test_create_schema_adds_missing_new_worker_understanding_slot_idempotently(tmp_path):
+    conn = connect(str(tmp_path / "new-worker-understanding-slot.db"))
+    create_schema(conn)
+    old_new_worker_fields = json.dumps(
+        {
+            "kickoff": {"value": "kickoff value", "proposal": None, "user_note": None},
+            "stages": {"value": "stages value", "proposal": None, "user_note": "stage note"},
+            "thinking": {"value": None, "proposal": None, "user_note": None},
+            "drafting": {
+                "value": None,
+                "proposal": {"body": "draft", "proposed_by": "agent", "created_at": 6},
+                "user_note": None,
+            },
+            "closeout": {"value": None, "proposal": None, "user_note": None},
+        },
+        separators=(",", ":"),
+    )
+    already_migrated_fields = json.dumps(
+        {
+            "kickoff": {"value": "kickoff", "proposal": None, "user_note": None},
+            "understanding": {
+                "value": "keep this",
+                "proposal": None,
+                "user_note": "do not normalize",
+            },
+            "stages": {"value": None, "proposal": None, "user_note": None},
+            "thinking": {"value": None, "proposal": None, "user_note": None},
+            "drafting": {"value": None, "proposal": None, "user_note": None},
+            "closeout": {"value": None, "proposal": None, "user_note": None},
+        },
+        separators=(",", ":"),
+    )
+    coding_fields = _EMPTY_CODING_FIELDS + "\n"
+    conn.executemany(
+        "INSERT INTO tickets ("
+        "id, title, worker_type, stage, priority, deadline, project_id, sprint_item_id, "
+        "sprint_id, recap, ceiling, at_cap, ticket_status, stage_ownership_overrides, "
+        "employee_session_id, alias, fields, created_at, updated_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                "t_kickoff",
+                "Kickoff legacy",
+                "new_worker",
+                "needs_kickoff",
+                "P1",
+                "2026-08-01",
+                None,
+                None,
+                None,
+                "recap",
+                "needs_kickoff",
+                "stop",
+                "awaiting_approval",
+                json.dumps({"needs_stages": "user"}, separators=(",", ":")),
+                "employee-session",
+                "legacy-alias",
+                old_new_worker_fields,
+                10,
+                11,
+            ),
+            (
+                "t_later",
+                "Later legacy",
+                "new_worker",
+                "needs_stages",
+                "P2",
+                None,
+                None,
+                None,
+                None,
+                "",
+                "needs_closeout",
+                "propose",
+                "paired_work",
+                "{}",
+                None,
+                None,
+                old_new_worker_fields,
+                20,
+                21,
+            ),
+            (
+                "t_done",
+                "Already migrated",
+                "new_worker",
+                "done",
+                "P3",
+                None,
+                None,
+                None,
+                None,
+                "",
+                "done",
+                "propose",
+                "empty",
+                "{}",
+                None,
+                None,
+                already_migrated_fields,
+                30,
+                31,
+            ),
+            (
+                "t_coding",
+                "Coding unchanged",
+                "coding",
+                "needs_success",
+                "P3",
+                None,
+                None,
+                None,
+                None,
+                "",
+                "needs_success",
+                "propose",
+                "empty",
+                "{}",
+                None,
+                None,
+                coding_fields,
+                40,
+                41,
+            ),
+        ],
+    )
+
+    create_schema(conn)
+    first_rows = {
+        row["id"]: dict(row)
+        for row in conn.execute(
+            "SELECT id, worker_type, stage, priority, deadline, recap, ceiling, at_cap, "
+            "ticket_status, stage_ownership_overrides, employee_session_id, alias, "
+            "fields, created_at, updated_at FROM tickets ORDER BY id"
+        )
+    }
+    create_schema(conn)
+    second_rows = {
+        row["id"]: dict(row)
+        for row in conn.execute(
+            "SELECT id, worker_type, stage, priority, deadline, recap, ceiling, at_cap, "
+            "ticket_status, stage_ownership_overrides, employee_session_id, alias, "
+            "fields, created_at, updated_at FROM tickets ORDER BY id"
+        )
+    }
+
+    assert second_rows == first_rows
+    for ticket_id in ("t_kickoff", "t_later"):
+        fields = json.loads(first_rows[ticket_id]["fields"])
+        assert list(fields) == [
+            "kickoff",
+            "understanding",
+            "stages",
+            "thinking",
+            "drafting",
+            "closeout",
+        ]
+        assert fields["understanding"] == {"value": None, "proposal": None, "user_note": None}
+        expected_without_understanding = json.loads(old_new_worker_fields)
+        del fields["understanding"]
+        assert fields == expected_without_understanding
+    assert {
+        key: first_rows["t_kickoff"][key]
+        for key in (
+            "worker_type",
+            "stage",
+            "priority",
+            "deadline",
+            "recap",
+            "ceiling",
+            "at_cap",
+            "ticket_status",
+            "stage_ownership_overrides",
+            "employee_session_id",
+            "alias",
+            "created_at",
+            "updated_at",
+        )
+    } == {
+        "worker_type": "new_worker",
+        "stage": "needs_kickoff",
+        "priority": "P1",
+        "deadline": "2026-08-01",
+        "recap": "recap",
+        "ceiling": "needs_kickoff",
+        "at_cap": "stop",
+        "ticket_status": "awaiting_approval",
+        "stage_ownership_overrides": json.dumps({"needs_stages": "user"}, separators=(",", ":")),
+        "employee_session_id": "employee-session",
+        "alias": "legacy-alias",
+        "created_at": 10,
+        "updated_at": 11,
+    }
+    assert json.loads(first_rows["t_done"]["fields"]) == json.loads(already_migrated_fields)
+    assert first_rows["t_coding"]["fields"] == coding_fields
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     conn.close()
 
 
@@ -2317,6 +2517,102 @@ def test_v17_rows_preserve_actual_worker_type_and_stage(tmp_path):
         ("t_new_worker", "new_worker", "needs_stages"),
     ]
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_create_schema_backfills_historical_new_worker_coding_fields_for_audit(tmp_path):
+    conn = connect(str(tmp_path / "historical-new-worker-coding-fields.db"))
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.executescript(_typed_ticket_ddl("ticket_type", "state"))
+    original_fields = json.dumps(
+        {
+            "kickoff": {"value": "legacy kickoff", "proposal": None, "user_note": "keep kickoff"},
+            "success": {"value": "legacy success", "proposal": None, "user_note": None},
+            "approach": {"value": "legacy approach", "proposal": None, "user_note": None},
+            "plan": {"value": None, "proposal": None, "user_note": "legacy plan note"},
+            "implementation": {
+                "value": None,
+                "proposal": {"body": "legacy impl", "proposed_by": "agent", "created_at": 7},
+                "user_note": None,
+            },
+            "closeout": {"value": None, "proposal": None, "user_note": "keep closeout"},
+        },
+        separators=(",", ":"),
+    )
+    _insert_ticket(
+        conn,
+        id="t_legacy_new_worker",
+        title="Legacy new worker",
+        ticket_type="new_worker",
+        state="needs_stages",
+        priority="P1",
+        deadline="2026-08-02",
+        project_id=None,
+        sprint_item_id=None,
+        sprint_id=None,
+        recap="legacy recap",
+        ceiling="needs_stages",
+        at_cap="stop",
+        ticket_status="agent_running_step",
+        implementer="panels_worker",
+        chat_session_key="employee-legacy",
+        alias="legacy-new-worker",
+        fields=original_fields,
+        created_at=101,
+        updated_at=202,
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    create_schema(conn)
+    tickets_data.audit_ticket_registry_integrity(conn)
+
+    row = conn.execute(
+        "SELECT worker_type, stage, ceiling, ticket_status, employee_session_id, fields "
+        "FROM tickets WHERE id = 't_legacy_new_worker'"
+    ).fetchone()
+    assert {
+        "worker_type": row["worker_type"],
+        "stage": row["stage"],
+        "ceiling": row["ceiling"],
+        "ticket_status": row["ticket_status"],
+        "employee_session_id": row["employee_session_id"],
+    } == {
+        "worker_type": "new_worker",
+        "stage": "needs_stages",
+        "ceiling": "needs_stages",
+        "ticket_status": "agent_running_step",
+        "employee_session_id": "employee-legacy",
+    }
+    fields = json.loads(row["fields"])
+    assert list(fields) == [
+        "kickoff",
+        "understanding",
+        "stages",
+        "thinking",
+        "drafting",
+        "closeout",
+        "success",
+        "approach",
+        "plan",
+        "implementation",
+    ]
+    empty_slot = {"value": None, "proposal": None, "user_note": None}
+    assert {key: fields[key] for key in ("understanding", "stages", "thinking", "drafting")} == {
+        "understanding": empty_slot,
+        "stages": empty_slot,
+        "thinking": empty_slot,
+        "drafting": empty_slot,
+    }
+    for key, value in json.loads(original_fields).items():
+        assert fields[key] == value
+
+    first_fields = row["fields"]
+    create_schema(conn)
+    assert (
+        conn.execute("SELECT fields FROM tickets WHERE id = 't_legacy_new_worker'").fetchone()[
+            "fields"
+        ]
+        == first_fields
+    )
 
 
 @pytest.mark.parametrize(

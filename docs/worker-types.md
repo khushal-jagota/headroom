@@ -36,9 +36,11 @@ advance targets, identify gates and terminals, calculate the default ceiling and
 working Stage, validate a Ticket position, and provide the field order used for
 external-work reconciliation.
 
-The shipped `coding` and `new_worker` definitions currently default every non-terminal
-Stage to worker ownership. New Worker types still choose deliberately for each Stage;
-they do not inherit that choice from registry order or another definition.
+The shipped `coding` definition defaults every non-terminal Stage to worker ownership.
+The shipped `new_worker` definition starts with worker-owned Kickoff, then a paired
+Understanding Stage, then worker-owned Stages, Thinking, Drafting, and Closeout. New
+Worker types choose deliberately for each Stage; they do not inherit that choice from
+registry order or another definition.
 
 This makes the definition the one authority for both the data and behavior of that
 workflow. Ticket contracts still own universal Ticket facts such as status, per-Ticket
@@ -156,6 +158,12 @@ that skill with `skill_view` and follows its Stage-specific guidance:
 - `panels-worker-coding` guides coding Tickets.
 - `panels-worker-new-worker` guides `new_worker` Tickets.
 
+For `new_worker`, the visible lifecycle after universal Kickoff is
+Understanding, Stages, Thinking, Drafting, Closeout, Done. Understanding is paired:
+ordinary Ticket Chat continues the durable Employee session, automatic dispatch does not
+run, and an Understanding proposal waits for approval before the Ticket advances to
+Stages.
+
 Startup provisions the listed skill directories into the planner Hermes home. A new
 specialist must therefore be both known to Worker type configuration and included in the
 planner skill list.
@@ -207,4 +215,4 @@ prefix, and reconciliation support before changing state.
 
 ---
 
-_Last verified: 2026-07-14._
+_Last verified: 2026-07-15._

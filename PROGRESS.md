@@ -4,6 +4,52 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-15): paired new-worker Understanding Stage
+
+Current build stage:
+
+- Ticket `t_gn7x278u` is verified on isolated branch `ticket/t_gn7x278u-understanding` from
+  `main` at `5f5ea6f`. The completed diff inserts paired `needs_understanding` immediately after
+  Kickoff, backfills existing `new_worker` field maps without rewinding Tickets, updates the shipped
+  specialist and live Worker-type documentation, and adds backend, gateway/session, and Playwright
+  coverage. An accepted High review finding is corrected: historical typed-ticket schemas that preserve
+  `worker_type = 'new_worker'` with coding-shaped field JSON now gain every missing new-worker-specific
+  slot (`understanding`, `stages`, `thinking`, `drafting`) in lifecycle order while preserving all
+  original top-level slot values as legacy extras.
+- The corrected plan and completed diff passed fresh read-only Codex reviews with `NO VIOLATIONS`.
+  Accepted findings made Understanding the explicit `first_worker_stage`, separated deterministic
+  protocol assertions from claims about model judgment, completed the Chief external-work prefix,
+  hardened second-turn session coverage, and closed the historical migration gap.
+
+What just passed:
+
+- Focused registry, migration, external-work, eligibility, shared Ticket Chat/session, provisioned-skill,
+  and browser progression tests are green in the isolated worktree. Chromium's Codex sandbox failure
+  was rerun outside the sandbox and both focused e2e cases pass.
+- The High review regression was replayed RED against this worktree's `src` with the pre-fix migrator:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/unit/test_db.py::test_create_schema_backfills_historical_new_worker_coding_fields_for_audit -q`
+  failed at `tickets_data.audit_ticket_registry_integrity()` for `t_legacy_new_worker` with corrupt fields
+  JSON. After the correction, the same regression plus the existing proper-shape/idempotence migration
+  test pass, and the affected DB/new-worker suite passes:
+  `PYTHONPATH=src .venv/bin/python -m pytest tests/unit/test_db.py tests/unit/test_worker_type_persistence.py tests/unit/test_new_worker_type.py -q`
+  (`91 passed, 2 warnings`). `PYTHONPATH=src .venv/bin/ruff check src/planner/core/db.py tests/unit/test_db.py`
+  and `git diff --check` are clean.
+- The canonical corrected-tree `./verify` passes Ruff, mypy across 116 source files, 823 unit tests
+  with nine existing warnings, compile/static/CSS checks, Svelte with zero errors/warnings,
+  production build, all frontend tests, and 102 Playwright tests. Every gate is `ok` and the run ends
+  `VERIFY: PASS`. The full transcript is
+  [verify implementation](/files/tickets/t_gn7x278u/artifacts/verify-implementation.txt), SHA-256
+  `115f678308f4bf6970f5eb824a0d891e3646035a8362f32638944cd4c517e735`.
+
+Next step:
+
+- Commit the verified branch and propose Implementation. Do not merge or apply the migration live;
+  those remain Closeout work after approval.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-14): live Panels connection status
 
 Current build stage:

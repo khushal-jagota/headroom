@@ -4,10 +4,10 @@ and a compact drive-to-done through the real ``data.*`` writers.
 ``new_worker`` is the second production type (registered in the production
 Worker-type configuration alongside ``coding``). Its worker designs and
 lands ANOTHER worker; its lifecycle is a bespoke thinking scaffold
-(``needs_kickoff -> needs_stages -> needs_thinking -> needs_drafting ->
+(``needs_kickoff -> needs_understanding -> needs_stages -> needs_thinking -> needs_drafting ->
 needs_closeout -> done``) whose three middle stages/fields are novel. This module proves:
 - the definition validates and serializes to its exact manifest (default_ceiling is
-  the leading ``needs_kickoff``; first worker stage is ``needs_stages``);
+  the leading ``needs_kickoff``; first worker stage is ``needs_understanding``);
 - a ``new_worker`` ticket is created and driven stage-by-stage (propose -> approve ->
   advance) through the shared gate machinery, its novel states/fields round-tripping
   the DB, reaching ``done`` — and to ``dropped`` via the universal terminal.
@@ -91,6 +91,13 @@ NEW_WORKER_MANIFEST = {
             "default_ownership_mode": "worker",
         },
         {
+            "id": "needs_understanding",
+            "label": "Understanding",
+            "gating_field": "understanding",
+            "is_terminal": False,
+            "default_ownership_mode": "paired",
+        },
+        {
             "id": "needs_stages",
             "label": "Stages",
             "gating_field": "stages",
@@ -134,7 +141,8 @@ NEW_WORKER_MANIFEST = {
         "default_ownership_mode": None,
     },
     "advance": {
-        "needs_kickoff": "needs_stages",
+        "needs_kickoff": "needs_understanding",
+        "needs_understanding": "needs_stages",
         "needs_stages": "needs_thinking",
         "needs_thinking": "needs_drafting",
         "needs_drafting": "needs_closeout",
@@ -142,6 +150,7 @@ NEW_WORKER_MANIFEST = {
     },
     "fields": [
         {"id": "kickoff", "label": "Kickoff"},
+        {"id": "understanding", "label": "Understanding"},
         {"id": "stages", "label": "Stages"},
         {"id": "thinking", "label": "Thinking"},
         {"id": "drafting", "label": "Drafting"},
@@ -149,6 +158,7 @@ NEW_WORKER_MANIFEST = {
     ],
     "ceiling_range": [
         "needs_kickoff",
+        "needs_understanding",
         "needs_stages",
         "needs_thinking",
         "needs_drafting",
@@ -177,6 +187,7 @@ def test_new_worker_gate_map_is_golden() -> None:
         for stage in NEW_WORKER_TYPE_DEFINITION.stage_ids()[:-1]
     } == {
         "needs_kickoff": "kickoff",
+        "needs_understanding": "understanding",
         "needs_stages": "stages",
         "needs_thinking": "thinking",
         "needs_drafting": "drafting",
@@ -187,6 +198,7 @@ def test_new_worker_gate_map_is_golden() -> None:
 def test_new_worker_field_order_is_golden() -> None:
     assert NEW_WORKER_TYPE_DEFINITION.field_ids() == (
         "kickoff",
+        "understanding",
         "stages",
         "thinking",
         "drafting",
@@ -196,18 +208,19 @@ def test_new_worker_field_order_is_golden() -> None:
 
 def test_new_worker_default_ceiling_and_first_worker_stage() -> None:
     # Default ceiling is the leading needs_kickoff (global); the FIRST WORKER stage —
-    # the distinct threshold — is needs_stages.
+    # the distinct threshold — is needs_understanding.
     assert NEW_WORKER_TYPE_DEFINITION.default_ceiling() == "needs_kickoff"
-    assert NEW_WORKER_TYPE_DEFINITION.first_worker_stage() == "needs_stages"
+    assert NEW_WORKER_TYPE_DEFINITION.first_worker_stage() == "needs_understanding"
 
 
-def test_new_worker_defaults_every_non_terminal_stage_to_worker_ownership() -> None:
+def test_new_worker_declares_expected_default_ownership_modes() -> None:
     assert {
         stage.id: stage.default_ownership_mode.value
         for stage in NEW_WORKER_TYPE_DEFINITION.stages
         if not stage.is_terminal
     } == {
         "needs_kickoff": "worker",
+        "needs_understanding": "paired",
         "needs_stages": "worker",
         "needs_thinking": "worker",
         "needs_drafting": "worker",
@@ -249,7 +262,7 @@ def test_new_worker_drives_to_done_via_real_writers(
     assert fields_codec.get_slot(ticket.fields, "kickoff").proposal is not None
 
     # Accept kickoff, expanding the ceiling all the way to needs_closeout -> advances to
-    # needs_stages (the first novel stage).
+    # needs_understanding (the first novel stage).
     t = tickets_data.accept_proposal(
         tmp_db,
         tid,
@@ -259,11 +272,35 @@ def test_new_worker_drives_to_done_via_real_writers(
         next_ceiling="needs_closeout",
         at_cap=AtCap.propose,
     )
-    assert t.stage == "needs_stages"
+    assert t.stage == "needs_understanding"
     assert t.ceiling == "needs_closeout"
 
-    # Drive the three novel worker stages: the ceiling (needs_closeout) is BEYOND each
-    # state, so a proposal AUTO-ACCEPTS and advances. Novel field ids round-trip the DB.
+    # Understanding is paired, so its proposal parks for human approval even below the
+    # ceiling. Approval advances to the existing worker-owned sequence.
+    t = tickets_data.file_proposal(
+        tmp_db,
+        tid,
+        field="understanding",
+        body="understanding body",
+        actor="agent",
+        now=now,
+    )
+    assert t.stage == "needs_understanding"
+    assert fields_codec.get_slot(t.fields, "understanding").proposal is not None
+    t = tickets_data.accept_proposal(
+        tmp_db,
+        tid,
+        field="understanding",
+        actor="human",
+        now=now,
+        next_ceiling="needs_closeout",
+        at_cap=AtCap.propose,
+    )
+    assert t.stage == "needs_stages"
+    assert fields_codec.get_slot(t.fields, "understanding").value == "understanding body"
+
+    # Drive the three worker-owned novel stages: the ceiling (needs_closeout) is BEYOND
+    # each state, so a proposal AUTO-ACCEPTS and advances. Novel field ids round-trip.
     for field, next_state in (
         ("stages", "needs_thinking"),
         ("thinking", "needs_drafting"),
@@ -292,6 +329,7 @@ def test_new_worker_drives_to_done_via_real_writers(
 
     # Exact final state: done, every worker field settled to its accepted value.
     assert t.stage == "done"
+    assert fields_codec.get_slot(t.fields, "understanding").value == "understanding body"
     assert fields_codec.get_slot(t.fields, "stages").value == "stages body"
     assert fields_codec.get_slot(t.fields, "thinking").value == "thinking body"
     assert fields_codec.get_slot(t.fields, "drafting").value == "drafting body"

@@ -76,7 +76,8 @@ Before running a `panels chief` command, export `PLAN_ACTOR=chief` so the CLI se
    `--approach-file`, `--plan-file`, `--implementation-file`, and `--closeout-file`
    options remain conveniences for coding fields. Never supply the same field more than
    once, whether through two `--field-file` options or through both forms. For example,
-   external `new_worker` work settled through Thinking can be created at Drafting with:
+   external `new_worker` work settled through Thinking can be created at Drafting
+   with the complete `understanding → stages → thinking` prefix:
 
    ```sh
    panels chief create-ticket-from-external-work \
@@ -84,6 +85,7 @@ Before running a `panels chief` command, export `PLAN_ACTOR=chief` so the CLI se
      --worker-type new_worker \
      --stage needs_drafting \
      --kickoff-note-file /tmp/kickoff.md \
+     --field-file understanding=/tmp/understanding.md \
      --field-file stages=/tmp/stages.md \
      --field-file thinking=/tmp/thinking.md \
      --json

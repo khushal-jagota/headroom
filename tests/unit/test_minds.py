@@ -2633,6 +2633,53 @@ def test_provisioned_sprint_planning_skill_is_review_first_and_panels_native(
     assert "Do not run sprint planning autonomously from a cron" in skill
 
 
+def test_provisioned_new_worker_skill_carries_understanding_protocol(tmp_path: Path) -> None:
+    provision_planner_home_skills(tmp_path)
+    skill = (
+        tmp_path / "skills" / "panels-worker-new-worker" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    sequence = "Understanding → Stages → Thinking → Drafting → Closeout → Done"
+    assert sequence in skill
+    assert "needs_understanding" in skill
+    assert "needs_understanding — understand the worker before designing it" in skill
+    assert skill.index("### needs_understanding") < skill.index("### needs_stages")
+
+    for required in (
+        "purpose/outcome",
+        "hard, ambiguous, or risky work",
+        "human judgment",
+        "constraints, examples, and boundaries",
+        "Follow up only when an answer exposes a material gap",
+        "Stop when those categories are sufficiently understood to design the lifecycle",
+        "Propose a concise durable Understanding result",
+    ):
+        assert required in skill
+
+    assert "panels-worker owns those shared rules" in skill
+    for forbidden in ("question counter", "interview state machine", "parallel chat path"):
+        assert forbidden not in skill
+
+
+def test_provisioned_chief_external_work_new_worker_example_carries_understanding_prefix(
+    tmp_path: Path,
+) -> None:
+    provision_planner_home_skills(tmp_path)
+    skill = (
+        tmp_path / "skills" / "panels-chief-of-staff" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert "understanding → stages → thinking" in skill
+    assert "--stage needs_drafting" in skill
+    assert "--field-file understanding=/tmp/understanding.md" in skill
+    assert skill.index("--field-file understanding=/tmp/understanding.md") < skill.index(
+        "--field-file stages=/tmp/stages.md"
+    )
+    assert skill.index("--field-file stages=/tmp/stages.md") < skill.index(
+        "--field-file thinking=/tmp/thinking.md"
+    )
+
+
 def test_panels_rollover_is_provisioned_as_readable_repo_skill(tmp_path: Path) -> None:
     provision_planner_home_skills(tmp_path)
 

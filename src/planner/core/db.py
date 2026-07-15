@@ -226,6 +226,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
         if "stage_ownership_overrides" not in _table_columns(conn, "tickets"):
             _migrate_tickets_to_v20_contract(conn)
         _migrate_tickets_to_v22_without_execution_route(conn)
+    _migrate_new_worker_understanding_field(conn)
     _migrate_project_summary_column(conn)
     _migrate_derived_sprint_item_status(conn)
     _migrate_links_blocks_only(conn)
@@ -834,6 +835,39 @@ def _migrate_tickets_to_v22_without_execution_route(conn: sqlite3.Connection) ->
     finally:
         if foreign_keys_enabled:
             conn.execute("PRAGMA foreign_keys=ON")
+
+
+def _migrate_new_worker_understanding_field(conn: sqlite3.Connection) -> None:
+    lifecycle_order = ("kickoff", "understanding", "stages", "thinking", "drafting", "closeout")
+    new_worker_specific_slots = ("understanding", "stages", "thinking", "drafting")
+    rows = conn.execute(
+        "SELECT id, fields FROM tickets WHERE worker_type = 'new_worker' ORDER BY id"
+    ).fetchall()
+    updates: list[tuple[str, str]] = []
+    for row in rows:
+        ticket_id = str(row["id"])
+        try:
+            payload = json.loads(str(row["fields"]))
+        except ValueError as exc:
+            raise RuntimeError(f"Ticket {ticket_id} fields are corrupt") from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"Ticket {ticket_id} fields are not an object")
+        if all(field in payload for field in new_worker_specific_slots):
+            continue
+
+        migrated: dict[str, object] = {}
+        for key in lifecycle_order:
+            if key in payload:
+                migrated[key] = payload[key]
+            elif key in new_worker_specific_slots:
+                migrated[key] = _empty_ticket_field_slot()
+        for key, value in payload.items():
+            if key not in migrated:
+                migrated[key] = value
+        updates.append((json.dumps(migrated, separators=(",", ":")), ticket_id))
+
+    if updates:
+        conn.executemany("UPDATE tickets SET fields = ? WHERE id = ?", updates)
 
 
 def _empty_ticket_field_slot() -> dict[str, object]:
