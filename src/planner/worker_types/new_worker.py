@@ -15,6 +15,13 @@ NEW_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     label="New Worker",
     stages=(
         StageDefinition("needs_kickoff", "Kickoff", "kickoff", False, StageOwnershipMode.worker),
+        StageDefinition(
+            "needs_understanding",
+            "Understanding",
+            "understanding",
+            False,
+            StageOwnershipMode.paired,
+        ),
         StageDefinition("needs_stages", "Stages", "stages", False, StageOwnershipMode.worker),
         StageDefinition("needs_thinking", "Thinking", "thinking", False, StageOwnershipMode.worker),
         StageDefinition("needs_drafting", "Drafting", "drafting", False, StageOwnershipMode.worker),
@@ -24,6 +31,7 @@ NEW_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     dropped_stage=StageDefinition("dropped", "Dropped", None, True, None),
     fields=(
         FieldDefinition("kickoff", "Kickoff"),
+        FieldDefinition("understanding", "Understanding"),
         FieldDefinition("stages", "Stages"),
         FieldDefinition("thinking", "Thinking"),
         FieldDefinition("drafting", "Drafting"),

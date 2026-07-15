@@ -108,6 +108,7 @@ def test_new_worker_definition_has_distinct_behavior() -> None:
     definition = NEW_WORKER_TYPE_DEFINITION
     assert definition.stage_ids() == (
         "needs_kickoff",
+        "needs_understanding",
         "needs_stages",
         "needs_thinking",
         "needs_drafting",
@@ -116,12 +117,13 @@ def test_new_worker_definition_has_distinct_behavior() -> None:
     )
     assert definition.field_ids() == (
         "kickoff",
+        "understanding",
         "stages",
         "thinking",
         "drafting",
         "closeout",
     )
-    assert definition.first_worker_stage() == "needs_stages"
+    assert definition.first_worker_stage() == "needs_understanding"
     assert definition.gating_field("needs_thinking") == "thinking"
 
 

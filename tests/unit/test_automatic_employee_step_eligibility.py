@@ -83,23 +83,24 @@ def _eligible(
 
 
 @pytest.mark.parametrize(
-    ("worker_type", "first_stage", "definition"),
+    ("worker_type", "first_stage", "expected_eligible", "definition"),
     [
-        ("coding", "needs_success", CODING_WORKER_TYPE_DEFINITION),
-        ("new_worker", "needs_stages", NEW_WORKER_TYPE_DEFINITION),
+        ("coding", "needs_success", True, CODING_WORKER_TYPE_DEFINITION),
+        ("new_worker", "needs_understanding", False, NEW_WORKER_TYPE_DEFINITION),
     ],
 )
-def test_shipped_worker_types_are_eligible_at_their_real_first_employee_stage(
+def test_shipped_worker_types_use_their_real_first_employee_stage_ownership(
     tmp_path: Path,
     worker_type: str,
     first_stage: str,
+    expected_eligible: bool,
     definition: WorkerTypeDefinition,
 ) -> None:
     conn = _db(tmp_path)
     try:
         ticket = _ticket(conn, worker_type=worker_type)
         assert ticket.stage == first_stage
-        assert _eligible(conn, ticket, definition=definition)
+        assert _eligible(conn, ticket, definition=definition) is expected_eligible
     finally:
         conn.close()
 
@@ -258,6 +259,25 @@ def test_scope_permission_uses_the_ticket_worker_type_definition(
     conn = _db(tmp_path)
     try:
         ticket = _ticket(conn, worker_type=worker_type, ceiling=ceiling, at_cap=at_cap)
+        if worker_type == "new_worker":
+            tickets_data.file_proposal(
+                conn,
+                ticket.id,
+                field="understanding",
+                body="understanding",
+                actor="agent",
+                now=3,
+            )
+            ticket = tickets_data.accept_proposal(
+                conn,
+                ticket.id,
+                field="understanding",
+                actor="human",
+                now=4,
+                next_ceiling=ceiling,
+                at_cap=at_cap,
+            )
+            assert ticket.stage == "needs_stages"
         assert _eligible(conn, ticket) is expected
     finally:
         conn.close()
@@ -418,8 +438,9 @@ def test_new_worker_novel_stage_is_never_interpreted_as_coding(tmp_path: Path) -
     conn = _db(tmp_path)
     try:
         ticket = _ticket(conn, worker_type="new_worker")
-        assert ticket.stage == "needs_stages"
-        assert _eligible(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
+        assert ticket.stage == "needs_understanding"
+        assert not _eligible(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
+        conn.execute("UPDATE tickets SET ticket_status = 'empty' WHERE id = ?", (ticket.id,))
         with pytest.raises(Exception, match="stage outside the linear order"):
             _eligible(conn, ticket, definition=CODING_WORKER_TYPE_DEFINITION)
     finally:

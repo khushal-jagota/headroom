@@ -513,7 +513,7 @@ def create_ticket_from_external_work(
         admission.validate_body(recap, "recap")
     worker_type_definition = configured_worker_type_registry().require(worker_type)
     # External work is "already done elsewhere": seed at the type's FIRST WORKER stage
-    # (needs_success / needs_stages / needs_alpha), NOT the leading needs_kickoff — the
+    # (needs_success / needs_understanding / needs_alpha), NOT the leading needs_kickoff — the
     # applied decision then jumps it to target_stage. first_worker_stage is the concept
     # here; default_ceiling is now needs_kickoff and would wrongly re-park kickoff.
     first_worker = worker_type_definition.first_worker_stage()

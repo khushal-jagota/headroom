@@ -108,6 +108,7 @@ def test_chief_external_work_cli_create_and_reconcile(server, tmp_path: Path) ->
 
 def test_chief_external_work_cli_carries_new_worker_fields(server, tmp_path: Path) -> None:
     note = _file(tmp_path, "new-worker-note.md", "Design imported outside Panels")
+    understanding = _file(tmp_path, "understanding.md", "Bounded worker-design understanding")
     stages = _file(tmp_path, "stages.md", "needs_thinking, needs_drafting")
     thinking = _file(tmp_path, "thinking.md", "Worker reasoning contract")
 
@@ -124,12 +125,17 @@ def test_chief_external_work_cli_carries_new_worker_fields(server, tmp_path: Pat
         "--kickoff-note-file",
         note,
         "--field-file",
+        f"understanding={understanding}",
+        "--field-file",
         f"stages={stages}",
         "--json",
     )
     assert created.returncode == 0, created.stderr
     created_json = json.loads(created.stdout)
     assert created_json["stage"] == "needs_thinking"
+    assert (
+        created_json["fields"]["understanding"]["value"] == "Bounded worker-design understanding"
+    )
     assert created_json["fields"]["stages"]["value"] == "needs_thinking, needs_drafting"
     assert created_json["fields"]["thinking"]["value"] is None
 
@@ -149,6 +155,10 @@ def test_chief_external_work_cli_carries_new_worker_fields(server, tmp_path: Pat
     assert reconciled.returncode == 0, reconciled.stderr
     reconciled_json = json.loads(reconciled.stdout)
     assert reconciled_json["stage"] == "needs_drafting"
+    assert (
+        reconciled_json["fields"]["understanding"]["value"]
+        == "Bounded worker-design understanding"
+    )
     assert reconciled_json["fields"]["stages"]["value"] == "needs_thinking, needs_drafting"
     assert reconciled_json["fields"]["thinking"]["value"] == "Worker reasoning contract"
 

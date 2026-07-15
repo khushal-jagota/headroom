@@ -296,6 +296,22 @@ radius was the whole poll — a raise aborts discovery for every ticket), and th
 non-coding runtime path confirmed those were the only stragglers; all others already thread the
 definition or are intentionally coding.
 
+## D-new-worker-understanding — Understanding is the paired first working Stage
+
+`new_worker` now enters `needs_understanding` immediately after Kickoff. It is paired by default:
+ordinary Ticket Chat continues the durable Employee session, automatic discovery does not claim it,
+and an Understanding proposal always parks for approval. Its specialist asks a small purposeful core
+set, follows up only for material gaps, and stops once purpose/outcome, hard judgment, and the material
+constraints/examples/boundaries are sufficient to design the lifecycle. Approval then enters the
+unchanged Stages → Thinking → Drafting → Closeout → Done sequence.
+
+Understanding deliberately becomes `new_worker.first_worker_stage()`. External-work prefixes and
+sprint-stage thresholds therefore move with that meaning instead of keeping `needs_stages` as a hidden
+special case. Existing Tickets at Stages or later are never rewound; an idempotent startup migration
+adds only an empty `understanding` field slot to old `new_worker` rows before the strict registry audit.
+Deterministic tests assert the shipped specialist protocol and separately prove real session delivery,
+paired readiness, and proposal parking; they do not pretend to prove a model's judgment.
+
 ## D-ticket-types-front-doors — The agent front doors carry an explicit type list, maintained by closeout
 
 The base worker skill (`panels-worker`) and the Chief-of-Staff skill (`panels-chief-of-staff`) each carry

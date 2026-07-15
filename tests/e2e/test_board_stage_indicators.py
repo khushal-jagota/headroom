@@ -81,6 +81,7 @@ def test_workspace_row_byline_shows_registered_type_active_stage_and_mark(
     for ticket_id in (active, done, running, takeover):
         _add_today(api, server, ticket_id)
     _set_ticket_stage(server, active, "needs_stages")
+    _set_ticket_status(server, active, "empty")
     _set_ticket_stage(server, done, "done")
     _set_ticket_stage(server, running, "needs_success")
     _set_ticket_status(server, running, "agent_running_step")

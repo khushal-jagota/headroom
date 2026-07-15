@@ -96,8 +96,8 @@ def test_review_uses_each_shipped_worker_types_stored_stage_field(tmp_db: Connec
         tmp_db,
         worker_type="new_worker",
         title="New worker",
-        next_ceiling="needs_stages",
-        field="stages",
+        next_ceiling="needs_understanding",
+        field="understanding",
         proposal_at=3,
     )
     days_data.add_day_ticket(tmp_db, TODAY_DAY_ID, coding_id, 5)
@@ -109,7 +109,7 @@ def test_review_uses_each_shipped_worker_types_stored_stage_field(tmp_db: Connec
     assert response["ticket_decisions"] == [
         {
             "ticket_id": new_worker_id,
-            "field": "stages",
+            "field": "understanding",
             "title": "New worker",
             "waiting_since": 3,
         },

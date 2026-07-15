@@ -429,7 +429,8 @@ def test_next_step_prompt_includes_stage_owner_without_execution_route(tmp_path:
 
 def test_next_step_prompt_reads_novel_stage_field_for_new_worker(tmp_path: Path) -> None:
     # Regression: _next_step_prompt resolves the ticket's OWN type definition, so a
-    # new_worker ticket at the NOVEL needs_stages stage names the 'stages' field instead
+    # new_worker ticket at the NOVEL needs_understanding stage names the 'understanding'
+    # field instead
     # of raising 'Stage outside the linear order' (which it would if the gating field
     # were resolved against the coding default).
     db = _db(tmp_path)
@@ -443,7 +444,7 @@ def test_next_step_prompt_reads_novel_stage_field_for_new_worker(tmp_path: Path)
             title_max_chars=200,
             worker_type="new_worker",
         )
-        # Accept kickoff -> advances to the novel needs_stages stage.
+        # Accept kickoff -> advances to the novel paired needs_understanding stage.
         ticket = tickets_data.accept_proposal(
             conn,
             ticket.id,
@@ -456,13 +457,14 @@ def test_next_step_prompt_reads_novel_stage_field_for_new_worker(tmp_path: Path)
     finally:
         conn.close()
 
-    assert ticket.stage == "needs_stages"
+    assert ticket.stage == "needs_understanding"
     assert _next_step_prompt(
         ticket,
         worker_type_definition=configured_worker_type_registry().require(ticket.worker_type),
     ) == (
-        f"Work ticket {ticket.id} — Design a worker. It is at Stage 'needs_stages'; "
-        "take the next step and propose the 'stages' field for approval. Stage owner: worker."
+        f"Work ticket {ticket.id} — Design a worker. It is at Stage 'needs_understanding'; "
+        "take the next step and propose the 'understanding' field for approval. "
+        "Stage owner: paired."
     )
 
 

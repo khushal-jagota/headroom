@@ -773,6 +773,119 @@ def test_paired_ticket_chat_reuses_employee_session_and_stays_paired_without_pro
     assert gateway.calls == [("paired-session", ticket_id, "work with me", "message", False)]
 
 
+def test_new_worker_understanding_chat_route_reuses_session_and_proposal_parks(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "new-worker-understanding-chat.db"
+    conn = connect(str(db))
+    create_schema(conn)
+    try:
+        ticket = tickets_data.create_ticket(
+            conn,
+            worker_type="new_worker",
+            title="Design an interview worker",
+            actor="human",
+            now=1,
+            title_max_chars=200,
+        )
+        ticket = tickets_data.accept_proposal(
+            conn,
+            ticket.id,
+            field="kickoff",
+            actor="human",
+            now=2,
+            next_ceiling="needs_closeout",
+            at_cap=AtCap.propose,
+        )
+        assert ticket.stage == "needs_understanding"
+        assert ticket.ticket_status is TicketStatus.paired_work
+        ticket_id = ticket.id
+    finally:
+        conn.close()
+
+    config = load_config(
+        path=None,
+        env={
+            "PLAN_TEST_MODE": "1",
+            "PLAN_GATEWAY_ADAPTER": "fake",
+            "PLAN_DB_PATH": str(db),
+        },
+    )
+    app = create_app(config, build_clock(config), build_adapters(config), lambda: connect(str(db)))
+
+    def stored_ticket() -> dict:
+        check = connect(str(db))
+        try:
+            row = check.execute(
+                "SELECT employee_session_id, ticket_status, fields FROM tickets WHERE id = ?",
+                (ticket_id,),
+            ).fetchone()
+            return {
+                "employee_session_id": row["employee_session_id"],
+                "ticket_status": row["ticket_status"],
+                "fields": json.loads(row["fields"]),
+                "complete_turns": check.execute(
+                    "SELECT COUNT(*) AS count FROM chat_turns "
+                    "WHERE entity_id = ? AND status = 'complete'",
+                    (ticket_id,),
+                ).fetchone()["count"],
+            }
+        finally:
+            check.close()
+
+    with TestClient(app) as client:
+        first = client.post(
+            f"/api/chat/{ticket_id}/turns",
+            json={"text": "Start the Understanding conversation.", "mode": "message"},
+        )
+        assert first.status_code == 200, first.text
+        assert _wait_until(
+            lambda: stored_ticket()["employee_session_id"] == "fake-sess-1"
+            and stored_ticket()["complete_turns"] == 1
+        )
+        after_first = stored_ticket()
+        assert after_first["ticket_status"] == "paired_work"
+        assert after_first["fields"]["understanding"]["proposal"] is None
+
+        second = client.post(
+            f"/api/chat/{ticket_id}/turns",
+            json={"text": "Continue with the same Employee.", "mode": "message"},
+        )
+        assert second.status_code == 200, second.text
+        assert _wait_until(
+            lambda: stored_ticket()["employee_session_id"] == "fake-sess-1"
+            and stored_ticket()["complete_turns"] == 2
+        )
+        after_second = stored_ticket()
+        assert after_second["ticket_status"] == "paired_work"
+        assert after_second["fields"]["understanding"]["proposal"] is None
+
+        proposed = client.post(
+            f"/api/tickets/{ticket_id}/propose",
+            json={
+                "body": "Purpose/outcome, risky judgment, and boundaries captured.",
+                "recap": "Understanding ready.",
+            },
+        )
+        assert proposed.status_code == 200, proposed.text
+        proposed_body = proposed.json()
+        assert proposed_body["stage"] == "needs_understanding"
+        assert proposed_body["ticket_status"] == "awaiting_approval"
+        assert proposed_body["fields"]["understanding"]["proposal"]["body"].startswith(
+            "Purpose/outcome"
+        )
+
+        approved = client.post(
+            f"/api/tickets/{ticket_id}/accept/understanding",
+            json={"next_ceiling": "needs_stages", "at_cap": "propose"},
+        )
+        assert approved.status_code == 200, approved.text
+        approved_body = approved.json()
+        assert approved_body["stage"] == "needs_stages"
+        assert approved_body["fields"]["understanding"]["proposal"] is None
+        assert approved_body["fields"]["understanding"]["value"].startswith("Purpose/outcome")
+
+
 def test_human_admission_wins_atomic_race_and_claim_has_no_side_effects(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

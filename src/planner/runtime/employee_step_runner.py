@@ -65,7 +65,7 @@ def _next_step_prompt(
     The Worker type selects the specialist skill; this prompt carries only the current
     Stage ownership and the gated field to advance.
     The gating field is resolved against the ticket's OWN type definition (not the
-    coding default), so a novel-stage type (e.g. new_worker at needs_stages) reads
+    coding default), so a novel-stage type (e.g. new_worker at needs_understanding) reads
     its real field instead of raising 'stage outside the linear order'."""
     gating = worker_type_definition.gating_field(ticket.stage)
     field = str(gating) if gating is not None else "the next step"
