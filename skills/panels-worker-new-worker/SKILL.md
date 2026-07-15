@@ -99,8 +99,17 @@ The mechanical recipe for adding a worker to the running system:
    `panels-worker`'s worker list, and add the Worker type (with what it's for) to
    `panels-chief-of-staff` so it can create and reconcile it.
 
-A restart activates the Worker type. A good **closeout** is a short, verified report:
-what was placed and registered, and how you confirmed the worker is live.
+A restart activates the Worker type. Finish the merge, verification, durable recap, and
+every other pre-restart write before requesting it.
+Run `panels restart` only after every pre-restart write is durable, and only when that
+command is available in `panels --help`.
+Treat it as the final pre-restart operation; after restart recovery, confirm the Worker
+type is live and then propose Closeout.
+
+Never discover or signal a server PID, and never launch `panels serve` from this Ticket's
+worktree. If `panels restart` is unavailable, report that activation needs an operator
+restart and stop without attempting live verification. A good **closeout** is a short,
+verified report: what was placed and registered, and how you confirmed the worker is live.
 
 ### Working disciplines
 
