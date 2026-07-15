@@ -391,10 +391,10 @@ has two external-work operations that establish a coherent imported Stage; it is
 generic Stage setter.
 
 `panels serve` stays in the foreground while it replaces the running Panels application.
-It remembers the checkout that started it. `panels restart` asks it to stop that
+It remembers the installed copy that started it. `panels restart` asks it to stop that
 application cleanly and waits for the stop to finish before starting the replacement
-from the same checkout. The restart caller cannot choose another worktree, and it never
-looks up or signals a server PID.
+from the same installed copy. Running the command from another working folder cannot
+change that choice, and the command never searches the machine for a server to stop.
 
 Stopping `panels serve` also stops the application cleanly. If the application exits on
 its own, `serve` exits with an error instead of starting it again. The existing application

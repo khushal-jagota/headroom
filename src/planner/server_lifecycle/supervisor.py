@@ -239,41 +239,45 @@ class ServerSupervisor:
         connection: socket.socket,
         signal_read: int,
     ) -> bool:
-        connection.setblocking(False)
-        selector = selectors.DefaultSelector()
-        selector.register(connection, selectors.EVENT_READ, "client")
-        selector.register(signal_read, selectors.EVENT_READ, "signal")
         try:
-            while True:
-                for key, _ in selector.select():
-                    if key.data == "signal":
-                        self._drain_signal_pipe(signal_read)
-                        if (
-                            self._operator_shutdown_requested
-                            or self._application_child_has_exited()
-                        ):
-                            return False
-                    elif key.data == "client":
-                        try:
-                            chunk = connection.recv(_CONTROL_SOCKET_DRAIN_BYTES)
-                        except BlockingIOError:
-                            continue
-                        if not chunk:
-                            return True
-        finally:
-            selector.close()
+            while self._receive_control_bytes_until_lifecycle_change(
+                connection,
+                signal_read,
+                _CONTROL_SOCKET_DRAIN_BYTES,
+            ):
+                pass
+        except _ControlRequestSuperseded:
+            return False
+        return True
 
     def _receive_control_request(
         self,
         connection: socket.socket,
         signal_read: int,
     ) -> bytes | None:
+        def receive(maximum_bytes: int) -> bytes:
+            return self._receive_control_bytes_until_lifecycle_change(
+                connection,
+                signal_read,
+                maximum_bytes,
+            )
+
+        try:
+            return receive_server_control_message(receive)
+        except _ControlRequestSuperseded:
+            return None
+
+    def _receive_control_bytes_until_lifecycle_change(
+        self,
+        connection: socket.socket,
+        signal_read: int,
+        maximum_bytes: int,
+    ) -> bytes:
         connection.setblocking(False)
         selector = selectors.DefaultSelector()
         selector.register(connection, selectors.EVENT_READ, "client")
         selector.register(signal_read, selectors.EVENT_READ, "signal")
-
-        def receive(maximum_bytes: int) -> bytes:
+        try:
             while True:
                 for key, _ in selector.select():
                     if key.data == "signal":
@@ -288,11 +292,6 @@ class ServerSupervisor:
                             return connection.recv(maximum_bytes)
                         except BlockingIOError:
                             continue
-
-        try:
-            return receive_server_control_message(receive)
-        except _ControlRequestSuperseded:
-            return None
         finally:
             selector.close()
 
