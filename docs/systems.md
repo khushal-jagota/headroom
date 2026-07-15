@@ -390,6 +390,19 @@ proposals/recaps/notes without exposing runtime controls. The exceptional Chief 
 has two external-work operations that establish a coherent imported Stage; it is not a
 generic Stage setter.
 
+`panels serve` is the operator-owned foreground process. It holds one port-scoped
+lifecycle lease and supervises one application child from the source root captured at
+launch. `panels restart` sends a versioned request to that supervisor through its local
+control socket. The supervisor acknowledges the request, gracefully stops its owned
+child, waits for that child to exit, and only then starts one replacement from the same
+root. The command never discovers or signals a listener PID. A caller in a Ticket
+worktree cannot choose the replacement's code, configuration, or built frontend.
+
+Stopping the foreground supervisor gracefully stops its application child and removes
+the control socket. An application child that exits unexpectedly ends the supervisor
+with an error; this system is not a crash-retry daemon. Application shutdown and recovery
+remain in the existing FastAPI lifespan and Employee runtime rather than the supervisor.
+
 The server classifies a missing `X-Plan-Actor` as **unattributed**, not human. `chief` is
 the explicit Chief role; every other non-empty value is an attributed non-Chief agent.
 Direct-only routes allow unattributed and Chief requests while rejecting worker agents.
@@ -397,7 +410,7 @@ Hosted Tailscale user requests deliberately ignore `X-Plan-Actor`; same-host int
 requests still use it as provenance.
 
 Code paths: `src/planner/cli/main.py`, `src/planner/cli/http.py`,
-`src/planner/core/authctx.py`.
+`src/planner/server_lifecycle/`, `src/planner/core/authctx.py`.
 
 ## Boundaries That Matter
 

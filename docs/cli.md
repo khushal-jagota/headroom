@@ -60,11 +60,17 @@ generic Stage setter.
   operations move the ceiling to the imported Stage, preserve an explicit Stop
   (otherwise Continue remains), and apply that Stage's effective ownership.
 - **`serve`** — run the server and background worker runtime in the foreground.
-  It may be launched from outside the repository; the app shell, static assets, and
-  checked-in config are resolved from the repository root.
+  The foreground command is a stable supervisor with one application child. It captures
+  the installed source root once, so the app shell, static assets, and checked-in config
+  keep coming from that root even after a restart.
+- **`restart`** — ask the running foreground supervisor to replace its application child.
+  It returns only after the supervisor accepts the request. It does not find a PID, signal
+  an arbitrary process, or start a replacement from the caller's working directory. If no
+  supervisor owns the configured port, it reports the connection error and stops.
 
 _Code paths:_ `src/planner/cli/main.py` (the verbs), `src/planner/cli/http.py`
-(the HTTP call, output, and exit codes).
+(the HTTP call, output, and exit codes), `src/planner/server_lifecycle/` (foreground
+ownership and controlled restart).
 
 Project-aware commands accept `--project-id` as the preferred selector and keep
 `--project` as legacy name compatibility. Passing both is allowed only when they
@@ -112,4 +118,4 @@ lease; the employee runtime runs one step at a time and writes status itself (se
 
 ---
 
-_Last verified: 2026-07-14._
+_Last verified: 2026-07-15._
