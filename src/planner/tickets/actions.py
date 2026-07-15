@@ -248,8 +248,10 @@ def take_over_ticket(
     now: int,
     automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> Ticket:
+    before = tickets_data.read_ticket(conn, ticket_id)
     ticket = tickets_data.take_over_ticket(conn, ticket_id, now=now)
-    automatic_employee_step_eligibility_wake.wake()
+    if replace(before, updated_at=ticket.updated_at) != ticket:
+        automatic_employee_step_eligibility_wake.wake()
     return ticket
 
 
@@ -260,8 +262,10 @@ def release_ticket(
     now: int,
     automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> Ticket:
+    before = tickets_data.read_ticket(conn, ticket_id)
     ticket = tickets_data.release_ticket(conn, ticket_id, now=now)
-    automatic_employee_step_eligibility_wake.wake()
+    if replace(before, updated_at=ticket.updated_at) != ticket:
+        automatic_employee_step_eligibility_wake.wake()
     return ticket
 
 
@@ -274,6 +278,7 @@ def set_stage_ownership(
     now: int,
     automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> Ticket:
+    before = tickets_data.read_ticket(conn, ticket_id)
     ticket = tickets_data.set_stage_ownership(
         conn,
         ticket_id,
@@ -281,7 +286,8 @@ def set_stage_ownership(
         ownership_mode=ownership_mode,
         now=now,
     )
-    automatic_employee_step_eligibility_wake.wake()
+    if replace(before, updated_at=ticket.updated_at) != ticket:
+        automatic_employee_step_eligibility_wake.wake()
     return ticket
 
 

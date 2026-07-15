@@ -48,12 +48,12 @@ Ownership says who drives the current Stage. It is separate from Ticket scope.
   operation; there is no worker self-settle or self-proposal substitute. The Chief moves
   the ceiling to the reconciled Stage, preserves an explicit Stop (otherwise Continue
   remains), and the entered Stage's ownership then controls what happens next.
-- **Paired** — the Ticket rests in paired work and is never dispatched automatically.
-  Ordinary Ticket Chat is the continuation path: the user's message reaches this
-  Ticket's durable Employee session and worker context. If the turn ends without a
-  proposal, the Ticket remains paired. A real proposal always parks for approval, even
-  when scope would auto-accept the same proposal from a worker-owned Stage. Approval
-  advances normally and the next Stage's ownership takes effect.
+- **Paired** — the Ticket gets one automatic opening turn for the current Stage, then
+  rests in paired work. Ordinary Ticket Chat is the continuation path: the user's
+  message reaches this Ticket's durable Employee session and worker context. If a turn
+  ends without a proposal, the Ticket remains paired. A real proposal always parks for
+  approval, even when scope would auto-accept the same proposal from a worker-owned
+  Stage. Approval advances normally and the next Stage's ownership takes effect.
 
 **Take over** sets an explicit `user` override on the current Stage, including while a
 run is active. **Release** clears that current-Stage override; it does not reveal an

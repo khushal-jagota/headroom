@@ -269,3 +269,69 @@ def test_accept_dropped_ticket_with_pending_proposal_rejected(
     assert fields_codec.get_slot(t.fields, "plan").value is None  # the write never landed
     assert fields_codec.get_slot(t.fields, "plan").proposal is not None
     assert len(_events(tmp_db, cfg, t.id)) == count_before
+
+
+def test_accept_non_gating_proposal_keeps_opened_paired_stage_resting(
+    tmp_db: Connection, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    ticket = data.create_ticket(
+        tmp_db,
+        worker_type="coding",
+        title="Paired design",
+        actor="human",
+        now=now,
+        title_max_chars=TITLE_MAX_CHARS,
+    )
+    ticket = data.accept_proposal(
+        tmp_db,
+        ticket.id,
+        field="kickoff",
+        actor="human",
+        now=now,
+        next_ceiling="needs_plan",
+        at_cap=AtCap.propose,
+    )
+    ticket = data.file_proposal(
+        tmp_db,
+        ticket.id,
+        field="success",
+        body="success",
+        actor="agent",
+        now=now,
+    )
+    assert ticket.stage == "needs_approach"
+    ticket = data.set_stage_ownership(
+        tmp_db,
+        ticket.id,
+        stage="needs_approach",
+        ownership_mode=StageOwnershipMode.paired,
+        now=now,
+    )
+    assert ticket.ticket_status is TicketStatus.empty
+    tmp_db.execute(
+        "UPDATE tickets SET ticket_status = 'paired_work' WHERE id = ?",
+        (ticket.id,),
+    )
+
+    ticket = data.file_proposal(
+        tmp_db,
+        ticket.id,
+        field="plan",
+        body="plan draft",
+        actor="agent",
+        now=now,
+    )
+    assert ticket.stage == "needs_approach"
+    assert ticket.ticket_status is TicketStatus.awaiting_approval
+
+    ticket = data.accept_proposal(
+        tmp_db,
+        ticket.id,
+        field="plan",
+        actor="human",
+        now=now,
+    )
+    assert ticket.stage == "needs_approach"
+    assert ticket.ticket_status is TicketStatus.paired_work
+    assert fields_codec.get_slot(ticket.fields, "plan").value == "plan draft"

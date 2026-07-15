@@ -16,6 +16,13 @@ Current build stage:
   `worker_type = 'new_worker'` with coding-shaped field JSON now gain every missing new-worker-specific
   slot (`understanding`, `stages`, `thinking`, `drafting`) in lifecycle order while preserving all
   original top-level slot values as legacy extras.
+- Parent-review production corrections are applied in this worktree only. Reconciliation uses entered
+  status only when the Stage actually changes; current paired reconciliation preserves `paired_work`.
+  Ownership override writes now no-op only on identical override maps, emit
+  `previous_effective_ownership_mode`, preserve status for same-effective current-Stage changes, and never
+  change status for future-Stage overrides. Takeover/release now persist or clear explicit current-Stage
+  overrides even when the default has the same effective mode. Drop remains on resting status, and
+  auto-accepted proposal writers use entered status only for real Stage advances.
 - The corrected plan and completed diff passed fresh read-only Codex reviews with `NO VIOLATIONS`.
   Accepted findings made Understanding the explicit `first_worker_stage`, separated deterministic
   protocol assertions from claims about model judgment, completed the Chief external-work prefix,
@@ -40,11 +47,34 @@ What just passed:
   `VERIFY: PASS`. The full transcript is
   [verify implementation](/files/tickets/t_gn7x278u/artifacts/verify-implementation.txt), SHA-256
   `115f678308f4bf6970f5eb824a0d891e3646035a8362f32638944cd4c517e735`.
+- Parent RED was reproduced with the expanded command: the stale discovery-loop test still expected no
+  automatic paired dispatch, two human chat tests expected immediate `paired_work` without an automatic
+  opening precondition, and two e2e tests waited for background loops that test-mode servers deliberately
+  do not compose.
+- After corrections, focused ownership/external-work/eligibility regressions pass:
+  `PYTHONPATH=$PWD/src .venv/bin/python -m pytest -q tests/unit/test_stage_ownership_backend.py tests/unit/test_chief_external_work.py tests/unit/test_automatic_employee_step_eligibility.py`
+  (`78 passed`, one existing warning). The broader focused unit set also passes:
+  `PYTHONPATH=$PWD/src .venv/bin/python -m pytest -q tests/unit/test_stage_ownership_backend.py tests/unit/test_chief_external_work.py tests/unit/test_automatic_employee_step_eligibility.py tests/unit/test_automatic_employee_step_discovery_loop.py tests/unit/test_human_chat_turn.py tests/unit/test_automatic_employee_step_eligibility_actions.py`
+  (`139 passed`, two existing warnings).
+- The parent command's unit-test portion passes:
+  `PYTHONPATH=$PWD/src .venv/bin/python -m pytest -q tests/unit/test_automatic_employee_step_eligibility.py tests/unit/test_automatic_employee_step_discovery_loop.py tests/unit/test_employee_step_runner.py tests/unit/test_automatic_employee_step_eligibility_actions.py tests/unit/test_human_chat_turn.py`
+  (`167 passed`, two existing warnings).
+- The expanded parent command now passes all selected unit tests plus both new-worker public-flow e2e
+  tests. The e2e tests explicitly invoke the production `EmployeeStepRunner` with the shared fake gateway
+  against the server DB because test mode omits background loops, then continue through the public Chat
+  and browser surfaces. Ruff and `git diff --check` pass.
+- Independent correction review found one redispatch edge: accepting a non-gating proposal on an already
+  opened paired Stage used entered-stage status and reset it to `empty`. Acceptance now uses entered status
+  only when the Stage advances; a regression keeps unchanged paired Stages at `paired_work`.
+- Corrected review found the compatibility check still required an earlier worker-step event when a later
+  paired Stage reused a session created by ordinary Ticket Chat. Compatibility now keys only on whether a
+  worker-step opening started after the current Stage marker; an earlier human turn/session no longer
+  blocks the one opening. The expanded focused gate, Ruff, stale-wording search, and diff check pass.
 
 Next step:
 
-- Commit the verified branch and propose Implementation. Do not merge or apply the migration live;
-  those remain Closeout work after approval.
+- Re-run the corrected focused gate and independent review, then commit and merge into current main.
+- Run one clean canonical post-merge `./verify`; do not deploy, restart, or touch live data.
 
 Blockers:
 

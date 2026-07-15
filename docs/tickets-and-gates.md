@@ -114,10 +114,10 @@ current owner.
 - **User-owned** Stages rest in **user takeover** and are never dispatched
   automatically. The user does the work, then the Chief records it through external-work
   reconciliation; there is no direct self-settle path.
-- **Paired** Stages rest in **paired work** and are never dispatched automatically.
-  Ordinary Ticket Chat continues the durable Employee conversation. A turn without a
-  proposal leaves paired work unchanged; a real proposal always parks for approval,
-  regardless of scope.
+- **Paired** Stages get one automatic Employee opening turn when the Stage becomes
+  eligible, then rest in **paired work**. Ordinary Ticket Chat continues the durable
+  Employee conversation. A turn without a proposal leaves paired work unchanged; a real
+  proposal always parks for approval, regardless of scope.
 
 **Take over** sets a `user` override for the current Stage, even if an Employee run is
 active. That run cannot undo the takeover when it settles. **Release** clears the current
@@ -160,8 +160,8 @@ Every ticket carries a permission with two parts — together, its **scope**:
 
 Below the ceiling, a worker-owned Stage's proposal is accepted automatically and the
 ticket advances. A paired Stage's proposal always parks instead. At the ceiling, the
-at-cap rule decides whether a worker-owned Stage may propose. User-owned and paired
-Stages are not automatically dispatched. New tickets start leashed right at
+at-cap rule decides whether a worker-owned Stage may propose. User-owned Stages are not
+automatically dispatched; paired Stages only get their opening turn. New tickets start leashed right at
 **Kickoff**: the ceiling is `needs_kickoff` for every Worker type, so nothing advances past
 the human-approved intake until the human grants scope onward — review before agents
 start. Every later stage behaves the same way, including the last two: an accepted

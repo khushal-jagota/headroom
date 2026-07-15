@@ -10,6 +10,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from planner.chat import data as chat_data
 from planner.core import clock as planner_clock
 from planner.core import links as core_links
 from planner.core.adapters.registry import build_adapters
@@ -28,6 +29,8 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
+    StageOwnershipMode,
+    TicketStatus,
 )
 from planner.tickets.logic import fields_codec
 
@@ -105,6 +108,25 @@ def _event_kinds(db_path: Path, entity_id: str) -> list[str]:
                 "SELECT kind FROM events WHERE entity_id = ? ORDER BY id", (entity_id,)
             ).fetchall()
         ]
+    finally:
+        conn.close()
+
+
+def _is_eligible_today(db_path: Path, ticket_id: str) -> bool:
+    from planner.runtime.automatic_employee_step_eligibility import (
+        is_eligible_for_automatic_employee_step,
+    )
+    from planner.worker_types.configuration import configured_worker_type_registry
+
+    conn = connect(str(db_path))
+    try:
+        ticket = tickets_data.read_ticket(conn, ticket_id)
+        return is_eligible_for_automatic_employee_step(
+            conn,
+            ticket,
+            planning_day_id="day_2099-01-01",
+            worker_type_definition=configured_worker_type_registry().require(ticket.worker_type),
+        )
     finally:
         conn.close()
 
@@ -252,6 +274,130 @@ def test_chief_rejections_do_not_wake_or_change_canonical_records(
         assert active_reconcile.status_code == 409
         assert eligibility_wake.calls == 0
         assert _ticket_and_events_snapshot(db_path, ticket_id) == before_active
+
+
+def test_accepting_kickoff_into_paired_stage_leaves_empty_and_wakes(
+    tmp_path: Path,
+) -> None:
+    app, db_path, _clock, eligibility_wake = _make_app(
+        tmp_path,
+        fake_now="2099-01-01T12:00:00+00:00",
+    )
+    conn = connect(str(db_path))
+    try:
+        ticket = tickets_data.create_ticket(
+            conn,
+            worker_type="new_worker",
+            title="New specialist",
+            actor="human",
+            now=1,
+            title_max_chars=TITLE_MAX_CHARS,
+        )
+        days_data.add_day_ticket(conn, "day_2099-01-01", ticket.id, 2)
+    finally:
+        conn.close()
+    eligibility_wake.reset()
+
+    with TestClient(app) as client:
+        accepted = client.post(
+            f"/api/tickets/{ticket.id}/accept/kickoff",
+            json={"next_ceiling": "needs_understanding", "at_cap": "propose"},
+        )
+
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["stage"] == "needs_understanding"
+    assert accepted.json()["ticket_status"] == TicketStatus.empty.value
+    assert eligibility_wake.calls == 1
+    assert _is_eligible_today(db_path, ticket.id)
+
+
+def test_same_mode_ownership_does_not_reopen_but_real_paired_transition_does(
+    tmp_path: Path,
+) -> None:
+    app, db_path, _clock, eligibility_wake = _make_app(
+        tmp_path,
+        fake_now="2099-01-01T12:00:00+00:00",
+    )
+    ticket_id = _create_direct(db_path, title="Ownership")
+    conn = connect(str(db_path))
+    try:
+        days_data.add_day_ticket(conn, "day_2099-01-01", ticket_id, 2)
+    finally:
+        conn.close()
+    eligibility_wake.reset()
+
+    with TestClient(app) as client:
+        paired = client.put(
+            f"/api/tickets/{ticket_id}/stage-ownership/needs_success",
+            json={"ownership_mode": StageOwnershipMode.paired.value},
+        )
+        assert paired.status_code == 200, paired.text
+        assert paired.json()["ticket_status"] == TicketStatus.empty.value
+        assert eligibility_wake.calls == 1
+        assert _event_kinds(db_path, ticket_id).count("stage_ownership_changed") == 1
+        assert _is_eligible_today(db_path, ticket_id)
+
+        conn = connect(str(db_path))
+        try:
+            turn = chat_data.start_turn(
+                conn,
+                ticket_id,
+                origin="worker",
+                mode="worker_step",
+                visible_role="worker",
+                visible_text="automatic opening",
+                output_role="assistant",
+                phase="thinking",
+                activity_label="Thinking",
+                now=3,
+            )
+            chat_data.settle_chat_turn(
+                conn,
+                turn.id,
+                entity_id=ticket_id,
+                status="complete",
+                reply_text="opened",
+                output_role="assistant",
+                error=None,
+                now=4,
+            )
+            conn.execute(
+                "UPDATE tickets SET ticket_status = 'paired_work', employee_session_id = ? "
+                "WHERE id = ?",
+                ("existing-session", ticket_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        assert not _is_eligible_today(db_path, ticket_id)
+
+        same_paired = client.put(
+            f"/api/tickets/{ticket_id}/stage-ownership/needs_success",
+            json={"ownership_mode": StageOwnershipMode.paired.value},
+        )
+        assert same_paired.status_code == 200, same_paired.text
+        assert same_paired.json()["ticket_status"] == TicketStatus.paired_work.value
+        assert eligibility_wake.calls == 1
+        assert _event_kinds(db_path, ticket_id).count("stage_ownership_changed") == 1
+        assert not _is_eligible_today(db_path, ticket_id)
+
+        user = client.put(
+            f"/api/tickets/{ticket_id}/stage-ownership/needs_success",
+            json={"ownership_mode": StageOwnershipMode.user.value},
+        )
+        assert user.status_code == 200, user.text
+        assert user.json()["ticket_status"] == TicketStatus.user_takeover.value
+        assert eligibility_wake.calls == 2
+
+        paired_again = client.put(
+            f"/api/tickets/{ticket_id}/stage-ownership/needs_success",
+            json={"ownership_mode": StageOwnershipMode.paired.value},
+        )
+        assert paired_again.status_code == 200, paired_again.text
+        assert paired_again.json()["ticket_status"] == TicketStatus.empty.value
+        assert eligibility_wake.calls == 3
+        assert _event_kinds(db_path, ticket_id).count("stage_ownership_changed") == 3
+        assert _is_eligible_today(db_path, ticket_id)
 
 
 def test_chief_reconcile_wakes_for_semantic_change_and_errored_normalization_only(
