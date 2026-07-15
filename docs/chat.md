@@ -62,6 +62,15 @@ or tool and command output in the activity list. Repeated updates change the sam
 entry where Hermes supplies an identity, the list keeps at most 100 entries, and
 the entries are removed when the turn settles.
 
+When a worker asks a clarification question, the same active worker turn stores the
+request id, question, and optional choices. The existing composer expands to show
+that question. A choice or typed answer goes to `clarify.respond` on the exact live
+Employee session and request that asked it; it does not start an ordinary Chat turn.
+Panels keeps the question pending if Hermes rejects or cannot confirm the answer.
+After Hermes accepts it, Panels mirrors the question and answer into the visible
+transcript and clears only the answered request, so a following question cannot be
+lost. Any ordinary composer draft is restored after the clarification closes.
+
 That split matters: writing a row to Panels chat state does not append anything to
 the employee's Hermes conversation. A normal Ticket Chat send reaches the employee
 because it goes through the Ticket's `employee_session_id` and is then mirrored into

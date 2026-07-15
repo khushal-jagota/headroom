@@ -1,4 +1,8 @@
-import type { ChatImageUploadResponse, StartChatTurnBody } from "./types";
+import type {
+  AnswerChatClarificationBody,
+  ChatImageUploadResponse,
+  StartChatTurnBody
+} from "./types";
 
 export type JsonValue =
   | null
@@ -105,6 +109,16 @@ export async function startChatTurn(
   body: StartChatTurnBody
 ): Promise<unknown> {
   return fetchJson(`/api/chat/${encodeURIComponent(entityId)}/turns`, {
+    method: "POST",
+    body
+  });
+}
+
+export async function answerChatClarification(
+  entityId: string,
+  body: AnswerChatClarificationBody
+): Promise<unknown> {
+  return fetchJson(`/api/chat/${encodeURIComponent(entityId)}/clarification-answer`, {
     method: "POST",
     body
   });

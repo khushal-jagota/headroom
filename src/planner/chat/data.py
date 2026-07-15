@@ -8,6 +8,7 @@ day chat, and the chief-of-staff chat all use the same state shape.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -16,6 +17,7 @@ from typing import Final, Literal
 from planner.chat.contracts import (
     ChatActivityEntry,
     ChatActivityObservation,
+    ChatPendingClarification,
     ChatState,
     ChatStateMessage,
     ChattableEntityKind,
@@ -66,6 +68,27 @@ def _row_to_activity_entry(row: sqlite3.Row) -> ChatActivityEntry:
     )
 
 
+def _row_to_pending_clarification(row: sqlite3.Row) -> ChatPendingClarification | None:
+    request_id = row["pending_clarification_request_id"]
+    question = row["pending_clarification_question"]
+    if request_id is None or question is None:
+        return None
+    choices_raw = row["pending_clarification_choices"]
+    choices: tuple[str, ...] = ()
+    if choices_raw:
+        try:
+            parsed = json.loads(str(choices_raw))
+        except json.JSONDecodeError:
+            parsed = []
+        if isinstance(parsed, list):
+            choices = tuple(str(item) for item in parsed if isinstance(item, str))
+    return ChatPendingClarification(
+        request_id=str(request_id),
+        question=str(question),
+        choices=choices,
+    )
+
+
 def _row_to_turn(
     row: sqlite3.Row, activity_entries: tuple[ChatActivityEntry, ...] = ()
 ) -> ChatTurn:
@@ -85,6 +108,7 @@ def _row_to_turn(
         updated_at=int(row["updated_at"]),
         completed_at=row["completed_at"],
         activity_entries=activity_entries,
+        pending_clarification=_row_to_pending_clarification(row),
     )
 
 
@@ -260,6 +284,155 @@ def record_turn_activity(
         )
 
 
+def record_pending_clarification(
+    conn: sqlite3.Connection,
+    turn_id: str,
+    *,
+    entity_id: str,
+    clarification: ChatPendingClarification,
+    now: int,
+) -> bool:
+    choices_json = json.dumps(list(clarification.choices)) if clarification.choices else None
+    with _txn(conn):
+        cursor = conn.execute(
+            "UPDATE chat_turns SET pending_clarification_request_id = ?, "
+            "pending_clarification_question = ?, pending_clarification_choices = ?, "
+            "activity_label = NULL, updated_at = ? "
+            "WHERE id = ? AND entity_id = ? AND status = 'running' "
+            "AND origin = 'worker' AND mode = 'worker_step'",
+            (
+                clarification.request_id,
+                clarification.question,
+                choices_json,
+                now,
+                turn_id,
+                entity_id,
+            ),
+        )
+        if cursor.rowcount == 0:
+            return False
+        append_event(
+            conn,
+            entity_id,
+            EventKind.chat_turn_updated,
+            {
+                "turn_id": turn_id,
+                "pending_clarification_request_id": clarification.request_id,
+            },
+            now,
+        )
+        return True
+
+
+def read_pending_clarification_answer_target(
+    conn: sqlite3.Connection,
+    entity_id: str,
+    request_id: str,
+) -> tuple[str, str, str, ChatPendingClarification]:
+    row = conn.execute(
+        "SELECT chat_turns.*, tickets.employee_session_id AS ticket_employee_session_id "
+        "FROM chat_turns JOIN tickets ON tickets.id = chat_turns.entity_id "
+        "WHERE chat_turns.entity_id = ? AND chat_turns.status = 'running' "
+        "ORDER BY chat_turns.started_at DESC, chat_turns.id DESC LIMIT 1",
+        (entity_id,),
+    ).fetchone()
+    if row is None:
+        raise PlannerError(ErrorCode.not_found, "no active worker chat turn")
+    if str(row["origin"]) != "worker" or str(row["mode"]) != "worker_step":
+        raise PlannerError(
+            ErrorCode.validation,
+            "active chat turn is not a worker step",
+            {"entity_id": entity_id, "turn_id": str(row["id"])},
+        )
+    clarification = _row_to_pending_clarification(row)
+    if clarification is None:
+        raise PlannerError(
+            ErrorCode.not_found,
+            "active worker turn has no pending clarification",
+            {"entity_id": entity_id, "turn_id": str(row["id"])},
+        )
+    if clarification.request_id != request_id:
+        raise PlannerError(
+            ErrorCode.already_running,
+            "pending clarification request changed",
+            {
+                "entity_id": entity_id,
+                "turn_id": str(row["id"]),
+                "request_id": clarification.request_id,
+            },
+        )
+    session_key = row["session_key"]
+    employee_session_id = row["ticket_employee_session_id"]
+    if not session_key or not employee_session_id or session_key != employee_session_id:
+        raise PlannerError(
+            ErrorCode.validation,
+            "active worker turn session does not match the ticket employee session",
+            {"entity_id": entity_id, "turn_id": str(row["id"])},
+        )
+    return str(row["id"]), str(session_key), str(employee_session_id), clarification
+
+
+def mirror_accepted_clarification_answer(
+    conn: sqlite3.Connection,
+    entity_id: str,
+    *,
+    turn_id: str,
+    request_id: str,
+    question: str,
+    answer: str,
+    now: int,
+) -> ChatTurn:
+    with _txn(conn):
+        row = conn.execute(
+            "SELECT * FROM chat_turns WHERE id = ? AND entity_id = ?",
+            (turn_id, entity_id),
+        ).fetchone()
+        if row is None:
+            raise PlannerError(
+                ErrorCode.not_found,
+                "worker chat turn no longer exists",
+                {"entity_id": entity_id, "turn_id": turn_id},
+            )
+        _append_message(
+            conn,
+            entity_id,
+            turn_id=turn_id,
+            role="assistant",
+            text=question,
+            now=now,
+        )
+        _append_message(
+            conn,
+            entity_id,
+            turn_id=turn_id,
+            role="human",
+            text=answer,
+            now=now,
+        )
+        conn.execute(
+            "UPDATE chat_turns SET pending_clarification_request_id = NULL, "
+            "pending_clarification_question = NULL, pending_clarification_choices = NULL, "
+            "updated_at = ? WHERE id = ? AND entity_id = ? "
+            "AND pending_clarification_request_id = ?",
+            (now, turn_id, entity_id, request_id),
+        )
+        updated = conn.execute("SELECT * FROM chat_turns WHERE id = ?", (turn_id,)).fetchone()
+        assert updated is not None
+        append_event(
+            conn,
+            entity_id,
+            EventKind.chat_turn_updated,
+            {
+                "turn_id": turn_id,
+                "pending_clarification_request_id": updated[
+                    "pending_clarification_request_id"
+                ],
+            },
+            now,
+        )
+        return _row_to_turn(updated)
+
+
 def start_turn(
     conn: sqlite3.Connection,
     entity_id: str,
@@ -381,8 +554,9 @@ def _settle_chat_turn_in_transaction(
         final_role = output_role
     conn.execute(
         "UPDATE chat_turns SET status = ?, phase = 'settled', activity_label = NULL, "
-        "output_role = ?, output_text = ?, error = ?, updated_at = ?, completed_at = ? "
-        "WHERE id = ?",
+        "pending_clarification_request_id = NULL, pending_clarification_question = NULL, "
+        "pending_clarification_choices = NULL, output_role = ?, output_text = ?, error = ?, "
+        "updated_at = ?, completed_at = ? WHERE id = ?",
         (status, final_role, final_text, error, now, now, turn_id),
     )
     if status != "errored" and final_text:
@@ -700,7 +874,9 @@ def finish_turn(
         conn.execute("DELETE FROM chat_turn_activity_entries WHERE turn_id = ?", (turn_id,))
         conn.execute(
             "UPDATE chat_turns SET status = ?, phase = 'settled', activity_label = NULL, "
-            "output_role = ?, output_text = ?, updated_at = ?, completed_at = ? WHERE id = ?",
+            "pending_clarification_request_id = NULL, pending_clarification_question = NULL, "
+            "pending_clarification_choices = NULL, output_role = ?, output_text = ?, "
+            "updated_at = ?, completed_at = ? WHERE id = ?",
             (status, output_role, final_text, now, now, turn_id),
         )
         if final_text:
@@ -740,7 +916,9 @@ def fail_turn(
         conn.execute("DELETE FROM chat_turn_activity_entries WHERE turn_id = ?", (turn_id,))
         conn.execute(
             "UPDATE chat_turns SET status = 'errored', phase = 'settled', "
-            "activity_label = NULL, error = ?, updated_at = ?, completed_at = ? WHERE id = ?",
+            "activity_label = NULL, pending_clarification_request_id = NULL, "
+            "pending_clarification_question = NULL, pending_clarification_choices = NULL, "
+            "error = ?, updated_at = ?, completed_at = ? WHERE id = ?",
             (error, now, now, turn_id),
         )
         append_event(

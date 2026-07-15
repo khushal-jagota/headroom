@@ -21,6 +21,7 @@ from urllib.parse import quote, unquote, urlsplit
 from planner.chat import data as chat_data
 from planner.chat.contracts import (
     ChatActivityObservation,
+    ChatPendingClarification,
     ChatState,
     ChattableEntityKind,
     ChatTurn,
@@ -169,6 +170,7 @@ class ChatTurnLifecycle:
         self._gateway_provider = gateway_provider
         self._now = now
         self._db_path = db_path
+        self._clarification_answer_lock = threading.Lock()
 
     @staticmethod
     def _ensure_ticket_worker_not_running(
@@ -357,6 +359,62 @@ class ChatTurnLifecycle:
         finally:
             conn.close()
 
+    def _answer_pending_clarification(
+        self, entity_id: str, *, request_id: str, answer: str
+    ) -> ChatTurn:
+        with self._clarification_answer_lock:
+            return self._answer_pending_clarification_serially(
+                entity_id,
+                request_id=request_id,
+                answer=answer,
+            )
+
+    def _answer_pending_clarification_serially(
+        self, entity_id: str, *, request_id: str, answer: str
+    ) -> ChatTurn:
+        answer = answer.strip()
+        if not request_id.strip():
+            raise PlannerError(ErrorCode.validation, "request_id is required")
+        if not answer:
+            raise PlannerError(ErrorCode.validation, "answer is required")
+        conn = self._conn_factory()
+        try:
+            _resolve(conn, entity_id, self._now())
+            turn_id, session_key, _employee_session_id, clarification = (
+                chat_data.read_pending_clarification_answer_target(
+                    conn,
+                    entity_id,
+                    request_id,
+                )
+            )
+            gateway = self._gateway_provider()
+            try:
+                gateway.respond_to_clarification(
+                    session_key,
+                    entity_id,
+                    request_id,
+                    answer,
+                )
+            except PlannerError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise PlannerError(
+                    ErrorCode.gateway_offline,
+                    "clarification response failed",
+                    {"cause": str(exc), "entity_id": entity_id},
+                ) from exc
+            return chat_data.mirror_accepted_clarification_answer(
+                conn,
+                entity_id,
+                turn_id=turn_id,
+                request_id=request_id,
+                question=clarification.question,
+                answer=answer,
+                now=self._now(),
+            )
+        finally:
+            conn.close()
+
     def _launch_execution(self, admitted: _AdmittedHumanChatTurn) -> None:
         thread = threading.Thread(
             target=self._execute_turn,
@@ -518,6 +576,20 @@ def _visible_human_text(text: str, image_references: Sequence[str]) -> str:
     return f"{text}\n\n{markdown}" if text else markdown
 
 
+def answer_pending_clarification(
+    lifecycle: ChatTurnLifecycle,
+    entity_id: str,
+    *,
+    request_id: str,
+    answer: str,
+) -> ChatTurn:
+    return lifecycle._answer_pending_clarification(
+        entity_id,
+        request_id=request_id,
+        answer=answer,
+    )
+
+
 def start_worker_turn(
     conn: sqlite3.Connection, entity_id: str, *, visible_text: str, now: int
 ) -> ChatTurn:
@@ -549,6 +621,29 @@ def observe_worker_gateway_event(
     etype = str(event.get("type") or "")
     raw = event.get("payload")
     payload = raw if isinstance(raw, dict) else {}
+    if etype == "clarify.request":
+        request_id = payload.get("request_id")
+        question = payload.get("question")
+        choices_raw = payload.get("choices")
+        if not isinstance(request_id, str) or not request_id.strip():
+            return
+        if not isinstance(question, str) or not question.strip():
+            return
+        choices: tuple[str, ...] = ()
+        if isinstance(choices_raw, list):
+            choices = tuple(item for item in choices_raw if isinstance(item, str))
+        chat_data.record_pending_clarification(
+            conn,
+            turn_id,
+            entity_id=entity_id,
+            clarification=ChatPendingClarification(
+                request_id=request_id,
+                question=question,
+                choices=choices,
+            ),
+            now=now,
+        )
+        return
     if etype == "message.delta":
         delta = str(payload.get("text") or payload.get("delta") or "")
         chat_data.append_turn_output(conn, turn_id, entity_id=entity_id, delta=delta, now=now)

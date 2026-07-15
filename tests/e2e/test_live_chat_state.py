@@ -145,6 +145,71 @@ def _seed_running_worker_turn(server, entity_id: str) -> None:
         )
 
 
+def _seed_pending_clarification(
+    server,
+    entity_id: str,
+    *,
+    request_id: str = "clarify-e2e",
+    question: str,
+    choices: list[str],
+) -> None:
+    with sqlite3.connect(server.db_path) as conn:
+        row = conn.execute(
+            "SELECT id FROM chat_turns WHERE entity_id = ? AND status = 'running'",
+            (entity_id,),
+        ).fetchone()
+        assert row is not None
+        turn_id = row[0]
+        conn.execute(
+            "UPDATE chat_turns SET pending_clarification_request_id = ?, "
+            "pending_clarification_question = ?, pending_clarification_choices = ?, "
+            "updated_at = updated_at + 1 WHERE id = ?",
+            (request_id, question, json.dumps(choices), turn_id),
+        )
+        conn.execute(
+            "INSERT INTO events (entity_id, kind, payload, created_at) VALUES (?, ?, ?, 2)",
+            (
+                entity_id,
+                "chat_turn_updated",
+                json.dumps(
+                    {
+                        "turn_id": turn_id,
+                        "pending_clarification_request_id": request_id,
+                    }
+                ),
+            ),
+        )
+
+
+def _clear_pending_clarification(server, entity_id: str) -> None:
+    with sqlite3.connect(server.db_path) as conn:
+        row = conn.execute(
+            "SELECT id FROM chat_turns WHERE entity_id = ? AND status = 'running'",
+            (entity_id,),
+        ).fetchone()
+        assert row is not None
+        turn_id = row[0]
+        conn.execute(
+            "UPDATE chat_turns SET pending_clarification_request_id = NULL, "
+            "pending_clarification_question = NULL, pending_clarification_choices = NULL, "
+            "updated_at = updated_at + 1 WHERE id = ?",
+            (turn_id,),
+        )
+        conn.execute(
+            "INSERT INTO events (entity_id, kind, payload, created_at) VALUES (?, ?, ?, 3)",
+            (
+                entity_id,
+                "chat_turn_updated",
+                json.dumps(
+                    {
+                        "turn_id": turn_id,
+                        "pending_clarification_request_id": None,
+                    }
+                ),
+            ),
+        )
+
+
 def _seed_running_chief_turn(server, entity_id: str) -> None:
     turn_id = f"run_e2e_chief_{entity_id}"
     with sqlite3.connect(server.db_path) as conn:
@@ -1132,6 +1197,183 @@ def test_ticket_chat_shows_running_worker_turn_after_remount(
     page.fill("[data-chat] [data-chat-input]", "draft after remount")
     assert page.locator("[data-chat] [data-chat-input]").input_value() == "draft after remount"
     assert page.locator("[data-chat] [data-chat-send]").is_enabled()
+
+
+def test_ticket_chat_pending_clarification_renders_choices_and_submits_answer(
+    server, context_factory, open_page, cli, api
+) -> None:
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Clarification UI ticket",
+    )["id"]
+    _seed_running_worker_turn(server, tid)
+    long_question = (
+        "Please decide whether the worker should keep the deliberately long existing "
+        "backend boundary name or split it into a smaller explicit service before coding."
+    )
+    choices = [
+        "Keep the existing long boundary name and add the smallest missing behavior.",
+        "Split it first.\nUse a separate service for the new answer operation.",
+    ]
+    _seed_pending_clarification(
+        server,
+        tid,
+        question=long_question,
+        choices=choices,
+    )
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{tid}",
+        'section[data-screen="ticket"] [data-chat] [data-chat-clarification]',
+        settled=True,
+    )
+    page.locator("[data-chat]").evaluate(
+        "el => { el.style.width = '360px'; el.style.minWidth = '0'; }"
+    )
+
+    question = page.locator("[data-chat-clarification-question]")
+    second_choice = page.locator("[data-chat-clarification-choice]").nth(1)
+    assert long_question in question.inner_text()
+    assert "Use a separate service" in second_choice.inner_text()
+    question_id = question.get_attribute("id")
+    assert question_id
+    assert page.locator("[data-chat-clarification-choices]").get_attribute(
+        "aria-labelledby"
+    ) == question_id
+    assert page.locator("[data-chat-input]").get_attribute("aria-labelledby") == question_id
+    assert not page.locator("[data-chat-slash]").is_visible()
+    assert not page.locator("[data-chat-image]").is_visible()
+    assert question.evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+    assert second_choice.evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+
+    default_style = page.locator("[data-chat-clarification-choice]").first.evaluate(
+        """el => {
+            const style = getComputedStyle(el);
+            return {
+              borderTopWidth: style.borderTopWidth,
+              borderTopStyle: style.borderTopStyle,
+              backgroundColor: style.backgroundColor
+            };
+        }"""
+    )
+    second_choice.click()
+    selected_style = second_choice.evaluate(
+        """el => {
+            const style = getComputedStyle(el);
+            return {
+              borderTopWidth: style.borderTopWidth,
+              borderTopStyle: style.borderTopStyle,
+              borderTopColor: style.borderTopColor
+            };
+        }"""
+    )
+    assert default_style["borderTopWidth"] == "0px"
+    assert default_style["borderTopStyle"] in ("none", "solid")
+    assert selected_style["borderTopWidth"] != "0px"
+    assert selected_style["borderTopStyle"] == "solid"
+    assert page.locator("[data-chat] [data-chat-send]").get_attribute("title") == "Answer"
+
+    page.route(
+        f"**/api/chat/{tid}/clarification-answer",
+        lambda route: route.fulfill(status=200, json={"ok": True}),
+    )
+    with page.expect_request(f"**/api/chat/{tid}/clarification-answer") as request_info:
+        page.click("[data-chat] [data-chat-send]")
+
+    assert request_info.value.post_data_json == {
+        "request_id": "clarify-e2e",
+        "answer": choices[1],
+    }
+
+
+def test_ticket_chat_pending_clarification_submits_free_text_answer(
+    server, context_factory, open_page, cli
+) -> None:
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Clarification free text ticket",
+    )["id"]
+    _seed_running_worker_turn(server, tid)
+    _seed_pending_clarification(
+        server,
+        tid,
+        request_id="clarify-free",
+        question="What should the worker do next?",
+        choices=["Use option A", "Use option B"],
+    )
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{tid}",
+        'section[data-screen="ticket"] [data-chat] [data-chat-clarification]',
+        settled=True,
+    )
+    page.route(
+        f"**/api/chat/{tid}/clarification-answer",
+        lambda route: route.fulfill(status=200, json={"ok": True}),
+    )
+
+    page.fill("[data-chat] [data-chat-input]", "Neither option. Please preserve the current API.")
+    with page.expect_request(f"**/api/chat/{tid}/clarification-answer") as request_info:
+        page.click("[data-chat] [data-chat-send]")
+
+    assert request_info.value.post_data_json == {
+        "request_id": "clarify-free",
+        "answer": "Neither option. Please preserve the current API.",
+    }
+
+
+def test_ticket_chat_pending_clarification_preserves_existing_composer_draft(
+    server, context_factory, open_page, cli
+) -> None:
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Clarification draft preservation ticket",
+    )["id"]
+    _seed_running_worker_turn(server, tid)
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{tid}",
+        'section[data-screen="ticket"] [data-chat] [data-chat-input]',
+        settled=True,
+    )
+    composer = page.locator("[data-chat] [data-chat-input]")
+    composer.fill("Keep this ordinary draft for after the clarification.")
+
+    _seed_pending_clarification(
+        server,
+        tid,
+        request_id="clarify-draft",
+        question="What should the worker do first?",
+        choices=["Use the existing route", "Add a smaller route"],
+    )
+    page.wait_for_selector("[data-chat] [data-chat-clarification]", timeout=WAIT_MS)
+    assert composer.input_value() == ""
+    composer.fill("This answer belongs only to the clarification.")
+
+    _clear_pending_clarification(server, tid)
+    page.wait_for_function(
+        "() => !document.querySelector('[data-chat] [data-chat-clarification]')",
+        timeout=WAIT_MS,
+    )
+    assert composer.input_value() == "Keep this ordinary draft for after the clarification."
 
 
 def test_startup_recovery_preserves_partial_chat_and_continues_without_duplicate_input(

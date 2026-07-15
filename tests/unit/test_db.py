@@ -1681,8 +1681,8 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(tm
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     create_schema(conn)
-    assert SCHEMA_VERSION == 20
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 20
+    assert SCHEMA_VERSION == 21
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     info = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(tickets)")}
     assert info["worker_type"]["notnull"] == 1

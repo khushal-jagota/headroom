@@ -11,7 +11,7 @@ from typing import Final
 
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 20
+SCHEMA_VERSION: Final = 21
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -114,6 +114,9 @@ CREATE TABLE IF NOT EXISTS chat_turns (
   output_text    TEXT NOT NULL DEFAULT '',
   session_key    TEXT,
   error          TEXT,
+  pending_clarification_request_id TEXT,
+  pending_clarification_question   TEXT,
+  pending_clarification_choices    TEXT,
   started_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL,
   completed_at   INTEGER
@@ -210,12 +213,23 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _migrate_project_summary_column(conn)
     _migrate_derived_sprint_item_status(conn)
     _migrate_links_blocks_only(conn)
+    _migrate_chat_turn_pending_clarification(conn)
     _create_indexes(conn)
     conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _migrate_chat_turn_pending_clarification(conn: sqlite3.Connection) -> None:
+    columns = _table_columns(conn, "chat_turns")
+    if "pending_clarification_request_id" not in columns:
+        conn.execute("ALTER TABLE chat_turns ADD COLUMN pending_clarification_request_id TEXT")
+    if "pending_clarification_question" not in columns:
+        conn.execute("ALTER TABLE chat_turns ADD COLUMN pending_clarification_question TEXT")
+    if "pending_clarification_choices" not in columns:
+        conn.execute("ALTER TABLE chat_turns ADD COLUMN pending_clarification_choices TEXT")
 
 
 # --- sealed historical-to-v20 Ticket migration --------------------------------

@@ -68,5 +68,10 @@ class RealGatewayAdapter:
     def interrupt(self, session_key: str, entity_id: str) -> None:
         raise self._offline()
 
+    def respond_to_clarification(
+        self, session_key: str, entity_id: str, request_id: str, answer: str
+    ) -> None:
+        raise self._offline()
+
     def catalog(self) -> CommandCatalog:
         raise self._offline()

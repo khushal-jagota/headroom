@@ -1,6 +1,11 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from "svelte";
-  import { pauseChatTurn, startChatTurn, uploadChatImage } from "../lib/api";
+  import {
+    answerChatClarification,
+    pauseChatTurn,
+    startChatTurn,
+    uploadChatImage
+  } from "../lib/api";
   import { resourceCatalogue } from "../lib/resourceCatalogue";
   import type { ChatStateMessage, ChatTurn } from "../lib/types";
   import ChatComposer from "./ChatComposer.svelte";
@@ -78,6 +83,7 @@
   let pending = $derived(Boolean(activeTurn));
   let pendingWho = $derived(activeTurn?.origin === "worker" ? "worker" : "planner");
   let activityEntries = $derived(activeTurn?.activity_entries || []);
+  let pendingClarification = $derived(activeTurn?.pending_clarification || null);
   let hasActivityEntries = $derived(activityEntries.length > 0);
   const activityDetailsId = `chat-activity-${stableEntityId}`;
 
@@ -169,6 +175,7 @@
     transcript;
     pending;
     pendingLabel;
+    pendingClarification;
     activityEntries;
     activityExpanded;
 
@@ -197,6 +204,15 @@
   ): Promise<boolean> {
     error = null;
     try {
+      if (pendingClarification) {
+        await answerChatClarification(stableEntityId, {
+          request_id: pendingClarification.request_id,
+          answer: text
+        });
+        draft = "";
+        await chatState.refresh();
+        return true;
+      }
       const uploaded = [];
       for (const image of images) {
         uploaded.push(await uploadChatImage(stableEntityId, image));
@@ -348,10 +364,11 @@
   {#if available}
     <ChatComposer
       catalog={commands.data}
-      submitDisabled={pending}
-      pauseMode={pending}
+      submitDisabled={pending && !pendingClarification}
+      pauseMode={pending && !pendingClarification}
       pauseDisabled={!activeTurn?.can_pause}
       {pausePending}
+      {pendingClarification}
       initialText={draft}
       placeholder={label === "employee" ? "Message the employee..." : `Message ${label}...`}
       onDraft={(text) => (draft = text)}

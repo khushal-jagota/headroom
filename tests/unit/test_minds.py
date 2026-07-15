@@ -1540,6 +1540,78 @@ def test_shared_gateway_interrupt_resolves_stored_key_to_live_session() -> None:
     assert results[0].session_key == STORED_KEY
 
 
+def test_shared_gateway_clarification_response_uses_current_live_session_only() -> None:
+    class ManualEventFake(FakeGateway):
+        def emit(self, event: dict[str, Any]) -> None:
+            self._out.put(json.dumps(event))
+
+    fake = ManualEventFake(
+        {
+            "session.create": [create_reply(LIVE_SID, STORED_KEY)],
+            "prompt.submit": [Reply(result={"status": "streaming"})],
+            "clarify.respond": [Reply(result={"ok": True})],
+        }
+    )
+    gateway = shared(fake)
+    results: list[RunResult] = []
+    turn = threading.Thread(
+        target=lambda: results.append(gateway.run_ticket_step(None, "t_demo", "in flight"))
+    )
+
+    try:
+        turn.start()
+        assert fake.wait_sent(2, 5.0)
+        gateway.respond_to_clarification(
+            STORED_KEY,
+            "t_demo",
+            "clarify-1",
+            "Use the existing endpoint.",
+        )
+        fake.emit(complete_ev(LIVE_SID, text="done"))
+        turn.join(5.0)
+    finally:
+        gateway.shutdown()
+
+    clarify = next(frame for frame in fake.sent if frame["method"] == "clarify.respond")
+    assert clarify["params"] == {
+        "session_id": LIVE_SID,
+        "request_id": "clarify-1",
+        "answer": "Use the existing endpoint.",
+    }
+    assert fake.sent_methods() == [
+        "session.create",
+        "prompt.submit",
+        "clarify.respond",
+    ]
+    assert not turn.is_alive()
+    assert results[0].status == "complete"
+
+
+def test_shared_gateway_clarification_response_rejects_missing_live_session_without_resume(
+) -> None:
+    fake = FakeGateway(
+        {
+            "session.resume": [resume_reply(LIVE_SID, STORED_KEY)],
+            "clarify.respond": [Reply(result={"ok": True})],
+        }
+    )
+    gateway = shared(fake)
+
+    try:
+        with pytest.raises(PlannerError) as excinfo:
+            gateway.respond_to_clarification(
+                STORED_KEY,
+                "t_demo",
+                "clarify-1",
+                "Answer",
+            )
+    finally:
+        gateway.shutdown()
+
+    assert excinfo.value.code == ErrorCode.gateway_offline
+    assert fake.sent_methods() == []
+
+
 @pytest.mark.parametrize("second_disposition", ["streaming", "queued"])
 def test_human_stop_then_immediate_send_ignores_old_interrupted_completion(
     second_disposition: str,

@@ -97,6 +97,26 @@ async def pause_chat_turn(entity_id: str, request: Request) -> dict[str, Any]:
     return asdict(result)
 
 
+@router.post("/chat/{entity_id}/clarification-answer")
+async def answer_chat_clarification(
+    entity_id: str, body: dict[str, Any], request: Request
+) -> dict[str, Any]:
+    authctx.require_direct_write(authctx.request_context(request))
+    request_id = body.get("request_id")
+    answer = body.get("answer")
+    if not isinstance(request_id, str) or not request_id.strip():
+        raise PlannerError(ErrorCode.validation, "request_id is required")
+    if not isinstance(answer, str) or not answer.strip():
+        raise PlannerError(ErrorCode.validation, "answer is required")
+    result = service.answer_pending_clarification(
+        request.app.state.chat_turn_lifecycle,
+        entity_id,
+        request_id=request_id.strip(),
+        answer=answer,
+    )
+    return asdict(result)
+
+
 @router.get("/chat/commands")
 async def chat_commands(request: Request) -> dict[str, Any]:
     # The gateway command/skill catalog for the "/" menu. Direct-only, gateway-wide,
