@@ -119,6 +119,9 @@ CREATE TABLE IF NOT EXISTS chat_turns (
   session_key    TEXT,
   recovery_of_turn_id TEXT REFERENCES chat_turns(id),
   error          TEXT,
+  pending_clarification_request_id TEXT,
+  pending_clarification_question   TEXT,
+  pending_clarification_choices    TEXT,
   started_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL,
   completed_at   INTEGER
@@ -227,6 +230,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _migrate_derived_sprint_item_status(conn)
     _migrate_links_blocks_only(conn)
     _migrate_chat_turn_recovery_column(conn)
+    _migrate_chat_turn_pending_clarification(conn)
     _cleanup_legacy_execution_route_records(conn)
     _create_indexes(conn)
     conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
@@ -275,6 +279,16 @@ def _cleanup_legacy_execution_route_records(conn: sqlite3.Connection) -> None:
         conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
         conn.execute(f"RELEASE SAVEPOINT {savepoint}")
         raise
+
+
+def _migrate_chat_turn_pending_clarification(conn: sqlite3.Connection) -> None:
+    columns = _table_columns(conn, "chat_turns")
+    if "pending_clarification_request_id" not in columns:
+        conn.execute("ALTER TABLE chat_turns ADD COLUMN pending_clarification_request_id TEXT")
+    if "pending_clarification_question" not in columns:
+        conn.execute("ALTER TABLE chat_turns ADD COLUMN pending_clarification_question TEXT")
+    if "pending_clarification_choices" not in columns:
+        conn.execute("ALTER TABLE chat_turns ADD COLUMN pending_clarification_choices TEXT")
 
 
 # --- sealed historical-to-v20 Ticket migration --------------------------------

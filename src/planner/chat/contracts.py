@@ -51,6 +51,13 @@ class ChatActivityEntry:
 
 
 @dataclass(frozen=True)
+class ChatPendingClarification:
+    request_id: str
+    question: str
+    choices: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ChatTurn:
     id: str
     entity_id: str
@@ -67,6 +74,7 @@ class ChatTurn:
     updated_at: int
     completed_at: int | None
     activity_entries: tuple[ChatActivityEntry, ...] = ()
+    pending_clarification: ChatPendingClarification | None = None
 
 
 @dataclass(frozen=True)

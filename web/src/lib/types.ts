@@ -28,6 +28,12 @@ export type ChatActivityEntry = {
   completed_at?: number | null;
 };
 
+export type ChatPendingClarification = {
+  request_id: string;
+  question: string;
+  choices: string[];
+};
+
 export type ChatTurn = {
   id: string;
   entity_id: string;
@@ -44,6 +50,7 @@ export type ChatTurn = {
   started_at: number;
   updated_at: number;
   completed_at?: number | null;
+  pending_clarification?: ChatPendingClarification | null;
 };
 
 export type ChatTurnOutcome = {
@@ -72,6 +79,11 @@ export type StartChatTurnBody = {
   text: string;
   mode: "message" | "command";
   image_references?: string[];
+};
+
+export type AnswerChatClarificationBody = {
+  request_id: string;
+  answer: string;
 };
 
 export type SprintSummary = {

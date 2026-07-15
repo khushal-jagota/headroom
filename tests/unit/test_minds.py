@@ -1595,6 +1595,114 @@ def test_deadline_interrupt_does_not_resume_missing_live_session() -> None:
         gateway.shutdown()
 
 
+
+def test_shared_gateway_clarification_response_uses_current_live_session_only() -> None:
+    class ManualEventFake(FakeGateway):
+        def emit(self, event: dict[str, Any]) -> None:
+            self._out.put(json.dumps(event))
+
+    fake = ManualEventFake(
+        {
+            "session.create": [create_reply(LIVE_SID, STORED_KEY)],
+            "prompt.submit": [Reply(result={"status": "streaming"})],
+            "clarify.respond": [Reply(result={"ok": True})],
+        }
+    )
+    gateway = shared(fake)
+    results: list[RunResult] = []
+    turn = threading.Thread(
+        target=lambda: results.append(gateway.run_ticket_step(None, "t_demo", "in flight"))
+    )
+
+    try:
+        turn.start()
+        assert fake.wait_sent(2, 5.0)
+        gateway.respond_to_clarification(
+            STORED_KEY,
+            "t_demo",
+            "clarify-1",
+            "Use the existing endpoint.",
+        )
+        fake.emit(complete_ev(LIVE_SID, text="done"))
+        turn.join(5.0)
+    finally:
+        gateway.shutdown()
+
+    clarify = next(frame for frame in fake.sent if frame["method"] == "clarify.respond")
+    assert clarify["params"] == {
+        "session_id": LIVE_SID,
+        "request_id": "clarify-1",
+        "answer": "Use the existing endpoint.",
+    }
+    assert fake.sent_methods() == [
+        "session.create",
+        "prompt.submit",
+        "clarify.respond",
+    ]
+    assert not turn.is_alive()
+    assert results[0].status == "complete"
+
+
+def test_shared_gateway_routes_clarification_request_as_first_worker_event() -> None:
+    clarification = {
+        "request_id": "clarify-first",
+        "question": "Choose before any other output.",
+        "choices": ["One", "Two"],
+    }
+    fake = FakeGateway(
+        {
+            "session.create": [create_reply(LIVE_SID, STORED_KEY)],
+            "prompt.submit": [
+                Reply(
+                    result={"status": "streaming"},
+                    events_after=(
+                        ev("clarify.request", LIVE_SID, clarification),
+                        complete_ev(LIVE_SID, text="done"),
+                    ),
+                )
+            ],
+        }
+    )
+    gateway = shared(fake)
+    observed: list[dict[str, Any]] = []
+
+    try:
+        result = gateway.run_ticket_step(None, "t_demo", "in flight", observed.append)
+    finally:
+        gateway.shutdown()
+
+    assert result.status == "complete"
+    assert observed[0] == {
+        "type": "clarify.request",
+        "session_id": LIVE_SID,
+        "payload": clarification,
+    }
+
+
+def test_shared_gateway_clarification_response_rejects_missing_live_session_without_resume(
+) -> None:
+    fake = FakeGateway(
+        {
+            "session.resume": [resume_reply(LIVE_SID, STORED_KEY)],
+            "clarify.respond": [Reply(result={"ok": True})],
+        }
+    )
+    gateway = shared(fake)
+
+    try:
+        with pytest.raises(PlannerError) as excinfo:
+            gateway.respond_to_clarification(
+                STORED_KEY,
+                "t_demo",
+                "clarify-1",
+                "Answer",
+            )
+    finally:
+        gateway.shutdown()
+
+    assert excinfo.value.code == ErrorCode.gateway_offline
+    assert fake.sent_methods() == []
+
 @pytest.mark.parametrize("second_disposition", ["streaming", "queued"])
 def test_human_stop_then_immediate_send_ignores_old_interrupted_completion(
     second_disposition: str,

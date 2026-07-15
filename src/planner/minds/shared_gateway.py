@@ -128,6 +128,16 @@ class EntityRoutingGateway:
     def interrupt(self, session_key: str, entity_id: str) -> None:
         self._gateway_for(entity_id).interrupt(session_key, entity_id)
 
+    def respond_to_clarification(
+        self, session_key: str, entity_id: str, request_id: str, answer: str
+    ) -> None:
+        self._gateway_for(entity_id).respond_to_clarification(
+            session_key,
+            entity_id,
+            request_id,
+            answer,
+        )
+
     def catalog(self) -> CommandCatalog:
         return self._default_gateway.catalog()
 
@@ -402,6 +412,35 @@ class SharedGateway:
                 ErrorCode.gateway_offline,
                 "chat gateway interrupt failed",
                 {"detail": str(exc), "entity_id": entity_id},
+            ) from exc
+
+    def respond_to_clarification(
+        self, session_key: str, entity_id: str, request_id: str, answer: str
+    ) -> None:
+        try:
+            live_session = self.live_session(session_key)
+            if live_session is None:
+                raise GatewayError(f"Hermes live session is unavailable for {session_key}")
+            live_session.request(
+                "clarify.respond",
+                {
+                    "session_id": live_session.live_session_id,
+                    "request_id": request_id,
+                    "answer": answer,
+                },
+                timeout=self._request_timeout,
+            )
+        except GatewayRpcError as exc:
+            raise PlannerError(
+                ErrorCode.gateway_offline,
+                "clarification response failed",
+                {"detail": str(exc), "entity_id": entity_id, "session_key": session_key},
+            ) from exc
+        except GatewayError as exc:
+            raise PlannerError(
+                ErrorCode.gateway_offline,
+                "clarification response failed",
+                {"detail": str(exc), "entity_id": entity_id, "session_key": session_key},
             ) from exc
 
     def catalog(self) -> CommandCatalog:

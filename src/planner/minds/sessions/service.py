@@ -1029,6 +1029,7 @@ class LiveSessionManager:
             "tool.end",
             "tool.complete",
             "command.start",
+            "clarify.request",
         )
         terminal = event_type in ("message.complete", "error")
         if state.unknown_lifecycle_barrier and not state.active_consequences:

@@ -1,4 +1,8 @@
-import type { ChatImageUploadResponse, StartChatTurnBody } from "./types";
+import type {
+  AnswerChatClarificationBody,
+  ChatImageUploadResponse,
+  StartChatTurnBody
+} from "./types";
 
 export type JsonValue =
   | null
@@ -115,6 +119,16 @@ export async function continueChatTurn(entityId: string, turnId: string): Promis
     `/api/chat/${encodeURIComponent(entityId)}/turns/${encodeURIComponent(turnId)}/continue`,
     { method: "POST" }
   );
+}
+
+export async function answerChatClarification(
+  entityId: string,
+  body: AnswerChatClarificationBody
+): Promise<unknown> {
+  return fetchJson(`/api/chat/${encodeURIComponent(entityId)}/clarification-answer`, {
+    method: "POST",
+    body
+  });
 }
 
 export async function uploadChatImage(

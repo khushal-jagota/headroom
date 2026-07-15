@@ -1305,6 +1305,53 @@ button.list-row:hover .list-row-title {
   text-overflow: ellipsis;
 }
 .chat-box:focus-within { border-color: color-mix(in srgb, var(--accent-bright) 40%, transparent); }
+.chat-clarification {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0 0 var(--space-2);
+  min-width: 0;
+}
+.chat-clarification-question {
+  color: var(--text-strong);
+  font-size: var(--type-sm);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-clarification-choices {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.chat-clarification-choice {
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--surface-overlay) 44%, transparent);
+  border: 0;
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+  font: inherit;
+  font-size: var(--type-sm);
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.chat-clarification-choice:hover {
+  background: var(--surface-overlay);
+  color: var(--text-strong);
+}
+.chat-clarification-choice--selected {
+  border: var(--border-hairline) solid var(--accent-bright);
+  background: color-mix(in srgb, var(--accent-bright) 10%, var(--surface-overlay));
+  color: var(--text-strong);
+}
+.chat-clarification-choice:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
 .chat-image-previews {
   display: flex;
   gap: var(--space-2);

@@ -7,7 +7,7 @@
     removePendingChatImage,
     revokePendingChatImages
   } from "../lib/chatImages.js";
-  import type { CommandCatalog } from "../lib/types";
+  import type { ChatPendingClarification, CommandCatalog } from "../lib/types";
 
   type MenuItem = { name: string; description: string; skill: boolean };
   type PendingImage = { id: number; file: File; url: string };
@@ -19,6 +19,7 @@
     pauseMode = false,
     pauseDisabled = false,
     pausePending = false,
+    pendingClarification = null,
     initialText = "",
     placeholder = "Message the employee...",
     onDraft,
@@ -32,6 +33,7 @@
     pauseMode?: boolean;
     pauseDisabled?: boolean;
     pausePending?: boolean;
+    pendingClarification?: ChatPendingClarification | null;
     initialText?: string;
     placeholder?: string;
     onDraft?: (text: string) => void;
@@ -50,6 +52,9 @@
   let busy = $state(false);
   let pendingImages = $state<PendingImage[]>([]);
   let imageInput = $state<HTMLInputElement | null>(null);
+  let selectedClarificationChoice = $state<string | null>(null);
+  let lastClarificationRequestId = $state<string | null>(null);
+  let draftBeforeClarification = $state<string | null>(null);
   let nextImageId = 1;
   let dragDepth = 0;
   let draggingImages = $state(false);
@@ -108,11 +113,31 @@
   $effect(() => {
     if (initialText !== lastInitialText) {
       lastInitialText = initialText;
-      text = initialText;
+      if (!pendingClarification) text = initialText;
+    }
+  });
+
+  $effect(() => {
+    const requestId = pendingClarification?.request_id || null;
+    if (requestId !== lastClarificationRequestId) {
+      const previousRequestId = lastClarificationRequestId;
+      lastClarificationRequestId = requestId;
+      selectedClarificationChoice = null;
+      if (requestId) {
+        if (!previousRequestId) draftBeforeClarification = text;
+        text = "";
+      } else {
+        text = draftBeforeClarification ?? initialText;
+        draftBeforeClarification = null;
+      }
     }
   });
 
   function inputChanged(): void {
+    if (pendingClarification) {
+      if (text.trim()) selectedClarificationChoice = null;
+      return;
+    }
     onDraft?.(text);
   }
 
@@ -138,6 +163,23 @@
           URL.revokeObjectURL
         );
         if (imageInput) imageInput.value = "";
+      }
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function sendClarification(): Promise<void> {
+    if (!pendingClarification || busy || disabled) return;
+    const answer = text.trim() || selectedClarificationChoice || "";
+    if (!answer || submitDisabled) return;
+    busy = true;
+    menuOpen = false;
+    try {
+      const submitted = await onSubmit(answer, "message", []);
+      if (submitted) {
+        text = "";
+        selectedClarificationChoice = null;
       }
     } finally {
       busy = false;
@@ -211,6 +253,10 @@
   }
 
   async function activateButton(): Promise<void> {
+    if (pendingClarification) {
+      await sendClarification();
+      return;
+    }
     if (pauseMode) {
       if (busy || disabled || pauseDisabled || pausePending || !onPause) return;
       await onPause();
@@ -232,6 +278,10 @@
   function onKeydown(event: KeyboardEvent): void {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
+      if (pendingClarification) {
+        void sendClarification();
+        return;
+      }
       if (pauseMode) return;
       void send();
     }
@@ -254,6 +304,43 @@
   ondragleave={onDragLeave}
   ondrop={onDrop}
 >
+  {#if pendingClarification}
+    <div class="chat-clarification" data-chat-clarification>
+      <div
+        id="chat-clarification-question"
+        class="chat-clarification-question"
+        data-chat-clarification-question
+      >
+        {pendingClarification.question}
+      </div>
+      {#if pendingClarification.choices.length > 0}
+        <div
+          class="chat-clarification-choices"
+          data-chat-clarification-choices
+          role="radiogroup"
+          aria-labelledby="chat-clarification-question"
+        >
+          {#each pendingClarification.choices as choice}
+            <button
+              type="button"
+              class:chat-clarification-choice--selected={selectedClarificationChoice === choice}
+              class="chat-clarification-choice"
+              data-chat-clarification-choice
+              role="radio"
+              aria-checked={selectedClarificationChoice === choice}
+              disabled={disabled || busy}
+              onclick={() => {
+                selectedClarificationChoice = choice;
+                text = "";
+              }}
+            >
+              {choice}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
   {#if pendingImages.length > 0}
     <div class="chat-image-previews" data-chat-image-previews aria-label="Pending images">
       {#each pendingImages as image, index (image.id)}
@@ -282,7 +369,8 @@
     class="chat-ta"
     data-chat-input
     rows="1"
-    {placeholder}
+    placeholder={pendingClarification ? "Answer the worker…" : placeholder}
+    aria-labelledby={pendingClarification ? "chat-clarification-question" : undefined}
     bind:value={text}
     disabled={disabled || busy}
     oninput={inputChanged}
@@ -290,50 +378,52 @@
     onpaste={onPaste}
   ></textarea>
   <div class="chat-foot">
+    {#if !pendingClarification}
+      <button
+        type="button"
+        class="chat-slash"
+        data-chat-slash
+        onclick={() => {
+          if (!text.startsWith("/")) text = `/${text}`;
+          inputChanged();
+        }}
+      >
+        /
+      </button>
+      <button
+        type="button"
+        class={`chat-image${pendingImages.length ? " on" : ""}`}
+        data-chat-image
+        data-chat-image-pending={pendingImages.length ? "true" : undefined}
+        data-chat-image-count={pendingImages.length || undefined}
+        disabled={disabled || busy}
+        aria-label={pendingImages.length ? "Attach more images" : "Attach images"}
+        title={pendingImages.length ? `${pendingImages.length} image selected` : "Attach images"}
+        onclick={() => imageInput?.click()}
+      >
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M2.5 3.5h11v9h-11zM4 10l2.5-2.5 2 2 1.5-1.5 2 2M10.5 6h.01" />
+        </svg>
+      </button>
+      <input
+        bind:this={imageInput}
+        class="chat-image-input"
+        data-chat-image-input
+        type="file"
+        accept="image/*"
+        multiple
+        onchange={imageChanged}
+      />
+    {/if}
     <button
       type="button"
-      class="chat-slash"
-      data-chat-slash
-      onclick={() => {
-        if (!text.startsWith("/")) text = `/${text}`;
-        inputChanged();
-      }}
-    >
-      /
-    </button>
-    <button
-      type="button"
-      class={`chat-image${pendingImages.length ? " on" : ""}`}
-      data-chat-image
-      data-chat-image-pending={pendingImages.length ? "true" : undefined}
-      data-chat-image-count={pendingImages.length || undefined}
-      disabled={disabled || busy}
-      aria-label={pendingImages.length ? "Attach more images" : "Attach images"}
-      title={pendingImages.length ? `${pendingImages.length} image selected` : "Attach images"}
-      onclick={() => imageInput?.click()}
-    >
-      <svg viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M2.5 3.5h11v9h-11zM4 10l2.5-2.5 2 2 1.5-1.5 2 2M10.5 6h.01" />
-      </svg>
-    </button>
-    <input
-      bind:this={imageInput}
-      class="chat-image-input"
-      data-chat-image-input
-      type="file"
-      accept="image/*"
-      multiple
-      onchange={imageChanged}
-    />
-    <button
-      type="button"
-      class={`chat-send${text.trim() || pendingImages.length || pauseMode ? " on" : ""}${pauseMode ? " pause" : ""}`}
+      class={`chat-send${text.trim() || pendingImages.length || pauseMode || selectedClarificationChoice ? " on" : ""}${pauseMode && !pendingClarification ? " pause" : ""}`}
       data-chat-send
-      disabled={pauseMode ? (disabled || pauseDisabled || pausePending || busy) : (disabled || submitDisabled || busy || (!text.trim() && pendingImages.length === 0))}
+      disabled={pendingClarification ? (disabled || submitDisabled || busy || (!text.trim() && !selectedClarificationChoice)) : (pauseMode ? (disabled || pauseDisabled || pausePending || busy) : (disabled || submitDisabled || busy || (!text.trim() && pendingImages.length === 0)))}
       onclick={() => void activateButton()}
-      title={pauseMode ? "Pause" : "Send"}
+      title={pendingClarification ? "Answer" : (pauseMode ? "Pause" : "Send")}
     >
-      {pauseMode ? "Ⅱ" : "↑"}
+      {pauseMode && !pendingClarification ? "Ⅱ" : "↑"}
     </button>
   </div>
   <div class="chat-menu" data-chat-menu hidden={!menuOpen}>

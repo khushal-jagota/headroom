@@ -46,6 +46,7 @@ class EchoGatewayAdapter:
     calls: list[tuple[str | None, str, str]] = field(default_factory=list)
     command_calls: list[tuple[str | None, str, str]] = field(default_factory=list)
     interrupt_calls: list[tuple[str, str]] = field(default_factory=list)
+    clarification_calls: list[tuple[str, str, str, str]] = field(default_factory=list)
     histories: dict[str, list[EmployeeSessionHistoryMessage]] = field(default_factory=dict)
     catalog_calls: int = 0                # counts real catalog() work (cache-miss proof)
     next_session: int = 1
@@ -154,6 +155,18 @@ class EchoGatewayAdapter:
     def interrupt(self, session_key: str, entity_id: str) -> None:
         self.interrupt_calls.append((session_key, entity_id))
 
+    def respond_to_clarification(
+        self, session_key: str, entity_id: str, request_id: str, answer: str
+    ) -> None:
+        self.clarification_calls.append((session_key, entity_id, request_id, answer))
+        self.histories.setdefault(session_key, []).append(
+            EmployeeSessionHistoryMessage(
+                role="user",
+                text=answer,
+                created_at=self._next_message_time(session_key),
+            )
+        )
+
     def catalog(self) -> CommandCatalog:
         self.catalog_calls += 1
         return CANNED_CATALOG
@@ -184,6 +197,11 @@ class OfflineGatewayAdapter:
         raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
 
     def interrupt(self, session_key: str, entity_id: str) -> None:
+        raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
+
+    def respond_to_clarification(
+        self, session_key: str, entity_id: str, request_id: str, answer: str
+    ) -> None:
         raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
 
     def catalog(self) -> CommandCatalog:
