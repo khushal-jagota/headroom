@@ -287,6 +287,21 @@ def _resting_status_for_ticket(
     return machine.resting_ticket_status(ownership_mode)
 
 
+def _entered_stage_status_for_ticket(
+    ticket: Ticket,
+    *,
+    worker_type_definition: WorkerTypeDefinition,
+) -> TicketStatus:
+    ownership_mode = machine.effective_stage_ownership_mode(
+        ticket.stage,
+        ticket.stage_ownership_overrides,
+        worker_type_definition=worker_type_definition,
+    )
+    if ownership_mode is StageOwnershipMode.user:
+        return TicketStatus.user_takeover
+    return TicketStatus.empty
+
+
 def _write_resting_ticket_status(
     conn: sqlite3.Connection,
     ticket: Ticket,
@@ -306,6 +321,22 @@ def _write_resting_ticket_status(
         target_status,
         now,
     )
+
+
+def _write_entered_stage_ticket_status(
+    conn: sqlite3.Connection,
+    ticket: Ticket,
+    *,
+    worker_type_definition: WorkerTypeDefinition,
+    now: int,
+) -> None:
+    target_status = _entered_stage_status_for_ticket(
+        ticket,
+        worker_type_definition=worker_type_definition,
+    )
+    if ticket.ticket_status is target_status:
+        return
+    _write_ticket_status(conn, ticket.id, target_status, now)
 
 
 def write_employee_session_id_in_transaction(
@@ -600,7 +631,7 @@ def create_ticket_from_external_work(
             append_event(conn, ticket_id, EventKind.recap_updated, {}, now)
             ticket = _load_ticket_for_write(conn, ticket_id)
         ticket = _apply_decision(conn, ticket, position_decision, now)
-        _write_resting_ticket_status(
+        _write_entered_stage_ticket_status(
             conn,
             ticket,
             worker_type_definition=worker_type_definition,
@@ -665,13 +696,22 @@ def reconcile_ticket_from_external_work(
             )
             append_event(conn, ticket_id, EventKind.recap_updated, {}, now)
             ticket = _load_ticket_for_write(conn, ticket_id)
+        stage_before_position = ticket.stage
         ticket = _apply_decision(conn, ticket, position_decision, now)
-        _write_resting_ticket_status(
-            conn,
-            ticket,
-            worker_type_definition=worker_type_definition,
-            now=now,
-        )
+        if ticket.stage != stage_before_position:
+            _write_entered_stage_ticket_status(
+                conn,
+                ticket,
+                worker_type_definition=worker_type_definition,
+                now=now,
+            )
+        else:
+            _write_resting_ticket_status(
+                conn,
+                ticket,
+                worker_type_definition=worker_type_definition,
+                now=now,
+            )
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -806,6 +846,28 @@ def finish_run_if_still_running_step(
         return _load_ticket_for_write(conn, ticket_id)
 
 
+def release_run_claim_to_empty_if_still_running_step(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    employee_session_transition: EmployeeSessionIdTransition | None = None,
+    now: int,
+) -> Ticket:
+    with _txn(conn):
+        ticket = _load_ticket_for_write(conn, ticket_id)
+        if ticket.ticket_status is TicketStatus.agent_running_step:
+            if employee_session_transition is not None:
+                write_employee_session_id_in_transaction(
+                    conn,
+                    ticket_id,
+                    transition=employee_session_transition,
+                    force_fresh_employee_session=False,
+                    now=now,
+                )
+            _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
+        return _load_ticket_for_write(conn, ticket_id)
+
+
 def mark_run_errored(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -878,12 +940,20 @@ def file_proposal(
             updated = _load_ticket_for_write(conn, ticket_id)
         else:
             updated = _load_ticket_for_write(conn, ticket_id)
-            _write_resting_ticket_status(
-                conn,
-                updated,
-                worker_type_definition=worker_type_definition,
-                now=now,
-            )
+            if decision.new_stage is not None and decision.new_stage != ticket.stage:
+                _write_entered_stage_ticket_status(
+                    conn,
+                    updated,
+                    worker_type_definition=worker_type_definition,
+                    now=now,
+                )
+            else:
+                _write_resting_ticket_status(
+                    conn,
+                    updated,
+                    worker_type_definition=worker_type_definition,
+                    now=now,
+                )
             updated = _load_ticket_for_write(conn, ticket_id)
         return updated
 
@@ -933,12 +1003,20 @@ def file_current_proposal_with_recap(
             _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
         else:
             updated = _load_ticket_for_write(conn, ticket_id)
-            _write_resting_ticket_status(
-                conn,
-                updated,
-                worker_type_definition=worker_type_definition,
-                now=now,
-            )
+            if decision.new_stage is not None and decision.new_stage != ticket.stage:
+                _write_entered_stage_ticket_status(
+                    conn,
+                    updated,
+                    worker_type_definition=worker_type_definition,
+                    now=now,
+                )
+            else:
+                _write_resting_ticket_status(
+                    conn,
+                    updated,
+                    worker_type_definition=worker_type_definition,
+                    now=now,
+                )
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -969,12 +1047,20 @@ def accept_proposal(
         updated = _apply_decision(conn, ticket, decision, now)
         if edited_body is not None:
             ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
-        _write_resting_ticket_status(
-            conn,
-            updated,
-            worker_type_definition=worker_type_definition,
-            now=now,
-        )
+        if decision.new_stage is not None and decision.new_stage != ticket.stage:
+            _write_entered_stage_ticket_status(
+                conn,
+                updated,
+                worker_type_definition=worker_type_definition,
+                now=now,
+            )
+        else:
+            _write_resting_ticket_status(
+                conn,
+                updated,
+                worker_type_definition=worker_type_definition,
+                now=now,
+            )
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -998,22 +1084,30 @@ def set_stage_ownership(
                 "terminal stage cannot have ownership",
                 {"stage": stage},
             )
+        effective_before = machine.effective_stage_ownership_mode(
+            stage,
+            ticket.stage_ownership_overrides,
+            worker_type_definition=worker_type_definition,
+        )
+        assert effective_before is not None
         overrides = dict(ticket.stage_ownership_overrides)
         if ownership_mode is None:
             overrides.pop(stage, None)
         else:
             overrides[stage] = ownership_mode
+        effective_after = machine.effective_stage_ownership_mode(
+            stage,
+            overrides,
+            worker_type_definition=worker_type_definition,
+        )
+        if overrides == ticket.stage_ownership_overrides:
+            return ticket
         conn.execute(
             "UPDATE tickets SET stage_ownership_overrides = ?, updated_at = ? WHERE id = ?",
             (_stage_ownership_overrides_to_json(overrides), now, ticket_id),
         )
         updated = _load_ticket_for_write(conn, ticket_id)
-        effective_ownership_mode = machine.effective_stage_ownership_mode(
-            stage,
-            overrides,
-            worker_type_definition=worker_type_definition,
-        )
-        assert effective_ownership_mode is not None
+        assert effective_after is not None
         append_event(
             conn,
             ticket_id,
@@ -1021,16 +1115,22 @@ def set_stage_ownership(
             {
                 "stage": stage,
                 "ownership_mode": ownership_mode.value if ownership_mode is not None else None,
-                "effective_ownership_mode": effective_ownership_mode.value,
+                "previous_effective_ownership_mode": effective_before.value,
+                "effective_ownership_mode": effective_after.value,
             },
             now,
         )
-        if updated.ticket_status not in (
-            TicketStatus.agent_running_step,
-            TicketStatus.awaiting_approval,
-            TicketStatus.errored,
+        if (
+            stage == ticket.stage
+            and effective_before is not effective_after
+            and updated.ticket_status
+            not in (
+                TicketStatus.agent_running_step,
+                TicketStatus.awaiting_approval,
+                TicketStatus.errored,
+            )
         ):
-            _write_resting_ticket_status(
+            _write_entered_stage_ticket_status(
                 conn,
                 updated,
                 worker_type_definition=worker_type_definition,
@@ -1045,12 +1145,21 @@ def take_over_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> T
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
+        if ticket.stage in ("done", "dropped"):
+            raise PlannerError(
+                ErrorCode.validation,
+                "terminal tickets cannot be taken over",
+                {"ticket_id": ticket_id, "stage": ticket.stage},
+            )
         if ticket.stage == "needs_kickoff":
             raise PlannerError(
                 ErrorCode.validation,
                 "kickoff must be settled before takeover",
                 {"ticket_id": ticket_id},
             )
+        if ticket.stage_ownership_overrides.get(ticket.stage) is StageOwnershipMode.user:
+            return ticket
+        effective_before = ticket.effective_stage_ownership_mode
         overrides = dict(ticket.stage_ownership_overrides)
         overrides[ticket.stage] = StageOwnershipMode.user
         conn.execute(
@@ -1065,16 +1174,23 @@ def take_over_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> T
             {
                 "stage": ticket.stage,
                 "ownership_mode": StageOwnershipMode.user.value,
+                "previous_effective_ownership_mode": (
+                    effective_before.value if effective_before is not None else None
+                ),
                 "effective_ownership_mode": StageOwnershipMode.user.value,
             },
             now,
         )
-        if updated.ticket_status not in (
-            TicketStatus.agent_running_step,
-            TicketStatus.awaiting_approval,
-            TicketStatus.errored,
+        if (
+            effective_before is not StageOwnershipMode.user
+            and updated.ticket_status
+            not in (
+                TicketStatus.agent_running_step,
+                TicketStatus.awaiting_approval,
+                TicketStatus.errored,
+            )
         ):
-            _write_resting_ticket_status(
+            _write_entered_stage_ticket_status(
                 conn,
                 updated,
                 worker_type_definition=worker_type_definition,
@@ -1089,14 +1205,28 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
+        if ticket.stage in ("done", "dropped"):
+            raise PlannerError(
+                ErrorCode.validation,
+                "terminal tickets cannot be released",
+                {"ticket_id": ticket_id, "stage": ticket.stage},
+            )
         if ticket.stage == "needs_kickoff":
             raise PlannerError(
                 ErrorCode.validation,
                 "kickoff must be settled before release",
                 {"ticket_id": ticket_id},
             )
+        if ticket.stage not in ticket.stage_ownership_overrides:
+            return ticket
+        effective_before = ticket.effective_stage_ownership_mode
         overrides = dict(ticket.stage_ownership_overrides)
         overrides.pop(ticket.stage, None)
+        effective_after = machine.effective_stage_ownership_mode(
+            ticket.stage,
+            overrides,
+            worker_type_definition=worker_type_definition,
+        )
         conn.execute(
             "UPDATE tickets SET stage_ownership_overrides = ?, updated_at = ? WHERE id = ?",
             (_stage_ownership_overrides_to_json(overrides), now, ticket_id),
@@ -1109,6 +1239,9 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
             {
                 "stage": ticket.stage,
                 "ownership_mode": None,
+                "previous_effective_ownership_mode": (
+                    effective_before.value if effective_before is not None else None
+                ),
                 "effective_ownership_mode": (
                     updated.effective_stage_ownership_mode.value
                     if updated.effective_stage_ownership_mode is not None
@@ -1117,12 +1250,16 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
             },
             now,
         )
-        if updated.ticket_status not in (
-            TicketStatus.agent_running_step,
-            TicketStatus.awaiting_approval,
-            TicketStatus.errored,
+        if (
+            effective_before is not effective_after
+            and updated.ticket_status
+            not in (
+                TicketStatus.agent_running_step,
+                TicketStatus.awaiting_approval,
+                TicketStatus.errored,
+            )
         ):
-            _write_resting_ticket_status(
+            _write_entered_stage_ticket_status(
                 conn,
                 updated,
                 worker_type_definition=worker_type_definition,
@@ -1203,7 +1340,7 @@ def set_stage(
         # and _apply_decision re-validates the prospective (stage, ceiling) per-type.
         decision = resolution.decide_stage_jump(ticket, new_stage, actor)
         updated = _apply_decision(conn, ticket, decision, now)
-        _write_resting_ticket_status(
+        _write_entered_stage_ticket_status(
             conn,
             updated,
             worker_type_definition=worker_type_definition,

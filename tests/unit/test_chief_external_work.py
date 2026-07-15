@@ -21,6 +21,8 @@ from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     NO_FURTHER,
     AtCap,
+    StageOwnershipMode,
+    TicketStatus,
 )
 from planner.tickets.data import (
     create_ticket,
@@ -493,6 +495,43 @@ def test_reconcile_safety_reads_happen_after_begin_immediate(tmp_path: Path) -> 
         assert ticket["stage"] == "needs_success"
         assert json.loads(ticket["fields"])["kickoff"]["value"] == "Original report"
         assert ticket["ticket_status"] == "agent_running_step"
+    finally:
+        conn.close()
+
+
+def test_reconcile_current_paired_stage_preserves_resting_status(tmp_path: Path) -> None:
+    _app, db_path = _make_app(tmp_path)
+    ticket_id = _ordinary_ticket(db_path)
+    conn = connect(str(db_path))
+    try:
+        ticket = tickets_data.set_stage_ownership(
+            conn,
+            ticket_id,
+            stage="needs_success",
+            ownership_mode=StageOwnershipMode.paired,
+            now=2,
+        )
+        assert ticket.ticket_status is TicketStatus.empty
+        conn.execute(
+            "UPDATE tickets SET ticket_status = 'paired_work', employee_session_id = ? "
+            "WHERE id = ?",
+            ("paired-session", ticket_id),
+        )
+        conn.commit()
+
+        reconciled = reconcile_ticket_from_external_work(
+            conn,
+            ticket_id,
+            target_stage="needs_success",
+            provided_values={},
+            actor="chief",
+            kickoff_note="External report",
+            now=3,
+        )
+
+        assert reconciled.stage == "needs_success"
+        assert reconciled.ticket_status is TicketStatus.paired_work
+        assert reconciled.employee_session_id == "paired-session"
     finally:
         conn.close()
 

@@ -113,8 +113,9 @@ Stage ownership decides who drives the current Stage. Every non-terminal Stage h
 default owner from its Worker type: worker, user, or paired. A Ticket may override one
 Stage. Worker-owned Stages can be discovered automatically when every other condition
 allows it. User-owned Stages rest in `user_takeover` and return through Chief
-external-work reconciliation. Paired Stages rest in `paired_work`; ordinary Ticket Chat
-continues the same Employee session, and any real proposal parks for approval.
+external-work reconciliation. Paired Stages get one automatic opening turn, then rest in
+`paired_work`; ordinary Ticket Chat continues the same Employee session, and any real
+proposal parks for approval.
 
 The Worker type selects the Employee's specialist skill. Tickets do not carry a separate
 execution-route selector.
@@ -181,8 +182,9 @@ only when all nine facts hold:
 
 1. The Ticket belongs to the supplied `planning_day_id` — today's day during
    automatic discovery.
-2. Its current Stage's effective ownership is `worker`.
-3. Its `ticket_status` is `empty`.
+2. Its current Stage's effective ownership is `worker` or `paired`.
+3. Its `ticket_status` is `empty`, or it is a compatibility `paired_work` row whose
+   current paired Stage has no later worker-step opening-start event in event history.
 4. Its Stage is not terminal.
 5. Its Stage has a next gated field.
 6. That field has no parked proposal.

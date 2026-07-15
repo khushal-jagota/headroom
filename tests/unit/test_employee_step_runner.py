@@ -158,6 +158,74 @@ def _new_ticket(db_path: str, *, ceiling: str | None = None) -> str:
         conn.close()
 
 
+def _new_worker_understanding_ticket(db_path: str) -> str:
+    conn = connect(db_path)
+    try:
+        ticket = tickets_data.create_ticket(
+            conn,
+            worker_type="new_worker",
+            title="Design a specialist",
+            actor="human",
+            now=0,
+            title_max_chars=200,
+        )
+        ticket = tickets_data.accept_proposal(
+            conn,
+            ticket.id,
+            field="kickoff",
+            actor="human",
+            now=0,
+            next_ceiling="needs_understanding",
+            at_cap=AtCap.propose,
+        )
+        today_id = dates.resolve_day_id("today", RealClock().now(), BOUNDARY_HOUR)
+        days_data.add_day_ticket(conn, today_id, ticket.id, 0)
+        return ticket.id
+    finally:
+        conn.close()
+
+
+def _exploration_later_paired_ticket_with_session(db_path: str) -> str:
+    conn = connect(db_path)
+    try:
+        ticket = tickets_data.create_ticket(
+            conn,
+            worker_type="exploration",
+            title="Explore the market",
+            actor="human",
+            now=0,
+            title_max_chars=200,
+        )
+        ticket = tickets_data.accept_proposal(
+            conn,
+            ticket.id,
+            field="kickoff",
+            actor="human",
+            now=0,
+            next_ceiling="needs_answer",
+            at_cap=AtCap.propose,
+        )
+        tickets_data.finish_run_if_still_running_step(
+            conn,
+            ticket.id,
+            employee_session_transition=EmployeeSessionIdTransition(None, STORED_KEY),
+            now=1,
+        )
+        ticket = tickets_data.set_stage(
+            conn,
+            ticket.id,
+            new_stage="needs_answer",
+            actor="human",
+            now=2,
+        )
+        assert ticket.ticket_status is TicketStatus.empty
+        today_id = dates.resolve_day_id("today", RealClock().now(), BOUNDARY_HOUR)
+        days_data.add_day_ticket(conn, today_id, ticket.id, 3)
+        return ticket.id
+    finally:
+        conn.close()
+
+
 def _read(db_path: str, ticket_id: str) -> Any:
     conn = connect(db_path)
     try:
@@ -402,6 +470,90 @@ def test_complete_with_no_proposal_is_empty_not_errored(tmp_path: Path) -> None:
     assert eligibility_wake.calls == 1
 
 
+def test_paired_opening_runs_once_then_rests_in_paired_work(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    tid = _new_worker_understanding_ticket(db)
+    assert _read(db, tid).ticket_status is TicketStatus.empty
+
+    fake = FakeGateway(_create_script(_complete_ev()))
+    eligibility_wake = _RecordingEligibilityWake()
+    runner = _runner(db, fake, eligibility_wake)
+    runner.try_run_automatic_step(tid)
+    assert runner.wait_idle(10.0)
+
+    ticket = _read(db, tid)
+    submit_frame = next(frame for frame in fake.sent if frame.get("method") == "prompt.submit")
+    prompt = submit_frame["params"]["text"]
+    assert "open the paired discussion" in prompt
+    assert "propose the 'understanding' field" not in prompt
+    assert ticket.ticket_status is TicketStatus.paired_work
+    assert ticket.employee_session_id == STORED_KEY
+    assert fields_codec.get_slot(ticket.fields, "understanding").proposal is None
+    assert [event["ticket_status"] for event in _status_events(db, tid)][-2:] == [
+        "agent_running_step",
+        "paired_work",
+    ]
+    assert eligibility_wake.calls == 1
+
+    sent_count = len(fake.sent)
+    runner.try_run_automatic_step(tid)
+    assert runner.wait_idle(10.0)
+    assert len(fake.sent) == sent_count
+
+
+def test_later_paired_opening_reuses_existing_employee_session_once(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    tid = _exploration_later_paired_ticket_with_session(db)
+
+    fake = FakeGateway(_resume_script(STORED_KEY, _complete_ev()))
+    runner = _runner(db, fake)
+    runner.try_run_automatic_step(tid)
+    assert runner.wait_idle(10.0)
+
+    ticket = _read(db, tid)
+    submit_frame = next(frame for frame in fake.sent if frame.get("method") == "prompt.submit")
+    prompt = submit_frame["params"]["text"]
+    assert fake.sent_methods() == ["session.resume", "prompt.submit"]
+    assert "Stage 'needs_answer'" in prompt
+    assert "open the paired discussion" in prompt
+    assert ticket.employee_session_id == STORED_KEY
+    assert ticket.ticket_status is TicketStatus.paired_work
+
+    sent_count = len(fake.sent)
+    runner.try_run_automatic_step(tid)
+    assert runner.wait_idle(10.0)
+    assert len(fake.sent) == sent_count
+
+
+def test_paired_opening_gateway_busy_releases_claim_without_immediate_wake(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    tid = _new_worker_understanding_ticket(db)
+    eligibility_wake = _RecordingEligibilityWake()
+    fake = FakeGateway(
+        {"session.create": [_create_reply()], "prompt.submit": [Reply(error=(4009, "busy"))]}
+    )
+    runner = _runner(db, fake, eligibility_wake)
+
+    runner.try_run_automatic_step(tid)
+    assert runner.wait_idle(10.0)
+
+    ticket = _read(db, tid)
+    assert ticket.ticket_status is TicketStatus.empty
+    assert ticket.employee_session_id == STORED_KEY
+    assert eligibility_wake.calls == 0
+
+    retry_fake = FakeGateway(_resume_script(STORED_KEY, _complete_ev()))
+    retry_runner = _runner(db, retry_fake)
+    retry_runner.try_run_automatic_step(tid)
+    assert retry_runner.wait_idle(10.0)
+    assert _read(db, tid).ticket_status is TicketStatus.paired_work
+    assert retry_fake.sent_methods() == ["session.resume", "prompt.submit"]
+
+
 def test_next_step_prompt_includes_stage_owner_without_execution_route(tmp_path: Path) -> None:
     db = _db(tmp_path)
     conn = connect(db)
@@ -463,7 +615,9 @@ def test_next_step_prompt_reads_novel_stage_field_for_new_worker(tmp_path: Path)
         worker_type_definition=configured_worker_type_registry().require(ticket.worker_type),
     ) == (
         f"Work ticket {ticket.id} — Design a worker. It is at Stage 'needs_understanding'; "
-        "take the next step and propose the 'understanding' field for approval. "
+        "open the paired discussion for the 'understanding' field. "
+        "Ask bounded questions or resume the Stage conversation, and do not file a "
+        "proposal until the discussion has enough shared understanding. "
         "Stage owner: paired."
     )
 
@@ -1752,7 +1906,7 @@ def test_gateway_busy_4009_is_skip_not_error(tmp_path: Path) -> None:
         "agent_running_step",
         "empty",
     ]
-    assert eligibility_wake.calls == 1
+    assert eligibility_wake.calls == 0
 
 
 def test_concurrent_same_ticket_runs_only_one_prompt(tmp_path: Path) -> None:

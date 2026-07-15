@@ -29,9 +29,10 @@ when all nine facts hold:
 
 1. The Ticket belongs to the supplied `planning_day_id` — today's day during
    automatic discovery.
-2. Its current Stage's effective ownership is `worker`; user-owned and paired Stages
-   are never dispatched automatically.
-3. Its `ticket_status` is `empty`.
+2. Its current Stage's effective ownership is `worker` or `paired`; user-owned Stages
+   stay in human control.
+3. Its `ticket_status` is `empty`, or it is a compatibility `paired_work` row whose
+   current paired Stage has no later worker-step opening-start event in event history.
 4. Its Stage is not terminal.
 5. Its Stage has a next gated field.
 6. That field has no parked proposal.

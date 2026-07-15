@@ -714,8 +714,9 @@
               <p>
                 Stage ownership decides who drives the current Stage: worker, user, or
                 paired. Worker-owned Stages can be discovered automatically, user-owned
-                Stages rest in user takeover, and paired Stages continue through ordinary
-                Ticket Chat while any real proposal parks for approval. Execution route
+                Stages rest in user takeover, and paired Stages get one automatic opening
+                turn before ordinary Ticket Chat continues the same Employee session.
+                Any real paired proposal parks for approval. Execution route
                 is separate: Panels worker, Hermes with Codex, Hermes with Claude, or no
                 route.
               </p>
@@ -740,8 +741,8 @@
               </p>
               <ol>
                 <li>The Ticket belongs to the supplied <code>planning_day_id</code> — today's day during automatic discovery.</li>
-                <li>Its current Stage's effective ownership is <code>worker</code>.</li>
-                <li>Its <code>ticket_status</code> is <code>empty</code>.</li>
+                <li>Its current Stage's effective ownership is <code>worker</code> or <code>paired</code>.</li>
+                <li>Its <code>ticket_status</code> is <code>empty</code>, or it is a compatibility <code>paired_work</code> row whose current paired Stage has no later worker-step opening-start event in event history.</li>
                 <li>Its Stage is not terminal.</li>
                 <li>Its Stage has a next gated field.</li>
                 <li>That field has no parked proposal.</li>

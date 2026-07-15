@@ -95,9 +95,17 @@ into the next same-stage proposal.
 Each non-terminal Worker-type Stage declares whether work is normally **worker-owned**,
 **user-owned**, or **paired**; a Ticket may override that declaration for a particular Stage. The
 effective ownership determines the Ticket's inactive control state: worker work is ready for automatic
-eligibility, user work rests in `user_takeover`, and paired work rests in `paired_work` while ordinary
-Ticket Chat continues the same Employee session. A paired worker's real field proposal always parks for
-approval; paired work is not a renamed proposal or a second dispatch loop.
+eligibility and user work rests in `user_takeover`. A newly eligible paired Stage receives exactly one
+automatic opening worker turn in durable Ticket Chat, then rests in `paired_work` while ordinary user
+messages continue the same Employee session. A later paired Stage reuses that session but still receives
+its own one opening turn. A paired worker's real field proposal always parks for approval; paired work is
+not a renamed proposal or a second dispatch loop.
+
+The same discovery loop owns paired openings. Entering worker- or paired-owned work writes `empty`; a
+successful paired opening settles to `paired_work`, which is not redispatched after its Stage-entry event
+has a later worker-step event. Existing silently parked paired Stages use that event history for one
+compatibility opening without adding a new persisted flag. A transient busy gateway releases the claim to
+`empty` but waits for the periodic poll instead of immediately waking into a retry loop.
 
 Ownership does not absorb `(ceiling, at_cap)`. Scope still limits autonomous continuation. The stored
 `at_cap=propose` contract remains unchanged and is displayed as **Continue**; **Stop** is the explicit
@@ -105,6 +113,16 @@ Ticket override. User-completed work returns through Chief external-work reconci
 that explicit Stop instead of imposing one. The old human `khushal` implementer route is represented by a
 coding Implementation ownership override. Tickets carry no separate execution-route selector; the Worker
 type chooses the specialist skill.
+
+## D-stage-ownership-explicit-overrides — Override-map identity, not effective mode, defines no-op writes
+
+An ownership write is a no-op only when the explicit `stage_ownership_overrides` map would be identical.
+Setting an explicit override that matches the Stage default still persists the map and emits an ownership
+event; clearing an explicit override still persists the removal. The event records both the previous and
+new effective modes so paired-opening compatibility can distinguish real transitions into paired from
+same-effective paired events. Future-Stage override writes never change the current Ticket status. On the
+current Stage, only a real effective-mode change uses entered-Stage status; same-effective explicit writes
+preserve the current status.
 
 ## D-stage-ownership-integration-repair — Tests pin ownership, not retired transition hooks
 

@@ -5,7 +5,67 @@ from __future__ import annotations
 import time
 
 import httpx
-from tests.e2e.conftest import WAIT_MS
+from tests.e2e.conftest import FAKE_NOW, WAIT_MS
+
+from planner.core.clock import TestClock as MutableClock
+from planner.core.clock import parse_fake_now
+from planner.minds.fake import FakeGateway, Reply, ev
+from planner.minds.shared_gateway import SharedGateway
+from planner.runtime.automatic_employee_step_eligibility_wake import (
+    NoOpAutomaticEmployeeStepEligibilityWake,
+)
+from planner.runtime.employee_step_runner import EmployeeStepRunner
+
+
+def _run_automatic_opening(server, ticket_id: str) -> FakeGateway:
+    """Run the production opening path explicitly; test-mode servers omit all loops."""
+    fake = FakeGateway(
+        {
+            "session.create": [
+                Reply(
+                    result={
+                        "session_id": "opening-live-session",
+                        "stored_session_id": "fake-sess-1",
+                    }
+                )
+            ],
+            "prompt.submit": [
+                Reply(
+                    result={"status": "streaming"},
+                    events_after=(
+                        ev(
+                            "message.complete",
+                            "opening-live-session",
+                            {
+                                "text": "What should this worker understand before we design it?",
+                                "usage": {},
+                                "status": "complete",
+                            },
+                        ),
+                    ),
+                )
+            ],
+        }
+    )
+    gateway = SharedGateway(
+        hermes_python="python",
+        home=str(server.db_path.parent / "automatic-opening-home"),
+        worker_role="planning-worker",
+        spawn=fake.spawn,
+        base_env={},
+    )
+    runner = EmployeeStepRunner(
+        str(server.db_path),
+        MutableClock(parse_fake_now(FAKE_NOW)),
+        gateway=gateway,
+        automatic_employee_step_eligibility_wake=NoOpAutomaticEmployeeStepEligibilityWake(),
+        boundary_hour=5,
+    )
+    runner.try_run_automatic_step(ticket_id)
+    assert runner.wait_idle(10.0)
+    runner.stop()
+    assert fake.sent_methods() == ["session.create", "prompt.submit"]
+    return fake
 
 
 def _post_chat(server, ticket_id: str, text: str) -> dict:
@@ -56,24 +116,18 @@ def test_new_worker_understanding_public_chat_reuses_session_and_proposal_parks(
         "--title",
         "Design a public API worker",
     )["id"]
+    api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
+    _run_automatic_opening(server, ticket_id)
 
     detail = api.get(server, f"/api/tickets/{ticket_id}")
     assert detail["stage"] == "needs_understanding"
+    assert detail["employee_session_id"] == "fake-sess-1"
     assert detail["ticket_status"] == "paired_work"
-    assert detail["employee_session_id"] is None
-
-    first_turn = _post_chat(server, ticket_id, "Start the Understanding conversation.")
-    _wait_for_chat_turn_complete(api, server, ticket_id, first_turn["id"])
-    first = _wait_for_ticket(
-        api,
-        server,
-        ticket_id,
-        lambda ticket: ticket["employee_session_id"] == "fake-sess-1",
-    )
+    first = detail
     assert first["ticket_status"] == "paired_work"
     assert first["fields"]["understanding"]["proposal"] is None
 
-    second_turn = _post_chat(server, ticket_id, "Continue with the same employee.")
+    second_turn = _post_chat(server, ticket_id, "Continue the Understanding conversation.")
     _wait_for_chat_turn_complete(api, server, ticket_id, second_turn["id"])
     second = api.get(server, f"/api/tickets/{ticket_id}")
     assert second["employee_session_id"] == first["employee_session_id"]
@@ -119,26 +173,18 @@ def test_new_worker_understanding_public_chat_proposal_and_browser_progression(
         "--title",
         "Design a research worker",
     )["id"]
+    api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
+    _run_automatic_opening(server, ticket_id)
 
     detail = api.get(server, f"/api/tickets/{ticket_id}")
     assert detail["stage"] == "needs_understanding"
-    assert detail["ticket_status"] == "paired_work"
     assert detail["default_stage_ownership_mode"] == "paired"
     assert detail["effective_stage_ownership_mode"] == "paired"
-    assert detail["employee_session_id"] is None
-
-    first_turn = _post_chat(server, ticket_id, "Start the Understanding conversation.")
-    _wait_for_chat_turn_complete(api, server, ticket_id, first_turn["id"])
-    detail = _wait_for_ticket(
-        api,
-        server,
-        ticket_id,
-        lambda ticket: ticket["employee_session_id"] == "fake-sess-1",
-    )
+    assert detail["employee_session_id"] == "fake-sess-1"
     assert detail["ticket_status"] == "paired_work"
     assert detail["fields"]["understanding"]["proposal"] is None
 
-    second_turn = _post_chat(server, ticket_id, "Continue with the same employee.")
+    second_turn = _post_chat(server, ticket_id, "Continue the Understanding conversation.")
     _wait_for_chat_turn_complete(api, server, ticket_id, second_turn["id"])
     detail = api.get(server, f"/api/tickets/{ticket_id}")
     assert detail["employee_session_id"] == "fake-sess-1"
