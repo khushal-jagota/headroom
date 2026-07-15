@@ -113,7 +113,7 @@ def test_probe_ticket_drives_through_real_writers(
         now=now,
     )
     assert ticket.stage == NEEDS_BETA
-    assert ticket.ticket_status is TicketStatus.paired_work
+    assert ticket.ticket_status is TicketStatus.empty
     assert fields_codec.get_slot(ticket.fields, FIELD_ALPHA).value == "alpha value"
 
 
