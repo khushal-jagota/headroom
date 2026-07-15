@@ -390,18 +390,15 @@ proposals/recaps/notes without exposing runtime controls. The exceptional Chief 
 has two external-work operations that establish a coherent imported Stage; it is not a
 generic Stage setter.
 
-`panels serve` is the operator-owned foreground process. It holds one port-scoped
-lifecycle lease and supervises one application child from the source root captured at
-launch. `panels restart` sends a versioned request to that supervisor through its local
-control socket. The supervisor acknowledges the request, gracefully stops its owned
-child, waits for that child to exit, and only then starts one replacement from the same
-root. The command never discovers or signals a listener PID. A caller in a Ticket
-worktree cannot choose the replacement's code, configuration, or built frontend.
+`panels serve` stays in the foreground while it replaces the running Panels application.
+It remembers the checkout that started it. `panels restart` asks it to stop that
+application cleanly and waits for the stop to finish before starting the replacement
+from the same checkout. The restart caller cannot choose another worktree, and it never
+looks up or signals a server PID.
 
-Stopping the foreground supervisor gracefully stops its application child and removes
-the control socket. An application child that exits unexpectedly ends the supervisor
-with an error; this system is not a crash-retry daemon. Application shutdown and recovery
-remain in the existing FastAPI lifespan and Employee runtime rather than the supervisor.
+Stopping `panels serve` also stops the application cleanly. If the application exits on
+its own, `serve` exits with an error instead of starting it again. The existing application
+shutdown and Employee recovery paths still own unfinished work.
 
 The server classifies a missing `X-Plan-Actor` as **unattributed**, not human. `chief` is
 the explicit Chief role; every other non-empty value is an attributed non-Chief agent.

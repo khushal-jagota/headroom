@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import socket
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Final
 
@@ -97,7 +97,7 @@ def request_server_restart(control_socket_path: Path) -> None:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.connect(str(control_socket_path))
             client.sendall(encode_server_control_request(request))
-            response = _receive_message(client)
+            response = receive_server_control_message(client.recv)
             decode_server_control_response(response)
     except OSError as exc:
         raise ServerRestartConnectionError(
@@ -125,13 +125,14 @@ def _decode_message(payload: bytes) -> dict[str, Any]:
     return decoded
 
 
-def _receive_message(connection: socket.socket) -> bytes:
+def receive_server_control_message(receive: Callable[[int], bytes]) -> bytes:
+    """Receive one bounded newline-framed control message through a caller-owned read."""
     payload = bytearray()
     while not payload.endswith(b"\n"):
-        chunk = connection.recv(min(1024, _MAX_CONTROL_MESSAGE_BYTES + 1 - len(payload)))
+        chunk = receive(_MAX_CONTROL_MESSAGE_BYTES + 1 - len(payload))
         if not chunk:
-            raise ServerRestartProtocolError("control connection closed before a complete reply")
+            raise ServerRestartProtocolError("control connection closed before a complete message")
         payload.extend(chunk)
         if len(payload) > _MAX_CONTROL_MESSAGE_BYTES:
-            raise ServerRestartProtocolError("control reply exceeds the protocol limit")
+            raise ServerRestartProtocolError("control message exceeds the protocol limit")
     return bytes(payload)

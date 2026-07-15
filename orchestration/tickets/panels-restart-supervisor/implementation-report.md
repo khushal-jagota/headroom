@@ -186,3 +186,44 @@ PYTHONPATH="$PWD/src" /Users/khushaljagota/.hermes/planning-v2/.venv/bin/python 
 ```
 
 Ruff, mypy across 122 source files, and `git diff --check` remain clean after the repair.
+
+## Two-axis review corrections
+
+The standards review found duplicated, implementation-heavy live documentation and two
+copies of the bounded control-message framing rule. The spec review found that an
+incomplete request could delay operator shutdown and that a child crash already pending
+beside a queued restart could be misclassified as a planned replacement.
+
+Both lifecycle regressions were RED against the reviewed implementation:
+
+```text
+PYTHONPATH="$PWD/src" /Users/khushaljagota/.hermes/planning-v2/.venv/bin/python -m pytest -q tests/e2e/test_server_lifecycle.py::test_operator_shutdown_overrides_an_incomplete_control_request tests/e2e/test_server_lifecycle.py::test_unexpected_child_exit_wins_over_a_queued_restart
+FF                                                                       [100%]
+2 failed
+```
+
+The lifecycle loop now checks operator and child state before accepting ready control
+work. Incomplete-request reads use the signal wakeup path, and one shared function owns
+bounded newline framing for both client and supervisor. The docs now put the lifecycle
+shape only in `docs/systems.md`; CLI and Employee docs keep short behavior and handoff
+descriptions.
+
+Corrected focused proof:
+
+```text
+PYTHONPATH="$PWD/src" /Users/khushaljagota/.hermes/planning-v2/.venv/bin/python -m pytest -q tests/e2e/test_server_lifecycle.py
+............                                                             [100%]
+12 passed
+
+PYTHONPATH="$PWD/src" /Users/khushaljagota/.hermes/planning-v2/.venv/bin/python -m pytest -q tests/unit/test_server_lifecycle_control.py tests/unit/test_server_shutdown_process.py tests/unit/test_minds.py::test_provisioned_worker_skills_do_not_let_workers_own_the_panels_server
+.....                                                                    [100%]
+5 passed
+
+PYTHONPATH="$PWD/src" /Users/khushaljagota/.hermes/planning-v2/.venv/bin/ruff check src/planner/server_lifecycle src/planner/cli/main.py tests/unit/test_server_lifecycle_control.py tests/e2e/test_server_lifecycle.py tests/e2e/conftest.py
+All checks passed!
+
+PYTHONPATH="$PWD/src" /Users/khushaljagota/.hermes/planning-v2/.venv/bin/mypy src/ tests/typing/
+Success: no issues found in 122 source files
+```
+
+`git diff --check` is also clean.

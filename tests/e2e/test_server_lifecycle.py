@@ -38,6 +38,16 @@ def _process_exists(pid: int) -> bool:
     return True
 
 
+def _process_is_zombie(pid: int) -> bool:
+    result = subprocess.run(
+        ["ps", "-o", "stat=", "-p", str(pid)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0 and result.stdout.strip().startswith("Z")
+
+
 def _wait_until(predicate: Callable[[], bool], message: str, timeout: float = 10.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -256,6 +266,73 @@ def test_operator_shutdown_overrides_an_accepted_client_that_stays_open(
     assert operator_shutdown_completed
     assert server.proc.returncode == 0
     _wait_until(lambda: not _process_exists(application_pid), "application child remained alive")
+
+
+def test_operator_shutdown_overrides_an_incomplete_control_request(
+    server: ServerHandle,
+) -> None:
+    application_pid = _wait_for_one_child(server.proc.pid)
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.connect(str(server.control_socket_path))
+
+    server.proc.terminate()
+    try:
+        server.proc.wait(timeout=0.5)
+        operator_shutdown_completed = True
+    except subprocess.TimeoutExpired:
+        operator_shutdown_completed = False
+    finally:
+        client.close()
+    if not operator_shutdown_completed:
+        server.proc.wait(timeout=10.0)
+
+    assert operator_shutdown_completed
+    assert server.proc.returncode == 0
+    _wait_until(lambda: not _process_exists(application_pid), "application child remained alive")
+
+
+def test_unexpected_child_exit_wins_over_a_queued_restart(
+    server_factory: Callable[..., ServerHandle],
+) -> None:
+    server = server_factory()
+    supervisor_pid = server.proc.pid
+    application_pid = _wait_for_one_child(supervisor_pid)
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    supervisor_resumed = False
+    try:
+        os.kill(supervisor_pid, signal.SIGSTOP)
+        client.connect(str(server.control_socket_path))
+        request = json.dumps({"version": 1, "operation": "restart"}).encode() + b"\n"
+        client.sendall(request)
+        os.kill(application_pid, signal.SIGKILL)
+        _wait_until(
+            lambda: _process_is_zombie(application_pid),
+            "killed application child did not become observable before supervisor resume",
+        )
+        os.kill(supervisor_pid, signal.SIGCONT)
+        supervisor_resumed = True
+        client.settimeout(5.0)
+        try:
+            response = client.recv(4096)
+        except (ConnectionResetError, TimeoutError):
+            response = b""
+    finally:
+        if not supervisor_resumed:
+            os.kill(supervisor_pid, signal.SIGCONT)
+        client.close()
+
+    try:
+        server.proc.wait(timeout=0.75)
+        supervisor_ended = True
+    except subprocess.TimeoutExpired:
+        supervisor_ended = False
+        server.proc.terminate()
+        server.proc.wait(timeout=10.0)
+
+    assert b'"status":"accepted"' not in response
+    assert supervisor_ended
+    assert server.proc.returncode != 0
+    assert not server.control_socket_path.exists()
 
 
 def test_restart_from_ticket_worktree_uses_captured_launch_root(

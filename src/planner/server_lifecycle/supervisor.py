@@ -26,11 +26,16 @@ from planner.server_lifecycle.contracts import (
 from planner.server_lifecycle.control import (
     decode_server_control_request,
     encode_server_control_response,
+    receive_server_control_message,
     resolve_server_control_socket_path,
     resolve_server_lifecycle_lease_path,
 )
 
-_CONTROL_READ_BYTES: Final = 4096
+_CONTROL_SOCKET_DRAIN_BYTES: Final = 4096
+
+
+class _ControlRequestSuperseded(RuntimeError):
+    """Operator shutdown or child exit took priority over an incomplete request."""
 
 
 def resolve_planner_launch_root() -> Path:
@@ -121,11 +126,17 @@ class ServerSupervisor:
                     return 1
 
                 events = selector.select()
+                if any(key.data == "signal" for key, _ in events):
+                    self._drain_signal_pipe(signal_read)
+                if self._operator_shutdown_requested:
+                    self._stop_application_child()
+                    return 0
+                if self._application_child_has_exited():
+                    return 1
+
                 restart_requested = False
                 for key, _ in events:
-                    if key.data == "signal":
-                        self._drain_signal_pipe(signal_read)
-                    elif key.data == "control":
+                    if key.data == "control":
                         restart_requested = (
                             self._accept_control_request(signal_read) or restart_requested
                         )
@@ -200,10 +211,15 @@ class ServerSupervisor:
         with connection:
             connection.setblocking(True)
             try:
-                request = self._receive_control_request(connection)
+                request = self._receive_control_request(connection, signal_read)
+                if request is None:
+                    return False
                 decode_server_control_request(request)
             except (OSError, ServerRestartProtocolError):
                 return False
+            if self._operator_shutdown_requested or self._application_child_has_exited():
+                return False
+            connection.setblocking(True)
             response = ServerControlResponse(
                 version=SERVER_CONTROL_PROTOCOL_VERSION,
                 status="accepted",
@@ -239,7 +255,7 @@ class ServerSupervisor:
                             return False
                     elif key.data == "client":
                         try:
-                            chunk = connection.recv(_CONTROL_READ_BYTES)
+                            chunk = connection.recv(_CONTROL_SOCKET_DRAIN_BYTES)
                         except BlockingIOError:
                             continue
                         if not chunk:
@@ -247,17 +263,38 @@ class ServerSupervisor:
         finally:
             selector.close()
 
-    @staticmethod
-    def _receive_control_request(connection: socket.socket) -> bytes:
-        request = bytearray()
-        while not request.endswith(b"\n"):
-            chunk = connection.recv(_CONTROL_READ_BYTES)
-            if not chunk:
-                raise ServerRestartProtocolError("control request ended before newline")
-            request.extend(chunk)
-            if len(request) > _CONTROL_READ_BYTES:
-                raise ServerRestartProtocolError("control request exceeds protocol limit")
-        return bytes(request)
+    def _receive_control_request(
+        self,
+        connection: socket.socket,
+        signal_read: int,
+    ) -> bytes | None:
+        connection.setblocking(False)
+        selector = selectors.DefaultSelector()
+        selector.register(connection, selectors.EVENT_READ, "client")
+        selector.register(signal_read, selectors.EVENT_READ, "signal")
+
+        def receive(maximum_bytes: int) -> bytes:
+            while True:
+                for key, _ in selector.select():
+                    if key.data == "signal":
+                        self._drain_signal_pipe(signal_read)
+                        if (
+                            self._operator_shutdown_requested
+                            or self._application_child_has_exited()
+                        ):
+                            raise _ControlRequestSuperseded
+                    elif key.data == "client":
+                        try:
+                            return connection.recv(maximum_bytes)
+                        except BlockingIOError:
+                            continue
+
+        try:
+            return receive_server_control_message(receive)
+        except _ControlRequestSuperseded:
+            return None
+        finally:
+            selector.close()
 
     def _stop_application_child(self) -> None:
         child = self._application_child
