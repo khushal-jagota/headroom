@@ -2594,6 +2594,20 @@ def test_provision_planner_home_skills_symlinks_repo_skills(tmp_path: Path) -> N
     assert (sprint_planning / "SKILL.md").exists()
 
 
+def test_panels_worker_exploration_is_provisioned_as_readable_repo_skill(tmp_path: Path) -> None:
+    provision_planner_home_skills(tmp_path)
+
+    exploration = tmp_path / "skills" / "panels-worker-exploration"
+    assert exploration.is_symlink()
+    skill_text = (exploration / "SKILL.md").read_text(encoding="utf-8")
+    assert skill_text.startswith("---\nname: panels-worker-exploration\n")
+    assert (
+        "The sequence is **Kickoff → Understanding → Research Plan → Research → Answer → "
+        "Follow-up → Closeout → Done**."
+    ) in skill_text
+    assert "do not invent a separate corpus step" in skill_text
+
+
 def test_provisioned_sprint_planning_skill_is_review_first_and_panels_native(
     tmp_path: Path,
 ) -> None:

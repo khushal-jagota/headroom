@@ -1,8 +1,9 @@
 """t_tt03 — GET /api/worker-types serves the registry's manifests.
 
-Production serves coding then new_worker. With the test registry installed it serves
-coding, new_worker, then probe in registration order. The JSON response round-trips
-unchanged because it is the single manifest source consumed by the CLI and web.
+Production serves coding, new_worker, then exploration. With the test registry installed
+it serves coding, new_worker, exploration, then probe in registration order. The JSON
+response round-trips unchanged because it is the single manifest source consumed by the
+CLI and web.
 """
 
 from __future__ import annotations
@@ -50,13 +51,14 @@ def probe_installed() -> Iterator[None]:
         uninstall_probe_registry()
 
 
-def test_production_serves_coding_and_new_worker(app) -> None:
+def test_production_serves_all_shipped_worker_types(app) -> None:
     with TestClient(app) as client:
         served = client.get("/api/worker-types").json()
     assert served == {
         "worker_types": [
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding"),
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("new_worker"),
+            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("exploration"),
         ]
     }
 
@@ -68,12 +70,13 @@ def test_coding_entry_json_roundtrips(app) -> None:
     assert served["worker_types"][0]["worker_type"] == "coding"
 
 
-def test_installed_probe_appears_after_coding(app, probe_installed: None) -> None:
+def test_installed_probe_appears_after_shipped_worker_types(app, probe_installed: None) -> None:
     with TestClient(app) as client:
         served = client.get("/api/worker-types").json()
     assert [m["worker_type"] for m in served["worker_types"]] == [
         "coding",
         "new_worker",
+        "exploration",
         "probe",
     ]
     assert served["worker_types"][0] == PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")
