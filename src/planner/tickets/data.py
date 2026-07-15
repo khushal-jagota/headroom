@@ -780,6 +780,23 @@ def read_ticket_by_employee_session_id(
     return _row_to_ticket(row)
 
 
+def read_tickets_by_employee_session_ids(
+    conn: sqlite3.Connection, employee_session_ids: tuple[str, ...]
+) -> tuple[Ticket, ...]:
+    """Return every Ticket owning any supplied Employee session id."""
+    unique_session_ids = tuple(dict.fromkeys(employee_session_ids))
+    if not unique_session_ids:
+        return ()
+    placeholders = ", ".join("?" for _ in unique_session_ids)
+    rows = conn.execute(
+        "SELECT tickets.*, projects.name AS project_name "
+        "FROM tickets LEFT JOIN projects ON projects.id = tickets.project_id "
+        f"WHERE tickets.employee_session_id IN ({placeholders}) ORDER BY tickets.id",
+        unique_session_ids,
+    ).fetchall()
+    return tuple(_row_to_ticket(row) for row in rows)
+
+
 def get_effective_sprint_id(conn: sqlite3.Connection, ticket_id: str) -> str | None:
     ticket = _load_ticket(conn, ticket_id)
     if ticket.sprint_item_id is None:

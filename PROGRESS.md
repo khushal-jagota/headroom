@@ -4,6 +4,39 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-15): worker live-session identity
+
+Current build stage:
+
+- The existing-Worker-management exploration `t_z9upbzf0` was created and stored correctly, but its
+  Hermes terminal environment carried `HERMES_SESSION_KEY=20260715_114042_14bc38`, which belongs to
+  `t_gn7x278u`. A fresh `/new` session reproduced the same mismatch. Forcing the exploration's actual
+  durable session key made the unchanged CLI resolve `t_z9upbzf0`, proving the Ticket row and the
+  by-Employee-session endpoint were not corrupt.
+- `panels worker my-ticket` now prefers `HERMES_UI_SESSION_ID`. Panels maps that live gateway identity
+  back to the durable Employee session and fails closed when the mapping owns zero or multiple Tickets.
+  The old durable-key route remains the fallback for single-session Hermes surfaces.
+
+What just passed:
+
+- RED reproduced the stale-key routing in CLI, API, and route-contract tests. The focused corrected set
+  passes: `tests/unit/test_cli_entrypoints.py`, `tests/unit/test_worker_my_ticket.py`, and
+  `tests/unit/test_chat_ingress_contract.py` (`10 passed`).
+- The canonical combined-tree `./verify` after the restart-supervisor merge passes Ruff,
+  mypy across 122 source files, 858 unit tests with nine existing warnings,
+  compile/static/CSS checks, Svelte with zero errors or warnings, the production build,
+  all frontend tests, and 114 browser tests. Every gate is `ok` and the run ends
+  `VERIFY: PASS`.
+
+Next step:
+
+- Run canonical `./verify`, restart Panels on the corrected source, reset `t_z9upbzf0` once more, and
+  prove `panels worker my-ticket` resolves that exploration despite Hermes still exposing the stale key.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-15): controlled Panels restart supervisor
 
 Current build stage:
@@ -117,11 +150,69 @@ What just passed:
   paired Stage reused a session created by ordinary Ticket Chat. Compatibility now keys only on whether a
   worker-step opening started after the current Stage marker; an earlier human turn/session no longer
   blocks the one opening. The expanded focused gate, Ruff, stale-wording search, and diff check pass.
+- Corrected implementation commit `8a24cfe` passed final independent review with `NO VIOLATIONS` and is
+  integrated into current main as merge commit `d4867fe`. Fresh owner edits were backed up, stashed for the
+  merge, and restored without conflict; the nested frontend worktree remains untouched.
+- The first canonical post-merge `./verify` exposed three stale expectations of the retired silent-paired
+  behavior: two probe genericity tests expected immediate `paired_work` on paired Stage entry, and one
+  browser marker fixture did the same. Test-only commit `d6d5d1a` now expects `empty` on entry and seeds
+  `paired_work` only for the post-opening rendering assertion. All three focused tests pass; independent
+  post-verify review reported `NO VIOLATIONS`.
+- Final canonical post-merge `./verify` passes all gates: Ruff, mypy, 850 unit tests, build checks,
+  frontend tests, and 102 Playwright tests. The transcript is
+  [verify closeout](/files/tickets/t_gn7x278u/artifacts/verify-closeout-paired-opening.txt), SHA-256
+  `d11ecba7eaf5976f1125aecdf5a66556723ae9d51f22d6ffa6219b69d033e979`.
+- Both temporary ticket worktrees/branches and their two temporary owner-state stashes are removed. The
+  Closeout proposal is filed and the Ticket now rests at `awaiting_approval`.
 
 Next step:
 
-- Re-run the corrected focused gate and independent review, then commit and merge into current main.
-- Run one clean canonical post-merge `./verify`; do not deploy, restart, or touch live data.
+- Await Closeout approval. No deployment, restart, or live database operation is part of this closeout.
+
+Blockers:
+
+- None.
+
+## Current work cycle (2026-07-15): exploration Worker type
+
+Current build stage:
+
+- Ticket `t_8vfx962r` has landed on `main` through feature commit `4f7916b` and merge
+  commit `5e8c9fa`. The production registry now carries `exploration`; startup provisions
+  `panels-worker-exploration`; Worker and Chief front doors and live docs name the type.
+- The approved lifecycle is Kickoff → paired Understanding → Research Plan → Research →
+  paired Answer → Follow-up → Closeout → Done. Research owns source discovery and corpus
+  curation; there is no separate Corpus Stage. The specialist ends with the approved
+  transferable-problem discipline for cross-domain research.
+- Codex review found stale probe validation lists and stale live-doc references; those were
+  corrected. Two later review rounds drove the remaining doc/comment cleanup and the final
+  review reports `NO VIOLATIONS`.
+- Panels restarted on the merged code. The live manifest serves the exact `exploration`
+  lifecycle and `data/hermes-home/skills/panels-worker-exploration` resolves to the shipped
+  specialist.
+- Four real exploration Tickets now carry grounded Kickoff proposals: durable user memory
+  (`t_pszubyxa`), Vylo onboarding (`t_jj25dbnj`), Panels VPS workflow (`t_4bps5bwm`), and
+  existing-Worker management (`t_z9upbzf0`). The first three sit under their relevant
+  sprint items; the fourth is a loose current-sprint Panels Ticket. All four are on today
+  and await Kickoff approval. No exploration work was performed.
+
+What just passed:
+
+- Canonical `./verify` with this worktree's source pinned passes Ruff, mypy across 117
+  source files, 823 unit tests with nine existing warnings, compile/static and CSS checks,
+  Svelte check with zero errors/warnings, production build, frontend tests, and 100
+  Playwright tests. It ends `VERIFY: PASS`; the transcript is
+  `data/files/tickets/t_8vfx962r/artifacts/verify-closeout.txt` with SHA-256
+  `26abe805a176f8d473a59fcc26d8560f4c3f63418514ecae2e24186a694cc0c7`.
+- Canonical readback passed every onboarding check: title, priority, Worker type, Stage,
+  approval status, exact Kickoff body, sprint item, effective project/sprint, and today
+  placement. The record is
+  `data/files/tickets/t_8vfx962r/artifacts/exploration-onboarding/onboarding-results.json`.
+
+Next step:
+
+- Propose Closeout for approval with the merge, verification, live activation, and four
+  onboarding Ticket IDs. Do not start or monitor the explorations.
 
 Blockers:
 
@@ -373,13 +464,49 @@ Blockers:
 
 - None.
 
+## Current work cycle (2026-07-14): Workspace ticket ordering
+
+Current build stage:
+
+- Ticket `t_mw2vegjw` is integrated into `main` by merge commit `e53bfe0`; the ticket branch is
+  deleted. The product change remains limited to the Workspace sorter, its focused browser regression,
+  the served bundle, and the matching frontend decision record.
+- Within each existing project category, rows now sort by served Worker-type manifest position,
+  that type's served Stage position, newest `activity_at`, then the existing board sequence. Workspace
+  waits for both board and manifest resources so the retired activity-first order never flashes first.
+
+What just passed:
+
+- The focused Playwright regression failed first against the activity-first implementation, then
+  passes with `coding` and `new_worker` tickets proving type order, per-type Stage order, and
+  newest-first activity ties while retaining category, status-filter, and Hide done assertions.
+- Svelte check reports zero errors and warnings; the complete frontend unit script passes.
+- Initial independent Codex review found the pre-manifest fallback/timing gap. Workspace now treats the
+  manifest as a required resource, the browser test waits on a manifest-backed project section, and
+  corrected-diff review session `019f60c1-64fe-7270-8baf-499a4b3a42e6` reports `NO VIOLATIONS`.
+- The branch-level `./verify` passed before integration. Main advanced with unrelated Chat work, so the
+  generated bundle was rebuilt during the merge; focused Svelte and browser checks passed, and fresh
+  integration review session `019f621d-46b1-7913-a11b-ba8d7ba18da4` reports `NO VIOLATIONS`.
+- The one post-merge canonical `./verify` passes Ruff; mypy across 115 source files; 791 unit tests;
+  compile, static, CSS, and frontend checks; production build; frontend tests; and 94 Playwright tests,
+  ending `VERIFY: PASS`. The full transcript is
+  `[post-merge verify transcript](/files/tickets/t_mw2vegjw/artifacts/verify-closeout.txt)`.
+
+Next step:
+
+- Propose Closeout for approval. No deploy, restart, migration, or follow-up ticket applies.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-14): managed HTML sibling assets
 
 Current build stage:
 
-- Ticket `t_z79gfuuf` is implemented on branch `ticket/t_z79gfuuf-managed-html-assets` in the
-  isolated worktree `planning-v2-worktrees/t_z79gfuuf-managed-html-assets` and is awaiting final review,
-  canonical verification, and its Implementation proposal.
+- Ticket `t_z79gfuuf` is integrated into `main` by merge commit `5772978`; the ticket branch and isolated
+  worktree are removed. Unrelated owner note edits and the nested frontend worktree were preserved across
+  integration and remain uncommitted.
 - Both managed HTML preview lifecycles now prepare fetched HTML through one shared absolute managed-base
   helper before assigning it to embedded `srcdoc` or the full-page Blob URL. The iframe sandbox remains
   exactly `allow-scripts`; fetch cancellation, source cleanup, and Blob revocation are unchanged.
@@ -395,14 +522,16 @@ What just passed:
   for the real document head. The helper now parses HTML, prepends the managed base to the actual head, and
   serializes the document; the new false-token regression passes. Fresh corrected-diff Codex review reports
   `NO VIOLATIONS`.
-- The canonical gate passes Ruff; mypy across 115 source files; 760 unit tests; compile/static, CSS, and
-  frontend checks; production build; all frontend tests; and 91 Playwright tests, ending `VERIFY: PASS`.
-  The full transcript is `data/verify/t_z79gfuuf-pass.log`.
+- The canonical branch gate passes Ruff; mypy across 115 source files; 760 unit tests; compile/static, CSS,
+  and frontend checks; production build; all frontend tests; and 91 Playwright tests, ending `VERIFY: PASS`.
+- The post-merge canonical gate on `main` passes the same complete set with 760 unit and 91 Playwright tests,
+  ending `VERIFY: PASS`. The retained transcript and ticket artifact are
+  `data/verify/t_z79gfuuf-main-pass.log` and
+  `[full verify transcript](/files/tickets/t_z79gfuuf/artifacts/verify.txt)`.
 
 Next step:
 
-- Propose Implementation for approval with the branch, behavior, focused regression, corrected independent
-  review, and canonical verification evidence.
+- Propose Closeout for approval. No deploy, restart, migration, or follow-up ticket applies.
 
 Blockers:
 
@@ -452,25 +581,22 @@ Blockers:
 
 Current build stage:
 
-- Integration is in progress on branch `codex/architecture-merge` in
-  `/Users/khushaljagota/.hermes/planning-v2-worktrees/architecture-merge`. It merges reviewed architecture
-  head `9e51df2` into current main `49660f5` while retaining main's restart-recovery and bounded-shutdown
-  behavior.
+- The reviewed architecture head `9e51df2` is integrated with restart-recovery main `49660f5` through merge
+  commit `2384159`; the import-order repair is `b574046`, and the verification record is `c5279d6`. Main is
+  fast-forwarded to `c5279d6`. No push or pull request was created.
 - The public and domain shape follows the architecture branch: required immutable Worker type, direct
   stored Stage reads, Automatic Employee-step eligibility, Ticket-focused Review, canonical Panels Chat,
   and explicit Employee session history. Retired readiness names, Ticket Chat identity, generic Chat
   transport bags, old routes, and live `coding` defaults remain deleted.
-- The source integration is complete enough for focused validation. Restart recovery now uses the same
+- The source integration is complete. Restart recovery now uses the same
   architecture owners: canonical first-wins Chat settlement, strict typed gateway resume, Employee session
   id transitions, and the renamed discovery/eligibility runtime. Startup recovers ordinary human Chat and
   running Employee steps before automatic discovery; post-handoff worker turns settle without re-prompting;
   one absolute deadline is shared through runtime and gateway shutdown.
 - Focused backend tests for Chat, Employee recovery, loop composition, gateways, session history,
   discovery, eligibility wake, config, the closed Chat ingress, and Worker-type/migration boundaries are
-  green. Both named Playwright cases pass; compile, Ruff, mypy across 113 source files, the retired-surface
-  scans, conflict-marker scan, and diff check pass. Conflict resolutions are staged with no unmerged paths.
-  Independent integration review and the post-commit canonical gate still remain; no canonical `./verify`
-  has been run for the uncommitted merge.
+  green. Both named Playwright cases pass; compile, Ruff, mypy, the retired-surface scans, conflict-marker
+  scan, and diff check pass. Independent corrected-diff review reports `NO VIOLATIONS`.
 - The first fresh merge-diff review found one High omission: no-session Employee restart recovery errored
   the Ticket but left its stale visible worker turn running. The accepted repair now settles that worker turn
   through canonical Chat settlement with the same exact error before the canonical Ticket transition, with
@@ -484,7 +610,12 @@ Current build stage:
 - The corrected integration head `b574046` passes the canonical gate: Ruff; mypy across 115 source files;
   760 unit tests; compile/static and CSS/Markdown checks; Svelte check with zero errors and zero warnings;
   production build; frontend tests; 88 Playwright tests; final `VERIFY: PASS`. The full transcript is retained
-  at `data/verify/architecture-merge-pass.log`. Fast-forwarding main with its owner edits preserved is next.
+  at `data/verify/architecture-merge-pass.log`.
+- The actual main checkout initially retained ignored Python bytecode under the deleted `ticket_types`
+  directory. Removing only that stale cache made the deletion boundary honest. The final main checkout then
+  passed the same complete canonical gate with 760 unit and 88 Playwright tests; final `VERIFY: PASS`. Its
+  transcript is `data/verify/architecture-deepening-merged-pass.log`. Owner note edits and the unrelated
+  nested frontend worktree remain uncommitted; the exact pre-merge note snapshot remains in the named stash.
 
 - Shared understanding is confirmed for all six architecture candidates. Implementation is isolated on
   branch `codex/architecture-deepening` in
@@ -1056,6 +1187,18 @@ t_tt02's migration closed.
 A one-line ledger of completed cycles. Dates are when the work landed; git carries the detail. Decision
 references point into `decisions.md`.
 
+- **2026-07-13 — Restart and crash recovery** (`49660f5`): startup continues stranded Ticket Employee
+  and ordinary Chat work in the same durable Hermes session without replaying the original prompt; one
+  configured deadline bounds runtime and gateway shutdown. The pre-integration gate passed 700 unit and
+  78 Playwright tests. [D-runtime-restart-continuation]
+- **2026-07-13 — Hosted Panels authentication boundary** (`b7ca44a`): Tailscale Serve identity and
+  browser-Origin checks cover UI, APIs, assets, files, and WebSockets; ordinary HTTP clients use the
+  canonical asynchronous Chief turn. The post-integration gate passed 680 unit and 77 Playwright tests.
+  [D-hosted-trusted-ingress]
+- **2026-07-13 — Workspace Worker-type and Stage byline** (`7e67828`): the owner-selected stacked byline
+  keeps the registered Worker-type and direct stored Stage label together while preserving `StageMark`,
+  grouping, filters, selection, and navigation. The post-integration gate passed 655 unit and 76 Playwright
+  tests. [D-workspace-row-byline]
 - **2026-07-13 — Type-aware front doors** (skill edits): `panels-chief-of-staff` + `panels-worker` now
   know ticket types and the "new worker → `new_worker` ticket" mapping; `new_worker` closeout keeps the
   lists current. [D-ticket-types-front-doors]

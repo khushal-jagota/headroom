@@ -83,6 +83,18 @@ class EntityRoutingGateway:
     def status_for_entity(self, entity_id: str) -> GatewayStatus:
         return self._gateway_for(entity_id).status()
 
+    def stored_session_keys_for_live_session_id(self, live_session_id: str) -> tuple[str, ...]:
+        """Return stored session keys currently bound to one Hermes live session."""
+        keys: list[str] = []
+        seen_gateways: set[int] = set()
+        for gateway in (self._default_gateway, *self._entity_gateways.values()):
+            gateway_identity = id(gateway)
+            if gateway_identity in seen_gateways:
+                continue
+            seen_gateways.add(gateway_identity)
+            keys.extend(gateway.stored_session_keys_for_live_session_id(live_session_id))
+        return tuple(dict.fromkeys(keys))
+
     def read_employee_session_history(
         self,
         employee_session_id: str,
@@ -211,6 +223,18 @@ class SharedGateway:
         with self._lock:
             manager = self._session_manager
         return manager.session(session_key) if manager is not None else None
+
+    def stored_session_keys_for_live_session_id(self, live_session_id: str) -> tuple[str, ...]:
+        """Resolve Hermes' per-window live id back to its durable session key aliases."""
+        if not live_session_id:
+            return ()
+        with self._lock:
+            stored_to_live_session = self._live_session_ids_by_stored_key
+            return tuple(
+                stored_key
+                for stored_key, candidate_live_session_id in stored_to_live_session.items()
+                if candidate_live_session_id == live_session_id
+            )
 
     def status(self) -> GatewayStatus:
         if not self._python.exists():

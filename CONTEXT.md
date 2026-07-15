@@ -20,13 +20,15 @@ It does not contain Sprint items or an overdue digest.
 _Avoid_: Queues, approval queue
 
 **Panels Chat**:
-The durable product-visible messages and live turn state intended for the human to see. Reading it never
-loads or merges Employee session history, and a Panels row alone is not delivery to the employee.
+The product-visible conversation with an employee: durable messages and live turn state intended for the
+human to see. It is not the employee's conversation context. Reading it never loads or merges Employee
+session history, and a Panels row alone is not delivery to the employee.
 _Avoid_: Employee session history, worker context
 
 **Employee session history**:
 The authoritative Hermes record of what was delivered to and produced by a Ticket employee's durable
-`employee_session_id`. It is inspected explicitly and may contain internal context absent from Panels Chat.
+conversation, identified by `employee_session_id`. It is inspected explicitly, is never silently merged
+into Panels Chat, and may contain internal context absent from Panels Chat.
 _Avoid_: Panels Chat, chat transcript
 
 **Employee session id**:

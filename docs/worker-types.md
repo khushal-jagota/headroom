@@ -161,6 +161,11 @@ The worker runs `panels worker my-ticket`. That response includes the Ticket's s
 Worker type and the specialist skill named by its `WorkerTypeDefinition`. The worker loads
 that skill with `skill_view` and follows its Stage-specific guidance:
 
+Inside the shared Hermes gateway, that lookup follows the current live window back to its
+durable Employee session. It does not trust a process-level session key when Hermes is serving
+several Tickets, because that key can belong to a different concurrent Ticket. Older single-session
+surfaces without a live-window identity still use the durable Employee session directly.
+
 - `panels-worker-coding` guides coding Tickets.
 - `panels-worker-new-worker` guides `new_worker` Tickets.
 - `panels-worker-exploration` guides `exploration` Tickets.

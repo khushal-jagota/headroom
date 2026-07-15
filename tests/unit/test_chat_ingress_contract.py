@@ -84,6 +84,7 @@ def test_retired_chat_ingress_routes_are_absent(tmp_path: Path) -> None:
         "/api/tickets/by-employee-session/{employee_session_id}",
         "GET",
     ) in route_keys
+    assert ("/api/tickets/by-live-session/{live_session_id}", "GET") in route_keys
     for retired_path in (
         "/api/chat/{entity_id}/send",
         "/api/chat/{entity_id}/stream",

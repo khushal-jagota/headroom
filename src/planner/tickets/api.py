@@ -539,6 +539,42 @@ async def get_my_ticket(
     return detail
 
 
+@router.get("/tickets/by-live-session/{live_session_id}")
+async def get_my_ticket_by_live_session(
+    live_session_id: str,
+    request: Request,
+    conn: DbConn,
+    clk: Clk,
+) -> JsonDict:
+    """Resolve a worker Ticket from the current Hermes gateway live-session id."""
+    gateway = request.app.state.adapters.gateway
+    stored_session_keys = gateway.stored_session_keys_for_live_session_id(live_session_id)
+    tickets_by_id = {
+        ticket.id: ticket
+        for ticket in tickets_data.read_tickets_by_employee_session_ids(conn, stored_session_keys)
+    }
+    if not tickets_by_id:
+        raise PlannerError(
+            ErrorCode.not_found,
+            "no ticket owns this live Hermes session",
+            {"live_session_id": live_session_id},
+        )
+    if len(tickets_by_id) != 1:
+        raise PlannerError(
+            ErrorCode.validation,
+            "live Hermes session is bound to multiple tickets",
+            {"live_session_id": live_session_id, "ticket_ids": sorted(tickets_by_id)},
+        )
+    ticket = next(iter(tickets_by_id.values()))
+    detail = tickets_views.ticket_detail(conn, ticket.id, clk.now_unix())
+    detail["worker"] = (
+        configured_worker_type_registry()
+        .require(ticket.worker_type)
+        .worker_profile.specialist_skill
+    )
+    return detail
+
+
 @router.get("/tickets/{ticket_id}/employee-session-history")
 async def get_employee_session_history(
     ticket_id: str,

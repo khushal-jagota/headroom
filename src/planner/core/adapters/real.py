@@ -45,6 +45,9 @@ class RealGatewayAdapter:
             return GatewayStatus(available=False, detail=f"hermes interpreter not found: {python}")
         return GatewayStatus(available=False, detail="shared gateway is not attached")
 
+    def stored_session_keys_for_live_session_id(self, live_session_id: str) -> tuple[str, ...]:
+        raise self._offline()
+
     def read_employee_session_history(
         self,
         employee_session_id: str,

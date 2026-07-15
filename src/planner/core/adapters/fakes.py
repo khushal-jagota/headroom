@@ -56,6 +56,9 @@ class EchoGatewayAdapter:
     def status(self) -> GatewayStatus:
         return GatewayStatus(available=True)
 
+    def stored_session_keys_for_live_session_id(self, live_session_id: str) -> tuple[str, ...]:
+        return ()
+
     def _next_message_time(self, session_key: str) -> int:
         return len(self.histories.setdefault(session_key, [])) + 1
 
@@ -175,6 +178,9 @@ class EchoGatewayAdapter:
 class OfflineGatewayAdapter:
     def status(self) -> GatewayStatus:
         return GatewayStatus(available=False, detail="gateway offline")
+
+    def stored_session_keys_for_live_session_id(self, live_session_id: str) -> tuple[str, ...]:
+        raise PlannerError(ErrorCode.gateway_offline, "gateway offline")
 
     def read_employee_session_history(
         self,

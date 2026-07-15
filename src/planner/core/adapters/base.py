@@ -23,6 +23,7 @@ HumanSessionKeyBinder: TypeAlias = Callable[[str], str]  # noqa: UP040 -- frozen
 
 class GatewayAdapter(Protocol):
     def status(self) -> GatewayStatus: ...
+    def stored_session_keys_for_live_session_id(self, live_session_id: str) -> tuple[str, ...]: ...
     def read_employee_session_history(
         self,
         employee_session_id: str,

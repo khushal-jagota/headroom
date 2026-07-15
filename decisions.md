@@ -107,6 +107,14 @@ has a later worker-step event. Existing silently parked paired Stages use that e
 compatibility opening without adding a new persisted flag. A transient busy gateway releases the claim to
 `empty` but waits for the periodic poll instead of immediately waking into a retry loop.
 
+## D-worker-live-session-identity — A worker resolves its Ticket from the live gateway session
+
+`panels worker my-ticket` prefers Hermes' per-window live-session identity and asks the Panels-owned
+shared gateway to map that identity back to the durable Employee session. The process-level
+`HERMES_SESSION_KEY` remains only a fallback for older single-session surfaces. This prevents one
+concurrent Ticket's stale process context from routing another Ticket's worker CLI to the wrong record.
+If a live session maps to no Ticket or more than one Ticket, lookup fails rather than guessing.
+
 Ownership does not absorb `(ceiling, at_cap)`. Scope still limits autonomous continuation. The stored
 `at_cap=propose` contract remains unchanged and is displayed as **Continue**; **Stop** is the explicit
 Ticket override. User-completed work returns through Chief external-work reconciliation, which preserves
@@ -190,6 +198,18 @@ active control, and chat turns under that lock. `PLAN_ACTOR` is an operational b
 trusted single-user runtime, not an auth credential: ordinary product operations are unattributed
 (absence of an actor header is not proof a human acted), worker calls stay attributed and gated, and
 external-work routes require the explicit Chief role.
+
+## D-hosted-trusted-ingress — Tailscale Serve is the first hosted boundary
+
+The sole hosted Panels instance stays bound to VPS loopback and is exposed first through Tailscale
+Serve. A matching `Tailscale-User-Login` selects the remote-human path and removes every caller-supplied
+`X-Plan-Actor`; headerless same-host traffic keeps the existing trusted runtime provenance. Tailscale
+ACLs admit only the owner's non-tagged devices, while wrong or duplicate identity headers and wrong or
+duplicate browser Origins fail closed across HTTP, files, and WebSockets. No-Origin HTTP clients remain
+valid, and this decision adds no generic request, body, rate, or connection limits. External tools use
+the ordinary `POST /api/messages/chief` contract, which reuses the canonical asynchronous Chief turn.
+Provider-specific parsing stays in the server shell so a future clientless gateway can replace
+Tailscale without redesigning Panels or Chief intake.
 
 ## D-imported-ticket-note — Legacy imported ticket body becomes the ticket user note
 
@@ -828,6 +848,20 @@ groups by effective project (parented tickets group under their item's project v
 without changing their own `project_id`) and shows all four ticket-stage dots. Hide-done defaults on.
 Chief of Staff is embedded in Workspace, not a primary nav tab (the `#/chief` route stays for direct
 links).
+
+## D-workspace-row-byline — Workspace rows show worker type and current stage together
+
+Workspace ticket rows use the owner-selected stacked-byline treatment: the title stays on the first
+line; the registered Worker-type label and current Stage label stay together on the left of a quiet
+second line; the existing `StageMark` sits alone at that line's far-right edge. Active rows read their
+Stage label directly from the board card's gating-field label. Terminal rows use the stored terminal
+state label (`Done`/`Dropped`) while retaining the existing closeout StageMark fallback, so display
+text does not distort marker behavior.
+
+The board payload remains unchanged. Workspace reuses the cached Worker-type manifest for registered
+type labels and keeps StageMark state driven only by the existing board card fields. This is a
+Workspace-specific row shape rather than a new generic ListRow capability; grouping, filters,
+selection, and navigation remain unchanged.
 
 ## D-workspace-ticket-order — Served Worker-type and Stage order precede activity
 
@@ -1492,6 +1526,28 @@ deadline and preserves durable recovery state, and it remains unchanged. The min
 therefore one nonempty `message.delta`, the same terminal `interrupted` assertion, and an explicit
 assertion that no shutdown-settlement SQLite lock error was logged. No production change follows
 from this fixture correction; the final canonical `./verify` still remains.
+
+## D-exploration-worker — Exploration extracts the transferable problem before it produces work
+
+`exploration` is a first-class Worker type for premises that are not yet understood well enough to
+become implementation Tickets. Its lifecycle is Kickoff → paired Understanding → Research Plan →
+Research → paired Answer → Follow-up → Closeout → Done. Understanding and Answer are paired because
+they depend on user intent and judgment; evidence work remains worker-owned. Research includes source
+discovery, selection, provenance, and synthesis, so there is deliberately no separate Corpus Stage.
+The specialist teaches the worker to remove product and implementation nouns, identify the underlying
+mechanism, search adjacent domains under their own vocabulary, and state both what transfers and where
+an analogy stops. Follow-up may be Tickets, files, record changes, another exploration, or nothing;
+Closeout applies only the approved consequences and never hides downstream implementation.
+
+The production landing used isolated branch `ticket/t_8vfx962r-exploration-worker` because `main` had
+unrelated local changes. The registry, provisioned specialist, Worker/Chief front doors, tests, and live
+docs landed together; no frontend type table or new core contract was added. Review corrections were
+small integration repairs applied directly by the orchestrator after one RED validation-payload test.
+The first three onboarding Tickets use the existing durable-personas, Vylo-onboarding, and Panels-VPS
+sprint items. No existing sprint item honestly owns the user-only existing-Worker management page, so
+that Ticket stays loose in the current Panels sprint rather than forcing it into an unrelated item.
+All four were added to today under the standing creation default, but remain at grounded Kickoff
+proposals awaiting approval; Closeout did not begin or monitor any exploration.
 
 ---
 

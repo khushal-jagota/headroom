@@ -41,3 +41,31 @@ def test_worker_my_ticket_human_line_surfaces_worker(monkeypatch) -> None:
 
     assert result.exit_code == 0, result.output
     assert "worker: panels-worker-coding" in result.output
+
+
+def test_worker_my_ticket_prefers_live_session_identity(monkeypatch) -> None:
+    requested_paths: list[str] = []
+
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        requested_paths.append(path)
+        return {
+            "id": "t_correct",
+            "stage": "needs_understanding",
+            "priority": "P1",
+            "title": "Correct ticket",
+            "worker": "panels-worker-exploration",
+        }
+
+    monkeypatch.setattr(cli_main.http, "send", fake_send)
+    result = CliRunner().invoke(
+        cli_main.main,
+        ["worker", "my-ticket"],
+        env={
+            "HERMES_UI_SESSION_ID": "live_correct",
+            "HERMES_SESSION_KEY": "stale_other_ticket",
+        },
+    )
+
+    assert result.exit_code == 0, result.output
+    assert requested_paths == ["/api/tickets/by-live-session/live_correct"]
+    assert "t_correct needs_understanding" in result.output

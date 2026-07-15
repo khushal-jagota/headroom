@@ -1572,6 +1572,22 @@ def test_shared_gateway_interrupt_resolves_stored_key_to_live_session() -> None:
     assert results[0].session_key == STORED_KEY
 
 
+def test_shared_gateway_resolves_live_session_to_stored_session_key() -> None:
+    fake = FakeGateway(
+        {
+            "session.create": [create_reply(LIVE_SID, STORED_KEY)],
+            "prompt.submit": [submit_reply(complete_ev(LIVE_SID, text="done"))],
+        }
+    )
+    gateway = shared(fake)
+    try:
+        gateway.run_ticket_step(None, "t_demo", "work")
+        assert gateway.stored_session_keys_for_live_session_id(LIVE_SID) == (STORED_KEY,)
+        assert gateway.stored_session_keys_for_live_session_id("foreign-live-session") == ()
+    finally:
+        gateway.shutdown()
+
+
 def test_deadline_interrupt_does_not_spawn_missing_child() -> None:
     fake = FakeGateway({})
     gateway = shared(fake)
