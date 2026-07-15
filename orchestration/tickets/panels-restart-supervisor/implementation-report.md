@@ -12,7 +12,7 @@ environment.
 The stopgap commit `430cf92` remains intact. The implementation is committed on the
 isolated `codex/panels-restart-supervisor` branch, which includes current `main` through
 merge `ddaf5c1`. Nothing was merged into `main`, no live Panels server was stopped or
-restarted, and `./verify` has not yet run.
+restarted, and the corrected canonical `./verify` run passes every gate.
 
 ## RED -> GREEN record
 
@@ -153,8 +153,8 @@ boundary regression is green.
 
 ## Unresolved issues
 
-No known product or focused-test issue remains. The orchestrator still owns independent
-implementation review and the one final `./verify` completion run.
+No known product, focused-test, review, or verification issue remains. The isolated
+branch is ready for the user's merge instruction.
 
 ## Orchestrator integration repair
 
@@ -251,5 +251,35 @@ Success: no issues found in 120 source files
 ```
 
 The final Standards and Spec reviews both report `NO FINDINGS`. The final read-only
-Codex implementation review reports `NO VIOLATIONS`. The canonical `./verify` remains
-the only outstanding completion gate.
+Codex implementation review reports `NO VIOLATIONS`.
+
+## Canonical verification
+
+The first `./verify` attempt used the main worktree's borrowed virtualenv without a
+source-path override. Its editable install therefore imported old `main` source while
+collecting this branch's tests: the new command and package appeared absent. This was a
+worktree setup failure, not a production or test failure.
+
+The same completion gate was rerun with this worktree's `src` first on `PYTHONPATH`:
+
+```text
+PYTHONPATH="$PWD/src" ./verify
+...
+854 passed, 9 warnings in 19.51s
+...
+svelte-check found 0 errors and 0 warnings
+...
+114 passed in 161.44s (0:02:41)
+
+[verify] gate ruff: ok
+[verify] gate mypy: ok
+[verify] gate unit suite: ok
+[verify] gate build check: ok
+[verify] gate frontend: ok
+[verify] gate e2e suite: ok
+
+VERIFY: PASS
+```
+
+The full transcript is `verify-final.txt`, SHA-256
+`2ccfe2a325214e276abd717cc1e6116fb9d8c05cbb7ec500d5c997b7f00e5ce3`.

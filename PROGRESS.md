@@ -30,11 +30,21 @@ What just passed:
   clean, mypy reports no issues across 120 source files, and `git diff --check` is clean.
 - The corrected implementation reviews report `NO FINDINGS` on both Standards and Spec.
   Two read-only Codex implementation reviews report `NO VIOLATIONS`.
+- The clean canonical completion run passes Ruff, mypy across 122 source files, 854
+  unit tests with nine existing warnings, compile/static/CSS checks, Svelte with zero
+  errors or warnings, the production build, all frontend tests, and 114 browser tests.
+  Every gate is `ok` and the run ends `VERIFY: PASS`. The full transcript is
+  `orchestration/tickets/panels-restart-supervisor/verify-final.txt`, SHA-256
+  `2ccfe2a325214e276abd717cc1e6116fb9d8c05cbb7ec500d5c997b7f00e5ce3`.
+- The first verifier attempt exposed only that the borrowed main-worktree virtualenv's
+  editable install resolved the old main source. Running the same gate with this
+  worktree's `src` first on `PYTHONPATH` corrected the test environment; no product
+  change was needed.
 
 Next step:
 
-- Run the single canonical `./verify`, record its full output, then commit the final
-  evidence and hand the isolated branch to the user without merging it into `main`.
+- Await the user's instruction before merging the verified isolated branch into `main`.
+  Do not start, stop, or restart the live server as part of this handoff.
 
 Blockers:
 
