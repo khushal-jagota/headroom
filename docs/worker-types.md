@@ -168,8 +168,10 @@ the durable Employee session directly.
 
 A restart investigation proved a separate Hermes problem: its local terminal shell snapshot could
 restore another conversation's `HERMES_SESSION_*` values after the current conversation identity
-had been injected. That cross-repository fix is required and is being handled in Hermes. Panels
-still defends its own boundary: one durable Employee session may belong to only one Ticket. A
+had been injected. Hermes now restores every current-turn identity value over that snapshot before
+the command runs and before the next snapshot is written. A supported restart resumed the original
+durable conversation and worker lookup resolved the correct Ticket. Panels still defends its own
+boundary: one durable Employee session may belong to only one Ticket. A
 second Ticket cannot claim an owned session, even during a forced fresh human binding. An already
 ambiguous idempotent binding, an ambiguous compare-and-swap winner, and any read that finds duplicate
 owners fail with all owner Ticket ids instead of choosing one.

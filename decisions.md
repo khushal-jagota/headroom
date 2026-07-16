@@ -116,7 +116,8 @@ therefore authoritative whenever Hermes supplies it; zero or multiple owners fai
 
 The restart trace proved Panels resumed the right durable conversation, but Hermes' shared local
 terminal shell snapshot restored another conversation's `HERMES_SESSION_*` values after current
-ContextVars were injected. That root cause requires a separate Hermes repository fix. Panels still
+ContextVars were injected. Hermes now restores every mapped per-turn session variable around each
+foreground command, including when the snapshot contains functions named `export` or `unset`. Panels
 hardens its own durable boundary: the canonical transactional writer rejects a candidate session
 owned by another Ticket, including force-fresh human bindings, and direct durable reads fetch every
 owner deterministically and reject impossible duplicates with sorted Ticket ids. Same-Ticket
@@ -124,7 +125,8 @@ idempotence remains only while ownership is unambiguous; an already-corrupt dupl
 the idempotent return. Compare-and-swap still adopts a unique current winner, but rejects an ambiguous
 winner before returning it to a caller. Production data had zero
 duplicates, so a schema migration would add machinery without repairing any live row and was not
-added; the existing `BEGIN IMMEDIATE` callers serialize the ownership gate.
+added; the existing `BEGIN IMMEDIATE` callers serialize the ownership gate. The supported restart path
+resumed the original durable conversation and `panels worker my-ticket` resolved the correct Ticket.
 
 Ownership does not absorb `(ceiling, at_cap)`. Scope still limits autonomous continuation. The stored
 `at_cap=propose` contract remains unchanged and is displayed as **Continue**; **Stop** is the explicit

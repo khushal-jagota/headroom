@@ -8,18 +8,13 @@ bottom; the blow-by-blow is git's.
 
 Current build stage:
 
-- Ticket `t_8vww58fj` is hardening the Panels-side durable ownership boundary on branch
-  `ticket/t_8vww58fj-worker-identity-restart`. Panels already resumes the correct durable Employee
-  conversation and treats the gateway's live session identity as authoritative.
-- The restart trace proved the remaining cross-Ticket environment leak is in Hermes: a shared local
-  terminal shell snapshot restored another conversation's `HERMES_SESSION_*` values after the current
-  ContextVars were injected. The isolated Hermes correction now reapplies authoritative ContextVars
-  after snapshot restore and before the next snapshot write, including CLI session rotation.
-- Panels now additionally fetches every durable owner deterministically and fails closed on impossible
-  duplicate ownership. Its canonical transactional session writer rejects a candidate already owned by
-  another Ticket, including force-fresh and already-ambiguous idempotent binding, before mutation. The
-  existing `BEGIN IMMEDIATE` callers serialize this gate; production data had zero duplicates, so no
-  schema migration is justified.
+- Ticket `t_8vww58fj` is integrated and in final closeout verification. Panels fetches every durable
+  owner deterministically and rejects any ambiguous effective binding before returning or persisting it.
+- Hermes now restores every current-turn session ContextVar over the shared local terminal snapshot and
+  exports those values to the command's child processes. Shell functions stored in the snapshot cannot
+  intercept that restoration.
+- Production and the available compatible backups had zero duplicate durable owners. The existing
+  transactional ownership gate is sufficient, so no schema migration was added.
 
 What just passed:
 
@@ -36,22 +31,24 @@ What just passed:
   `git diff --check` is clean. Canonical `./verify` was deliberately not run in this branch.
 - Hermes' exact cross-session, all-mapped-variable, snapshot-function, snapshot-poisoning, and
   CLI-rotation regressions pass (`18 passed`); focused Ruff and `git diff --check` are clean.
+- Panels merged as `b8ee189`; Hermes merged as `047ba8298`. Both repositories retained their unrelated
+  pre-existing workspace changes.
+- `panels restart` resumed this conversation as durable session `20260715_195950_a2e173` with new live
+  id `9fabc812`; `panels worker my-ticket --json` resolved `t_8vww58fj`, not `t_4bps5bwm`.
 
 Current hypothesis:
 
-- Panels' durable conversation selection is correct. The wrong terminal environment is produced after
-  that boundary by Hermes shell-state restoration, while Panels must still prevent and detect impossible
-  durable ownership independently.
+- Confirmed. Panels owns unambiguous durable Ticket binding; Hermes owns authoritative per-turn terminal
+  identity. Fixing both boundaries removes the demonstrated leak and fails closed on inconsistent data.
 
 Next step:
 
-- Hand the scoped Panels commit to the parent for integration. The parent will run canonical `./verify`
-  once after integration and the separate Hermes correction.
+- Run one canonical `./verify` against this settled tree, then supersede the stale failed Closeout
+  proposal with the merge, review, restart, and verification evidence. No further source change is planned.
 
 Blockers:
 
-- The end-to-end restart regression still requires the separate Hermes repository correction. It does
-  not block completing and committing this Panels-side fail-closed hardening.
+- None.
 
 ## Current work cycle (2026-07-15): controlled Panels restart supervisor
 
