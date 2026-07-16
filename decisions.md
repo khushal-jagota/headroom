@@ -111,9 +111,18 @@ compatibility opening without adding a new persisted flag. A transient busy gate
 
 `panels worker my-ticket` prefers Hermes' per-window live-session identity and asks the Panels-owned
 shared gateway to map that identity back to the durable Employee session. The process-level
-`HERMES_SESSION_KEY` remains only a fallback for older single-session surfaces. This prevents one
-concurrent Ticket's stale process context from routing another Ticket's worker CLI to the wrong record.
-If a live session maps to no Ticket or more than one Ticket, lookup fails rather than guessing.
+`HERMES_SESSION_KEY` remains only a fallback for older single-session surfaces. Live identity is
+therefore authoritative whenever Hermes supplies it; zero or multiple owners fail rather than guess.
+
+The restart trace proved Panels resumed the right durable conversation, but Hermes' shared local
+terminal shell snapshot restored another conversation's `HERMES_SESSION_*` values after current
+ContextVars were injected. That root cause requires a separate Hermes repository fix. Panels still
+hardens its own durable boundary: the canonical transactional writer rejects a candidate session
+owned by another Ticket, including force-fresh human bindings, and direct durable reads fetch every
+owner deterministically and reject impossible duplicates with sorted Ticket ids. Same-Ticket
+idempotence and existing compare-and-swap behavior remain unchanged. Production data had zero
+duplicates, so a schema migration would add machinery without repairing any live row and was not
+added; the existing `BEGIN IMMEDIATE` callers serialize the ownership gate.
 
 Ownership does not absorb `(ceiling, at_cap)`. Scope still limits autonomous continuation. The stored
 `at_cap=propose` contract remains unchanged and is displayed as **Continue**; **Stop** is the explicit

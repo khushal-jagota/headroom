@@ -372,6 +372,21 @@ def write_employee_session_id_in_transaction(
             "Employee session changed during binding",
             {"ticket_id": ticket_id},
         )
+    owning_ticket_rows = conn.execute(
+        "SELECT id FROM tickets "
+        "WHERE employee_session_id = ? AND id != ? ORDER BY id",
+        (candidate, ticket_id),
+    ).fetchall()
+    if owning_ticket_rows:
+        raise PlannerError(
+            ErrorCode.validation,
+            "candidate Employee session already belongs to another ticket",
+            {
+                "candidate_employee_session_id": candidate,
+                "claiming_ticket_id": ticket_id,
+                "owning_ticket_ids": [str(row["id"]) for row in owning_ticket_rows],
+            },
+        )
     conn.execute(
         "UPDATE tickets SET employee_session_id = ?, updated_at = ? WHERE id = ?",
         (candidate, now, ticket_id),
@@ -765,19 +780,28 @@ def read_ticket_by_employee_session_id(
     conn: sqlite3.Connection, employee_session_id: str
 ) -> Ticket:
     """Resolve the Ticket that owns this durable Employee conversation."""
-    row = conn.execute(
+    rows = conn.execute(
         "SELECT tickets.*, projects.name AS project_name "
         "FROM tickets LEFT JOIN projects ON projects.id = tickets.project_id "
-        "WHERE tickets.employee_session_id = ?",
+        "WHERE tickets.employee_session_id = ? ORDER BY tickets.id",
         (employee_session_id,),
-    ).fetchone()
-    if row is None:
+    ).fetchall()
+    if not rows:
         raise PlannerError(
             ErrorCode.not_found,
             "no ticket owns this Employee session",
             {"employee_session_id": employee_session_id},
         )
-    return _row_to_ticket(row)
+    if len(rows) > 1:
+        raise PlannerError(
+            ErrorCode.validation,
+            "multiple tickets own this Employee session",
+            {
+                "employee_session_id": employee_session_id,
+                "ticket_ids": sorted(str(row["id"]) for row in rows),
+            },
+        )
+    return _row_to_ticket(rows[0])
 
 
 def read_tickets_by_employee_session_ids(

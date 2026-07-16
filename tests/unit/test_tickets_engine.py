@@ -499,6 +499,58 @@ def test_claim_running_step_employee_session_id_logs_lookup_event(
     ]
 
 
+@pytest.mark.parametrize("force_fresh_employee_session", [False, True])
+def test_employee_session_writer_rejects_a_session_owned_by_another_ticket(
+    tmp_db: Connection,
+    cfg: Config,
+    fake_clock: TestClock,
+    force_fresh_employee_session: bool,
+) -> None:
+    now = fake_clock.now_unix()
+    owner = _create(tmp_db, cfg, fake_clock, title="Owner")
+    claimant = _create(tmp_db, cfg, fake_clock, title="Claimant")
+    tmp_db.execute("BEGIN IMMEDIATE")
+    data.write_employee_session_id_in_transaction(
+        tmp_db,
+        owner.id,
+        transition=EmployeeSessionIdTransition(None, "shared-session"),
+        force_fresh_employee_session=False,
+        now=now,
+    )
+    tmp_db.commit()
+    claimant_before = tmp_db.execute(
+        "SELECT employee_session_id, updated_at FROM tickets WHERE id = ?",
+        (claimant.id,),
+    ).fetchone()
+    events_before = _events(tmp_db, cfg, claimant.id)
+
+    tmp_db.execute("BEGIN IMMEDIATE")
+    with pytest.raises(PlannerError) as exc:
+        data.write_employee_session_id_in_transaction(
+            tmp_db,
+            claimant.id,
+            transition=EmployeeSessionIdTransition(None, "shared-session"),
+            force_fresh_employee_session=force_fresh_employee_session,
+            now=now + 1,
+        )
+
+    assert exc.value.code is ErrorCode.validation
+    assert exc.value.detail == {
+        "candidate_employee_session_id": "shared-session",
+        "claiming_ticket_id": claimant.id,
+        "owning_ticket_ids": [owner.id],
+    }
+    assert (
+        tmp_db.execute(
+            "SELECT employee_session_id, updated_at FROM tickets WHERE id = ?",
+            (claimant.id,),
+        ).fetchone()
+        == claimant_before
+    )
+    assert _events(tmp_db, cfg, claimant.id) == events_before
+    tmp_db.rollback()
+
+
 def test_claim_running_step_employee_session_id_does_not_overwrite_non_running_ticket(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:

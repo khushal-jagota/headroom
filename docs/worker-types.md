@@ -161,10 +161,17 @@ The worker runs `panels worker my-ticket`. That response includes the Ticket's s
 Worker type and the specialist skill named by its `WorkerTypeDefinition`. The worker loads
 that skill with `skill_view` and follows its Stage-specific guidance:
 
-Inside the shared Hermes gateway, that lookup follows the current live window back to its
-durable Employee session. It does not trust a process-level session key when Hermes is serving
-several Tickets, because that key can belong to a different concurrent Ticket. Older single-session
-surfaces without a live-window identity still use the durable Employee session directly.
+Panels opens or resumes the Ticket's correct durable Employee conversation. Inside the shared
+Hermes gateway, worker lookup treats the current live window as authoritative and follows it back
+to that durable session. Older single-session surfaces without a live-window identity still use
+the durable Employee session directly.
+
+A restart investigation proved a separate Hermes problem: its local terminal shell snapshot could
+restore another conversation's `HERMES_SESSION_*` values after the current conversation identity
+had been injected. That cross-repository fix is required and is being handled in Hermes. Panels
+still defends its own boundary: one durable Employee session may belong to only one Ticket. A
+second Ticket cannot claim an owned session, even during a forced fresh human binding, and a read
+that finds impossible duplicate owners fails with all owner Ticket ids instead of choosing one.
 
 - `panels-worker-coding` guides coding Tickets.
 - `panels-worker-new-worker` guides `new_worker` Tickets.
@@ -227,4 +234,4 @@ prefix, and reconciliation support before changing state.
 
 ---
 
-_Last verified: 2026-07-15._
+_Last verified: 2026-07-16._
