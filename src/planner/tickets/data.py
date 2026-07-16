@@ -360,18 +360,6 @@ def write_employee_session_id_in_transaction(
     if row is None:
         raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
     current: str | None = row["employee_session_id"]
-    if current == candidate:
-        return candidate
-    if force_fresh_employee_session or current == transition.expected_employee_session_id:
-        pass
-    elif current is not None:
-        return current
-    else:
-        raise PlannerError(
-            ErrorCode.already_running,
-            "Employee session changed during binding",
-            {"ticket_id": ticket_id},
-        )
     owning_ticket_rows = conn.execute(
         "SELECT id FROM tickets "
         "WHERE employee_session_id = ? AND id != ? ORDER BY id",
@@ -386,6 +374,18 @@ def write_employee_session_id_in_transaction(
                 "claiming_ticket_id": ticket_id,
                 "owning_ticket_ids": [str(row["id"]) for row in owning_ticket_rows],
             },
+        )
+    if current == candidate:
+        return candidate
+    if force_fresh_employee_session or current == transition.expected_employee_session_id:
+        pass
+    elif current is not None:
+        return current
+    else:
+        raise PlannerError(
+            ErrorCode.already_running,
+            "Employee session changed during binding",
+            {"ticket_id": ticket_id},
         )
     conn.execute(
         "UPDATE tickets SET employee_session_id = ?, updated_at = ? WHERE id = ?",

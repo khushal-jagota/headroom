@@ -120,7 +120,8 @@ ContextVars were injected. That root cause requires a separate Hermes repository
 hardens its own durable boundary: the canonical transactional writer rejects a candidate session
 owned by another Ticket, including force-fresh human bindings, and direct durable reads fetch every
 owner deterministically and reject impossible duplicates with sorted Ticket ids. Same-Ticket
-idempotence and existing compare-and-swap behavior remain unchanged. Production data had zero
+idempotence remains only while ownership is unambiguous; an already-corrupt duplicate fails before
+the idempotent return. Existing compare-and-swap behavior remains unchanged. Production data had zero
 duplicates, so a schema migration would add machinery without repairing any live row and was not
 added; the existing `BEGIN IMMEDIATE` callers serialize the ownership gate.
 

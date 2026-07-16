@@ -12,11 +12,12 @@ Current build stage:
   `ticket/t_8vww58fj-worker-identity-restart`. Panels already resumes the correct durable Employee
   conversation and treats the gateway's live session identity as authoritative.
 - The restart trace proved the remaining cross-Ticket environment leak is in Hermes: a shared local
-  terminal shell snapshot restores another conversation's `HERMES_SESSION_*` values after the current
-  ContextVars are injected. The Hermes repository fix is required and is being handled separately.
+  terminal shell snapshot restored another conversation's `HERMES_SESSION_*` values after the current
+  ContextVars were injected. The isolated Hermes correction now reapplies authoritative ContextVars
+  after snapshot restore and before the next snapshot write, including CLI session rotation.
 - Panels now additionally fetches every durable owner deterministically and fails closed on impossible
   duplicate ownership. Its canonical transactional session writer rejects a candidate already owned by
-  another Ticket, including force-fresh binding, before mutating the Ticket or appending an event. The
+  another Ticket, including force-fresh and already-ambiguous idempotent binding, before mutation. The
   existing `BEGIN IMMEDIATE` callers serialize this gate; production data had zero duplicates, so no
   schema migration is justified.
 
@@ -26,9 +27,13 @@ What just passed:
   after the read hardening, the same focused test passes with validation and sorted Ticket ids.
 - RED for both ordinary and force-fresh second-Ticket claims did not raise; after the writer gate, both
   focused cases pass and prove the claimant row and event stream remain unchanged.
-- The complete focused worker lookup, Ticket engine, and human Chat binding set passes (`54 passed`, one
+- A Codex review found the idempotent already-corrupt ownership edge; RED reproduced it, and the writer
+  now rejects it before the ordinary idempotent return.
+- The complete focused worker lookup, Ticket engine, and human Chat binding set passes (`55 passed`, one
   existing FastAPI deprecation warning). Focused Ruff reports `All checks passed!`, and
   `git diff --check` is clean. Canonical `./verify` was deliberately not run in this branch.
+- Hermes' exact cross-session, all-mapped-variable, snapshot-poisoning, and CLI-rotation regressions pass
+  (`17 passed`); focused Ruff and `git diff --check` are clean.
 
 Current hypothesis:
 

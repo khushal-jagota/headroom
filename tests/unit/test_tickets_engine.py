@@ -551,6 +551,37 @@ def test_employee_session_writer_rejects_a_session_owned_by_another_ticket(
     tmp_db.rollback()
 
 
+def test_employee_session_writer_rejects_idempotence_when_ownership_is_already_ambiguous(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    first = _create(tmp_db, cfg, fake_clock, title="First")
+    second = _create(tmp_db, cfg, fake_clock, title="Second")
+    tmp_db.execute(
+        "UPDATE tickets SET employee_session_id = ? WHERE id IN (?, ?)",
+        ("already-shared", first.id, second.id),
+    )
+    tmp_db.commit()
+
+    tmp_db.execute("BEGIN IMMEDIATE")
+    with pytest.raises(PlannerError) as exc:
+        data.write_employee_session_id_in_transaction(
+            tmp_db,
+            first.id,
+            transition=EmployeeSessionIdTransition("already-shared", "already-shared"),
+            force_fresh_employee_session=False,
+            now=now + 1,
+        )
+
+    assert exc.value.code is ErrorCode.validation
+    assert exc.value.detail == {
+        "candidate_employee_session_id": "already-shared",
+        "claiming_ticket_id": first.id,
+        "owning_ticket_ids": [second.id],
+    }
+    tmp_db.rollback()
+
+
 def test_claim_running_step_employee_session_id_does_not_overwrite_non_running_ticket(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
