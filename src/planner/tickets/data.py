@@ -360,30 +360,49 @@ def write_employee_session_id_in_transaction(
     if row is None:
         raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
     current: str | None = row["employee_session_id"]
-    if current == candidate:
-        return candidate
-    if force_fresh_employee_session or current == transition.expected_employee_session_id:
-        pass
+    if (
+        current == candidate
+        or force_fresh_employee_session
+        or current == transition.expected_employee_session_id
+    ):
+        effective_employee_session_id = candidate
     elif current is not None:
-        return current
+        effective_employee_session_id = current
     else:
         raise PlannerError(
             ErrorCode.already_running,
             "Employee session changed during binding",
             {"ticket_id": ticket_id},
         )
+    owning_ticket_rows = conn.execute(
+        "SELECT id FROM tickets "
+        "WHERE employee_session_id = ? AND id != ? ORDER BY id",
+        (effective_employee_session_id, ticket_id),
+    ).fetchall()
+    if owning_ticket_rows:
+        raise PlannerError(
+            ErrorCode.validation,
+            "Employee session already belongs to another ticket",
+            {
+                "employee_session_id": effective_employee_session_id,
+                "binding_ticket_id": ticket_id,
+                "owning_ticket_ids": [str(row["id"]) for row in owning_ticket_rows],
+            },
+        )
+    if current == effective_employee_session_id:
+        return effective_employee_session_id
     conn.execute(
         "UPDATE tickets SET employee_session_id = ?, updated_at = ? WHERE id = ?",
-        (candidate, now, ticket_id),
+        (effective_employee_session_id, now, ticket_id),
     )
     append_event(
         conn,
         ticket_id,
         EventKind.employee_session_changed,
-        {"employee_session_id": candidate},
+        {"employee_session_id": effective_employee_session_id},
         now,
     )
-    return candidate
+    return effective_employee_session_id
 
 
 def claim_running_step_employee_session_id(
@@ -765,19 +784,28 @@ def read_ticket_by_employee_session_id(
     conn: sqlite3.Connection, employee_session_id: str
 ) -> Ticket:
     """Resolve the Ticket that owns this durable Employee conversation."""
-    row = conn.execute(
+    rows = conn.execute(
         "SELECT tickets.*, projects.name AS project_name "
         "FROM tickets LEFT JOIN projects ON projects.id = tickets.project_id "
-        "WHERE tickets.employee_session_id = ?",
+        "WHERE tickets.employee_session_id = ? ORDER BY tickets.id",
         (employee_session_id,),
-    ).fetchone()
-    if row is None:
+    ).fetchall()
+    if not rows:
         raise PlannerError(
             ErrorCode.not_found,
             "no ticket owns this Employee session",
             {"employee_session_id": employee_session_id},
         )
-    return _row_to_ticket(row)
+    if len(rows) > 1:
+        raise PlannerError(
+            ErrorCode.validation,
+            "multiple tickets own this Employee session",
+            {
+                "employee_session_id": employee_session_id,
+                "ticket_ids": sorted(str(row["id"]) for row in rows),
+            },
+        )
+    return _row_to_ticket(rows[0])
 
 
 def read_tickets_by_employee_session_ids(

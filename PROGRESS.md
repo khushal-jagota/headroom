@@ -4,41 +4,54 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
-## Current work cycle (2026-07-15): worker live-session identity
+## Current work cycle (2026-07-16): fail-closed Employee session ownership
 
 Current build stage:
 
-- The existing-Worker-management exploration `t_z9upbzf0` was created and stored correctly, but its
-  Hermes terminal environment carried `HERMES_SESSION_KEY=20260715_114042_14bc38`, which belongs to
-  `t_gn7x278u`. A fresh `/new` session reproduced the same mismatch. Forcing the exploration's actual
-  durable session key made the unchanged CLI resolve `t_z9upbzf0`, proving the Ticket row and the
-  by-Employee-session endpoint were not corrupt.
-- `panels worker my-ticket` now prefers `HERMES_UI_SESSION_ID`. Panels maps that live gateway identity
-  back to the durable Employee session and fails closed when the mapping owns zero or multiple Tickets.
-  The old durable-key route remains the fallback for single-session Hermes surfaces.
+- Ticket `t_8vww58fj` is hardening the Panels-side durable ownership boundary on branch
+  `ticket/t_8vww58fj-worker-identity-restart`. Panels already resumes the correct durable Employee
+  conversation and treats the gateway's live session identity as authoritative.
+- The restart trace proved the remaining cross-Ticket environment leak is in Hermes: a shared local
+  terminal shell snapshot restored another conversation's `HERMES_SESSION_*` values after the current
+  ContextVars were injected. The isolated Hermes correction now reapplies authoritative ContextVars
+  after snapshot restore and before the next snapshot write, including CLI session rotation.
+- Panels now additionally fetches every durable owner deterministically and fails closed on impossible
+  duplicate ownership. Its canonical transactional session writer rejects a candidate already owned by
+  another Ticket, including force-fresh and already-ambiguous idempotent binding, before mutation. The
+  existing `BEGIN IMMEDIATE` callers serialize this gate; production data had zero duplicates, so no
+  schema migration is justified.
 
 What just passed:
 
-- RED reproduced the stale-key routing in CLI, API, and route-contract tests. The focused corrected set
-  passes: `tests/unit/test_cli_entrypoints.py`, `tests/unit/test_worker_my_ticket.py`, and
-  `tests/unit/test_chat_ingress_contract.py` (`10 passed`).
-- The canonical combined-tree `./verify` after the restart-supervisor merge passes Ruff,
-  mypy across 122 source files, 858 unit tests with nine existing warnings,
-  compile/static/CSS checks, Svelte with zero errors or warnings, the production build,
-  all frontend tests, and 114 browser tests. Every gate is `ok` and the run ends
-  `VERIFY: PASS`.
-- A post-merge read-only Codex review of the live-session identity commit reports
-  `NO VIOLATIONS` across identity mapping, ambiguity handling, adapter composition,
-  fallback behavior, API contracts, and regression coverage.
+- RED for direct durable lookup returned an arbitrary `200` Ticket when two Tickets shared a session;
+  after the read hardening, the same focused test passes with validation and sorted Ticket ids.
+- RED for both ordinary and force-fresh second-Ticket claims did not raise; after the writer gate, both
+  focused cases pass and prove the claimant row and event stream remain unchanged.
+- A Codex review found the idempotent already-corrupt ownership edge; RED reproduced it, and the writer
+  now rejects it before the ordinary idempotent return.
+- Final review found the same issue on compare-and-swap winner adoption; RED reproduced that path, and
+  the writer now validates the one effective session before either returning or persisting it.
+- The complete focused worker lookup, Ticket engine, and human Chat binding set passes (`56 passed`, one
+  existing FastAPI deprecation warning). Focused Ruff reports `All checks passed!`, and
+  `git diff --check` is clean. Canonical `./verify` was deliberately not run in this branch.
+- Hermes' exact cross-session, all-mapped-variable, snapshot-function, snapshot-poisoning, and
+  CLI-rotation regressions pass (`18 passed`); focused Ruff and `git diff --check` are clean.
+
+Current hypothesis:
+
+- Panels' durable conversation selection is correct. The wrong terminal environment is produced after
+  that boundary by Hermes shell-state restoration, while Panels must still prevent and detect impossible
+  durable ownership independently.
 
 Next step:
 
-- Run canonical `./verify`, restart Panels on the corrected source, reset `t_z9upbzf0` once more, and
-  prove `panels worker my-ticket` resolves that exploration despite Hermes still exposing the stale key.
+- Hand the scoped Panels commit to the parent for integration. The parent will run canonical `./verify`
+  once after integration and the separate Hermes correction.
 
 Blockers:
 
-- None.
+- The end-to-end restart regression still requires the separate Hermes repository correction. It does
+  not block completing and committing this Panels-side fail-closed hardening.
 
 ## Current work cycle (2026-07-15): controlled Panels restart supervisor
 

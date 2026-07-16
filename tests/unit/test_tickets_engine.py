@@ -499,6 +499,117 @@ def test_claim_running_step_employee_session_id_logs_lookup_event(
     ]
 
 
+@pytest.mark.parametrize("force_fresh_employee_session", [False, True])
+def test_employee_session_writer_rejects_a_session_owned_by_another_ticket(
+    tmp_db: Connection,
+    cfg: Config,
+    fake_clock: TestClock,
+    force_fresh_employee_session: bool,
+) -> None:
+    now = fake_clock.now_unix()
+    owner = _create(tmp_db, cfg, fake_clock, title="Owner")
+    claimant = _create(tmp_db, cfg, fake_clock, title="Claimant")
+    tmp_db.execute("BEGIN IMMEDIATE")
+    data.write_employee_session_id_in_transaction(
+        tmp_db,
+        owner.id,
+        transition=EmployeeSessionIdTransition(None, "shared-session"),
+        force_fresh_employee_session=False,
+        now=now,
+    )
+    tmp_db.commit()
+    claimant_before = tmp_db.execute(
+        "SELECT employee_session_id, updated_at FROM tickets WHERE id = ?",
+        (claimant.id,),
+    ).fetchone()
+    events_before = _events(tmp_db, cfg, claimant.id)
+
+    tmp_db.execute("BEGIN IMMEDIATE")
+    with pytest.raises(PlannerError) as exc:
+        data.write_employee_session_id_in_transaction(
+            tmp_db,
+            claimant.id,
+            transition=EmployeeSessionIdTransition(None, "shared-session"),
+            force_fresh_employee_session=force_fresh_employee_session,
+            now=now + 1,
+        )
+
+    assert exc.value.code is ErrorCode.validation
+    assert exc.value.detail == {
+        "employee_session_id": "shared-session",
+        "binding_ticket_id": claimant.id,
+        "owning_ticket_ids": [owner.id],
+    }
+    assert (
+        tmp_db.execute(
+            "SELECT employee_session_id, updated_at FROM tickets WHERE id = ?",
+            (claimant.id,),
+        ).fetchone()
+        == claimant_before
+    )
+    assert _events(tmp_db, cfg, claimant.id) == events_before
+    tmp_db.rollback()
+
+
+def test_employee_session_writer_rejects_idempotence_when_ownership_is_already_ambiguous(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    first = _create(tmp_db, cfg, fake_clock, title="First")
+    second = _create(tmp_db, cfg, fake_clock, title="Second")
+    tmp_db.execute(
+        "UPDATE tickets SET employee_session_id = ? WHERE id IN (?, ?)",
+        ("already-shared", first.id, second.id),
+    )
+    tmp_db.commit()
+
+    tmp_db.execute("BEGIN IMMEDIATE")
+    with pytest.raises(PlannerError) as exc:
+        data.write_employee_session_id_in_transaction(
+            tmp_db,
+            first.id,
+            transition=EmployeeSessionIdTransition("already-shared", "already-shared"),
+            force_fresh_employee_session=False,
+            now=now + 1,
+        )
+
+    assert exc.value.code is ErrorCode.validation
+    assert exc.value.detail == {
+        "employee_session_id": "already-shared",
+        "binding_ticket_id": first.id,
+        "owning_ticket_ids": [second.id],
+    }
+    tmp_db.rollback()
+
+
+def test_employee_session_writer_rejects_an_ambiguous_compare_and_swap_winner(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    first = _create(tmp_db, cfg, fake_clock, title="First")
+    second = _create(tmp_db, cfg, fake_clock, title="Second")
+    tmp_db.execute(
+        "UPDATE tickets SET employee_session_id = ? WHERE id IN (?, ?)",
+        ("ambiguous-winner", first.id, second.id),
+    )
+    tmp_db.commit()
+
+    tmp_db.execute("BEGIN IMMEDIATE")
+    with pytest.raises(PlannerError) as exc:
+        data.write_employee_session_id_in_transaction(
+            tmp_db,
+            first.id,
+            transition=EmployeeSessionIdTransition("stale-expected", "losing-candidate"),
+            force_fresh_employee_session=False,
+            now=now + 1,
+        )
+
+    assert exc.value.code is ErrorCode.validation
+    assert exc.value.detail["employee_session_id"] == "ambiguous-winner"
+    assert exc.value.detail["owning_ticket_ids"] == [second.id]
+    tmp_db.rollback()
+
+
 def test_claim_running_step_employee_session_id_does_not_overwrite_non_running_ticket(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:

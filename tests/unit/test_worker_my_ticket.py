@@ -113,6 +113,31 @@ def test_my_ticket_returns_probe_specialist(
     assert body["worker"] == "probe-worker"
 
 
+def test_my_ticket_rejects_duplicate_durable_session_ownership(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/tickets",
+            json={"title": "First", "worker_type": "coding", "kickoff_note": "k"},
+        ).json()
+        second = client.post(
+            "/api/tickets",
+            json={"title": "Second", "worker_type": "coding", "kickoff_note": "k"},
+        ).json()
+        _bind_session(db_path, first["id"], "duplicate_session")
+        _bind_session(db_path, second["id"], "duplicate_session")
+
+        response = client.get("/api/tickets/by-employee-session/duplicate_session")
+
+    assert response.status_code == 400, response.text
+    error = response.json()["error"]
+    assert error["code"] == "validation"
+    assert error["detail"] == {
+        "employee_session_id": "duplicate_session",
+        "ticket_ids": sorted((first["id"], second["id"])),
+    }
+
+
 def test_my_ticket_resolves_the_gateway_live_session_before_the_stale_environment_key(
     tmp_path: Path,
 ) -> None:
