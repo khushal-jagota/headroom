@@ -121,7 +121,8 @@ hardens its own durable boundary: the canonical transactional writer rejects a c
 owned by another Ticket, including force-fresh human bindings, and direct durable reads fetch every
 owner deterministically and reject impossible duplicates with sorted Ticket ids. Same-Ticket
 idempotence remains only while ownership is unambiguous; an already-corrupt duplicate fails before
-the idempotent return. Existing compare-and-swap behavior remains unchanged. Production data had zero
+the idempotent return. Compare-and-swap still adopts a unique current winner, but rejects an ambiguous
+winner before returning it to a caller. Production data had zero
 duplicates, so a schema migration would add machinery without repairing any live row and was not
 added; the existing `BEGIN IMMEDIATE` callers serialize the ownership gate.
 

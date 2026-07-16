@@ -29,11 +29,13 @@ What just passed:
   focused cases pass and prove the claimant row and event stream remain unchanged.
 - A Codex review found the idempotent already-corrupt ownership edge; RED reproduced it, and the writer
   now rejects it before the ordinary idempotent return.
-- The complete focused worker lookup, Ticket engine, and human Chat binding set passes (`55 passed`, one
+- Final review found the same issue on compare-and-swap winner adoption; RED reproduced that path, and
+  the writer now validates the one effective session before either returning or persisting it.
+- The complete focused worker lookup, Ticket engine, and human Chat binding set passes (`56 passed`, one
   existing FastAPI deprecation warning). Focused Ruff reports `All checks passed!`, and
   `git diff --check` is clean. Canonical `./verify` was deliberately not run in this branch.
-- Hermes' exact cross-session, all-mapped-variable, snapshot-poisoning, and CLI-rotation regressions pass
-  (`17 passed`); focused Ruff and `git diff --check` are clean.
+- Hermes' exact cross-session, all-mapped-variable, snapshot-function, snapshot-poisoning, and
+  CLI-rotation regressions pass (`18 passed`); focused Ruff and `git diff --check` are clean.
 
 Current hypothesis:
 

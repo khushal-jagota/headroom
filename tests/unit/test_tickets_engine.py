@@ -536,8 +536,8 @@ def test_employee_session_writer_rejects_a_session_owned_by_another_ticket(
 
     assert exc.value.code is ErrorCode.validation
     assert exc.value.detail == {
-        "candidate_employee_session_id": "shared-session",
-        "claiming_ticket_id": claimant.id,
+        "employee_session_id": "shared-session",
+        "binding_ticket_id": claimant.id,
         "owning_ticket_ids": [owner.id],
     }
     assert (
@@ -575,10 +575,38 @@ def test_employee_session_writer_rejects_idempotence_when_ownership_is_already_a
 
     assert exc.value.code is ErrorCode.validation
     assert exc.value.detail == {
-        "candidate_employee_session_id": "already-shared",
-        "claiming_ticket_id": first.id,
+        "employee_session_id": "already-shared",
+        "binding_ticket_id": first.id,
         "owning_ticket_ids": [second.id],
     }
+    tmp_db.rollback()
+
+
+def test_employee_session_writer_rejects_an_ambiguous_compare_and_swap_winner(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    first = _create(tmp_db, cfg, fake_clock, title="First")
+    second = _create(tmp_db, cfg, fake_clock, title="Second")
+    tmp_db.execute(
+        "UPDATE tickets SET employee_session_id = ? WHERE id IN (?, ?)",
+        ("ambiguous-winner", first.id, second.id),
+    )
+    tmp_db.commit()
+
+    tmp_db.execute("BEGIN IMMEDIATE")
+    with pytest.raises(PlannerError) as exc:
+        data.write_employee_session_id_in_transaction(
+            tmp_db,
+            first.id,
+            transition=EmployeeSessionIdTransition("stale-expected", "losing-candidate"),
+            force_fresh_employee_session=False,
+            now=now + 1,
+        )
+
+    assert exc.value.code is ErrorCode.validation
+    assert exc.value.detail["employee_session_id"] == "ambiguous-winner"
+    assert exc.value.detail["owning_ticket_ids"] == [second.id]
     tmp_db.rollback()
 
 

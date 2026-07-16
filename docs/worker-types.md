@@ -171,8 +171,8 @@ restore another conversation's `HERMES_SESSION_*` values after the current conve
 had been injected. That cross-repository fix is required and is being handled in Hermes. Panels
 still defends its own boundary: one durable Employee session may belong to only one Ticket. A
 second Ticket cannot claim an owned session, even during a forced fresh human binding. An already
-ambiguous idempotent binding and any read that finds duplicate owners fail with all owner Ticket ids
-instead of choosing one.
+ambiguous idempotent binding, an ambiguous compare-and-swap winner, and any read that finds duplicate
+owners fail with all owner Ticket ids instead of choosing one.
 
 - `panels-worker-coding` guides coding Tickets.
 - `panels-worker-new-worker` guides `new_worker` Tickets.
