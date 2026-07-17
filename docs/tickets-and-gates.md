@@ -117,10 +117,12 @@ unchanged.
 
 ### Who owns the current Stage
 
-Every non-terminal Stage has a default owner declared by its Worker type: **worker**,
-**user**, or **paired**. A Ticket may override that default for a particular Stage. The
-current Stage's override wins; without one, its default applies. Terminal Tickets have no
-current owner.
+Every non-terminal Stage has a default owner: **worker**, **user**, or **paired**. The
+Worker type supplies the starting value, and the Workers screen can change that value for
+future Stage entries. When a Ticket enters a Stage, Panels stores the default in that Ticket.
+Later changes therefore do not move work already resting there. A Ticket may also override
+the stored default for a particular Stage. The current Stage's override wins; without one,
+the stored default applies. Terminal Tickets have no current owner.
 
 - **Worker-owned** Stages rest ready for automatic eligibility. The other runtime,
   blocker, proposal, and scope conditions must still allow a run.
@@ -134,15 +136,16 @@ current owner.
 
 **Take over** sets a `user` override for the current Stage, even if an Employee run is
 active. That run cannot undo the takeover when it settles. **Release** clears the current
-Stage override and reapplies the Stage default; there is no stack of older overrides.
-Moving to another Stage applies that Stage's own override or default.
+Stage override and reapplies the default captured when the Ticket entered that Stage; there
+is no stack of older overrides. Moving to another Stage captures that Stage's current global
+default, then applies any explicit Ticket override.
 
 Ownership and scope answer different questions. Ownership says who drives the current
 Stage. Scope says how far a worker may advance autonomously and what it may do at the
 ceiling. The Worker type chooses the specialist skill used for that work.
 
 _Code paths:_ `src/planner/tickets/logic/machine.py`, `src/planner/tickets/data.py`,
-and `src/planner/tickets/api.py`.
+`src/planner/worker_settings/`, and `src/planner/tickets/api.py`.
 
 ## The one rule: proposals and the single door
 

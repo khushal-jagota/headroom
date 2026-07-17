@@ -287,3 +287,51 @@ def test_ticket_employee_session_and_step_events_have_exact_network_dependencies
     _append_event(server, "idea_unrelated", "idea_created")
     _wait_for_flush(page, previous)
     assert _count(requests, server, f"/api/tickets/{ticket_id}") == 0
+
+
+def test_worker_settings_event_refetches_workers_and_matching_detail_only(
+    server, context_factory, open_page
+) -> None:
+    requests: list[tuple[str, str]] = []
+    index = open_page(
+        context_factory(),
+        server,
+        "#/workers",
+        'section[data-screen="workers"] [data-workers-list]',
+        settled=False,
+    )
+    coding = open_page(
+        context_factory(),
+        server,
+        "#/workers/coding",
+        '[data-worker-detail][data-worker-id="coding"]',
+        settled=False,
+    )
+    new_worker = open_page(
+        context_factory(),
+        server,
+        "#/workers/new_worker",
+        '[data-worker-detail][data-worker-id="new_worker"]',
+        settled=False,
+    )
+    pages = [index, coding, new_worker]
+    for page in pages:
+        _watch_requests(page, requests)
+
+    previous = [page.evaluate("window.__plannerDebug.flushes") for page in pages]
+    requests.clear()
+    _append_event(
+        server,
+        "worker_coding",
+        "worker_settings_changed",
+        {"worker_type": "coding", "changed": "skill"},
+    )
+    for page, before in zip(pages, previous, strict=True):
+        _wait_for_flush(page, before)
+
+    assert _count(requests, server, "/api/workers") == 1
+    assert _count(requests, server, "/api/workers/coding") == 1
+    assert _count(requests, server, "/api/workers/new_worker") == 0
+    assert _count(requests, server, "/api/worker-types") == 0
+    assert _count(requests, server, "/api/board") == 0
+    assert _count(requests, server, "/api/sprint/current") == 0

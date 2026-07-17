@@ -1,8 +1,7 @@
 export type AnyRecord = Record<string, any>;
 
-// The served Worker-type manifest response (GET /api/worker-types). Re-exported here
-// for the resource fetch typing; the derived Lifecycle + per-type manifest shapes are
-// imported directly from lifecycle.ts at call sites.
+// The served Worker-type manifest response (GET /api/worker-types).
+import type { WorkerTypeManifest } from "./lifecycle";
 export type { WorkerTypesResponse } from "./lifecycle";
 
 export type SprintSummary = {
@@ -58,6 +57,35 @@ export type BlockerSummary = {
 };
 
 export type StageOwnershipMode = "worker" | "user" | "paired";
+
+export type ManagedSkill = {
+  name: string;
+  description: string;
+  markdown_body: string;
+};
+
+export type WorkerManagementSummary = {
+  worker_type: string;
+  label: string;
+  specialist_skill_name: string;
+  stage_ownership_defaults: Record<string, StageOwnershipMode>;
+};
+
+export type WorkersResponse = {
+  workers: WorkerManagementSummary[];
+};
+
+export type WorkerManagementSettings = {
+  worker_type: string;
+  stage_ownership_defaults: Record<string, StageOwnershipMode>;
+  specialist_skill: ManagedSkill;
+  candidate_specialist_skill?: ManagedSkill;
+};
+
+export type WorkerManagementDetail = {
+  manifest: WorkerTypeManifest;
+  settings: WorkerManagementSettings;
+};
 
 
 export type TicketDetail = {

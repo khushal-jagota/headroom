@@ -14,6 +14,7 @@ from planner.core.legacy_execution_route import (
     LEGACY_EXECUTION_ROUTE_FIELDS,
 )
 from planner.projects import data as projects_data
+from planner.worker_types.configuration import configured_worker_type_registry
 
 SCHEMA_VERSION: Final = 27
 
@@ -81,6 +82,7 @@ CREATE TABLE IF NOT EXISTS tickets (
                                                 'awaiting_approval','user_takeover',
                                                 'paired_work','errored')),
   stage_ownership_overrides TEXT NOT NULL DEFAULT '{}',
+  default_stage_ownership_mode TEXT CHECK (default_stage_ownership_mode IN ('worker','user','paired')),
   employee_session_id  TEXT,                         -- the Employee's durable Hermes session id
   alias                TEXT,                         -- migration "Ticket ID:" (seed importer dedup)
   fields               TEXT NOT NULL,
@@ -231,6 +233,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             "v27 Ticket schema is missing the nullable Employee launch configuration columns "
             "without defaults"
         )
+    _migrate_ticket_default_stage_ownership_mode(conn)
     _create_indexes(conn)
 
 
@@ -381,6 +384,7 @@ CREATE TABLE tickets_new (
                                                 'awaiting_approval','user_takeover',
                                                 'paired_work','errored')),
   stage_ownership_overrides TEXT NOT NULL DEFAULT '{}',
+  default_stage_ownership_mode TEXT CHECK (default_stage_ownership_mode IN ('worker','user','paired')),
   employee_session_id  TEXT,
   alias                TEXT,
   fields               TEXT NOT NULL,
@@ -506,6 +510,41 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _registered_default_stage_ownership_mode(worker_type: str, stage: str) -> str | None:
+    try:
+        definition = configured_worker_type_registry().require(worker_type)
+        if definition.is_terminal(stage):
+            return None
+        default = definition.stage_definition(stage).default_ownership_mode
+    except Exception:
+        return None
+    return default.value if default is not None else None
+
+
+def _migrate_ticket_default_stage_ownership_mode(conn: sqlite3.Connection) -> None:
+    columns = _table_columns(conn, "tickets")
+    if "default_stage_ownership_mode" not in columns:
+        conn.execute(
+            "ALTER TABLE tickets ADD COLUMN default_stage_ownership_mode TEXT "
+            "CHECK (default_stage_ownership_mode IN ('worker','user','paired'))"
+        )
+    rows = conn.execute(
+        "SELECT id, worker_type, stage, default_stage_ownership_mode "
+        "FROM tickets ORDER BY id"
+    ).fetchall()
+    for row in rows:
+        if row["default_stage_ownership_mode"] is not None:
+            continue
+        captured_default = _registered_default_stage_ownership_mode(
+            str(row["worker_type"]), str(row["stage"])
+        )
+        if captured_default is not None:
+            conn.execute(
+                "UPDATE tickets SET default_stage_ownership_mode = ? WHERE id = ?",
+                (captured_default, row["id"]),
+            )
 
 
 def _cleanup_legacy_execution_route_records(conn: sqlite3.Connection) -> None:
@@ -977,6 +1016,7 @@ CREATE TABLE tickets_new (
                                                 'awaiting_approval','user_takeover',
                                                 'paired_work','errored')),
   stage_ownership_overrides TEXT NOT NULL DEFAULT '{}',
+  default_stage_ownership_mode TEXT CHECK (default_stage_ownership_mode IN ('worker','user','paired')),
   employee_session_id  TEXT,
   alias                TEXT,
   fields               TEXT NOT NULL,

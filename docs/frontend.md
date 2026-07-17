@@ -47,6 +47,11 @@ One screen per part of the system:
   documents page for the kickoff/mid/review record (see `sprints.md`).
 - **Backlog** and **Ideas** — the two catch surfaces; both capture through the same
   unboxed serif idiom (see `backlog-and-ideas.md`).
+- **Workers** — a compact list of configured Worker types and one detail page per Worker.
+  Worker identity and lifecycle structure stay read-only. Each Stage ownership default
+  saves independently for future Ticket entries. The specialist skill opens as one managed
+  edit of its description and Markdown body. A failed save keeps the attempted text and a
+  useful error so it can be corrected or retried. The same page collapses cleanly on mobile.
 
 The shell itself carries two separate live signals. Worker presence is the small
 spinner and "N working" readout from the global running-worker count. Server
@@ -63,10 +68,10 @@ share.
   cached server read, its endpoint and type, and the events that affect it. The cache
   engine only manages loaded values, subscribers, and overlapping requests; it knows
   nothing about Tickets or Projects. The event log is a doorbell. Events invalidate
-  catalogue resources such as `ticket:<id>`, `board`, `review`, and `sprint:current`,
-  and successful UI writes apply one named catalogue effect immediately. Only those
-  resources refetch. There is no whole-screen refetch or client-side copy of canonical
-  state — the server remains the source of truth.
+  catalogue resources such as `ticket:<id>`, `board`, `review`, `sprint:current`,
+  `workers`, and `worker:<id>`, and successful UI writes apply one named catalogue
+  effect immediately. Only those resources refetch. There is no whole-screen refetch or
+  client-side copy of canonical state — the server remains the source of truth.
 
   A Project rename refreshes Projects, Board, today's Day, backlog Sprint items,
   Ideas, current Sprint, and an already-opened Ticket when its loaded direct Project
@@ -178,6 +183,8 @@ hand-rolling the same shapes per screen. Each does one job:
 - **ResourceState** — the shared error / loading scaffold; shows an error line, a
   loading line, or the content. Data-empty states ("No ideas yet.") stay in the screens.
 - **InlineEdit** — product editing and save behavior for Markdown and plain text.
+- **Workers skill editor** — the managed Markdown surface wrapped in one explicit edit/save
+  boundary because the skill description and Markdown body are one frontmatter-backed file.
 - **MarkdownBlock** — the read-only product wrapper for managed Markdown.
 - **FilePreview** — the one file preview card/inline renderer (see the file-preview rule).
 - **AcpConversation / AcpConversationPane** — the sole Ticket and Chief-of-Staff

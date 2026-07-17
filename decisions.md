@@ -1826,6 +1826,22 @@ therefore one nonempty `message.delta`, the same terminal `interrupted` assertio
 assertion that no shutdown-settlement SQLite lock error was logged. No production change follows
 from this fixture correction; the final canonical `./verify` still remains.
 
+## D-compact-worker-settings — Editable Worker settings are a managed overlay, not structure
+
+Worker identity, Stage order, gated fields, terminality, and specialist-skill identity remain in the
+immutable Python registry. One managed Worker-settings source owns only existing Stage ownership
+defaults and the canonical editable specialist-skill description/body. Ticket rows persist the default
+captured on current-Stage entry before any global default can be changed; explicit per-Ticket overrides
+remain authoritative. The UI reads composed Worker detail through dedicated `workers` resources while
+`/api/worker-types` stays the structural lifecycle manifest. Edited specialist skills are materialized
+into the planner Hermes home without resetting or rewriting existing Employee session ids.
+
+The work is isolated because the main worktree contains unrelated Hermes-relay changes. Implementation
+uses serial contract-bounded agent passes and read-only Codex review; only the final settled tree runs
+canonical `./verify`. A failed event transaction restores the prior managed file and live skill while
+the per-Worker lock is still held. Candidate files remain for repair, and the browser keeps attempted
+edits visible instead of pretending a failed write succeeded.
+
 ## D-exploration-worker — Exploration extracts the transferable problem before it produces work
 
 `exploration` is a first-class Worker type for premises that are not yet understood well enough to
