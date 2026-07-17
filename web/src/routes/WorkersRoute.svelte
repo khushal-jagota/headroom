@@ -1,13 +1,11 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
-  import ErrorLine from "../components/ErrorLine.svelte";
-  import MarkdownBlock from "../components/MarkdownBlock.svelte";
+  import InlineEdit from "../components/InlineEdit.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import {
     mutateJsonWithResourceEffect,
     resourceCatalogue
   } from "../lib/resourceCatalogue";
-  import { createManagedMarkdownSurface, type EditableManagedMarkdownSurface } from "../lib/managedMarkdown";
   import type { WorkerTypeManifest } from "../lib/lifecycle";
   import { errorMessage, labelize } from "../lib/ui";
   import type {
@@ -36,15 +34,6 @@
   let stageSaving = $state<Record<string, boolean>>({});
   let stageSaveErrors = $state<Record<string, unknown>>({});
 
-  let skillEditing = $state(false);
-  let skillSaving = $state(false);
-  let skillError = $state<unknown>(null);
-  let skillFormDescription = $state("");
-  let skillFormBody = $state("");
-  let skillBodyHost = $state<HTMLDivElement | null>(null);
-  let bodySurface: EditableManagedMarkdownSurface | null = null;
-  let bodySurfaceHost: HTMLDivElement | null = null;
-
   let indexedManifests = $derived(new Map((manifests?.data?.worker_types || []).map((item) => [item.worker_type, item])));
 
   function stageCount(workerSummary: WorkerManagementSummary): number {
@@ -59,50 +48,19 @@
     return settings.candidate_specialist_skill || settings.specialist_skill;
   }
 
-  function resetSkillEditor(settings: WorkerManagementSettings): void {
-    const skill = displaySkillForEdit(settings);
-    skillFormDescription = skill.description;
-    skillFormBody = skill.markdown_body;
-    skillError = null;
-    bodySurface?.update(skill.markdown_body);
-  }
-
-  function enterSkillEdit(settings: WorkerManagementSettings): void {
-    if (skillSaving) return;
-    resetSkillEditor(settings);
-    skillEditing = true;
-  }
-
-  function cancelSkillEdit(settings: WorkerManagementSettings): void {
-    skillEditing = false;
-    resetSkillEditor(settings);
-  }
-
-  async function saveSkill(settings: WorkerManagementSettings): Promise<void> {
-    const body = bodySurface?.hasChanges() ? bodySurface.read() : skillFormBody;
-    skillFormBody = body;
-    skillSaving = true;
-    skillError = null;
-    try {
-      await mutateJsonWithResourceEffect<WorkerManagementSettings>(
-        `/api/workers/${encodeURIComponent(settings.worker_type)}/skill`,
-        {
-          method: "PUT",
-          body: {
-            description: skillFormDescription,
-            markdown_body: body
-          }
-        },
-        { kind: "workerSettingsChanged", workerType: settings.worker_type }
-      );
-      skillEditing = false;
-    } catch (err) {
-      skillError = err;
-      skillEditing = true;
-      bodySurface?.update(body);
-    } finally {
-      skillSaving = false;
-    }
+  async function saveSkillField(
+    settings: WorkerManagementSettings,
+    field: "description" | "markdown_body",
+    raw: string
+  ): Promise<void> {
+    await mutateJsonWithResourceEffect<WorkerManagementSettings>(
+      `/api/workers/${encodeURIComponent(settings.worker_type)}/skill`,
+      {
+        method: "PATCH",
+        body: { [field]: raw }
+      },
+      { kind: "workerSettingsChanged", workerType: settings.worker_type }
+    );
   }
 
   async function saveStageOwner(settings: WorkerManagementSettings, stage: string, ownershipMode: StageOwnershipMode): Promise<void> {
@@ -159,22 +117,10 @@
     if (!sameOwners(lastServerOwners, nextServer)) lastServerOwners = nextServer;
   });
 
-  $effect(() => {
-    if (!skillEditing || !skillBodyHost) return;
-    if (bodySurfaceHost !== skillBodyHost) {
-      bodySurface?.destroy();
-      bodySurface = createManagedMarkdownSurface(skillBodyHost, { mode: "editable" });
-      bodySurfaceHost = skillBodyHost;
-    }
-    bodySurface?.update(skillFormBody);
-  });
-
   onDestroy(() => {
     workers?.dispose();
     manifests?.dispose();
     worker?.dispose();
-    bodySurface?.destroy();
-    bodySurface = null;
   });
 </script>
 
@@ -217,6 +163,7 @@
         {#if worker?.data}
           {@const detail = worker.data}
           {@const manifest = detailManifest(detail)}
+          {@const editableSkill = displaySkillForEdit(detail.settings)}
           <article class="worker-detail" data-worker-detail data-worker-id={detail.settings.worker_type}>
             <header class="workers-head worker-detail-head">
               <h1 data-worker-name>{manifest?.label || labelize(detail.settings.worker_type)}</h1>
@@ -276,66 +223,42 @@
             <section class="worker-skill" data-worker-skill>
               <header class="worker-skill-head">
                 <h2>Specialist skill</h2>
-                {#if !skillEditing}
-                  <button type="button" class="button button--quiet" data-skill-edit-button aria-label="Edit specialist skill" onclick={() => enterSkillEdit(detail.settings)}>Edit</button>
-                {/if}
               </header>
 
-              {#if skillEditing}
-                <div class="worker-skill-editor" data-skill-editor>
-                  <label class="worker-skill-field">
-                    <span>Name</span>
-                    <input class="worker-skill-input" data-skill-name-input aria-label="Specialist skill name" value={detail.settings.specialist_skill.name} readonly />
-                  </label>
-                  <label class="worker-skill-field">
-                    <span>Description</span>
-                    <textarea
-                      class="worker-skill-textarea"
-                      data-skill-description-input
-                      aria-label="Specialist skill description"
-                      rows="2"
-                      bind:value={skillFormDescription}
-                    ></textarea>
-                  </label>
-                  <div class="worker-skill-field">
-                    <span>Markdown body</span>
-                    <div
-                      class="worker-skill-body-editor"
-                      bind:this={skillBodyHost}
-                      role="textbox"
-                      aria-label="Specialist skill Markdown body"
-                      aria-multiline="true"
-                      tabindex="0"
-                      contenteditable="true"
-                      data-skill-body-editor
-                      oninput={() => bodySurface?.refreshEmptyState()}
-                    ></div>
+              <div class="worker-skill-content" data-skill-content>
+                <dl class="worker-skill-meta">
+                  <div>
+                    <dt>Name</dt>
+                    <dd data-skill-name>{detail.settings.specialist_skill.name}</dd>
                   </div>
-                  {#if skillError}
-                    <div data-skill-error><ErrorLine error={skillError} /></div>
-                  {/if}
-                  <div class="worker-skill-actions">
-                    <button type="button" class="button button--primary" data-skill-save-button aria-label="Save specialist skill" disabled={skillSaving} onclick={() => void saveSkill(detail.settings)}>Save</button>
-                    <button type="button" class="button button--quiet" data-skill-cancel-button aria-label="Cancel specialist skill edit" disabled={skillSaving} onclick={() => cancelSkillEdit(detail.settings)}>Cancel</button>
+                  <div>
+                    <dt>Description</dt>
+                    <dd data-skill-description>
+                      <InlineEdit
+                        value={editableSkill.description}
+                        multiline
+                        ariaLabel="Specialist skill description"
+                        className="worker-skill-inline"
+                        onSave={(raw) => saveSkillField(detail.settings, "description", raw)}
+                      />
+                    </dd>
                   </div>
-                </div>
-              {:else}
-                <div class="worker-skill-read" data-skill-read>
-                  <dl class="worker-skill-meta">
-                    <div>
-                      <dt>Name</dt>
-                      <dd data-skill-name>{detail.settings.specialist_skill.name}</dd>
-                    </div>
-                    <div>
-                      <dt>Description</dt>
-                      <dd data-skill-description>{detail.settings.specialist_skill.description}</dd>
-                    </div>
-                  </dl>
+                </dl>
+                <div class="worker-skill-field">
+                  <span>Markdown body</span>
                   <div class="worker-skill-body" data-skill-body>
-                    <MarkdownBlock text={detail.settings.specialist_skill.markdown_body} quiet="No skill body." />
+                    <InlineEdit
+                      value={editableSkill.markdown_body}
+                      markdown
+                      multiline
+                      placeholder="Write the complete specialist skill body..."
+                      ariaLabel="Specialist skill Markdown body"
+                      className="worker-skill-body-editable"
+                      onSave={(raw) => saveSkillField(detail.settings, "markdown_body", raw)}
+                    />
                   </div>
                 </div>
-              {/if}
+              </div>
             </section>
           </article>
         {/if}

@@ -21,6 +21,7 @@ from planner.worker_settings import service
 from planner.worker_settings.contracts import (
     ManagedSkill,
     ManagedWorkerSettings,
+    SpecialistSkillPatch,
     WorkerManagementDetail,
     WorkerManagementSummary,
 )
@@ -179,6 +180,45 @@ async def put_worker_skill(
         registry,
         worker_type,
         raw,
+        after_publish=lambda: _worker_settings_changed_callback(
+            conn,
+            worker_type,
+            changed="skill",
+            now=now,
+        ),
+        runtime_skills_root=_planner_home(config) / "skills",
+    )
+    return _settings_json(settings)
+
+
+@router.patch("/workers/{worker_type}/skill")
+async def patch_worker_skill(
+    worker_type: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    config: Cfg,
+    clock: Clk,
+) -> JsonDict:
+    require_direct_write(ctx)
+    if set(raw) not in ({"description"}, {"markdown_body"}):
+        raise PlannerError(
+            ErrorCode.validation,
+            "specialist skill patch requires exactly one field",
+            {"fields": sorted(raw)},
+        )
+    patch: SpecialistSkillPatch = {}
+    if "description" in raw:
+        patch["description"] = body_str(raw, "description")
+    else:
+        patch["markdown_body"] = body_str(raw, "markdown_body")
+    registry = configured_worker_type_registry()
+    now = clock.now_unix()
+    settings = service.patch_specialist_skill(
+        _database_parent(config),
+        registry,
+        worker_type,
+        patch,
         after_publish=lambda: _worker_settings_changed_callback(
             conn,
             worker_type,

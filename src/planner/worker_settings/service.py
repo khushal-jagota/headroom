@@ -24,6 +24,7 @@ from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_settings.contracts import (
     ManagedSkill,
     ManagedWorkerSettings,
+    SpecialistSkillPatch,
     WorkerManagementDetail,
     WorkerManagementSummary,
 )
@@ -641,6 +642,48 @@ def save_specialist_skill(
                 runtime_skill_snapshot.restore()
             raise
         return _read_settings_with_recovery(root, definition)
+
+
+def patch_specialist_skill(
+    configured_database_parent: Path | str,
+    registry: WorkerTypeRegistry,
+    worker_type: str,
+    patch: SpecialistSkillPatch,
+    *,
+    after_publish: Callable[[], None] | None = None,
+    runtime_skills_root: Path | None = None,
+) -> ManagedWorkerSettings:
+    field_names = set(patch)
+    if field_names not in ({"description"}, {"markdown_body"}):
+        raise PlannerError(
+            ErrorCode.validation,
+            "specialist skill patch requires exactly one field",
+            {"fields": sorted(field_names)},
+        )
+    value = patch["description"] if "description" in patch else patch["markdown_body"]
+    if not isinstance(value, str):
+        raise PlannerError(
+            ErrorCode.validation,
+            "specialist skill field must be a string",
+            {"field": next(iter(field_names))},
+        )
+    definition = registry.require(worker_type)
+    root = managed_worker_settings_root(configured_database_parent)
+    with _worker_settings_lock(root, worker_type):
+        current = _read_settings_with_recovery(root, definition)
+        payload: dict[str, Any] = {
+            "description": current.specialist_skill.description,
+            "markdown_body": current.specialist_skill.markdown_body,
+        }
+        payload.update(patch)
+        return save_specialist_skill(
+            configured_database_parent,
+            registry,
+            worker_type,
+            payload,
+            after_publish=after_publish,
+            runtime_skills_root=runtime_skills_root,
+        )
 
 
 def materialize_specialist_skill(

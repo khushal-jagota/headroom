@@ -96,7 +96,7 @@ def test_workers_api_composes_registry_with_managed_settings_and_emits_event(
         conn.close()
 
 
-def test_api_skill_save_materializes_runtime_skill_without_touching_ticket_session(
+def test_api_skill_patch_materializes_runtime_skill_without_touching_ticket_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     planner_home = tmp_path / "explicit-hermes-home"
@@ -121,14 +121,49 @@ def test_api_skill_save_materializes_runtime_skill_without_touching_ticket_sessi
         conn.close()
 
     with client:
-        saved = client.put(
+        before = client.get("/api/workers/coding").json()["settings"]["specialist_skill"]
+        saved_description = client.patch(
             "/api/workers/coding/skill",
             json={
                 "description": "API materialized description",
-                "markdown_body": "# API materialized\n\nManaged body\n",
             },
         )
-        assert saved.status_code == 200
+        assert saved_description.status_code == 200
+        assert (
+            saved_description.json()["specialist_skill"]["description"]
+            == "API materialized description"
+        )
+        assert (
+            saved_description.json()["specialist_skill"]["markdown_body"]
+            == before["markdown_body"]
+        )
+
+        saved_body = client.patch(
+            "/api/workers/coding/skill",
+            json={"markdown_body": "# API materialized\n\nManaged body\n"},
+        )
+        assert saved_body.status_code == 200
+        assert (
+            saved_body.json()["specialist_skill"]["description"]
+            == "API materialized description"
+        )
+        assert (
+            saved_body.json()["specialist_skill"]["markdown_body"]
+            == "\n# API materialized\n\nManaged body\n"
+        )
+
+        rejected_empty = client.patch("/api/workers/coding/skill", json={})
+        assert rejected_empty.status_code == 400
+        assert (
+            rejected_empty.json()["error"]["message"]
+            == "specialist skill patch requires exactly one field"
+        )
+
+        rejected_both = client.patch(
+            "/api/workers/coding/skill",
+            json={"description": "Two", "markdown_body": "# Two\n"},
+        )
+        assert rejected_both.status_code == 400
 
     materialized = planner_home / "skills" / "panels-worker-coding" / "SKILL.md"
     skill_text = materialized.read_text(encoding="utf-8")
@@ -141,6 +176,16 @@ def test_api_skill_save_materializes_runtime_skill_without_touching_ticket_sessi
             "SELECT employee_session_id FROM tickets WHERE id = ?", (ticket.id,)
         ).fetchone()
         assert row["employee_session_id"] == "session_keep_api"
+        events = conn.execute(
+            "SELECT entity_id, kind, payload FROM events "
+            "WHERE kind = ? ORDER BY id",
+            (EventKind.worker_settings_changed.value,),
+        ).fetchall()
+        assert [row["entity_id"] for row in events] == ["worker_coding", "worker_coding"]
+        assert [json.loads(row["payload"]) for row in events] == [
+            {"worker_type": "coding", "changed": "skill"},
+            {"worker_type": "coding", "changed": "skill"},
+        ]
     finally:
         conn.close()
 
@@ -286,12 +331,9 @@ def test_skill_event_failure_restores_canonical_and_runtime_skill(
 
     monkeypatch.setattr(worker_settings_api, "append_event", fail_event)
     with client:
-        response = client.put(
+        response = client.patch(
             "/api/workers/coding/skill",
-            json={
-                "description": "New runtime description",
-                "markdown_body": "# New runtime\n\nBody\n",
-            },
+            json={"description": "New runtime description"},
         )
         assert response.status_code == 500
         detail = client.get("/api/workers/coding").json()
@@ -310,6 +352,35 @@ def test_skill_event_failure_restores_canonical_and_runtime_skill(
         )
     finally:
         conn.close()
+
+
+def test_skill_patch_preserves_concurrent_other_field_values(tmp_path: Path) -> None:
+    registry = configured_worker_type_registry()
+    worker_settings_service.save_specialist_skill(
+        tmp_path,
+        registry,
+        "coding",
+        {
+            "description": "Original description",
+            "markdown_body": "# Original\n\nBody\n",
+        },
+    )
+
+    worker_settings_service.patch_specialist_skill(
+        tmp_path,
+        registry,
+        "coding",
+        {"markdown_body": "# Body winner\n\nSecond field\n"},
+    )
+    saved = worker_settings_service.patch_specialist_skill(
+        tmp_path,
+        registry,
+        "coding",
+        {"description": "Description winner"},
+    )
+
+    assert saved.specialist_skill.description == "Description winner"
+    assert saved.specialist_skill.markdown_body == "\n# Body winner\n\nSecond field\n"
 
 
 def test_corrupt_current_files_restore_exact_prior_good_revision(tmp_path: Path) -> None:

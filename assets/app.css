@@ -495,20 +495,15 @@ textarea {
   overflow-wrap: anywhere;
 }
 
-.worker-owner-select,
-.worker-skill-input,
-.worker-skill-textarea {
+.worker-owner-select {
   width: 100%;
+  max-width: calc(var(--space-7) * 3);
   min-width: 0;
   background: var(--surface-sunken);
   color: var(--text-strong);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-2);
-}
-
-.worker-owner-select {
-  max-width: calc(var(--space-7) * 3);
 }
 
 .worker-owner-select[data-saving="true"] {
@@ -530,20 +525,15 @@ textarea {
   margin-top: var(--space-6);
 }
 
-.worker-skill-head,
-.worker-skill-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
 .worker-skill-head {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
   justify-content: space-between;
   margin-bottom: var(--space-3);
 }
 
-.worker-skill-read,
-.worker-skill-editor {
+.worker-skill-content {
   display: grid;
   gap: var(--space-4);
 }
@@ -574,16 +564,7 @@ textarea {
   color: var(--text-default);
 }
 
-.worker-skill-input[readonly] {
-  color: var(--text-faint);
-}
-
-.worker-skill-textarea {
-  resize: vertical;
-}
-
-.worker-skill-body,
-.worker-skill-body-editor {
+.worker-skill-body {
   min-width: 0;
   background: var(--surface-sunken);
   border: var(--border-hairline) solid var(--border-color);
@@ -591,19 +572,18 @@ textarea {
   padding: var(--space-3);
 }
 
-.worker-skill-body-editor {
-  min-height: calc(var(--space-7) * 4);
+.worker-skill-inline,
+.worker-skill-body-editable {
   color: var(--text-default);
   overflow-wrap: anywhere;
 }
 
-.worker-skill-body-editor[data-empty="true"]::before {
-  content: "Write the complete specialist skill body...";
-  color: var(--text-faintest);
+.worker-skill-inline {
+  min-height: calc(var(--space-6) + var(--space-1));
 }
 
-.worker-skill-actions {
-  justify-content: flex-start;
+.worker-skill-body-editable {
+  min-height: calc(var(--space-7) * 4);
 }
 
 @media (max-width: 720px) {
@@ -655,9 +635,6 @@ textarea {
     max-width: 100%;
   }
 
-  .worker-skill-actions {
-    align-items: stretch;
-  }
 }
 
 /* --- Entrance ------------------------------------------------------------ */

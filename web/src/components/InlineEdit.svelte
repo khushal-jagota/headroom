@@ -19,6 +19,7 @@
     markdown = false,
     multiline = false,
     placeholder = "",
+    ariaLabel = "",
     className = "",
     dataAttr = "",
     dataEdit = false,
@@ -29,6 +30,7 @@
     markdown?: boolean;
     multiline?: boolean;
     placeholder?: string;
+    ariaLabel?: string;
     className?: string;
     dataAttr?: "day-focus" | "day-take-body" | "day-watch-body" | "day-lands-body" | "";
     dataEdit?: boolean;
@@ -174,6 +176,7 @@
   class={`ed ${className}`.trim()}
   contenteditable="true"
   role="textbox"
+  aria-label={ariaLabel || undefined}
   aria-multiline={multiline}
   tabindex="0"
   data-ph={placeholder || undefined}

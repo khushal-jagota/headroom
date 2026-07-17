@@ -18,8 +18,13 @@ def _put_stage_owner(server, ticket_id: str, stage: str, mode: str | None) -> di
     return response.json()
 
 
-def _set_skill_body(page, text: str) -> None:
-    page.locator("[data-skill-body-editor]").evaluate(
+DESCRIPTION_EDIT = '[data-skill-description] [contenteditable="true"]'
+BODY_EDIT = '[data-skill-body] [contenteditable="true"]'
+
+
+def _replace_inline_edit_text(page, selector: str, text: str) -> None:
+    page.locator(selector).click()
+    page.locator(selector).evaluate(
         """(node, text) => {
           node.replaceChildren(document.createTextNode(text));
           node.dispatchEvent(new InputEvent("input", {
@@ -30,6 +35,11 @@ def _set_skill_body(page, text: str) -> None:
         }""",
         text,
     )
+    page.locator("[data-worker-name]").click()
+
+
+def _editable_text(page, selector: str) -> str:
+    return page.locator(selector).evaluate("(node) => node.textContent")
 
 
 def test_workers_index_detail_and_mobile_layout(server, context_factory, open_page) -> None:
@@ -54,11 +64,15 @@ def test_workers_index_detail_and_mobile_layout(server, context_factory, open_pa
     assert terminal.get_attribute("data-terminal") == "true"
     assert terminal.locator("[data-terminal-owner]").inner_text() == "terminal"
     assert (
-        page.locator("[data-skill-read] [data-skill-name]").inner_text() == "panels-worker-coding"
+        page.locator("[data-skill-content] [data-skill-name]").inner_text()
+        == "panels-worker-coding"
     )
-    page.locator("[data-skill-read] [data-skill-body] .markdown-block").wait_for(
-        state="visible", timeout=WAIT_MS
-    )
+    assert page.locator("[data-skill-edit-button]").count() == 0
+    assert page.locator("[data-skill-save-button]").count() == 0
+    assert page.locator("[data-skill-cancel-button]").count() == 0
+    assert page.locator(DESCRIPTION_EDIT).get_attribute("contenteditable") == "true"
+    assert page.locator(BODY_EDIT).get_attribute("contenteditable") == "true"
+    assert page.locator("[data-skill-name]").get_attribute("contenteditable") != "true"
 
     mobile = context_factory().new_page()
     mobile.set_viewport_size({"width": 390, "height": 844})
@@ -216,17 +230,34 @@ def test_worker_skill_edit_candidate_save_failure_retention_and_session_stabilit
     page = context_factory().new_page()
     page.goto(server.base + "/#/workers/coding")
     page.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)
-    assert "Candidate description" not in page.locator("[data-skill-read]").inner_text()
-    page.click("[data-skill-edit-button]")
-    page.wait_for_selector("[data-skill-editor]", timeout=WAIT_MS)
-    assert page.locator("[data-skill-description-input]").input_value() == "Candidate description"
-    assert "Candidate body" in page.locator("[data-skill-body-editor]").inner_text()
+    assert page.locator("[data-skill-edit-button]").count() == 0
+    assert page.locator("[data-skill-save-button]").count() == 0
+    assert page.locator("[data-skill-cancel-button]").count() == 0
+    assert page.locator(DESCRIPTION_EDIT).get_attribute("contenteditable") == "true"
+    assert page.locator(BODY_EDIT).get_attribute("contenteditable") == "true"
+    assert page.locator("[data-skill-name]").inner_text() == "panels-worker-coding"
+    assert page.locator("[data-skill-name]").get_attribute("contenteditable") != "true"
+    assert _editable_text(page, DESCRIPTION_EDIT) == "Candidate description"
+    assert "Candidate body" in _editable_text(page, BODY_EDIT)
+
+    original = api.get(server, "/api/workers/coding")["settings"]["specialist_skill"]
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith("/api/workers/coding/skill")
+    ):
+        _replace_inline_edit_text(page, DESCRIPTION_EDIT, "Saved description")
+    after_description = api.get(server, "/api/workers/coding")["settings"]["specialist_skill"]
+    assert after_description["description"] == "Saved description"
+    assert after_description["markdown_body"] == original["markdown_body"]
 
     failed_once = True
+    body_patch_payloads: list[dict] = []
 
     def fail_skill(route) -> None:
         nonlocal failed_once
-        if route.request.method == "PUT" and failed_once:
+        if route.request.method == "PATCH":
+            body_patch_payloads.append(route.request.post_data_json)
+        if route.request.method == "PATCH" and failed_once:
             failed_once = False
             route.fulfill(
                 status=500,
@@ -237,22 +268,27 @@ def test_worker_skill_edit_candidate_save_failure_retention_and_session_stabilit
         route.continue_()
 
     page.route("**/api/workers/coding/skill", fail_skill)
-    page.fill("[data-skill-description-input]", "Saved description")
-    _set_skill_body(page, "# Saved body\n\nSession unchanged\n")
-    page.click("[data-skill-save-button]")
-    page.locator("[data-skill-error]", has_text="skill save failed").wait_for(
-        state="visible", timeout=WAIT_MS
-    )
-    assert page.locator("[data-skill-description-input]").input_value() == "Saved description"
-    assert "Saved body" in page.locator("[data-skill-body-editor]").inner_text()
 
-    page.click("[data-skill-save-button]")
-    page.wait_for_selector("[data-skill-read]", timeout=WAIT_MS)
-    page.locator("[data-skill-description]", has_text="Saved description").wait_for(
+    attempted_body = "# Saved body\n\nSession unchanged\nexact source"
+    _replace_inline_edit_text(page, BODY_EDIT, attempted_body)
+    page.locator("[data-skill-body] .error-line", has_text="skill save failed").wait_for(
         state="visible", timeout=WAIT_MS
     )
-    page.locator("[data-skill-body] .markdown-block", has_text="Saved body").wait_for(
-        state="visible", timeout=WAIT_MS
-    )
+    assert body_patch_payloads == [{"markdown_body": attempted_body}]
+
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith("/api/workers/coding/skill")
+        and response.status < 300
+    ):
+        page.locator(BODY_EDIT).click()
+        page.locator("[data-worker-name]").click()
+    assert body_patch_payloads == [
+        {"markdown_body": attempted_body},
+        {"markdown_body": attempted_body},
+    ]
+    saved = api.get(server, "/api/workers/coding")["settings"]["specialist_skill"]
+    assert saved["description"] == "Saved description"
+    assert saved["markdown_body"] == f"\n{attempted_body}\n"
     detail = api.get(server, f"/api/tickets/{ticket_id}")
     assert detail["employee_session_id"] == "skill-session-keep"

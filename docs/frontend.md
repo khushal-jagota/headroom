@@ -49,9 +49,10 @@ One screen per part of the system:
   unboxed serif idiom (see `backlog-and-ideas.md`).
 - **Workers** — a compact list of configured Worker types and one detail page per Worker.
   Worker identity and lifecycle structure stay read-only. Each Stage ownership default
-  saves independently for future Ticket entries. The specialist skill opens as one managed
-  edit of its description and Markdown body. A failed save keeps the attempted text and a
-  useful error so it can be corrected or retried. The same page collapses cleanly on mobile.
+  saves independently for future Ticket entries. The specialist skill name stays read-only;
+  its description and Markdown body use the standard direct `InlineEdit` behavior and save
+  independently. A failed save keeps the attempted text and a useful error so it can be
+  corrected or retried. The same page collapses cleanly on mobile.
 
 The shell itself carries two separate live signals. Worker presence is the small
 spinner and "N working" readout from the global running-worker count. Server
@@ -183,8 +184,6 @@ hand-rolling the same shapes per screen. Each does one job:
 - **ResourceState** — the shared error / loading scaffold; shows an error line, a
   loading line, or the content. Data-empty states ("No ideas yet.") stay in the screens.
 - **InlineEdit** — product editing and save behavior for Markdown and plain text.
-- **Workers skill editor** — the managed Markdown surface wrapped in one explicit edit/save
-  boundary because the skill description and Markdown body are one frontmatter-backed file.
 - **MarkdownBlock** — the read-only product wrapper for managed Markdown.
 - **FilePreview** — the one file preview card/inline renderer (see the file-preview rule).
 - **AcpConversation / AcpConversationPane** — the sole Ticket and Chief-of-Staff
