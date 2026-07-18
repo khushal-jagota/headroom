@@ -40,6 +40,7 @@ from planner.runtime.automatic_employee_step_eligibility_wake import (
     NoOpAutomaticEmployeeStepEligibilityWake,
 )
 from planner.runtime.employee_step_runner import EmployeeStepRunner
+from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, Ticket, TicketStatus
 from planner.tickets.logic import fields_codec
@@ -69,11 +70,26 @@ def _db(tmp_path: Path) -> str:
     return str(db_path)
 
 
-def _new_ticket(db: str, *, ceiling: str | None = None, at_cap: AtCap = AtCap.propose) -> str:
+def _new_ticket(
+    db: str,
+    *,
+    ceiling: str | None = None,
+    at_cap: AtCap = AtCap.propose,
+    worker_type: str = "coding",
+    project_id: str | None = None,
+    sprint_item_id: str | None = None,
+) -> str:
     conn = connect(db)
     try:
         ticket = tickets_data.create_ticket(
-            conn, worker_type="coding", title="T", actor="human", now=0, title_max_chars=200
+            conn,
+            worker_type=worker_type,
+            title="T",
+            actor="human",
+            now=0,
+            title_max_chars=200,
+            project_id=project_id,
+            sprint_item_id=sprint_item_id,
         )
         ticket = tickets_data.accept_proposal(
             conn,
@@ -106,6 +122,19 @@ def _read(db: str, tid: str) -> Ticket:
         conn.close()
 
 
+def _new_item(db: str, project_id: str) -> str:
+    conn = connect(db)
+    try:
+        return sprints_data.create_item(
+            conn,
+            title="Item",
+            project_id=project_id,
+            clock=TestClock(FIXED_NOW),
+        ).id
+    finally:
+        conn.close()
+
+
 def _new_kickoff_ticket(db: str) -> str:
     conn = connect(db)
     try:
@@ -124,6 +153,14 @@ def _set_status(db: str, tid: str, status: TicketStatus) -> None:
             "UPDATE tickets SET ticket_status = ?, updated_at = ? WHERE id = ?",
             (status.value, 0, tid),
         )
+    finally:
+        conn.close()
+
+
+def _set_updated_at(db: str, tid: str, updated_at: int) -> None:
+    conn = connect(db)
+    try:
+        conn.execute("UPDATE tickets SET updated_at = ? WHERE id = ?", (updated_at, tid))
     finally:
         conn.close()
 
@@ -264,6 +301,27 @@ def _loop(db: str, runner: EmployeeStepRunner) -> AutomaticEmployeeStepDiscovery
     )
 
 
+class _RecordingRunner:
+    def __init__(self) -> None:
+        self.ticket_ids: list[str] = []
+
+    def try_run_automatic_step(self, ticket_id: str) -> None:
+        self.ticket_ids.append(ticket_id)
+
+
+def _recording_loop(db: str) -> tuple[AutomaticEmployeeStepDiscoveryLoop, _RecordingRunner]:
+    runner = _RecordingRunner()
+    return (
+        AutomaticEmployeeStepDiscoveryLoop(
+            db,
+            TestClock(FIXED_NOW),
+            runner,  # type: ignore[arg-type]
+            boundary_hour=BOUNDARY_HOUR,
+        ),
+        runner,
+    )
+
+
 def _wait_until(predicate: Callable[[], bool], timeout: float = 10.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -399,23 +457,195 @@ def test_poll_passes_only_ticket_id_to_runner_interface(tmp_path: Path) -> None:
     tid = _new_ticket(db)
     _add_to_day(db, tid)
 
-    class RecordingRunner:
-        def __init__(self) -> None:
-            self.ticket_ids: list[str] = []
-
-        def try_run_automatic_step(self, ticket_id: str) -> None:
-            self.ticket_ids.append(ticket_id)
-
-    runner = RecordingRunner()
-    loop = AutomaticEmployeeStepDiscoveryLoop(
-        db,
-        TestClock(FIXED_NOW),
-        runner,  # type: ignore[arg-type]
-        boundary_hour=BOUNDARY_HOUR,
-    )
+    loop, runner = _recording_loop(db)
 
     assert loop.poll_once() == [tid]
     assert runner.ticket_ids == [tid]
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        TicketStatus.agent_running_step,
+        TicketStatus.awaiting_approval,
+        TicketStatus.user_takeover,
+        TicketStatus.paired_work,
+        TicketStatus.errored,
+    ],
+)
+def test_closeout_waiter_is_not_submitted_while_its_projectless_worker_lane_is_occupied(
+    tmp_path: Path,
+    status: TicketStatus,
+) -> None:
+    db = _db(tmp_path)
+    active = _new_ticket(db)
+    waiting = _new_ticket(db)
+    _jump_state(db, active, "needs_closeout")
+    _jump_state(db, waiting, "needs_closeout")
+    _set_status(db, active, status)
+    _add_to_day(db, waiting)
+
+    loop, runner = _recording_loop(db)
+
+    assert loop.poll_once() == []
+    assert runner.ticket_ids == []
+
+
+def test_closeout_discovery_submits_only_the_oldest_waiter_in_one_free_lane(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    oldest = _new_ticket(db)
+    newest = _new_ticket(db)
+    for ticket_id in (oldest, newest):
+        _jump_state(db, ticket_id, "needs_closeout")
+        _add_to_day(db, ticket_id)
+    _set_updated_at(db, oldest, 10)
+    _set_updated_at(db, newest, 20)
+
+    loop, runner = _recording_loop(db)
+
+    assert loop.poll_once() == [oldest]
+    assert runner.ticket_ids == [oldest]
+
+
+def test_closeout_lane_uses_the_parent_sprint_item_project(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    item_id = _new_item(db, "project_vylo")
+    active = _new_ticket(db, project_id="project_vylo")
+    waiting = _new_ticket(db, sprint_item_id=item_id)
+    _jump_state(db, active, "needs_closeout")
+    _jump_state(db, waiting, "needs_closeout")
+    _set_status(db, active, TicketStatus.awaiting_approval)
+    _add_to_day(db, waiting)
+
+    loop, runner = _recording_loop(db)
+
+    assert loop.poll_once() == []
+    assert runner.ticket_ids == []
+
+
+def test_different_project_or_worker_type_closeout_lanes_are_independent(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    ticket_ids = {
+        _new_ticket(db, project_id="project_vylo"),
+        _new_ticket(db, project_id="project_learning"),
+        _new_ticket(db, worker_type="exploration", project_id="project_vylo"),
+    }
+    for ticket_id in ticket_ids:
+        _jump_state(db, ticket_id, "needs_closeout")
+        _add_to_day(db, ticket_id)
+
+    loop, runner = _recording_loop(db)
+
+    assert set(loop.poll_once()) == ticket_ids
+    assert set(runner.ticket_ids) == ticket_ids
+
+
+def test_empty_stopped_closeout_neither_runs_nor_occupies_the_lane(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    stopped = _new_ticket(db)
+    continuing = _new_ticket(db)
+    for ticket_id in (stopped, continuing):
+        _jump_state(db, ticket_id, "needs_closeout")
+        _add_to_day(db, ticket_id)
+    _scope(db, stopped, "needs_closeout", AtCap.stop)
+
+    loop, runner = _recording_loop(db)
+
+    assert loop.poll_once() == [continuing]
+    assert runner.ticket_ids == [continuing]
+
+
+def test_closeout_claim_rechecks_lane_occupancy_inside_the_write_transaction(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    first = _new_ticket(db)
+    second = _new_ticket(db)
+    for ticket_id in (first, second):
+        _jump_state(db, ticket_id, "needs_closeout")
+        _add_to_day(db, ticket_id)
+
+    conn = connect(db)
+    try:
+        def claim(ticket_id: str) -> Ticket | None:
+            return tickets_data.claim_automatic_employee_step(
+                conn,
+                ticket_id,
+                planning_day_id_resolver=lambda: TODAY_DAY_ID,
+                eligibility_check=(
+                    automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step
+                ),
+                now=1,
+            )
+
+        assert claim(first) is not None
+        assert claim(second) is None
+    finally:
+        conn.close()
+
+
+def test_accepting_closeout_frees_the_lane_for_the_next_waiter(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    active = _new_ticket(db)
+    waiting = _new_ticket(db)
+    for ticket_id in (active, waiting):
+        _jump_state(db, ticket_id, "needs_closeout")
+    _file_proposal(db, active, "closeout", "closed")
+    _add_to_day(db, waiting)
+
+    loop, runner = _recording_loop(db)
+    assert loop.poll_once() == []
+
+    conn = connect(db)
+    try:
+        accepted = tickets_data.accept_proposal(
+            conn,
+            active,
+            field="closeout",
+            actor="human",
+            now=1,
+            next_ceiling="none",
+            at_cap=AtCap.propose,
+        )
+    finally:
+        conn.close()
+
+    assert accepted.stage == "done"
+    assert loop.poll_once() == [waiting]
+    assert runner.ticket_ids == [waiting]
+
+
+def test_non_closeout_tickets_do_not_share_closeout_lane_serialization(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    ticket_ids = {_new_ticket(db), _new_ticket(db)}
+    for ticket_id in ticket_ids:
+        _add_to_day(db, ticket_id)
+
+    loop, runner = _recording_loop(db)
+
+    assert set(loop.poll_once()) == ticket_ids
+    assert set(runner.ticket_ids) == ticket_ids
+
+
+def test_closeout_resumes_the_existing_ticket_employee_session(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    ticket_id = _new_ticket(db)
+    _jump_state(db, ticket_id, "needs_closeout")
+    _set_key(db, ticket_id, STORED_KEY)
+    _add_to_day(db, ticket_id)
+    fake = _ProposingFake(
+        _resume_script(STORED_KEY, _complete_ev()),
+        on_submit=lambda: _file_proposal(db, ticket_id, "closeout", "closed"),
+    )
+    runner = _runner(db, fake)
+
+    assert _loop(db, runner).poll_once() == [ticket_id]
+    assert runner.wait_idle(10.0)
+    assert _read(db, ticket_id).ticket_status is TicketStatus.awaiting_approval
+    assert "session.resume" in fake.sent_methods()
+    assert "session.create" not in fake.sent_methods()
 
 
 def test_poll_excludes_every_ineligible_ticket(tmp_path: Path) -> None:
@@ -919,13 +1149,14 @@ def test_poll_exception_is_logged_and_the_periodic_loop_survives(
     assert "transient poll failure" in caplog.text
 
 
-def test_discovery_source_has_membership_only_sql_and_no_parallel_rule() -> None:
+def test_discovery_source_orders_membership_sql_without_copying_eligibility() -> None:
     root = Path(__file__).resolve().parents[2]
     path = root / "src/planner/runtime/automatic_employee_step_discovery_loop.py"
     source = path.read_text()
     normalized = " ".join(source.split()).lower()
     expected_sql = (
-        "select t.id from tickets t join day_tickets dt on dt.ticket_id = t.id where dt.day_id = ?"
+        "select t.id from tickets t join day_tickets dt on dt.ticket_id = t.id "
+        "where dt.day_id = ? \" \"order by t.updated_at, t.id"
     )
     assert expected_sql in normalized
     candidate = normalized.split("_candidate_sql", 1)[1].split(")", 1)[0]

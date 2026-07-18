@@ -1730,6 +1730,19 @@ that Ticket stays loose in the current Panels sprint rather than forcing it into
 All four were added to today under the standing creation default, but remain at grounded Kickoff
 proposals awaiting approval; Closeout did not begin or monitor any exploration.
 
+## D-closeout-lanes-use-ticket-state — Closeout serialization adds one fact to normal eligibility
+
+Owner direction (2026-07-18): Closeout is not a second scheduler or claim system. The normal
+Automatic Employee-step eligibility decision still determines whether a Ticket may run. A Closeout
+adds one fact: another Ticket at Closeout with the same effective project and Worker type occupies
+the lane whenever its existing `ticket_status` is not `empty`. `empty` means waiting; a stopped
+empty Ticket is ineligible but does not block another waiter. Parented Tickets use the sprint item's
+project. Tickets with no effective project share one explicit projectless lane per Worker type.
+Discovery chooses the oldest eligible waiter by `updated_at`, then Ticket id, and the existing
+`BEGIN IMMEDIATE` claim repeats the complete decision. Existing running, approval, error, takeover,
+paired-work, recovery, and Done state is sufficient; no queue table, lease, claim row, migration,
+staging-PR queue, or Integration Worker is added.
+
 ---
 
 # Superseded / merged IDs map

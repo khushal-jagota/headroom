@@ -25,7 +25,7 @@ separate runner owns the step itself.
 ## Discovery and execution
 
 One function answers **Automatic Employee-step eligibility**. It returns yes only
-when all nine facts hold:
+when all ten facts hold:
 
 1. The Ticket belongs to the supplied `planning_day_id` — today's day during
    automatic discovery.
@@ -41,11 +41,16 @@ when all nine facts hold:
 8. It has no active blocker.
 9. It has no running Panels Chat turn, whether that visible turn came from a human or
    an Employee step.
+10. If the Stage gates `closeout`, no Ticket in the same effective project and Worker-type
+    lane is already at Closeout with a non-empty status. A parented Ticket uses its sprint
+    item's project. Projectless Tickets share one projectless lane per Worker type.
 
 **AutomaticEmployeeStepDiscoveryLoop** is read-only and advisory. Its database scan
-selects only Tickets that belong to today's day, then it asks the complete eligibility
-function about each membership candidate. It passes eligible Ticket ids to the
-runner, but it does not claim a Ticket, touch Hermes, or write Ticket state.
+selects only Tickets that belong to today's day, ordered by oldest `updated_at` and then
+Ticket id, then it asks the complete eligibility function about each membership candidate.
+Ordinary Stages keep their existing behavior. For Closeout, discovery submits at most one
+waiting Ticket from each free lane in a poll. It passes eligible Ticket ids to the runner,
+but it does not claim a Ticket, touch Hermes, or write Ticket state.
 
 **EmployeeStepRunner** separately owns one step through the shared persistent Hermes
 gateway child. Its final claim starts `BEGIN IMMEDIATE`, reloads the Ticket and its

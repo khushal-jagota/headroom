@@ -4,6 +4,38 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-18): project-and-Worker-type Closeout lanes
+
+Current build stage:
+
+- Ticket `t_scvazj90` is in Implementation on branch `ticket/t_scvazj90-closeout-lanes`.
+- Closeout reuses the complete automatic Employee-step eligibility decision. Its only added fact is
+  that any matching effective-project + Worker-type Closeout with non-empty `ticket_status` holds
+  the lane. No queue table, claim row, or migration was added.
+- Discovery orders today's candidates by `updated_at`, then Ticket id, and submits only the oldest
+  eligible Closeout from each free lane. The existing `BEGIN IMMEDIATE` claim repeats the same
+  complete decision before changing status.
+
+What just passed:
+
+- RED proved a projectless Closeout waiter was incorrectly submitted while another matching
+  Closeout awaited approval. The eligibility rule now blocks it.
+- RED proved two empty Closeouts in one free lane were both submitted. Discovery now submits only
+  the oldest waiter.
+- The focused discovery and Ticket-engine set is green (`71 passed`). Coverage includes all
+  non-empty statuses, parent-derived project identity, projectless lanes, independent
+  project/Worker-type lanes, Stop, atomic claim recheck, acceptance release, non-Closeout behavior,
+  and durable-session resume. Focused Ruff and mypy are clean.
+- The single independent Codex implementation-diff review reported `NO VIOLATIONS`.
+
+Next step:
+
+- Run one canonical `./verify` on the settled tree and propose Implementation.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-17): Hermes integration restructure — S0 protocol spike
 
 Exploration note (2026-07-18): the VPS agent-GUI survey found a possible simplification

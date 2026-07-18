@@ -17,7 +17,8 @@ from planner.worker_types.configuration import configured_worker_type_registry
 _log = logging.getLogger(__name__)
 
 _CANDIDATE_SQL = (
-    "SELECT t.id FROM tickets t JOIN day_tickets dt ON dt.ticket_id = t.id WHERE dt.day_id = ?"
+    "SELECT t.id FROM tickets t JOIN day_tickets dt ON dt.ticket_id = t.id WHERE dt.day_id = ? "
+    "ORDER BY t.updated_at, t.id"
 )
 
 
@@ -57,6 +58,9 @@ class AutomaticEmployeeStepDiscoveryLoop:
         try:
             rows = conn.execute(_CANDIDATE_SQL, (planning_day_id,)).fetchall()
             eligible_ticket_ids: list[str] = []
+            selected_closeout_lanes: set[
+                automatic_employee_step_eligibility.CloseoutLaneIdentity
+            ] = set()
             registry = configured_worker_type_registry()
             for row in rows:
                 ticket = tickets_data.read_ticket(conn, str(row["id"]))
@@ -67,6 +71,15 @@ class AutomaticEmployeeStepDiscoveryLoop:
                     planning_day_id=planning_day_id,
                     worker_type_definition=worker_type_definition,
                 ):
+                    closeout_lane = automatic_employee_step_eligibility.closeout_lane_identity(
+                        conn,
+                        ticket,
+                        worker_type_definition=worker_type_definition,
+                    )
+                    if closeout_lane is not None:
+                        if closeout_lane in selected_closeout_lanes:
+                            continue
+                        selected_closeout_lanes.add(closeout_lane)
                     eligible_ticket_ids.append(ticket.id)
         finally:
             conn.close()
