@@ -193,7 +193,8 @@ configured planning database, resolved to an absolute path before the gateways s
 An explicit `PLAN_HERMES_HOME` overrides that location. On startup the server links this
 repo's role skills into the selected home — the base `panels-worker`, the per-Worker-type
 specialists (`panels-worker-coding`, `panels-worker-new-worker`,
-`panels-worker-exploration`, and the `probe-worker` test fixture), plus `panels`,
+`panels-worker-exploration`, `panels-worker-initiative-planning`, and the `probe-worker`
+test fixture), plus `panels`,
 `panels-chief-of-staff`, `panels-sprint-planning`, and `panels-rollover`. That link is what
 lets a worker `skill_view` its specialist. The
 rollover skill is an operating role for manual or thin scheduled prompts, not a
@@ -251,4 +252,4 @@ today wakes eligibility discovery without a follow-up scope edit. The ticket mov
 
 ---
 
-_Last verified: 2026-07-15._
+_Last verified: 2026-07-18._

@@ -21,6 +21,7 @@ PLANNER_SKILL_NAMES: Final = (
     "panels-worker-coding",
     "panels-worker-new-worker",
     "panels-worker-exploration",
+    "panels-worker-initiative-planning",
     "probe-worker",
     "panels-chief-of-staff",
     "panels-sprint-planning",
@@ -31,9 +32,7 @@ ENV_HERMES_PYTHON: Final = "PLAN_HERMES_PYTHON"
 ENV_PLANNER_HOME: Final = "PLAN_HERMES_HOME"
 
 
-def resolve_hermes_python(
-    value: str | None = None, env: Mapping[str, str] | None = None
-) -> Path:
+def resolve_hermes_python(value: str | None = None, env: Mapping[str, str] | None = None) -> Path:
     """Resolve the Hermes interpreter: explicit value → env → default; then expanduser."""
     source = env if env is not None else os.environ
     chosen = value or source.get(ENV_HERMES_PYTHON) or DEFAULT_HERMES_PYTHON

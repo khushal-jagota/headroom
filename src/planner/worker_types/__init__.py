@@ -19,12 +19,14 @@ from planner.worker_types.contracts import (
     WorkerTypeManifestStage,
 )
 from planner.worker_types.exploration import EXPLORATION_WORKER_TYPE_DEFINITION
+from planner.worker_types.initiative_planning import INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION
 from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
 from planner.worker_types.registry import WorkerTypeRegistry
 
 __all__ = [
     "CODING_WORKER_TYPE_DEFINITION",
     "EXPLORATION_WORKER_TYPE_DEFINITION",
+    "INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION",
     "NEW_WORKER_TYPE_DEFINITION",
     "PRODUCTION_WORKER_TYPE_REGISTRY",
     "FieldDefinition",

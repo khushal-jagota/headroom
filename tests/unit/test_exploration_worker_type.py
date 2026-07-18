@@ -112,6 +112,7 @@ def test_production_registry_carries_complete_exploration_manifest() -> None:
         "coding",
         "new_worker",
         "exploration",
+        "initiative_planning",
     )
     assert PRODUCTION_WORKER_TYPE_REGISTRY.manifest("exploration") == EXPLORATION_MANIFEST
 
@@ -119,14 +120,12 @@ def test_production_registry_carries_complete_exploration_manifest() -> None:
 def test_exploration_definition_carries_complete_execution_contract() -> None:
     definition = PRODUCTION_WORKER_TYPE_REGISTRY.require("exploration")
 
-    assert definition.stage_ids() == tuple(
-        stage["id"] for stage in EXPLORATION_MANIFEST["stages"]
-    )
-    assert definition.field_ids() == tuple(
-        field["id"] for field in EXPLORATION_MANIFEST["fields"]
-    )
-    assert tuple(stage.default_ownership_mode.value if stage.default_ownership_mode else None
-                 for stage in definition.stages) == (
+    assert definition.stage_ids() == tuple(stage["id"] for stage in EXPLORATION_MANIFEST["stages"])
+    assert definition.field_ids() == tuple(field["id"] for field in EXPLORATION_MANIFEST["fields"])
+    assert tuple(
+        stage.default_ownership_mode.value if stage.default_ownership_mode else None
+        for stage in definition.stages
+    ) == (
         "worker",
         "paired",
         "worker",
@@ -167,8 +166,8 @@ def test_live_worker_type_docs_include_shipped_exploration_paths_and_guidance() 
     root = Path(__file__).resolve().parents[2]
     docs = (root / "docs/worker-types.md").read_text(encoding="utf-8")
 
-    assert "Three Worker types ship today:" in docs
+    assert "Four Worker types ship today:" in docs
     assert "- **`exploration`**" in docs
     assert "`src/planner/worker_types/exploration.py`" in docs
-    assert "contains `coding`, `new_worker`, and `exploration`" in docs
+    assert "contains `coding`, `new_worker`, `exploration`, and `initiative_planning`" in docs
     assert "- `panels-worker-exploration` guides `exploration` Tickets." in docs

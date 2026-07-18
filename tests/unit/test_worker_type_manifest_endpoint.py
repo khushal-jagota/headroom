@@ -1,7 +1,7 @@
 """t_tt03 — GET /api/worker-types serves the registry's manifests.
 
-Production serves coding, new_worker, then exploration. With the test registry installed
-it serves coding, new_worker, exploration, then probe in registration order. The JSON
+Production serves coding, new_worker, exploration, then initiative_planning. With the
+test registry installed it serves those shipped types, then probe in registration order. The JSON
 response round-trips unchanged because it is the single manifest source consumed by the
 CLI and web.
 """
@@ -59,6 +59,7 @@ def test_production_serves_all_shipped_worker_types(app) -> None:
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding"),
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("new_worker"),
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("exploration"),
+            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("initiative_planning"),
         ]
     }
 
@@ -77,6 +78,7 @@ def test_installed_probe_appears_after_shipped_worker_types(app, probe_installed
         "coding",
         "new_worker",
         "exploration",
+        "initiative_planning",
         "probe",
     ]
     assert served["worker_types"][0] == PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")

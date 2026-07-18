@@ -271,7 +271,13 @@ def test_gate_invalid_inputs_return_exact_codes(app_db, probe_installed: None) -
         assert missing.json()["error"]["code"] == "validation"
         assert missing.json()["error"]["detail"] == {
             "worker_type": "",
-            "worker_types": ["coding", "new_worker", "exploration", "probe"],
+            "worker_types": [
+                "coding",
+                "new_worker",
+                "exploration",
+                "initiative_planning",
+                "probe",
+            ],
         }
 
         # 8. unknown type on create -> the type list.
@@ -280,7 +286,13 @@ def test_gate_invalid_inputs_return_exact_codes(app_db, probe_installed: None) -
         assert unknown.json()["error"]["code"] == "validation"
         assert unknown.json()["error"]["detail"] == {
             "worker_type": "nonesuch",
-            "worker_types": ["coding", "new_worker", "exploration", "probe"],
+            "worker_types": [
+                "coding",
+                "new_worker",
+                "exploration",
+                "initiative_planning",
+                "probe",
+            ],
         }
 
 

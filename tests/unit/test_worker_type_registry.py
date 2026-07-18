@@ -317,6 +317,7 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
         "coding",
         "new_worker",
         "exploration",
+        "initiative_planning",
     )
     coding = PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")
     assert coding == {
@@ -496,6 +497,7 @@ def test_worker_type_package_has_only_the_locked_modules_and_outbound_imports() 
         "configuration.py",
         "contracts.py",
         "exploration.py",
+        "initiative_planning.py",
         "new_worker.py",
         "registry.py",
     }

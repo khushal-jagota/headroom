@@ -9,12 +9,14 @@ Panels stores that choice on the Ticket for its whole life. A read returns the T
 stored Stage and Worker type as they are; it does not substitute coding behavior or ask a
 registry to reinterpret them.
 
-Three Worker types ship today:
+Four Worker types ship today:
 
 - **`coding`** handles product and repository work.
 - **`new_worker`** designs and lands a new kind of worker.
 - **`exploration`** turns an under-defined premise into a grounded answer, then applies
   only the follow-up the user approves.
+- **`initiative_planning`** works out the shared top-level how for a confirmed direction,
+  then creates the bounded Tickets that carry it.
 
 Tests also register **`probe`**. It has deliberately unfamiliar Stage and field names so
 the test suite catches code that still assumes every Ticket is coding-shaped. It is not a
@@ -43,8 +45,10 @@ The shipped `coding` definition defaults every non-terminal Stage to worker owne
 before returning to worker-owned Stages, Thinking, Drafting, and Closeout. `exploration`
 uses paired ownership for Understanding and Answer, where the user and worker establish
 the frame and reach the decision together; its other non-terminal Stages default to worker
-ownership. Every Worker type chooses deliberately for each Stage; it does not inherit that
-choice from registry order or another definition.
+ownership. `initiative_planning` uses paired ownership for Question Answers, where
+consequential cross-Ticket choices are settled with the user; its other non-terminal
+Stages default to worker ownership. Every Worker type chooses deliberately for each
+Stage; it does not inherit that choice from registry order or another definition.
 
 This makes the definition the one authority for both the data and behavior of that
 workflow. Ticket contracts still own universal Ticket facts such as status, per-Ticket
@@ -52,8 +56,9 @@ ownership overrides, and scope, but they do not define a coding lifecycle.
 
 _Code paths:_ `src/planner/worker_types/contracts.py` contains the immutable declaration
 types and behavior. `src/planner/worker_types/coding.py`,
-`src/planner/worker_types/new_worker.py`, and
-`src/planner/worker_types/exploration.py` contain the three shipped definitions.
+`src/planner/worker_types/new_worker.py`,
+`src/planner/worker_types/exploration.py`, and
+`src/planner/worker_types/initiative_planning.py` contain the four shipped definitions.
 
 ## Validation and the narrow registry
 
@@ -111,7 +116,8 @@ behavior is needed. Rules under `src/planner/tickets/logic/` receive
 Application composition lives in `src/planner/worker_types/configuration.py`. It owns the
 catalogs of known specialist skills and toolset profiles, the ordered tuple of shipped
 definitions, and the production registry built from them. The shipped tuple currently
-contains `coding`, `new_worker`, and `exploration`; its order is also the manifest order.
+contains `coding`, `new_worker`, `exploration`, and `initiative_planning`; its order is
+also the manifest order.
 
 Tests use the explicit configuration test seam to install a registry containing the
 additional `probe` definition, then restore the production registry. Production code and
@@ -146,8 +152,8 @@ current Stage's default and effective ownership, so clients do not reconstruct t
 
 The frontend derives one lifecycle per Worker type from this served manifest. It renders a
 Ticket against the entry matching the Ticket's stored `worker_type`. Coding, `new_worker`,
-and `exploration` Tickets therefore show their own Stage spines without frontend type
-tables.
+`exploration`, and `initiative_planning` Tickets therefore show their own Stage spines
+without frontend type tables.
 
 _Code paths:_ `src/planner/core/server.py` serves the registry manifest;
 `web/src/lib/lifecycle.ts` derives the frontend lifecycle.
@@ -179,6 +185,7 @@ owners fail with all owner Ticket ids instead of choosing one.
 - `panels-worker-coding` guides coding Tickets.
 - `panels-worker-new-worker` guides `new_worker` Tickets.
 - `panels-worker-exploration` guides `exploration` Tickets.
+- `panels-worker-initiative-planning` guides `initiative_planning` Tickets.
 
 For `new_worker`, the visible lifecycle after universal Kickoff is
 Understanding, Stages, Thinking, Drafting, Closeout, Done. Understanding is paired:
@@ -237,4 +244,4 @@ prefix, and reconciliation support before changing state.
 
 ---
 
-_Last verified: 2026-07-16._
+_Last verified: 2026-07-18._
