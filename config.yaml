@@ -7,6 +7,7 @@ port: 8767                         # server port; bind host is fixed at 127.0.0.
 boundary_hour: 5                   # planning-day boundary, local hour (R1)
 tick_seconds: 60                   # dispatcher tick interval (§7.1)
 dispatch_enabled: true             # automatic Employee-step discovery/dispatch startup switch (§7.1)
+relay_backend_enabled: false       # S1 hermes-relay child pool + /api/relay; OFF by default
 hermes_bin: hermes                 # Hermes executable (employee home is separate)
 hermes_profile: default            # hermes profile (R3)
 worker_skill: panels-worker        # employee role skill used by EmployeeStepRunner

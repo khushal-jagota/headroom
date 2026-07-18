@@ -1,0 +1,159 @@
+{
+  "phases": {
+    "1-connect": {
+      "ok": true,
+      "ready": {
+        "type": "gateway.ready",
+        "payload": {
+          "skin": {
+            "name": "default",
+            "colors": {
+              "banner_border": "#CD7F32",
+              "banner_title": "#FFD700",
+              "banner_accent": "#FFBF00",
+              "banner_dim": "#B8860B",
+              "banner_text": "#FFF8DC",
+              "ui_accent": "#FFBF00",
+              "ui_label": "#DAA520",
+              "ui_ok": "#4caf50",
+              "ui_error": "#ef5350",
+              "ui_warn": "#ffa726",
+              "prompt": "#FFF8DC",
+              "input_rule": "#CD7F32",
+              "response_border": "#FFD700",
+              "status_bar_bg": "#1a1a2e",
+              "session_label": "#DAA520",
+              "session_border": "#8B8682"
+            },
+            "branding": {
+              "agent_name": "Hermes Agent",
+              "welcome": "Welcome to Hermes Agent! Type your message or /help for commands.",
+              "goodbye": "Goodbye! \u2695",
+              "response_label": " \u2695 Hermes ",
+              "prompt_symbol": "\u276f",
+              "help_header": "(^_^)? Available Commands"
+            },
+            "banner_logo": "",
+            "banner_hero": "",
+            "tool_prefix": "\u250a",
+            "help_header": "(^_^)? Available Commands"
+          }
+        }
+      }
+    },
+    "2-create": {
+      "ok": true,
+      "live": "804d51bb",
+      "stored": "20260717_134720_a88cf5",
+      "keys": [
+        "info",
+        "message_count",
+        "messages",
+        "session_id",
+        "stored_session_id"
+      ]
+    },
+    "3-prompt": {
+      "ok": true,
+      "submit_response_keys": [
+        "status"
+      ],
+      "submit_response": {
+        "status": "streaming"
+      },
+      "event_sequence": [
+        "session.info",
+        "message.start",
+        "thinking.delta",
+        "thinking.delta",
+        "message.delta",
+        "message.delta",
+        "message.delta",
+        "thinking.delta",
+        "reasoning.available",
+        "message.complete"
+      ],
+      "final_text": "marigold"
+    },
+    "4-list": {
+      "ok": true,
+      "spike_sessions": [
+        {
+          "id": "20260717_134720_a88cf5",
+          "title": "",
+          "preview": "Reply with exactly the single word: marigold",
+          "started_at": 1784292440.484376,
+          "message_count": 2,
+          "source": "s0-spike"
+        }
+      ]
+    },
+    "5-drop": {
+      "ok": true
+    },
+    "6-resume": {
+      "ok": true,
+      "resumed_keys": [
+        "info",
+        "message_count",
+        "messages",
+        "resumed",
+        "running",
+        "session_id",
+        "session_key",
+        "started_at",
+        "status"
+      ],
+      "resumed_live": "804d51bb",
+      "resumed_field": "20260717_134720_a88cf5",
+      "message_count": 2
+    },
+    "6b-history": {
+      "ok": true,
+      "reply": "marigold",
+      "events": [
+        "message.start",
+        "thinking.delta",
+        "session.title",
+        "thinking.delta",
+        "message.delta",
+        "message.delta",
+        "message.delta",
+        "thinking.delta",
+        "reasoning.available",
+        "message.complete"
+      ]
+    },
+    "7-concurrent-resume": {
+      "response_keys": [
+        "info",
+        "message_count",
+        "messages",
+        "resumed",
+        "running",
+        "session_id",
+        "session_key",
+        "started_at",
+        "status"
+      ],
+      "error": null,
+      "note": "informational: relay design never does this; recording server behavior"
+    }
+  },
+  "event_types": {
+    "gateway.ready": 3,
+    "session.info": 2,
+    "message.start": 2,
+    "thinking.delta": 6,
+    "message.delta": 6,
+    "reasoning.available": 2,
+    "message.complete": 2,
+    "session.title": 1
+  },
+  "rpc_responses": {
+    "session.create": "ok",
+    "prompt.submit": "ok",
+    "session.list": "ok",
+    "session.resume": "ok"
+  }
+}

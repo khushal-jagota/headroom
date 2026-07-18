@@ -9,6 +9,8 @@ appear."""
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import importlib
 import logging
 import os
@@ -115,6 +117,19 @@ def _shutdown_gateway_with_deadline(gateway: Any, deadline: float) -> None:
     gateway.shutdown(deadline=deadline)
 
 
+async def _shutdown_relay_pool_with_deadline(
+    pool: Any, loop: asyncio.AbstractEventLoop, deadline: float
+) -> None:
+    """The single production teardown for the relay pool: run the keyword-only
+    `pool.shutdown(deadline=...)` OFF the loop on the pool's reserved shutdown executor
+    via `functools.partial` (R3-A/R3-G). Extracted so `_lifespan` and its test drive the
+    SAME wiring — a positional or wrong-executor regression fails the test."""
+    await loop.run_in_executor(
+        pool.shutdown_executor,
+        functools.partial(pool.shutdown, deadline=deadline),
+    )
+
+
 def _start_gateway_if_available(gateway: Any) -> None:
     start = getattr(gateway, "start", None)
     if start is not None:
@@ -173,6 +188,7 @@ def create_app(
         loops: Any = None
         shared_gateway: Any = None
         chat_gateway_to_shutdown: Any = None
+        employee_child_pool_to_shutdown: Any = None
         if config.test_mode and config.run_startup_recovery_in_test_mode:
             _recover_running_human_chat_turns(
                 conn_factory,
@@ -233,6 +249,19 @@ def create_app(
                     app_.state.automatic_employee_step_eligibility_wake = (
                         loops.automatic_employee_step_eligibility_wake
                     )
+                from planner.hermes_backend.composition import (
+                    compose_relay_backend_if_enabled,
+                )
+
+                loop = asyncio.get_running_loop()
+                employee_child_pool_to_shutdown = compose_relay_backend_if_enabled(
+                    config=config,
+                    app_state=app_.state,
+                    loop=loop,
+                    hermes_python=resolve_hermes_python(),
+                    planner_home=planner_home,
+                    base_env=dict(os.environ),
+                )
         try:
             yield
         finally:
@@ -243,6 +272,10 @@ def create_app(
                 _shutdown_gateway_with_deadline(chat_gateway_to_shutdown, deadline)
             elif shared_gateway is not None:
                 _shutdown_gateway_with_deadline(shared_gateway, deadline)
+            if employee_child_pool_to_shutdown is not None:
+                await _shutdown_relay_pool_with_deadline(
+                    employee_child_pool_to_shutdown, loop, deadline
+                )
 
     app = FastAPI(title="planner", version="2.0.0", lifespan=_lifespan)
     app.add_middleware(
@@ -264,6 +297,8 @@ def create_app(
         TestModeAcceptingEmployeeRevisionRunner() if config.test_mode else None
     )
     app.state.shared_gateway = None
+    app.state.employee_child_pool = None
+    app.state.employee_child_relay = None
     # GET /api/chat/commands TTL cache: (CommandCatalog, expiry_monotonic) | None, plus a
     # lock so concurrent cache misses spawn at most one gateway child (chat/api.py).
     app.state.chat_command_catalog = None
@@ -314,6 +349,16 @@ def create_app(
             config.ws_poll_ms,
             config.events_read_limit,
             config.ws_heartbeat_ms,
+        )
+
+    @app.websocket("/api/relay")
+    async def relay_ws(websocket: WebSocket) -> None:
+        from planner.hermes_backend.relay_route import relay_downstream_websocket
+
+        await relay_downstream_websocket(
+            websocket,
+            pool_provider=lambda: app.state.employee_child_pool,
+            relay=app.state.employee_child_relay,
         )
 
     @app.get("/", response_class=HTMLResponse)

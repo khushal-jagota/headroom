@@ -4,6 +4,86 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-17): Hermes integration restructure — S0 protocol spike
+
+Current build stage:
+
+- Owner approved the relay architecture (see `D-hermes-relay-architecture` and
+  `D-runtime-neutral-pane-vocabulary` in decisions.md): Panels' server keeps the single Hermes
+  connection but relays native conversation frames to the browser instead of translating them
+  through SQLite; the pane speaks a runtime-neutral ACP-shaped vocabulary so future Codex/Claude
+  CLI workers plug in as adapters.
+- Staged plan: S0 live spike → S1 relay foundation (`hermes serve` + WS client + relay endpoint)
+  → S2 native-vocabulary chat pane → S3 worker steps on the shared backend → S4 deletion of the
+  demux/DB-streamed turns/polling plus the transcript-ownership ruling → S5 optional profile
+  registration for desktop access.
+- S0 PASSED live: authenticated WS connect (`gateway.ready`), session.create, prompt.submit
+  with real streamed frames, hard socket drop, reconnect + session.resume with full history and
+  proven conversational continuity, plus the concurrent-resume probe (server does not lock —
+  relay must stay sole upstream owner). Record: `orchestration/hermes-relay-redesign/s0-spike.md`;
+  staged plan: `orchestration/hermes-relay-redesign/plan.md`. Scratch backend stopped after the
+  run; the live Panels server and the user's Hermes processes were never touched.
+
+What just passed:
+
+- Investigation complete (three parallel sweeps + direct source verification). Key verified facts:
+  `tui_gateway` is the official surface with stdio and WS transports over one wire format;
+  `hermes serve` is the headless backend; `apps/shared/src/json-rpc-gateway.ts` is the shared
+  client; events route to the owning transport and carry `session_id`; WS disconnect has a
+  grace-windowed reaper cancelled by quick reconnect/resume; Panels today uses ~10 RPC methods and
+  rebuilds the client half (~4k+ lines) with the DB in the conversation path (500 ms poll confirmed
+  at `web/src/components/ChatPanel.svelte:155-161`).
+
+- Owner redirected the upstream topology mid-S1: one child process per employee
+  (`D-child-per-employee`) supersedes the shared `hermes serve` backend and the prompt-carried
+  credential identity (spawn env `PLAN_TICKET_ID` + actor is the carrier). No idle reaping in
+  v1 — provider-side prompt caching gives keep-alive no token benefit; respawn costs seconds
+  plus a fresh shell env. Plan and S1 contract revised accordingly; the in-flight S1 ticket
+  agent was paused before the redirect and resumed on the revised contract.
+
+- The S1 ticket completed its full pipeline: multi-round-reviewed plan, implementation,
+  and an implementation-diff Codex review that converged 9 → 3 → 2 → 0 findings
+  ("the ticket is complete"). 14 new files under `src/planner/hermes_backend/` +
+  `tests/unit/` and three minimal edits (`core/server.py`, `core/config.py`,
+  `config.yaml`); 56 focused tests green; backend off by default; nothing under
+  `minds/`/`chat/`/`runtime/` touched. Mid-pipeline rulings are recorded as
+  `D-relay-raw-frame-transport` (raw stdio frames on the spawn seam; pool owns session
+  binding; 9-method denylist) and `D-s1-concurrency-scope` (trigger-bound limitations).
+- First canonical `./verify` FAILED at the skip-scan gate: the registry-completeness test
+  carried a forbidden `pytest.skip` for a missing Hermes checkout. Orchestrator-direct
+  integration repair: the test now hard-asserts the checkout resolves (skips would
+  silently disable the drift trip-wire); unused import removed; focused file green;
+  skip-sweep across all seven new test files clean. Failed transcript retained at
+  `data/verify/s1-relay-foundation.log`.
+
+- The second canonical run passed every suite (919 unit, all frontend, 114 Playwright,
+  mypy across 129 files, build) but failed the ruff gate on scratch-grade lint in the
+  copied S0 spike script; orchestrator-direct lint repair applied, repo-wide Ruff clean.
+  Transcript retained at `data/verify/s1-relay-foundation-2.log`.
+- The third canonical `./verify` passed all gates, but during its e2e phase the ticket
+  agent's ordered R3-round3-1..4 code audit landed one genuine one-line fix (the
+  transport's started-flag was set before `Thread.start()`, so a failed start would make
+  shutdown join a never-started thread) — flagged immediately, inspected and accepted.
+  Because that pass no longer described the settled tree, it is not the claim; transcript
+  retained at `data/verify/s1-relay-foundation-3.log`.
+- The fourth canonical `./verify`, against the frozen settled tree, PASSES all gates:
+  Ruff, mypy (129 source files), 919 unit tests (nine existing warnings),
+  compile/static/CSS checks, Svelte, production build, frontend tests, and 114
+  Playwright tests — final `VERIFY: PASS`. Transcript
+  `data/verify/s1-relay-foundation-4.log`, SHA-256
+  `6c9713e992947827a4d8bf948e2e286d65ed1951b9cc2975698544013ef362a5`. S1 is complete;
+  nothing is committed pending the owner's word.
+
+Next step:
+
+- On owner instruction, commit the S1 green wave. Then cut S2 (native-vocabulary chat
+  pane on the relay: streaming, clarify, interrupt, model picker, and the mediated
+  slash-command design point), re-anchoring the chat e2e suite at parity.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-16): fail-closed Employee session ownership
 
 Current build stage:

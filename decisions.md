@@ -1402,6 +1402,118 @@ uncommitted state. Owner-delegated. Frontend-consolidation and ticket-types buil
 
 ---
 
+# Hermes integration restructure (2026-07-17)
+
+## D-hermes-relay-architecture — Panels relays the native conversation instead of translating it
+
+Owner decision after a full structural investigation (2026-07-17). Panels' server stays the single
+holder of the Hermes connection (multi-tab, VPS hosting, auth all ride it), but it becomes a
+transparent relay instead of a translator: conversation frames pass through to the browser in
+flight, and Panels only tees the few facts it needs (turn settled/failed, session ids, optional
+audit copy). The DB leaves the conversation's path — no more store → invalidate → refetch → 500 ms
+poll, no per-feature rebuild of what Hermes already ships (streaming, clarify, approvals, model
+picker, reconnect/resume). Grounding: `tui_gateway` is Hermes's official programmatic surface
+(stdio and WebSocket, identical wire format, served by `hermes serve`; Nous's desktop app and
+dashboard consume it through the shared client `apps/shared/src/json-rpc-gateway.ts`). Panels'
+stdio-child embedding plus rebuilt client was the outlier integration and the direct cause of the
+owner's three named pains. Staged plan S0–S5; S0 is a live protocol spike before any product code.
+
+## D-runtime-neutral-pane-vocabulary — The chat pane speaks a runtime-neutral, ACP-shaped protocol
+
+Owner constraint: workers may soon be Hermes, Codex CLI, or Claude CLI — "CLI agents with a GUI and
+skills." So the pane must not speak Hermes's wire format. The relay normalizes each runtime's
+native stream into one neutral event vocabulary (turn started, text delta, thinking, tool call,
+agent-asks-user, needs-approval, turn done/failed), shaped on ACP — the protocol all three runtimes
+already have adapters for. Backend connections stay native per runtime (Hermes via the gateway WS,
+keeping model options/command catalog richness); only the Hermes translator is built now. This
+normalization is a stateless in-flight frame mapping — the structural sin being removed was the DB
+in the path, not translation itself.
+
+## D-stock-hermes-only — Panels runs on stock Hermes; local patches are to be undone
+
+Owner ruling (2026-07-17): Hermes updates will erase local modifications, so Panels must not
+rely on them. The three local terminal-session-isolation commits (merged `047ba8298`) exist
+because worker identity rides `HERMES_UI_SESSION_ID`/`HERMES_SESSION_KEY` subprocess env, and
+stock Hermes intentionally collapses all sessions' local shells into one shared "default"
+environment (`tools/terminal_tool.py::_resolve_container_task_id`) whose persistent snapshot can
+carry one session's identity exports into another's subprocess. Stock offers no per-session
+isolation knob for local shells (isolation triggers only on `env_type`/image overrides,
+registered in-process). Consequence: retire env-derived worker identity (see
+`D-panels-issued-worker-identity`), then revert the local Hermes commits to stock. Sequencing:
+revert only after the replacement identity lands, or live workers break.
+
+## D-child-per-employee — One child process per employee; identity is the child's spawn env
+
+Owner decision (2026-07-17), superseding `D-panels-issued-worker-identity` (prompt-carried
+credentials — never built) and the shared-`hermes serve` upstream in the relay plan's original
+S1. Each employee (each active ticket, plus the Chief) gets its own child process holding
+exactly one session. Identity becomes the child's spawn environment: Panels sets the ticket id
+and actor when it spawns the child; every shell the child runs inherits them; `panels` reads
+them. Crossover is impossible by construction — the leak needed two sessions in one process —
+so this is safe on fully stock Hermes and works identically for future Claude CLI / Codex CLI
+employees, where the ticket's runtime choice simply selects which binary Panels spawns behind a
+thin adapter. Further effects: the 1,100-line session demultiplexer loses its reason to exist
+(one stream per child), worker crashes are isolated per ticket, and this matches Hermes's own
+first-party kanban swarm (process per task), not a multiplexed backend. Accepted costs:
+in-flight turns die with a Panels restart (today's behavior; recovery machinery exists and
+shrinks) and N resident processes instead of one.
+
+Reaping policy: none in v1. Children spawn on demand and live until their ticket closes or the
+server shuts down — today's behavior at per-ticket granularity. Prompt caching gives no reason
+to keep children alive (caches are provider-side, keyed on conversation prefix and short TTLs;
+Claude/Codex are per-invocation processes by design), and a respawn costs seconds of agent
+rebuild plus a fresh shell environment (accumulated exports/cwd reset — the one real state
+loss). Idle reaping is a memory-pressure feature, added only if resident children actually
+hurt.
+
+## D-relay-raw-frame-transport — The relay speaks raw stdio frames; the pool owns session binding
+
+Orchestrator ruling on the S1 impasse (2026-07-17), Codex-review-driven. `GatewayChild` is a
+typed JSON-RPC client — it rebuilds requests under its own ids, unwraps responses, and consumes
+`gateway.ready` — so it cannot carry frames verbatim, which the relay contract requires. The
+relay therefore reads/writes raw newline-delimited frames directly on the child's stdio via the
+existing `planner.minds.gateway` spawn seam (`SpawnFn`/`ChildProcess`/`spawn_popen`), preserving
+byte-level payloads and child emission order; `GatewayChild` stays untouched for the legacy role
+children. Companion ruling: downstreams talk to an employee, never to session lifecycle — the
+relay rejects session-binding methods (`session.create/resume/close/delete/activate` + any
+further binding-capable verbs the implementation plan identifies) with an error frame. Denylist,
+not allowlist, so every other native method keeps flowing for free; the set is re-checked when
+the Hermes checkout advances.
+
+## D-s1-concurrency-scope — S1 fixes contract-relevant concurrency bugs; deep edges are trigger-bound limitations
+
+Orchestrator ruling during S1 plan review round 3 (2026-07-17). Genuine plan bugs are fixed
+(positional shutdown call, in-flight init publishing after close, death between resolution and
+registration, unmatched-response fan-out, mechanical denylist-completeness test), plus one cheap
+structural hardening (a dedicated bounded init/shutdown executor, which also removes executor
+starvation). Two residual robustness edges are accepted as documented S1 limitations, each bound
+to the S2 trigger — they must be re-examined when the backend gains real browser consumers, not
+before: (1) a failed-write death signal can overtake a child's final already-emitted stdout frame
+(death semantics are child-reset + respawn; downstream re-syncs from durable session state, so
+lossless ordering across death is not a contract promise); (2) unbounded relay queues (test-only
+consumers in S1; a slow real downstream changes the calculus at S2). Review-loop termination:
+one confirming Codex round after the fixes; findings that are genuine contract violations always
+block, but new beyond-contract robustness edges join the trigger-bound limitations list instead
+of extending the loop.
+
+## D-panels-issued-worker-identity — SUPERSEDED by D-child-per-employee
+
+Prompt-carried per-ticket credentials were decided (2026-07-17) while the plan's upstream was
+one shared `hermes serve` backend, where ambient env could not be trusted. The same day the
+owner chose one child per employee, which makes spawn env the simpler, runtime-agnostic
+identity carrier. Never implemented; retained for the reasoning about why ambient Hermes
+session env (`HERMES_UI_SESSION_ID`/`HERMES_SESSION_KEY`) is unreliable in any shared-process
+topology on stock Hermes.
+
+## D-transcript-ownership-open — Conversation history source of truth is an open owner decision
+
+Under the relay, Hermes's session store holds the conversation and Panels can read it back on
+demand. Recommendation on the table: Panels keeps only a thin audit copy written from the tee so
+ticket pages and reviews render history without a live backend. The alternative (keep today's full
+mirror) preserves more of `chat/data.py`. Owner has not yet ruled; lands with stage S4.
+
+---
+
 # Original build (`SPEC.md`-era) — retained rationale
 
 These entries predate the current design intent (`SPEC.md` was retired). Most of the original build log
@@ -1630,3 +1742,4 @@ column disambiguates. Find the old number here to reach its current slug (or its
 | D102–D114 (closeout) | Per-ticket closeout/integration bookkeeping | Dropped (git carries commits + integration facts) |
 | D4–D9, D13–D28 (original) | CLI location, test-mode clock, seed tensions, audit rounds, verify-run notes, ticket-redesign inventories | Dropped (original-build process exhaust; git carries it) |
 | D58–D64 (segments) | Review/ticket UI segment cleanups | Folded into [D-shared-component-set] / [D-workspace-route] |
+

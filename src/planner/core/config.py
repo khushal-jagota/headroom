@@ -30,6 +30,7 @@ class Config:
     boundary_hour: int
     tick_seconds: int
     dispatch_enabled: bool
+    relay_backend_enabled: bool
     hermes_bin: str
     hermes_profile: str
     worker_skill: str
@@ -236,6 +237,9 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         boundary_hour=_int_value(cfg, env, "boundary_hour", "PLAN_BOUNDARY_HOUR", 5),
         tick_seconds=_int_value(cfg, env, "tick_seconds", "PLAN_TICK_SECONDS", 60),
         dispatch_enabled=_bool_value(cfg, env, "dispatch_enabled", "PLAN_DISPATCH_ENABLED", True),
+        relay_backend_enabled=_bool_value(
+            cfg, env, "relay_backend_enabled", "PLAN_RELAY_BACKEND_ENABLED", False
+        ),
         hermes_bin=_str_value(cfg, env, "hermes_bin", "PLAN_HERMES_BIN", "hermes"),
         hermes_profile=_str_value(cfg, env, "hermes_profile", "PLAN_HERMES_PROFILE", "default"),
         worker_skill=_str_value(cfg, env, "worker_skill", "PLAN_WORKER_SKILL", "panels-worker"),
