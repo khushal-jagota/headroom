@@ -1287,4 +1287,7 @@ def test_worker_origin_pause_settles_visible_turn_without_changing_worker_state_
         "gateway_provider",
         "now",
         "db_path",
+        # S2b: the pool-ownership crossover predicate (defaults to lambda: False, so every
+        # existing construction is unchanged); wired to relay_backend_enabled in create_app.
+        "chief_pool_owned",
     ]

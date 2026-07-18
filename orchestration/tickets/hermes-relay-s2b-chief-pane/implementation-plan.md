@@ -34,7 +34,7 @@ re-open any of that. S2b adds exactly five things:
    `agent_chat_sessions.chat_session_key` so its first spawn `session.resume`s the Chief's durable
    session; a composition-owned persistence callback WRITES the Chief's stored-session binding back
    to `agent_chat_sessions` after the first create AND every rebind, so a restart resumes the
-   LATEST session, not a stale/forked one (F5 — **pending main's ruling on scope**, §2.5).
+   LATEST session, not a stale/forked one (F5 — **RULED in-scope by main**, §2.5).
 3. **Pool-owned new-conversation** (additive: one new neutral request kind + a pool method +
    session servicing): the pool CLOSES the child's current session and binds a fresh one via its
    own `session.create`, RETURNS the new live+stored ids, and the session bootstraps the RETURNED
@@ -180,8 +180,9 @@ This is the `src/planner/chat/` change the contract pre-authorizes ("changes onl
 required for the flag split, and then minimally"). It is ONE guard method invoked at each of the
 six Chief lifecycle entry points — broader than a single endpoint but still a single guard
 concept. See Collision #1: whether this guard BREADTH is within the contract's "minimal chat/
-change" is **escalated to main** (§10). Tests cover EACH bypass (send, continue, pause, clarify)
-and a stale-running-Chief boot (§7.3).
+change" is **RULED in-scope by main** (§10, Collision #1: "minimally" = no broader than required,
+not smaller than correct). Tests cover EACH bypass (send, continue, pause, clarify) and a
+stale-running-Chief boot (§7.3).
 
 Ticket chat (`t_*`) and day chat are unaffected — they route to the worker/day gateways, never
 the chief gateway, in both flag states.
@@ -263,7 +264,7 @@ The contract says the Chief spawn carries S1's actor identity. `_env_for_employe
 for `CHIEF_OF_STAFF_ENTITY_ID` (proven by `test_pool_spawns_chief_child_with_actor_and_no_ticket_id`,
 pool test). No change; the plan only adds the durable-key adoption.
 
-### 2.5 Fresh-binding persistence (F5 — pending main's ruling on scope)
+### 2.5 Fresh-binding persistence (F5 — RULED in-scope by main)
 
 **The defect.** Nothing under `hermes_backend/` writes `agent_chat_sessions.chat_session_key`
 back. Verified: the pool's initial `session.create` (`employee_child_pool.py:301-313`) and any
@@ -277,19 +278,16 @@ forks. Adoption alone (read-only) does not close this; the write half is missing
 READ that already lives in composition (§2.3):
 
 - Composition constructs a small `persist_chief_session(stored_session_id: str) -> None` closure
-  that opens a short-lived connection (mirroring the adoption read's own-connection discipline).
-  **Round-2 F5 fix — do NOT emit a raw column `UPDATE`.** It must (a) handle the ABSENT row (the
-  `agent_chat_sessions` row is created lazily via `INSERT OR IGNORE` in `resolve_chattable_entity`,
-  `chat/service.py:92-94` — so `persist_chief_session` first `INSERT OR IGNORE`s the Chief row,
-  then updates), (b) set `updated_at` (the column is NOT NULL / carries timestamp semantics like
-  the existing writer `chat/data.py:960`), and (c) append the `chat_session_created` event so the
-  frontend event log / resource catalogue stays consistent (the same event
-  `bind_human_turn_session` emits, `chat/data.py:966`). The cleanest form is a NEW small call-only
-  helper in `chat/data.py` (`record_agent_session_key(conn, entity_id, session_key, now)`) that the
-  pool-persistence closure calls — this keeps the timestamp/event semantics inside the chat-owned
-  writer rather than duplicating them in composition. It writes the EXISTING column — no `db.py`
-  schema change. (Whether ADDING this call-only helper to `chat/data.py` is within the authorized
-  `chat/` surface is part of Collision #4's escalation.)
+  that opens a short-lived connection (mirroring the adoption read's own-connection discipline) and
+  calls the NEW call-only `chat/data.py` helper on it. **Round-2 F5 fix — do NOT emit a raw column
+  `UPDATE`.** Per main's ruling (no existing writer fits — `bind_human_turn_session` requires a
+  running human turn, `attach_session_key` writes the turn column) the plan adds the NARROWEST new
+  call-only helper `record_agent_session_key(conn, entity_id, session_key, now)` in `chat/data.py`,
+  which (a) `INSERT OR IGNORE`s the Chief row (created lazily via `resolve_chattable_entity`,
+  `chat/service.py:92-94`) then updates it, (b) sets `updated_at` (`chat/data.py:960`), and (c)
+  `append_event`s `chat_session_created` so the frontend event log / resource catalogue stays
+  consistent (`chat/data.py:966`). Timestamp/event semantics live inside the chat-owned writer, not
+  duplicated in composition. It writes the EXISTING column — no `db.py` schema change.
 - The callback is INJECTED into the pool (a new optional ctor param
   `on_stored_session_bound: Callable[[str, str], None] | None = None`, keyed by employee id) and
   the pool invokes it — off the lock, before reporting success — at the two moments the Chief's
@@ -305,11 +303,11 @@ SAME file DB; assert adoption now reads the LATEST persisted key and the first s
 resume`s it (not `session.create`). Uses a migrated temp FILE db (F15 — in-memory is invisible to
 composition's separate connection, `db.py:204`).
 
-**Scope note (escalated).** This WRITES a `chat/`-owned table (`agent_chat_sessions`) from
-`hermes_backend`/composition. The READ already lives in composition (§2.3); the write is
-symmetric. Whether this write is within the contract's authorized `chat/` surface (it does not
-touch `chat/` code — it writes a table `chat/` owns) is **one of TWO items escalated to main**
-(§10, Collision #4). Written here as the recommended design, marked pending main's ruling on scope.
+**Scope (RULED in-scope by main).** Persisting the fresh Chief binding is the necessary other half
+of adoption (§2.3): without it, `/new` + restart forks the durable session — the fail-closed
+ownership class this project just hardened. Main authorized the narrowest addition: the call-only
+`record_agent_session_key` helper in `chat/data.py`, called by the composition-owned callback. See
+§10, Collision #4.
 
 ---
 
@@ -815,10 +813,10 @@ Re-anchored existing scenarios (contract §3):
 - `test_neutral_chief_refresh_mid_conversation` — send, then `page.reload()`; after re-attach
   the transcript is restored from the fresh `HistorySnapshotEvent`.
 - `test_neutral_chief_images` — attach an image via the existing upload flow, send; assert the
-  reference is carried AND the scripted child VALIDATES the resolved path (F7 — an ACK-anything
-  fake would pass falsely). **This scenario depends on main's F7 ruling** (§10): if S2a forwards
-  the managed `/files/chats/...` reference verbatim, `image.attach` gets a non-openable path and
-  the scripted validator fails — surfacing the S2a gap rather than masking it.
+  reference is carried AND the scripted child VALIDATES the resolved absolute path (F7 — an
+  ACK-anything fake would pass falsely). Against S2a's resolved-refs behavior (main ruled the
+  ref→absolute-path resolution is fixed in S2a, §10 Collision #3), the child receives an openable
+  path; the validator asserts it is absolute/openable.
 - `test_neutral_chief_interrupt` — send a HELD long stream, click interrupt; assert the running
   turn closes as interrupted (F13 — interrupt acts on a RUNNING turn) and the composer stays
   enabled (no synthetic busy).
@@ -881,7 +879,7 @@ New file `tests/unit/test_hermes_backend_chief_composition.py`:
   (F15 — in-memory is invisible to composition's separate connection, `db.py:204`); compose flag-on
   with a fake spawn; assert the first Chief spawn issues `session.resume {session_id: <that key>}`.
   A NULL/absent-key case asserts `session.create`.
-- `test_fresh_binding_persisted_and_readopted` (F5 — pending ruling) — after a first-create (or a
+- `test_fresh_binding_persisted_and_readopted` (F5 — RULED in-scope) — after a first-create (or a
   rebind), recreate the pool / re-run composition against the SAME file db; assert adoption reads
   the LATEST persisted key and resumes it.
 - `test_flag_on_chief_lifecycle_ops_rejected` (F2) — with the flag on, EACH gateway-touching Chief
@@ -904,7 +902,7 @@ New file `tests/unit/test_hermes_backend_new_conversation.py`:
   RETURNED live id (not `active_list`).
 - `test_new_conversation_runs_off_event_loop` (F6) — a held rebind RPC keeps the writer/event loop
   responsive (the rebind runs through `pool.init_executor`, awaited).
-- `test_new_conversation_persists_fresh_binding` (F5 — pending ruling) — the rebind invokes the
+- `test_new_conversation_persists_fresh_binding` (F5 — RULED in-scope) — the rebind invokes the
   persistence callback with the new stored id before success is reported.
 - `test_new_conversation_without_pool_answers_neutral_error` — no `pool_provider` → a
   `TurnFailedEvent(agent_error, ...)`, no native frame.
@@ -984,11 +982,15 @@ The implementer may create/modify EXACTLY these; nothing else.
   performs the flag split, CALLS the NAMED `_assert_single_chief_owner` helper, and composes the
   relay in the test-mode branch when `test_mode && relay_backend_enabled` with
   `spawn=scripted_relay_spawn` (F16a); `/api/meta` adds `relay_chief_enabled`.
-- `src/planner/chat/service.py` — the central `_reject_if_pool_owned` guard invoked at every
-  gateway-touching Chief lifecycle op (send, continue, pause, clarify) + the stale-running-Chief
-  recovery settle (F2). Keyed on `relay_backend_enabled`. (F15: resolved to `service.py` ONLY — NOT
-  `api.py`.) **Guard BREADTH pending main's ruling** (Collision #1). (NO `config.py` change — F16a
-  drops the extra flag; `relay_backend_enabled` already exists.)
+- `src/planner/chat/service.py` — the central pool-ownership crossover guard `_reject_if_pool_owned`
+  invoked at every gateway-touching Chief lifecycle op (send, continue, pause, clarify) + the
+  stale-running-Chief recovery settle branch (F2), plus the injected `chief_pool_owned` predicate on
+  `ChatTurnLifecycle.__init__`. **Guard BREADTH RULED in-scope** (Collision #1). (NO `config.py`
+  change — F16a drops the extra flag; `relay_backend_enabled` already exists.)
+- `src/planner/chat/data.py` — ADD the narrowest call-only `record_agent_session_key(conn,
+  entity_id, session_key, now)` writer (INSERT OR IGNORE + UPDATE chat_session_key/updated_at +
+  append `chat_session_created`) for the F5 fresh-binding persistence. **RULED in-scope**
+  (Collision #4; no existing writer fits). Call-only from the composition-owned callback.
 
 ### Frontend — new files (under `web/src`)
 - `web/src/lib/neutralPane.ts` — the pure-TS neutral-envelope client (§4).
@@ -1027,13 +1029,14 @@ The implementer may create/modify EXACTLY these; nothing else.
   routing map — see Collision #2).
 - **No file under `src/planner/runtime/` changes.**
 - **`src/planner/chat/` changes only if strictly required for the flag split, and minimally** —
-  one central `_reject_if_pool_owned` guard in `service.py` covering all Chief lifecycle ops +
-  the stale-recovery settle (Collision #1, **guard breadth pending main's ruling**). The tee's
-  call-only `planner.chat.data` usage from S2a is unchanged.
-- **F5 persistence write** — composition WRITES `agent_chat_sessions.chat_session_key` (a
-  `chat/`-owned table) after first-create and every rebind. It does NOT touch `chat/` code — it
-  writes a table `chat/` owns, symmetric to the adoption READ already in composition. **Pending
-  main's ruling on scope** (Collision #4).
+  TWO ruled-in-scope touches: (a) `service.py` — the central pool-ownership crossover guard across
+  all Chief lifecycle ops + the stale-recovery settle + the injected `chief_pool_owned` predicate
+  (Collision #1); (b) `data.py` — the narrowest call-only `record_agent_session_key` writer for F5
+  persistence (Collision #4). The tee's call-only `planner.chat.data` usage from S2a is unchanged.
+- **F5 persistence write (RULED in-scope)** — composition persists
+  `agent_chat_sessions.chat_session_key` after first-create and every rebind, through the NEW
+  call-only `record_agent_session_key` helper in `chat/data.py` (main-authorized narrowest addition;
+  no existing writer fits). Symmetric to the adoption READ already in composition. (Collision #4.)
 - **S1/S2a `hermes_backend` public behavior preserved (additive only)** — no S1 relay/transport/
   tee behavior changes; the pool's one-child-one-session rules and the `SESSION_LIFECYCLE_DENYLIST`
   are untouched (the pool issues `session.close`/`session.create` on its OWN transport, never
@@ -1044,10 +1047,11 @@ The implementer may create/modify EXACTLY these; nothing else.
 
 ---
 
-## 10. Collisions raised (for the orchestrator's ruling)
+## 10. Collisions raised — ALL RULED by main (2026-07-18)
 
-These are genuine contract-vs-reality tensions surfaced with verified evidence. Do NOT treat the
-recommendations as decided — they go to the orchestrator.
+These were genuine contract-vs-reality tensions surfaced with verified evidence. All three are now
+RULED by main on the orchestrator's recommendations; the rulings are recorded inline below. Nothing
+here remains open.
 
 ### Collision #1 — the flag-on chief chat HTTP path cannot both "still exist for tickets/legacy" AND "never reach a live chief child" without a `chat/` guard
 
@@ -1074,24 +1078,25 @@ and it still lives partly in `minds/` (forbidden) or needs a new adapter. (c) Do
 on "the pane doesn't call it" — REJECTED: a stray/legacy POST would still spawn a contending
 child and corrupt the durable session; the contract explicitly forbids two owners.
 
-**Recommendation: (a).** It is the smallest honest change, is contract-pre-authorized, and keeps
-the path existing (it returns a clear error rather than 404) for any legacy caller while
-guaranteeing no contending child. The guard reads a config flag the chat layer already has access
-to via `app.state.config` (the meta endpoint reads `config.relay_backend_enabled` the same way).
-Needs a ruling because it touches `chat/`, and the contract's "must still exist for
-tickets/legacy" could be read as "must still FUNCTION for the Chief" — which is impossible
-without two owners.
+**Recommendation: (a) — RULED in-scope by main.** It is the smallest honest change and keeps the
+path existing (a clear error, not a 404) for any legacy caller while guaranteeing no contending
+child. The guard reads an injected `chief_pool_owned` predicate (round-2 F2: `ChatTurnLifecycle`
+takes no config; `create_app` wires the predicate to `config.relay_backend_enabled`), NOT
+`app.state.config` directly. The contract's "must still exist for tickets/legacy" cannot mean
+"must still FUNCTION for the Chief" — that is impossible without two owners; main confirmed the
+guard is the minimal correct closure.
 
-**BREADTH note (F2 — the guard is broader than one endpoint).** Codex correctly showed a
-two-endpoint guard is insufficient: the Chief captures a gateway in FIVE `chat/service.py` ops
-(`start_human_turn`, `continue_human_turn`, `pause_active_turn`,
-`_answer_pending_clarification_serially`, `recover_human_turn`), and `_recover_running_human_chat_turns`
-(`server.py:233`) runs BEFORE relay composition (`server.py:257`) so a stale running-Chief turn
-would capture the worker gateway at boot. So the guard is ONE central `_reject_if_pool_owned`
-invoked at all six entry points, plus a settle-not-resume for the stale-recovery case. This is
-consistent (one guard concept) but broader than a single endpoint check — **escalated to main:
-is this breadth within the contract's "minimal `chat/` change"?** Recommendation: YES (a narrower
-guard leaves real crossover paths open).
+**BREADTH — RULED in-scope (main, 2026-07-18).** Codex correctly showed a two-endpoint guard is
+insufficient: the Chief captures a gateway in FIVE `chat/service.py` ops (`start_human_turn`,
+`continue_human_turn`, `pause_active_turn`, `_answer_pending_clarification_serially`,
+`recover_human_turn`), and `_recover_running_human_chat_turns` (`server.py:233`) runs BEFORE relay
+composition (`server.py:257`) so a stale running-Chief turn would capture the worker gateway at
+boot. MAIN RULED: yes, in-scope — "minimally" means no broader than required, not smaller than
+correct; ONE central flag-on guard in `chat/service.py` covering every gateway-touching Chief
+lifecycle op (send, continue, pause, clarification) PLUS skip-and-settle of stale running-Chief
+turns in startup recovery is the minimal CORRECT closure of the two-owner hazard (scattered
+endpoint checks would be both larger in surface and leakier). Name it for exactly what it is (a
+pool-ownership crossover guard). This resolves Collision #1 — no longer escalated.
 
 ### Collision #2 — the two-owner startup assertion wants to read the routing map, which lives in untouchable `minds/`
 
@@ -1113,32 +1118,40 @@ mis-wired map before it is even built). This is the plan's chosen form (§1.3) a
 `minds/` change. Flagged only because the "read the routing map" reading is the more literal one
 and the orchestrator may prefer it — which would require widening the allowlist to `minds/`.
 
-### Collision #3 (F7) — RESOLVED in shipped S2a; NOT escalated
+### Collision #3 (F7) — RULED: fixed in S2a; S2b plans against resolved-refs behavior
 
-**Round-1 raised this as a blocker; the round-2 re-check RETRACTS it.** Verified against shipped
-S2a: `NeutralDownstreamSession.handle_neutral_request` already resolves each managed
-web-relative image ref to a child-openable ABSOLUTE path via `_resolve_image_refs` BEFORE building
-the native `image.attach` plan (`neutral_downstream_session.py:89-92`, comment: "Resolve each
-managed web-relative image ref to a child-openable ABSOLUTE path BEFORE building the native plan
-... defect #7 / contract lines 75-79"; on any failure the WHOLE send is rejected with a neutral
-error). So the translator does NOT forward the `/files/chats/...` reference verbatim — S2a already
-handles it. The round-1 reading (that `hermes_frame_translation.py:226` forwards `path: ref`
-verbatim) missed the session-level resolution step that runs before translation. **No S2b work, no
-S2a fix, no escalation.** The images e2e still asserts the reference is carried and the child opens
-a real path (the scripted child validates the path is absolute/openable — a genuine assertion, not
-a false-pass), but this is straightforward against the working S2a resolution.
+**Round-1 raised this as a blocker; round-2 partly retracted it; MAIN RULED it (2026-07-18).**
+Ruling: the managed-ref→absolute-path resolution is fixed in S2a itself (main amended S2a's
+contract and directed a RED test: server-side resolution of managed refs to absolute paths before
+`image.attach`; an unresolvable ref → neutral error). **S2b plans against RESOLVED-REFS behavior**
+and the images e2e stays in scope. Shipped S2a already has the resolution seam
+(`NeutralDownstreamSession.handle_neutral_request` → `_resolve_image_refs`,
+`neutral_downstream_session.py:89-92`, comment cites "defect #7 / contract lines 75-79"); S2a's own
+cycle hardens it with the RED test. So S2b: the pane carries the upload reference in
+`SendMessageRequest.image_refs`; the child receives a resolved absolute path; the scripted child
+VALIDATES the path is absolute/openable (a genuine assertion, not a false-pass). NOT escalated — no
+S2b-side image code beyond carrying the ref as S2a specifies.
 
-### Collision #4 — persisting the fresh Chief binding writes a `chat/`-owned table (F5 — escalated)
+### Collision #4 — persisting the fresh Chief binding (F5) — RULED in-scope
 
 **Evidence.** Nothing under `hermes_backend/` writes `agent_chat_sessions.chat_session_key` back;
 the initial pool `session.create` and any `/new` rebind are memory-only (§2.5). So after first use
-or `/new`, a restart re-adopts a STALE key and forks the durable session. The F5 fix WRITES
-`agent_chat_sessions.chat_session_key` (a `chat/`-owned table) from composition after first-create
-and every rebind. It does NOT touch `chat/` code — it writes a table `chat/` owns, symmetric to the
-adoption READ already in composition (§2.3). **Ruling needed:** is this write in-scope for S2b (the
-necessary other half of "adoption of the persisted chief session key"), or should it live behind a
-`chat/`-owned function? Recommendation: keep it in composition (symmetric, one DB seam, no schema
-change). Marked pending main's ruling.
+or `/new`, a restart re-adopts a STALE key and forks the durable session (the exact fail-closed
+ownership class this project just hardened). **MAIN RULED (2026-07-18): yes, in-scope** — it is the
+necessary other half of adoption. Composition-owned callback; write through an EXISTING `chat/`
+data write function call-only IF one fits, else propose the NARROWEST addition.
+
+**Verified — no existing call-only writer fits, so the narrowest addition is required.** The two
+candidate `chat/data.py` writers are turn-bound: `bind_human_turn_session` (`data.py:889`) REQUIRES
+a running human turn and raises `already_running` otherwise (`data.py:908-919`); `attach_session_key`
+(`data.py:872`) writes `chat_turns.session_key` (a turn column), not the entity's
+`agent_chat_sessions.chat_session_key`. Neither can persist a pool-owned Chief binding (there is no
+chat turn). So the plan adds the NARROWEST new call-only helper `record_agent_session_key(conn,
+entity_id, session_key, now)` in `chat/data.py`: `INSERT OR IGNORE` the row (it is created lazily,
+`chat/service.py:92`), then `UPDATE ... SET chat_session_key=?, updated_at=?`, and `append_event`
+`chat_session_created` (matching `bind_human_turn_session`'s semantics, `data.py:960-966`). The
+composition-owned callback (§2.5) calls it. This is the authorized narrowest addition. Collision #4
+resolved — no longer escalated.
 
 ---
 
@@ -1153,5 +1166,7 @@ signal (Frontend); the unit + Playwright tests (Parity §3-5). Nothing speculati
 (`D-only-free-hermes-features`), no busy state (`D-native-turn-concurrency`), no runnable commands
 in the picker (skills only), no defensive wrong-employee filter (F16b), no extra test config flag
 (F16a), no new resource, no db schema change, no `minds/`/`runtime/` change. `chat/` is touched only
-for the central crossover guard the flag split strictly requires (breadth escalated, Collision #1);
-the F5 persistence write touches a `chat/`-owned table from composition (escalated, Collision #4).
+for the central crossover guard the flag split strictly requires (breadth RULED in-scope,
+Collision #1) and the narrowest call-only `record_agent_session_key` helper the fresh-binding
+persistence needs (RULED in-scope, Collision #4). All three raised collisions are ruled; nothing
+remains open.

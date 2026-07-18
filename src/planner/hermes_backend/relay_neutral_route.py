@@ -73,7 +73,11 @@ async def relay_neutral_downstream_websocket(
         await websocket.send_text(text)
 
     session = NeutralDownstreamSession(
-        relay=relay, conn=conn, send_neutral=send_neutral, db_path=db_path
+        relay=relay,
+        conn=conn,
+        send_neutral=send_neutral,
+        db_path=db_path,
+        pool_provider=pool_provider,
     )
     # The writer loop below is the sole drainer of `conn.outbound`; request-time RPC
     # correlation awaits futures instead of self-draining (avoids two queue consumers).

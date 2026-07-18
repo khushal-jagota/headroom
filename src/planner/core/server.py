@@ -88,8 +88,12 @@ def _build_role_gateways(
     worker_role: str,
     environ: Mapping[str, str],
     worker_context: WorkerContextService | None = None,
+    chief_owned_by_pool: bool = False,
 ) -> tuple[Any, Any]:
-    """Build the two gateway children with explicit, preserved role environments."""
+    """Build the role gateway children with explicit, preserved role environments. When
+    `chief_owned_by_pool` (the relay backend owns the Chief employee), NO legacy Chief
+    gateway child is constructed — the Chief entity must be unroutable to any live child —
+    and the second return is None."""
     from planner.minds.shared_gateway import SharedGateway
 
     base_env = dict(environ)
@@ -100,6 +104,8 @@ def _build_role_gateways(
         base_env={**base_env, "PLAN_ACTOR": "worker"},
         worker_context=worker_context,
     )
+    if chief_owned_by_pool:
+        return worker_gateway, None
     chief_gateway = SharedGateway(
         hermes_python=hermes_python,
         home=planner_home,
@@ -107,6 +113,18 @@ def _build_role_gateways(
         base_env={**base_env, "PLAN_ACTOR": "chief"},
     )
     return worker_gateway, chief_gateway
+
+
+def _assert_single_chief_owner(
+    *, relay_backend_enabled: bool, pool: Any, chief_gateway: Any
+) -> None:
+    """Exactly one owner of the Chief's stored session. Raises on any inconsistency.
+
+    Asserts on the COMPOSITION INPUTS (the ground truth for ownership) — not the routing
+    map (private, in untouchable minds/): the flag on iff a pool exists iff no legacy Chief
+    gateway exists."""
+    if not (relay_backend_enabled == (pool is not None) == (chief_gateway is None)):
+        raise RuntimeError("two-owner hazard: inconsistent Chief ownership composition")
 
 
 async def _stop_runtime_with_deadline(runtime: Any, deadline: float) -> None:
@@ -189,12 +207,41 @@ def create_app(
         shared_gateway: Any = None
         chat_gateway_to_shutdown: Any = None
         employee_child_pool_to_shutdown: Any = None
+        loop: Any = None
         if config.test_mode and config.run_startup_recovery_in_test_mode:
             _recover_running_human_chat_turns(
                 conn_factory,
                 app_.state.chat_turn_lifecycle,
             )
-        elif not config.test_mode:  # D6: background loops never run in test mode
+        if config.test_mode and config.relay_backend_enabled:
+            # Test-mode relay composition (F16a — gated ONLY on test_mode &&
+            # relay_backend_enabled; no extra config flag; no production path composes the
+            # relay in test mode). Compose ONLY the pool+relay+neutral route against the
+            # STATEFUL scripted child — no role gateways, no loops — and assert single Chief
+            # ownership so a mis-wired composition fails boot loudly.
+            from planner.hermes_backend.composition import (
+                compose_relay_backend_if_enabled,
+            )
+            from planner.hermes_backend.scripted_relay_child import scripted_relay_spawn
+
+            loop = asyncio.get_running_loop()
+            employee_child_pool_to_shutdown = compose_relay_backend_if_enabled(
+                config=config,
+                app_state=app_.state,
+                loop=loop,
+                hermes_python=Path(config.db_path),  # unused by the scripted spawn
+                planner_home=Path(config.logs_dir),  # unused by the scripted spawn
+                base_env=dict(os.environ),
+                spawn=scripted_relay_spawn,
+                db_path=config.db_path,
+                now=clock.now_unix,
+            )
+            _assert_single_chief_owner(
+                relay_backend_enabled=config.relay_backend_enabled,
+                pool=employee_child_pool_to_shutdown,
+                chief_gateway=None,
+            )
+        if not config.test_mode:  # D6: background loops never run in test mode
             try:
                 module = importlib.import_module("planner.core.loops")
                 start = module.start_background_loops
@@ -220,16 +267,23 @@ def create_app(
                     worker_role=config.worker_skill,
                     environ=os.environ,
                     worker_context=SqliteWorkerContextService(conn_factory),
+                    chief_owned_by_pool=config.relay_backend_enabled,
                 )
-                chat_gateway = EntityRoutingGateway(
-                    shared_gateway,
-                    {CHIEF_OF_STAFF_ENTITY_ID: chief_gateway},
+                # Only map the Chief entity to a dedicated gateway when one exists; when the
+                # pool owns the Chief, the entity is intentionally absent (the central chat
+                # guard rejects any Chief op so it never falls through to the worker gateway).
+                entity_gateways = (
+                    {CHIEF_OF_STAFF_ENTITY_ID: chief_gateway}
+                    if chief_gateway is not None
+                    else {}
                 )
+                chat_gateway = EntityRoutingGateway(shared_gateway, entity_gateways)
                 chat_gateway_to_shutdown = chat_gateway
                 app_.state.shared_gateway = shared_gateway
                 app_.state.adapters = Adapters(gateway=chat_gateway)
                 _start_gateway_if_available(shared_gateway)
-                _start_gateway_if_available(chief_gateway)
+                if chief_gateway is not None:
+                    _start_gateway_if_available(chief_gateway)
                 _recover_running_human_chat_turns(
                     conn_factory,
                     app_.state.chat_turn_lifecycle,
@@ -264,6 +318,11 @@ def create_app(
                     db_path=config.db_path,
                     now=clock.now_unix,
                 )
+                _assert_single_chief_owner(
+                    relay_backend_enabled=config.relay_backend_enabled,
+                    pool=employee_child_pool_to_shutdown,
+                    chief_gateway=chief_gateway,
+                )
         try:
             yield
         finally:
@@ -296,6 +355,7 @@ def create_app(
         gateway_provider=lambda: app.state.adapters.gateway,
         now=clock.now_unix,
         db_path=config.db_path,
+        chief_pool_owned=lambda: config.relay_backend_enabled,
     )
     app.state.automatic_employee_step_eligibility_wake = NoOpAutomaticEmployeeStepEligibilityWake()
     app.state.employee_step_runner = (
@@ -331,6 +391,7 @@ def create_app(
             "ws_poll_ms": config.ws_poll_ms,
             "ws_heartbeat_ms": config.ws_heartbeat_ms,
             "test_mode": config.test_mode,
+            "relay_chief_enabled": config.relay_backend_enabled,
         }
 
     @app.get("/api/worker-types")

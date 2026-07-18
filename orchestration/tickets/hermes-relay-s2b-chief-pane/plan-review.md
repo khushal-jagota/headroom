@@ -170,17 +170,20 @@ revision, then re-confirmed with one Codex round (D-codex-loop-cap).
 
 D-codex-loop-cap reached (2 rounds). Codex confirmed the two hard checks pass (`session.close`
 is valid + the pool-transport bypass of the denylist is real; `pool.init_executor` exists and is
-appropriate) and IMPORTANTLY RETRACTED F7. It raised residual under-specification on 7 items,
+appropriate) and confirmed F7 is now resolved in S2a (my round-1 finding was correct and DROVE that S2a fix — not a false alarm). It raised residual under-specification on 7 items,
 which I verified against code and resolved in the plan (no third Codex round; these are precise,
 bounded specification fixes, not open design questions):
 
-- **F7 — RETRACTED (was a false blocker).** Verified: shipped S2a ALREADY resolves managed image
-  refs to child-openable absolute paths in `NeutralDownstreamSession.handle_neutral_request`
-  (`neutral_downstream_session.py:89-92`, comment cites "defect #7 / contract lines 75-79") BEFORE
-  building the native `image.attach` plan. My round-1 escalation read only
-  `hermes_frame_translation.py:226` (which does carry `path: ref`) and missed the session-level
-  resolution that runs first. **F7 is NOT a blocker, NOT an S2a gap, and is NO LONGER escalated.**
-  Collision #3 updated to record the retraction. (This drops one of the three escalations.)
+- **F7 — CORRECT when raised; RESOLVED in S2a (not a self-retraction).** The round-1 finding was
+  accurate: at the time it was raised, S2a's translator DID forward image refs verbatim as
+  `image.attach {path}`. It drove main's directive into S2a's still-open pipeline (main amended
+  S2a's contract + a RED test: server-side resolution of managed refs to absolute paths before
+  `image.attach`; unresolvable → neutral error). The resolution seam now visible in
+  `NeutralDownstreamSession.handle_neutral_request` (`neutral_downstream_session.py:89-92`, comment
+  cites "defect #7") IS that fix landing — the finding caused the fix, it did not describe a
+  pre-existing state I misread. So S2b plans against S2a's RESOLVED-refs behavior; the images e2e
+  stays in scope. NOT an S2b-side change, NOT a standing escalation. (Two scope escalations remained
+  after this — Collisions #1 and #4 — both since ruled in-scope.)
 - **F4 (old live id) — FIXED.** `EmployeeChildRecord` carries only `stored_session_id`, not the
   live id (verified `employee_child_pool.py:52-59`, `:300`). The pool cannot source the old live
   id. Resolved: the SESSION passes its already-bootstrapped `self._session_id` into
@@ -228,3 +231,34 @@ bounded specification fixes, not open design questions):
 All 16 round-1 findings resolved; all 7 round-2 residuals resolved or precisely flagged for the
 implementer. The plan is sound to implement against once S2a lands green and main rules on the two
 remaining scope escalations (Collisions #1 and #4). Codex loop cap reached.
+
+---
+
+# Main's rulings (2026-07-18) — all three resolved
+
+Main ruled all three escalations on the orchestrator's recommendations:
+
+1. **IMAGE REFS (F7)** → fixed in S2a NOW (its pipeline is still open; main amended S2a's contract
+   and directed a RED test: server-side resolution of managed refs to absolute paths before
+   image.attach; unresolvable → neutral error). S2b plans against RESOLVED-REFS behavior; the images
+   e2e stays in scope. Plan §10 Collision #3 + §6.2 + §7.1 updated to the resolved posture.
+
+2. **CENTRAL CHIEF GUARD (Collision #1)** → IN-SCOPE. "Minimally" = no broader than required, not
+   smaller than correct. One central flag-on guard in chat/service.py across every gateway-touching
+   Chief lifecycle op + skip-and-settle of stale running-Chief startup recovery is the minimal
+   CORRECT closure. Named for exactly what it is (pool-ownership crossover guard). Plan §1.4 + §10
+   + §9 updated to RULED.
+
+3. **CHIEF BINDING PERSISTENCE (Collision #4)** → IN-SCOPE (necessary other half of adoption).
+   Composition-owned callback; write through an existing chat/ data write function call-only if one
+   fits, else the narrowest addition. VERIFIED no existing writer fits (bind_human_turn_session
+   requires a running turn; attach_session_key writes the turn column), so the plan adds the
+   narrowest call-only record_agent_session_key helper in chat/data.py. Plan §2.5 + §10 + §9
+   updated to RULED; chat/data.py added to the allowlist.
+
+All "pending ruling" / "escalated" markers cleared throughout the plan. No open questions remain.
+
+## Pipeline state
+- STEP 1 (plan) ✅ · STEP 2 (Codex plan review, 2 rounds, cap reached) ✅ · rulings reconciled ✅
+- HOLDING on the implementation gate: S2b implementation MUST NOT begin until main confirms S2a is
+  integrated + verify green. (Task #11 shows S2a completed, but I await main's explicit go-signal.)

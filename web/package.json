@@ -6,7 +6,7 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node tests/resource-catalogue.test.mjs && node tests/resource-cache.test.mjs && node tests/ws-connection.test.mjs && node tests/file-preview.test.mjs && node tests/lifecycle.test.mjs && node tests/managed-markdown.test.mjs && node tests/markdown-renderer.test.mjs && node tests/chat-images.test.mjs"
+    "test": "node tests/resource-catalogue.test.mjs && node tests/resource-cache.test.mjs && node tests/ws-connection.test.mjs && node tests/neutral-pane.test.mjs && node tests/file-preview.test.mjs && node tests/lifecycle.test.mjs && node tests/managed-markdown.test.mjs && node tests/markdown-renderer.test.mjs && node tests/chat-images.test.mjs"
   },
   "dependencies": {
     "@fontsource/newsreader": "^5.2.10",

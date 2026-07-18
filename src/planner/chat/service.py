@@ -166,12 +166,26 @@ class ChatTurnLifecycle:
         gateway_provider: Callable[[], GatewayAdapter],
         now: Callable[[], int],
         db_path: str | Path,
+        chief_pool_owned: Callable[[], bool] = lambda: False,
     ) -> None:
         self._conn_factory = conn_factory
         self._gateway_provider = gateway_provider
         self._now = now
         self._db_path = db_path
+        self._chief_pool_owned = chief_pool_owned
         self._clarification_answer_lock = threading.Lock()
+
+    def _reject_chief_pool_owned_crossover(self, entity_id: str) -> None:
+        """Pool-ownership crossover guard: when the relay backend owns the Chief employee,
+        no legacy chat lifecycle op may reach a gateway for the Chief (that would spawn a
+        contending child against the pool-owned durable session). Raise BEFORE any gateway
+        is captured. Ticket/day entities never hit this branch — only the Chief entity."""
+        if self._chief_pool_owned() and entity_id == CHIEF_OF_STAFF_ENTITY_ID:
+            raise PlannerError(
+                ErrorCode.validation,
+                "the Chief employee is pool-owned; use the neutral relay pane",
+                {"entity_id": entity_id},
+            )
 
     @staticmethod
     def _ensure_ticket_worker_not_running(
@@ -200,6 +214,7 @@ class ChatTurnLifecycle:
         return cast(Literal["message", "command"], request.mode)
 
     def start_human_turn(self, entity_id: str, request: ChatTurnRequest) -> ChatTurn:
+        self._reject_chief_pool_owned_crossover(entity_id)
         mode = self._validate_request(request)
         admission_now = self._now()
         conn = self._conn_factory()
@@ -247,6 +262,7 @@ class ChatTurnLifecycle:
 
     def continue_human_turn(self, entity_id: str, turn_id: str) -> ChatTurn:
         """Continue one eligible terminal turn without replaying its original prompt."""
+        self._reject_chief_pool_owned_crossover(entity_id)
         now = self._now()
         conn = self._conn_factory()
         try:
@@ -304,6 +320,24 @@ class ChatTurnLifecycle:
             active = chat_data.read_active_turn(conn, entity_id)
             if active is None:
                 return None
+            if self._chief_pool_owned() and entity_id == CHIEF_OF_STAFF_ENTITY_ID:
+                # Pool-ownership crossover guard, settle-not-raise variant: the pool now
+                # owns the Chief's durable session, so a stale running human turn left across
+                # a restart cannot be resumed against a live chief child. SETTLE it (no
+                # gateway capture) and return; the neutral relay pane owns the Chief now.
+                chat_data.settle_chat_turn(
+                    conn,
+                    active.id,
+                    entity_id=entity_id,
+                    status="errored",
+                    reply_text="",
+                    output_role="system"
+                    if active.output_role == "system"
+                    else "assistant",
+                    error="Chief is pool-owned; stale turn superseded",
+                    now=now,
+                )
+                return None
             if stored_session_key is None:
                 chat_data.settle_chat_turn(
                     conn,
@@ -353,6 +387,7 @@ class ChatTurnLifecycle:
         return turn
 
     def pause_active_turn(self, entity_id: str) -> ChatTurn:
+        self._reject_chief_pool_owned_crossover(entity_id)
         conn = self._conn_factory()
         try:
             now = self._now()
@@ -397,6 +432,7 @@ class ChatTurnLifecycle:
     def _answer_pending_clarification(
         self, entity_id: str, *, request_id: str, answer: str
     ) -> ChatTurn:
+        self._reject_chief_pool_owned_crossover(entity_id)
         with self._clarification_answer_lock:
             return self._answer_pending_clarification_serially(
                 entity_id,

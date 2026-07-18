@@ -75,6 +75,7 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
         trusted_ingress_env: Mapping[str, str] | Callable[[str], Mapping[str, str]] | None = None,
         run_startup_recovery: bool = False,
         seed_db: Callable[[Path], None] | None = None,
+        relay_chief: bool = False,
     ) -> ServerHandle:
         nonlocal counter
         srvdir = tmp_path / f"srv{counter}"
@@ -87,6 +88,25 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
         base = f"http://127.0.0.1:{port}"
         db_path = srvdir / "planning.db"
         log_path = srvdir / "server.log"
+        if relay_chief and seed_db is None:
+            # The flag-on Chief neutral pane resumes a durable session on attach; seed the
+            # Chief's chat_session_key with the scripted child's well-known seeded key so
+            # composition adopts it and the "history on load" scenario renders prior messages.
+            def seed_db(target: Path) -> None:
+                from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
+                from planner.core.db import connect
+                from planner.hermes_backend.scripted_relay_child import (
+                    SEEDED_CHIEF_SESSION_KEY,
+                )
+
+                with connect(str(target)) as conn:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO agent_chat_sessions "
+                        "(id, chat_session_key, created_at, updated_at) VALUES (?, ?, 1, 1)",
+                        (CHIEF_OF_STAFF_ENTITY_ID, SEEDED_CHIEF_SESSION_KEY),
+                    )
+                    conn.commit()
+
         if seed_db is not None:
             from planner.core.db import connect, create_schema
 
@@ -110,6 +130,10 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
         )
         if run_startup_recovery:
             env["PLAN_RUN_STARTUP_RECOVERY_IN_TEST_MODE"] = "1"
+        if relay_chief:
+            # Flag ON: the test-mode compose path builds the pool+relay against the scripted
+            # child (test_mode is already on). No second flag (F16a).
+            env["PLAN_RELAY_BACKEND_ENABLED"] = "1"
         if gateway is not None:
             env["PLAN_GATEWAY_ADAPTER"] = gateway
         if trusted_ingress_env is not None:
@@ -186,6 +210,13 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
 def server(server_factory: Callable[..., ServerHandle]) -> ServerHandle:
     """The default echo-gateway instance every test uses."""
     return server_factory()
+
+
+@pytest.fixture
+def relay_chief_server(server_factory: Callable[..., ServerHandle]) -> ServerHandle:
+    """A flag-ON instance: the Chief neutral pane over the relay + the scripted child, with a
+    seeded durable Chief session (test_mode is already on; no second flag — F16a)."""
+    return server_factory(relay_chief=True)
 
 
 @pytest.fixture

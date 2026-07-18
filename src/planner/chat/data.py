@@ -982,6 +982,35 @@ def bind_human_turn_session(
         return effective_session_key
 
 
+def record_agent_session_key(
+    conn: sqlite3.Connection, entity_id: str, session_key: str, now: int
+) -> None:
+    """Persist a top-level agent entity's durable chat_session_key WITHOUT a chat turn.
+
+    The relay pool owns the Chief employee's session outside the human-turn machinery, so
+    neither `bind_human_turn_session` (requires a running human turn) nor
+    `attach_session_key` (writes a turn column) fits. This is the narrowest call-only
+    writer: it lazily creates the row (INSERT OR IGNORE), sets the key + updated_at, and
+    appends `chat_session_created` so the event log / resource catalogue stays consistent."""
+    with _txn(conn):
+        conn.execute(
+            "INSERT OR IGNORE INTO agent_chat_sessions "
+            "(id, chat_session_key, created_at, updated_at) VALUES (?, NULL, ?, ?)",
+            (entity_id, now, now),
+        )
+        conn.execute(
+            "UPDATE agent_chat_sessions SET chat_session_key = ?, updated_at = ? WHERE id = ?",
+            (session_key, now, entity_id),
+        )
+        append_event(
+            conn,
+            entity_id,
+            EventKind.chat_session_created,
+            {"session_key": session_key},
+            now,
+        )
+
+
 def append_turn_output(
     conn: sqlite3.Connection,
     turn_id: str,

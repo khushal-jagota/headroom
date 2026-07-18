@@ -42,11 +42,13 @@ class NeutralDownstreamSession:
         conn: DownstreamConnection,
         send_neutral: SendNeutral,
         db_path: str,
+        pool_provider: Callable[[], Any | None] | None = None,
     ) -> None:
         self._relay = relay
         self._conn = conn
         self._send_neutral = send_neutral
         self._db_path = db_path
+        self._pool_provider = pool_provider
         self._employee_entity_id: str | None = None
         self._session_id: str | None = None
         # Downstream ids the translator assigns to its OWN native RPCs, negative to stay
@@ -85,6 +87,9 @@ class NeutralDownstreamSession:
         self._employee_entity_id = request.employee_entity_id
         if isinstance(request, nv.AttachToEmployeeRequest):
             await self._attach(request.employee_entity_id)
+            return
+        if isinstance(request, nv.NewConversationRequest):
+            await self._new_conversation(request.employee_entity_id)
             return
         if isinstance(request, nv.SendMessageRequest) and request.image_refs:
             # Resolve each managed web-relative image ref to a child-openable ABSOLUTE path
@@ -195,6 +200,49 @@ class NeutralDownstreamSession:
         )
         await self._await_rpc(history_id)
 
+    async def _new_conversation(self, employee_entity_id: str) -> None:
+        # New-conversation is an EMPLOYEE LIFECYCLE op the POOL services (its own
+        # session.create is on the downstream denylist). The pool CLOSES the old live
+        # session and binds a fresh one, RETURNS the new ids; the session bootstraps the
+        # returned live id directly and issues session.history -> an EMPTY snapshot.
+        pool = self._pool_provider() if self._pool_provider is not None else None
+        if pool is None:
+            await self._emit(
+                nv.TurnFailedEvent(
+                    employee_entity_id=employee_entity_id,
+                    reason=nv.TurnFailureReason.agent_error,
+                    detail="new-conversation unavailable",
+                )
+            )
+            return
+        if self._session_id is None:
+            await self._emit(
+                nv.TurnFailedEvent(
+                    employee_entity_id=employee_entity_id,
+                    reason=nv.TurnFailureReason.agent_error,
+                    detail="new-conversation requires a prior attach",
+                )
+            )
+            return
+        # Run the blocking rebind OFF the WS event loop, passing the OLD live id we hold.
+        loop = asyncio.get_running_loop()
+        new_live_id, _new_stored = await loop.run_in_executor(
+            pool.init_executor,
+            pool.rebind_fresh_session,
+            employee_entity_id,
+            self._require_session_id(),
+        )
+        # Bootstrap the RETURNED live id directly (not an ambiguous active_list).
+        self._session_id = new_live_id
+        history_id = await self._inject(
+            tr.NativeRequestPlan(
+                tr.NATIVE_SESSION_HISTORY,
+                {"session_id": new_live_id},
+                tr.RpcKind.HISTORY,
+            )
+        )
+        await self._await_rpc(history_id)
+
     async def _inject(self, plan: tr.NativeRequestPlan) -> int:
         """Inject one native frame through the S1 relay seam; return the downstream id the
         translator assigned (correlates the response when the plan is a tracked RPC)."""
@@ -274,6 +322,16 @@ class NeutralDownstreamSession:
             if future is not None and not future.done():
                 future.set_result(None)
             return
+        if has_body:
+            # A body-bearing frame (result/error) that is NOT one of THIS session's tracked
+            # translator RPCs is an uncorrelated RPC response the relay fanned out to every
+            # subscriber — the pool's OWN session.close/session.create during a `/new` rebind
+            # (it issues those on the child transport with an int id but registers no
+            # downstream PendingForward, so deliver_child_frame fans the response out).
+            # These are lifecycle plumbing, not a child event; DROP them so a `/new` never
+            # renders a stray passthrough row on another attached pane. Real child events all
+            # carry `params.type` and have no result/error body, so nothing legitimate is lost.
+            return
         event = tr.native_frame_to_neutral_event(self._require_employee(), frame)
         if isinstance(event, nv.ChildResetEvent):
             # A respawn invalidates the cached live session id; the next attach
@@ -344,6 +402,7 @@ _REQUEST_TYPES = (
     nv.InterruptRequest,
     nv.CompactRequest,
     nv.ListCatalogRequest,
+    nv.NewConversationRequest,
 )
 
 

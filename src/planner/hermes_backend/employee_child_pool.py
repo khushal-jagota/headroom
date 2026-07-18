@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic as _monotonic
@@ -100,6 +100,7 @@ class EmployeeChildPool:
         chief_entity_id: str = CHIEF_OF_STAFF_ENTITY_ID,
         ready_timeout: float = READY_TIMEOUT_DEFAULT,
         request_timeout: float = REQUEST_TIMEOUT_DEFAULT,
+        on_stored_session_bound: Callable[[str, str], None] | None = None,
     ) -> None:
         self._hermes_python = hermes_python
         self._planner_home = planner_home
@@ -110,12 +111,20 @@ class EmployeeChildPool:
         self._chief_entity_id = chief_entity_id
         self._ready_timeout = ready_timeout
         self._request_timeout = request_timeout
+        self._on_stored_session_bound = on_stored_session_bound
 
         self._lock = threading.Lock()
         self._records: dict[str, EmployeeChildRecord] = {}
         self._init_slots: dict[str, _InitSlot] = {}
         self._generation_counter = 0
         self._stored_session_id_by_employee: dict[str, str] = {}
+        # The current LIVE session id per employee (record carries only the stored id).
+        # Populated at first create/resume and every rebind; used to detect a stale rebind.
+        self._live_session_id_by_employee: dict[str, str] = {}
+        # Per-employee serialization latch for rebind_fresh_session, so concurrent
+        # new-conversation requests for one employee do not each mint a live session.
+        self._rebind_locks: dict[str, threading.Lock] = {}
+        self._rebind_locks_guard = threading.Lock()
         self._closing = False
 
         # Per-child observer registries, so the permanent on_frame can feed the
@@ -137,6 +146,20 @@ class EmployeeChildPool:
     @property
     def shutdown_executor(self) -> concurrent.futures.ThreadPoolExecutor:
         return self._shutdown_executor
+
+    # --- durable session adoption (S2b) ------------------------------------
+
+    def adopt_stored_session(self, employee_entity_id: str, stored_session_id: str) -> None:
+        """Seed the durable stored-session binding for an employee BEFORE its first spawn,
+        so the first `_create_or_resume_session` RESUMES it instead of creating fresh.
+        First-write-wins and a no-op once the employee already has a live child (never
+        rebind a running child underneath itself)."""
+        with self._lock:
+            if employee_entity_id in self._records:
+                return
+            self._stored_session_id_by_employee.setdefault(
+                employee_entity_id, stored_session_id
+            )
 
     # --- spawn on demand ---------------------------------------------------
 
@@ -250,9 +273,23 @@ class EmployeeChildPool:
             registered = True
             transport.start_reading()
             transport.wait_ready(self._ready_timeout)
-            stored_session_id = self._create_or_resume_session(
-                transport, employee_entity_id, generation
+            live_session_id, stored_session_id, created_fresh = (
+                self._create_or_resume_session(transport, employee_entity_id, generation)
             )
+            if created_fresh:
+                # A never-seen stored id was minted (not a resume of an adopted key): persist
+                # the fresh binding BEFORE publishing it, so a restart resumes THIS session,
+                # not a stale one. Fail-closed: this call is INSIDE the guarded block, so a
+                # persistence failure tears down + unregisters the just-bound child (below)
+                # rather than leaving an unpersisted live owner of the durable session — a
+                # later spawn must not fork a second owner of the same session (S2B-OWN-001).
+                self._notify_stored_session_bound(employee_entity_id, stored_session_id)
+            # Publish the binding to the in-memory maps only AFTER any required persist landed,
+            # so a failed persist leaves NEITHER a live child NOR a stored-id map entry that a
+            # restart would resume without a matching durable DB write.
+            with self._lock:
+                self._stored_session_id_by_employee[employee_entity_id] = stored_session_id
+                self._live_session_id_by_employee[employee_entity_id] = live_session_id
         except BaseException:
             self._shutdown_transport_bounded(transport)
             if registered:
@@ -262,8 +299,6 @@ class EmployeeChildPool:
                 # fan out + be tee'd before the binding is gone (defect #2).
                 self._loop.call_soon_threadsafe(self._relay.unregister_child, generation)
             raise
-        with self._lock:
-            self._stored_session_id_by_employee[employee_entity_id] = stored_session_id
         return EmployeeChildRecord(
             employee_entity_id=employee_entity_id,
             transport=transport,
@@ -286,7 +321,10 @@ class EmployeeChildPool:
 
     def _create_or_resume_session(
         self, transport: RawFrameChildTransport, employee_entity_id: str, generation: int
-    ) -> str:
+    ) -> tuple[str, str, bool]:
+        """Return `(live_session_id, stored_session_id, created_fresh)`. `created_fresh` is
+        True only when a brand-new stored id was minted (session.create), so the caller
+        persists that fresh binding; a resume of an adopted/held key is not fresh."""
         with self._lock:
             held = self._stored_session_id_by_employee.get(employee_entity_id)
         if held is not None:
@@ -297,7 +335,8 @@ class EmployeeChildPool:
                 {"session_id": held},
                 self._request_timeout,
             )
-            return str(result.get("resumed") or held)
+            live = str(result.get("session_id") or held)
+            return live, str(result.get("resumed") or held), False
         result = self._transport_request(
             transport,
             generation,
@@ -310,7 +349,82 @@ class EmployeeChildPool:
         stored = result.get("stored_session_id")
         if not isinstance(stored, str) or not stored:
             raise RawFrameTransportError("session.create returned no non-empty stored_session_id")
-        return stored
+        live = str(result.get("session_id") or stored)
+        return live, stored, True
+
+    # --- new-conversation rebind (S2b) -------------------------------------
+
+    def rebind_fresh_session(
+        self, employee_entity_id: str, old_live_session_id: str
+    ) -> tuple[str, str]:
+        """End the employee child's current session binding and bind a fresh one, on the
+        child's OWN transport (never through the downstream denylist seam): close the old
+        live session first, then session.create a fresh one. Returns
+        `(new_live_session_id, new_stored_session_id)`.
+
+        Per-employee serialized: a concurrent rebind whose `old_live_session_id` no longer
+        matches the current live id observes the already-fresh binding and returns it
+        without re-closing/re-creating (a stale no-op)."""
+        rebind_lock = self._rebind_lock_for(employee_entity_id)
+        with rebind_lock:
+            with self._lock:
+                if self._closing:
+                    raise PoolError("relay pool is closing")
+                record = self._records.get(employee_entity_id)
+                current_live = self._live_session_id_by_employee.get(employee_entity_id)
+            if record is None or not record.transport.alive:
+                raise PoolError(f"no live child for employee {employee_entity_id!r}")
+            if current_live is not None and current_live != old_live_session_id:
+                # A rebind already advanced past this caller's old live id: no-op, return
+                # the current fresh binding.
+                return current_live, record.stored_session_id
+            generation = record.child_generation
+            self._transport_request(
+                record.transport,
+                generation,
+                "session.close",
+                {"session_id": old_live_session_id},
+                self._request_timeout,
+            )
+            result = self._transport_request(
+                record.transport,
+                generation,
+                "session.create",
+                {"source": RELAY_SESSION_SOURCE, "cols": SESSION_COLS},
+                self._request_timeout,
+            )
+            new_stored = result.get("stored_session_id")
+            if not isinstance(new_stored, str) or not new_stored:
+                raise RawFrameTransportError(
+                    "session.create returned no non-empty stored_session_id"
+                )
+            new_live = str(result.get("session_id") or new_stored)
+            # Persist the fresh durable binding BEFORE advancing any in-memory state
+            # (S2B-OWN-001, rebind half). Fail-closed: if persistence raises, the in-memory
+            # maps still point at the OLD binding and the DB still holds the OLD key — the two
+            # stay CONSISTENT (a restart resumes the old key). A concurrent stale `/new` then
+            # still sees the OLD current_live (not advanced), so it is NOT a no-op and retries
+            # its own close+create+persist rather than returning an unpersisted fresh binding.
+            # The freshly-created live session is orphaned on the child but never referenced.
+            self._notify_stored_session_bound(employee_entity_id, new_stored)
+            with self._lock:
+                self._stored_session_id_by_employee[employee_entity_id] = new_stored
+                self._live_session_id_by_employee[employee_entity_id] = new_live
+                record.stored_session_id = new_stored
+            return new_live, new_stored
+
+    def _rebind_lock_for(self, employee_entity_id: str) -> threading.Lock:
+        with self._rebind_locks_guard:
+            lock = self._rebind_locks.get(employee_entity_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._rebind_locks[employee_entity_id] = lock
+            return lock
+
+    def _notify_stored_session_bound(self, employee_entity_id: str, stored_session_id: str) -> None:
+        callback = self._on_stored_session_bound
+        if callback is not None:
+            callback(employee_entity_id, stored_session_id)
 
     def _transport_request(
         self,

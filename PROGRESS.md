@@ -6,6 +6,14 @@ bottom; the blow-by-blow is git's.
 
 ## Current work cycle (2026-07-17): Hermes integration restructure — S0 protocol spike
 
+Exploration note (2026-07-18): the VPS agent-GUI survey found a possible simplification
+that must be tested before adding provider-specific translators. Hermes 0.18.2 has native
+`hermes acp`; maintained ACP adapters exist for Claude Agent SDK and Codex app-server; Emdash
+uses all three behind one ACP runtime. The open gap is Hermes `clarify`/ACP elicitation.
+Research and the proposed three-provider conformance spike are recorded in
+`orchestration/vps-agent-gui-research-2026-07.md`. This is a finding, not an owner decision;
+the active S2b work remains unchanged.
+
 Current build stage:
 
 - Owner approved the relay architecture (see `D-hermes-relay-architecture` and
@@ -105,10 +113,39 @@ What just passed:
   central flag-on Chief guard incl. recovery settle → in-scope; Chief binding
   persistence → in-scope). Implementation stays gated until this S2a commit lands.
 
+- S2a committed to main as `fe9e2b5`; S2b's implementation gate opened against it.
+- S2b implementation was interrupted mid-run by a usage outage (~17:20): Waves 1–2
+  (vocabulary/new-conversation seam; Chief adoption + binding persistence) reported
+  complete, Wave 3 (composition split + two-owner assertion + central Chief guard)
+  partial on disk, Wave 4 (scripted-child e2e composition) and all frontend waves not
+  started. A fresh resume orchestrator was dispatched: ground-truth the tree against the
+  reviewed plan first (`resume-ground-truth.md`), complete implementation, then the
+  single Codex diff review. Non-ticket files in the tree (owner's SKILL.md edit;
+  live-system `initiative_planning` worker-type output) are explicitly out of its scope.
+
+- S2b (`hermes-relay-s2b-chief-pane`) is COMPLETE and verified. The resume orchestrator
+  ground-truthed the outage-interrupted tree, completed the central Chief crossover
+  guard, the scripted-child e2e composition, the frontend (neutral client, capabilities
+  probe, `ChiefNeutralPane`, route swaps), and both Playwright suites. Two Codex diff
+  rounds (cap) surfaced and closed seven findings — notably fail-closed binding
+  persistence (publish only after the write lands; failure tears the child down) and
+  the invented-catalog-shape defect (picker + scripted child now parse the native
+  `pairs`/`skill_count` shape). Canonical `./verify` PASSES all gates: Ruff, mypy
+  (137 files), 984 unit tests, build, frontend, and 129 Playwright (15 new flag-on
+  Chief scenarios + legacy flag-off unchanged). Transcript
+  `data/verify/s2b-chief-pane.log`, SHA-256
+  `7c01892dbf156b5111a9866be00d35697c51390ceee9be0f893bac8cdd9a9f46`.
+- Meanwhile the live Panels system committed its own `initiative planning worker`
+  (`f75ddfc`, 19:33) through its normal flow; the canonical run covers the combined
+  state. The owner's in-progress skill edits remain uncommitted.
+- S3 (`hermes-relay-s3-ticket-employees`) is cut and mid-planning (plan written, review
+  round next); implementation gated on this S2b commit.
+
 Next step:
 
-- Commit the S2a green wave, release S2b's implementation gate, and run S2b through to
-  hand-back → integration → verify → commit.
+- Commit the S2b green wave, open S3's implementation gate, run S3 to hand-back →
+  integration → verify → commit. Then the de-patch stage and S4 deletion (transcript
+  ruling still open with the owner).
 
 Blockers:
 

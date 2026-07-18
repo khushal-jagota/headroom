@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { fetchJson } from "./lib/api";
+  import { markRelayChiefMetaError, resolveRelayChiefFromMeta } from "./lib/capabilities";
   import { resourceCatalogue } from "./lib/resourceCatalogue";
   import { connectionStatus, startEventStream, stopEventStream } from "./lib/ws";
   import BacklogRoute from "./routes/BacklogRoute.svelte";
@@ -95,12 +96,22 @@
       route = parseRoute();
     };
     window.addEventListener("hashchange", onHash);
-    fetchJson<{ ui_debounce_ms: number; ws_heartbeat_ms: number }>("/api/meta")
-      .then((meta) => startEventStream({
-        debounceMs: meta.ui_debounce_ms,
-        heartbeatMs: meta.ws_heartbeat_ms
-      }))
-      .catch(() => startEventStream({ debounceMs: 250 }));
+    fetchJson<{ ui_debounce_ms: number; ws_heartbeat_ms: number; relay_chief_enabled?: boolean }>(
+      "/api/meta"
+    )
+      .then((meta) => {
+        resolveRelayChiefFromMeta(meta);
+        startEventStream({
+          debounceMs: meta.ui_debounce_ms,
+          heartbeatMs: meta.ws_heartbeat_ms
+        });
+      })
+      .catch(() => {
+        // A meta failure must NOT silently mount the legacy Chief pane (F11): resolve the
+        // capability to "error" so the Chief routes show a retry placeholder.
+        markRelayChiefMetaError();
+        startEventStream({ debounceMs: 250 });
+      });
     return () => {
       window.removeEventListener("hashchange", onHash);
       stopEventStream();

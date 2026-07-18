@@ -62,6 +62,7 @@ class NeutralRequestKind(enum.Enum):
     interrupt = "interrupt"
     compact = "compact"
     list_catalog = "list_catalog"
+    new_conversation = "new_conversation"
 
 
 # --- supporting nested types -------------------------------------------------
@@ -228,6 +229,11 @@ class ListCatalogRequest:
     employee_entity_id: str
 
 
+@dataclass(frozen=True)
+class NewConversationRequest:
+    employee_entity_id: str
+
+
 NeutralRequest = (
     AttachToEmployeeRequest
     | SendMessageRequest
@@ -236,6 +242,7 @@ NeutralRequest = (
     | InterruptRequest
     | CompactRequest
     | ListCatalogRequest
+    | NewConversationRequest
 )
 
 
@@ -268,6 +275,7 @@ _REQUEST_BY_KIND: dict[NeutralRequestKind, type[Any]] = {
     NeutralRequestKind.interrupt: InterruptRequest,
     NeutralRequestKind.compact: CompactRequest,
     NeutralRequestKind.list_catalog: ListCatalogRequest,
+    NeutralRequestKind.new_conversation: NewConversationRequest,
 }
 _KIND_BY_REQUEST: dict[type[Any], NeutralRequestKind] = {
     v: k for k, v in _REQUEST_BY_KIND.items()
