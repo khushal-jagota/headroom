@@ -261,6 +261,8 @@ def create_app(
                     hermes_python=resolve_hermes_python(),
                     planner_home=planner_home,
                     base_env=dict(os.environ),
+                    db_path=config.db_path,
+                    now=clock.now_unix,
                 )
         try:
             yield
@@ -276,6 +278,9 @@ def create_app(
                 await _shutdown_relay_pool_with_deadline(
                     employee_child_pool_to_shutdown, loop, deadline
                 )
+            transcript_mirror_tee = getattr(app_.state, "transcript_mirror_tee", None)
+            if transcript_mirror_tee is not None:
+                transcript_mirror_tee.shutdown()
 
     app = FastAPI(title="planner", version="2.0.0", lifespan=_lifespan)
     app.add_middleware(
@@ -359,6 +364,19 @@ def create_app(
             websocket,
             pool_provider=lambda: app.state.employee_child_pool,
             relay=app.state.employee_child_relay,
+        )
+
+    @app.websocket("/api/relay/neutral")
+    async def relay_neutral_ws(websocket: WebSocket) -> None:
+        from planner.hermes_backend.relay_neutral_route import (
+            relay_neutral_downstream_websocket,
+        )
+
+        await relay_neutral_downstream_websocket(
+            websocket,
+            pool_provider=lambda: app.state.employee_child_pool,
+            relay=app.state.employee_child_relay,
+            db_path=config.db_path,
         )
 
     @app.get("/", response_class=HTMLResponse)

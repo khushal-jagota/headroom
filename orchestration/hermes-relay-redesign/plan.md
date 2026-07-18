@@ -43,16 +43,29 @@ skills provisioned into the Hermes home, one durable session per ticket employee
   `GatewayChild` stdio transport, one session per child, per-child spawn env identity) plus
   the relay endpoint: per-tab request-id namespacing, routing by employee, tee seam.
   Config-gated off in production; no user-visible change; old role-children paths untouched.
-- **S2 — native-vocabulary chat pane.** Rebuild the chat pane internals on the neutral
-  vocabulary (Hermes translator at the relay), ticket + Chief chat: streaming, clarify,
-  interrupt, commands, model picker. Swap only at parity. Open design point carried from
-  S1: the relay denylists `slash.exec`/`cli.exec` as binding-capable escape hatches, so
-  the pane's slash-command menu needs a mediated path (relay-injected or pool-mediated),
-  not raw passthrough. S1's two trigger-bound limitations (final-frame-vs-death ordering,
-  unbounded queues) are re-examined here, when real browser consumers arrive.
-- **S3 — worker steps through the child pool.** Step prompts submitted to the ticket's own
-  child; settlement/busy from teed lifecycle events plus Hermes's busy rejection; `panels`
-  CLI identity reads the Panels-set spawn env instead of Hermes session env.
+- **S2a — neutral vocabulary + Hermes translator (backend).** One typed contracts module
+  defines the runtime-neutral conversation core (`D-only-free-hermes-features` — the
+  necessary set only: attach/history, send, clarify answer, approval response, interrupt,
+  and the event stream), the relay grows a neutral downstream mode translating native
+  frames both ways, and a tee consumer feeds the existing Panels transcript mirror
+  write-behind (`D-chief-first-cutover`). Model selection and command execution are cut
+  as nice-to-haves (the stock seams are recorded in the contract for any future want).
+  S1's two trigger-bound limitations (final-frame-vs-death ordering, unbounded queues)
+  are re-examined here, where real browser consumers arrive.
+- **S2b — Chief pane cutover (frontend).** The Chief of Staff chat pane rebuilt on the
+  neutral vocabulary over the relay: streaming, thinking, clarify, interrupt, history
+  from the durable session, compact, pool-owned new-conversation, and the catalog-driven
+  picker (skills insert their trigger as message text). No model picker (owner-ruled
+  not-free nice-to-have; seam recorded). Chief only — a ticket's chat and steps share
+  one stored session and must move together (`D-chief-first-cutover`). Swap at parity:
+  the existing Chief chat Playwright scenarios pass re-anchored, plus new e2e for live
+  streaming and clarify.
+- **S3 — ticket employees through the child pool (chat + steps together).** Step prompts
+  submitted to the ticket's own child; settlement from teed lifecycle events; turn
+  concurrency is Hermes's own (queue / default-interrupt / steer — no Panels admission
+  gate, `D-native-turn-concurrency`); the discovery loop keeps only its dispatch
+  bookkeeping (step-in-flight eligibility). Ticket chat panes cut over in the same move;
+  `panels` CLI identity reads the Panels-set spawn env instead of Hermes session env.
 - **S3b — de-patch Hermes.** With one session per child, stock behavior is correct — revert
   the three local terminal-session-isolation commits (`D-stock-hermes-only`). Only after S3
   is live, or current-path workers break.

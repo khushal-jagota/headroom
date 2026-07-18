@@ -74,11 +74,41 @@ What just passed:
   `6c9713e992947827a4d8bf948e2e286d65ed1951b9cc2975698544013ef362a5`. S1 is complete;
   nothing is committed pending the owner's word.
 
+- S1 is committed to main as `052a968` (green-wave practice; owner said continue). The
+  owner's unrelated `skills/panels-chief-of-staff/SKILL.md` edit remains uncommitted.
+- Sequencing correction while cutting S2 (`D-chief-first-cutover`): a ticket's chat and
+  steps share one stored session with one owning process, so ticket chat cannot move
+  before steps — the Chief (no automatic steps) cuts over first; ticket employees move
+  chat + steps together in S3. S2 splits into S2a (neutral vocabulary + Hermes
+  translator + mediated commands + transcript-mirror tee, backend) and S2b (Chief pane
+  cutover, frontend). During transition the tee keeps the Panels transcript mirror fed
+  so `D-transcript-ownership-open` stays open for S4.
+
+- S2a (`hermes-relay-s2a-neutral-translator`) is COMPLETE and verified. Final scope per
+  the owner's free/not-free rulings (`D-only-free-hermes-features`,
+  `D-native-turn-concurrency`): the neutral conversation core (attach/history, send with
+  resolved image refs, clarify answer, approval response, interrupt) plus compact and
+  the as-is catalog read; model machinery cut; cut/unknown request kinds rejected. Six
+  source + eight test files; additive wiring only in `core/server.py` and
+  `composition.py`; chat/ call-only; S1 files unchanged. Pipeline: one plan review and
+  one diff review (per `D-codex-loop-cap`); the diff review surfaced six genuine
+  defects, plus the image-reference defect found by S2b's planning review — all seven
+  fixed RED-first. Canonical `./verify` PASSES all gates: Ruff, mypy (135 files), 956
+  unit tests, build, frontend, 114 Playwright. Transcript
+  `data/verify/s2a-neutral-translator.log`, SHA-256
+  `e1984e0cfe9940302e4e9e0764cf03d3d07837395caff04603102732b798b2cb`.
+- S2b (`hermes-relay-s2b-chief-pane`) is cut and mid-planning: contract locks the
+  ownership handoff (flag-on composition never starts the legacy Chief child; pool
+  adopts and persists the Chief binding), pool-owned new-conversation, the neutral pane,
+  and Playwright re-anchor in both flag states. Its plan review produced 13 internal
+  findings (being folded) and three cross-boundary rulings (image refs → fixed in S2a;
+  central flag-on Chief guard incl. recovery settle → in-scope; Chief binding
+  persistence → in-scope). Implementation stays gated until this S2a commit lands.
+
 Next step:
 
-- On owner instruction, commit the S1 green wave. Then cut S2 (native-vocabulary chat
-  pane on the relay: streaming, clarify, interrupt, model picker, and the mediated
-  slash-command design point), re-anchoring the chat e2e suite at parity.
+- Commit the S2a green wave, release S2b's implementation gate, and run S2b through to
+  hand-back → integration → verify → commit.
 
 Blockers:
 

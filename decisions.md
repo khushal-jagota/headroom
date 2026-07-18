@@ -1496,6 +1496,62 @@ one confirming Codex round after the fixes; findings that are genuine contract v
 block, but new beyond-contract robustness edges join the trigger-bound limitations list instead
 of extending the loop.
 
+## D-only-free-hermes-features — If Hermes doesn't give it for free, leave it alone
+
+Owner directive (2026-07-18): no overbuilding around the runtime. Panels exposes what Hermes
+hands over and builds nothing speculative on top. Sharpened the same day: the NECESSARY
+integration is exactly the two things the owner named at the start — programmatic user-message
+send and skills attached as defaults (plus what the product already visibly does today).
+Model selection, command menus, and any other capability beyond that are nice-to-haves, never
+necessary, and never drive contract scope or delay. The free/not-free line, applied by the
+owner the same day: **compact, new, and a skill picker are IN** because Hermes gives each for
+free — compact is `session.compress` (also a native `command.dispatch` builtin), new is the
+pool's own `session.create` (S2b, pool-owned), and the skill picker is the free
+`commands.catalog` listing rendered by the pane with skill selection inserting the trigger as
+ordinary message text (skills are model-side; zero execution machinery). **Set-model /
+model-options and generic mediated command execution stay OUT** — the switch isn't free (the
+real seam, session-scoped `config.set`, is recorded in the S2a contract for any future want;
+nothing built), and generic execution grows machinery. The S1 denylist blocks the escape
+hatches regardless.
+
+## D-codex-loop-cap — One Codex review round per artifact, two at most
+
+Owner directive (2026-07-18, for speed, "for now"): each pipeline artifact (plan,
+implementation diff) gets ONE Codex review round, with at most one confirming round when the
+first drove material fixes. Findings from a round are still addressed or refuted before
+proceeding — the cap bounds rounds, not the fixing of what a round finds. Beyond-contract
+robustness edges go straight to the trigger-bound limitations list (same discipline as
+`D-s1-concurrency-scope`) instead of earning further rounds. Owner clarification
+(2026-07-18): Codex reviews live inside the ticket agent's pipeline ONLY — the top-level
+orchestrator never adds its own Codex round at integration; its part is the serial merge, a
+personal spot-check of load-bearing code, and the one canonical `./verify`.
+
+## D-native-turn-concurrency — No Panels-invented busy semantics; Hermes's defaults govern mid-turn sends
+
+Owner ruling (2026-07-18): "busy guard doesn't need to be a thing, we don't make up our own
+functionality." Stock Hermes queues a mid-turn `prompt.submit` (by default interrupting the
+live turn — `_handle_busy_submit`); steering/interrupting/queuing are the runtime's own
+semantics and Panels adopts them as-is. Consequences: the S2b pane never disables the composer
+or renders a synthetic busy state; S3 does not rebuild a chat-vs-step admission gate — the
+legacy one-busy-guard model is superseded for relay surfaces. What remains Panels' own is
+dispatch bookkeeping only: the discovery loop still tracks whether an automatic step is in
+flight for eligibility, which is scheduling state, not conversation policy.
+
+## D-chief-first-cutover — The Chief moves to the relay first; ticket chat and steps move together
+
+Orchestrator sequencing ruling cutting S2 (2026-07-18). A ticket's human chat and its worker
+steps share ONE stored employee session, and a stored session must have exactly one owning
+process (the store does not lock across processes — S0 phase 7). Swapping ticket chat to the
+pool while steps still run on the legacy role children would give one session two owners. The
+Chief of Staff has no automatic steps, so the S2 cutover targets the Chief only; ticket
+employees move chat + steps TOGETHER in S3. Two consequences bound into S2: (1) the neutral
+vocabulary and its Hermes translator land as their own backend ticket before the pane ticket
+(the pane builds against a locked vocabulary); (2) during the transition the relay's tee feeds
+the existing Panels chat-transcript mirror for relay-handled turns (write-behind, off the
+conversation path), so the product's durable transcript keeps growing and the
+`D-transcript-ownership-open` decision stays genuinely open for S4 rather than being
+front-run.
+
 ## D-panels-issued-worker-identity — SUPERSEDED by D-child-per-employee
 
 Prompt-carried per-ticket credentials were decided (2026-07-17) while the plan's upstream was
