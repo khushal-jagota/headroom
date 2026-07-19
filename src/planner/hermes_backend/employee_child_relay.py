@@ -26,8 +26,8 @@ from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Final
 
-from planner.hermes_backend.raw_frame_transport import RawFrameChildTransport
 from planner.hermes_backend.relay_tee import RelayFrameDirection, RelayTeeObserver
+from planner.minds.employee_child_registry import ChildReader
 from planner.minds.gateway import JsonDict
 
 # A relay-owned JSON-RPC error code for a request that cannot complete because its child
@@ -124,7 +124,7 @@ class ChildBinding:
 
     child_generation: int
     employee_entity_id: str
-    transport: RawFrameChildTransport
+    transport: ChildReader
     next_request_id: int = 1
     pending_by_child_request_id: dict[int, PendingForward] = field(default_factory=dict)
 
@@ -149,7 +149,7 @@ class EmployeeChildRelay:
     # --- pool-facing (called off-loop in the init executor) ----------------
 
     def register_child(
-        self, generation: int, employee_entity_id: str, transport: RawFrameChildTransport
+        self, generation: int, employee_entity_id: str, transport: ChildReader
     ) -> None:
         with self._lock:
             self._children[generation] = ChildBinding(

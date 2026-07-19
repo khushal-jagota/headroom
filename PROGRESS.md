@@ -4,6 +4,69 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-19): shared employee-child registry — port legacy to per-child
+
+Owner decision (2026-07-19): port the legacy (flag-off) path to one-child-per-employee — the
+same topology the live relay (flag-on) path already uses — by extracting a **shared per-employee
+child registry both paths ride**. Keep both paths (A/B the DB-translate transport against the
+relay on an identical child substrate). Payoff: with both paths per-child, the worker-identity
+leak the three local Hermes patches fix is impossible by construction in BOTH flag states, so
+S3b (revert to stock Hermes) becomes safe without deleting legacy or flipping the committed
+default. Full design + constraints: `orchestration/hermes-relay-redesign/shared-registry-plan.md`.
+
+Reshaped picture (from two ground-truth investigations): the relay path does NOT use
+`GatewayChild` — it uses `RawFrameChildTransport`, a peer reader on the same `spawn_popen`/
+`ChildProcess` seam. Two per-child readers each duplicate spawn+identity+lifecycle; the reader
+half (raw frames vs typed JSON-RPC) is what legitimately differs. Extract the duplicated half
+into `minds/employee_child_registry.py::EmployeeChildRegistry` (keyed by employee), depending on
+an injected `ChildReader` interface both readers satisfy.
+
+Stages (serial, per-wave commits): **P1** extract registry, relay rides it, flag-on unchanged
+(zero test edits = the proof) → **P2** legacy onto the registry — `GatewayChild` becomes a
+spawn-decoupled `ChildReader` AND `SharedGateway`/`EntityRoutingGateway` rekeyed
+per-role→per-employee, one ticket, flag-off unchanged (old P2+P3 folded; the split was
+artificial — same green guard) → **S3b** `git revert -m 1 047ba8298` in Hermes (orchestrator
+does this directly; confirmed clean isolated bubble, pre-patch parent `3a1a3c7e6`), verify both
+flag states. Load-bearing
+constraints C1 arming-order, C2 request/reply unification, C3 identity-env-as-strategy, C4
+lifecycle move, C5 fail-closed persist, C6 on_frame weld — see plan doc.
+
+Current state: P1 contract cut (`orchestration/tickets/hermes-relay-p1-child-registry/contract.md`).
+P1 plan at rev 2: rev-1 (Opus) got a Codex plan review that found 8 blockers — 2 architectural
+(the "pool builds the reader callback" shortcut didn't establish the real shared seam) + 6 concrete
+(monkeypatched `_PoolSessionResponder`, mypy `ChildReader` vs `RawFrameChildTransport` mismatch,
+cyclic `RawFrameTransportError` in a `minds/` module, coarse retire timing, session-param owner,
+missing cleanup constant). Orchestrator directed a re-architecture: registry OWNS each child via an
+injected `reader_factory` + emits frames to a `ChildFrameSubscriber` in exact order
+`sink1(deliver)→sink2(reader responder settle)→sink3(fold)`; neutral `ChildReaderError` base with
+`RawFrameTransportError` subclassing it; composition-injectable optional `reader_factory` seam. Rev-2
+`plan.md` resolves all 8; orchestrator independently re-verified the two load-bearing invariants
+(sink1-before-sink2 FIFO, relay id-space coupling). Codex round 2 confirmed all 8 resolved + found
+one blocker (a `request_on` re-resolution that reopened the N/N+1 rebind race — fixed by having
+`submit_step_prompt` issue on the captured `record.transport`) + two mechanical should-fixes, all
+corrected in the plan.
+
+**P1 is COMPLETE and verified** (commit pending below). `EmployeeChildRegistry` (`minds/`) owns each
+child via an injected `reader_factory` and emits frames to a `ChildFrameSubscriber` in exact order
+sink1(deliver) → sink2(reader responder settle) → sink3(fold); `RawFrameChildTransport` gained
+`request()`/reply + the pre-send id hook + a neutral `ChildReaderError` base; the pool is a thin
+subscriber over the registry, relay behavior byte-unchanged (zero existing-test edits). The Codex
+implementation-diff review found the production diff faithful (no blocker) + 4 test-strength
+should-fixes, all applied and RED-verified. One `./verify` FAILED on a PRE-EXISTING flaky e2e
+(`test_chief_neutral_pane::test_neutral_chief_compact_4009_surfaces_failure`, ~1-in-5 on base with P1
+fully reverted — not P1's fault; flagged for a separate fix); the clean re-run PASSES all gates
+(ruff, mypy, 1053 unit, build, frontend, 135 e2e — `VERIFY: PASS`). Next: **P2** (legacy onto the
+registry). Process note: an investigation sub-agent ran `git reset --hard` in the
+Hermes checkout and
+destroyed a pre-existing uncommitted edit to `plugins/platforms/matrix/adapter.py`
+(unrecoverable — unstaged, never in the object store); owner accepted the loss (stock-Hermes-only
+anyway). All sub-agents now carry strict read-only-on-Hermes instructions; the S3b revert is
+orchestrator-run, not delegated.
+
+Prior redesign state (still true): S0–S3 + the chat-UI polish are committed to main; the live app
+runs relay-on (`config.yaml` uncommitted `true`; committed default stays `false`). Ticket-pane
+label now shows the worker name (e.g. "Coding worker") not the ticket title (uncommitted).
+
 ## Current work cycle (2026-07-17): Hermes integration restructure — S0 protocol spike
 
 Exploration note (2026-07-18): the VPS agent-GUI survey found a possible simplification

@@ -1,10 +1,12 @@
-"""EmployeeChildPool: owns N RawFrameChildTransports, one per employee entity.
+"""EmployeeChildPool: the relay-consumer adapter over a shared EmployeeChildRegistry.
 
-Spawns on demand with identity env; creates/owns exactly one session per child;
-respawns dead children on next demand; is the SOLE issuer of session.create/
-session.resume; shuts all down within one shared deadline. Owns its OWN bounded
-initialization executor and a separate reserved shutdown path (plan §1 R3-G). NEVER
-holds a blocking call under its global lock (R-2).
+The registry (in `minds/`) owns the per-employee children — spawn/respawn, the generation
+counter, session create/resume/close/interrupt, stored/live session maps, rebind, fail-closed
+persistence, and one-deadline shutdown-all. This pool is the relay CONSUMER + the registry's
+`ChildFrameSubscriber`: it builds the concrete `RawFrameChildTransport` (the default
+`reader_factory`), wires the relay (`attach`/`deliver`/`on_dead`/`detach`/`detach_now`), owns the
+step-submission settlement (`TurnSubmission` + `submit_step_prompt`), and proxies its historical
+privates to the registry so the public surface is unchanged.
 """
 
 from __future__ import annotations
@@ -14,9 +16,7 @@ import concurrent.futures
 import queue
 import threading
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
 from pathlib import Path
-from time import monotonic as _monotonic
 from typing import TYPE_CHECKING, Final
 
 from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
@@ -24,11 +24,23 @@ from planner.hermes_backend.raw_frame_transport import (
     RawFrameChildTransport,
     RawFrameTransportError,
 )
+from planner.hermes_backend.raw_frame_transport import (
+    _PoolSessionResponder as _PoolSessionResponder,
+)
 from planner.minds.config import hermes_src_root
+from planner.minds.employee_child_registry import (
+    INIT_EXECUTOR_MAX_WORKERS as INIT_EXECUTOR_MAX_WORKERS,
+)
+from planner.minds.employee_child_registry import (
+    ChildReader,
+    ChildRegistryClosing,
+    EmployeeChildRecord,
+    EmployeeChildRegistry,
+    ReaderFactory,
+)
 from planner.minds.gateway import (
     READY_TIMEOUT_DEFAULT,
     REQUEST_TIMEOUT_DEFAULT,
-    SHUTDOWN_GRACE_DEFAULT,
     JsonDict,
     SpawnFn,
     spawn_popen,
@@ -39,53 +51,13 @@ if TYPE_CHECKING:
 
 SESSION_COLS: Final = 100
 RELAY_SESSION_SOURCE: Final = "panels-relay"
-CHILD_CLEANUP_BUDGET_SECONDS: Final = SHUTDOWN_GRACE_DEFAULT
-INIT_EXECUTOR_MAX_WORKERS: Final = 8
 
 _PLAN_TICKET_ID_ENV: Final = "PLAN_TICKET_ID"
 _HERMES_TUI_SKILLS_ENV: Final = "HERMES_TUI_SKILLS"
 
-
-class PoolError(Exception):
-    """Pool-level failure (closing, spawn/session failure surfaced to the caller)."""
-
-
-@dataclass
-class EmployeeChildRecord:
-    """The employee→child record (only S1-consumed state)."""
-
-    employee_entity_id: str
-    transport: RawFrameChildTransport
-    child_generation: int
-    stored_session_id: str
-
-
-@dataclass
-class _InitSlot:
-    """The per-employee init latch (R-2), teardown-capable (R3-B)."""
-
-    done: threading.Event
-    record: EmployeeChildRecord | None = None
-    error: BaseException | None = None
-    transport: RawFrameChildTransport | None = None
-    generation: int | None = None
-
-
-class _PoolSessionResponder:
-    """Observes the matching response frame for one pool-issued RPC WITHOUT consuming
-    it from the ordered routing (plan §1, R-1/R3-D). Waits on (done OR dead_event)."""
-
-    def __init__(self, request_id: int) -> None:
-        self._request_id = request_id
-        self.done = threading.Event()
-        self.frame: JsonDict | None = None
-
-    def observe(self, frame: JsonDict) -> None:
-        if self.done.is_set():
-            return
-        if frame.get("id") == self._request_id and ("result" in frame or "error" in frame):
-            self.frame = frame
-            self.done.set()
+# The registry's closing/no-live-child error, re-exported under the pool's historical name so
+# callers (and tests) that `except PoolError` keep catching the SAME class the registry raises.
+PoolError = ChildRegistryClosing
 
 
 class TurnSubmission:
@@ -233,6 +205,13 @@ class TurnSubmission:
 
 
 class EmployeeChildPool:
+    """Relay-consumer adapter: builds + subscribes to a per-employee EmployeeChildRegistry.
+
+    The registry owns the children and the lifecycle; this pool is the registry's
+    `ChildFrameSubscriber` (relay wiring) plus the step-submission settlement half. Its public
+    surface and constructor are unchanged; historical privates are proxied to the registry.
+    """
+
     def __init__(
         self,
         *,
@@ -247,6 +226,7 @@ class EmployeeChildPool:
         request_timeout: float = REQUEST_TIMEOUT_DEFAULT,
         on_stored_session_bound: Callable[[str, str, str | None], None] | None = None,
         stored_session_resolver: Callable[[str], str | None] | None = None,
+        reader_factory: ReaderFactory | None = None,
     ) -> None:
         self._hermes_python = hermes_python
         self._planner_home = planner_home
@@ -255,233 +235,70 @@ class EmployeeChildPool:
         self._loop = loop
         self._spawn = spawn
         self._chief_entity_id = chief_entity_id
-        self._ready_timeout = ready_timeout
         self._request_timeout = request_timeout
-        self._on_stored_session_bound = on_stored_session_bound
-        self._stored_session_resolver = stored_session_resolver
 
-        self._lock = threading.Lock()
-        # Per-employee active step submission (S3 §1.4). At most one is registered per
-        # employee at a time; the runner registers before submit and unregisters on settle.
+        # Per-employee active step submission (S3 §1.4). At most one is registered per employee at
+        # a time; the runner registers before submit and unregisters on settle. This is the pool's
+        # OWN (step-fold) state — the registry owns everything else.
         self._turn_submissions: dict[str, TurnSubmission] = {}
         self._turn_submissions_lock = threading.Lock()
-        self._records: dict[str, EmployeeChildRecord] = {}
-        self._init_slots: dict[str, _InitSlot] = {}
-        self._generation_counter = 0
-        self._stored_session_id_by_employee: dict[str, str] = {}
-        # The current LIVE session id per employee (record carries only the stored id).
-        # Populated at first create/resume and every rebind; used to detect a stale rebind.
-        self._live_session_id_by_employee: dict[str, str] = {}
-        # Per-employee serialization latch for rebind_fresh_session, so concurrent
-        # new-conversation requests for one employee do not each mint a live session.
-        self._rebind_locks: dict[str, threading.Lock] = {}
-        self._rebind_locks_guard = threading.Lock()
-        self._closing = False
 
-        # Per-child observer registries, so the permanent on_frame can feed the
-        # responder for a pool-issued RPC without a callback swap.
-        self._responders: dict[int, list[_PoolSessionResponder]] = {}
-        self._responders_lock = threading.Lock()
+        # Build the registry, injecting THIS pool as the frame subscriber + the default (or a
+        # composition-injected) reader factory. Passing a half-built `self` is safe: no subscriber
+        # or factory method runs during construction.
+        self._registry = EmployeeChildRegistry(
+            reader_factory=reader_factory or self._default_reader_factory,
+            subscriber=self,
+            identity_env_strategy=self._build_identity_env,
+            session_source=RELAY_SESSION_SOURCE,
+            session_cols=SESSION_COLS,
+            on_stored_session_bound=on_stored_session_bound,
+            stored_session_resolver=stored_session_resolver,
+            ready_timeout=ready_timeout,
+            request_timeout=request_timeout,
+        )
 
-        self._init_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=INIT_EXECUTOR_MAX_WORKERS, thread_name_prefix="relay-pool-init"
-        )
-        self._shutdown_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="relay-pool-shutdown"
-        )
+    # --- registry executors + private-state proxies (frozen test reads) ----
 
     @property
     def init_executor(self) -> concurrent.futures.ThreadPoolExecutor:
-        return self._init_executor
+        return self._registry.init_executor
 
     @property
     def shutdown_executor(self) -> concurrent.futures.ThreadPoolExecutor:
-        return self._shutdown_executor
+        return self._registry.shutdown_executor
 
-    # --- durable session adoption (S2b) ------------------------------------
+    @property
+    def _records(self) -> dict[str, EmployeeChildRecord]:
+        return self._registry._records
 
-    def adopt_stored_session(self, employee_entity_id: str, stored_session_id: str) -> None:
-        """Seed the durable stored-session binding for an employee BEFORE its first spawn,
-        so the first `_create_or_resume_session` RESUMES it instead of creating fresh.
-        First-write-wins and a no-op once the employee already has a live child (never
-        rebind a running child underneath itself)."""
-        with self._lock:
-            if employee_entity_id in self._records:
-                return
-            self._stored_session_id_by_employee.setdefault(
-                employee_entity_id, stored_session_id
-            )
+    @property
+    def _stored_session_id_by_employee(self) -> dict[str, str]:
+        return self._registry._stored_session_id_by_employee
 
-    # --- spawn on demand ---------------------------------------------------
+    @property
+    def _live_session_id_by_employee(self) -> dict[str, str]:
+        return self._registry._live_session_id_by_employee
 
-    def child_for_employee(self, employee_entity_id: str) -> EmployeeChildRecord:
-        """The single spawn-on-demand entry point. Called only from the init executor.
-        No blocking call runs under `_lock` (R-2)."""
-        with self._lock:
-            if self._closing:
-                raise PoolError("relay pool is closing")
-            existing = self._records.get(employee_entity_id)
-            if existing is not None and existing.transport.alive:
-                return existing
-            slot = self._init_slots.get(employee_entity_id)
-            if slot is not None:
-                own = False
-            else:
-                slot = _InitSlot(done=threading.Event())
-                self._init_slots[employee_entity_id] = slot
-                own = True
-            stale = existing if existing is not None and not existing.transport.alive else None
+    @property
+    def _closing(self) -> bool:
+        return self._registry._closing
 
-        if not own:
-            slot.done.wait()
-            if slot.error is not None:
-                raise slot.error
-            assert slot.record is not None
-            return slot.record
+    @_closing.setter
+    def _closing(self, value: bool) -> None:
+        self._registry._closing = value
 
-        # We own the slot: perform the ENTIRE blocking spawn OFF the lock.
-        try:
-            if stale is not None:
-                self._shutdown_transport_bounded(stale.transport)
-            record = self._spawn_and_bind(employee_entity_id, slot)
-        except BaseException as exc:  # noqa: BLE001 — record and re-raise via slot
-            with self._lock:
-                slot.error = exc
-                self._init_slots.pop(employee_entity_id, None)
-            slot.done.set()
-            raise
+    @property
+    def _ready_timeout(self) -> float:
+        return self._registry._ready_timeout
 
-        # Publish/discard under `_lock` (short) with a `_closing` re-check (R3-B).
-        with self._lock:
-            if self._closing:
-                slot.error = PoolError("relay pool is closing")
-                self._init_slots.pop(employee_entity_id, None)
-                published_transport = slot.transport
-                published_generation = slot.generation
-            else:
-                self._records[employee_entity_id] = record
-                slot.record = record
-                self._init_slots.pop(employee_entity_id, None)
-                published_transport = None
-                published_generation = None
-        slot.done.set()
-        if slot.error is not None:
-            # Closing raced the publish: tear down the just-built child, unregister.
-            if published_transport is not None:
-                self._shutdown_transport_bounded(published_transport)
-            if published_generation is not None:
-                self._relay.unregister_child(published_generation)
-            raise slot.error
-        return record
+    @_ready_timeout.setter
+    def _ready_timeout(self, value: float) -> None:
+        self._registry._ready_timeout = value
 
-    def _spawn_and_bind(self, employee_entity_id: str, slot: _InitSlot) -> EmployeeChildRecord:
-        with self._lock:
-            self._generation_counter += 1
-            generation = self._generation_counter
-        env = self._env_for_employee(employee_entity_id)
-        responder_registry = self._responders
+    # --- identity env strategy + default reader factory (relay flavor) -----
 
-        def on_frame(frame: JsonDict) -> None:
-            # Ordering is load-bearing: QUEUE deliver_child_frame on the loop FIRST, THEN
-            # wake the pool responder. If we woke the responder first, a failed session-RPC
-            # would unblock the initializer, whose except-path queues unregister_child on
-            # the loop — and that unregister could land AHEAD of this frame's delivery in
-            # the loop FIFO, dropping the error response (binding already retired). Queuing
-            # the delivery before the responder wakes guarantees FIFO delivers the error
-            # response (fan-out + tee) before any unregister the initializer schedules.
-            self._loop.call_soon_threadsafe(self._relay.deliver_child_frame, generation, frame)
-            with self._responders_lock:
-                observers = list(responder_registry.get(generation, ()))
-            for observer in observers:
-                observer.observe(frame)
-            # Third sink (S3 §1.4): drive the employee's active step settlement, OFF the SQLite
-            # path, IN emission order on this single reader thread. A RESPONSE frame (has `id`)
-            # is offered to the submission as its possible `prompt.submit` ACK — arming there is
-            # strictly ordered before any later event frame's fold (race-free arm, Codex
-            # Findings 1/2). An EVENT frame (no `id`) is folded as an owned/predecessor frame.
-            # Swallow any exception so a settlement bug never kills the stdout reader.
-            submission = self._turn_submission_for(employee_entity_id)
-            if submission is not None:
-                try:
-                    if "id" in frame:
-                        submission.observe_ack_frame(frame)
-                    else:
-                        submission.fold_frame(frame)
-                except BaseException:  # noqa: BLE001 — never kill the reader (§1.4)
-                    pass
-
-        def on_dead() -> None:
-            self._loop.call_soon_threadsafe(self._relay.deliver_child_death, generation)
-            # Settle a running step errored on child death (child reset, §1.4). Off the
-            # SQLite path; swallow to protect the reader teardown.
-            submission = self._turn_submission_for(employee_entity_id)
-            if submission is not None:
-                try:
-                    submission.fold_dead()
-                except BaseException:  # noqa: BLE001
-                    pass
-
-        transport = RawFrameChildTransport(
-            hermes_python=str(self._hermes_python),
-            env=env,
-            on_frame=on_frame,
-            on_dead=on_dead,
-            spawn=self._spawn,
-        )
-        # Publish the partial transport + generation the instant it exists, and re-check
-        # `_closing` in the SAME locked section (R3-B, R3-round3-1).
-        with self._lock:
-            if self._closing:
-                closing_now = True
-            else:
-                closing_now = False
-                slot.transport = transport
-                slot.generation = generation
-        if closing_now:
-            self._shutdown_transport_bounded(transport)
-            raise PoolError("relay pool is closing")
-
-        registered = False
-        try:
-            self._relay.register_child(generation, employee_entity_id, transport)
-            registered = True
-            transport.start_reading()
-            transport.wait_ready(self._ready_timeout)
-            live_session_id, stored_session_id, created_fresh = (
-                self._create_or_resume_session(transport, employee_entity_id, generation)
-            )
-            if created_fresh:
-                # A never-seen stored id was minted (not a resume of an adopted key): persist
-                # the fresh binding BEFORE publishing it, so a restart resumes THIS session,
-                # not a stale one. Fail-closed: this call is INSIDE the guarded block, so a
-                # persistence failure tears down + unregisters the just-bound child (below)
-                # rather than leaving an unpersisted live owner of the durable session — a
-                # later spawn must not fork a second owner of the same session (S2B-OWN-001).
-                # First create has no predecessor durable id (old = None).
-                self._notify_stored_session_bound(employee_entity_id, stored_session_id, None)
-            # Publish the binding to the in-memory maps only AFTER any required persist landed,
-            # so a failed persist leaves NEITHER a live child NOR a stored-id map entry that a
-            # restart would resume without a matching durable DB write.
-            with self._lock:
-                self._stored_session_id_by_employee[employee_entity_id] = stored_session_id
-                self._live_session_id_by_employee[employee_entity_id] = live_session_id
-        except BaseException:
-            self._shutdown_transport_bounded(transport)
-            if registered:
-                # Retire the binding on the LOOP (call_soon_threadsafe) so it lands
-                # AFTER any deliver_child_frame already queued for this generation
-                # (e.g. a failed session-RPC error response) — that frame must still
-                # fan out + be tee'd before the binding is gone (defect #2).
-                self._loop.call_soon_threadsafe(self._relay.unregister_child, generation)
-            raise
-        return EmployeeChildRecord(
-            employee_entity_id=employee_entity_id,
-            transport=transport,
-            child_generation=generation,
-            stored_session_id=stored_session_id,
-        )
-
-    def _env_for_employee(self, employee_entity_id: str) -> dict[str, str]:
+    def _build_identity_env(self, employee_entity_id: str) -> dict[str, str]:
         env = dict(self._base_env)
         env.pop(_PLAN_TICKET_ID_ENV, None)
         env.pop(_HERMES_TUI_SKILLS_ENV, None)
@@ -494,186 +311,102 @@ class EmployeeChildPool:
             env["PLAN_ACTOR"] = "worker"
         return env
 
-    def _create_or_resume_session(
-        self, transport: RawFrameChildTransport, employee_entity_id: str, generation: int
-    ) -> tuple[str, str, bool]:
-        """Return `(live_session_id, stored_session_id, created_fresh)`. `created_fresh` is
-        True only when a brand-new stored id was minted (session.create), so the caller
-        persists that fresh binding; a resume of an adopted/held key is not fresh."""
-        with self._lock:
-            held = self._stored_session_id_by_employee.get(employee_entity_id)
-        if held is None and self._stored_session_resolver is not None:
-            # On-demand adoption (S3 §3.1): no eagerly-adopted key is held, so ask the
-            # composition-owned resolver for this employee's persisted durable key. The
-            # resolver runs OFF the pool lock (it opens its own short-lived DB connection).
-            # A non-empty return seeds the resume branch (an adopted key, NOT created fresh —
-            # so persistence does not re-bind it); a None/empty return falls through to
-            # session.create.
-            resolved = self._stored_session_resolver(employee_entity_id)
-            if isinstance(resolved, str) and resolved:
-                held = resolved
-        if held is not None:
-            result = self._transport_request(
-                transport,
-                generation,
-                "session.resume",
-                {"session_id": held},
-                self._request_timeout,
-            )
-            live = str(result.get("session_id") or held)
-            return live, str(result.get("resumed") or held), False
-        result = self._transport_request(
-            transport,
-            generation,
-            "session.create",
-            {"source": RELAY_SESSION_SOURCE, "cols": SESSION_COLS},
-            self._request_timeout,
+    def _default_reader_factory(
+        self,
+        *,
+        generation: int,
+        employee_entity_id: str,
+        env: Mapping[str, str],
+        on_deliver: Callable[[JsonDict], None],
+        on_fold: Callable[[JsonDict], None],
+        on_dead: Callable[[], None],
+    ) -> ChildReader:
+        return RawFrameChildTransport(
+            hermes_python=str(self._hermes_python),
+            env=env,
+            on_frame=on_deliver,
+            on_dead=on_dead,
+            spawn=self._spawn,
+            on_fold=on_fold,
+            allocate_request_id=lambda: self._relay.next_child_request_id(generation),
         )
-        # The own-session-resume proof depends on a durable stored id; require a
-        # non-empty string. NO fallback to the live session_id (uncontracted).
-        stored = result.get("stored_session_id")
-        if not isinstance(stored, str) or not stored:
-            raise RawFrameTransportError("session.create returned no non-empty stored_session_id")
-        live = str(result.get("session_id") or stored)
-        return live, stored, True
 
-    # --- new-conversation rebind (S2b) -------------------------------------
+    # --- ChildFrameSubscriber (the relay consumer) -------------------------
+
+    def attach(self, *, generation: int, employee_entity_id: str, reader: ChildReader) -> None:
+        self._relay.register_child(generation, employee_entity_id, reader)
+
+    def deliver(self, *, generation: int, employee_entity_id: str, frame: JsonDict) -> None:
+        # sink1: QUEUE deliver_child_frame on the loop FIRST (load-bearing ordering — see the
+        # reader's _stdout_loop). The reader runs this before settling its own responders (sink2),
+        # so a failed session-RPC error frame is delivered before the initializer (woken by the
+        # responder) can schedule an unregister.
+        self._loop.call_soon_threadsafe(self._relay.deliver_child_frame, generation, frame)
+
+    def fold(self, *, generation: int, employee_entity_id: str, frame: JsonDict) -> None:
+        # sink3: drive the employee's active step settlement, off the SQLite path, in emission
+        # order on the reader thread. A RESPONSE frame (has `id`) is offered as its possible
+        # prompt.submit ACK; an EVENT frame is folded as an owned/predecessor frame. Swallow any
+        # exception so a settlement bug never kills the reader.
+        submission = self._turn_submission_for(employee_entity_id)
+        if submission is not None:
+            try:
+                if "id" in frame:
+                    submission.observe_ack_frame(frame)
+                else:
+                    submission.fold_frame(frame)
+            except BaseException:  # noqa: BLE001 — never kill the reader (§1.4)
+                pass
+
+    def on_dead(self, *, generation: int, employee_entity_id: str) -> None:
+        self._loop.call_soon_threadsafe(self._relay.deliver_child_death, generation)
+        # Settle a running step errored on child death (child reset). Off the SQLite path.
+        submission = self._turn_submission_for(employee_entity_id)
+        if submission is not None:
+            try:
+                submission.fold_dead()
+            except BaseException:  # noqa: BLE001
+                pass
+
+    def detach(self, *, generation: int) -> None:
+        # On-loop retire (spawn except path / rebind discard): lands AFTER any deliver already
+        # queued on the loop for this generation.
+        self._loop.call_soon_threadsafe(self._relay.unregister_child, generation)
+
+    def detach_now(self, *, generation: int) -> None:
+        # Synchronous retire (closing-race / shutdown in-progress slots).
+        self._relay.unregister_child(generation)
+
+    # --- lifecycle delegations to the registry -----------------------------
+
+    def child_for_employee(self, employee_entity_id: str) -> EmployeeChildRecord:
+        return self._registry.get_or_spawn(employee_entity_id)
+
+    def adopt_stored_session(self, employee_entity_id: str, stored_session_id: str) -> None:
+        self._registry.adopt_stored_session(employee_entity_id, stored_session_id)
 
     def rebind_fresh_session(
         self, employee_entity_id: str, old_live_session_id: str
     ) -> tuple[str, str]:
-        """End the employee child's current session binding and bind a fresh one, on the
-        child's OWN transport (never through the downstream denylist seam): close the old
-        live session first, then session.create a fresh one. Returns
-        `(new_live_session_id, new_stored_session_id)`.
+        return self._registry.rebind_fresh_session(employee_entity_id, old_live_session_id)
 
-        Per-employee serialized: a concurrent rebind whose `old_live_session_id` no longer
-        matches the current live id observes the already-fresh binding and returns it
-        without re-closing/re-creating (a stale no-op)."""
-        rebind_lock = self._rebind_lock_for(employee_entity_id)
-        with rebind_lock:
-            with self._lock:
-                if self._closing:
-                    raise PoolError("relay pool is closing")
-                record = self._records.get(employee_entity_id)
-                current_live = self._live_session_id_by_employee.get(employee_entity_id)
-            if record is None or not record.transport.alive:
-                raise PoolError(f"no live child for employee {employee_entity_id!r}")
-            if current_live is not None and current_live != old_live_session_id:
-                # A rebind already advanced past this caller's old live id: no-op, return
-                # the current fresh binding.
-                return current_live, record.stored_session_id
-            generation = record.child_generation
-            self._transport_request(
-                record.transport,
-                generation,
-                "session.close",
-                {"session_id": old_live_session_id},
-                self._request_timeout,
-            )
-            result = self._transport_request(
-                record.transport,
-                generation,
-                "session.create",
-                {"source": RELAY_SESSION_SOURCE, "cols": SESSION_COLS},
-                self._request_timeout,
-            )
-            new_stored = result.get("stored_session_id")
-            if not isinstance(new_stored, str) or not new_stored:
-                raise RawFrameTransportError(
-                    "session.create returned no non-empty stored_session_id"
-                )
-            new_live = str(result.get("session_id") or new_stored)
-            old_stored = record.stored_session_id
-            # Persist the fresh durable binding BEFORE advancing any in-memory state
-            # (S2B-OWN-001, rebind half). Fail-closed (§3.2, Codex Finding 5): the OLD live
-            # session is ALREADY CLOSED above, so simply leaving the in-memory/DB maps on the
-            # old key is NOT safe — a resume of the old key would hit a closed session. If
-            # persistence raises, TEAR THE CHILD DOWN so it respawns clean on next demand and
-            # RESUMES the still-durable OLD stored key (session.close closes the live session,
-            # not the durable stored session); the in-memory maps are cleared with the child so
-            # they never point at the unpersisted fresh binding, and the DB still holds the OLD
-            # durable key. The freshly-created live session dies with the torn-down child.
-            try:
-                self._notify_stored_session_bound(employee_entity_id, new_stored, old_stored)
-            except BaseException:
-                # Pass generation N's OWN transport (a distinct object) so the cleanup shuts down
-                # exactly N's child, never whatever a concurrent respawn has since published.
-                self._discard_child_after_rebind_persist_failure(
-                    employee_entity_id, generation, record.transport
-                )
-                raise
-            with self._lock:
-                self._stored_session_id_by_employee[employee_entity_id] = new_stored
-                self._live_session_id_by_employee[employee_entity_id] = new_live
-                record.stored_session_id = new_stored
-            return new_live, new_stored
+    def live_session_id_for(self, employee_entity_id: str) -> str | None:
+        return self._registry.live_session_id_for(employee_entity_id)
 
-    def _discard_child_after_rebind_persist_failure(
-        self,
-        employee_entity_id: str,
-        generation: int,
-        generation_transport: RawFrameChildTransport,
-    ) -> None:
-        """Tear generation `generation`'s child down after ITS rebind persistence failure so the
-        next demand respawns clean and resumes the still-durable OLD stored key. Leaves the OLD
-        durable DB key intact.
+    def interrupt_live_turn(self, employee_entity_id: str, *, deadline: float) -> None:
+        self._registry.interrupt_live_turn(employee_entity_id, deadline=deadline)
 
-        GENERATION-GUARDED (Codex Finding 3): `child_for_employee` respawns a dead child using only
-        `_lock`/`_init_slots`, NEVER `rebind_lock` (`:286-315`, publish at `:331`), so a NEWER
-        generation N+1 can publish while THIS rebind (N) blocks in its persist callback (up to
-        SQLite's 5s busy timeout). N's cleanup must therefore touch NOTHING that belongs to N+1:
-        the record pop, the live-id clear, and the relay unregister are ALL conditional on the
-        current record still being generation N (or absent). N's OWN transport (a distinct object,
-        passed in) is always shut down — it is the failed rebind's child regardless — but never
-        N+1's transport (re-reading `_records` for the transport was the bug that killed a healthy
-        newer generation)."""
-        with self._lock:
-            record = self._records.get(employee_entity_id)
-            current_is_this_generation = (
-                record is not None and record.child_generation == generation
-            )
-            if current_is_this_generation:
-                self._records.pop(employee_entity_id, None)
-                # Clear the fresh (unpersisted) live id ONLY when the current binding is still N's;
-                # leave the stored-id map on the OLD durable key so a respawn RESUMES it. When N+1
-                # already published, its live id is left INTACT.
-                self._live_session_id_by_employee.pop(employee_entity_id, None)
-        # Shut down N's OWN transport (idempotent; a respawn may already have shut the stale one).
-        self._shutdown_transport_bounded(generation_transport)
-        # Retire only N's relay binding. `unregister_child` is generation-keyed, so it is a no-op
-        # for N+1 even if a respawn published between the check above and this call.
-        self._loop.call_soon_threadsafe(self._relay.unregister_child, generation)
-
-    def _rebind_lock_for(self, employee_entity_id: str) -> threading.Lock:
-        with self._rebind_locks_guard:
-            lock = self._rebind_locks.get(employee_entity_id)
-            if lock is None:
-                lock = threading.Lock()
-                self._rebind_locks[employee_entity_id] = lock
-            return lock
-
-    def _notify_stored_session_bound(
-        self,
-        employee_entity_id: str,
-        new_stored_session_id: str,
-        old_stored_session_id: str | None,
-    ) -> None:
-        """Publish a fresh durable binding. The callback carries BOTH the new stored id and
-        the OLD one (None on first-create) so a ticket ownership-CAS writer can pass
-        `expected → candidate` and assert the write took (§3.2, Codex Finding 5)."""
-        callback = self._on_stored_session_bound
-        if callback is not None:
-            callback(employee_entity_id, new_stored_session_id, old_stored_session_id)
+    def shutdown(self, *, deadline: float) -> None:
+        self._registry.shutdown(deadline=deadline)
 
     # --- step submission seam (S3 §1.3-§1.4) -------------------------------
 
     def register_turn_submission(self, employee_entity_id: str) -> TurnSubmission:
-        """Register the active step submission for an employee BEFORE its `prompt.submit`
-        streams frames, so the stdout-thread sink can fold them into settlement. Registered
-        UNARMED; the caller `arm`s it with the ACK disposition once known. At most one is
-        active per employee; a second registration replaces the first (the caller owns the
-        one-at-a-time discipline via the runner's active-ticket guard)."""
+        """Register the active step submission for an employee BEFORE its `prompt.submit` streams
+        frames, so the fold sink can fold them into settlement. Registered UNARMED; the submission
+        arms itself on its ACK. At most one is active per employee; a second registration replaces
+        the first (the caller owns the one-at-a-time discipline via the runner's active-ticket
+        guard)."""
         submission = TurnSubmission()
         with self._turn_submissions_lock:
             self._turn_submissions[employee_entity_id] = submission
@@ -698,158 +431,24 @@ class EmployeeChildPool:
         text: str,
         submission: TurnSubmission,
     ) -> str:
-        """Submit `prompt.submit` on the employee's child transport and return the ACK
-        DISPOSITION ("streaming"|"queued"|"steered"). The native submit params + the ACK
-        `status` field are captured from real source: sessions/service.py:507-508 (params)
-        and :556 (`disposition = str(result.get("status") ...)`).
+        """Submit `prompt.submit` on the employee's CAPTURED child reader and return the ACK
+        DISPOSITION ("streaming"|"queued"|"steered").
 
-        The submission is told its `prompt.submit` request id BEFORE the frame is sent, so it
-        ARMS itself the instant it observes the matching ACK response frame on the stdout thread
-        (race-free vs. a runner-thread arm; Codex Findings 1/2). The disposition is still
-        returned so the caller can short-circuit `steered` without waiting on a terminal.
+        The submission is told its `prompt.submit` request id BEFORE the frame is sent (via
+        `on_request_id=submission.expect_ack`), so it ARMS itself the instant it observes the
+        matching ACK response frame on the reader thread (race-free). The request is issued on the
+        record's OWN reader — never re-resolved by employee — so a concurrent rebind cannot redirect
+        it (the original target-transport discipline).
 
-        A native busy RPC error (BUSY_CODE 4009) is surfaced by `_transport_request` as a
-        RawFrameTransportError carrying the code, which the caller maps to SharedGatewayBusy
-        (mirrors shared_gateway.py:836-837)."""
-        result = self._transport_request(
-            record.transport,
-            record.child_generation,
+        A native busy RPC error (BUSY_CODE 4009) surfaces as a RawFrameTransportError carrying the
+        code, which the caller maps to SharedGatewayBusy."""
+        result = record.transport.request(
             "prompt.submit",
             {"session_id": live_session_id, "text": text},
-            self._request_timeout,
+            timeout=self._request_timeout,
             on_request_id=submission.expect_ack,
         )
         disposition = str(result.get("status") or "")
         if disposition not in ("streaming", "queued", "steered"):
             raise RawFrameTransportError(f"unexpected prompt.submit disposition: {disposition!r}")
         return disposition
-
-    def live_session_id_for(self, employee_entity_id: str) -> str | None:
-        """The employee's CURRENT live session id, if a turn is (or was last) live. Used by
-        the step gateway for `prompt.submit` targeting and by `interrupt_live_turn`."""
-        with self._lock:
-            return self._live_session_id_by_employee.get(employee_entity_id)
-
-    def interrupt_live_turn(self, employee_entity_id: str, *, deadline: float) -> None:
-        """Issue `session.interrupt {session_id: <live id>}` on the employee's child (§1.6).
-        Resolves the employee's CURRENT live session id (the correct target — the record
-        carries only the stored id); a no-op when no live id is known (no turn in flight).
-        Converts the absolute `deadline` to the remaining relative timeout the transport
-        expects. `session.interrupt` params captured from sessions/service.py:679-681."""
-        with self._lock:
-            record = self._records.get(employee_entity_id)
-            live_session_id = self._live_session_id_by_employee.get(employee_entity_id)
-        if record is None or not record.transport.alive or not live_session_id:
-            return
-        remaining = max(0.0, deadline - _monotonic())
-        try:
-            self._transport_request(
-                record.transport,
-                record.child_generation,
-                "session.interrupt",
-                {"session_id": live_session_id},
-                remaining,
-            )
-        except RawFrameTransportError:
-            # Best-effort interrupt at shutdown; a dead/unresponsive child needs no interrupt.
-            pass
-
-    def _transport_request(
-        self,
-        transport: RawFrameChildTransport,
-        generation: int,
-        method: str,
-        params: JsonDict,
-        timeout: float,
-        on_request_id: Callable[[int], None] | None = None,
-    ) -> JsonDict:
-        rid = self._relay.next_child_request_id(generation)
-        # Hand the caller the allocated id BEFORE the frame is enqueued, so a step submission
-        # can register it as its pending ACK id before any response can be observed (race-free
-        # arm-on-ACK, §1.4). Runs synchronously here on the submitting thread.
-        if on_request_id is not None:
-            on_request_id(rid)
-        responder = _PoolSessionResponder(rid)
-        with self._responders_lock:
-            self._responders.setdefault(generation, []).append(responder)
-        try:
-            transport.enqueue_frame(
-                {"jsonrpc": "2.0", "id": rid, "method": method, "params": params}
-            )
-            deadline = _monotonic() + timeout
-            while True:
-                if responder.done.is_set():
-                    break
-                if transport.dead_event.is_set():
-                    raise RawFrameTransportError(
-                        f"relay child died before responding to {method}; "
-                        f"stderr: {transport.stderr_tail()!r}"
-                    )
-                remaining = deadline - _monotonic()
-                if remaining <= 0:
-                    raise RawFrameTransportError(f"no response to {method} within {timeout}s")
-                # Wake on either completion or death.
-                if responder.done.wait(min(remaining, 0.05)):
-                    break
-            frame = responder.frame
-            assert frame is not None
-            err = frame.get("error")
-            if isinstance(err, dict):
-                raise RawFrameTransportError(
-                    f"relay child rpc error for {method}: {err.get('code')} {err.get('message')}"
-                )
-            result = frame.get("result")
-            return result if isinstance(result, dict) else {}
-        finally:
-            with self._responders_lock:
-                observers = self._responders.get(generation)
-                if observers is not None:
-                    try:
-                        observers.remove(responder)
-                    except ValueError:
-                        pass
-                    if not observers:
-                        self._responders.pop(generation, None)
-
-    # --- shutdown ----------------------------------------------------------
-
-    def _shutdown_transport_bounded(self, transport: RawFrameChildTransport) -> None:
-        transport.shutdown(deadline=_monotonic() + CHILD_CLEANUP_BUDGET_SECONDS)
-
-    def shutdown(self, *, deadline: float) -> None:
-        """Keyword-only; MUST be scheduled via functools.partial through run_in_executor
-        (R3-A). Marks closing + snapshots under the short lock, then tears down off the
-        lock on the reserved shutdown path (R3-G)."""
-        with self._lock:
-            self._closing = True
-            active = list(self._records.values())
-            in_progress = list(self._init_slots.values())
-            self._records.clear()
-
-        def remaining() -> float:
-            return max(0.0, deadline - _monotonic())
-
-        first_failure: BaseException | None = None
-        for record in active:
-            try:
-                record.transport.shutdown(deadline=deadline)
-            except BaseException as exc:  # noqa: BLE001
-                if first_failure is None:
-                    first_failure = exc
-        for slot in in_progress:
-            transport = slot.transport
-            if transport is not None:
-                try:
-                    transport.shutdown(deadline=deadline)
-                except BaseException as exc:  # noqa: BLE001
-                    if first_failure is None:
-                        first_failure = exc
-                if slot.generation is not None:
-                    self._relay.unregister_child(slot.generation)
-            slot.done.wait(remaining())
-
-        self._init_executor.shutdown(wait=False, cancel_futures=True)
-        # LAST action: reclaim the reserved worker (safe from its own worker).
-        self._shutdown_executor.shutdown(wait=False, cancel_futures=True)
-        if first_failure is not None:
-            raise first_failure

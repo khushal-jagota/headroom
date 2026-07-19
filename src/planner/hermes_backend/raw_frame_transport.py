@@ -2,18 +2,21 @@
 raw newline-delimited JSON stdio, on the injected `SpawnFn`/`ChildProcess` seam.
 
 This is a PEER of `GatewayChild` built on the same spawn seam, but it uses NONE of
-`GatewayChild`'s typed client methods. It gives the relay:
-- a single ordered ingress of parsed frames (one permanent `on_frame` callback),
+`GatewayChild`'s typed client methods. It satisfies the `ChildReader` interface and gives
+the registry/relay:
+- an ordered per-frame subscription dispatched in emission order as sink1 DELIVER
+  (`on_deliver`) → sink2 the reader's OWN request/reply responders → sink3 FOLD (`on_fold`),
+- its own request/reply primitive (`request()`) with a pre-send id hook,
 - a single-writer ordered off-loop egress (one outbound writer thread draining a FIFO),
 - a bounded readiness wait, a bounded diagnostic stderr tail,
 - an atomic single-fire death signal, and a deadline-bounded shutdown.
 
 Concurrency (see plan §0): one stdout reader thread, one outbound writer thread (the
-SOLE writer AND SOLE graceful closer of stdin), one stderr reader thread. `on_frame`
-is a single PERMANENT callback for the transport's whole life — never swapped. The
-reader thread is NOT started in `__init__`; the pool calls `start_reading()` only AFTER
-it has registered the child with the relay, so `gateway.ready` (emitted before Hermes
-reads stdin) always routes through a live binding and is never lost.
+SOLE writer AND SOLE graceful closer of stdin), one stderr reader thread. The frame sinks
+are set once (via the constructor / `register_frame_sinks`) before reading starts and never
+swapped. The reader thread is NOT started in `__init__`; the caller invokes `start_reading()`
+only AFTER it has registered the child with the relay, so `gateway.ready` (emitted before
+Hermes reads stdin) always routes through a live binding and is never lost.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from collections import deque
 from collections.abc import Callable, Mapping
 from time import monotonic as _monotonic
 
+from planner.minds.employee_child_registry import ChildReaderError
 from planner.minds.gateway import (
     READY_TIMEOUT_DEFAULT,
     STDERR_TAIL_LINES,
@@ -34,8 +38,30 @@ from planner.minds.gateway import (
 )
 
 
-class RawFrameTransportError(Exception):
-    """Transport-level failure: spawn failure, child death, ready timeout."""
+class RawFrameTransportError(ChildReaderError):
+    """Transport-level failure: spawn failure, child death, ready timeout, RPC error.
+
+    Subclasses the neutral `ChildReaderError` so the registry (in `minds/`) can `except
+    ChildReaderError` while hermes_backend callers keep catching `RawFrameTransportError`.
+    """
+
+
+class _PoolSessionResponder:
+    """Observes the matching response frame for one reader-issued RPC WITHOUT consuming it from
+    the ordered routing. Waits on `done`. Kept here (not in the pool) so `request()` owns its own
+    request/reply; the pool re-exports the SAME class object for the ordering monkeypatch."""
+
+    def __init__(self, request_id: int) -> None:
+        self._request_id = request_id
+        self.done = threading.Event()
+        self.frame: JsonDict | None = None
+
+    def observe(self, frame: JsonDict) -> None:
+        if self.done.is_set():
+            return
+        if frame.get("id") == self._request_id and ("result" in frame or "error" in frame):
+            self.frame = frame
+            self.done.set()
 
 
 class _ShutdownSentinel:
@@ -58,9 +84,15 @@ class RawFrameChildTransport:
         on_dead: Callable[[], None],
         spawn: SpawnFn = spawn_popen,
         stderr_tail_lines: int = STDERR_TAIL_LINES,
+        on_fold: Callable[[JsonDict], None] | None = None,
+        allocate_request_id: Callable[[], int] | None = None,
     ) -> None:
-        self._on_frame = on_frame
-        self._on_dead = on_dead
+        # `on_frame` is the sink1 DELIVER phase; `on_fold` (optional) is the sink3 FOLD phase; the
+        # reader's own request/reply responders are sink2 (settled between them, §5.3).
+        self.register_frame_sinks(on_deliver=on_frame, on_fold=on_fold, on_dead=on_dead)
+        self._allocate_request_id = allocate_request_id
+        self._responders: list[_PoolSessionResponder] = []
+        self._responders_lock = threading.Lock()
         argv = [hermes_python, "-m", "tui_gateway.entry"]
         try:
             self._child = spawn(argv, dict(env))
@@ -103,6 +135,22 @@ class RawFrameChildTransport:
         self._stderr_thread.start()
         self._outbound_thread.start()
 
+    # --- frame subscription (the ordered 2-phase sink) ---------------------
+
+    def register_frame_sinks(
+        self,
+        *,
+        on_deliver: Callable[[JsonDict], None],
+        on_fold: Callable[[JsonDict], None] | None,
+        on_dead: Callable[[], None],
+    ) -> None:
+        """Wire the ordered per-frame subscription: `on_deliver` (sink1) runs for every frame in
+        emission order, then the reader settles its own request/reply responders (sink2), then
+        `on_fold` (sink3) if present. Set before `start_reading`; the constructor forwards to it."""
+        self._on_deliver = on_deliver
+        self._on_fold = on_fold
+        self._on_dead = on_dead
+
     # --- lifecycle: start reading (phase two) ------------------------------
 
     def start_reading(self) -> None:
@@ -143,8 +191,14 @@ class RawFrameChildTransport:
                 if isinstance(params, dict) and params.get("type") == "gateway.ready":
                     self._ready_seen = True
                     self._ready_gate.set()
-            # gateway.ready is STILL forwarded (not swallowed) — one permanent callback.
-            self._on_frame(frame)
+            # gateway.ready is STILL forwarded (not swallowed). Order is load-bearing: sink1
+            # DELIVER first (queues relay-deliver on the loop) BEFORE sink2 wakes our own
+            # responders, so a failed session-RPC error frame is delivered before the initializer
+            # (woken by the responder) can schedule an unregister; then sink3 FOLD.
+            self._on_deliver(frame)
+            self._settle_responders(frame)
+            if self._on_fold is not None:
+                self._on_fold(frame)
         self._mark_dead()
 
     def _stderr_loop(self) -> None:
@@ -174,6 +228,72 @@ class RawFrameChildTransport:
         if self._dead:
             return  # best-effort fast drop; the writer also guards
         self._outbound.put_nowait(json.dumps(frame) + "\n")
+
+    # --- request/reply (sink2: observe our own responses in emission order) --
+
+    def _settle_responders(self, frame: JsonDict) -> None:
+        with self._responders_lock:
+            observers = list(self._responders)
+        for observer in observers:
+            observer.observe(frame)
+
+    def request(
+        self,
+        method: str,
+        params: JsonDict,
+        *,
+        timeout: float,
+        on_request_id: Callable[[int], None] | None = None,
+    ) -> JsonDict:
+        """Issue one JSON-RPC request on this reader and block for its response.
+
+        The request id is allocated from the injected `allocate_request_id` (the relay's shared
+        per-child counter, so a session RPC never collides with a downstream forward) BEFORE the
+        frame is written, and handed to `on_request_id` PRE-SEND so a step submission can register
+        it as its pending ACK id before any response can be observed (race-free arm-on-ACK)."""
+        alloc = self._allocate_request_id
+        if alloc is None:
+            raise RawFrameTransportError(
+                "request() called on a reader constructed without an id allocator"
+            )
+        rid = alloc()
+        if on_request_id is not None:
+            on_request_id(rid)
+        responder = _PoolSessionResponder(rid)
+        with self._responders_lock:
+            self._responders.append(responder)
+        try:
+            self.enqueue_frame({"jsonrpc": "2.0", "id": rid, "method": method, "params": params})
+            deadline = _monotonic() + timeout
+            while True:
+                if responder.done.is_set():
+                    break
+                if self.dead_event.is_set():
+                    raise RawFrameTransportError(
+                        f"relay child died before responding to {method}; "
+                        f"stderr: {self.stderr_tail()!r}"
+                    )
+                remaining = deadline - _monotonic()
+                if remaining <= 0:
+                    raise RawFrameTransportError(f"no response to {method} within {timeout}s")
+                # Wake on either completion or death.
+                if responder.done.wait(min(remaining, 0.05)):
+                    break
+            frame = responder.frame
+            assert frame is not None
+            err = frame.get("error")
+            if isinstance(err, dict):
+                raise RawFrameTransportError(
+                    f"relay child rpc error for {method}: {err.get('code')} {err.get('message')}"
+                )
+            result = frame.get("result")
+            return result if isinstance(result, dict) else {}
+        finally:
+            with self._responders_lock:
+                try:
+                    self._responders.remove(responder)
+                except ValueError:
+                    pass
 
     # --- readiness ---------------------------------------------------------
 
