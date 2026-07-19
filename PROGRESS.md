@@ -55,8 +55,25 @@ implementation-diff review found the production diff faithful (no blocker) + 4 t
 should-fixes, all applied and RED-verified. One `./verify` FAILED on a PRE-EXISTING flaky e2e
 (`test_chief_neutral_pane::test_neutral_chief_compact_4009_surfaces_failure`, ~1-in-5 on base with P1
 fully reverted — not P1's fault; flagged for a separate fix); the clean re-run PASSES all gates
-(ruff, mypy, 1053 unit, build, frontend, 135 e2e — `VERIFY: PASS`). Next: **P2** (legacy onto the
-registry). Process note: an investigation sub-agent ran `git reset --hard` in the
+(ruff, mypy, 1053 unit, build, frontend, 135 e2e — `VERIFY: PASS`).
+
+**P2 (legacy onto the registry) — in plan, not yet implemented.** Owner rulings (2026-07-19) that shaped
+it: (a) DROP the shared-process multiplex outright — no dual-mode/vestige — keep BOTH communication
+methods (relay flag-on untouched in behavior; legacy flag-off keeps typed→LiveSessionManager→DB→ChatPanel,
+transport per-employee). (b) DELETE day chat — it's dead code (no UI; `DayRoute` renders only the day
+overview). Keep the day planning overview; remove only the chat entity + `days.chat_session_key`. (c)
+Skills/catalog PER-WORKER (Option B) — zero shared processes; the "/" menu's Hermes skills come from the
+worker's own child (built-ins always; skills after first message); this + day-removal means the residual
+shared worker gateway is removed from BOTH flag states (its only jobs were catalog + days). (d) Interrupt
+stays on `LiveSession` flag-off (Codex-confirmed leak-safe; interrupt isn't a session-identity op). P2 plan
+went dual-mode → drop-shared re-plan → Codex round 1 (7 blockers) → revision → round 2 (5 blockers, 5
+resolved) → this amendment (day-removal + B + residual-out-both-states + mechanical fixes: stderr shutdown
+lifecycle, history-id coherence on concurrent /new, same-entity winner replacement, ownership-same-registry,
+catalog adapter-contract/cache/dedup). Next: final Codex round on the amended plan → implement → diff review
+→ `./verify` BOTH flag states → commit. Branch note: this session (113c8e88) is a /branch off the original;
+the P2 planner is `p2-replan`, the status-loop cron did NOT carry over.
+
+Process note: an investigation sub-agent ran `git reset --hard` in the
 Hermes checkout and
 destroyed a pre-existing uncommitted edit to `plugins/platforms/matrix/adapter.py`
 (unrecoverable — unstaged, never in the object store); owner accepted the loss (stock-Hermes-only

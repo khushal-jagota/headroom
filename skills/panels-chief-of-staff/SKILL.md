@@ -137,7 +137,13 @@ For rollover, inspect the day, current sprint, unfinished work, and waiting appr
 
 For sprint planning, inspect the sprint, backlog, ideas, active tickets, and project context before proposing the sprint shape.
 
-For capture, create the smallest correct object:
+For capture, create the smallest correct object. Keep a Ticket's Kickoff short enough for
+the user to read as a real gate: preserve everything the user supplied, summarized or close
+to verbatim, and add only context needed to prevent obvious misunderstanding. Do not
+pre-write the Worker's gated reasoning or add defensive process instructions. Longer
+Kickoffs are justified by long discussions or substantial upstream Ticket context; prefer
+concise summaries with durable links. Trust the Worker to do its job, and improve the
+Worker when a clear Kickoff exposes a failure.
 
 - Use a **Ticket** for a concrete unit of work. Choose its required Worker type; use
   `coding` for product or repository work.
