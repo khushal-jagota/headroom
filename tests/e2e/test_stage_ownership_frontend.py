@@ -125,15 +125,11 @@ def test_workspace_stage_mark_renders_paired_work_on_desktop_and_mobile(
         assert page.is_checked("[data-hide-done-toggle]")
         assert page.locator('[aria-label="Ticket status"]').count() == 0
         assert page.get_attribute(card, "data-ticket-status") == "paired_work"
-        assert page.inner_text(f"{card} .board-workspace-row-stage") == "Success"
-        assert (
-            page.get_attribute(
-                f"{card} .board-workspace-stage-mark",
-                "data-stage-state",
-            )
-            == "current-paired-work"
+        success_stage = '[data-worker-type="coding"] [data-stage-key="needs_success"]'
+        assert page.inner_text(f"{success_stage} > summary .board-workspace-stage-label") == (
+            "Success"
         )
-        assert (
-            page.get_attribute(f"{card} .board-workspace-stage-mark", "data-marker")
-            == "paired-work"
-        )
+        assert page.locator(f"{success_stage} {card}").count() == 1
+        assert page.inner_text(f"{card} .list-row-title") == "Paired workspace ticket"
+        assert page.locator(f"{card} > *").count() == 1
+        assert page.locator(f"{card} .board-workspace-stage-mark").count() == 0

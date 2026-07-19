@@ -1909,7 +1909,6 @@ select {
   padding: var(--space-4) var(--space-5) var(--space-7);
   border-right: var(--border-hairline) solid var(--border-color);
   --board-workspace-rail-pad-x: var(--space-3);
-  --board-workspace-stage-rail-width: 0.9rem;
 }
 
 .board-workspace-right {
@@ -2017,72 +2016,136 @@ select {
   cursor: pointer;
 }
 
-/* Project sections stack with space between them — no rule, no box; the uppercase
- * heading and its right-aligned count carry the grouping. The gap above each
- * heading is the group separator (mockup: 16px section + the heading's own pad). */
+/* Project → worker type → current stage. Scale carries the project boundary; worker
+ * types are the only boxed level, and stage rules provide the finer subdivision. */
 .board-workspace-index-section {
   position: relative;
-  margin-top: var(--space-5);
 }
 
-.disclosure--project > .disclosure-summary {
+.board-workspace-index-section + .board-workspace-index-section {
+  margin-top: calc(var(--space-7) - var(--space-1));
+}
+
+.disclosure--workspace-project > .disclosure-summary,
+.disclosure--workspace-worker > .disclosure-summary,
+.disclosure--workspace-stage > .disclosure-summary {
   width: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-2);
   text-align: left;
-  margin: 0 0 var(--space-2);
-  padding: var(--space-2) var(--board-workspace-rail-pad-x) var(--space-1);
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  line-height: 1.35;
-  text-transform: uppercase;
-  color: var(--text-faint);
+  margin: 0;
 }
 
-.board-workspace-index-heading-main {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
+.disclosure--workspace-project > .disclosure-summary {
+  padding: var(--space-2) 0;
+  color: var(--text-strong);
+}
+
+.board-workspace-project-label {
   min-width: 0;
-}
-
-.board-workspace-index-chevron {
-  flex: 0 0 auto;
-  color: var(--text-faintest);
-  transition: transform var(--motion-fast) var(--motion-ease);
-}
-
-.disclosure--project[open] > .disclosure-summary .board-workspace-index-chevron {
-  transform: rotate(90deg);
-}
-
-.board-workspace-index-count {
-  flex: 0 0 auto;
-  color: var(--text-faintest);
-  font-size: var(--type-xs);
+  font-family: var(--font-serif);
+  font-size: calc(var(--space-7) - var(--space-2));
+  font-weight: 500;
+  line-height: 1;
 }
 
 .board-workspace-index-items {
   display: flex;
   flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  margin-top: var(--space-3);
+}
+
+.disclosure--workspace-worker {
+  min-width: 0;
+  padding: var(--space-4);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: transparent;
+}
+
+.disclosure--workspace-worker > .disclosure-summary {
+  color: var(--text-muted);
+}
+
+.disclosure--workspace-worker[open] > .disclosure-summary {
+  margin-bottom: var(--space-4);
+}
+
+.board-workspace-worker-label {
+  min-width: 0;
+  font-family: var(--font-ui);
+  font-size: var(--type-md);
+  font-weight: 500;
+  letter-spacing: var(--tracking-label);
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.board-workspace-worker-stages,
+.board-workspace-stage-tickets {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
 }
 
-/* Slim rows: a title, then one byline whose left text carries type + stage while
- * the existing stage mark owns the far-right edge. */
+.disclosure--workspace-stage + .disclosure--workspace-stage {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+.disclosure--workspace-stage > .disclosure-summary {
+  color: var(--text-muted);
+}
+
+.disclosure--workspace-stage[open] > .disclosure-summary {
+  margin-bottom: var(--space-1);
+}
+
+.board-workspace-stage-label {
+  min-width: 0;
+  font-family: var(--font-ui);
+  font-size: var(--type-lg);
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+/* Every level uses the shared trailing disclosure mark. The mark stays at the far
+ * edge and appears only when its own summary carries pointer or keyboard intent. */
+.disclosure--workspace-project > .disclosure-summary > .disclosure-chev,
+.disclosure--workspace-worker > .disclosure-summary > .disclosure-chev,
+.disclosure--workspace-stage > .disclosure-summary > .disclosure-chev {
+  flex: 0 0 auto;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--motion-ease);
+}
+
+.disclosure--workspace-project > .disclosure-summary:hover > .disclosure-chev,
+.disclosure--workspace-project > .disclosure-summary:focus-visible > .disclosure-chev,
+.disclosure--workspace-worker > .disclosure-summary:hover > .disclosure-chev,
+.disclosure--workspace-worker > .disclosure-summary:focus-visible > .disclosure-chev,
+.disclosure--workspace-stage > .disclosure-summary:hover > .disclosure-chev,
+.disclosure--workspace-stage > .disclosure-summary:focus-visible > .disclosure-chev {
+  opacity: 1;
+}
+
+/* Ticket rows contain only the title and, while running, the existing StageMark. */
 .list-row--board {
   width: 100%;
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
   border: 0;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) 0;
   text-align: left;
   font-size: var(--type-sm);
   line-height: 1.35;
@@ -2104,64 +2167,14 @@ select {
 
 .list-row--board .list-row-title {
   display: block;
-  flex: none;
+  min-width: 0;
   overflow-wrap: anywhere;
   color: inherit;
   font-size: inherit;
 }
 
-.board-workspace-row-main {
-  display: block;
-  min-width: 0;
-}
-
-.board-workspace-row-byline {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  min-width: 0;
-  margin-top: var(--space-1);
-  color: var(--text-faint);
-  font-size: var(--type-xs);
-  line-height: 1.2;
-}
-
-.board-workspace-row-metadata {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-.board-workspace-row-type,
-.board-workspace-row-stage {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.board-workspace-row-stage {
-  color: var(--text-muted);
-}
-
-.board-workspace-row-separator {
-  flex: 0 0 auto;
-  color: var(--text-faintest);
-}
-
-.board-workspace-stage-rail {
-  width: var(--board-workspace-stage-rail-width);
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-1);
-  justify-self: end;
-}
-
 .board-workspace-stage-mark {
-  flex: 0 0 0.7rem;
+  flex: 0 0 auto;
 }
 
 /* --- Ticket screen (T16) ------------------------------------------------- */
