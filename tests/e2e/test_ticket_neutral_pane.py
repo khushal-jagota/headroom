@@ -140,7 +140,7 @@ def test_ticket_step_settles_on_failed(
     _run_step(relay_tickets_server, ticket_id)
     # Wait until the step turn is genuinely streaming (a delta rendered) before interrupting.
     page.wait_for_selector("[data-neutral-streaming]", timeout=WAIT_MS)
-    page.click("[data-neutral-interrupt]")
+    _send(page, "/interrupt")  # interrupt is a slash action in the "/" menu
     # The running step turn closes as interrupted (its failure line renders; live streaming gone).
     _wait_chat_text(page, "planner", "(interrupted)")
     page.wait_for_selector("[data-neutral-streaming]", state="detached", timeout=WAIT_MS)
@@ -187,10 +187,12 @@ def test_ticket_human_send_mid_step_native_queue(
     page = _open_ticket_pane(open_page, context_factory, relay_tickets_server, ticket_id)
     _run_step(relay_tickets_server, ticket_id)
     page.wait_for_selector("[data-neutral-streaming]", timeout=WAIT_MS)
-    # The composer stays enabled while the step streams, and a mid-step human send is accepted.
+    # The composer stays enabled while the step streams; with text present a mid-step send is
+    # allowed (no turn-busy disable — the empty-composer disable is unrelated).
     assert page.is_enabled("[data-chat-input]")
+    page.fill("[data-chat-input]", "interject while the step runs")
     assert page.is_enabled("[data-chat-send]")
-    _send(page, "interject while the step runs")
+    page.click("[data-chat-send]")
     _wait_chat_text(page, "you", "interject while the step runs")
 
 
@@ -209,11 +211,12 @@ def test_ticket_recovery_after_child_reset(
     # OPTIMISTIC human row; the barrier below proves the reset fired (that optimistic row must
     # DISAPPEAR when the post-reattach history snapshot — which never got the never-completed
     # reset-cue turn — REPLACES the transcript).
-    _send(page, "__reset_child__ now")
-    _wait_chat_text(page, "you", "__reset_child__ now")
+    _send(page, "reset-child now")
+    # markdown renders __reset_child__ as bold, so the visible text is "reset_child now".
+    _wait_chat_text(page, "you", "reset-child")
     page.wait_for_function(
         "() => !Array.from(document.querySelectorAll('[data-chat-msg=\"you\"]'))"
-        ".some(el => el.textContent.includes('__reset_child__'))",
+        ".some(el => el.textContent.includes('reset-child'))",
         timeout=WAIT_MS,
     )
     # The durable history is intact after re-attach (the persisted "before reset" turn).

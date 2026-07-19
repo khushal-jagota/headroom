@@ -38,10 +38,10 @@ _CLARIFY_CUE = "ask me"
 _HOLD_CUE = "hold open"
 # The scripted 4009 compact-failure cue: a prompt carrying it flags ITS session so a later
 # session.compress on that session fails with 4009 (a native rejection that must not be masked).
-_COMPACT_FAIL_CUE = "__compact_fails__"
+_COMPACT_FAIL_CUE = "compact-fails"
 # A RESET cue kills the child so the relay synthesizes a child_reset; the respawn shares the
 # store, so re-attach restores history.
-_RESET_CUE = "__reset_child__"
+_RESET_CUE = "reset-child"
 
 # S3 §1.3 — the prompt.submit ACK carries a DISPOSITION `status` field matching real Hermes
 # (sessions/service.py:556 `disposition = str(result.get("status") ...)`, values

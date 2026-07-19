@@ -1,24 +1,21 @@
 <script lang="ts">
   /**
-   * ChiefNeutralPane — the Chief-only neutral-envelope pane (S2b plan §4.4). A thin view over
-   * the framework-free `neutralPane.ts` client, with its OWN dedicated composer (NOT
-   * ChatComposer, which auto-sends skills/commands and carries a disabling busy state — both
-   * contract violations). NEVER disabled, no busy state; a mid-turn send is a native queue,
-   * not an error (D-native-turn-concurrency).
+   * ChiefNeutralPane — the entity-generic neutral-envelope pane (Chief + every ticket). A thin
+   * view over the framework-free `neutralPane.ts` client that REUSES the legacy chat design:
+   * the same message/markdown thread and the real ChatComposer (with disabling turned off and
+   * skill-select set to insert, per D-native-turn-concurrency / the owner ruling). Only the two
+   * genuinely-new event kinds differ — live agent activity (thinking + tool calls) renders in the
+   * thread, and tool approvals get a small inset the legacy pane has no equivalent for.
    *
    * Reactivity boundary: this runs a SEPARATE WebSocket to /api/relay/neutral with its own
    * reconnect + re-attach lifecycle. It registers NO resource, does not import the resource
-   * cache, and does not read Panels DB — history renders only from the attach snapshot. So the
-   * resource-catalogue completeness test stays green.
+   * cache, and does not read Panels DB — history renders only from the attach snapshot.
    */
-  import { onDestroy, onMount, tick } from "svelte";
+  import { onDestroy, onMount } from "svelte";
+  import ChatComposer from "./ChatComposer.svelte";
+  import MarkdownBlock from "./MarkdownBlock.svelte";
   import { uploadChatImage } from "../lib/api";
-  import {
-    createPendingChatImages,
-    pendingChatImageFiles,
-    removePendingChatImage,
-    revokePendingChatImages
-  } from "../lib/chatImages";
+  import type { CommandCatalog, ChatPendingClarification } from "../lib/types";
   import {
     createNeutralPaneClient,
     type NeutralPaneClient,
@@ -45,23 +42,38 @@
     historyLoaded: false
   });
   let ready = $state(false);
-  let draft = $state("");
-  let answerDraft = $state("");
-  let pickerOpen = $state(false);
-  let pendingImages = $state<{ id: number; file: File; url: string }[]>([]);
-  let nextImageId = 1;
-  let imageInput = $state<HTMLInputElement | null>(null);
-  let uploadError = $state("");
+  let composerError = $state("");
+
+  let threadElement = $state<HTMLDivElement | null>(null);
+  let following = true;
+
+  function onThreadScroll(): void {
+    const el = threadElement;
+    if (!el) return;
+    following = el.scrollHeight - el.clientHeight - el.scrollTop <= 80;
+  }
+
+  // Keep the thread pinned to the newest content while the reader is at the bottom.
+  $effect(() => {
+    void snapshot.transcript.length;
+    void snapshot.streamingText;
+    void snapshot.thinkingText;
+    void snapshot.toolActivity.length;
+    void snapshot.historyLoaded;
+    if (!following) return;
+    void Promise.resolve().then(() => {
+      if (threadElement && following) threadElement.scrollTop = threadElement.scrollHeight;
+    });
+  });
 
   let client: NeutralPaneClient | null = null;
+  let catalogFetched = false;
 
   function neutralUrl(): string {
     const scheme = window.location.protocol === "https:" ? "wss://" : "ws://";
     return `${scheme}${window.location.host}/api/relay/neutral`;
   }
 
-  /** Adapt the DOM WebSocket (its handlers carry an Event arg the client ignores) to the
-   * client's minimal NeutralSocket shape. */
   function makeSocket(url: string): NeutralSocket {
     const raw = new WebSocket(url);
     const adapter: NeutralSocket = {
@@ -89,8 +101,6 @@
       clearTimeout: (id) => window.clearTimeout(id),
       onState: (next) => {
         snapshot = next;
-        // The readiness barrier gates on the FIRST history snapshot rendering — a socket open
-        // alone is not ready (Playwright must never race the pre-history mount).
         if (!ready && next.historyLoaded) ready = true;
       }
     });
@@ -99,21 +109,21 @@
 
   onDestroy(() => {
     client?.dispose();
-    revokePendingChatImages(pendingImages, URL.revokeObjectURL);
-    pendingImages = [];
   });
 
-  // --- skills-only picker (from the catalog_result payload, skills only) ---------------------
+  // Fetch the catalog once ready so skills populate the composer's "/" menu.
+  $effect(() => {
+    if (ready && !catalogFetched) {
+      catalogFetched = true;
+      client?.listCatalog();
+    }
+  });
+
+  // --- skills from the native catalog (skills only) ------------------------------------------
 
   type SkillEntry = { name: string; trigger: string; description?: string };
-
   const skills = $derived<SkillEntry[]>(extractSkills(snapshot.catalogPayload));
 
-  /** Parse skills from the NATIVE `commands.catalog` payload (delivered verbatim by S2a). The
-   * native shape (shared_gateway._build_catalog) is top-level `pairs` (list of
-   * [command, description]) + `skill_count`; SKILLS are the LAST `skill_count` entries of
-   * `pairs`. The command string IS the trigger text to insert. Skills-only — never runnable
-   * commands, never /model. */
   function extractSkills(payload: unknown): SkillEntry[] {
     if (payload === null || typeof payload !== "object") return [];
     const record = payload as { pairs?: unknown; skill_count?: unknown };
@@ -123,108 +133,98 @@
         ? Math.min(record.skill_count, pairs.length)
         : 0;
     if (skillCount === 0) return [];
-    const skillPairs = pairs.slice(pairs.length - skillCount);
     const found: SkillEntry[] = [];
-    for (const pair of skillPairs) {
+    for (const pair of pairs.slice(pairs.length - skillCount)) {
       if (!Array.isArray(pair) || pair.length < 1) continue;
       const command = String(pair[0] ?? "");
       if (!command) continue;
       found.push({
         name: command,
-        trigger: command, // the command string is the trigger text
+        trigger: command,
         description: pair.length >= 2 ? String(pair[1] ?? "") : undefined
       });
     }
     return found;
   }
 
-  function togglePicker(): void {
-    pickerOpen = !pickerOpen;
-    if (pickerOpen) client?.listCatalog(); // fetch the catalog on picker OPEN (F10)
+  // --- the "/" menu: everything is a slash command, listing only what we handle --------------
+  // Session verbs run when picked (they are actions); skills insert their trigger as text.
+  // There is no generic command execution — the relay has no path to run arbitrary commands,
+  // so only these three actions plus skills appear.
+  type CommandItem = { name: string; description: string; run: () => void };
+
+  const COMMAND_ITEMS: CommandItem[] = [
+    { name: "/compact", description: "Compress the conversation", run: () => client?.compact() },
+    { name: "/new", description: "Start a new conversation", run: () => client?.newConversation() },
+    { name: "/interrupt", description: "Stop the current turn", run: () => client?.interrupt() }
+  ];
+
+  function matchedCommand(text: string): CommandItem | undefined {
+    return COMMAND_ITEMS.find((c) => text === c.name || text.startsWith(`${c.name} `));
   }
 
-  function insertSkill(skill: SkillEntry): void {
-    // INSERT the trigger text into the draft — never auto-send.
-    draft = draft.length ? `${draft} ${skill.trigger}` : skill.trigger;
-    pickerOpen = false;
-  }
+  // Adapt our handled actions + native skills into the CommandCatalog shape ChatComposer wants.
+  const composerCatalog = $derived<CommandCatalog>({
+    categories: [
+      { name: "Session", pairs: COMMAND_ITEMS.map((c) => [c.name, c.description] as [string, string]) }
+    ],
+    skills: skills.map((s) => [s.trigger, s.description ?? ""] as [string, string]),
+    canon: {},
+    sub: {}
+  });
 
-  // --- images (reuse the existing chatImages helper + uploadChatImage) -----------------------
+  // A pending agent question maps onto the composer's built-in clarification UI.
+  const pendingClarification = $derived<ChatPendingClarification | null>(
+    snapshot.pendingQuestion
+      ? {
+          request_id: snapshot.pendingQuestion.requestId,
+          question: snapshot.pendingQuestion.promptText,
+          choices: [...snapshot.pendingQuestion.choices]
+        }
+      : null
+  );
 
-  function intakeFiles(files: FileList | null | undefined): void {
-    if (!files) return;
-    const result = createPendingChatImages(files, nextImageId, URL.createObjectURL);
-    pendingImages = [...pendingImages, ...result.accepted];
-    nextImageId = result.nextId;
-    if (result.rejected.length) uploadError = "Choose an image file.";
-  }
-
-  function imageChanged(): void {
-    intakeFiles(imageInput?.files);
-    if (imageInput) imageInput.value = "";
-  }
-
-  function removeImage(id: number): void {
-    pendingImages = removePendingChatImage(pendingImages, id, URL.revokeObjectURL);
-  }
-
-  async function uploadPendingImages(): Promise<string[]> {
+  async function uploadFiles(files: File[]): Promise<string[]> {
     const refs: string[] = [];
-    for (const file of pendingChatImageFiles(pendingImages)) {
+    for (const file of files) {
       const uploaded = await uploadChatImage(entityId, file);
       refs.push(uploaded.reference);
     }
     return refs;
   }
 
-  // --- composer actions (NEVER disabled — a mid-turn send is a native queue) ------------------
-
-  async function submit(): Promise<void> {
-    const text = draft.trim();
-    if (!text && pendingImages.length === 0) return;
+  // The composer's one submit path, routed to the neutral client. Never disabled — a mid-turn
+  // send is a native queue/interrupt, not an error.
+  async function composerSubmit(
+    text: string,
+    _mode: "message" | "command",
+    images?: File[]
+  ): Promise<boolean> {
+    const trimmed = text.trim();
+    const question = snapshot.pendingQuestion;
+    if (question) {
+      if (!trimmed) return false;
+      client?.answer(question.requestId, trimmed);
+      return true;
+    }
+    const command = matchedCommand(trimmed);
+    if (command && (!images || images.length === 0)) {
+      command.run();
+      return true;
+    }
     let refs: string[] = [];
-    if (pendingImages.length) {
+    if (images && images.length) {
       try {
-        refs = await uploadPendingImages();
+        refs = await uploadFiles(images);
       } catch {
-        uploadError = "Image upload failed.";
-        return;
+        composerError = "Image upload failed.";
+        return false;
       }
     }
-    client?.send(text, refs);
-    draft = "";
-    revokePendingChatImages(pendingImages, URL.revokeObjectURL);
-    pendingImages = [];
-    uploadError = "";
-    await tick();
-  }
-
-  function onKeydown(event: KeyboardEvent): void {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      void submit();
-    }
-  }
-
-  function interrupt(): void {
-    client?.interrupt();
-  }
-
-  function compact(): void {
-    client?.compact();
-  }
-
-  function newConversation(): void {
-    client?.newConversation();
-  }
-
-  function answerQuestion(choice?: string): void {
-    const question = snapshot.pendingQuestion;
-    if (!question) return;
-    const answer = (choice ?? answerDraft).trim();
-    if (!answer) return;
-    client?.answer(question.requestId, answer);
-    answerDraft = "";
+    if (!trimmed && refs.length === 0) return false;
+    client?.send(trimmed, refs);
+    composerError = "";
+    return true;
   }
 
   function respondApproval(decision: string, applyToAll: boolean): void {
@@ -235,162 +235,160 @@
 </script>
 
 <section
-  class="chief-neutral-pane"
+  class="chat-panel"
   data-chief-neutral-pane
   data-neutral-ready={ready ? "true" : undefined}
   data-neutral-connected={snapshot.connected ? "true" : undefined}
   aria-label={label}
 >
-  <div class="chief-neutral-transcript" data-neutral-transcript>
-    {#each snapshot.transcript as entry, index (index)}
-      {#if entry.role === "human" || entry.role === "user"}
-        <div class="chat-u" data-chat-msg="you">{entry.text}</div>
-      {:else if entry.role === "assistant"}
-        <div class="chat-a" data-chat-msg="planner">{entry.text}</div>
-      {:else if entry.role === "tool"}
-        <div class="chat-sys" data-chat-msg="tool">{entry.text}</div>
-      {:else}
-        <div class="chat-sys" data-chat-msg="system">{entry.text}</div>
-      {/if}
-    {/each}
-
-    {#if snapshot.thinkingText}
-      <div class="chief-neutral-thinking" data-neutral-thinking>{snapshot.thinkingText}</div>
-    {/if}
-
-    {#if snapshot.turnActive && snapshot.streamingText}
-      <div class="chat-a" data-chat-msg="planner" data-neutral-streaming>
-        {snapshot.streamingText}
-      </div>
-    {/if}
-
-    {#each snapshot.toolActivity as tool (tool.toolId + tool.phase)}
-      <div class="chief-neutral-tool" data-neutral-tool>{tool.toolName}: {tool.preview}</div>
-    {/each}
+  <div class="chat-head">
+    <span class={`chat-dot ${snapshot.connected ? "chat-dot--on" : "chat-dot--off"}`}></span>
+    <span class="chat-lbl">{snapshot.connected ? label : `${label} · offline`}</span>
   </div>
 
-  {#if snapshot.pendingQuestion}
-    <div class="chief-neutral-clarify" data-neutral-clarify>
-      <p data-neutral-question>{snapshot.pendingQuestion.promptText}</p>
-      {#each snapshot.pendingQuestion.choices as choice (choice)}
-        <button
-          type="button"
-          data-neutral-choice
-          onclick={() => answerQuestion(choice)}
-        >{choice}</button>
+  <div class="chat-thread-shell">
+    <div
+      class="chat-thread"
+      data-neutral-transcript
+      bind:this={threadElement}
+      onscroll={onThreadScroll}
+    >
+      {#each snapshot.transcript as entry, index (index)}
+        {#if entry.role === "human" || entry.role === "user"}
+          <div class="chat-u" data-chat-msg="you"><MarkdownBlock text={entry.text} /></div>
+        {:else if entry.role === "assistant"}
+          <div class="chat-a" data-chat-msg="planner"><MarkdownBlock text={entry.text} /></div>
+        {:else if entry.role === "tool"}
+          <div class="chat-sys" data-chat-msg="tool"><MarkdownBlock text={entry.text} /></div>
+        {:else}
+          <div class="chat-sys" data-chat-msg="system"><MarkdownBlock text={entry.text} /></div>
+        {/if}
       {/each}
-      <input
-        type="text"
-        data-neutral-answer-input
-        bind:value={answerDraft}
-        placeholder="Answer..."
-      />
-      <button type="button" data-neutral-answer-send onclick={() => answerQuestion()}>Answer</button>
+
+      {#if snapshot.turnActive && snapshot.streamingText}
+        <div class="chat-a" data-chat-msg="planner" data-neutral-streaming>
+          <MarkdownBlock text={snapshot.streamingText} />
+        </div>
+      {/if}
+
+      {#if snapshot.thinkingText || snapshot.toolActivity.length}
+        <div class="chat-pending-block neutral-activity" data-chat-pending>
+          <div class="chat-pending-row">
+            <span class="chat-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="chat-pending-label"
+              >{snapshot.thinkingText ? "Thinking" : "Working"}</span
+            >
+          </div>
+          {#if snapshot.thinkingText}
+            <div class="neutral-thinking" data-neutral-thinking>{snapshot.thinkingText}</div>
+          {/if}
+          {#each snapshot.toolActivity as tool (tool.toolId + tool.phase)}
+            <div class="neutral-tool" data-neutral-tool>
+              <span class="neutral-tool-name">{tool.toolName}</span>
+              {#if tool.preview}<span class="neutral-tool-preview">{tool.preview}</span>{/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
     </div>
-  {/if}
+  </div>
 
   {#if snapshot.pendingApproval}
-    <div class="chief-neutral-approval" data-neutral-approval>
-      <p>{snapshot.pendingApproval.summary}</p>
-      <button type="button" data-neutral-approve onclick={() => respondApproval("approve", false)}
-        >Approve</button
-      >
-      <button type="button" data-neutral-approve-all onclick={() => respondApproval("approve", true)}
-        >Approve all</button
-      >
-      <button type="button" data-neutral-deny onclick={() => respondApproval("deny", false)}
-        >Deny</button
-      >
+    <div class="neutral-inset neutral-approval" data-neutral-approval>
+      <p class="neutral-inset-q">{snapshot.pendingApproval.summary}</p>
+      <div class="neutral-inset-choices">
+        <button
+          type="button"
+          class="neutral-chip neutral-chip--go"
+          data-neutral-approve
+          onclick={() => respondApproval("approve", false)}>Approve</button
+        >
+        <button
+          type="button"
+          class="neutral-chip"
+          data-neutral-approve-all
+          onclick={() => respondApproval("approve", true)}>Approve all</button
+        >
+        <button
+          type="button"
+          class="neutral-chip neutral-chip--deny"
+          data-neutral-deny
+          onclick={() => respondApproval("deny", false)}>Deny</button
+        >
+      </div>
     </div>
   {/if}
 
-  <div class="chief-neutral-composer" data-neutral-composer>
-    {#if pickerOpen}
-      <div class="chief-neutral-picker" data-neutral-picker>
-        {#each skills as skill (skill.name)}
-          <button
-            type="button"
-            data-neutral-skill
-            data-neutral-skill-name={skill.name}
-            onclick={() => insertSkill(skill)}
-          >{skill.name}</button>
-        {/each}
-        {#if skills.length === 0}
-          <span data-neutral-picker-empty>No skills</span>
-        {/if}
-      </div>
-    {/if}
+  {#if composerError}
+    <p class="neutral-error" data-neutral-error>{composerError}</p>
+  {/if}
 
-    {#if pendingImages.length}
-      <div class="chief-neutral-images" data-neutral-images>
-        {#each pendingImages as image (image.id)}
-          <span class="chief-neutral-image" data-neutral-image data-neutral-image-name={image.file.name}>
-            <img src={image.url} alt="" />
-            <button type="button" data-neutral-image-remove onclick={() => removeImage(image.id)}
-              >×</button
-            >
-          </span>
-        {/each}
-      </div>
-    {/if}
-
-    {#if uploadError}
-      <p class="chief-neutral-error" data-neutral-error>{uploadError}</p>
-    {/if}
-
-    <textarea
-      data-chat-input
-      bind:value={draft}
-      onkeydown={onKeydown}
-      placeholder={`Message ${label}...`}
-      rows="2"
-    ></textarea>
-
-    <div class="chief-neutral-actions">
-      <button type="button" data-neutral-picker-toggle onclick={togglePicker}>Skills</button>
-      <input
-        type="file"
-        accept="image/*"
-        bind:this={imageInput}
-        onchange={imageChanged}
-        data-neutral-image-input
-        hidden
-      />
-      <button type="button" data-neutral-image-add onclick={() => imageInput?.click()}>Image</button>
-      <button type="button" data-neutral-compact onclick={compact}>Compact</button>
-      <button type="button" data-neutral-new-conversation onclick={newConversation}>New</button>
-      <button type="button" data-neutral-interrupt onclick={interrupt}>Interrupt</button>
-      <button type="button" data-chat-send onclick={() => void submit()}>Send</button>
-    </div>
-  </div>
+  <ChatComposer
+    catalog={composerCatalog}
+    disabled={false}
+    submitDisabled={false}
+    pauseMode={false}
+    {pendingClarification}
+    placeholder={`Message ${label}…`}
+    skillSelectInserts={true}
+    onSubmit={composerSubmit}
+    onError={(err) => (composerError = err ? "Choose an image file." : "")}
+  />
 </section>
 
 <style>
-  /* Fill the flex parent and establish the internal scroll region — mirrors the
-     legacy .chat-panel/.chat-thread structure in assets/app.css so the transcript
-     scrolls instead of expanding its container (which the desk clips at overflow
-     hidden). Entity-generic: applies to the Chief and every ticket pane. */
-  .chief-neutral-pane {
-    flex: 1;
-    min-height: 0;
-    height: 100%;
+  /* Live agent activity (thinking + tool calls), a quiet inset matching the pending block. */
+  .neutral-activity {
     display: flex;
     flex-direction: column;
+    gap: var(--space-2);
   }
-
-  .chief-neutral-transcript {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
+  .neutral-thinking {
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
+    color: var(--text-faint);
+    white-space: pre-wrap;
+    padding-left: calc(var(--space-4) + var(--space-1));
+  }
+  .neutral-tool {
     display: flex;
-    flex-direction: column;
-    gap: var(--space-5);
-    padding: var(--space-3) var(--space-1) var(--space-4);
+    gap: var(--space-2);
+    align-items: baseline;
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
+    padding-left: calc(var(--space-4) + var(--space-1));
   }
+  .neutral-tool-name { color: var(--text-muted); font-weight: 600; }
+  .neutral-tool-preview { color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  .chief-neutral-clarify,
-  .chief-neutral-approval,
-  .chief-neutral-composer {
+  /* Approval inset — the one genuinely new affordance with no legacy equivalent. */
+  .neutral-inset {
     flex: none;
+    margin: 0 var(--space-1) var(--space-2);
+    padding: var(--space-3);
+    border: var(--border-hairline) solid var(--accent-bright);
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
   }
+  .neutral-inset-q { margin: 0; color: var(--text-strong); font-size: var(--type-sm); }
+  .neutral-inset-choices { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .neutral-chip {
+    border: var(--border-hairline) solid var(--border-color);
+    border-radius: var(--radius-pill);
+    background: var(--surface-overlay);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
+    padding: var(--space-1) var(--space-3);
+    cursor: pointer;
+    transition: border-color var(--motion-fast) var(--motion-ease), color var(--motion-fast) var(--motion-ease);
+  }
+  .neutral-chip:hover { border-color: var(--accent-bright); color: var(--text-strong); }
+  .neutral-chip--go { color: var(--text-strong); border-color: var(--accent-bright); }
+  .neutral-chip--deny:hover { border-color: var(--accent-error); color: var(--accent-error); }
+
+  .neutral-error { flex: none; margin: 0 var(--space-1) var(--space-2); color: var(--accent-error); font-size: var(--type-xs); }
 </style>

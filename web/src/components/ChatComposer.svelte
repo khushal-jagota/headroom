@@ -22,6 +22,7 @@
     pendingClarification = null,
     initialText = "",
     placeholder = "Message the employee...",
+    skillSelectInserts = false,
     onDraft,
     onSubmit,
     onPause,
@@ -36,6 +37,7 @@
     pendingClarification?: ChatPendingClarification | null;
     initialText?: string;
     placeholder?: string;
+    skillSelectInserts?: boolean;
     onDraft?: (text: string) => void;
     onSubmit: (
       text: string,
@@ -267,6 +269,14 @@
 
   function choose(item: MenuItem): void {
     const kind = commandKind(item.name);
+    // Callers can opt into inserting a picked skill's trigger as text (to compose around it)
+    // instead of sending it immediately — the neutral pane uses this.
+    if (skillSelectInserts && kind === "skill") {
+      text = `${item.name} `;
+      menuOpen = false;
+      inputChanged();
+      return;
+    }
     if (kind === "skill" || kind === "command") {
       void send(item.name);
       return;
