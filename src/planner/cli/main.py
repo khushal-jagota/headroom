@@ -21,6 +21,7 @@ import click
 from click.core import ParameterSource
 
 from planner.cli import http
+from planner.environments.cli import environment as environment_group
 from planner.tickets.contracts import AtCap
 
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
@@ -278,6 +279,9 @@ def json_option(func: Callable[..., Any]) -> Callable[..., Any]:
 @click.group()
 def main() -> None:
     """Operate the local planner server."""
+
+
+main.add_command(environment_group)
 
 
 @main.command("serve")

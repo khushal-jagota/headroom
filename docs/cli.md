@@ -62,6 +62,10 @@ generic Stage setter.
 - **`serve`** — run the server and background worker runtime in the foreground.
   It keeps ownership while Panels restarts, so the same terminal continues to show the
   server logs.
+- **`environment prepare / inspect / run / reset / remove / render-linux`** — manage
+  isolated live, staging, and preview runtime instances. `environment run` requires one
+  explicit `--repository-root` and validates that worktree against the prepared
+  manifest before using it as the launch directory.
 - **`restart`** — ask that running `serve` command to load the current Panels code again.
   The command reports when the request is accepted. If `serve` is not running, it reports
   the connection error and stops.

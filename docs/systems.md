@@ -253,6 +253,10 @@ Code paths: `src/planner/runtime/automatic_employee_step_eligibility.py`,
 `src/planner/core/link_actions.py`,
 `src/planner/core/loops.py`.
 
+Runtime environments let the same foreground server run as separate live, staging, or
+preview instances with distinct databases, managed files, Hermes homes, logs, locks,
+control sockets, and ports. See [`runtime environments`](environments.md).
+
 ### 5. The Hermes Gateway System
 
 Hermes is outside the planner. The planner talks to it through a gateway adapter.

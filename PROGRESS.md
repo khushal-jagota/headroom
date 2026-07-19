@@ -4,6 +4,48 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-19): isolated Panels runtime environments
+
+Current build stage:
+
+- Ticket `t_2r1u7f39` has accepted Success, Approach, and Plan. Implementation remains isolated on
+  `ticket/t_2r1u7f39-isolated-runtime` from main commit `3763cb5`; the main checkout and running Panels
+  instance were never restarted or mutated.
+- The repository-owned environment contract now covers `live`, stable `staging`, and disposable
+  previews through the ordinary Panels entry point. Every instance receives separate database/files,
+  Hermes home, repositories, credentials reference, ports, sockets, locks, and logs.
+- Linux account/systemd/tmpfiles/env assets are checked in as render/install inputs. Local output keeps
+  `vps_enforcement_verified=false`; host-account ownership remains a later VPS installation check.
+
+What just passed:
+
+- Strict RED→GREEN slices now cover 128 environment unit tests. The real process-level e2e starts
+  staging and two previews concurrently through `panels environment run --test-mode`, proves distinct
+  state/resources/repositories and isolated fake Hermes session state, then leaves no child running.
+- Independent review converged through manifest/path, credential, socket, Linux-unit, port, lifecycle,
+  caller-trusted repository, future-live-root, and repository-overlap corrections. Final code-only
+  Codex verdict: `NO VIOLATIONS`.
+- Canonical `./verify` passes every gate on the settled tree: Ruff, mypy across 151 source files,
+  1,167 unit tests, build/frontend checks, and 136 e2e tests — final `VERIFY: PASS`. Full transcript:
+  `data/verify/t_2r1u7f39-isolated-runtime-clean.log`; SHA-256
+  `252674abdfecfa4407c988904641748296674ee41614128c203ce1be55eb8972`.
+
+Current hypothesis:
+
+- Repository implementation is complete. The final branch commit and Implementation proposal are the
+  handoff boundary; installing Linux accounts/units or touching the running instance belongs to
+  Closeout or later VPS work.
+
+Next step:
+
+- Wait for the owner to approve or revise the ticket's Implementation proposal. Do not merge, deploy,
+  install VPS assets, or remove the worktree before that approval.
+
+Blockers:
+
+- VPS-only account/service enforcement is intentionally deferred to installation; it does not block the
+  reviewed and verified repository implementation.
+
 ## Current work cycle (2026-07-17): Hermes integration restructure — S0 protocol spike
 
 Exploration note (2026-07-18): the VPS agent-GUI survey found a possible simplification

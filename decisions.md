@@ -392,6 +392,27 @@ the controlled command is unavailable, the worker reports the operator action an
 This is an operational safety seam, not an OS security sandbox; same-user hostile-process
 isolation remains out of scope.
 
+## D-isolated-runtime-environments — One contract, separate mutable instances, host account for live
+
+`live`, stable `staging`, and disposable `preview-<id>` use the ordinary `panels serve` runtime through
+one repository-owned environment contract. Every instance has its own database, managed files, Hermes
+home/session state, port, control socket, locks, logs, credentials reference, and repository/worktree.
+Staging and previews share only one immutable versioned synthetic fixture definition; each materializes
+its own mutable database and files, and reset rebuilds only that instance. Live never receives fake data
+and is ultimately protected from `panels-worker` by the operator-owned `panels-live` Linux account.
+
+Launch starts from a scrubbed allowlist rather than overlaying the invoking shell. Runtime provider
+credentials come only from the prepared instance's validated file; Tailscale setup authority is not an
+application runtime credential. `panels environment run` requires a caller-provided repository root,
+checks it against the prepared allowed roots, and uses that exact root for exec, so a manifest cannot
+self-authorize a different worktree. Destructive operations are non-live only and hold the same
+port-scoped lifecycle lease through the full mutation.
+
+The repository checks path/resource collisions, fake-state independence, and three concurrent real
+server processes locally. Checked-in systemd/account assets are render/install inputs, not proof that
+Linux ownership exists: VPS enforcement remains false until an operator installs and verifies the
+accounts, permissions, credentials, units, and ingress on the target host.
+
 ## D-automatic-employee-step-eligibility — One complete automatic-start decision
 
 **Automatic Employee-step eligibility** is the whole answer to whether Planner may automatically start a

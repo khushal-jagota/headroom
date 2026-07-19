@@ -60,6 +60,9 @@ its old event lines are replaced by one minimal deletion audit.
   it, and feeds proposals back through the gate.
 - **Chat** (`chat.md`) — talking to a ticket's worker or the Chief of Staff, with
   server-owned live turn state and the slash menu of commands and skills.
+- **Runtime environments** (`environments.md`) — live, staging, and preview runtime
+  layouts, scrubbed launch, Linux render intent, and the opt-in Hermes cross-home
+  smoke.
 
 **The surfaces you plan on**
 
@@ -85,5 +88,5 @@ its old event lines are replaced by one minimal deletion audit.
 
 ---
 
-_Last verified: 2026-07-15 · Covers the system landscape; each doc carries its own
+_Last verified: 2026-07-19 · Covers the system landscape; each doc carries its own
 code paths._
