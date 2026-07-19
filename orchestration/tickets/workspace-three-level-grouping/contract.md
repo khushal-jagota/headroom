@@ -21,8 +21,8 @@ contracts do not change.
   current within-stage activity ordering.
 - Make project, worker-type, and stage groups independently collapsible and open by default.
 - Put each worker type in a transparent, thin, low-contrast bordered container.
-- Use large project titles, uppercase worker-type labels, and normal-case stage headings clearly larger
-  than ticket text.
+- Use large project titles, normal-case worker-type headers larger than ticket text, and compact uppercase
+  stage labels.
 - Hide right-aligned disclosure chevrons until their own header is hovered or keyboard-focused.
 - Separate stages with thin rules. Do not add a rule directly under a project title.
 - A ticket row contains its title and the existing condition mark only. Preserve the mark's waiting,

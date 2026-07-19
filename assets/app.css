@@ -2077,11 +2077,10 @@ select {
 .board-workspace-worker-label {
   min-width: 0;
   font-family: var(--font-ui);
-  font-size: var(--type-md);
+  font-size: var(--type-lg);
   font-weight: 500;
-  letter-spacing: var(--tracking-label);
-  line-height: 1.2;
-  text-transform: uppercase;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
 }
 
 .board-workspace-worker-stages,
@@ -2108,9 +2107,11 @@ select {
 .board-workspace-stage-label {
   min-width: 0;
   font-family: var(--font-ui);
-  font-size: var(--type-lg);
-  font-weight: 500;
-  line-height: 1.25;
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  line-height: 1.35;
+  text-transform: uppercase;
 }
 
 /* Every level uses the shared trailing disclosure mark. The mark stays at the far

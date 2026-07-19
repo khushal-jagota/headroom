@@ -259,6 +259,12 @@ def test_workspace_groups_populated_project_worker_and_stage_sections_in_contrac
         "els => els.map(el => el.textContent.trim())",
     )
     assert worker_labels == ["Coding", "New Worker"]
+    worker_type = page.eval_on_selector(
+        f"{vylo} [data-worker-type='coding'] .board-workspace-worker-label",
+        "el => ({fontSize: getComputedStyle(el).fontSize, "
+        "textTransform: getComputedStyle(el).textTransform})",
+    )
+    assert worker_type == {"fontSize": "20px", "textTransform": "none"}
 
     coding = f'{vylo} [data-worker-type="coding"]'
     coding_stage_labels = page.eval_on_selector_all(
@@ -267,6 +273,12 @@ def test_workspace_groups_populated_project_worker_and_stage_sections_in_contrac
         "els => els.map(el => el.textContent.trim())",
     )
     assert coding_stage_labels == ["Success", "Plan"]
+    stage_type = page.eval_on_selector(
+        f"{coding} [data-stage-key='needs_success'] .board-workspace-stage-label",
+        "el => ({fontSize: getComputedStyle(el).fontSize, "
+        "textTransform: getComputedStyle(el).textTransform})",
+    )
+    assert stage_type == {"fontSize": "11px", "textTransform": "uppercase"}
     assert page.locator(f'{coding} [data-stage-key="needs_kickoff"]').count() == 0
     assert page.locator(f'{coding} [data-stage-key="done"]').count() == 0
 
