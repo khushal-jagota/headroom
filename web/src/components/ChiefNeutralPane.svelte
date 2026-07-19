@@ -34,6 +34,8 @@
     streamingText: "",
     thinkingText: "",
     toolActivity: [],
+    statusLabel: "",
+    compacting: false,
     pendingQuestion: null,
     pendingApproval: null,
     title: "",
@@ -46,6 +48,19 @@
 
   let threadElement = $state<HTMLDivElement | null>(null);
   let following = true;
+
+  // Progressive disclosure for live agent activity: the collapsed row shows Hermes's own
+  // status phrase ("Pondering…", "Summarizing…"); expand to see the reasoning + tool steps.
+  let activityExpanded = $state(false);
+  const activityLabel = $derived(
+    snapshot.statusLabel || (snapshot.thinkingText ? "Thinking" : "Working")
+  );
+  const hasActivityDetail = $derived(
+    Boolean(snapshot.thinkingText || snapshot.toolActivity.length)
+  );
+  const activityVisible = $derived(
+    Boolean(snapshot.statusLabel || snapshot.thinkingText || snapshot.toolActivity.length)
+  );
 
   function onThreadScroll(): void {
     const el = threadElement;
@@ -258,6 +273,8 @@
           <div class="chat-u" data-chat-msg="you"><MarkdownBlock text={entry.text} /></div>
         {:else if entry.role === "assistant"}
           <div class="chat-a" data-chat-msg="planner"><MarkdownBlock text={entry.text} /></div>
+        {:else if entry.role === "divider"}
+          <div class="neutral-divider" data-neutral-divider><span>{entry.text}</span></div>
         {:else if entry.role === "tool"}
           <div class="chat-sys" data-chat-msg="tool"><MarkdownBlock text={entry.text} /></div>
         {:else}
@@ -271,23 +288,41 @@
         </div>
       {/if}
 
-      {#if snapshot.thinkingText || snapshot.toolActivity.length}
-        <div class="chat-pending-block neutral-activity" data-chat-pending>
-          <div class="chat-pending-row">
+      {#if activityVisible}
+        <div
+          class="chat-pending-block neutral-activity"
+          class:neutral-activity--compacting={snapshot.compacting}
+          data-chat-pending
+        >
+          <button
+            type="button"
+            class="chat-pending-row neutral-activity-toggle"
+            data-neutral-activity-toggle
+            aria-expanded={activityExpanded}
+            disabled={!hasActivityDetail}
+            onclick={() => (activityExpanded = !activityExpanded)}
+          >
             <span class="chat-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-            <span class="chat-pending-label"
-              >{snapshot.thinkingText ? "Thinking" : "Working"}</span
-            >
-          </div>
-          {#if snapshot.thinkingText}
-            <div class="neutral-thinking" data-neutral-thinking>{snapshot.thinkingText}</div>
-          {/if}
-          {#each snapshot.toolActivity as tool (tool.toolId + tool.phase)}
-            <div class="neutral-tool" data-neutral-tool>
-              <span class="neutral-tool-name">{tool.toolName}</span>
-              {#if tool.preview}<span class="neutral-tool-preview">{tool.preview}</span>{/if}
+            <span class="chat-pending-label" data-neutral-status>{activityLabel}</span>
+            {#if hasActivityDetail}
+              <span class="neutral-activity-chevron" aria-hidden="true"
+                >{activityExpanded ? "⌃" : "⌄"}</span
+              >
+            {/if}
+          </button>
+          {#if activityExpanded && hasActivityDetail}
+            <div class="neutral-activity-detail">
+              {#if snapshot.thinkingText}
+                <div class="neutral-thinking" data-neutral-thinking>{snapshot.thinkingText}</div>
+              {/if}
+              {#each snapshot.toolActivity as tool (tool.toolId + tool.phase)}
+                <div class="neutral-tool" data-neutral-tool>
+                  <span class="neutral-tool-name">{tool.toolName}</span>
+                  {#if tool.preview}<span class="neutral-tool-preview">{tool.preview}</span>{/if}
+                </div>
+              {/each}
             </div>
-          {/each}
+          {/if}
         </div>
       {/if}
     </div>
@@ -337,12 +372,53 @@
 </section>
 
 <style>
-  /* Live agent activity (thinking + tool calls), a quiet inset matching the pending block. */
+  /* A compacted-conversation divider — a thin centered rule in the history. */
+  .neutral-divider {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-faintest);
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
+    letter-spacing: var(--tracking-mono);
+  }
+  .neutral-divider::before,
+  .neutral-divider::after {
+    content: "";
+    flex: 1;
+    height: var(--border-hairline);
+    background: var(--border-color);
+  }
+
+  /* Live agent activity (thinking + tool calls) — progressive disclosure. */
   .neutral-activity {
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
   }
+  .neutral-activity-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+    border: none;
+    background: transparent;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .neutral-activity-toggle[disabled] { cursor: default; }
+  .neutral-activity-chevron { color: var(--text-faintest); font-size: var(--type-xs); }
+  .neutral-activity-detail {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  /* While a compaction is in flight, tint the status label so it reads as a lifecycle
+     event, not ordinary thinking. */
+  .neutral-activity--compacting .chat-pending-label { color: var(--accent-bright); }
   .neutral-thinking {
     font-family: var(--font-mono);
     font-size: var(--type-xs);

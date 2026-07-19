@@ -245,10 +245,19 @@ function feed(socket, kind, extra = {}) {
   feed(socket, "catalog_result", { payload_json: JSON.stringify(nativeCatalog) });
   assert.deepEqual(client.snapshot().catalogPayload, nativeCatalog);
 
-  // passthrough appends a quiet system line.
-  feed(socket, "passthrough", { native_type: "status.update", payload_json: "{}" });
-  assert.equal(client.snapshot().transcript.at(-1).role, "system");
-  assert.equal(client.snapshot().transcript.at(-1).text, "[status.update]");
+  // passthrough (internal/telemetry) is DROPPED from the transcript, not shown as "[kind]".
+  const beforePass = client.snapshot().transcript.length;
+  feed(socket, "passthrough", { native_type: "session.info", payload_json: "{}" });
+  assert.equal(client.snapshot().transcript.length, beforePass);
+
+  // a status event sets the activity label; a "compacting" status raises the affordance.
+  feed(socket, "status", { status_kind: "compacting", text: "Summarizing…" });
+  assert.equal(client.snapshot().statusLabel, "Summarizing…");
+  assert.equal(client.snapshot().compacting, true);
+  // the compacted event clears the affordance and drops a divider into the history.
+  feed(socket, "compacted", {});
+  assert.equal(client.snapshot().compacting, false);
+  assert.equal(client.snapshot().transcript.at(-1).role, "divider");
 
   // turn_completed closes the open turn with final_text and CLEARS all ephemeral state,
   // INCLUDING the pending question + approval (F9).

@@ -51,6 +51,8 @@ class NeutralEventKind(enum.Enum):
     history_snapshot = "history_snapshot"
     child_reset = "child_reset"
     catalog_result = "catalog_result"
+    status = "status"
+    compacted = "compacted"
     passthrough = "passthrough"
 
 
@@ -161,6 +163,26 @@ class CatalogResultEvent:
 
 
 @dataclass(frozen=True)
+class StatusEvent:
+    """The agent's live status line (`status.update`). `kind` is the native status kind —
+    "status" for the ordinary "Pondering…"/"Searching…" phrase the pane shows as the activity
+    label, "compacting" while a summarize/compress is in flight (the pane's compaction
+    affordance keys on it)."""
+
+    employee_entity_id: str
+    status_kind: str
+    text: str
+
+
+@dataclass(frozen=True)
+class CompactedEvent:
+    """A conversation compaction completed (the `session.compress` request's success ACK). The
+    pane drops its compacting affordance and marks the history with a compacted divider."""
+
+    employee_entity_id: str
+
+
+@dataclass(frozen=True)
 class PassthroughEvent:
     employee_entity_id: str
     native_type: str
@@ -180,6 +202,8 @@ NeutralEvent = (
     | HistorySnapshotEvent
     | ChildResetEvent
     | CatalogResultEvent
+    | StatusEvent
+    | CompactedEvent
     | PassthroughEvent
 )
 
@@ -263,6 +287,8 @@ _EVENT_BY_KIND: dict[NeutralEventKind, type[Any]] = {
     NeutralEventKind.history_snapshot: HistorySnapshotEvent,
     NeutralEventKind.child_reset: ChildResetEvent,
     NeutralEventKind.catalog_result: CatalogResultEvent,
+    NeutralEventKind.status: StatusEvent,
+    NeutralEventKind.compacted: CompactedEvent,
     NeutralEventKind.passthrough: PassthroughEvent,
 }
 _KIND_BY_EVENT: dict[type[Any], NeutralEventKind] = {v: k for k, v in _EVENT_BY_KIND.items()}

@@ -30,6 +30,8 @@ export const EVENT_KIND = {
   historySnapshot: "history_snapshot",
   childReset: "child_reset",
   catalogResult: "catalog_result",
+  status: "status",
+  compacted: "compacted",
   passthrough: "passthrough"
 } as const;
 
@@ -46,7 +48,7 @@ export const REQUEST_KIND = {
 
 // --- rendered snapshot shape (what onState delivers to the Svelte view) ----------------------
 
-export type TranscriptRole = "human" | "assistant" | "system" | "tool" | string;
+export type TranscriptRole = "human" | "assistant" | "system" | "tool" | "divider" | string;
 
 export type TranscriptEntry = {
   role: TranscriptRole;
@@ -79,6 +81,12 @@ export type NeutralSnapshot = {
   streamingText: string;
   thinkingText: string;
   toolActivity: readonly ToolActivity[];
+  // The agent's current status phrase (Hermes's own "Pondering…"/"Summarizing…"), shown as the
+  // activity label. Empty when idle.
+  statusLabel: string;
+  // True while a conversation compaction is in flight (a `compacting` status), cleared on the
+  // compacted event. Drives the compaction affordance.
+  compacting: boolean;
   pendingQuestion: PendingQuestion | null;
   pendingApproval: PendingApproval | null;
   title: string;
@@ -132,6 +140,8 @@ type MutableState = {
   streamingText: string;
   thinkingText: string;
   toolActivity: ToolActivity[];
+  statusLabel: string;
+  compacting: boolean;
   pendingQuestion: PendingQuestion | null;
   pendingApproval: PendingApproval | null;
   title: string;
@@ -147,6 +157,8 @@ function freshState(): MutableState {
     streamingText: "",
     thinkingText: "",
     toolActivity: [],
+    statusLabel: "",
+    compacting: false,
     pendingQuestion: null,
     pendingApproval: null,
     title: "",
@@ -164,6 +176,8 @@ function clearEphemeral(state: MutableState): void {
   state.streamingText = "";
   state.thinkingText = "";
   state.toolActivity = [];
+  state.statusLabel = "";
+  state.compacting = false;
   state.pendingQuestion = null;
   state.pendingApproval = null;
 }
@@ -182,6 +196,8 @@ export function createNeutralPaneClient(deps: NeutralPaneDeps): NeutralPaneClien
       streamingText: state.streamingText,
       thinkingText: state.thinkingText,
       toolActivity: state.toolActivity.slice(),
+      statusLabel: state.statusLabel,
+      compacting: state.compacting,
       pendingQuestion: state.pendingQuestion,
       pendingApproval: state.pendingApproval,
       title: state.title,
@@ -298,8 +314,19 @@ export function createNeutralPaneClient(deps: NeutralPaneDeps): NeutralPaneClien
       case EVENT_KIND.catalogResult:
         state.catalogPayload = parseCatalog(wire);
         break;
+      case EVENT_KIND.status:
+        // The agent's live status phrase becomes the activity label; a "compacting" status
+        // also raises the compaction affordance.
+        state.statusLabel = String(wire.text ?? "");
+        if (String(wire.status_kind ?? "") === "compacting") state.compacting = true;
+        break;
+      case EVENT_KIND.compacted:
+        state.compacting = false;
+        state.transcript.push({ role: "divider", text: "Conversation compacted" });
+        break;
       case EVENT_KIND.passthrough:
-        state.transcript.push({ role: "system", text: passthroughLine(wire) });
+        // Internal/telemetry frames (session.info, review.summary, and any unmapped kind) are
+        // NOT conversation — drop them from the transcript rather than printing "[kind]".
         break;
       default:
         // An unknown kind: leave state untouched (never crash the reducer).
@@ -454,11 +481,6 @@ function failureText(wire: Record<string, unknown>): string {
   if (reason === "interrupted") return detail || "(interrupted)";
   if (detail) return detail;
   return reason || "(turn failed)";
-}
-
-function passthroughLine(wire: Record<string, unknown>): string {
-  const nativeType = String(wire.native_type ?? "");
-  return nativeType ? `[${nativeType}]` : "[system]";
 }
 
 function parseCatalog(wire: Record<string, unknown>): unknown {

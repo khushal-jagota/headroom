@@ -369,11 +369,16 @@ class NeutralDownstreamSession:
                 )
             )
             return
+        if kind == tr.RpcKind.COMPACT:
+            # A successful session.compress: the pane clears its compacting affordance and
+            # drops a compacted divider into the history. A native error already surfaced above
+            # as a TurnFailedEvent (compact's 4009 -> busy_already_running).
+            await self._emit(nv.CompactedEvent(employee_entity_id=employee_entity_id))
+            return
         if kind == tr.RpcKind.ACK:
-            # A successful send/answer/approval/interrupt/compact carries nothing the pane
-            # needs (the real turn output flows back as event frames). A native error already
-            # took the error branch above and surfaced as a TurnFailedEvent (e.g. compact's
-            # 4009 -> busy_already_running).
+            # A successful send/answer/approval/interrupt carries nothing the pane needs (the
+            # real turn output flows back as event frames). A native error already took the
+            # error branch above and surfaced as a TurnFailedEvent.
             return
 
     async def _emit(self, event: nv.NeutralEvent) -> None:

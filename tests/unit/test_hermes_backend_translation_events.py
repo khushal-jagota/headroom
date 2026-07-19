@@ -110,11 +110,22 @@ def test_s0_inventory_kinds_have_explicit_rows() -> None:
         native_type="session.info",
         payload_json=json.dumps({"cwd": "/repo"}),
     )
-    status = ev("status.update", "sid", {"phase": "compacting"})
-    assert _translate(status) == nv.PassthroughEvent(
+    review = ev("review.summary", "sid", {"text": "..."})
+    assert _translate(review) == nv.PassthroughEvent(
         employee_entity_id=E1,
-        native_type="status.update",
-        payload_json=json.dumps({"phase": "compacting"}),
+        native_type="review.summary",
+        payload_json=json.dumps({"text": "..."}),
+    )
+
+
+def test_status_update_becomes_status_event() -> None:
+    ordinary = ev("status.update", "sid", {"kind": "status", "text": "Pondering"})
+    assert _translate(ordinary) == nv.StatusEvent(
+        employee_entity_id=E1, status_kind="status", text="Pondering"
+    )
+    compacting = ev("status.update", "sid", {"kind": "compacting", "text": "Summarizing…"})
+    assert _translate(compacting) == nv.StatusEvent(
+        employee_entity_id=E1, status_kind="compacting", text="Summarizing…"
     )
 
 

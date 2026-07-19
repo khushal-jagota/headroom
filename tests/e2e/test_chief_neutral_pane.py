@@ -163,8 +163,9 @@ def test_neutral_chief_thinking_indication(
 ) -> None:
     page = _open_neutral(open_page, context_factory, relay_chief_server, "#/chief")
     _send(page, "think about it")
-    # The thinking indicator shows during the turn (driven by the scripted thinking.delta).
-    page.wait_for_selector("[data-neutral-thinking]", timeout=WAIT_MS)
+    # The activity indicator (progressive disclosure, collapsed) shows during the turn, its label
+    # driven by the agent's status; the reasoning stream lives behind the disclosure.
+    page.wait_for_selector("[data-neutral-activity-toggle]", timeout=WAIT_MS)
     _wait_chat_text(page, "planner", "echo: think about it")
 
 

@@ -181,6 +181,12 @@ def native_frame_to_neutral_event(
         return nv.SessionTitledEvent(
             employee_entity_id=employee_entity_id, title=str(payload.get("title", ""))
         )
+    if native_type == NATIVE_STATUS_UPDATE:
+        return nv.StatusEvent(
+            employee_entity_id=employee_entity_id,
+            status_kind=str(payload.get("kind", "status")),
+            text=str(payload.get("text", "")),
+        )
     # Explicit S0-inventoried passthrough rows + the general unknown fallthrough all
     # serialize the whole payload opaque.
     return nv.PassthroughEvent(
@@ -267,7 +273,7 @@ def neutral_request_to_native_frames(
     if isinstance(request, nv.CompactRequest):
         return [
             NativeRequestPlan(
-                NATIVE_SESSION_COMPRESS, {"session_id": session_id}, RpcKind.ACK
+                NATIVE_SESSION_COMPRESS, {"session_id": session_id}, RpcKind.COMPACT
             )
         ]
     if isinstance(request, nv.ListCatalogRequest):
@@ -294,6 +300,7 @@ class RpcKind:
     carry a payload the session turns into internal state or a neutral event."""
 
     ACK = "ack"
+    COMPACT = "compact"
     ACTIVE_LIST = "active_list"
     HISTORY = "history"
     CATALOG = "catalog"
