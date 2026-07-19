@@ -575,15 +575,67 @@ async def get_my_ticket_by_live_session(
     return detail
 
 
+@router.get("/tickets/{ticket_id}/worker-self")
+async def get_worker_self_ticket(
+    ticket_id: str,
+    conn: DbConn,
+    clk: Clk,
+) -> JsonDict:
+    """A worker agent's own Ticket, resolved from `PLAN_TICKET_ID` (its spawn env, flag-on).
+
+    Unlike the plain `/tickets/{ticket_id}` detail read, this worker-identity route applies
+    the same one-owner validation the by-session readers apply: if the ticket has a bound
+    durable session, that session must resolve to EXACTLY this ticket — a corrupt duplicate
+    (two tickets sharing one durable session) is rejected. Returns the same detail shape
+    (`ticket_detail` + the worker specialist skill) the by-session route returns."""
+    ticket = tickets_data.read_ticket(conn, ticket_id)
+    if ticket.employee_session_id is not None:
+        owner = tickets_data.read_ticket_by_employee_session_id(
+            conn, ticket.employee_session_id
+        )
+        if owner.id != ticket.id:
+            raise PlannerError(
+                ErrorCode.validation,
+                "ticket durable session is owned by another ticket",
+                {
+                    "ticket_id": ticket.id,
+                    "employee_session_id": ticket.employee_session_id,
+                    "owner_ticket_id": owner.id,
+                },
+            )
+    detail = tickets_views.ticket_detail(conn, ticket.id, clk.now_unix())
+    detail["worker"] = (
+        configured_worker_type_registry()
+        .require(ticket.worker_type)
+        .worker_profile.specialist_skill
+    )
+    return detail
+
+
 @router.get("/tickets/{ticket_id}/employee-session-history")
 async def get_employee_session_history(
     ticket_id: str,
     request: Request,
     conn: DbConn,
     ctx: Ctx,
+    cfg: Cfg,
     clk: Clk,
 ) -> JsonDict:
     require_direct_write(ctx)
+    # Flag-on, a ticket employee is pool-owned: the installed adapter is the EntityRoutingGateway
+    # whose default is the LEGACY worker gateway, and its history read spawns a legacy child that
+    # `session.resume`s + binds the ticket's durable session — a SECOND owner of the pool-owned
+    # session the composition-input assertion cannot see (Codex Finding 3, the crossover
+    # `D-child-per-employee` forbids). Reject the legacy-gateway history read for a pool-owned
+    # ticket flag-on; the neutral pane renders history from the durable session via attach, so
+    # this inspection endpoint has no flag-on consumer (no web caller). Legacy path unchanged.
+    if cfg.relay_backend_enabled and ticket_id.startswith("t_"):
+        raise PlannerError(
+            ErrorCode.validation,
+            "ticket employee is pool-owned; the legacy session-history read is unavailable "
+            "(the neutral pane renders history from the durable session)",
+            {"ticket_id": ticket_id},
+        )
     result = employee_session_history.read_employee_session_history(
         conn,
         request.app.state.adapters.gateway,

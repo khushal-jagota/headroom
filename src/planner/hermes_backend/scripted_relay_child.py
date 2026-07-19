@@ -43,6 +43,28 @@ _COMPACT_FAIL_CUE = "__compact_fails__"
 # store, so re-attach restores history.
 _RESET_CUE = "__reset_child__"
 
+# S3 §1.3 — the prompt.submit ACK carries a DISPOSITION `status` field matching real Hermes
+# (sessions/service.py:556 `disposition = str(result.get("status") ...)`, values
+# streaming/queued/steered). A normal step ACKs "streaming"; cues drive the other two so the
+# PoolStepGateway's A1 terminal-ownership paths are e2e-observable.
+_QUEUED_CUE = "__queued__"  # ACK "queued"; the child streams the interrupted PREDECESSOR's
+#                             frames (a distinctive delta THEN its terminal) BEFORE OUR turn, so
+#                             the skip-one path AND the drop-predecessor-frames path are both
+#                             observable (a leaked predecessor delta would corrupt the owned turn).
+_STEERED_CUE = "__steered__"  # ACK "steered"; delivered into the active execution — NO owned
+#                               terminal is emitted (A1 returns errored immediately).
+# A PREDECESSOR-BEFORE-ACK cue emits a predecessor turn's terminal BEFORE replying to the submit
+# with disposition "streaming" — modelling a competing turn whose frame lands on the child stdout
+# thread ahead of OUR prompt.submit ACK (Codex Finding 1). The pool must DROP that pre-ACK frame
+# (it is a predecessor's, never ours) and settle on OUR turn's terminal streamed after the ACK.
+_PREDECESSOR_BEFORE_ACK_CUE = "__predecessor_before_ack__"
+# The distinctive predecessor text a queued/pre-ACK predecessor streams, so a test can assert it
+# NEVER reaches the owned turn's on_event stream.
+_PREDECESSOR_DELTA_TEXT = "PREDECESSOR draft"
+# A BUSY cue makes the NEXT prompt.submit return a native 4009 RPC error (not a disposition), so
+# the PoolStepGateway maps it to SharedGatewayBusy (mirrors shared_gateway.py:836-837).
+_BUSY_SUBMIT_CUE = "__busy_submit__"
+
 # One fixed catalog payload in the EXACT native `commands.catalog` shape (as
 # shared_gateway._build_catalog reads it): top-level `pairs` (list of [command, description])
 # + `skill_count` (skills are the LAST skill_count pairs) + `categories[].pairs`. Here one
@@ -312,8 +334,7 @@ class ScriptedRelayChild(ChildProcess):
             self._attach_image(rid, params)
             return
         if method == "prompt.submit":
-            self._reply_result(rid, {"accepted": True})
-            self._begin_turn(str(params.get("session_id", "")), str(params.get("text", "")))
+            self._submit_prompt(rid, params)
             return
         # Any other method: a structured unknown-method error (never a silent drop).
         self._reply_error(rid, -32601, f"unknown method: {method}")
@@ -330,7 +351,82 @@ class ScriptedRelayChild(ChildProcess):
         self.attached_image_paths.append(path)
         self._reply_result(rid, {"attached": True})
 
-    # --- held-turn state machine (paced by the child's own thread) --------
+    # --- prompt.submit disposition + held-turn state machine --------------
+
+    def _submit_prompt(self, rid: Any, params: JsonDict) -> None:
+        """Reply to a prompt.submit with the DISPOSITION `status` (streaming/queued/steered)
+        matching real Hermes (sessions/service.py:556), then drive the scripted turn to match.
+
+        - `__busy_submit__` → a native 4009 RPC error (no turn), so the gateway maps it to
+          SharedGatewayBusy (shared_gateway.py:836-837). NO disposition, NO turn begins.
+        - `__steered__` → ACK "steered"; delivered into the active execution — NO owned terminal
+          is emitted (A1 returns errored without watching a terminal).
+        - `__queued__` → ACK "queued"; the child streams the interrupted PREDECESSOR's frames (a
+          distinctive delta THEN its terminal) BEFORE our own completion, so both the skip-one
+          terminal path AND the drop-predecessor-frames path are observable.
+        - `__predecessor_before_ack__` → a predecessor turn's terminal is emitted BEFORE the ACK,
+          then ACK "streaming", then OUR turn — so the pool's pre-ACK-drop path is exercised.
+        - otherwise → ACK "streaming"; a normal held turn that streams + completes."""
+        live_id = str(params.get("session_id", ""))
+        text = str(params.get("text", ""))
+        if _BUSY_SUBMIT_CUE in text:
+            # A native busy rejection (4009); mirrors a real submit racing a running turn.
+            self._reply_error(rid, 4009, "session busy: already running")
+            return
+        if _STEERED_CUE in text:
+            self._reply_result(rid, {"status": "steered"})
+            # Delivered by steering the active execution: no independent turn to stream.
+            return
+        if _QUEUED_CUE in text:
+            self._reply_result(rid, {"status": "queued"})
+            self._begin_queued_turn(live_id, text)
+            return
+        if _PREDECESSOR_BEFORE_ACK_CUE in text:
+            # A competing predecessor turn's terminal lands on the child stdout thread BEFORE our
+            # prompt.submit ACK: emit it first, THEN the ACK, THEN our turn. The pool must drop the
+            # pre-ACK terminal (a predecessor's) and settle on our post-ACK terminal (Finding 1).
+            self._emit(
+                _event(
+                    "message.complete",
+                    live_id,
+                    {"text": _PREDECESSOR_DELTA_TEXT, "status": "complete"},
+                )
+            )
+            self._reply_result(rid, {"status": "streaming"})
+            self._begin_turn(live_id, text)
+            return
+        self._reply_result(rid, {"status": "streaming"})
+        self._begin_turn(live_id, text)
+
+    def _begin_queued_turn(self, live_id: str, text: str) -> None:
+        """A queued submission: stream the INTERRUPTED predecessor's frames first (a distinctive
+        delta THEN its terminal), then stream + complete OUR turn — so the pool's skip-one
+        terminal-ownership path is exercised AND a leaked predecessor delta would corrupt the owned
+        turn (the predecessor's frames must never reach on_event; Codex Finding 2)."""
+        with self._turn_lock:
+            self._running_live_id = live_id
+            self._interrupted = False
+            self._clarify_pending = None
+
+        def run() -> None:
+            if self._dead.is_set():
+                return
+            # The predecessor's own delta (the human turn the queued step displaced): distinctive
+            # text that must NOT reach the owned turn's on_event stream.
+            self._emit(
+                _event("message.delta", live_id, {"text": _PREDECESSOR_DELTA_TEXT})
+            )
+            self._paced_sleep()
+            # The predecessor's interrupted terminal (the human turn the queued step displaced).
+            self._emit(
+                _event("message.complete", live_id, {"text": "", "status": "interrupted"})
+            )
+            self._paced_sleep()
+            # Now OUR turn streams and completes; the pool skips the predecessor's frames above and
+            # owns this.
+            self._finish_turn(live_id, text)
+
+        self._jobs.put(run)
 
     def _begin_turn(self, live_id: str, text: str) -> None:
         # A RESET cue kills the child (the relay then synthesizes child_reset). The child dies

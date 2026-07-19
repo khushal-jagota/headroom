@@ -47,16 +47,20 @@ selects only Tickets that belong to today's day, then it asks the complete eligi
 function about each membership candidate. It passes eligible Ticket ids to the
 runner, but it does not claim a Ticket, touch Hermes, or write Ticket state.
 
-**EmployeeStepRunner** separately owns one step through the shared persistent Hermes
-gateway child. Its final claim starts `BEGIN IMMEDIATE`, reloads the Ticket and its
-Worker type definition, resolves the planning day inside that transaction, and asks
-the same complete eligibility function again. A stale discovery result therefore
-cannot change status, create chat state, call the gateway, or build a prompt. After a
-successful claim, the runner assembles the prompt, resumes or creates the Ticket's
-durable session, submits one turn, watches the run end, and settles runtime status
-through the Ticket data writers. Proposals, approvals, takeover, release, and runtime
-start/finish/error use those same writers, so "the code owns the Stage, the worker
-only proposes" holds here too.
+**EmployeeStepRunner** separately owns one step. Which Hermes child carries that step
+depends on the **relay backend** flag. With the flag off — today's default — the step
+runs through the single shared persistent Hermes gateway child that serves every
+worker. With the flag on, every active Ticket employee gets its own child in a pool,
+and the step is submitted through that Ticket's own child; the runner watches the same
+run end and settles the same way. Either way its final claim starts `BEGIN IMMEDIATE`,
+reloads the Ticket and its Worker type definition, resolves the planning day inside
+that transaction, and asks the same complete eligibility function again. A stale
+discovery result therefore cannot change status, create chat state, call the gateway,
+or build a prompt. After a successful claim, the runner assembles the prompt, resumes
+or creates the Ticket's durable session, submits one turn, watches the run end, and
+settles runtime status through the Ticket data writers. Proposals, approvals, takeover,
+release, and runtime start/finish/error use those same writers, so "the code owns the
+Stage, the worker only proposes" holds here too.
 
 When a successful run clears `agent_running_step`, the canonical writer reapplies the
 current Stage's effective ownership even if the run filed no proposal. It therefore
@@ -69,6 +73,13 @@ recheck their opposing fact inside the transaction. Therefore only one side can 
 a running Chat turn makes the Employee claim a no-op, while
 `agent_running_step` makes human admission fail before it creates a visible message or
 turn.
+
+That mutual exclusion is a **flag-off** rule. With the relay backend flag on, a human
+send during a running step is not rejected: it follows stock Hermes semantics on the
+Ticket's own child — the new turn queues behind the step, or interrupts it, exactly as
+Hermes decides — and no synthetic "already running" error is raised on that path. The
+eligibility decision the runner asks is unchanged either way; only the chat-side
+rejection is absent when the flag is on.
 
 The runner exists whenever the worker gateway exists. Automatic discovery is
 optional: it may be disabled or another process may own the polling lock. Returning
@@ -172,7 +183,9 @@ The explicit `GET /api/tickets/{ticket_id}/employee-session-history` route is th
 authoritative inspection of what Hermes actually received and produced for the stored
 Employee session. It may show pending context, hidden revision guidance, system or
 tool content, or other real session material absent from Panels Chat. Panels Chat state
-never loads or merges that history.
+never loads or merges that history. With the relay backend on, the route rejects a
+pool-owned ticket rather than let the legacy gateway resume a session the pool already
+owns — the ticket pane reads the same durable history through its own attach instead.
 
 ## When a run fails: errors in the event log
 
@@ -243,13 +256,16 @@ today wakes eligibility discovery without a follow-up scope edit. The ticket mov
 - **Rollover scheduling stays outside the employee runtime.** The server provisions the
   role skill, which is designed for thin morning and afternoon Hermes jobs. Trigger:
   the product decides that Panels itself should own the schedule. See `days.md`.
-- **Chat is not queued behind an active worker step.** If you talk to the same
-  employee while its worker step is already running, the send is rejected as
-  `already_running`; explicit Employee session history remains readable. The UI still
-  shows thinking dots, then the full answer, rather than streaming token by token.
+- **Chat is not queued behind an active worker step (legacy path only).** With the
+  relay backend off, talking to an employee whose worker step is running is rejected
+  as `already_running`, and the UI shows thinking dots then the full answer rather
+  than streaming. With the relay backend on, none of this applies: a human send during
+  a running step follows Hermes's own semantics (it queues, by default interrupting
+  the live turn) and the pane streams token by token. Trigger: retiring the legacy
+  flag-off path.
 - **The "mind" → "employee" rename is unfinished** — some code still calls the
   employee a "mind" (`src/planner/minds/`, `MindQueue`).
 
 ---
 
-_Last verified: 2026-07-18._
+_Last verified: 2026-07-19 (relay backend flag-on step path and native-concurrency human sends)._

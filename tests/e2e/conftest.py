@@ -34,6 +34,15 @@ FAKE_NOW = "2026-07-04T12:00:00"
 WAIT_MS = 10_000          # every Playwright wait
 BOOT_BUDGET_S = 15.0      # server readiness budget
 
+# The titles the relay_tickets seed gives its two automatic-step-eligible tickets; the flag-on
+# ticket e2e discovers each ticket id by title through /api/tickets (the seed mints ids). The
+# step prompt embeds the ticket title verbatim (_next_step_prompt: "Work ticket {id} — {title}
+# ..."), so a title carrying the scripted child's "hold open" cue makes THAT ticket's step a held
+# (running) turn the pane can interrupt — the only scripted-child machinery that yields a
+# broadcast failure terminal for a step (interrupted).
+RELAY_TICKET_TITLE = "Relay ticket employee step"
+RELAY_TICKET_HOLD_TITLE = "Relay ticket hold open step"
+
 
 @dataclass(frozen=True)
 class ServerHandle:
@@ -76,6 +85,7 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
         run_startup_recovery: bool = False,
         seed_db: Callable[[Path], None] | None = None,
         relay_chief: bool = False,
+        relay_tickets: bool = False,
     ) -> ServerHandle:
         nonlocal counter
         srvdir = tmp_path / f"srv{counter}"
@@ -107,6 +117,50 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
                     )
                     conn.commit()
 
+        if relay_tickets and seed_db is None:
+            # Flag-on ticket neutral pane: seed ONE ticket eligible for an automatic Employee
+            # step so `POST /api/test/run-step/{id}` dispatches a real step through the pool
+            # child. Mirrors the relay_chief seed shape (additive; does not touch the Chief
+            # seed). The ticket has NO employee_session_id — the first step mints + binds a
+            # fresh pool session, exactly the never-run-ticket path.
+            def seed_db(target: Path) -> None:
+                from planner.core.clock import parse_fake_now
+                from planner.core.db import connect
+                from planner.days import data as days_data
+                from planner.days.logic.dates import resolve_day_id
+                from planner.tickets import data as tickets_data
+                from planner.tickets.contracts import (
+                    NO_FURTHER,
+                    TITLE_MAX_CHARS,
+                    AtCap,
+                )
+
+                effective_now = fake_now if fake_now is not None else FAKE_NOW
+                today_id = resolve_day_id("today", parse_fake_now(effective_now), 5)
+                with connect(str(target)) as conn:
+                    for title in (RELAY_TICKET_TITLE, RELAY_TICKET_HOLD_TITLE):
+                        ticket = tickets_data.create_ticket(
+                            conn,
+                            worker_type="coding",
+                            title=title,
+                            actor="human",
+                            now=1,
+                            title_max_chars=TITLE_MAX_CHARS,
+                        )
+                        # Accept kickoff → the ticket enters a worker-owned stage at status empty.
+                        tickets_data.accept_proposal(
+                            conn,
+                            ticket.id,
+                            field="kickoff",
+                            actor="human",
+                            now=1,
+                            next_ceiling=NO_FURTHER,
+                            at_cap=AtCap.propose,
+                        )
+                        # Today's planning day membership (an automatic-step eligibility gate).
+                        days_data.add_day_ticket(conn, today_id, ticket.id, 1)
+                    conn.commit()
+
         if seed_db is not None:
             from planner.core.db import connect, create_schema
 
@@ -130,9 +184,10 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
         )
         if run_startup_recovery:
             env["PLAN_RUN_STARTUP_RECOVERY_IN_TEST_MODE"] = "1"
-        if relay_chief:
+        if relay_chief or relay_tickets:
             # Flag ON: the test-mode compose path builds the pool+relay against the scripted
-            # child (test_mode is already on). No second flag (F16a).
+            # child (test_mode is already on). No second flag (F16a). ONE flag governs the
+            # Chief AND every ticket employee.
             env["PLAN_RELAY_BACKEND_ENABLED"] = "1"
         if gateway is not None:
             env["PLAN_GATEWAY_ADAPTER"] = gateway
@@ -217,6 +272,15 @@ def relay_chief_server(server_factory: Callable[..., ServerHandle]) -> ServerHan
     """A flag-ON instance: the Chief neutral pane over the relay + the scripted child, with a
     seeded durable Chief session (test_mode is already on; no second flag — F16a)."""
     return server_factory(relay_chief=True)
+
+
+@pytest.fixture
+def relay_tickets_server(server_factory: Callable[..., ServerHandle]) -> ServerHandle:
+    """A flag-ON instance seeded with ONE ticket eligible for an automatic Employee step, so
+    the ticket neutral pane e2e can drive a real step through the pool child via
+    `POST /api/test/run-step/{id}` (S3 §7). Same single flag as relay_chief — one flag governs
+    the Chief AND every ticket employee."""
+    return server_factory(relay_tickets=True)
 
 
 @pytest.fixture

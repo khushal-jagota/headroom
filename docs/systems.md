@@ -324,11 +324,18 @@ inside the worker can resolve their ticket while the turn is still active. It do
 not use `ChatTurnLifecycle` or the human transport. It also records the worker turn
 in chat state, so the UI does not infer activity from ticket status.
 
-Human Chat turns are rejected while `ticket_status=agent_running_step`. Automatic
-Employee-step eligibility rejects any running Panels Chat turn. The two checks happen
-again under the same transaction lock, so concurrent admission has one winner.
-Explicit Employee session history remains readable. There is no queue behind the
-active worker step.
+With the relay backend flag off, human Chat turns are rejected while
+`ticket_status=agent_running_step`. Automatic Employee-step eligibility rejects any
+running Panels Chat turn. The two checks happen again under the same transaction lock,
+so concurrent admission has one winner. Explicit Employee session history remains
+readable. On that path there is no queue behind the active worker step.
+
+With the relay backend flag on, the picture flips for the human side: each active
+Ticket employee has its own Hermes child, worker steps are submitted through it, and a
+human send during a running step is accepted, not rejected. It rides the same child and
+follows stock Hermes semantics — the human turn queues behind the step or interrupts
+it, as Hermes decides. The eligibility decision the runner asks is unchanged; only the
+chat-side rejection is absent.
 
 Because Chat state is product state, backend code must not use a visible row as a
 substitute for Employee-session delivery. An empty Panels transcript stays empty even
@@ -463,11 +470,13 @@ less clean than the rest.
   an errored-run retry policy is designed.
 - **No in-server rollover scheduler.** The repo provisions the agent-owned rollover
   skill; thin morning and afternoon prompts remain external to the server runtime.
-- **No chat queue during worker steps.** Human sends are rejected while a ticket worker
-  is active. Trigger: the product needs conversation to queue behind active work.
+- **No chat queue during worker steps (legacy flag-off path only).** With the relay
+  backend off, human sends are rejected while a ticket worker is active; with it on,
+  a mid-step send is accepted and follows Hermes's own queue/interrupt semantics (see
+  the flag-on step path above). Trigger: retiring the legacy flag-off path.
 - **No idea conversion or archive.** Ideas stay ideas. Trigger: a decision that ideas
   should be promoted or filed away.
 
 ---
 
-_Last verified: 2026-07-14 (Resource Catalogue ownership and targeted refresh verified)._
+_Last verified: 2026-07-19 (relay backend flag-on ticket-employee step path and human-send concurrency)._

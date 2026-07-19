@@ -93,10 +93,16 @@ a message and the active turn disappears.
 
 Human admission and the Employee's final claim use the same SQLite write lock. Human
 admission rechecks `ticket_status` inside that transaction, while Automatic
-Employee-step eligibility rechecks that there is no running Panels Chat turn. If the
-ticket is already at `agent_running_step`, the send or command returns
-`already_running` instead of creating a competing turn. If a human turn wins first,
-the Employee claim does nothing. The chat state remains readable in both cases.
+Employee-step eligibility rechecks that there is no running Panels Chat turn. With the
+relay backend flag off, if the ticket is already at `agent_running_step`, the send or
+command returns `already_running` instead of creating a competing turn; if a human turn
+wins first, the Employee claim does nothing. The chat state remains readable in both
+cases.
+
+With the relay backend flag on, that rejection is gone: a human send during a running
+step is accepted and delivered to the Ticket's own Hermes child, where it follows stock
+Hermes queue-or-interrupt behaviour like any other turn. There is no admission gate on
+that path — a mid-step human turn is product behaviour, not an error.
 
 The visible active turn can be paused from the chat panel. While a turn is active,
 the composer's send button becomes the pause button; pressing it interrupts that
@@ -132,7 +138,10 @@ history route. The result is Hermes' authoritative record of what that employee
 actually received and produced. It may include pending internal context, revision
 guidance, system or tool content, or other material intentionally absent from Panels
 Chat. It is never copied into an empty Panels transcript. A Ticket without an Employee
-session id returns an empty history without starting Hermes.
+session id returns an empty history without starting Hermes. With the relay backend
+on, the route rejects a pool-owned ticket (the pool is the session's one owner; the
+pane reads the same durable history through its attach) rather than resume it through
+the legacy gateway.
 
 After a process restart, a running human chat turn is settled as interrupted with its
 partial output kept, then Panels creates one visible system recovery turn and resumes
@@ -211,10 +220,12 @@ as `/new title`, continue through the ordinary command path.
 
 ## Deferred
 
-- **Chat is not queued behind an active worker step.** Sending chat or running a
-  command while the worker step is active returns `already_running`; explicit Employee
-  session history remains readable.
+- **Chat is not queued behind an active worker step (legacy path only).** With the
+  relay backend off, sending chat or running a command while the worker step is active
+  returns `already_running`. With the relay backend on, a mid-step send is legal and
+  follows Hermes's own queue/interrupt semantics. Trigger: retiring the legacy
+  flag-off path.
 
 ---
 
-_Last verified: 2026-07-14._
+_Last verified: 2026-07-19 (relay backend flag-on human-send-during-step semantics)._

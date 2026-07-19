@@ -1313,17 +1313,27 @@ def worker() -> None:
 @worker.command("my-ticket")
 @json_option
 def worker_my_ticket(as_json: bool) -> None:
-    live_session_id = os.environ.get("HERMES_UI_SESSION_ID", "").strip()
-    employee_session_id = os.environ.get("HERMES_SESSION_KEY", "").strip()
-    if not live_session_id and not employee_session_id:
-        http.fail_validation(
-            "no Hermes session identity in env; not running as a ticket worker", as_json
+    # PLAN_TICKET_ID is the pool child's spawn env (flag-on) — resolve by ticket id directly.
+    ticket_id = os.environ.get(_TICKET_ID_ENV, "").strip()
+    if ticket_id:
+        path = f"/api/tickets/{ticket_id}/worker-self"
+    else:
+        # TRANSITIONAL fallback (Collision #1 (a)): the flag-off legacy shared worker child
+        # carries no per-ticket PLAN_TICKET_ID; its identity rides the per-turn Hermes session
+        # env. This fallback is scoped to die with the legacy worker path (S4 deletion).
+        live_session_id = os.environ.get("HERMES_UI_SESSION_ID", "").strip()
+        employee_session_id = os.environ.get("HERMES_SESSION_KEY", "").strip()
+        if not live_session_id and not employee_session_id:
+            http.fail_validation(
+                "no ticket worker identity in env "
+                "(no PLAN_TICKET_ID and no Hermes session); not running as a ticket worker",
+                as_json,
+            )
+        path = (
+            f"/api/tickets/by-live-session/{live_session_id}"
+            if live_session_id
+            else f"/api/tickets/by-employee-session/{employee_session_id}"
         )
-    path = (
-        f"/api/tickets/by-live-session/{live_session_id}"
-        if live_session_id
-        else f"/api/tickets/by-employee-session/{employee_session_id}"
-    )
     data = http.send(
         "GET",
         path,

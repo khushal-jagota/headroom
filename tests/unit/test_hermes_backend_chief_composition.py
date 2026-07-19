@@ -208,17 +208,31 @@ def test_flag_on_composition_pool_owns_chief_no_legacy_child() -> None:
 
 
 def test_assert_single_chief_owner_helper() -> None:
-    from planner.core.server import _assert_single_chief_owner
+    # S3 generalized `_assert_single_chief_owner` -> `_assert_single_employee_owner` (the
+    # empty-entity-map + pool-step-gateway form). The Chief case is a subset: flag ON iff a
+    # pool exists iff no chief gateway iff the entity map is empty. Full coverage (including
+    # the step-gateway positive check) lives in test_hermes_backend_ticket_composition.py.
+    from planner.core.server import _assert_single_employee_owner
+    from planner.hermes_backend.pool_step_gateway import PoolStepGateway
 
     sentinel_pool = object()
     sentinel_gateway = object()
-    # Valid: flag ON -> pool present, chief gateway absent.
-    _assert_single_chief_owner(
-        relay_backend_enabled=True, pool=sentinel_pool, chief_gateway=None
+    step_gateway = PoolStepGateway.__new__(PoolStepGateway)
+    # Valid: flag ON -> pool present, chief gateway absent, empty entity map, pool step gateway.
+    _assert_single_employee_owner(
+        relay_backend_enabled=True,
+        pool=sentinel_pool,
+        chief_gateway=None,
+        entity_gateways={},
+        step_gateway=step_gateway,
     )
-    # Valid: flag OFF -> pool absent, chief gateway present.
-    _assert_single_chief_owner(
-        relay_backend_enabled=False, pool=None, chief_gateway=sentinel_gateway
+    # Valid: flag OFF -> pool absent, chief gateway present, chief in the entity map, no pool sg.
+    _assert_single_employee_owner(
+        relay_backend_enabled=False,
+        pool=None,
+        chief_gateway=sentinel_gateway,
+        entity_gateways={CHIEF_OF_STAFF_ENTITY_ID: sentinel_gateway},
+        step_gateway=None,
     )
     # Inconsistent triples all raise.
     for enabled, pool, chief in (
@@ -227,9 +241,16 @@ def test_assert_single_chief_owner_helper() -> None:
         (False, sentinel_pool, sentinel_gateway),  # flag off but a pool too
         (False, None, None),  # flag off but no chief gateway
     ):
+        entity_map = (
+            {CHIEF_OF_STAFF_ENTITY_ID: chief} if chief is not None else {}
+        )
         with pytest.raises(RuntimeError):
-            _assert_single_chief_owner(
-                relay_backend_enabled=enabled, pool=pool, chief_gateway=chief
+            _assert_single_employee_owner(
+                relay_backend_enabled=enabled,
+                pool=pool,
+                chief_gateway=chief,
+                entity_gateways=entity_map,
+                step_gateway=step_gateway if enabled else None,
             )
 
 
@@ -269,19 +290,19 @@ def test_lifespan_boot_raises_on_inconsistent_composition(tmp_path: Path) -> Non
     import planner.core.server as server_mod
 
     called = {"n": 0}
-    original = server_mod._assert_single_chief_owner
+    original = server_mod._assert_single_employee_owner
 
     def spy(**kwargs):
         called["n"] += 1
         return original(**kwargs)
 
-    server_mod._assert_single_chief_owner = spy  # type: ignore[assignment]
+    server_mod._assert_single_employee_owner = spy  # type: ignore[assignment]
     try:
         with TestClient(app):
             pass
         assert called["n"] >= 1, "the two-owner assertion was not invoked at boot"
     finally:
-        server_mod._assert_single_chief_owner = original  # type: ignore[assignment]
+        server_mod._assert_single_employee_owner = original  # type: ignore[assignment]
 
 
 def test_lifespan_boot_actually_raises_when_composition_is_inconsistent(tmp_path: Path) -> None:
@@ -334,17 +355,24 @@ def test_lifespan_boot_actually_raises_when_composition_is_inconsistent(tmp_path
 
 def _chief_lifecycle(db_path: str, *, chief_pool_owned: bool) -> ChatTurnLifecycle:
     """Build a ChatTurnLifecycle whose gateway_provider RAISES if ever touched — so a
-    guard bypass (reaching the gateway) turns into an obvious failure."""
+    guard bypass (reaching the gateway) turns into an obvious failure.
+
+    S3: the predicate now takes the entity id; this helper keeps the S2b Chief-only scope so
+    these tests continue to assert the Chief branch specifically (ticket coverage lives in
+    test_hermes_backend_ticket_composition.py)."""
 
     def exploding_gateway():
         raise AssertionError("gateway captured for a pool-owned Chief op (guard bypassed)")
+
+    def chief_only_predicate(entity_id: str) -> bool:
+        return chief_pool_owned and entity_id == CHIEF_OF_STAFF_ENTITY_ID
 
     return ChatTurnLifecycle(
         conn_factory=lambda: connect(db_path),
         gateway_provider=exploding_gateway,
         now=lambda: 100,
         db_path=db_path,
-        chief_pool_owned=lambda: chief_pool_owned,
+        entity_pool_owned=chief_only_predicate,
     )
 
 

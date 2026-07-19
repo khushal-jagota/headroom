@@ -222,6 +222,70 @@ def test_employee_session_history_empty_without_session(tmp_path: Path) -> None:
     assert _events(db_path, tid, "employee_session_changed") == []
 
 
+def _make_flag_on_app(tmp_path: Path) -> tuple[object, Path]:
+    """A relay-flag-ON app whose gateway is a spy that RAISES if the legacy history reader is
+    ever called — so the pool-owned-ticket reject (Finding 2) is proven to short-circuit BEFORE
+    the legacy gateway can resume+bind the ticket's durable session (a second owner)."""
+    db_path = tmp_path / "planning-flag-on.db"
+    boot = connect(str(db_path))
+    create_schema(boot)
+    boot.close()
+    config = load_config(
+        path=None,
+        env={
+            "PLAN_TEST_MODE": "1",
+            "PLAN_GATEWAY_ADAPTER": "fake",
+            "PLAN_DB_PATH": str(db_path),
+            "PLAN_RELAY_BACKEND_ENABLED": "1",
+        },
+    )
+    clock = build_clock(config)
+    adapters = build_adapters(config)
+
+    def conn_factory() -> Connection:
+        return connect(str(db_path))
+
+    return create_app(config, clock, adapters, conn_factory), db_path
+
+
+class _RaisingHistoryGateway:
+    """A gateway whose history read must NEVER run flag-on for a pool-owned ticket."""
+
+    def __init__(self) -> None:
+        self.called = False
+
+    def read_employee_session_history(self, *_args: object) -> EmployeeSessionHistory:
+        self.called = True
+        raise AssertionError(
+            "the legacy gateway history read must not run for a pool-owned ticket flag-on"
+        )
+
+    def status(self, *_args: object) -> GatewayStatus:
+        return GatewayStatus(available=True)
+
+
+def test_employee_session_history_pool_owned_ticket_flag_on_rejected(tmp_path: Path) -> None:
+    """Finding 2: flag-on, the employee-session-history read for a pool-owned (t_*) ticket is
+    rejected BEFORE the legacy gateway can resume+bind its durable session. The spy gateway
+    raises if reached; a passing test proves it is never reached and the durable binding is
+    untouched (no second owner). Removing the route reject makes the spy fire -> test fails."""
+    app, db_path = _make_flag_on_app(tmp_path)
+    tid = _ticket(db_path)
+    _set_stored_key(db_path, "tickets", tid, "durable-key")
+    spy = _RaisingHistoryGateway()
+    _replace_gateway(app, spy)
+
+    with TestClient(app) as client:
+        _replace_gateway(app, spy)  # re-assert after lifespan wiring
+        response = client.get(f"/api/tickets/{tid}/employee-session-history")
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation"
+    assert spy.called is False
+    # The durable binding is untouched (no rotation-winner write, no second owner).
+    assert _stored_key(db_path, "tickets", tid) == "durable-key"
+
+
 def test_employee_session_history_reads_full_fake_trace(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)

@@ -97,6 +97,13 @@ def _build_role_gateways(
     from planner.minds.shared_gateway import SharedGateway
 
     base_env = dict(environ)
+    # The legacy shared worker child serves EVERY ticket, so it must never carry a per-ticket
+    # PLAN_TICKET_ID: its worker identity rides the per-turn Hermes session env. Scrub any
+    # ambient PLAN_TICKET_ID (a stale export in the operator's environment) so the flag-off CLI
+    # `panels worker my-ticket` — which now reads PLAN_TICKET_ID FIRST — cannot be poisoned by
+    # it and falls through to the today-identical Hermes-env resolution (Codex Finding 6). The
+    # pool sets PLAN_TICKET_ID per child itself; this only affects the legacy role children.
+    base_env.pop("PLAN_TICKET_ID", None)
     worker_gateway = SharedGateway(
         hermes_python=hermes_python,
         home=planner_home,
@@ -115,16 +122,53 @@ def _build_role_gateways(
     return worker_gateway, chief_gateway
 
 
-def _assert_single_chief_owner(
-    *, relay_backend_enabled: bool, pool: Any, chief_gateway: Any
-) -> None:
-    """Exactly one owner of the Chief's stored session. Raises on any inconsistency.
+def _is_pool_owned_entity(entity_id: str) -> bool:
+    """The set of entities the relay pool owns flag-on: the Chief and every ticket employee.
+    Day entities are NOT pool-owned (they stay on the legacy worker gateway until their own
+    cutover)."""
+    from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
 
-    Asserts on the COMPOSITION INPUTS (the ground truth for ownership) — not the routing
-    map (private, in untouchable minds/): the flag on iff a pool exists iff no legacy Chief
-    gateway exists."""
-    if not (relay_backend_enabled == (pool is not None) == (chief_gateway is None)):
-        raise RuntimeError("two-owner hazard: inconsistent Chief ownership composition")
+    return entity_id == CHIEF_OF_STAFF_ENTITY_ID or entity_id.startswith("t_")
+
+
+def _assert_single_employee_owner(
+    *,
+    relay_backend_enabled: bool,
+    pool: Any,
+    chief_gateway: Any,
+    entity_gateways: Mapping[str, Any],
+    step_gateway: Any,
+) -> None:
+    """Exactly one owner per pool-owned employee's stored session (the Chief and every
+    ticket). Raises on any inconsistency.
+
+    Under Collision #4 reading (a), the legacy worker gateway STAYS running flag-on to serve
+    day chat / the command catalog / status / history — so this cannot assert the worker
+    gateway is absent. It asserts on the composition INPUTS that guarantee NO pool-owned
+    entity is routable to the legacy worker gateway: the flag is on iff a pool exists iff no
+    legacy Chief gateway exists iff the dedicated-gateway entity map is EMPTY (so neither the
+    Chief nor any ticket maps to a dedicated gateway; the crossover guard raises before any
+    pool-owned entity could fall through to the worker-gateway default). Plus a positive
+    check that the runner's injected step transport is the pool step gateway flag-on (not the
+    legacy worker gateway)."""
+    from planner.hermes_backend.pool_step_gateway import PoolStepGateway
+
+    consistent = (
+        relay_backend_enabled
+        == (pool is not None)
+        == (chief_gateway is None)
+        == (len(entity_gateways) == 0)
+    )
+    if not consistent:
+        raise RuntimeError("two-owner hazard: inconsistent employee ownership composition")
+    if relay_backend_enabled and not isinstance(step_gateway, PoolStepGateway):
+        raise RuntimeError(
+            "two-owner hazard: the runner's step transport is not the pool step gateway flag-on"
+        )
+    if not relay_backend_enabled and isinstance(step_gateway, PoolStepGateway):
+        raise RuntimeError(
+            "two-owner hazard: the pool step gateway is injected flag-off"
+        )
 
 
 async def _stop_runtime_with_deadline(runtime: Any, deadline: float) -> None:
@@ -207,6 +251,7 @@ def create_app(
         shared_gateway: Any = None
         chat_gateway_to_shutdown: Any = None
         employee_child_pool_to_shutdown: Any = None
+        test_mode_step_runner_to_stop: Any = None
         loop: Any = None
         if config.test_mode and config.run_startup_recovery_in_test_mode:
             _recover_running_human_chat_turns(
@@ -216,12 +261,13 @@ def create_app(
         if config.test_mode and config.relay_backend_enabled:
             # Test-mode relay composition (F16a — gated ONLY on test_mode &&
             # relay_backend_enabled; no extra config flag; no production path composes the
-            # relay in test mode). Compose ONLY the pool+relay+neutral route against the
-            # STATEFUL scripted child — no role gateways, no loops — and assert single Chief
-            # ownership so a mis-wired composition fails boot loudly.
+            # relay in test mode). Compose the pool+relay+neutral route against the STATEFUL
+            # scripted child — no role gateways — and assert single employee ownership so a
+            # mis-wired composition fails boot loudly.
             from planner.hermes_backend.composition import (
                 compose_relay_backend_if_enabled,
             )
+            from planner.hermes_backend.pool_step_gateway import PoolStepGateway
             from planner.hermes_backend.scripted_relay_child import scripted_relay_spawn
 
             loop = asyncio.get_running_loop()
@@ -236,11 +282,40 @@ def create_app(
                 db_path=config.db_path,
                 now=clock.now_unix,
             )
-            _assert_single_chief_owner(
+            test_mode_step_gateway = (
+                PoolStepGateway(pool=employee_child_pool_to_shutdown)
+                if employee_child_pool_to_shutdown is not None
+                else None
+            )
+            _assert_single_employee_owner(
                 relay_backend_enabled=config.relay_backend_enabled,
                 pool=employee_child_pool_to_shutdown,
                 chief_gateway=None,
+                entity_gateways={},
+                step_gateway=test_mode_step_gateway,
             )
+            # Collision #B (a): compose the REAL EmployeeStepRunner wired to the PoolStepGateway
+            # so a test-gated step-trigger route (testmode.py POST /test/run-step/{ticket_id})
+            # can dispatch a genuine automatic step against the scripted child. The runner is
+            # built like production but with the scripted-child step transport; the discovery
+            # loop is NOT started (the trigger dispatches directly). This replaces the hermetic
+            # revision handoff on app.state with the real runner so both the trigger route and
+            # the ticket-detail revision endpoints exercise the real path in relay test mode.
+            if test_mode_step_gateway is not None:
+                from planner.runtime.employee_step_runner import EmployeeStepRunner
+
+                test_mode_step_runner = EmployeeStepRunner(
+                    config.db_path,
+                    clock,
+                    gateway=test_mode_step_gateway,
+                    automatic_employee_step_eligibility_wake=(
+                        NoOpAutomaticEmployeeStepEligibilityWake()
+                    ),
+                    boundary_hour=config.boundary_hour,
+                    busy_timeout_ms=config.db_busy_timeout_ms,
+                )
+                app_.state.employee_step_runner = test_mode_step_runner
+                test_mode_step_runner_to_stop = test_mode_step_runner
         if not config.test_mode:  # D6: background loops never run in test mode
             try:
                 module = importlib.import_module("planner.core.loops")
@@ -288,24 +363,14 @@ def create_app(
                     conn_factory,
                     app_.state.chat_turn_lifecycle,
                 )
-                try:
-                    loops = start(
-                        config,
-                        clock,
-                        shared_gateway=shared_gateway,
-                    )
-                except Exception:
-                    _log.exception(
-                        "employee runtime composition failed; direct revisions unavailable"
-                    )
-                else:
-                    app_.state.employee_step_runner = loops.employee_step_runner
-                    app_.state.automatic_employee_step_eligibility_wake = (
-                        loops.automatic_employee_step_eligibility_wake
-                    )
+                # Compose the relay pool BEFORE the loops so the runner can be injected with
+                # the pool step gateway flag-on (the runner owns one ticket step through the
+                # pool child, not the legacy worker gateway). Flag-off this returns None and
+                # the runner keeps the legacy shared gateway.
                 from planner.hermes_backend.composition import (
                     compose_relay_backend_if_enabled,
                 )
+                from planner.hermes_backend.pool_step_gateway import PoolStepGateway
 
                 loop = asyncio.get_running_loop()
                 employee_child_pool_to_shutdown = compose_relay_backend_if_enabled(
@@ -318,17 +383,46 @@ def create_app(
                     db_path=config.db_path,
                     now=clock.now_unix,
                 )
-                _assert_single_chief_owner(
+                step_gateway = (
+                    PoolStepGateway(pool=employee_child_pool_to_shutdown)
+                    if employee_child_pool_to_shutdown is not None
+                    else None
+                )
+                _assert_single_employee_owner(
                     relay_backend_enabled=config.relay_backend_enabled,
                     pool=employee_child_pool_to_shutdown,
                     chief_gateway=chief_gateway,
+                    entity_gateways=entity_gateways,
+                    step_gateway=step_gateway,
                 )
+                try:
+                    loops = start(
+                        config,
+                        clock,
+                        shared_gateway=shared_gateway,
+                        step_gateway=step_gateway,
+                    )
+                except Exception:
+                    _log.exception(
+                        "employee runtime composition failed; direct revisions unavailable"
+                    )
+                else:
+                    app_.state.employee_step_runner = loops.employee_step_runner
+                    app_.state.automatic_employee_step_eligibility_wake = (
+                        loops.automatic_employee_step_eligibility_wake
+                    )
         try:
             yield
         finally:
             deadline = _monotonic() + float(config.shutdown_grace_seconds)
             if loops is not None:
                 await _stop_runtime_with_deadline(loops, deadline)
+            if test_mode_step_runner_to_stop is not None:
+                # Drain the test-mode runner's in-flight step threads BEFORE the pool shuts down,
+                # so no step thread touches a torn-down child transport.
+                await asyncio.to_thread(
+                    test_mode_step_runner_to_stop.stop, deadline=deadline
+                )
             if chat_gateway_to_shutdown is not None:
                 _shutdown_gateway_with_deadline(chat_gateway_to_shutdown, deadline)
             elif shared_gateway is not None:
@@ -355,7 +449,9 @@ def create_app(
         gateway_provider=lambda: app.state.adapters.gateway,
         now=clock.now_unix,
         db_path=config.db_path,
-        chief_pool_owned=lambda: config.relay_backend_enabled,
+        entity_pool_owned=lambda entity_id: (
+            config.relay_backend_enabled and _is_pool_owned_entity(entity_id)
+        ),
     )
     app.state.automatic_employee_step_eligibility_wake = NoOpAutomaticEmployeeStepEligibilityWake()
     app.state.employee_step_runner = (

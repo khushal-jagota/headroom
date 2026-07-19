@@ -141,11 +141,35 @@ What just passed:
 - S3 (`hermes-relay-s3-ticket-employees`) is cut and mid-planning (plan written, review
   round next); implementation gated on this S2b commit.
 
+- S3 (`hermes-relay-s3-ticket-employees`) is COMPLETE and verified. Every active ticket
+  employee runs as its own pool child flag-on: steps submit through the pool with
+  settlement correlated by prompt.submit ACK disposition (arm-on-own-ACK; pre-ACK
+  terminals buffered and counted against the skip, pre-ACK deltas dropped; id-match
+  guard against false-arm), ticket panes speak the neutral vocabulary (step turns
+  stream live), `panels` CLI identity reads `PLAN_TICKET_ID` first with the
+  transitional Hermes-env fallback, the crossover guard and two-owner assertion extend
+  per-ticket, and the history route rejects pool-owned tickets. Flag-off is exactly
+  today's system. Evidence beyond the review rounds: 400x pre-ACK stress (0 failures),
+  mutation-kill proofs on the settlement tests, a full disposition case-matrix trace.
+  Accepted trigger-bound limitation: composition-level interleaved tests survive the
+  buffering mutation (unit tests are the honest, mutation-proven guard).
+- The build crossed a usage outage and a three-agent coordination failure (out-of-order
+  inboxes produced parallel writers; all work converged and was reconciled, phantom
+  scope surgically removed, the tail completed inline by the orchestrator under a
+  hash fence). Full trail: the ticket dir's wave-log, resume-ground-truth, and review
+  artifacts; process lessons recorded in orchestrator memory.
+- Canonical `./verify` PASSES all gates: Ruff, mypy (139 files), 1038 unit tests,
+  build, frontend, 135 Playwright — final `VERIFY: PASS`. Transcript
+  `data/verify/s3-ticket-employees.log`, SHA-256
+  `f0e054686c69f0fb18c10e4702998a3554ba9b6f900b23c9580d517152c0d6c2`.
+
 Next step:
 
-- Commit the S2b green wave, open S3's implementation gate, run S3 to hand-back →
-  integration → verify → commit. Then the de-patch stage and S4 deletion (transcript
-  ruling still open with the owner).
+- Commit the S3 green wave. Remaining in the redesign: S3b (revert the three local
+  Hermes commits — stock Hermes; flag-on as the operating mode is the precondition),
+  the `relay_chief_enabled`→backend-named rename (`D-relay-flag-rename-debt`), and S4
+  deletion (legacy machinery; owner's transcript ruling lands there,
+  `D-transcript-ownership-open`).
 
 Blockers:
 

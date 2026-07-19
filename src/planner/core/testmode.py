@@ -9,7 +9,7 @@ from __future__ import annotations
 import threading
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from planner.core.clock import Clock, TestClock, parse_fake_now
 from planner.core.config import Config
@@ -95,5 +95,22 @@ def build_test_router(config: Config, clock: Clock) -> APIRouter:
             "now": clock.now().isoformat(),
             "planning_date": planning_date(clock.now(), config.boundary_hour).isoformat(),
         }
+
+    @router.post("/test/run-step/{ticket_id}")
+    async def run_step(ticket_id: str, request: Request) -> JsonDict:
+        """Dispatch ONE real automatic Employee step for `ticket_id` through the composed
+        runner (S3 Collision #B (a)). Relay test mode composes the REAL EmployeeStepRunner over
+        the PoolStepGateway (server.py), so this drives a genuine dispatch against the scripted
+        child — the discovery loop is not needed. Test-gated: the router is mounted only when
+        config.test_mode, so /api/test/* is a plain 404 otherwise."""
+        runner = getattr(request.app.state, "employee_step_runner", None)
+        if runner is None or not hasattr(runner, "try_run_automatic_step"):
+            raise PlannerError(
+                ErrorCode.gateway_offline,
+                "no composed employee step runner in this test composition",
+                {"ticket_id": ticket_id},
+            )
+        runner.try_run_automatic_step(ticket_id)
+        return {"dispatched": True, "ticket_id": ticket_id}
 
     return router

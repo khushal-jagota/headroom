@@ -24,6 +24,7 @@ from planner.hermes_backend.employee_child_relay import EmployeeChildRelay
 from planner.hermes_backend.relay_tee import RelayTeeObserver
 from planner.hermes_backend.transcript_mirror_tee import TranscriptMirrorTee
 from planner.minds.gateway import SpawnFn, spawn_popen
+from planner.tickets import data as tickets_data
 
 
 def compose_relay_backend_if_enabled(
@@ -51,25 +52,62 @@ def compose_relay_backend_if_enabled(
         loop=loop,
         tee_observers=tee_observers,
     )
-    # Persist a fresh Chief stored-session binding back to agent_chat_sessions after the
-    # first create and every rebind, so a restart resumes the LATEST session (not a stale
-    # one). Symmetric to the adoption READ below; both use composition's own short-lived
-    # connection discipline. A no-op for non-Chief employees.
-    persist_chief_session: Callable[[str, str], None] | None = None
+    # Persist a fresh stored-session binding after the first create and every rebind, so a
+    # restart resumes the LATEST session (not a stale one). Symmetric to the adoption READ
+    # below; both use composition's own short-lived connection discipline. S3 §3.2: the
+    # callback is a Chief-vs-ticket DISPATCHER — the pool owns EVERY employee's session, and
+    # each employee kind persists to its own durable store:
+    #   - Chief  → agent_chat_sessions.chat_session_key (record_agent_session_key; no CAS, so
+    #     the OLD stored id is ignored).
+    #   - ticket → tickets.employee_session_id through the ownership CAS
+    #     `bind_pool_employee_session_id`, passing the OLD stored id as `expected` and the new as
+    #     `candidate` (Codex Finding 5 — a silent-retain on an expected mismatch raises fail-
+    #     closed inside the pool's guarded publication).
+    # The callback runs INSIDE the pool's spawn/rebind fail-closed guard, so a persistence
+    # failure tears the child down rather than leaving a live-but-unpublished owner (S2B-OWN-001).
+    persist_session_binding: Callable[[str, str, str | None], None] | None = None
     if db_path is not None and now is not None:
         persist_db_path = db_path
         persist_now = now
 
-        def persist_chief_session(employee_entity_id: str, stored_session_id: str) -> None:
-            if employee_entity_id != CHIEF_OF_STAFF_ENTITY_ID:
-                return
+        def persist_session_binding(
+            employee_entity_id: str,
+            stored_session_id: str,
+            old_stored_session_id: str | None = None,
+        ) -> None:
             conn = connect(persist_db_path)
             try:
-                chat_data.record_agent_session_key(
-                    conn, employee_entity_id, stored_session_id, persist_now()
-                )
+                if employee_entity_id == CHIEF_OF_STAFF_ENTITY_ID:
+                    chat_data.record_agent_session_key(
+                        conn, employee_entity_id, stored_session_id, persist_now()
+                    )
+                elif employee_entity_id.startswith("t_"):
+                    tickets_data.bind_pool_employee_session_id(
+                        conn,
+                        employee_entity_id,
+                        expected_stored_session_id=old_stored_session_id,
+                        candidate_stored_session_id=stored_session_id,
+                        now=persist_now(),
+                    )
             finally:
                 conn.close()
+
+    # On-demand adoption (S3 §3.1): when the pool first spawns an employee with no eagerly-
+    # adopted key, it asks this resolver for the employee's persisted durable key so it RESUMEs
+    # instead of creating fresh. Composition owns the DB read (the pool stays DB-free): Chief →
+    # agent_chat_sessions.chat_session_key; ticket → tickets.employee_session_id. A None/absent
+    # return mints a fresh session (a never-run employee), which persistence then binds. Uses
+    # composition's own short-lived connection discipline (mirrors _read_chief_session_key).
+    stored_session_resolver: Callable[[str], str | None] | None = None
+    if db_path is not None:
+        resolve_db_path = db_path
+
+        def stored_session_resolver(employee_entity_id: str) -> str | None:
+            if employee_entity_id == CHIEF_OF_STAFF_ENTITY_ID:
+                return _read_chief_session_key(resolve_db_path)
+            if employee_entity_id.startswith("t_"):
+                return _read_ticket_employee_session_id(resolve_db_path, employee_entity_id)
+            return None
 
     pool = EmployeeChildPool(
         hermes_python=hermes_python,
@@ -78,7 +116,8 @@ def compose_relay_backend_if_enabled(
         relay=relay,
         loop=loop,
         spawn=spawn,
-        on_stored_session_bound=persist_chief_session,
+        on_stored_session_bound=persist_session_binding,
+        stored_session_resolver=stored_session_resolver,
     )
     # Adopt the persisted durable Chief key BEFORE the first spawn so it RESUMES instead
     # of creating fresh (a never-chatted Chief has NULL/absent key -> skipped -> fresh).
@@ -102,6 +141,23 @@ def _read_chief_session_key(db_path: str) -> str | None:
         if row is None:
             return None
         key = row["chat_session_key"]
+        return key if isinstance(key, str) and key else None
+    finally:
+        conn.close()
+
+
+def _read_ticket_employee_session_id(db_path: str, ticket_id: str) -> str | None:
+    """The ticket's persisted durable Employee session key (S3 §3.1). None when the ticket is
+    absent or has never run (NULL) — so the pool mints a fresh session for it."""
+    conn = connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT employee_session_id FROM tickets WHERE id = ?",
+            (ticket_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        key = row["employee_session_id"]
         return key if isinstance(key, str) and key else None
     finally:
         conn.close()

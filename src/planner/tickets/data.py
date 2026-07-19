@@ -429,6 +429,53 @@ def claim_running_step_employee_session_id(
         return _load_ticket_for_write(conn, ticket_id)
 
 
+def bind_pool_employee_session_id(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    expected_stored_session_id: str | None,
+    candidate_stored_session_id: str,
+    now: int,
+) -> None:
+    """Bind a ticket's durable Employee session to a pool-minted stored id OUTSIDE a running
+    step (S3 §3.2, Collision #3 — the ticket analogue of chat_data.record_agent_session_key).
+
+    The relay pool owns each ticket employee's session and binds fresh stored ids on spawn /
+    rebind, which can happen when the ticket is NOT at agent_running_step — so the
+    step-lifecycle writers (which require that status) do not fit. This is the narrowest
+    call-only writer: it routes through the SAME ownership CAS
+    `write_employee_session_id_in_transaction` (rejecting a candidate owned by another ticket,
+    and emitting `employee_session_changed`) but WITHOUT the running-step precondition.
+
+    Fail-closed: the CAS can silently RETAIN the current binding on an `expected` mismatch
+    rather than write the candidate (see :func:`write_employee_session_id_in_transaction`,
+    the `current` retain branch). This writer asserts the returned effective binding EQUALS
+    the candidate and raises otherwise, so a silent-retain becomes a fail-closed error the
+    pool surfaces (§3.2, Codex Finding 5)."""
+    with _txn(conn):
+        effective = write_employee_session_id_in_transaction(
+            conn,
+            ticket_id,
+            transition=EmployeeSessionIdTransition(
+                expected_employee_session_id=expected_stored_session_id,
+                candidate_employee_session_id=candidate_stored_session_id,
+            ),
+            force_fresh_employee_session=False,
+            now=now,
+        )
+        if effective != candidate_stored_session_id:
+            raise PlannerError(
+                ErrorCode.already_running,
+                "pool Employee session binding did not take (expected mismatch retained the "
+                "current binding)",
+                {
+                    "ticket_id": ticket_id,
+                    "candidate_employee_session_id": candidate_stored_session_id,
+                    "effective_employee_session_id": effective,
+                },
+            )
+
+
 def create_ticket(
     conn: sqlite3.Connection,
     *,

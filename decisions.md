@@ -1537,6 +1537,31 @@ legacy one-busy-guard model is superseded for relay surfaces. What remains Panel
 dispatch bookkeeping only: the discovery loop still tracks whether an automatic step is in
 flight for eligibility, which is scheduling state, not conversation policy.
 
+## D-s3-collision-rulings — Settlement by ACK disposition; transitional CLI fallback; per-session ownership invariant
+
+Orchestrator rulings on S3's plan-review collisions (2026-07-18), recorded in the amended S3
+contract: (1) step settlement correlates by the `prompt.submit` ACK disposition
+(streaming/queued/steered) — owned-turn identity reconstructed from what stock Hermes returns,
+no demux, with all three variants plus an interleaved human send tested; (2) the `panels` CLI
+reads `PLAN_TICKET_ID` first with an explicitly TRANSITIONAL Hermes-env fallback for the
+flag-off legacy shared child (which cannot carry per-ticket spawn env) — the fallback dies with
+the legacy worker path at S4, and de-patching (S3b) may proceed once flag-on is the operating
+mode since the patches only protected the shared-child topology; (3) flag-on the legacy worker
+gateway keeps running for its non-ticket consumers (day chat, command catalog, status,
+session-history) but owns no pool-owned entity's session — the two-owner invariant is per
+stored session, not per process; (4) relay test mode composes the real runner + pool step
+gateway with a test-gated step-trigger route (S2b's established test-machinery pattern); (5) a
+narrowest call-only `bind_pool_employee_session_id` writer routed through the ownership CAS.
+
+## D-relay-flag-rename-debt — `relay_chief_enabled`/`relayChief` are misnamed once tickets ride them
+
+Recorded during S3 closeout (2026-07-19). S2b shipped the capability meta key
+`relay_chief_enabled` and the frontend `relayChief` signal; S3 reuses both to govern ticket
+panes too, so the "chief" name now lies about scope. Kept as-is inside S3 (one flag, minimal
+churn into shipped S2b callers mid-ticket — the resume orchestrator's call, accepted). Owed: a
+small dedicated cleanup ticket renaming to backend-scoped names (`relay_backend_enabled`-style)
+per name-for-exactly-what-it-is; natural moment is S4's deletion sweep.
+
 ## D-chief-first-cutover — The Chief moves to the relay first; ticket chat and steps move together
 
 Orchestrator sequencing ruling cutting S2 (2026-07-18). A ticket's human chat and its worker

@@ -14,6 +14,8 @@
   } from "../lib/lifecycle";
   import type { StageOwnershipMode, TicketDetail } from "../lib/types";
   import ChatPanel from "../components/ChatPanel.svelte";
+  import ChiefNeutralPane from "../components/ChiefNeutralPane.svelte";
+  import { relayChief, retryRelayChiefMeta } from "../lib/capabilities";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import EnumPill from "../components/EnumPill.svelte";
@@ -30,9 +32,18 @@
   const ticket = resourceCatalogue.ticket(stableId);
   const sprints = resourceCatalogue.sprintSummaries();
   const projects = resourceCatalogue.projects();
-  const chatStatus = resourceCatalogue.chatGatewayStatus(stableId);
   const currentSprint = resourceCatalogue.currentSprint();
   const manifest = resourceCatalogue.workerTypeManifests();
+
+  // The legacy gateway-status resource is only meaningful on the legacy (disabled) chat path;
+  // the neutral pane has its own connection meaning. Open it lazily so the neutral branch never
+  // subscribes it (flag-on must NEVER touch /api/chat/{ticket}/status — S2B-ROUTE-001).
+  let chatStatus: ReturnType<typeof resourceCatalogue.chatGatewayStatus> | null = null;
+
+  function legacyChatStatus(): ReturnType<typeof resourceCatalogue.chatGatewayStatus> {
+    if (chatStatus === null) chatStatus = resourceCatalogue.chatGatewayStatus(stableId);
+    return chatStatus;
+  }
 
   // Derive the per-Worker-type lifecycle from the RESOURCE (ticket.data?.worker_type), not
   // the markup-local {@const detail} which is only bound inside {#if ticket.data}
@@ -205,7 +216,7 @@
     ticket.dispose();
     sprints.dispose();
     projects.dispose();
-    chatStatus.dispose();
+    chatStatus?.dispose();
     currentSprint.dispose();
     manifest.dispose();
   });
@@ -412,10 +423,24 @@
         </div>
       </main>
       <aside class="chat-rail" data-chat>
-        <ChatPanel
-          entityId={stableId}
-          available={chatStatus.data?.available ?? true}
-        />
+        {#if $relayChief === "enabled"}
+          <ChiefNeutralPane entityId={stableId} label={detail.title || "Ticket"} />
+        {:else if $relayChief === "disabled"}
+          {@const status = legacyChatStatus()}
+          <ChatPanel
+            entityId={stableId}
+            available={status.data?.available ?? true}
+          />
+        {:else if $relayChief === "error"}
+          <div class="chief-chat-placeholder" data-ticket-meta-error>
+            <p>Could not load chat.</p>
+            <button type="button" data-ticket-meta-retry onclick={() => void retryRelayChiefMeta()}>
+              Retry
+            </button>
+          </div>
+        {:else}
+          <div class="chief-chat-placeholder" data-ticket-meta-loading></div>
+        {/if}
       </aside>
     </div>
     {/if}

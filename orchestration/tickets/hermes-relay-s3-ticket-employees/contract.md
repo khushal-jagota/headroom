@@ -19,9 +19,12 @@ and the eligibility decision are untouched.
 
 ## Ownership handoff (generalizing S2b's Chief pattern, per ticket)
 
-- Flag-on composition never starts the legacy worker gateway; the pool owns every
-  ticket employee. One stored session, one owning process — the startup assertion
-  extends to ticket entities.
+- Flag-on, the pool owns every ticket employee's session; the legacy worker gateway
+  OWNS NO pool-owned entity's session (guard + empty entity map), but it keeps running
+  to serve its non-ticket consumers — day chat, the command catalog, entity status,
+  employee-session-history — until their own cutover. The invariant is per stored
+  session (one owner), enforced by the extended startup assertion; "process not
+  started" was imprecise and is superseded by this wording (ruled on Collision #4).
 - The pool adopts each ticket's persisted `employee_session_id` on demand and persists
   fresh bindings through the existing ticket-session ownership writers (call-only),
   **fail-closed**: any persistence failure must leave no live-but-unpublished child
@@ -33,10 +36,15 @@ and the eligibility decision are untouched.
 ## Worker steps through the pool
 
 - `EmployeeStepRunner` submits the step prompt as a plain send through the ticket's
-  pool child and observes settlement from teed lifecycle events (its submitted turn's
-  completed/failed), then settles Panels state exactly as today. The S1/S2a demux-free
-  path replaces the legacy consequence machinery for pool-owned tickets; legacy paths
-  remain intact for flag-off.
+  pool child and observes settlement from teed lifecycle events, then settles Panels
+  state exactly as today. The S1/S2a demux-free path replaces the legacy consequence
+  machinery for pool-owned tickets; legacy paths remain intact for flag-off.
+- RULED (Collision #A): settlement correlation uses the `prompt.submit` ACK
+  disposition (streaming / queued / steered) — the pool step gateway owns the correct
+  terminal event from what stock Hermes already returns, reconstructing owned-turn
+  identity without the demux. Tests must cover all three disposition variants AND an
+  interleaved human send during a running step (native queue/interrupt semantics,
+  `D-native-turn-concurrency`).
 - No admission gate (`D-native-turn-concurrency`): a human send during a running step
   follows stock semantics (queue, default-interrupt) — that is product behavior, not an
   error. The complete automatic-dispatch eligibility decision remains exactly as it is
@@ -47,13 +55,16 @@ and the eligibility decision are untouched.
 ## `panels` CLI identity (unblocks de-patch)
 
 - Worker identity resolution reads `PLAN_TICKET_ID` (the existing CLI convention) from
-  the child's spawn env; the `HERMES_UI_SESSION_ID`/`HERMES_SESSION_KEY` reads are
-  retired from the worker resolution path (`D-child-per-employee`). Server-side
-  resolution goes by ticket id directly, with the existing ownership validation.
-- Flag-off ticket employees still run through the legacy gateway whose children carry
-  the same spawn env the pool sets — the CLI change must hold for both compositions
-  (state exactly how in the plan; if the legacy children cannot carry it, that is a
-  collision to flag, not to patch around).
+  the child's spawn env FIRST. Server-side resolution goes by ticket id directly, with
+  the existing ownership validation.
+- RULED (Collision #1): the contract's original premise was false — the legacy shared
+  worker child serves all tickets and cannot carry a per-ticket spawn env; identity
+  there rides per-turn Hermes env. The CLI therefore keeps an explicitly TRANSITIONAL
+  fallback: when `PLAN_TICKET_ID` is absent, the existing Hermes-env resolution
+  applies, so flag-off remains exactly today's system. The fallback is scoped to die
+  with the legacy worker path (S4 deletion); the de-patch stage (S3b) may proceed once
+  flag-on is the operating mode, since the patched behavior only ever protected the
+  shared-child topology.
 
 ## Ticket pane cutover
 

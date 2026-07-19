@@ -146,11 +146,18 @@ def start_background_loops(
     clock: Clock,
     *,
     shared_gateway: SharedGateway,
+    step_gateway: Any | None = None,
 ) -> BackgroundLoops:
-    """Always compose Employee execution; optionally own automatic discovery."""
+    """Always compose Employee execution; optionally own automatic discovery.
+
+    The runner's step transport is `step_gateway` when supplied (the relay `PoolStepGateway`,
+    flag-on) and the legacy `shared_gateway` otherwise (flag-off, exactly today). The discovery
+    loop, eligibility, and wake are transport-agnostic and unchanged either way."""
     global _active
     if _active is not None:
         raise RuntimeError("background loops already running")
+
+    runner_gateway: Any = step_gateway if step_gateway is not None else shared_gateway
 
     def build_runner(
         eligibility_wake: AutomaticEmployeeStepEligibilityWake,
@@ -158,7 +165,7 @@ def start_background_loops(
         return EmployeeStepRunner(
             config.db_path,
             clock,
-            gateway=shared_gateway,
+            gateway=runner_gateway,
             automatic_employee_step_eligibility_wake=eligibility_wake,
             boundary_hour=config.boundary_hour,
             busy_timeout_ms=config.db_busy_timeout_ms,

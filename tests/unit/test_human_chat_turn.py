@@ -1287,7 +1287,8 @@ def test_worker_origin_pause_settles_visible_turn_without_changing_worker_state_
         "gateway_provider",
         "now",
         "db_path",
-        # S2b: the pool-ownership crossover predicate (defaults to lambda: False, so every
-        # existing construction is unchanged); wired to relay_backend_enabled in create_app.
-        "chief_pool_owned",
+        # S3: the pool-ownership crossover predicate takes the entity id (defaults to
+        # lambda entity_id: False, so every existing construction is unchanged); wired in
+        # create_app to True for the Chief AND any ticket entity when relay_backend_enabled.
+        "entity_pool_owned",
     ]

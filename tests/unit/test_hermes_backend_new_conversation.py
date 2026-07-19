@@ -46,6 +46,22 @@ def _pool(loop, spawn, *, on_stored_session_bound=None):
     return pool, relay
 
 
+class _MultiChild:
+    """Serve a fresh scripted child per spawn (a respawn gets the NEXT child), so a test can
+    model generation N and a respawned generation N+1 as distinct transports."""
+
+    def __init__(self, children):
+        self._children = list(children)
+        self._i = 0
+        self._lock = threading.Lock()
+
+    def spawn(self, argv, env):
+        with self._lock:
+            child = self._children[self._i]
+            self._i += 1
+        return child.spawn(argv, env)
+
+
 # --- vocabulary round-trip ---------------------------------------------------
 
 
@@ -78,11 +94,13 @@ def test_pool_rebind_closes_old_then_creates_and_returns_ids() -> None:
         )
         bound: list = []
         pool, _ = _pool(
-            loop, fake.spawn, on_stored_session_bound=lambda e, s: bound.append((e, s))
+            loop,
+            fake.spawn,
+            on_stored_session_bound=lambda e, new, old: bound.append((e, new, old)),
         )
         await loop.run_in_executor(pool.init_executor, pool.child_for_employee, E1)
-        # First bound was the initial create.
-        assert bound == [(E1, "stored1")]
+        # First bound was the initial create — no predecessor durable id (old = None).
+        assert bound == [(E1, "stored1", None)]
 
         new_live, new_stored = await loop.run_in_executor(
             pool.init_executor, pool.rebind_fresh_session, E1, "live1"
@@ -91,8 +109,9 @@ def test_pool_rebind_closes_old_then_creates_and_returns_ids() -> None:
         methods = fake.sent_methods()
         # The pool closed the OLD live session FIRST, then created the fresh one.
         assert methods.index("session.close") < methods.index("session.create", 1)
-        # The persistence callback fired with the NEW stored id, before returning.
-        assert bound == [(E1, "stored1"), (E1, "stored2")]
+        # The persistence callback fired with (employee, NEW stored id, OLD stored id), before
+        # returning — the widened 3-arg signature carrying the predecessor for the CAS (§3.2).
+        assert bound == [(E1, "stored1", None), (E1, "stored2", "stored1")]
         pool.shutdown(deadline=_monotonic() + 2.0)
 
     asyncio.run(body())
@@ -145,7 +164,7 @@ def test_first_create_persist_failure_leaves_no_live_owner() -> None:
             {"session.create": [Reply(result={"session_id": "live1", "stored_session_id": "s1"})]}
         )
 
-        def raising_persist(_employee, _stored):
+        def raising_persist(_employee, _new_stored, _old_stored):
             raise RuntimeError("db write failed")
 
         pool, relay = _pool(loop, fake.spawn, on_stored_session_bound=raising_persist)
@@ -165,11 +184,13 @@ def test_first_create_persist_failure_leaves_no_live_owner() -> None:
     asyncio.run(body())
 
 
-def test_rebind_persist_failure_does_not_advance_in_memory() -> None:
-    """A raising persistence callback on REBIND must NOT advance the in-memory binding past a
-    failed DB write. Otherwise a concurrent stale `/new` would return the unpersisted fresh ids
-    and a restart re-adopts the OLD key -> fork. Fail-closed: the in-memory maps stay at the
-    OLD binding, consistent with the (still-old) DB, and the rebind raises."""
+def test_rebind_persist_failure_tears_down_child_and_keeps_old_durable_key() -> None:
+    """A raising persistence callback on REBIND must NOT leave the child alive with an
+    unpersisted fresh session while the OLD live session is already CLOSED (S3 §3.2, Codex
+    Finding 5 — the fix, not the inherited defect). Fail-closed: the pool TEARS THE CHILD DOWN
+    (record dropped, relay binding unregistered, live-id map cleared) so the next demand
+    respawns clean and RESUMEs the still-durable OLD stored key; the stored-id map is left on
+    the OLD durable key, and the rebind raises."""
 
     async def body() -> None:
         loop = asyncio.get_running_loop()
@@ -184,12 +205,12 @@ def test_rebind_persist_failure_does_not_advance_in_memory() -> None:
         )
         calls: list = []
 
-        def persist(_employee, stored):
-            calls.append(stored)
-            if stored == "s2":  # the fresh rebind binding fails to persist
+        def persist(_employee, new_stored, _old_stored):
+            calls.append(new_stored)
+            if new_stored == "s2":  # the fresh rebind binding fails to persist
                 raise RuntimeError("db write failed")
 
-        pool, _ = _pool(loop, fake.spawn, on_stored_session_bound=persist)
+        pool, relay = _pool(loop, fake.spawn, on_stored_session_bound=persist)
         await loop.run_in_executor(pool.init_executor, pool.child_for_employee, E1)
         assert calls == ["s1"]  # the initial create persisted fine
 
@@ -199,10 +220,96 @@ def test_rebind_persist_failure_does_not_advance_in_memory() -> None:
         except Exception:
             raised = True
         assert raised, "a failed rebind persist must raise (fail-closed)"
-        # The in-memory binding did NOT advance to the unpersisted fresh id: it still points at
-        # the OLD binding (consistent with the still-old DB), so a restart resumes the old key.
+        # The child was torn down: no record, relay binding unregistered, live-id cleared.
+        assert E1 not in pool._records
+        assert not relay.binding_alive(1)
+        assert pool._live_session_id_by_employee.get(E1) is None
+        # The stored-id map is left on the OLD durable key so a respawn RESUMEs it (the old
+        # live session was closed, but the durable stored session persists).
         assert pool._stored_session_id_by_employee[E1] == "s1"
-        assert pool._live_session_id_by_employee[E1] == "live1"
+        pool.shutdown(deadline=_monotonic() + 2.0)
+
+    asyncio.run(body())
+
+
+def test_rebind_persist_failure_cleanup_spares_newer_generation() -> None:
+    """Codex Finding 3 (peer round): the rebind-failure cleanup must NOT kill a healthy NEWER
+    generation.
+
+    `child_for_employee` respawns a dead child using only `_lock`/`_init_slots`, NEVER
+    `rebind_lock` (`employee_child_pool.py:286-315`, publish at `:331`) — VERIFIED — so a NEWER
+    generation N+1 can publish while rebind N blocks in its persist callback (up to SQLite's 5s
+    busy timeout). The unfixed cleanup generation-guards ONLY `_records.pop` but UNCONDITIONALLY
+    clears `_live_session_id_by_employee` AND shuts down `record.transport` re-read from the
+    now-current N+1 record — killing N+1's transport and dropping its live-session mapping.
+
+    Here the persist callback for the fresh rebind binding deterministically publishes N+1 (it
+    kills N's child and respawns via `child_for_employee`, resuming the still-durable OLD key)
+    BEFORE it raises. N's cleanup then runs. The fix guards the live-id clear + the transport
+    shutdown on `record.child_generation == generation` and shuts down N's OWN transport (passed
+    in), so N+1 is untouched. This test DIES on the unfixed cleanup (N+1's transport killed / its
+    live-id cleared)."""
+
+    async def body() -> None:
+        loop = asyncio.get_running_loop()
+        # Child 1 = generation N: initial create (s1), then the rebind's close + fresh create (s2).
+        child_n = FakeGateway(
+            {
+                "session.create": [
+                    Reply(result={"session_id": "live1", "stored_session_id": "s1"}),
+                    Reply(result={"session_id": "live2", "stored_session_id": "s2"}),
+                ],
+                "session.close": [Reply(result={"closed": True})],
+            }
+        )
+        # Child 2 = generation N+1 (the respawn): resumes the still-durable OLD key s1.
+        child_n_plus_1 = FakeGateway(
+            {"session.resume": [Reply(result={"session_id": "live-n1", "resumed": "s1"})]}
+        )
+        multi = _MultiChild([child_n, child_n_plus_1])
+
+        published: dict = {}
+
+        def persist(_employee, new_stored, _old_stored):
+            if new_stored != "s2":
+                return  # the initial create (s1) persists fine
+            # The fresh rebind binding is about to fail — but FIRST model the race: N's child dies
+            # and a step demand respawns N+1 without the rebind lock, publishing it. Do that
+            # synchronously here (we are on the init-executor thread, mid-persist), THEN raise.
+            record_n = pool._records[E1]  # noqa: SLF001 — generation N's record
+            record_n.transport._child._die()  # type: ignore[attr-defined]  # N's child dies
+            assert record_n.transport.dead_event.wait(2.0)
+            # Respawn: publishes generation N+1 with a DISTINCT transport, live-id map -> live-n1.
+            record_n_plus_1 = pool.child_for_employee(E1)
+            published["record"] = record_n_plus_1
+            published["transport"] = record_n_plus_1.transport
+            raise RuntimeError("db write failed")
+
+        pool, relay = _pool(loop, multi.spawn, on_stored_session_bound=persist)
+        await loop.run_in_executor(pool.init_executor, pool.child_for_employee, E1)
+
+        try:
+            await loop.run_in_executor(pool.init_executor, pool.rebind_fresh_session, E1, "live1")
+            raised = False
+        except Exception:
+            raised = True
+        assert raised, "a failed rebind persist must raise (fail-closed)"
+
+        record_n_plus_1 = published["record"]
+        transport_n_plus_1 = published["transport"]
+        # N+1 is a DIFFERENT generation/transport than N (proving a real respawn happened).
+        assert record_n_plus_1.child_generation == 2
+        assert transport_n_plus_1 is not None
+        # N's cleanup MUST have spared the newer generation:
+        # 1) N+1's transport stays ALIVE (the cleanup did not shut down the current record's
+        #    transport — that was the bug that re-read `_records` for the transport to kill).
+        assert transport_n_plus_1.alive, "cleanup killed the newer generation's transport"
+        # 2) N+1 is still the current record.
+        assert pool._records.get(E1) is record_n_plus_1
+        # 3) N+1's live-session mapping is INTACT (the cleanup did not clear it unconditionally).
+        assert pool._live_session_id_by_employee.get(E1) == "live-n1", (
+            "cleanup cleared the newer generation's live-session mapping"
+        )
         pool.shutdown(deadline=_monotonic() + 2.0)
 
     asyncio.run(body())

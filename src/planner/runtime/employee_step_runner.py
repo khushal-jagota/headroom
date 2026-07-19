@@ -21,11 +21,12 @@ from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic import dates
-from planner.minds.shared_gateway import SharedGateway, SharedGatewayBusy
+from planner.minds.shared_gateway import SharedGatewayBusy
 from planner.runtime import automatic_employee_step_eligibility
 from planner.runtime.automatic_employee_step_eligibility_wake import (
     AutomaticEmployeeStepEligibilityWake,
 )
+from planner.runtime.step_gateway import StepGateway
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     EmployeeSessionIdTransition,
@@ -135,7 +136,7 @@ class EmployeeStepRunner:
         db_path: str,
         clock: Clock,
         *,
-        gateway: SharedGateway,
+        gateway: StepGateway,
         automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
         boundary_hour: int,
         busy_timeout_ms: int = 5000,
