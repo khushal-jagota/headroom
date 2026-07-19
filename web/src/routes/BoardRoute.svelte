@@ -3,6 +3,7 @@
   import { relayChief, retryRelayChiefMeta } from "../lib/capabilities";
   import { resourceCatalogue } from "../lib/resourceCatalogue";
   import { labelize } from "../lib/ui";
+  import type { FieldStageVisualState } from "../lib/ui";
   import type { WorkerTypesResponse } from "../lib/lifecycle";
   import Button from "../components/Button.svelte";
   import ChatPanel from "../components/ChatPanel.svelte";
@@ -49,11 +50,34 @@
     window.location.hash = "#/workspace";
   }
 
-  // Running tickets reuse the current-stage spinner. Its field identity comes from the
-  // card's gating field; non-running tickets need no mark because the stage heading now
-  // carries their state.
+  function stageMarker(card: Record<string, any>, stageState: FieldStageVisualState): string | null {
+    if (stageState === "current-running") return "agent-running-step";
+    if (stageState === "errored") return "errored";
+    if (stageState === "current-awaiting-approval" && card.has_pending_proposal) {
+      return "pending-proposal";
+    }
+    if (stageState === "current-waiting" && card.ticket_status === "user_takeover") {
+      return "user-takeover";
+    }
+    if (stageState === "current-paired-work") return "paired-work";
+    return null;
+  }
+
+  // The stage heading carries position; the existing mark still carries the ticket's
+  // current condition (waiting, running, needs approval, paired, errored, or complete).
   function currentStageField(card: Record<string, any>): string {
     return card.gating_field || "closeout";
+  }
+
+  function currentStageState(card: Record<string, any>): FieldStageVisualState {
+    if (card.is_done) return "completed";
+    if (card.ticket_status === "agent_running_step") return "current-running";
+    if (card.ticket_status === "errored") return "errored";
+    if (card.ticket_status === "paired_work") return "current-paired-work";
+    if (card.has_pending_proposal || card.ticket_status === "awaiting_approval") {
+      return "current-awaiting-approval";
+    }
+    return "current-waiting";
   }
 
   function currentStageLabel(card: Record<string, any>): string {
@@ -267,6 +291,8 @@
                           <div class="board-workspace-stage-tickets">
                             {#each stage.cards as card}
                               {@const stageField = currentStageField(card)}
+                              {@const stageState = currentStageState(card)}
+                              {@const marker = stageMarker(card, stageState)}
                               <button
                                 type="button"
                                 class="list-row list-row--board"
@@ -278,16 +304,14 @@
                                 data-ticket-status={card.ticket_status}
                               >
                                 <span class="list-row-title">{card.title}</span>
-                                {#if card.ticket_status === "agent_running_step"}
-                                  <StageMark
-                                    state="current-running"
-                                    class="board-workspace-stage-mark"
-                                    data-stage-field={stageField}
-                                    data-stage-state="current-running"
-                                    data-marker="agent-running-step"
-                                    aria-label={`${stageField} current running`}
-                                  />
-                                {/if}
+                                <StageMark
+                                  state={stageState}
+                                  class="board-workspace-stage-mark"
+                                  data-stage-field={stageField}
+                                  data-stage-state={stageState}
+                                  data-marker={marker || undefined}
+                                  aria-label={`${stageField} ${stageState.replace(/-/g, " ")}`}
+                                />
                               </button>
                             {/each}
                           </div>

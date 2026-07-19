@@ -35,7 +35,7 @@ def _set_ticket_updated_at(server, ticket_id: str, updated_at: int) -> None:
         )
 
 
-def test_workspace_ticket_rows_contain_only_title_and_existing_running_mark(
+def test_workspace_ticket_rows_contain_only_title_and_existing_condition_mark(
     server, context_factory, open_page, cli, api
 ) -> None:
     waiting = cli(
@@ -98,17 +98,26 @@ def test_workspace_ticket_rows_contain_only_title_and_existing_running_mark(
         assert page.locator(f"{selector} .board-workspace-row-byline").count() == 0
         assert page.locator(f"{selector} .board-workspace-row-metadata").count() == 0
 
-    assert page.locator(f"{waiting_card} > *").count() == 1
-    assert page.locator(f"{errored_card} > *").count() == 1
-    assert page.locator(f"{waiting_card} .board-workspace-stage-mark").count() == 0
-    assert page.locator(f"{errored_card} .board-workspace-stage-mark").count() == 0
+    for card in (waiting_card, running_card, errored_card):
+        assert page.locator(f"{card} > *").count() == 2
+        assert page.locator(f"{card} .board-workspace-stage-mark").count() == 1
 
-    assert page.locator(f"{running_card} > *").count() == 2
+    waiting_mark = page.locator(
+        f'{waiting_card} .board-workspace-stage-mark[data-stage-state="current-waiting"]'
+    )
+    assert waiting_mark.count() == 1
+    assert waiting_mark.get_attribute("data-marker") is None
+
     running_mark = page.locator(
         f'{running_card} [data-marker="agent-running-step"][data-stage-state="current-running"]'
     )
     assert running_mark.count() == 1
     assert running_mark.get_attribute("data-stage-field") == "success"
+
+    errored_mark = page.locator(
+        f'{errored_card} [data-marker="errored"][data-stage-state="errored"]'
+    )
+    assert errored_mark.count() == 1
 
 
 def test_workspace_groups_populated_project_worker_and_stage_sections_in_contract_order(

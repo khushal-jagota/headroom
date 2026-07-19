@@ -25,8 +25,9 @@ contracts do not change.
   than ticket text.
 - Hide right-aligned disclosure chevrons until their own header is hovered or keyboard-focused.
 - Separate stages with thin rules. Do not add a rule directly under a project title.
-- A ticket row contains its title and the existing running mark only. Do not repeat worker type or stage
-  on a ticket row and do not add counts or other metadata.
+- A ticket row contains its title and the existing condition mark only. Preserve the mark's waiting,
+  running, approval-needed, paired, error, and completed states. Do not repeat worker type or stage on a
+  ticket row and do not add counts or other metadata.
 - Preserve ticket selection, Hide done, Chief of Staff, routing, data attributes, and reduced-motion
   behavior.
 
