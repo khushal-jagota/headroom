@@ -424,7 +424,11 @@
       </main>
       <aside class="chat-rail" data-chat>
         {#if $relayChief === "enabled"}
-          <ChiefNeutralPane entityId={stableId} label={detail.title || "Ticket"} />
+          {@const workerLabel = lc?.workerTypeLabel ?? labelize(detail.worker_type)}
+          <ChiefNeutralPane
+            entityId={stableId}
+            label={/worker$/i.test(workerLabel) ? workerLabel : `${workerLabel} worker`}
+          />
         {:else if $relayChief === "disabled"}
           {@const status = legacyChatStatus()}
           <ChatPanel
