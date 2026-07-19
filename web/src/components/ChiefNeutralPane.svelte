@@ -364,3 +364,33 @@
     </div>
   </div>
 </section>
+
+<style>
+  /* Fill the flex parent and establish the internal scroll region — mirrors the
+     legacy .chat-panel/.chat-thread structure in assets/app.css so the transcript
+     scrolls instead of expanding its container (which the desk clips at overflow
+     hidden). Entity-generic: applies to the Chief and every ticket pane. */
+  .chief-neutral-pane {
+    flex: 1;
+    min-height: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .chief-neutral-transcript {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+    padding: var(--space-3) var(--space-1) var(--space-4);
+  }
+
+  .chief-neutral-clarify,
+  .chief-neutral-approval,
+  .chief-neutral-composer {
+    flex: none;
+  }
+</style>
