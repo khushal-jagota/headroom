@@ -107,7 +107,7 @@ The fixture is created through current schema/domain writers and provides a smal
 
 Preparation creates a distinct empty Hermes home for every instance and provisions only repository-owned role-skill links through the existing provisioning contract. It never copies `auth.json`, provider configuration, session state, or credentials from another home.
 
-Add a human-run opt-in smoke command/script that accepts two already-authenticated non-production instance homes, creates one real temporary session in each through the real gateway, proves the stored session ids and home paths differ, and cleans up best-effort. It must fail clearly when either home is not independently configured. Canonical tests use fakes and never make model calls.
+Add a human-run opt-in smoke command/script that accepts two already-authenticated non-production instance homes, creates one unrelated real session in each through the real gateway, proves the stored session ids and home paths differ, closes the first ACP child, and loads each session from a fresh child before reporting it. The smoke does not delete those durable sessions; they belong to the homes used for the smoke and remain for operator inspection or later cleanup. It must fail clearly when either home is not independently configured. Canonical tests use fakes and never make model calls.
 
 ## Linux assets
 
@@ -130,7 +130,7 @@ Use vertical RED → GREEN slices and preserve the exact decisive failure/pass o
 4. **Lifecycle safety:** prepare is idempotent for the exact manifest, concurrent preview prepare allocates distinct ports, mismatched re-prepare fails, and reset/remove fail while the real port lease is held or for live.
 5. **Concurrent runtime:** real test-mode subprocesses launched through `panels environment run` become healthy concurrently and expose independent writes/files/logs/locks/control sockets; termination leaves no owned child running.
 6. **Linux rendering:** units and setup assets name the correct accounts, instance roots, environment references, and common runtime entry point; no secret value is checked in.
-7. **Hermes smoke contract:** fake-gateway tests prove two explicit homes produce distinct temporary stored session ids and cleanup attempts; the real path is opt-in and never part of `./verify`.
+7. **Hermes smoke contract:** fake-gateway tests prove two explicit homes produce distinct stored session ids, and the official ACP path proves successful `end_turn`, exact agent text, and fresh-child session loading; the real path is opt-in and never part of `./verify`.
 
 ## Contract-scoped files
 

@@ -135,6 +135,52 @@ def test_run_execs_planner_serve_with_scrubbed_environment(tmp_path: Path) -> No
     assert "HERMES_SESSION_KEY" not in run_env
 
 
+def test_run_preserves_operator_selected_hermes_python_as_contract_owned_value(
+    tmp_path: Path,
+) -> None:
+    repository_root = _repository_root(tmp_path)
+    prepared = resolve_environment_instance(
+        kind="staging",
+        environment_root=_short_environment_root(tmp_path),
+        allowed_repository_roots=(repository_root,),
+        requested_repository_roots=(repository_root,),
+        prepared=True,
+    )
+    exec_calls: list[tuple[str, list[str], dict[str, str]]] = []
+
+    result = CliRunner().invoke(
+        environment,
+        [
+            "run",
+            "--kind",
+            "staging",
+            "--environment-root",
+            str(_short_environment_root(tmp_path)),
+            "--repository-root",
+            str(repository_root),
+        ],
+        obj=EnvironmentCliDependencies(
+            inspect_instance=lambda **_: _manifest(prepared),
+            exec_fn=lambda file, argv, env: exec_calls.append((file, argv, dict(env))),
+            ambient_env={
+                "PATH": "/usr/bin:/bin",
+                "HOME": "/operator-home",
+                "PLAN_HERMES_PYTHON": "/operator-hermes/bin/python",
+                "PLAN_DB_PATH": "/ambient/poison.db",
+                "PLAN_TICKET_ID": "ambient-ticket",
+            },
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    run_env = exec_calls[0][2]
+    assert run_env["PLAN_HERMES_PYTHON"] == "/operator-hermes/bin/python"
+    assert run_env["HOME"] == str(prepared.hermes_home)
+    assert "PLAN_DB_PATH" in run_env
+    assert run_env["PLAN_DB_PATH"] != "/ambient/poison.db"
+    assert "PLAN_TICKET_ID" not in run_env
+
+
 def test_run_requires_exactly_one_caller_trusted_repository_root(tmp_path: Path) -> None:
     repository_root = _repository_root(tmp_path)
     second_repository_root = tmp_path / "second-repo"

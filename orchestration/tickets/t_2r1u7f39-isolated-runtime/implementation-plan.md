@@ -130,7 +130,10 @@ Do not touch frontend files, HTTP route behavior, database migrations, existing 
 
 `hermes_smoke.py` owns opt-in real-session smoke:
 
-- `smoke_distinct_hermes_homes(home_a, home_b, hermes_python, *, cleanup=True) -> HermesSmokeReport`
+- `smoke_prepared_nonproduction_instances(staging, preview, hermes_python) -> HermesSmokeReport`
+- the official ACP smoke prompts one unrelated real session in each home, closes the first child,
+  and loads each durable session from a fresh child before reporting its id; it does not delete
+  those sessions
 - fake-gateway unit tests cover this path; no model call runs in `./verify`
 
 `cli.py` owns the Click group registered from `src/planner/cli/main.py`:
@@ -308,7 +311,9 @@ Own:
 
 Acceptance:
 
-- fake-gateway tests prove two explicit homes produce distinct temporary stored session ids and cleanup is attempted for both
+- fake-gateway tests prove two explicit homes produce distinct stored session ids; official ACP
+  tests prove exact prompt success and fresh-child loading, while the durable sessions remain in
+  their owning homes
 - real smoke command is opt-in, takes two already-authenticated nonproduction homes, fails clearly when either home is not independently configured, and is not part of `./verify`
 - docs provide copyable examples for `inspect`, `prepare`, `run`, `reset`, `remove`, and the opt-in smoke command
 - docs state live vs staging/preview isolation, Linux account boundary expectations, and the Implementation/Closeout boundary

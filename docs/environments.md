@@ -161,12 +161,21 @@ duplicate, unknown, or forbidden keys. Forbidden keys include contract-owned
 `PLAN_*`, Hermes session/config keys, `PYTHONPATH`, actor/ticket identity, process
 identity, and launch roots.
 
-`panels environment run` starts from a scrubbed process environment. It keeps only
-locale, terminal, `PATH`, `TMPDIR`, and `LC_*` basics from the ambient shell, then adds
-validated credential-file values and the contract-owned runtime values:
+`panels environment run` resolves the operator's `PLAN_HERMES_PYTHON` selection (or the
+normal Hermes default) before replacing `HOME` with the instance Hermes home. It then
+starts from a scrubbed process environment. It keeps only locale, terminal, `PATH`,
+`TMPDIR`, and `LC_*` basics from the ambient shell, then adds validated credential-file
+values and the contract-owned runtime values:
 `PLAN_DB_PATH`, `PLAN_PORT`, `PLAN_LOGS_DIR`, `PLAN_DISPATCHER_LOCK_PATH`,
-`PLAN_SERVER_CONTROL_SOCKET`, `PLAN_HERMES_HOME`, and `HOME`. `HOME` is set to the
-instance's Hermes home.
+`PLAN_SERVER_CONTROL_SOCKET`, `PLAN_HERMES_HOME`, `PLAN_HERMES_PYTHON`, and `HOME`.
+`HOME` is set to the instance's Hermes home. Other ambient `PLAN_*` values are not
+forwarded.
+
+The real-Hermes smoke creates unrelated durable sessions in the already-authenticated
+staging and preview homes, prompts each one, closes its first ACP child, and loads the
+same session from a fresh child before reporting the ids. It does not delete those
+sessions; the stored sessions belong to the homes used for the smoke and remain there
+for operator inspection or later cleanup.
 
 `run` requires exactly one caller-provided `--repository-root`. The command validates
 that existing worktree against the prepared manifest's allowed repository roots, then

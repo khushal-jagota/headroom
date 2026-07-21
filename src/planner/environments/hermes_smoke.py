@@ -15,7 +15,9 @@ from pathlib import Path
 from typing import cast
 
 from acp.schema import (
+    AgentMessageChunk,
     DeniedOutcome,
+    LoadSessionRequest,
     NewSessionRequest,
     PromptRequest,
     RequestPermissionRequest,
@@ -24,7 +26,11 @@ from acp.schema import (
     TextContentBlock,
 )
 
-from planner.conversation.backend_contracts import AcpConversationIngress
+from planner.conversation.backend_contracts import (
+    AcpConversationIngress,
+    AcpEmployeeChild,
+    AgentBackendDefinition,
+)
 from planner.conversation.contracts import ConversationEmployee
 from planner.conversation.hermes_backend import build_hermes_acp_backend_definition
 from planner.conversation.hermes_backend_configuration import hermes_src_root
@@ -41,6 +47,7 @@ from planner.environments.logic.credentials import (
 )
 
 _STORED_SESSION_RE = re.compile(r"\bstored(?:_session_id)?=(?P<id>[^\s]+)")
+_EXPECTED_RESPONSE_PREFIX = "Reply with exactly: "
 _AMBIENT_ALLOWLIST = {"LANG", "PATH", "TERM", "TMPDIR"}
 
 
@@ -72,7 +79,7 @@ def smoke_prepared_nonproduction_instances(
     runner: HermesSmokeRunner | None = None,
     prompt: str = "Reply with exactly: ok",
 ) -> HermesSmokeReport:
-    """Create one temporary real session in staging and one in preview, concurrently."""
+    """Create one unrelated real session in each non-production home, concurrently."""
     _validate_smoke_manifest(staging, expected_kind="staging")
     _validate_smoke_manifest(preview, expected_kind="preview")
     if staging.hermes_home == preview.hermes_home:
@@ -234,11 +241,83 @@ async def _create_official_acp_session(
     for name in credential_environment_names:
         validate_environment_key(name, kind="staging")
 
-    async def ingress(
-        _update: SessionNotification | ProtocolUpdateRejectedPayload,
-    ) -> None:
-        return None
+    agent_text: list[str] = []
+    definition = build_hermes_acp_backend_definition(
+        hermes_executable=hermes_python.with_name("hermes"),
+        hermes_home=home,
+        hermes_source_root=hermes_src_root(hermes_python),
+        turn_strategy=HermesAcpTurnStrategy(concurrent_prompt=None, capture_updates=None),
+        additional_inherited_environment_names=credential_environment_names,
+    )
 
+    async def ingress(
+        update: SessionNotification | ProtocolUpdateRejectedPayload,
+    ) -> None:
+        if not isinstance(update, SessionNotification):
+            return
+        if not isinstance(update.update, AgentMessageChunk):
+            return
+        if not isinstance(update.update.content, TextContentBlock):
+            return
+        agent_text.append(update.update.content.text)
+
+    child = await _create_official_acp_child(
+        home=home,
+        repository_root=repository_root,
+        definition=definition,
+        ingress=cast(AcpConversationIngress, ingress),
+    )
+    try:
+        await child.initialize(build_panels_initialize_request(definition))
+        session = await child.new_session(
+            NewSessionRequest(cwd=str(repository_root), additional_directories=[], mcp_servers=[])
+        )
+        prompt_response = await child.prompt(
+            PromptRequest(
+                session_id=session.session_id,
+                prompt=[TextContentBlock(type="text", text=prompt)],
+            )
+        )
+        expected_response = _expected_smoke_response(prompt)
+        actual_response = "".join(agent_text)
+        if prompt_response.stop_reason != "end_turn" or actual_response != expected_response:
+            raise EnvironmentValidationError(
+                "Hermes ACP smoke prompt failed: "
+                f"stop_reason={prompt_response.stop_reason!r}; "
+                f"agent_text={actual_response!r}; "
+                f"expected stop_reason='end_turn' and agent_text={expected_response!r}"
+            )
+    finally:
+        await child.close()
+
+    fresh_child = await _create_official_acp_child(
+        home=home,
+        repository_root=repository_root,
+        definition=definition,
+        ingress=cast(AcpConversationIngress, ingress),
+    )
+    try:
+        await fresh_child.initialize(build_panels_initialize_request(definition))
+        await fresh_child.load_session(
+            LoadSessionRequest(
+                cwd=str(repository_root),
+                session_id=session.session_id,
+                mcp_servers=[],
+                additional_directories=[],
+            )
+        )
+    finally:
+        await fresh_child.close()
+    return session.session_id
+
+
+async def _create_official_acp_child(
+    *,
+    home: Path,
+    repository_root: Path,
+    definition: AgentBackendDefinition,
+    ingress: AcpConversationIngress,
+) -> AcpEmployeeChild:
     async def permission(
         _request: RequestPermissionRequest,
     ) -> RequestPermissionResponse:
@@ -247,13 +326,6 @@ async def _create_official_acp_session(
     async def death(_error: BaseException | None) -> None:
         return None
 
-    definition = build_hermes_acp_backend_definition(
-        hermes_executable=hermes_python.with_name("hermes"),
-        hermes_home=home,
-        hermes_source_root=hermes_src_root(hermes_python),
-        turn_strategy=HermesAcpTurnStrategy(concurrent_prompt=None, capture_updates=None),
-        additional_inherited_environment_names=credential_environment_names,
-    )
     employee = ConversationEmployee(
         employee_id="environment-hermes-smoke",
         entity_kind="agent",
@@ -261,27 +333,21 @@ async def _create_official_acp_session(
         workspace_roots=(repository_root,),
         backend_key="hermes",
     )
-    child = await SdkAcpEmployeeChildFactory(definition).create(
+    return await SdkAcpEmployeeChildFactory(definition).create(
         employee,
         1,
-        cast(AcpConversationIngress, ingress),
+        ingress,
         permission,
         death,
     )
-    try:
-        await child.initialize(build_panels_initialize_request(definition))
-        session = await child.new_session(
-            NewSessionRequest(cwd=str(repository_root), additional_directories=[], mcp_servers=[])
+
+
+def _expected_smoke_response(prompt: str) -> str:
+    if not prompt.startswith(_EXPECTED_RESPONSE_PREFIX):
+        raise EnvironmentValidationError(
+            "Hermes ACP smoke prompt must start with 'Reply with exactly: '"
         )
-        await child.prompt(
-            PromptRequest(
-                session_id=session.session_id,
-                prompt=[TextContentBlock(type="text", text=prompt)],
-            )
-        )
-        return session.session_id
-    finally:
-        await child.close()
+    return prompt[len(_EXPECTED_RESPONSE_PREFIX) :]
 
 
 def _run_official_acp_session_from_cli(arguments: list[str] | None = None) -> int:

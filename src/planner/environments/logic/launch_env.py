@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 
 from planner.environments.contracts import ResolvedEnvironmentInstance
 from planner.environments.logic.credentials import validate_environment_values
@@ -22,10 +23,11 @@ def build_environment_run_env(
     *,
     credentials: Mapping[str, str],
     ambient: Mapping[str, str],
+    hermes_python: Path,
 ) -> dict[str, str]:
     run_env = _allowed_ambient_env(ambient)
     run_env.update(validate_environment_values(credentials, kind=instance.kind))
-    run_env.update(_contract_owned_env(instance))
+    run_env.update(_contract_owned_env(instance, hermes_python=hermes_python))
     return run_env
 
 
@@ -34,8 +36,14 @@ def build_test_environment_run_env(
     *,
     credentials: Mapping[str, str],
     ambient: Mapping[str, str],
+    hermes_python: Path,
 ) -> dict[str, str]:
-    run_env = build_environment_run_env(instance, credentials=credentials, ambient=ambient)
+    run_env = build_environment_run_env(
+        instance,
+        credentials=credentials,
+        ambient=ambient,
+        hermes_python=hermes_python,
+    )
     run_env.update(
         {
             "PLAN_TEST_MODE": "1",
@@ -55,7 +63,11 @@ def _allowed_ambient_env(ambient: Mapping[str, str]) -> dict[str, str]:
     return allowed
 
 
-def _contract_owned_env(instance: ResolvedEnvironmentInstance) -> dict[str, str]:
+def _contract_owned_env(
+    instance: ResolvedEnvironmentInstance,
+    *,
+    hermes_python: Path,
+) -> dict[str, str]:
     return {
         "PLAN_DB_PATH": str(instance.db_path),
         "PLAN_PORT": str(instance.port),
@@ -63,5 +75,6 @@ def _contract_owned_env(instance: ResolvedEnvironmentInstance) -> dict[str, str]
         "PLAN_DISPATCHER_LOCK_PATH": str(instance.dispatcher_lock_path),
         "PLAN_SERVER_CONTROL_SOCKET": str(instance.server_control_socket_path),
         "PLAN_HERMES_HOME": str(instance.hermes_home),
+        "PLAN_HERMES_PYTHON": str(hermes_python),
         "HOME": str(instance.hermes_home),
     }

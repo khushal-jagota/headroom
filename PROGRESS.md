@@ -4,6 +4,34 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-21): isolated runtime review corrections
+
+Starting point is commit `78b2b5a`. This closeout fixes three independent review findings
+without touching the operator server: normal environment launches now resolve the operator's
+Hermes Python selection before HOME is scrubbed and pass it as contract-owned
+`PLAN_HERMES_PYTHON`; the official ACP smoke now checks `end_turn` plus exact agent text; and
+each smoke session is loaded through a fresh ACP child before its id is reported. Smoke-created
+sessions are unrelated durable sessions owned by their isolated Hermes homes and are not deleted.
+
+RED evidence:
+
+- Added a focused CLI/run-env regression for the missing `PLAN_HERMES_PYTHON` contract value.
+- Added official ACP smoke regressions for failed stop reason/output and fresh-child loading.
+- The intended RED commands could not execute in this isolated checkout because its `.venv` and
+  project dependencies are absent and network/package installation is unavailable. Current code
+  inspection confirms each new assertion targets a present defect.
+
+Current hypothesis:
+
+- The minimal fixes are confined to the launch-env contract, official Hermes smoke lifecycle,
+  the focused tests, and live environment documentation. Credential confinement and production
+  Hermes backend defaults remain unchanged.
+
+Next step:
+
+- Run the requested unit, Hermes backend, Ruff, strict mypy, and diff gates when the project
+  environment is available, then record the full evidence and commit.
+
 ## Current work cycle (2026-07-21): isolated runtime integration closeout
 
 Ticket `t_2r1u7f39` is cherry-picked onto the current ACP-era main worktree at `28c439e`.

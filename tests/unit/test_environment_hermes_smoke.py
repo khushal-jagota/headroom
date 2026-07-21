@@ -7,6 +7,13 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from acp.schema import (
+    AgentMessageChunk,
+    LoadSessionRequest,
+    PromptResponse,
+    SessionNotification,
+    TextContentBlock,
+)
 from acp.transports import default_environment
 
 import planner.environments.hermes_smoke as hermes_smoke
@@ -58,14 +65,28 @@ def test_official_acp_smoke_child_keeps_only_validated_credentials_and_isolated_
             permission_callback: Any,
             death_callback: Any,
         ) -> Any:
-            del generation, update_ingress, permission_callback, death_callback
+            del generation, permission_callback, death_callback
             captured["environment"] = build_confined_child_environment(
                 self.definition, employee, ambient_environment=ambient
             )
+
+            async def prompt(request: Any) -> PromptResponse:
+                await update_ingress(
+                    SessionNotification(
+                        session_id=request.session_id,
+                        update=AgentMessageChunk(
+                            session_update="agent_message_chunk",
+                            content=TextContentBlock(type="text", text="ok"),
+                        ),
+                    )
+                )
+                return PromptResponse(stop_reason="end_turn")
+
             return SimpleNamespace(
                 initialize=async_noop,
                 new_session=new_session,
-                prompt=async_noop,
+                prompt=prompt,
+                load_session=async_noop,
                 close=async_noop,
             )
 
@@ -79,7 +100,7 @@ def test_official_acp_smoke_child_keeps_only_validated_credentials_and_isolated_
             home=home,
             hermes_python=tmp_path / "hermes-python",
             repository_root=repository_root,
-            prompt="ok",
+            prompt="Reply with exactly: ok",
             credential_environment_names=("ANTHROPIC_API_KEY", "OPENAI_API_KEY"),
         )
     )
@@ -103,6 +124,148 @@ def test_official_acp_smoke_child_keeps_only_validated_credentials_and_isolated_
     assert "PLAN_DB_PATH" not in environment
     assert "PYTHONPATH" not in environment
     assert session_id == "stored-session"
+
+
+def test_official_acp_smoke_rejects_failed_prompt_response_and_agent_text(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+
+    class FailedChild:
+        async def initialize(self, request: Any) -> None:
+            del request
+
+        async def new_session(self, request: Any) -> Any:
+            del request
+            return SimpleNamespace(session_id="stored-session")
+
+        async def prompt(self, request: Any) -> PromptResponse:
+            await self.ingress(
+                SessionNotification(
+                    session_id=request.session_id,
+                    update=AgentMessageChunk(
+                        session_update="agent_message_chunk",
+                        content=TextContentBlock(type="text", text="no"),
+                    ),
+                )
+            )
+            return PromptResponse(stop_reason="cancelled")
+
+        async def close(self) -> None:
+            events.append("close")
+
+        def __init__(self, ingress: Any) -> None:
+            self.ingress = ingress
+
+    class FailedFactory:
+        def __init__(self, definition: Any) -> None:
+            del definition
+
+        async def create(
+            self,
+            employee: Any,
+            generation: int,
+            update_ingress: Any,
+            permission_callback: Any,
+            death_callback: Any,
+        ) -> FailedChild:
+            del employee, generation, permission_callback, death_callback
+            return FailedChild(update_ingress)
+
+    monkeypatch.setattr(hermes_smoke, "SdkAcpEmployeeChildFactory", FailedFactory)
+
+    with pytest.raises(
+        EnvironmentValidationError,
+        match=r"stop_reason='cancelled'.*agent_text='no'",
+    ):
+        asyncio.run(
+            hermes_smoke._create_official_acp_session(
+                home=tmp_path / "isolated-hermes-home",
+                hermes_python=tmp_path / "hermes-python",
+                repository_root=_repository_root(tmp_path),
+                prompt="Reply with exactly: ok",
+            )
+        )
+
+    assert events == ["close"]
+
+
+def test_official_acp_smoke_loads_session_in_a_fresh_child_before_reporting_it(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    children: list[Any] = []
+    events: list[str] = []
+
+    class PersistentChild:
+        def __init__(self, child_number: int, ingress: Any) -> None:
+            self.child_number = child_number
+            self.ingress = ingress
+            self.load_requests: list[LoadSessionRequest] = []
+
+        async def initialize(self, request: Any) -> None:
+            del request
+
+        async def new_session(self, request: Any) -> Any:
+            del request
+            events.append(f"new:{self.child_number}")
+            return SimpleNamespace(session_id="stored-session")
+
+        async def prompt(self, request: Any) -> PromptResponse:
+            events.append(f"prompt:{self.child_number}")
+            await self.ingress(
+                SessionNotification(
+                    session_id=request.session_id,
+                    update=AgentMessageChunk(
+                        session_update="agent_message_chunk",
+                        content=TextContentBlock(type="text", text="ok"),
+                    ),
+                )
+            )
+            return PromptResponse(stop_reason="end_turn")
+
+        async def load_session(self, request: LoadSessionRequest) -> Any:
+            events.append(f"load:{self.child_number}")
+            self.load_requests.append(request)
+            return SimpleNamespace()
+
+        async def close(self) -> None:
+            events.append(f"close:{self.child_number}")
+
+    class PersistentFactory:
+        def __init__(self, definition: Any) -> None:
+            del definition
+
+        async def create(
+            self,
+            employee: Any,
+            generation: int,
+            update_ingress: Any,
+            permission_callback: Any,
+            death_callback: Any,
+        ) -> PersistentChild:
+            del employee, generation, permission_callback, death_callback
+            child = PersistentChild(len(children) + 1, update_ingress)
+            children.append(child)
+            return child
+
+    monkeypatch.setattr(hermes_smoke, "SdkAcpEmployeeChildFactory", PersistentFactory)
+    home = tmp_path / "isolated-hermes-home"
+
+    session_id = asyncio.run(
+        hermes_smoke._create_official_acp_session(
+            home=home,
+            hermes_python=tmp_path / "hermes-python",
+            repository_root=_repository_root(tmp_path),
+            prompt="Reply with exactly: ok",
+        )
+    )
+
+    assert session_id == "stored-session"
+    assert len(children) == 2
+    assert children[1].load_requests[0].session_id == session_id
+    assert events == ["new:1", "prompt:1", "close:1", "load:2", "close:2"]
 
 
 def test_hermes_smoke_runs_staging_and_preview_concurrently_with_scrubbed_envs(

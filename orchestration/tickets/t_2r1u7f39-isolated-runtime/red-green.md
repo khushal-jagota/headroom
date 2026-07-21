@@ -1266,3 +1266,36 @@ Output:
 ```text
 .                                                                        [100%]
 ```
+
+## Review-correction RED/GREEN: launch Hermes selection and official ACP persistence
+
+The correction RED added these focused tests before the production changes:
+
+```text
+tests/unit/test_environment_cli.py::test_run_preserves_operator_selected_hermes_python_as_contract_owned_value
+tests/unit/test_environment_hermes_smoke.py::test_official_acp_smoke_rejects_failed_prompt_response_and_agent_text
+tests/unit/test_environment_hermes_smoke.py::test_official_acp_smoke_loads_session_in_a_fresh_child_before_reporting_it
+```
+
+The isolated checkout could not execute the RED command because its project virtual environment
+and dependencies are absent; the available package managers could not reach the package index.
+The current code inspection confirmed the three RED assertions target the pre-correction
+omissions: no contract-owned `PLAN_HERMES_PYTHON`, discarded `PromptResponse`/agent updates, and
+no second child/session load.
+
+GREEN changes resolve `PLAN_HERMES_PYTHON` from the operator ambient mapping before HOME is
+scrubbed, capture typed `AgentMessageChunk` text, require `end_turn` plus the exact response
+requested by the default prompt (`ok`), close the first child, and load the same session id in a
+fresh child. The smoke reports no stored id when any of those checks fails, and the durable
+sessions remain in their owning isolated homes.
+
+Available local structural checks:
+
+```sh
+PYTHONPATH=src /opt/homebrew/bin/python3 -m compileall -q src tests
+git diff --check
+```
+
+Both completed successfully. The requested Python unit, related Hermes backend, Ruff, and strict
+mypy gates remain for the parent environment because this checkout cannot install the pinned
+dependencies. E2E and `./verify` remain intentionally deferred to the parent.

@@ -121,6 +121,7 @@ def test_launch_environment_scrubs_ambient_and_adds_contract_values(
         instance,
         credentials={"ANTHROPIC_API_KEY": "file-secret"},
         ambient=ambient,
+        hermes_python=Path("/operator-hermes/bin/python"),
     )
 
     assert run_env["LANG"] == "en_GB.UTF-8"
@@ -136,6 +137,7 @@ def test_launch_environment_scrubs_ambient_and_adds_contract_values(
     assert run_env["PLAN_DISPATCHER_LOCK_PATH"] == str(instance.dispatcher_lock_path)
     assert run_env["PLAN_SERVER_CONTROL_SOCKET"] == str(instance.server_control_socket_path)
     assert run_env["PLAN_HERMES_HOME"] == str(instance.hermes_home)
+    assert run_env["PLAN_HERMES_PYTHON"] == "/operator-hermes/bin/python"
 
     assert "PYTHONPATH" not in run_env
     assert "PLAN_ACTOR" not in run_env
@@ -164,6 +166,7 @@ def test_hidden_test_launch_seam_injects_fake_runtime_itself(tmp_path: Path) -> 
         instance,
         credentials={},
         ambient=ambient,
+        hermes_python=Path("/operator-hermes/bin/python"),
     )
 
     assert run_env["PLAN_TEST_MODE"] == "1"

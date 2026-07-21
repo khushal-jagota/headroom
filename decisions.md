@@ -37,6 +37,17 @@ the shared confined-environment builder via an opt-in definition extension. The 
 catalog continues to use only `HERMES_INHERITED_ENVIRONMENT_NAMES`, preserving its scrubbed-env
 boundary and avoiding any legacy `planner.minds` compatibility layer.
 
+## D-isolated-runtime-review-corrections — Resolve launch inputs before scrubbing and verify durable smoke sessions
+
+The ordinary environment runner explicitly resolves the operator-selected Hermes Python path from
+the caller's ambient mapping before replacing `HOME`, then writes only that value as the
+contract-owned `PLAN_HERMES_PYTHON`; arbitrary ambient `PLAN_*` values remain excluded. The
+official ACP smoke captures typed agent-message text and validates both `end_turn` and the exact
+response requested by its prompt. It closes the first child and loads the returned session id in
+a fresh child against the same isolated home before printing `stored=`, so authentication or
+model refusal cannot masquerade as success and persistence is proven. Smoke sessions are
+unrelated durable sessions belonging to those homes, not temporary sessions to delete.
+
 # Workspace
 
 ## D-workspace-three-level-grouping — Derive hierarchy from the existing board and manifest

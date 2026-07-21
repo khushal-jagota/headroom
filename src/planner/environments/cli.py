@@ -11,6 +11,7 @@ from pathlib import Path
 
 import click
 
+from planner.conversation.hermes_backend_configuration import resolve_hermes_python
 from planner.environments.contracts import (
     EnvironmentKind,
     EnvironmentManifest,
@@ -420,17 +421,20 @@ def run_environment_instance(
         else {}
     )
     ambient = deps.ambient_env if deps.ambient_env is not None else os.environ
+    hermes_python = resolve_hermes_python(env=ambient)
     if test_mode:
         run_env = build_test_environment_run_env(
             instance,
             credentials=credentials,
             ambient=ambient,
+            hermes_python=hermes_python,
         )
     else:
         run_env = build_environment_run_env(
             instance,
             credentials=credentials,
             ambient=ambient,
+            hermes_python=hermes_python,
         )
     argv = [deps.executable, "-m", "planner", "serve"]
     launch_root = _validated_launch_repository_root(
