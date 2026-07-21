@@ -68,6 +68,7 @@ try {
   });
   const subject = await import(join(temporaryDirectory, "subject.js"));
   runStateAssertions(subject, liveReplayFixture.live);
+  runGroupMessageBlocksAssertions(subject);
   runControllerAssertions(subject, liveReplayFixture, envelopeStatesFixture, controllerCasesFixture);
 } finally {
   await rm(entryPath, { force: true });
@@ -410,6 +411,99 @@ function runStateAssertions(subject, fixtureStream) {
     { kind: "add", text: "c", oldLine: null, newLine: 2 },
     { kind: "context", text: "", oldLine: 3, newLine: 3 },
   ]);
+}
+
+function runGroupMessageBlocksAssertions(subject) {
+  const { groupMessageBlocks } = subject;
+  const text = (value) => ({ type: "text", text: value });
+  const tool = (id, status = "completed") => ({
+    toolCallId: id,
+    title: id,
+    kind: "shell",
+    status,
+    content: [],
+    locations: [],
+  });
+  const agentMessage = (id, parts) => ({ id, role: "agent", timestamp: 1, parts });
+
+  // (a) All-text content immediately followed by tool calls folds into a
+  // content-led stanza — its blocks become the lead, no prose duplicate — with a
+  // key derived from the lead part index (stable across snapshots).
+  const led = groupMessageBlocks(agentMessage("m-a", [
+    { type: "content", content: [text("narration before tools")] },
+    { type: "tool_calls", toolCalls: [tool("tool-a")] },
+  ]));
+  assert.equal(led.length, 1);
+  assert.equal(led[0].kind, "stanza");
+  assert.equal(led[0].stanza.key, "m-a:stanza:c0");
+  assert.equal(led[0].stanza.thoughtPartIndex, null);
+  assert.deepEqual(led[0].stanza.thought, [text("narration before tools")]);
+  assert.deepEqual(led[0].stanza.steps.map((step) => step.toolCallId), ["tool-a"]);
+  assert.equal(led.some((block) => block.kind === "content"), false, "the lead never also renders as prose");
+
+  // (b) The turn's final answer text is not followed by tool calls, so it stays
+  // prose after the content-led stanza it trails.
+  const trailing = groupMessageBlocks(agentMessage("m-b", [
+    { type: "content", content: [text("lead narration")] },
+    { type: "tool_calls", toolCalls: [tool("tool-b")] },
+    { type: "content", content: [text("final answer")] },
+  ]));
+  assert.deepEqual(trailing.map((block) => block.kind), ["stanza", "content"]);
+  assert.equal(trailing[0].stanza.key, "m-b:stanza:c0");
+  assert.equal(trailing[1].key, "m-b:content:2");
+  assert.deepEqual(trailing[1].content, [text("final answer")]);
+
+  // (c) Thought-anchored grouping is unchanged: the thought part anchors, its key
+  // stays part-derived, and the following tools are its steps.
+  const thoughtLed = groupMessageBlocks(agentMessage("m-c", [
+    { type: "thought", thought: [text("typed thinking")], expanded: false },
+    { type: "tool_calls", toolCalls: [tool("tool-c")] },
+  ]));
+  assert.equal(thoughtLed.length, 1);
+  assert.equal(thoughtLed[0].stanza.key, "m-c:stanza:p0");
+  assert.equal(thoughtLed[0].stanza.thoughtPartIndex, 0);
+  assert.deepEqual(thoughtLed[0].stanza.steps.map((step) => step.toolCallId), ["tool-c"]);
+
+  // (d) A mixed-block content part (not all text) followed by tools stays prose;
+  // the tools open a bare stanza keyed off the tool call, not the content.
+  const mixed = groupMessageBlocks(agentMessage("m-d", [
+    { type: "content", content: [text("caption"), { type: "image", data: "AA==", mimeType: "image/png" }] },
+    { type: "tool_calls", toolCalls: [tool("tool-d")] },
+  ]));
+  assert.deepEqual(mixed.map((block) => block.kind), ["content", "stanza"]);
+  assert.equal(mixed[0].key, "m-d:content:0");
+  assert.equal(mixed[1].stanza.thoughtPartIndex, null);
+  assert.equal(mixed[1].stanza.thought, null);
+  assert.equal(mixed[1].stanza.key, "m-d:stanza:ttool-d");
+
+  // (e) Streaming progression falls out of re-running the pure grouper: while the
+  // text is the last part it is prose; once a tool_calls part is appended, the
+  // same text regroups as the collapsed content-led lead (the render key swaps
+  // from the content key to the stanza key).
+  const streamingParts = [{ type: "content", content: [text("streaming narration")] }];
+  const beforeTools = groupMessageBlocks(agentMessage("m-e", streamingParts));
+  assert.deepEqual(beforeTools.map((block) => block.kind), ["content"]);
+  assert.equal(beforeTools[0].key, "m-e:content:0");
+  const afterTools = groupMessageBlocks(agentMessage("m-e", [
+    ...streamingParts,
+    { type: "tool_calls", toolCalls: [tool("tool-e")] },
+  ]));
+  assert.deepEqual(afterTools.map((block) => block.kind), ["stanza"]);
+  assert.equal(afterTools[0].stanza.key, "m-e:stanza:c0");
+  assert.deepEqual(afterTools[0].stanza.thought, [text("streaming narration")]);
+
+  // (rule 6) A thought-anchored stanza with no steps does not merge into a
+  // following content-led stanza — the two beats stay separate.
+  const noMerge = groupMessageBlocks(agentMessage("m-f", [
+    { type: "thought", thought: [text("bare thought")], expanded: false },
+    { type: "content", content: [text("later narration")] },
+    { type: "tool_calls", toolCalls: [tool("tool-f")] },
+  ]));
+  assert.deepEqual(noMerge.map((block) => block.kind), ["stanza", "stanza"]);
+  assert.equal(noMerge[0].stanza.key, "m-f:stanza:p0");
+  assert.equal(noMerge[0].stanza.steps.length, 0);
+  assert.equal(noMerge[1].stanza.key, "m-f:stanza:c1");
+  assert.deepEqual(noMerge[1].stanza.steps.map((step) => step.toolCallId), ["tool-f"]);
 }
 
 function controllerHarness(subject, { failPermissionSend = false } = {}) {

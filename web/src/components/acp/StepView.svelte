@@ -29,15 +29,6 @@
   let expandable = $derived(detail.length > 0);
   let open = $derived(Boolean(tool.expanded));
 
-  // A failed step arrives with its detail open — once, so it can still be
-  // collapsed afterwards.
-  let failureOpened = $state(false);
-  $effect(() => {
-    if (tool.status !== "failed" || failureOpened) return;
-    failureOpened = true;
-    if (!tool.expanded) onExpanded(true);
-  });
-
   let counts = $derived.by(() => {
     if (tool.kind !== "edit") return null;
     let added = 0;

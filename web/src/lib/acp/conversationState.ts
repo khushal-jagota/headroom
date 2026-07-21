@@ -793,6 +793,14 @@ export function projectConversationSnapshot(state: ConversationState): Conversat
  * truth. A new thought burst (a `thought` part following tool calls) starts a
  * new stanza; tool calls arriving before any thought open a bare stanza the
  * following thought then fills.
+ *
+ * Backends like Claude rarely send `thought` parts — their rhythm is short
+ * narration text, then tool calls, then more narration, then a final answer. So
+ * an all-text `content` part that is immediately followed by a `tool_calls` part
+ * IS that beat's thinking: it becomes the collapsed lead of a content-led
+ * stanza (`thoughtPartIndex: null`, disclosure kept component-local) rather than
+ * rendering as prose. Any other `content` part — mixed blocks, or not followed
+ * by tool calls, including the turn's final answer — stays prose.
  */
 export interface TranscriptStanza {
   readonly key: string;
@@ -817,6 +825,8 @@ export type MessageBlock =
 
 interface MutableStanza {
   thoughtPartIndex: number | null;
+  /** Index of the lead `content` part for a content-led stanza, else null. */
+  contentLeadPartIndex: number | null;
   thought: readonly DeepReadonly<ContentBlock>[] | null;
   thoughtExpanded: boolean;
   steps: DeepReadonly<ToolCallState>[];
@@ -837,9 +847,11 @@ export function groupMessageBlocks(message: DeepReadonly<Message>): MessageBlock
     const firstStep = current.steps[0];
     const suffix = current.thoughtPartIndex !== null
       ? `p${current.thoughtPartIndex}`
-      : firstStep
-        ? `t${firstStep.toolCallId}`
-        : 'empty';
+      : current.contentLeadPartIndex !== null
+        ? `c${current.contentLeadPartIndex}`
+        : firstStep
+          ? `t${firstStep.toolCallId}`
+          : 'empty';
     blocks.push({
       kind: 'stanza',
       stanza: {
@@ -865,6 +877,7 @@ export function groupMessageBlocks(message: DeepReadonly<Message>): MessageBlock
         flush();
         current = {
           thoughtPartIndex: partIndex,
+          contentLeadPartIndex: null,
           thought: part.thought,
           thoughtExpanded: part.expanded ?? false,
           steps: [],
@@ -872,17 +885,39 @@ export function groupMessageBlocks(message: DeepReadonly<Message>): MessageBlock
       }
     } else if (part.type === 'tool_calls') {
       if (!current) {
-        current = { thoughtPartIndex: null, thought: null, thoughtExpanded: false, steps: [] };
+        current = {
+          thoughtPartIndex: null,
+          contentLeadPartIndex: null,
+          thought: null,
+          thoughtExpanded: false,
+          steps: [],
+        };
       }
       current.steps.push(...part.toolCalls);
     } else if (part.type === 'content') {
       flush();
-      blocks.push({
-        kind: 'content',
-        key: `${message.id}:content:${partIndex}`,
-        partIndex,
-        content: part.content,
-      });
+      const nextPart = message.parts[partIndex + 1];
+      const leadsToolCalls =
+        nextPart?.type === 'tool_calls' &&
+        part.content.every((block) => block.type === 'text');
+      if (leadsToolCalls) {
+        // Narration that precedes tool calls is this beat's thinking: fold it
+        // into the stanza as its lead instead of rendering it as prose.
+        current = {
+          thoughtPartIndex: null,
+          contentLeadPartIndex: partIndex,
+          thought: part.content,
+          thoughtExpanded: false,
+          steps: [],
+        };
+      } else {
+        blocks.push({
+          kind: 'content',
+          key: `${message.id}:content:${partIndex}`,
+          partIndex,
+          content: part.content,
+        });
+      }
     }
   });
   flush();
