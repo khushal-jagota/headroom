@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from planner.tickets.conversation_projection import TicketConversationProjection
+
 WAIT_MS = 10_000
 
 
@@ -106,18 +108,95 @@ def test_workspace_ticket_rows_contain_only_title_and_existing_condition_mark(
         f'{waiting_card} .board-workspace-stage-mark[data-stage-state="current-waiting"]'
     )
     assert waiting_mark.count() == 1
+    assert waiting_mark.get_attribute("data-workspace-dot-state") == "quiet"
     assert waiting_mark.get_attribute("data-marker") is None
+    assert waiting_mark.get_attribute("aria-label") == "Worker quiet"
 
     running_mark = page.locator(
         f'{running_card} [data-marker="agent-running-step"][data-stage-state="current-running"]'
     )
     assert running_mark.count() == 1
     assert running_mark.get_attribute("data-stage-field") == "success"
+    assert running_mark.get_attribute("data-workspace-dot-state") == "active"
+    assert running_mark.get_attribute("aria-label") == "Worker active"
 
     errored_mark = page.locator(
         f'{errored_card} [data-marker="errored"][data-stage-state="errored"]'
     )
     assert errored_mark.count() == 1
+    assert errored_mark.get_attribute("data-workspace-dot-state") == "exceptional"
+    assert errored_mark.get_attribute("aria-label") == "Worker exception"
+
+
+def test_workspace_dot_follows_projection_activity_and_reload(
+    server, context_factory, open_page, cli, api
+) -> None:
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Projection Workspace ticket",
+        "--project-id",
+        "project_vylo",
+    )["id"]
+    _add_today(api, server, ticket_id)
+    _set_ticket_stage(server, ticket_id, "needs_success")
+    _set_ticket_status(server, ticket_id, "empty")
+
+    page = open_page(
+        context_factory(),
+        server,
+        "#/workspace",
+        f'[data-card][data-ticket-id="{ticket_id}"]',
+        settled=True,
+    )
+    mark = f'[data-card][data-ticket-id="{ticket_id}"] .board-workspace-stage-mark'
+    assert page.get_attribute(mark, "data-stage-state") == "current-waiting"
+    assert page.get_attribute(mark, "data-workspace-dot-state") == "quiet"
+    assert page.get_attribute(mark, "data-marker") is None
+    assert page.get_attribute(mark, "aria-label") == "Worker quiet"
+
+    projection = TicketConversationProjection(server.db_path, now=lambda: 2)
+    projection.record_activity(ticket_id, "thinking")
+    page.wait_for_function(
+        "selector => document.querySelector(selector)?.getAttribute('data-stage-state') "
+        "=== 'current-running'",
+        arg=mark,
+        timeout=WAIT_MS,
+    )
+    assert page.get_attribute(mark, "data-marker") == "agent-running-step"
+    assert page.get_attribute(mark, "data-workspace-dot-state") == "active"
+    assert page.get_attribute(mark, "aria-label") == "Worker active"
+
+    page.reload()
+    page.wait_for_selector(mark, timeout=WAIT_MS)
+    assert page.get_attribute(mark, "data-stage-state") == "current-running"
+    assert page.get_attribute(mark, "data-workspace-dot-state") == "active"
+    assert page.get_attribute(mark, "aria-label") == "Worker active"
+
+    projection.record_activity(ticket_id, "idle")
+    page.wait_for_function(
+        "selector => document.querySelector(selector)?.getAttribute('data-stage-state') "
+        "=== 'current-awaiting-approval'",
+        arg=mark,
+        timeout=WAIT_MS,
+    )
+    assert page.get_attribute(mark, "data-marker") is None
+    assert page.get_attribute(mark, "data-workspace-dot-state") == "needs_attention"
+    assert page.get_attribute(mark, "aria-label") == "Worker needs attention"
+
+    projection.reset(ticket_id)
+    page.wait_for_function(
+        "selector => document.querySelector(selector)?.getAttribute('data-stage-state') "
+        "=== 'current-waiting'",
+        arg=mark,
+        timeout=WAIT_MS,
+    )
+    assert page.get_attribute(mark, "data-workspace-dot-state") == "quiet"
+    assert page.get_attribute(mark, "aria-label") == "Worker quiet"
 
 
 def test_workspace_groups_populated_project_worker_and_stage_sections_in_contract_order(

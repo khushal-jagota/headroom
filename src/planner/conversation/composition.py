@@ -21,6 +21,7 @@ from planner.conversation.backend_catalog import EmployeeBackendBuildContext
 from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.runtime.acp_step_gateway import AcpStepGateway
+from planner.tickets.conversation_projection import TicketConversationProjection
 from planner.worker_context.service import SqliteWorkerContextService
 from planner.worker_types.configuration import (
     ConfiguredEmployeeRuntimeDefinitions,
@@ -93,6 +94,7 @@ class ConversationComposition:
     permission_broker: ConversationPermissionBroker
     step_gateway: AcpStepGateway
     employee_configuration_catalog: EmployeeConfigurationCatalogService
+    ticket_conversation_projection: TicketConversationProjection
     employee_backend_startup_preflights: tuple[Callable[[], Awaitable[None]], ...]
     _employee_backend_startup_preflights_ran: bool = False
 
@@ -162,6 +164,11 @@ class ConversationComposition:
             employee_backend_catalog=catalog,
             chief_backend_key="hermes",
         )
+        ticket_conversation_projection = TicketConversationProjection(
+            db_path,
+            now=clock.now_unix,
+            busy_timeout_ms=busy_timeout_ms,
+        )
         hub = ConversationHub(
             repository,
             ingress_capacity=ingress_capacity,
@@ -169,6 +176,7 @@ class ConversationComposition:
             reset_buffer_byte_limit=reset_buffer_byte_limit,
             connection_id_factory=connection_id_factory,
             worker_client_message_id_factory=worker_client_message_id_factory,
+            ticket_conversation_projection=ticket_conversation_projection,
         )
         source_ingress = _BindOnceAsyncCallback[[ConversationIngressSource, object], None](
             "conversation ingress"
@@ -258,6 +266,7 @@ class ConversationComposition:
             permission_broker=permission_broker,
             step_gateway=step_gateway,
             employee_configuration_catalog=employee_configuration_catalog,
+            ticket_conversation_projection=ticket_conversation_projection,
             employee_backend_startup_preflights=tuple(
                 backend.startup_preflight
                 for backend in materialized_backends

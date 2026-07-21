@@ -20,7 +20,14 @@ One screen per part of the system:
   halves.
 - **Workspace** — today's tickets in a left rail backed by the board resource. The
   rail groups tickets by project, then orders rows by Worker type, that type's Stage,
-  and recent activity. It shows one current-stage/status dot per ticket and includes
+  and recent activity. It shows one current-stage dot per ticket. The board card owns
+  one derived Workspace result with the fixed precedence **exceptional**, **active**,
+  **needs attention**, then **quiet**. Active work spins; attention is a filled dot;
+  quiet is a ring; exceptional keeps the error treatment. The result combines Ticket
+  facts with a small durable Ticket-linked ACP projection, so a browser reload or an
+  unopened conversation does not invent or retain stale activity. Initial and repeated
+  idle are quiet until an admitted turn has real activity; a completed response stays
+  attention through reconnect/load until a new turn or explicit reset. It includes
   every Ticket status. Done tickets are hidden in a fresh session; the human can turn
   off **Hide done** to reveal them, and that choice stays in place when they visit
   another screen and return.

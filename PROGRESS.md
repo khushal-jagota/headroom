@@ -4,6 +4,31 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-21): Ticket Workspace dot projection (`t_xb76vw05`)
+
+The one pure `workspace_dot_state` classifier is implemented with exceptional > active > needs_attention
+> quiet precedence. Board cards now carry its result from Ticket facts plus a durable Ticket-linked ACP
+projection. Accepted delivery or real turn activity clears prior response attention; only a later idle after
+that activity creates response attention. Initial idle, connecting/loading, repeated idle, and re-attach
+preserve quiet or existing response facts. For Ticket activity, accepted delivery, and permission request/outcome,
+Hub now validates the exact current employee+binding under one per-Ticket lock, awaits the SQLite projection write,
+and publishes the ACP envelope as the final awaited operation; non-Ticket paths remain direct. New-conversation
+reset happens only after replacement stream establishment succeeds. Compaction and requested-cancel recovery now
+put their final stream commit/cutover under that same lock, while preparation, settlement, backend I/O, and replay
+construction remain outside the lock. A failed permission-request publication compensates the pending projection
+fact with `record_permission(False)` while preserving response attention. A replay-build failure after replacement
+binding keeps the prior projection and reports a conversation error; stale publications queued behind replacement
+fail validation before writing. The approved review P2 about done/paired/takeover field marks is intentionally
+refuted: the single Workspace dot remains the derived Ticket result and no status mapping is restored.
+
+Focused RED tests first failed on the absent classifier/projection; the focused backend, migration-validation,
+board, hub, permission, turn-broker, and invalidation tests now pass. The focused Hub/projection/compaction/
+recovery/permission selection passes 37 tests, including deterministic compaction and requested-cancel cutover
+races plus publication-failure permission compensation. The exact ACP replay WebSocket selection passes 4 tests.
+The settled canonical `./verify` passed: Ruff; strict Mypy across 136 source files; 1,140 unit tests;
+compile/CSS/JavaScript checks; zero Svelte diagnostics; production frontend build and all frontend tests;
+108 Playwright E2E tests; final result `VERIFY: PASS`; no commit made.
+
 ## Current work cycle (2026-07-21): ACP browser replay and live backpressure
 
 Live diagnosis proved employees continued working and filing proposals while every fresh Chief and

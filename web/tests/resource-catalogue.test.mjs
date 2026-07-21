@@ -290,6 +290,11 @@ exact(keysForEvent(event("t_employee", "employee_step_started")), [
   "sprint:current"
 ]);
 exact(keysForEvent(event("t_employee", "employee_session_changed")), ["ticket:t_employee"]);
+exact(keysForEvent(event("t_employee", "ticket_conversation_projection_changed")), [
+  "ticket:t_employee",
+  "board",
+  "sprint:current"
+]);
 exact(
   keysForEvent(event("t_backend", "ticket_updated", { field: "employee_backend" })),
   ["ticket:t_backend", "board", "sprint:current"]

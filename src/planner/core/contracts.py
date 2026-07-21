@@ -66,6 +66,7 @@ class EventKind(StrEnum):
     # --- supplemental: durable ticket runtime/parking status ---
     ticket_status_changed = "ticket_status_changed"  # {ticket_status, optional error}
     employee_session_changed = "employee_session_changed"  # {employee_session_id}
+    ticket_conversation_projection_changed = "ticket_conversation_projection_changed"
 
     # --- supplemental: links and Employee execution ---
     link_added = "link_added"                        # {from_id, to_id, kind}

@@ -17,6 +17,54 @@ _EMPTY_CODING_FIELDS = json.dumps(
     separators=(",", ":"),
 )
 
+
+def test_v27_to_v28_adds_ticket_conversation_projection_idempotently(tmp_path) -> None:
+    conn = connect(str(tmp_path / "v27-to-v28-projection.db"))
+    create_schema(conn)
+    conn.execute("PRAGMA user_version=27")
+    conn.execute("DROP TABLE ticket_conversation_projections")
+
+    create_schema(conn)
+    columns = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(ticket_conversation_projections)")
+    }
+    assert columns == {
+        "ticket_id",
+        "latest_activity_state",
+        "has_completed_response_awaiting_user",
+        "has_pending_permission",
+        "updated_at",
+    }
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 28
+    sql_before = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' "
+        "AND name='ticket_conversation_projections'"
+    ).fetchone()[0]
+    create_schema(conn)
+    assert conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' "
+        "AND name='ticket_conversation_projections'"
+    ).fetchone()[0] == sql_before
+    conn.close()
+
+
+def test_corrupt_v28_projection_schema_fails_validation(tmp_path) -> None:
+    conn = connect(str(tmp_path / "corrupt-v28-projection.db"))
+    create_schema(conn)
+    conn.execute("DROP TABLE ticket_conversation_projections")
+    conn.execute(
+        "CREATE TABLE ticket_conversation_projections ("
+        "ticket_id TEXT PRIMARY KEY, latest_activity_state TEXT)"
+    )
+    conn.execute("PRAGMA user_version=28")
+
+    with pytest.raises(RuntimeError, match="valid Ticket conversation projection table"):
+        create_schema(conn)
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 28
+    conn.close()
+
 _OLD_TICKETS_DDL = """
 CREATE TABLE tickets (
   id                   TEXT PRIMARY KEY,
@@ -234,7 +282,7 @@ def test_v25_to_v26_assigns_exact_hermes_and_preserves_ticket_bytes(tmp_path) ->
     assert after.pop("employee_launch_model") is None
     assert after.pop("employee_launch_reasoning_effort") is None
     assert after == before
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 27
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 28
     conn.close()
 
 
@@ -305,7 +353,7 @@ def test_v26_reopen_preserves_non_hermes_selection_and_is_idempotent(tmp_path) -
         == sql_before
     )
     assert tuple(conn.execute("SELECT * FROM tickets").fetchone()) == row_before
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 27
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 28
     conn.close()
 
 
@@ -361,7 +409,7 @@ def test_v26_to_v27_preserves_ticket_and_binding_bytes_and_seeds_null_configurat
             "WHERE employee_id = 't_v26_configuration'"
         ).fetchone()
     ) == binding_before
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 27
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 28
     conn.close()
 
 
@@ -392,7 +440,7 @@ def test_v27_reopen_preserves_explicit_ticket_configuration_and_is_idempotent(
         ).fetchone()[0]
         == sql_before
     )
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 27
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 28
     conn.close()
 
 
@@ -2382,7 +2430,7 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(tm
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     create_schema(conn)
-    assert SCHEMA_VERSION == 27
+    assert SCHEMA_VERSION == 28
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     info = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(tickets)")}
@@ -3095,7 +3143,7 @@ def test_pre_column_v24_binding_schema_reopens_with_empty_provenance(
     }["compaction_boundaries_json"]
     assert column["notnull"] == 1
     assert column["dflt_value"] == "'[]'"
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 27
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 28
     conn.close()
 
 
@@ -3128,7 +3176,7 @@ def test_amended_v24_binding_schema_reopens_without_rewriting_provenance(
     )
     create_schema(conn)
     assert conn.execute("SELECT 1 FROM conversation_session_bindings").fetchone() is None
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 27
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 28
     conn.close()
 
 
@@ -3328,7 +3376,7 @@ def test_v25_cutover_converts_worker_correctness_and_deletes_conversation_state(
     ):
         assert not db_module._table_exists(conn, table)
     assert "chat_session_key" not in db_module._table_columns(conn, "days")
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 27
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 28
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     create_schema(conn)
     assert conn.execute("SELECT COUNT(*) FROM employee_step_runs").fetchone()[0] == 3
@@ -3475,8 +3523,9 @@ def test_create_schema_reaches_only_consolidated_ticket_rebuild_after_lock(tmp_p
 
     begin_index = statements.index("BEGIN IMMEDIATE")
     # The two historical Ticket rebuilds, v25 cutover, terminal v26 backend rebuild,
-    # and additive v27 launch-configuration migration are the only write locks.
-    assert statements.count("BEGIN IMMEDIATE") == 5
+    # additive v27 launch-configuration migration, and v28 projection migration are
+    # the only write locks.
+    assert statements.count("BEGIN IMMEDIATE") == 6
     ticket_snapshot_index = next(
         index
         for index, statement in enumerate(statements)

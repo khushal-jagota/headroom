@@ -452,7 +452,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
         "stage": "IMPLEMENTATION",
         "nested": 1,
         "marks": 1,
-        "marker": "pending-proposal",
+        "marker": None,
     }
     assert before_b == after_b == expected_b, (before_b, after_b)
 

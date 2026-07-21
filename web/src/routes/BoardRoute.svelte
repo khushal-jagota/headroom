@@ -37,34 +37,40 @@
     window.location.hash = "#/workspace";
   }
 
-  function stageMarker(card: Record<string, any>, stageState: FieldStageVisualState): string | null {
-    if (stageState === "current-running") return "agent-running-step";
-    if (stageState === "errored") return "errored";
-    if (stageState === "current-awaiting-approval" && card.has_pending_proposal) {
-      return "pending-proposal";
-    }
-    if (stageState === "current-waiting" && card.ticket_status === "user_takeover") {
-      return "user-takeover";
-    }
-    if (stageState === "current-paired-work") return "paired-work";
-    return null;
-  }
+  type WorkspaceDotState = "exceptional" | "active" | "needs_attention" | "quiet";
 
-  // The stage heading carries position; the existing mark still carries the ticket's
-  // current condition (waiting, running, needs approval, paired, errored, or complete).
+  type WorkspaceDotPresentation = {
+    state: FieldStageVisualState;
+    marker: string | null;
+    ariaLabel: string;
+  };
+
+  const workspaceDotPresentation: Record<WorkspaceDotState, WorkspaceDotPresentation> = {
+    exceptional: {
+      state: "errored",
+      marker: "errored",
+      ariaLabel: "Worker exception"
+    },
+    active: {
+      state: "current-running",
+      marker: "agent-running-step",
+      ariaLabel: "Worker active"
+    },
+    needs_attention: {
+      state: "current-awaiting-approval",
+      marker: null,
+      ariaLabel: "Worker needs attention"
+    },
+    quiet: {
+      state: "current-waiting",
+      marker: null,
+      ariaLabel: "Worker quiet"
+    }
+  };
+
+  // The stage heading carries position; the mark carries only the derived Workspace condition.
   function currentStageField(card: Record<string, any>): string {
     return card.gating_field || "closeout";
-  }
-
-  function currentStageState(card: Record<string, any>): FieldStageVisualState {
-    if (card.is_done) return "completed";
-    if (card.ticket_status === "agent_running_step") return "current-running";
-    if (card.ticket_status === "errored") return "errored";
-    if (card.ticket_status === "paired_work") return "current-paired-work";
-    if (card.has_pending_proposal || card.ticket_status === "awaiting_approval") {
-      return "current-awaiting-approval";
-    }
-    return "current-waiting";
   }
 
   function currentStageLabel(card: Record<string, any>): string {
@@ -277,8 +283,8 @@
                           <div class="board-workspace-stage-tickets">
                             {#each stage.cards as card}
                               {@const stageField = currentStageField(card)}
-                              {@const stageState = currentStageState(card)}
-                              {@const marker = stageMarker(card, stageState)}
+                              {@const workspaceDotState = card.workspace_dot_state as WorkspaceDotState}
+                              {@const workspacePresentation = workspaceDotPresentation[workspaceDotState]}
                               <button
                                 type="button"
                                 class="list-row list-row--board"
@@ -291,12 +297,13 @@
                               >
                                 <span class="list-row-title">{card.title}</span>
                                 <StageMark
-                                  state={stageState}
+                                  state={workspacePresentation.state}
                                   class="board-workspace-stage-mark"
                                   data-stage-field={stageField}
-                                  data-stage-state={stageState}
-                                  data-marker={marker || undefined}
-                                  aria-label={`${stageField} ${stageState.replace(/-/g, " ")}`}
+                                  data-stage-state={workspacePresentation.state}
+                                  data-marker={workspacePresentation.marker || undefined}
+                                  data-workspace-dot-state={card.workspace_dot_state}
+                                  aria-label={workspacePresentation.ariaLabel}
                                 />
                               </button>
                             {/each}

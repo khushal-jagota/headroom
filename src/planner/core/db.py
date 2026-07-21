@@ -15,7 +15,7 @@ from planner.core.legacy_execution_route import (
 )
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 27
+SCHEMA_VERSION: Final = 28
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -89,6 +89,14 @@ CREATE TABLE IF NOT EXISTS tickets (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_alias ON tickets(alias) WHERE alias IS NOT NULL;
 -- Stage indexes are created in _create_indexes only after the terminal Ticket migration.
+
+CREATE TABLE IF NOT EXISTS ticket_conversation_projections (
+  ticket_id                              TEXT PRIMARY KEY REFERENCES tickets(id) ON DELETE CASCADE,
+  latest_activity_state                  TEXT,
+  has_completed_response_awaiting_user   INTEGER NOT NULL DEFAULT 0 CHECK (has_completed_response_awaiting_user IN (0,1)),
+  has_pending_permission                 INTEGER NOT NULL DEFAULT 0 CHECK (has_pending_permission IN (0,1)),
+  updated_at                             INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS days (
   id               TEXT PRIMARY KEY,                 -- day_YYYY-MM-DD (planning date, §3.4)
@@ -230,6 +238,14 @@ def create_schema(conn: sqlite3.Connection) -> None:
         raise RuntimeError(
             "v27 Ticket schema is missing the nullable Employee launch configuration columns "
             "without defaults"
+        )
+    if incoming_version < 28:
+        if conn.in_transaction:
+            conn.commit()
+        _migrate_to_v28(conn)
+    elif not _ticket_conversation_projection_table_is_v28(conn):
+        raise RuntimeError(
+            "v28 schema is missing the valid Ticket conversation projection table"
         )
     _create_indexes(conn)
 
@@ -493,6 +509,69 @@ def _migrate_to_v27(conn: sqlite3.Connection) -> None:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
         raise
+
+
+def _migrate_to_v28(conn: sqlite3.Connection) -> None:
+    """Add the durable factual ACP projection used by Ticket Workspace cards."""
+
+    if conn.in_transaction:
+        raise RuntimeError("Ticket v28 migration requires an autocommit connection")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS ticket_conversation_projections ("
+            "ticket_id TEXT PRIMARY KEY REFERENCES tickets(id) ON DELETE CASCADE, "
+            "latest_activity_state TEXT, "
+            "has_completed_response_awaiting_user INTEGER NOT NULL DEFAULT 0 "
+            "CHECK (has_completed_response_awaiting_user IN (0,1)), "
+            "has_pending_permission INTEGER NOT NULL DEFAULT 0 "
+            "CHECK (has_pending_permission IN (0,1)), "
+            "updated_at INTEGER NOT NULL"
+            ")"
+        )
+        if not _ticket_conversation_projection_table_is_v28(conn):
+            raise RuntimeError(
+                "Ticket v28 migration could not establish the conversation projection table"
+            )
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(
+                f"foreign key check failed after Ticket v28 migration: {violations!r}"
+            )
+        conn.execute("PRAGMA user_version=28")
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+
+
+def _ticket_conversation_projection_table_is_v28(conn: sqlite3.Connection) -> bool:
+    columns = tuple(
+        (
+            str(row[1]),
+            str(row[2]),
+            int(row[3]),
+            row[4],
+            int(row[5]),
+        )
+        for row in conn.execute("PRAGMA table_info(ticket_conversation_projections)")
+    )
+    foreign_keys = {
+        (str(row[2]), str(row[3]), str(row[4]), str(row[6]))
+        for row in conn.execute("PRAGMA foreign_key_list(ticket_conversation_projections)")
+    }
+    return (
+        columns
+        == (
+            ("ticket_id", "TEXT", 0, None, 1),
+            ("latest_activity_state", "TEXT", 0, None, 0),
+            ("has_completed_response_awaiting_user", "INTEGER", 1, "0", 0),
+            ("has_pending_permission", "INTEGER", 1, "0", 0),
+            ("updated_at", "INTEGER", 1, None, 0),
+        )
+        and foreign_keys == {("tickets", "ticket_id", "id", "CASCADE")}
+    )
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
