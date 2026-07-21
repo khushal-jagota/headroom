@@ -1,6 +1,5 @@
 export type FilePreviewTarget =
   | { kind: "ticket-file"; ticketId: string; path: string }
-  | { kind: "chat-file"; entityId: string; path: string }
   | { kind: "external-link"; href: string; label?: string };
 
 export type FilePreviewKind =
@@ -30,7 +29,6 @@ const IMAGE_EXTENSIONS = new Set(["avif", "bmp", "gif", "jpeg", "jpg", "png", "w
 const VIDEO_EXTENSIONS = new Set(["m4v", "mov", "mp4", "ogg", "ogv", "webm"]);
 const AUDIO_EXTENSIONS = new Set(["aac", "flac", "m4a", "mp3", "oga", "ogg", "opus", "wav", "webm"]);
 const TICKET_ID_RE = /^t_[a-z0-9]+$/;
-const ENTITY_ID_RE = /^[A-Za-z0-9_-]+$/;
 const RESIDUAL_UNSAFE_RE = /%(?:25|2e|2f|5c)/i;
 const MAX_MARKDOWN_EMBED_DEPTH = 2;
 
@@ -49,10 +47,7 @@ export function resolvePreview(target: FilePreviewTarget): ResolvedPreview {
   if (target.kind === "ticket-file" && !ticketFileTarget(target.ticketId, target.path)) {
     throw new Error("unsafe ticket file target");
   }
-  if (target.kind === "chat-file" && !chatFileTarget(target.entityId, target.path)) {
-    throw new Error("unsafe chat file target");
-  }
-  const href = target.kind === "ticket-file" ? ticketFileHref(target) : chatFileHref(target);
+  const href = ticketFileHref(target);
   const label = filenameLabel(target.path);
   const previewHref = previewHashHref(target);
   const extension = extensionFor(target.path);
@@ -92,8 +87,6 @@ export function markdownExpansionFor(
 export function targetFromHref(href: string, label = ""): FilePreviewTarget {
   const ticketTarget = ticketFileTargetFromHref(href);
   if (ticketTarget) return ticketTarget;
-  const chatTarget = chatFileTargetFromHref(href);
-  if (chatTarget) return chatTarget;
   return { kind: "external-link", href, label: label || href };
 }
 
@@ -105,24 +98,9 @@ export function ticketFileTarget(
   return { kind: "ticket-file", ticketId, path };
 }
 
-export function chatFileTarget(
-  entityId: string,
-  path: string
-): Extract<FilePreviewTarget, { kind: "chat-file" }> | null {
-  if (!ENTITY_ID_RE.test(entityId) || !safeManagedPath(path)) return null;
-  return { kind: "chat-file", entityId, path };
-}
-
 export function previewHashHref(
-  target: Extract<FilePreviewTarget, { kind: "ticket-file" | "chat-file" }>
+  target: Extract<FilePreviewTarget, { kind: "ticket-file" }>
 ): string {
-  if (target.kind === "chat-file") {
-    return (
-      "#/preview?source=chat" +
-      `&entity=${encodeURIComponent(target.entityId)}` +
-      `&path=${encodeURIComponent(target.path)}`
-    );
-  }
   return (
     "#/preview?source=ticket" +
     `&ticket=${encodeURIComponent(target.ticketId)}` +
@@ -135,21 +113,10 @@ export function ticketFileHref(target: Extract<FilePreviewTarget, { kind: "ticke
   return `/files/tickets/${encodeURIComponent(target.ticketId)}/${path}`;
 }
 
-export function chatFileHref(target: Extract<FilePreviewTarget, { kind: "chat-file" }>): string {
-  const path = encodedManagedPath(target.path);
-  return `/files/chats/${encodeURIComponent(target.entityId)}/${path}`;
-}
-
 function ticketFileTargetFromHref(href: string): FilePreviewTarget | null {
   const parts = managedHrefParts(href, "/files/tickets/");
   if (!parts) return null;
   return ticketFileTarget(parts.entityId, parts.path);
-}
-
-function chatFileTargetFromHref(href: string): FilePreviewTarget | null {
-  const parts = managedHrefParts(href, "/files/chats/");
-  if (!parts) return null;
-  return chatFileTarget(parts.entityId, parts.path);
 }
 
 function managedHrefParts(href: string, prefix: string): { entityId: string; path: string } | null {

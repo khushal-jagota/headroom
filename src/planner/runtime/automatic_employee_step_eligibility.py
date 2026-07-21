@@ -7,9 +7,60 @@ import sqlite3
 
 from planner.core import links as core_links
 from planner.core.contracts import EventKind
+from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.tickets.contracts import AtCap, StageOwnershipMode, Ticket, TicketStatus
 from planner.tickets.logic import machine
 from planner.worker_types.contracts import WorkerTypeDefinition
+
+CloseoutLaneIdentity = tuple[str | None, str]
+
+
+def closeout_lane_identity(
+    conn: sqlite3.Connection,
+    ticket: Ticket,
+    *,
+    worker_type_definition: WorkerTypeDefinition,
+) -> CloseoutLaneIdentity | None:
+    """Return the effective project-and-Worker-type lane for a Closeout Ticket."""
+    if worker_type_definition.gating_field(ticket.stage) != "closeout":
+        return None
+    effective_project_id = ticket.project_id
+    if ticket.sprint_item_id is not None:
+        row = conn.execute(
+            "SELECT project_id FROM sprint_items WHERE id = ?",
+            (ticket.sprint_item_id,),
+        ).fetchone()
+        effective_project_id = str(row["project_id"]) if row is not None else None
+    return effective_project_id, ticket.worker_type
+
+
+def _closeout_lane_is_occupied(
+    conn: sqlite3.Connection,
+    ticket: Ticket,
+    *,
+    worker_type_definition: WorkerTypeDefinition,
+) -> bool:
+    lane = closeout_lane_identity(
+        conn,
+        ticket,
+        worker_type_definition=worker_type_definition,
+    )
+    if lane is None:
+        return False
+    effective_project_id, worker_type = lane
+    closeout_stage = worker_type_definition.stage_gated_by("closeout")
+    return (
+        conn.execute(
+            "SELECT 1 FROM tickets t "
+            "LEFT JOIN sprint_items si ON si.id = t.sprint_item_id "
+            "WHERE t.id != ? AND t.worker_type = ? AND t.stage = ? "
+            "AND t.ticket_status != 'empty' "
+            "AND CASE WHEN t.sprint_item_id IS NOT NULL THEN si.project_id "
+            "ELSE t.project_id END IS ? LIMIT 1",
+            (ticket.id, worker_type, closeout_stage, effective_project_id),
+        ).fetchone()
+        is not None
+    )
 
 
 def _latest_current_paired_stage_marker_event(
@@ -58,24 +109,17 @@ def _has_worker_step_started_in_event_range(
     after_event_id: int | None = None,
 ) -> bool:
     clauses = ["entity_id = ?", "kind = ?"]
-    params: list[object] = [ticket_id, EventKind.chat_turn_started.value]
+    params: list[object] = [ticket_id, EventKind.employee_step_started.value]
     if after_event_id is not None:
         clauses.append("id > ?")
         params.append(after_event_id)
 
     where_clause = " AND ".join(clauses)
-    rows = conn.execute(
+    row = conn.execute(
         f"SELECT id, payload FROM events WHERE {where_clause} ORDER BY id",
         tuple(params),
-    ).fetchall()
-    for row in rows:
-        payload = json.loads(str(row["payload"]))
-        if (
-            payload.get("origin") == "worker"
-            and payload.get("mode") == "worker_step"
-        ):
-            return True
-    return False
+    ).fetchone()
+    return row is not None
 
 
 def _paired_status_allows_automatic_opening(
@@ -113,11 +157,7 @@ def is_eligible_for_automatic_employee_step(
     ).fetchone()
     if membership is None:
         return False
-    active_chat_turn = conn.execute(
-        "SELECT 1 FROM chat_turns WHERE entity_id = ? AND status = 'running'",
-        (ticket.id,),
-    ).fetchone()
-    if active_chat_turn is not None:
+    if SqliteEmployeeStepRepository().running_exists(conn, ticket.id):
         return False
     if worker_type_definition.is_terminal(ticket.stage):
         return False
@@ -151,5 +191,11 @@ def is_eligible_for_automatic_employee_step(
     ):
         return False
     if core_links.is_blocked(conn, ticket.id):
+        return False
+    if _closeout_lane_is_occupied(
+        conn,
+        ticket,
+        worker_type_definition=worker_type_definition,
+    ):
         return False
     return True

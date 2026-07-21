@@ -1,0 +1,173 @@
+ACP-05 durable compaction fork — settled focused checks
+Run from /Users/khushaljagota/.hermes/planning-v2 unless noted.
+
+1. Scoped Ruff and strict Mypy
+
+COMMAND
+.venv/bin/ruff check src/planner/conversation/backend_contracts.py src/planner/conversation/sdk_child.py src/planner/conversation/runtime_ports.py src/planner/conversation/employee_registry.py src/planner/conversation/turn_broker.py src/planner/conversation/hub.py src/planner/conversation/composition.py tests/unit/test_acp_employee_child.py tests/unit/test_acp_employee_registry.py tests/unit/test_conversation_turn_broker.py tests/unit/test_conversation_hub.py tests/unit/test_acp_conversation_composition.py tests/e2e/test_acp_conversation.py tests/support/acp_scripted_agent.py && .venv/bin/mypy --strict src/planner/conversation/backend_contracts.py src/planner/conversation/sdk_child.py src/planner/conversation/runtime_ports.py src/planner/conversation/employee_registry.py src/planner/conversation/turn_broker.py src/planner/conversation/hub.py src/planner/conversation/composition.py
+
+OUTPUT
+All checks passed!
+Success: no issues found in 7 source files
+
+2. Affected unit suites
+
+COMMAND
+.venv/bin/pytest -q tests/unit/test_acp_employee_child.py tests/unit/test_acp_employee_registry.py tests/unit/test_conversation_turn_broker.py tests/unit/test_conversation_hub.py tests/unit/test_acp_conversation_composition.py tests/unit/test_hermes_acp_turn_strategy.py -ra
+
+COLLECTION
+tests/unit/test_acp_conversation_composition.py: 6
+tests/unit/test_acp_employee_child.py: 33
+tests/unit/test_acp_employee_registry.py: 31
+tests/unit/test_conversation_hub.py: 11
+tests/unit/test_conversation_turn_broker.py: 32
+tests/unit/test_hermes_acp_turn_strategy.py: 9
+Total: 122
+
+OUTPUT
+........................................................................ [ 59%]
+..................................................                       [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.14/site-packages/fastapi/testclient.py:1
+  /Users/khushaljagota/.hermes/planning-v2/.venv/lib/python3.14/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+
+3. Full ACP conversation e2e file
+
+COMMAND
+.venv/bin/pytest -q tests/e2e/test_acp_conversation.py -ra
+
+COLLECTION
+tests/e2e/test_acp_conversation.py: 12
+
+OUTPUT
+............                                                             [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.14/site-packages/fastapi/testclient.py:1
+  /Users/khushaljagota/.hermes/planning-v2/.venv/lib/python3.14/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+
+4. ACP browser state and component suites
+
+WORKDIR
+/Users/khushaljagota/.hermes/planning-v2/web
+
+COMMAND
+node tests/acp-browser-state.test.mjs && node tests/acp-browser-components.test.mjs
+
+OUTPUT
+acp-browser-state.test.mjs: all assertions passed
+acp-browser-components.test.mjs: all assertions passed
+
+5. Svelte diagnostics
+
+WORKDIR
+/Users/khushaljagota/.hermes/planning-v2/web
+
+COMMAND
+npm run check
+
+OUTPUT
+> check
+> svelte-check --tsconfig ./tsconfig.json
+
+Loading svelte-check in workspace: /Users/khushaljagota/.hermes/planning-v2/web
+Getting Svelte diagnostics...
+
+svelte-check found 0 errors and 0 warnings
+
+6. Temporary production frontend build
+
+WORKDIR
+/Users/khushaljagota/.hermes/planning-v2/web
+
+COMMAND
+ACP05_FINAL_BUILD_DIR="$(mktemp -d /tmp/panels-acp05-final-build.XXXXXX)"; ./node_modules/.bin/vite build --outDir "$ACP05_FINAL_BUILD_DIR"; find "$ACP05_FINAL_BUILD_DIR" -maxdepth 1 -name index.html -print
+
+OUTPUT
+vite v6.4.3 building for production...
+<script src="/assets/markdown.js"> in "/index.html" can't be bundled without type="module" attribute
+
+/assets/tokens.css doesn't exist at build time, it will remain unchanged to be resolved at runtime
+
+/assets/app.css doesn't exist at build time, it will remain unchanged to be resolved at runtime
+transforming...
+✓ 182 modules transformed.
+rendering chunks...
+computing gzip size...
+../../../../../tmp/panels-acp05-final-build.lRujHP/index.html                                                0.75 kB │ gzip:  0.38 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/newsreader-vietnamese-400-normal-DdKr49mV.woff2    5.43 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/newsreader-vietnamese-500-normal-CL6a8tp2.woff2    5.44 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/newsreader-vietnamese-600-normal-CaH84vfx.woff2    5.50 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/newsreader-vietnamese-400-normal-BekUZro8.woff     6.97 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/newsreader-vietnamese-500-normal-BEAbKU8A.woff     7.04 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/newsreader-vietnamese-600-normal-CVAR0otO.woff     7.06 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/newsreader-latin-ext-400-normal-svq1FPys.woff2    14.21 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/newsreader-latin-ext-500-normal-BNHmvKvI.woff2    15.07 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/newsreader-latin-ext-600-normal-BXv5iMHi.woff2    15.17 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/newsreader-latin-ext-400-normal-DYA1XoQK.woff     18.38 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/newsreader-latin-ext-500-normal-CZruMFou.woff     19.30 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/newsreader-latin-ext-600-normal-BrbfzHZ5.woff     19.39 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/newsreader-latin-400-normal-BFBkh4jY.woff2        22.48 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/newsreader-latin-500-normal-B66TYsaK.woff2        23.62 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/newsreader-latin-600-normal-30OJ_TG_.woff2        23.88 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/newsreader-latin-400-normal-gRTjlS2D.woff         28.29 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/newsreader-latin-500-normal-DFwuUcdu.woff         29.64 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/newsreader-latin-600-normal-DUnT2r2g.woff         29.78 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/index-B15RFj9L.css                                 9.65 kB │ gzip:  1.90 kB
+../../../../../tmp/panels-acp05-final-build.lRujHP/assets/index-DpMYEmDB.js                                212.26 kB │ gzip: 70.16 kB
+✓ built in 922ms
+/tmp/panels-acp05-final-build.lRujHP/index.html
+
+7. Canonical verification
+
+Not run. By contract, ACP-10 owns the single final `./verify` invocation.
+
+8. Focused implementation-review corrections
+
+CORRECTIONS
+- Hub commit and abort stage the selected stream but keep admission closed. The broker calls the
+  bounded completion seam only after normalized boundary publication, tracked settlement, idle, and
+  FIFO advance.
+- Registry compaction failures that invalidate the exact runtime propagate an explicit
+  generation-fatal disposition. The broker fails the actor, tracked turn, queued intent, and hub
+  transition without abort, idle, or FIFO advance.
+
+TARGETED COMMAND
+.venv/bin/pytest -q tests/unit/test_conversation_turn_broker.py::test_broker_capture_adopts_exact_replacement_handle_before_fifo_advances tests/unit/test_conversation_turn_broker.py::test_unrestorable_original_before_replacement_fails_actor_and_queued_intent tests/unit/test_conversation_turn_broker.py::test_tracked_capture_failure_tears_down_before_queued_successor_starts tests/unit/test_conversation_hub.py::test_compaction_transition_rebinds_two_browsers_with_replay_and_queue tests/unit/test_conversation_hub.py::test_compaction_transition_barrier_releases_attach_on_abort_and_expiry -ra
+
+OUTPUT
+.....                                                                    [100%]
+
+The full scoped Ruff/Mypy command in section 1 was rerun after these corrections and passed with the
+same output. The affected unit command in section 2 was rerun at 122/122 and the full ACP e2e command
+in section 3 was rerun at 12/12. No frontend file changed, so the settled frontend evidence in
+sections 4-6 remains applicable.
+
+9. Fatal abort precedence correction
+
+TARGETED COMMAND
+.venv/bin/pytest -q tests/unit/test_conversation_turn_broker.py::test_fatal_abort_after_normalization_failure_fails_actor_and_queued_intent -ra
+
+RED OUTPUT BEFORE PRODUCTION CHANGE
+F                                                                        [100%]
+AssertionError: assert 'Conversation context capture failed' == 'Conversation runtime generation failed during compaction'
+
+GREEN OUTPUT
+.                                                                        [100%]
+
+STATIC AND AFFECTED UNIT COMMAND
+.venv/bin/ruff check src/planner/conversation/runtime_ports.py tests/unit/test_conversation_turn_broker.py && .venv/bin/mypy --strict src/planner/conversation/runtime_ports.py && .venv/bin/pytest -q tests/unit/test_acp_employee_child.py tests/unit/test_acp_employee_registry.py tests/unit/test_conversation_turn_broker.py tests/unit/test_conversation_hub.py tests/unit/test_acp_conversation_composition.py tests/unit/test_hermes_acp_turn_strategy.py -ra
+
+OUTPUT
+All checks passed!
+Success: no issues found in 1 source file
+........................................................................ [ 59%]
+..................................................                       [100%]
+
+The existing FastAPI `StarletteDeprecationWarning` was the only warning. No e2e or frontend source
+changed in this correction, so those settled gates were not rerun.

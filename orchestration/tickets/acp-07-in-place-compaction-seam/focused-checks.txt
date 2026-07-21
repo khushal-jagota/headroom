@@ -1,0 +1,20 @@
+$ .venv/bin/ruff check src/planner/conversation/runtime_ports.py tests/unit/test_in_place_compaction_strategy.py
+All checks passed!
+
+$ .venv/bin/mypy --strict src/planner/conversation/runtime_ports.py
+Success: no issues found in 1 source file
+
+$ .venv/bin/pytest -q tests/unit/test_in_place_compaction_strategy.py tests/unit/test_hermes_acp_turn_strategy.py
+....................................                                     [100%]
+36 passed
+
+$ .venv/bin/pytest -q tests/unit/test_conversation_turn_broker.py::test_broker_capture_adopts_exact_replacement_handle_before_fifo_advances tests/unit/test_conversation_turn_broker.py::test_durable_cas_failure_invalidates_source_actor_and_queued_intent tests/unit/test_conversation_turn_broker.py::test_fatal_abort_after_normalization_failure_fails_actor_and_queued_intent
+FFF                                                                      [100%]
+
+All three fail during fixture construction with:
+TypeError: AcpEmployeeRegistry.__init__() got an unexpected keyword argument 'backend_definitions'
+
+The failures precede compaction execution and come from concurrently changed selector constructor
+callers. They are recorded as non-seam integration debt in the implementation report.
+
+Canonical ./verify intentionally not run.

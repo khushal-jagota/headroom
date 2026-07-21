@@ -3,19 +3,21 @@ from __future__ import annotations
 import json
 import queue
 import threading
+from collections.abc import Iterator
 from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
-from planner.core.adapters.registry import build_adapters
 from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
 from planner.projects import data as projects_data
+from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
@@ -34,6 +36,15 @@ from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 _CHIEF = {"X-Plan-Actor": "chief"}
 
 
+@pytest.fixture
+def probe_runtime() -> Iterator[None]:
+    install_probe_registry()
+    try:
+        yield
+    finally:
+        uninstall_probe_registry()
+
+
 def _make_app(tmp_path: Path):
     db_path = tmp_path / "planning-test.db"
     boot = connect(str(db_path))
@@ -43,7 +54,6 @@ def _make_app(tmp_path: Path):
         path=None,
         env={
             "PLAN_TEST_MODE": "1",
-            "PLAN_GATEWAY_ADAPTER": "fake",
             "PLAN_DB_PATH": str(db_path),
         },
     )
@@ -51,7 +61,7 @@ def _make_app(tmp_path: Path):
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    app = create_app(config, build_clock(config), build_adapters(config), conn_factory)
+    app = create_app(config, build_clock(config), conn_factory)
     return app, db_path
 
 
@@ -110,6 +120,78 @@ def _events(db_path: Path, ticket_id: str) -> list[tuple[str, dict]]:
         return [(str(row["kind"]), json.loads(row["payload"])) for row in rows]
     finally:
         conn.close()
+
+
+def test_external_create_backend_default_override_and_unknown_before_mutation(
+    tmp_path: Path,
+    probe_runtime: None,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    base = {
+        "worker_type": "probe",
+        "stage": "needs_alpha",
+        "kickoff_note": "External kickoff",
+    }
+    with TestClient(app) as client:
+        defaulted = client.post(
+            "/api/chief/tickets/from-external-work",
+            json={"title": "External default", **base},
+            headers=_CHIEF,
+        )
+        overridden = client.post(
+            "/api/chief/tickets/from-external-work",
+            json={"title": "External override", **base, "employee_backend": "hermes"},
+            headers=_CHIEF,
+        )
+        conn = connect(str(db_path))
+        counts_before = tuple(
+            conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in ("tickets", "events")
+        )
+        conn.close()
+        rejected = client.post(
+            "/api/chief/tickets/from-external-work",
+            json={
+                "title": "External rejected",
+                **base,
+                "employee_backend": "missing-backend",
+            },
+            headers=_CHIEF,
+        )
+
+    assert defaulted.status_code == overridden.status_code == 200
+    assert defaulted.json()["employee_backend"] == "probe-backend"
+    assert overridden.json()["employee_backend"] == "hermes"
+    assert rejected.status_code == 400
+    check = connect(str(db_path))
+    try:
+        assert (
+            tuple(
+                check.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in ("tickets", "events")
+            )
+            == counts_before
+        )
+        assert _events(db_path, defaulted.json()["id"])[0] == (
+            "ticket_created",
+            {
+                "stage": "needs_alpha",
+                "employee_backend": "probe-backend",
+                "employee_launch_model": "probe-model",
+                "employee_launch_reasoning_effort": "probe-high",
+            },
+        )
+        assert _events(db_path, overridden.json()["id"])[0] == (
+            "ticket_created",
+            {
+                "stage": "needs_alpha",
+                "employee_backend": "hermes",
+                "employee_launch_model": None,
+                "employee_launch_reasoning_effort": None,
+            },
+        )
+    finally:
+        check.close()
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-Plan-Actor": "worker"}, {"X-Plan-Actor": "agent"}])
@@ -290,12 +372,7 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
     running_id = _ordinary_ticket(db_path)
     conn = connect(str(db_path))
     try:
-        conn.execute(
-            "INSERT INTO chat_turns (id, entity_id, origin, mode, status, phase, output_role, "
-            "started_at, updated_at) VALUES ('turn_external', ?, 'human', 'message', 'running', "
-            "'doing', 'assistant', 1, 1)",
-            (running_id,),
-        )
+        SqliteEmployeeStepRepository().start(conn, running_id, now=1)
         conn.commit()
     finally:
         conn.close()

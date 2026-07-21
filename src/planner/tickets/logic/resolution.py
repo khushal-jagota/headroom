@@ -131,8 +131,7 @@ def decide_file_proposal(
     if (
         ownership_mode is not None
         and ownership_mode.value == "worker"
-        and
-        machine.auto_accept_target(
+        and machine.auto_accept_target(
             ticket.stage,
             ticket.ceiling,
             field,

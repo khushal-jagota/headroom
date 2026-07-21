@@ -8,11 +8,9 @@ import sqlite3
 from time import monotonic as _monotonic
 from typing import Any
 
-from planner.chat import data as chat_data
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.db import connect
-from planner.minds.shared_gateway import SharedGateway
 from planner.runtime.automatic_employee_step_discovery_loop import (
     AutomaticEmployeeStepDiscoveryLoop,
 )
@@ -21,6 +19,7 @@ from planner.runtime.automatic_employee_step_eligibility_wake import (
     LoopAutomaticEmployeeStepEligibilityWake,
     NoOpAutomaticEmployeeStepEligibilityWake,
 )
+from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.runtime.lock import ensure_machine_lock, release_machine_lock
 
@@ -99,35 +98,15 @@ def _recover_running_ticket_steps(
             _LOGGER.exception("failed to admit restart recovery for Ticket %s", ticket_id)
 
 
-def _settle_stale_worker_turns_after_ticket_handoff(config: Config, clock: Clock) -> None:
+def _settle_stale_employee_steps_after_ticket_handoff(config: Config, clock: Clock) -> None:
     conn = connect(config.db_path, config.db_busy_timeout_ms)
     try:
-        if not _has_tables(conn, ("tickets", "chat_turns")):
+        if not _has_tables(conn, ("tickets", "employee_step_runs")):
             return
-        rows = conn.execute(
-            "SELECT chat_turns.id, chat_turns.entity_id, chat_turns.output_role "
-            "FROM chat_turns "
-            "JOIN tickets ON tickets.id = chat_turns.entity_id "
-            "WHERE chat_turns.status = 'running' "
-            "AND chat_turns.origin = 'worker' "
-            "AND chat_turns.mode = 'worker_step' "
-            "AND tickets.ticket_status <> 'agent_running_step' "
-            "ORDER BY chat_turns.started_at, chat_turns.id"
-        ).fetchall()
-        now = clock.now_unix()
-        for row in rows:
-            chat_data.settle_chat_turn(
-                conn,
-                str(row["id"]),
-                entity_id=str(row["entity_id"]),
-                status="interrupted",
-                reply_text="",
-                output_role="system"
-                if str(row["output_role"]) == "system"
-                else "assistant",
-                error=None,
-                now=now,
-            )
+        SqliteEmployeeStepRepository().interrupt_all_stale_handoffs(
+            conn,
+            now=clock.now_unix(),
+        )
     finally:
         conn.close()
 
@@ -145,9 +124,12 @@ def start_background_loops(
     config: Config,
     clock: Clock,
     *,
-    shared_gateway: SharedGateway,
+    step_gateway: Any,
 ) -> BackgroundLoops:
-    """Always compose Employee execution; optionally own automatic discovery."""
+    """Always compose Employee execution; optionally own automatic discovery.
+
+    Production supplies the one ACP ``step_gateway``. The discovery loop,
+    eligibility, and wake are transport-agnostic and unchanged."""
     global _active
     if _active is not None:
         raise RuntimeError("background loops already running")
@@ -158,7 +140,7 @@ def start_background_loops(
         return EmployeeStepRunner(
             config.db_path,
             clock,
-            gateway=shared_gateway,
+            gateway=step_gateway,
             automatic_employee_step_eligibility_wake=eligibility_wake,
             boundary_hour=config.boundary_hour,
             busy_timeout_ms=config.db_busy_timeout_ms,
@@ -174,14 +156,14 @@ def start_background_loops(
     if not config.dispatch_enabled:
         _LOGGER.info("Automatic Employee-step discovery disabled (dispatch_enabled=false)")
         employee_step_runner = build_runner(automatic_employee_step_eligibility_wake)
-        _settle_stale_worker_turns_after_ticket_handoff(config, clock)
+        _settle_stale_employee_steps_after_ticket_handoff(config, clock)
         _recover_running_ticket_steps(config, employee_step_runner)
     elif not ensure_machine_lock(config.dispatcher_lock_path):
         _LOGGER.info(
             "Automatic Employee-step discovery not started: another process holds the polling lock"
         )
         employee_step_runner = build_runner(automatic_employee_step_eligibility_wake)
-        _settle_stale_worker_turns_after_ticket_handoff(config, clock)
+        _settle_stale_employee_steps_after_ticket_handoff(config, clock)
         _recover_running_ticket_steps(config, employee_step_runner)
     else:
         candidate_runner: EmployeeStepRunner | None = None
@@ -194,7 +176,7 @@ def start_background_loops(
         candidate_eligibility_wake = LoopAutomaticEmployeeStepEligibilityWake(wake_loop)
         try:
             candidate_runner = build_runner(candidate_eligibility_wake)
-            _settle_stale_worker_turns_after_ticket_handoff(config, clock)
+            _settle_stale_employee_steps_after_ticket_handoff(config, clock)
             _recover_running_ticket_steps(config, candidate_runner)
             candidate_loop = AutomaticEmployeeStepDiscoveryLoop(
                 config.db_path,

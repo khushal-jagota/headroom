@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any
-
 import pytest
 
 from planner.cli import http
 from planner.core import authctx
-from planner.core import server as server_module
 from planner.core.errors import ErrorCode, PlannerError
 
 
@@ -61,32 +57,3 @@ def test_cli_header_modes_preserve_ambient_actor_without_privilege_synthesis(
     assert http._headers("ordinary") == {"X-Plan-Actor": "worker"}
     assert http._headers("worker") == {"X-Plan-Actor": "worker"}
     assert http._headers("chief") == {"X-Plan-Actor": "worker"}
-
-
-def test_role_gateway_wiring_sets_distinct_actors_and_preserves_environment(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from planner.minds import shared_gateway as shared_gateway_module
-
-    calls: list[dict[str, Any]] = []
-
-    class CapturingGateway:
-        def __init__(self, **kwargs: Any) -> None:
-            calls.append(kwargs)
-
-    monkeypatch.setattr(shared_gateway_module, "SharedGateway", CapturingGateway)
-    worker, chief = server_module._build_role_gateways(
-        hermes_python=Path("/tmp/hermes-python"),
-        planner_home=Path("/tmp/planner-home"),
-        worker_role="panels-worker",
-        environ={"PRESERVED": "yes", "PLAN_ACTOR": "ambient"},
-    )
-
-    assert isinstance(worker, CapturingGateway)
-    assert isinstance(chief, CapturingGateway)
-    assert [call["worker_role"] for call in calls] == [
-        "panels-worker",
-        "panels-chief-of-staff",
-    ]
-    assert calls[0]["base_env"] == {"PRESERVED": "yes", "PLAN_ACTOR": "worker"}
-    assert calls[1]["base_env"] == {"PRESERVED": "yes", "PLAN_ACTOR": "chief"}

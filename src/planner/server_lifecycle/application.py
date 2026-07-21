@@ -8,7 +8,6 @@ from pathlib import Path
 
 import uvicorn
 
-from planner.core.adapters.registry import build_adapters
 from planner.core.clock import build_clock
 from planner.core.config import HOST, load_config
 from planner.core.db import connect, create_schema
@@ -26,12 +25,10 @@ def run_application_process() -> None:
         create_schema(bootstrap)
 
     clock = build_clock(config)
-    adapters = build_adapters(config)
-
     def conn_factory() -> sqlite3.Connection:
         return connect(config.db_path, config.db_busy_timeout_ms)
 
-    app = create_app(config, clock, adapters, conn_factory)
+    app = create_app(config, clock, conn_factory)
     uvicorn.run(app, host=HOST, port=config.port)
 
 

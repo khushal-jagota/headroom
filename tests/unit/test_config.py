@@ -89,25 +89,6 @@ def test_trusted_ingress_config_rejects_partial_or_unsupported_contract(
         load_config(path=None, env=env)
 
 
-def test_startup_recovery_test_mode_switch_is_env_only_and_default_off() -> None:
-    default_cfg = load_config(path=None, env={"PLAN_TEST_MODE": "1"})
-    enabled_cfg = load_config(
-        path=None,
-        env={
-            "PLAN_TEST_MODE": "1",
-            "PLAN_RUN_STARTUP_RECOVERY_IN_TEST_MODE": "1",
-        },
-    )
-    production_cfg = load_config(
-        path=None,
-        env={"PLAN_RUN_STARTUP_RECOVERY_IN_TEST_MODE": "1"},
-    )
-
-    assert default_cfg.run_startup_recovery_in_test_mode is False
-    assert enabled_cfg.run_startup_recovery_in_test_mode is True
-    assert production_cfg.run_startup_recovery_in_test_mode is False
-
-
 def test_retired_yaml_keys_are_ignored(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     path.write_text(

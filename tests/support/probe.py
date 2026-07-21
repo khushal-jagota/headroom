@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+from typing import Never
+
+from planner.conversation.backend_catalog import (
+    EmployeeBackendBuildContext,
+    EmployeeBackendCatalog,
+    EmployeeBackendRegistration,
+)
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
-    install_worker_type_registry_for_test,
-    restore_production_worker_type_registry_for_test,
+    ConfiguredEmployeeRuntimeDefinitions,
+    install_employee_runtime_definitions_for_test,
+    restore_employee_runtime_definitions_for_test,
 )
 from planner.worker_types.contracts import (
     FieldDefinition,
@@ -44,9 +52,10 @@ PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     ),
     worker_profile=WorkerProfile(
         specialist_skill=PROBE_SPECIALIST_SKILL,
-        model=None,
-        reasoning_effort=None,
+        default_employee_model="probe-model",
+        default_employee_reasoning_effort="probe-high",
         toolset_profile="default",
+        default_employee_backend="probe-backend",
     ),
     supports_prefix_reconciliation=True,
 )
@@ -64,7 +73,23 @@ PROBE_KNOWN_SKILLS: frozenset[str] = frozenset(
 PROBE_KNOWN_TOOLSET_PROFILES: frozenset[str] = frozenset({"default"})
 
 
-def build_probe_registry() -> WorkerTypeRegistry:
+def _unmaterialized_probe_backend(
+    _context: EmployeeBackendBuildContext,
+) -> Never:
+    raise RuntimeError("unit-only probe backend was materialized")
+
+
+PROBE_EMPLOYEE_BACKEND_CATALOG = EmployeeBackendCatalog(
+    (
+        EmployeeBackendRegistration("hermes", _unmaterialized_probe_backend),
+        EmployeeBackendRegistration("probe-backend", _unmaterialized_probe_backend),
+    )
+)
+
+
+def build_probe_registry(
+    employee_backend_catalog: EmployeeBackendCatalog = PROBE_EMPLOYEE_BACKEND_CATALOG,
+) -> WorkerTypeRegistry:
     return WorkerTypeRegistry(
         (
             CODING_WORKER_TYPE_DEFINITION,
@@ -75,14 +100,28 @@ def build_probe_registry() -> WorkerTypeRegistry:
         ),
         known_skills=PROBE_KNOWN_SKILLS,
         known_toolset_profiles=PROBE_KNOWN_TOOLSET_PROFILES,
+        employee_backend_catalog=employee_backend_catalog,
     )
 
 
+_installed_definitions: ConfiguredEmployeeRuntimeDefinitions | None = None
+
+
 def install_probe_registry() -> WorkerTypeDefinition:
+    global _installed_definitions
     registry = build_probe_registry()
-    install_worker_type_registry_for_test(registry)
+    _installed_definitions = install_employee_runtime_definitions_for_test(
+        ConfiguredEmployeeRuntimeDefinitions(
+            PROBE_EMPLOYEE_BACKEND_CATALOG,
+            registry,
+        )
+    )
     return registry.require("probe")
 
 
 def uninstall_probe_registry() -> None:
-    restore_production_worker_type_registry_for_test()
+    global _installed_definitions
+    if _installed_definitions is None:
+        raise RuntimeError("probe runtime definitions were not installed")
+    restore_employee_runtime_definitions_for_test(_installed_definitions)
+    _installed_definitions = None

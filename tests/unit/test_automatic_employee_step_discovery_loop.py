@@ -1,15 +1,13 @@
 """Read-only Automatic Employee-step discovery and its timer/wake behavior.
 
 Hermetic against minds/fake.py: the full proposal flow uses the real Ticket writers and an
-injected fake Hermes gateway, while interface-focused tests record the one complete eligibility
+injected fake step gateway, while interface-focused tests record the one complete eligibility
 call and the ticket ids submitted after the discovery connection closes.
 """
 
 from __future__ import annotations
 
 import ast
-import json
-import sys
 import threading
 import time
 from collections.abc import Callable
@@ -20,17 +18,13 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from planner.chat import data as chat_data
 from planner.core import links as core_links
-from planner.core.adapters.registry import build_adapters
 from planner.core.clock import TestClock
 from planner.core.config import load_config
 from planner.core.contracts import LinkKind
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.days import data as days_data
-from planner.minds.fake import FakeGateway, Reply, ev
-from planner.minds.shared_gateway import SharedGateway
 from planner.runtime import automatic_employee_step_eligibility
 from planner.runtime.automatic_employee_step_discovery_loop import (
     AutomaticEmployeeStepDiscoveryLoop,
@@ -39,16 +33,15 @@ from planner.runtime.automatic_employee_step_eligibility_wake import (
     LoopAutomaticEmployeeStepEligibilityWake,
     NoOpAutomaticEmployeeStepEligibilityWake,
 )
+from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.runtime.employee_step_runner import EmployeeStepRunner
+from planner.runtime.step_gateway import EmployeeStepRunResult
+from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, Ticket, TicketStatus
 from planner.tickets.logic import fields_codec
 
-HOME = "/tmp/planner-home"
-HERMES_PY = sys.executable
-LIVE_SID = "live-sid"
 STORED_KEY = "stored-key-1"
-ROLE = "planning-worker"
 
 # Discovery is scoped to TODAY. Pin the clock so "today" is deterministic:
 # planning_date(2026-07-06 12:00, boundary 5) = 2026-07-06 -> day_2026-07-06.
@@ -69,11 +62,26 @@ def _db(tmp_path: Path) -> str:
     return str(db_path)
 
 
-def _new_ticket(db: str, *, ceiling: str | None = None, at_cap: AtCap = AtCap.propose) -> str:
+def _new_ticket(
+    db: str,
+    *,
+    ceiling: str | None = None,
+    at_cap: AtCap = AtCap.propose,
+    worker_type: str = "coding",
+    project_id: str | None = None,
+    sprint_item_id: str | None = None,
+) -> str:
     conn = connect(db)
     try:
         ticket = tickets_data.create_ticket(
-            conn, worker_type="coding", title="T", actor="human", now=0, title_max_chars=200
+            conn,
+            worker_type=worker_type,
+            title="T",
+            actor="human",
+            now=0,
+            title_max_chars=200,
+            project_id=project_id,
+            sprint_item_id=sprint_item_id,
         )
         ticket = tickets_data.accept_proposal(
             conn,
@@ -106,6 +114,19 @@ def _read(db: str, tid: str) -> Ticket:
         conn.close()
 
 
+def _new_item(db: str, project_id: str) -> str:
+    conn = connect(db)
+    try:
+        return sprints_data.create_item(
+            conn,
+            title="Item",
+            project_id=project_id,
+            clock=TestClock(FIXED_NOW),
+        ).id
+    finally:
+        conn.close()
+
+
 def _new_kickoff_ticket(db: str) -> str:
     conn = connect(db)
     try:
@@ -124,6 +145,14 @@ def _set_status(db: str, tid: str, status: TicketStatus) -> None:
             "UPDATE tickets SET ticket_status = ?, updated_at = ? WHERE id = ?",
             (status.value, 0, tid),
         )
+    finally:
+        conn.close()
+
+
+def _set_updated_at(db: str, tid: str, updated_at: int) -> None:
+    conn = connect(db)
+    try:
+        conn.execute("UPDATE tickets SET updated_at = ? WHERE id = ?", (updated_at, tid))
     finally:
         conn.close()
 
@@ -185,43 +214,30 @@ def _add_to_day(db: str, tid: str, day_id: str = TODAY_DAY_ID) -> None:
         conn.close()
 
 
-# --- fake-gateway scripting ---------------------------------------------------
+# --- ACP step-gateway fixture -------------------------------------------------
 
 
-def _create_reply(sid: str = LIVE_SID, key: str = STORED_KEY) -> Reply:
-    return Reply(result={"session_id": sid, "stored_session_id": key})
+def _create_script(*_after: object) -> object:
+    return object()
 
 
-def _resume_reply(sid: str = LIVE_SID, key: str = STORED_KEY) -> Reply:
-    return Reply(result={"session_id": sid, "resumed": key})
+def _resume_script(_key: str = STORED_KEY, *_after: object) -> object:
+    return object()
 
 
-def _complete_ev(sid: str = LIVE_SID, status: str = "complete") -> dict[str, Any]:
-    return ev("message.complete", sid, {"text": "ok", "usage": {}, "status": status})
+def _complete_ev(*_args: object, **_kwargs: object) -> object:
+    return object()
 
 
-def _submit_reply(*events_after: dict[str, Any]) -> Reply:
-    return Reply(result={"status": "streaming"}, events_after=tuple(events_after))
-
-
-def _create_script(*after: dict[str, Any]) -> dict[str, list[Reply]]:
-    return {"session.create": [_create_reply()], "prompt.submit": [_submit_reply(*after)]}
-
-
-def _resume_script(key: str = STORED_KEY, *after: dict[str, Any]) -> dict[str, list[Reply]]:
-    return {"session.resume": [_resume_reply(key=key)], "prompt.submit": [_submit_reply(*after)]}
-
-
-class _ProposingFake(FakeGateway):
-    """Files a real proposal (production writer) the moment it receives prompt.submit."""
+class _ProposingFake:
+    """Files a real proposal when the runner admits one ACP prompt."""
 
     def __init__(
         self,
-        script: dict[str, list[Reply]],
+        _script: object,
         *,
         on_submit: Callable[[], None] | list[Callable[[], None]] | None = None,
     ) -> None:
-        super().__init__(script)
         if on_submit is None:
             self._on_submit: list[Callable[[], None]] = []
         elif isinstance(on_submit, list):
@@ -229,26 +245,55 @@ class _ProposingFake(FakeGateway):
         else:
             self._on_submit = [on_submit]
 
-    def send(self, line: str) -> None:
-        frame = json.loads(line)
-        if frame.get("method") == "prompt.submit" and self._on_submit:
+        self._methods: list[str] = []
+
+    def run_ticket_step(
+        self,
+        employee_session_id: str | None,
+        entity_id: str,
+        prompt_text: str,
+        on_employee_session_id: Callable[[str], None] | None = None,
+        *,
+        require_existing_session: bool = False,
+    ) -> EmployeeStepRunResult:
+        del entity_id, prompt_text, require_existing_session
+        session_id = employee_session_id or STORED_KEY
+        self._methods.extend(
+            ["session.resume" if employee_session_id else "session.create", "prompt.submit"]
+        )
+        if on_employee_session_id is not None:
+            on_employee_session_id(session_id)
+        if self._on_submit:
             callback = self._on_submit.pop(0)
             callback()
-        super().send(line)
+        return EmployeeStepRunResult("complete", session_id, None)
+
+    def interrupt(
+        self,
+        employee_session_id: str,
+        entity_id: str,
+        *,
+        deadline: float | None = None,
+    ) -> None:
+        del employee_session_id, entity_id, deadline
+
+    def status(self) -> object:
+        return type("Status", (), {"available": True})()
+
+    def sent_methods(self) -> list[str]:
+        return list(self._methods)
 
 
-def _runner(db: str, fake: FakeGateway) -> EmployeeStepRunner:
-    gateway = SharedGateway(
-        hermes_python=HERMES_PY,
-        home=HOME,
-        worker_role=ROLE,
-        spawn=fake.spawn,
-        base_env={},
-    )
+class _UnusedFake(_ProposingFake):
+    def __init__(self) -> None:
+        super().__init__(object())
+
+
+def _runner(db: str, fake: _ProposingFake) -> EmployeeStepRunner:
     return EmployeeStepRunner(
         db,
         TestClock(FIXED_NOW),
-        gateway=gateway,
+        gateway=fake,
         automatic_employee_step_eligibility_wake=NoOpAutomaticEmployeeStepEligibilityWake(),
         boundary_hour=BOUNDARY_HOUR,
     )
@@ -261,6 +306,27 @@ def _loop(db: str, runner: EmployeeStepRunner) -> AutomaticEmployeeStepDiscovery
         TestClock(FIXED_NOW),
         runner,
         boundary_hour=BOUNDARY_HOUR,
+    )
+
+
+class _RecordingRunner:
+    def __init__(self) -> None:
+        self.ticket_ids: list[str] = []
+
+    def try_run_automatic_step(self, ticket_id: str) -> None:
+        self.ticket_ids.append(ticket_id)
+
+
+def _recording_loop(db: str) -> tuple[AutomaticEmployeeStepDiscoveryLoop, _RecordingRunner]:
+    runner = _RecordingRunner()
+    return (
+        AutomaticEmployeeStepDiscoveryLoop(
+            db,
+            TestClock(FIXED_NOW),
+            runner,  # type: ignore[arg-type]
+            boundary_hour=BOUNDARY_HOUR,
+        ),
+        runner,
     )
 
 
@@ -367,7 +433,7 @@ def test_only_today_membership_is_presented_with_the_explicit_day(
         "is_eligible_for_automatic_employee_step",
         record,
     )
-    loop = _loop(db, _runner(db, FakeGateway({})))
+    loop = _loop(db, _runner(db, _UnusedFake()))
 
     assert loop.poll_once() == []
     assert calls == [(today, TODAY_DAY_ID)]
@@ -399,23 +465,195 @@ def test_poll_passes_only_ticket_id_to_runner_interface(tmp_path: Path) -> None:
     tid = _new_ticket(db)
     _add_to_day(db, tid)
 
-    class RecordingRunner:
-        def __init__(self) -> None:
-            self.ticket_ids: list[str] = []
-
-        def try_run_automatic_step(self, ticket_id: str) -> None:
-            self.ticket_ids.append(ticket_id)
-
-    runner = RecordingRunner()
-    loop = AutomaticEmployeeStepDiscoveryLoop(
-        db,
-        TestClock(FIXED_NOW),
-        runner,  # type: ignore[arg-type]
-        boundary_hour=BOUNDARY_HOUR,
-    )
+    loop, runner = _recording_loop(db)
 
     assert loop.poll_once() == [tid]
     assert runner.ticket_ids == [tid]
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        TicketStatus.agent_running_step,
+        TicketStatus.awaiting_approval,
+        TicketStatus.user_takeover,
+        TicketStatus.paired_work,
+        TicketStatus.errored,
+    ],
+)
+def test_closeout_waiter_is_not_submitted_while_its_projectless_worker_lane_is_occupied(
+    tmp_path: Path,
+    status: TicketStatus,
+) -> None:
+    db = _db(tmp_path)
+    active = _new_ticket(db)
+    waiting = _new_ticket(db)
+    _jump_state(db, active, "needs_closeout")
+    _jump_state(db, waiting, "needs_closeout")
+    _set_status(db, active, status)
+    _add_to_day(db, waiting)
+
+    loop, runner = _recording_loop(db)
+
+    assert loop.poll_once() == []
+    assert runner.ticket_ids == []
+
+
+def test_closeout_discovery_submits_only_the_oldest_waiter_in_one_free_lane(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    oldest = _new_ticket(db)
+    newest = _new_ticket(db)
+    for ticket_id in (oldest, newest):
+        _jump_state(db, ticket_id, "needs_closeout")
+        _add_to_day(db, ticket_id)
+    _set_updated_at(db, oldest, 10)
+    _set_updated_at(db, newest, 20)
+
+    loop, runner = _recording_loop(db)
+
+    assert loop.poll_once() == [oldest]
+    assert runner.ticket_ids == [oldest]
+
+
+def test_closeout_lane_uses_the_parent_sprint_item_project(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    item_id = _new_item(db, "project_vylo")
+    active = _new_ticket(db, project_id="project_vylo")
+    waiting = _new_ticket(db, sprint_item_id=item_id)
+    _jump_state(db, active, "needs_closeout")
+    _jump_state(db, waiting, "needs_closeout")
+    _set_status(db, active, TicketStatus.awaiting_approval)
+    _add_to_day(db, waiting)
+
+    loop, runner = _recording_loop(db)
+
+    assert loop.poll_once() == []
+    assert runner.ticket_ids == []
+
+
+def test_different_project_or_worker_type_closeout_lanes_are_independent(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    ticket_ids = {
+        _new_ticket(db, project_id="project_vylo"),
+        _new_ticket(db, project_id="project_learning"),
+        _new_ticket(db, worker_type="exploration", project_id="project_vylo"),
+    }
+    for ticket_id in ticket_ids:
+        _jump_state(db, ticket_id, "needs_closeout")
+        _add_to_day(db, ticket_id)
+
+    loop, runner = _recording_loop(db)
+
+    assert set(loop.poll_once()) == ticket_ids
+    assert set(runner.ticket_ids) == ticket_ids
+
+
+def test_empty_stopped_closeout_neither_runs_nor_occupies_the_lane(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    stopped = _new_ticket(db)
+    continuing = _new_ticket(db)
+    for ticket_id in (stopped, continuing):
+        _jump_state(db, ticket_id, "needs_closeout")
+        _add_to_day(db, ticket_id)
+    _scope(db, stopped, "needs_closeout", AtCap.stop)
+
+    loop, runner = _recording_loop(db)
+
+    assert loop.poll_once() == [continuing]
+    assert runner.ticket_ids == [continuing]
+
+
+def test_closeout_claim_rechecks_lane_occupancy_inside_the_write_transaction(
+    tmp_path: Path,
+) -> None:
+    db = _db(tmp_path)
+    first = _new_ticket(db)
+    second = _new_ticket(db)
+    for ticket_id in (first, second):
+        _jump_state(db, ticket_id, "needs_closeout")
+        _add_to_day(db, ticket_id)
+
+    conn = connect(db)
+    try:
+        def claim(ticket_id: str) -> Ticket | None:
+            return tickets_data.claim_automatic_employee_step(
+                conn,
+                ticket_id,
+                planning_day_id_resolver=lambda: TODAY_DAY_ID,
+                eligibility_check=(
+                    automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step
+                ),
+                now=1,
+            )
+
+        assert claim(first) is not None
+        assert claim(second) is None
+    finally:
+        conn.close()
+
+
+def test_accepting_closeout_frees_the_lane_for_the_next_waiter(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    active = _new_ticket(db)
+    waiting = _new_ticket(db)
+    for ticket_id in (active, waiting):
+        _jump_state(db, ticket_id, "needs_closeout")
+    _file_proposal(db, active, "closeout", "closed")
+    _add_to_day(db, waiting)
+
+    loop, runner = _recording_loop(db)
+    assert loop.poll_once() == []
+
+    conn = connect(db)
+    try:
+        accepted = tickets_data.accept_proposal(
+            conn,
+            active,
+            field="closeout",
+            actor="human",
+            now=1,
+            next_ceiling="none",
+            at_cap=AtCap.propose,
+        )
+    finally:
+        conn.close()
+
+    assert accepted.stage == "done"
+    assert loop.poll_once() == [waiting]
+    assert runner.ticket_ids == [waiting]
+
+
+def test_non_closeout_tickets_do_not_share_closeout_lane_serialization(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    ticket_ids = {_new_ticket(db), _new_ticket(db)}
+    for ticket_id in ticket_ids:
+        _add_to_day(db, ticket_id)
+
+    loop, runner = _recording_loop(db)
+
+    assert set(loop.poll_once()) == ticket_ids
+    assert set(runner.ticket_ids) == ticket_ids
+
+
+def test_closeout_resumes_the_existing_ticket_employee_session(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    ticket_id = _new_ticket(db)
+    _jump_state(db, ticket_id, "needs_closeout")
+    _set_key(db, ticket_id, STORED_KEY)
+    _add_to_day(db, ticket_id)
+    fake = _ProposingFake(
+        _resume_script(STORED_KEY, _complete_ev()),
+        on_submit=lambda: _file_proposal(db, ticket_id, "closeout", "closed"),
+    )
+    runner = _runner(db, fake)
+
+    assert _loop(db, runner).poll_once() == [ticket_id]
+    assert runner.wait_idle(10.0)
+    assert _read(db, ticket_id).ticket_status is TicketStatus.awaiting_approval
+    assert "session.resume" in fake.sent_methods()
+    assert "session.create" not in fake.sent_methods()
 
 
 def test_poll_excludes_every_ineligible_ticket(tmp_path: Path) -> None:
@@ -452,7 +690,7 @@ def test_poll_excludes_every_ineligible_ticket(tmp_path: Path) -> None:
     ):
         _add_to_day(db, tid)
 
-    runner = _runner(db, FakeGateway({}))  # must never be used
+    runner = _runner(db, _UnusedFake())  # must never be used
     loop = _loop(db, runner)
     assert loop.poll_once() == []  # nothing ready -> nothing started
 
@@ -503,28 +741,17 @@ def test_settlement_eligibility_wake_drives_the_auto_advance_chain(tmp_path: Pat
     tid = _new_ticket(db, ceiling="needs_approach")
     _add_to_day(db, tid)  # on today -> in scope
     fake = _ProposingFake(
-        {
-            "session.create": [_create_reply()],
-            "session.resume": [_resume_reply(key=STORED_KEY)],
-            "prompt.submit": [_submit_reply(_complete_ev()), _submit_reply(_complete_ev())],
-        },
+        object(),
         on_submit=[
             lambda: _file_proposal(db, tid, "success", "s"),
             lambda: _file_proposal(db, tid, "approach", "a"),
         ],
     )
     loop_box: list[AutomaticEmployeeStepDiscoveryLoop] = []
-    gateway = SharedGateway(
-        hermes_python=HERMES_PY,
-        home=HOME,
-        worker_role=ROLE,
-        spawn=fake.spawn,
-        base_env={},
-    )
     runner = EmployeeStepRunner(
         db,
         TestClock(FIXED_NOW),
-        gateway=gateway,
+        gateway=fake,
         automatic_employee_step_eligibility_wake=LoopAutomaticEmployeeStepEligibilityWake(
             lambda: loop_box[0].wake()
         ),
@@ -582,7 +809,6 @@ def test_fastapi_day_action_wakes_real_loop_without_waiting_for_long_timer(
         path=None,
         env={
             "PLAN_TEST_MODE": "1",
-            "PLAN_GATEWAY_ADAPTER": "fake",
             "PLAN_DB_PATH": db,
             "PLAN_BOUNDARY_HOUR": str(BOUNDARY_HOUR),
         },
@@ -591,7 +817,7 @@ def test_fastapi_day_action_wakes_real_loop_without_waiting_for_long_timer(
     def conn_factory():
         return connect(db)
 
-    app = create_app(config, TestClock(FIXED_NOW), build_adapters(config), conn_factory)
+    app = create_app(config, TestClock(FIXED_NOW), conn_factory)
     app.state.automatic_employee_step_eligibility_wake = LoopAutomaticEmployeeStepEligibilityWake(
         loop.wake
     )
@@ -633,7 +859,7 @@ def test_poll_excludes_ticket_on_another_day(tmp_path: Path) -> None:
     db = _db(tmp_path)
     tid = _new_ticket(db)  # fresh + eligible
     _add_to_day(db, tid, OTHER_DAY_ID)  # but on yesterday, not today
-    runner = _runner(db, FakeGateway({}))  # must never be used
+    runner = _runner(db, _UnusedFake())  # must never be used
     loop = _loop(db, runner)
     assert loop.poll_once() == []  # other-day Ticket is out of scope
 
@@ -792,24 +1018,15 @@ def test_periodic_timer_is_the_backstop_when_no_wake_is_delivered(tmp_path: Path
         loop.stop()
 
 
-def test_periodic_timer_observes_chat_settlement_without_a_wake(tmp_path: Path) -> None:
+def test_periodic_timer_observes_employee_step_settlement_without_a_wake(
+    tmp_path: Path,
+) -> None:
     db = _db(tmp_path)
     ticket_id = _new_ticket(db)
     _add_to_day(db, ticket_id)
     conn = connect(db)
     try:
-        turn = chat_data.start_turn(
-            conn,
-            ticket_id,
-            origin="human",
-            mode="message",
-            visible_role="human",
-            visible_text="still chatting",
-            output_role="assistant",
-            phase="thinking",
-            activity_label="Thinking",
-            now=1,
-        )
+        run = SqliteEmployeeStepRepository().start(conn, ticket_id, now=1)
     finally:
         conn.close()
 
@@ -848,13 +1065,11 @@ def test_periodic_timer_observes_chat_settlement_without_a_wake(tmp_path: Path) 
         conn = connect(db)
         try:
             # This low-level settlement deliberately delivers no eligibility wake.
-            chat_data.settle_chat_turn(
+            SqliteEmployeeStepRepository().settle(
                 conn,
-                turn.id,
-                entity_id=ticket_id,
+                run.employee_step_id,
+                ticket_id=ticket_id,
                 status="complete",
-                reply_text="done",
-                output_role="assistant",
                 error=None,
                 now=2,
             )
@@ -869,7 +1084,7 @@ def test_periodic_timer_observes_chat_settlement_without_a_wake(tmp_path: Path) 
 
 def test_discovery_starts_once_and_stop_joins_the_thread(tmp_path: Path) -> None:
     db = _db(tmp_path)
-    loop = _loop(db, _runner(db, FakeGateway({})))
+    loop = _loop(db, _runner(db, _UnusedFake()))
     loop.start(60)
     thread = loop._thread
     assert thread is not None
@@ -896,7 +1111,7 @@ def test_poll_exception_is_logged_and_the_periodic_loop_survives(
             super().__init__(
                 db,
                 TestClock(FIXED_NOW),
-                _runner(db, FakeGateway({})),
+                _runner(db, _UnusedFake()),
                 boundary_hour=BOUNDARY_HOUR,
             )
             self.calls = 0
@@ -919,13 +1134,14 @@ def test_poll_exception_is_logged_and_the_periodic_loop_survives(
     assert "transient poll failure" in caplog.text
 
 
-def test_discovery_source_has_membership_only_sql_and_no_parallel_rule() -> None:
+def test_discovery_source_orders_membership_sql_without_copying_eligibility() -> None:
     root = Path(__file__).resolve().parents[2]
     path = root / "src/planner/runtime/automatic_employee_step_discovery_loop.py"
     source = path.read_text()
     normalized = " ".join(source.split()).lower()
     expected_sql = (
-        "select t.id from tickets t join day_tickets dt on dt.ticket_id = t.id where dt.day_id = ?"
+        "select t.id from tickets t join day_tickets dt on dt.ticket_id = t.id "
+        "where dt.day_id = ? \" \"order by t.updated_at, t.id"
     )
     assert expected_sql in normalized
     candidate = normalized.split("_candidate_sql", 1)[1].split(")", 1)[0]

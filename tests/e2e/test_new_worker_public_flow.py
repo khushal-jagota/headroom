@@ -1,254 +1,256 @@
-"""Focused public-flow coverage for the shipped new_worker Understanding stage."""
+"""Public New Worker flow through the production ACP composition."""
 
 from __future__ import annotations
 
+import json
+import sys
 import time
+from pathlib import Path
+from typing import Any
 
-import httpx
-from tests.e2e.conftest import FAKE_NOW, WAIT_MS
+from acp.transports import default_environment
+from fastapi.testclient import TestClient
+from starlette.testclient import WebSocketTestSession
 
-from planner.core.clock import TestClock as MutableClock
-from planner.core.clock import parse_fake_now
-from planner.minds.fake import FakeGateway, Reply, ev
-from planner.minds.shared_gateway import SharedGateway
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    NoOpAutomaticEmployeeStepEligibilityWake,
+from planner.conversation.backend_catalog import (
+    EmployeeBackendCatalog,
+    static_employee_backend_registration,
 )
-from planner.runtime.employee_step_runner import EmployeeStepRunner
+from planner.conversation.backend_contracts import (
+    AgentBackendDefinition,
+    BackendTurnCapabilities,
+    ReverseServiceCapabilities,
+)
+from planner.conversation.composition import ConversationTestOptions
+from planner.conversation.sdk_child import SdkAcpEmployeeChildFactory
+from planner.core.clock import build_clock
+from planner.core.config import load_config
+from planner.core.db import connect, create_schema
+from planner.core.server import create_app
+from planner.days import data as days_data
+from planner.days.logic.dates import resolve_day_id
+from planner.tickets import data as tickets_data
+from planner.tickets.contracts import NO_FURTHER, AtCap
+from planner.worker_types.configuration import build_employee_runtime_definitions
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+SCRIPTED_AGENT = REPOSITORY_ROOT / "tests/support/acp_scripted_agent.py"
+_AGENT = {"X-Plan-Actor": "agent"}
 
 
-def _run_automatic_opening(server, ticket_id: str) -> FakeGateway:
-    """Run the production opening path explicitly; test-mode servers omit all loops."""
-    fake = FakeGateway(
-        {
-            "session.create": [
-                Reply(
-                    result={
-                        "session_id": "opening-live-session",
-                        "stored_session_id": "fake-sess-1",
-                    }
-                )
-            ],
-            "prompt.submit": [
-                Reply(
-                    result={"status": "streaming"},
-                    events_after=(
-                        ev(
-                            "message.complete",
-                            "opening-live-session",
-                            {
-                                "text": "What should this worker understand before we design it?",
-                                "usage": {},
-                                "status": "complete",
-                            },
-                        ),
-                    ),
-                )
-            ],
-        }
+class _Strategy:
+    def classify_replay(
+        self,
+        _binding: object,
+        replay: tuple[object, ...],
+        _boundaries: tuple[object, ...],
+    ) -> tuple[object, ...]:
+        return replay
+
+    async def steer(self, *args: object, **kwargs: object) -> object:
+        raise NotImplementedError
+
+    def observe_compaction(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    async def capture_compaction(self, *args: object, **kwargs: object) -> object:
+        raise NotImplementedError
+
+
+def _definition() -> AgentBackendDefinition:
+    return AgentBackendDefinition(
+        backend_key="hermes",
+        argv=(sys.executable, str(SCRIPTED_AGENT)),
+        inherited_environment_names=tuple(default_environment()),
+        environment_overrides=(),
+        expected_agent_name="panels-scripted-agent",
+        expected_agent_version="1.0.0",
+        turn_capabilities=BackendTurnCapabilities(False, False),
+        reverse_service_capabilities=ReverseServiceCapabilities(False, False, True),
+        working_directory_resolver=lambda employee: employee.workspace_roots[0],
+        turn_strategy=_Strategy(),
     )
-    gateway = SharedGateway(
-        hermes_python="python",
-        home=str(server.db_path.parent / "automatic-opening-home"),
-        worker_role="planning-worker",
-        spawn=fake.spawn,
-        base_env={},
+
+
+def _application(tmp_path: Path) -> tuple[Any, Path, str]:
+    db_path = tmp_path / "new-worker.db"
+    config = load_config(
+        path=None,
+        env={
+            "PLAN_TEST_MODE": "1",
+            "PLAN_DB_PATH": str(db_path),
+            "PLAN_FAKE_NOW": "2026-07-04T12:00:00",
+        },
     )
-    runner = EmployeeStepRunner(
-        str(server.db_path),
-        MutableClock(parse_fake_now(FAKE_NOW)),
-        gateway=gateway,
-        automatic_employee_step_eligibility_wake=NoOpAutomaticEmployeeStepEligibilityWake(),
-        boundary_hour=5,
-    )
-    runner.try_run_automatic_step(ticket_id)
-    assert runner.wait_idle(10.0)
-    runner.stop()
-    assert fake.sent_methods() == ["session.create", "prompt.submit"]
-    return fake
-
-
-def _post_chat(server, ticket_id: str, text: str) -> dict:
-    response = httpx.post(
-        f"{server.base}/api/chat/{ticket_id}/turns",
-        json={"text": text, "mode": "message"},
-        timeout=10.0,
-    )
-    assert response.status_code < 300, response.text
-    return response.json()
-
-
-def _wait_for_ticket(api, server, ticket_id: str, predicate) -> dict:
-    deadline = time.monotonic() + 5
-    last = None
-    while time.monotonic() < deadline:
-        last = api.get(server, f"/api/tickets/{ticket_id}")
-        if predicate(last):
-            return last
-        time.sleep(0.05)
-    raise AssertionError(f"ticket condition was not met; last={last!r}")
-
-
-def _wait_for_chat_turn_complete(api, server, ticket_id: str, turn_id: str) -> dict:
-    deadline = time.monotonic() + 5
-    last = None
-    while time.monotonic() < deadline:
-        last = api.get(server, f"/api/chat/{ticket_id}/state")
-        has_assistant_message = any(
-            message["role"] == "assistant" and message["turn_id"] == turn_id
-            for message in last["messages"]
+    clock = build_clock(config)
+    with connect(str(db_path)) as conn:
+        create_schema(conn)
+        ticket = tickets_data.create_ticket(
+            conn,
+            worker_type="new_worker",
+            title="Design a public API worker",
+            actor="human",
+            now=clock.now_unix(),
+            title_max_chars=200,
         )
-        if last["active_turn"] is None and has_assistant_message:
-            return last
-        time.sleep(0.05)
-    raise AssertionError(f"chat turn {turn_id} did not complete; last={last!r}")
-
-
-def test_new_worker_understanding_public_chat_reuses_session_and_proposal_parks(
-    server, cli, api
-) -> None:
-    ticket_id = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "new_worker",
-        "--title",
-        "Design a public API worker",
-    )["id"]
-    api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
-    _run_automatic_opening(server, ticket_id)
-
-    detail = api.get(server, f"/api/tickets/{ticket_id}")
-    assert detail["stage"] == "needs_understanding"
-    assert detail["employee_session_id"] == "fake-sess-1"
-    assert detail["ticket_status"] == "paired_work"
-    first = detail
-    assert first["ticket_status"] == "paired_work"
-    assert first["fields"]["understanding"]["proposal"] is None
-
-    second_turn = _post_chat(server, ticket_id, "Continue the Understanding conversation.")
-    _wait_for_chat_turn_complete(api, server, ticket_id, second_turn["id"])
-    second = api.get(server, f"/api/tickets/{ticket_id}")
-    assert second["employee_session_id"] == first["employee_session_id"]
-    assert second["ticket_status"] == "paired_work"
-    assert second["fields"]["understanding"]["proposal"] is None
-
-    proposed = cli(
-        server,
-        "worker",
-        "propose",
-        ticket_id,
-        "--body-file",
-        "-",
-        "--recap",
-        "Understanding ready.",
-        stdin="Purpose/outcome, judgment risks, and boundaries captured.",
+        tickets_data.accept_proposal(
+            conn,
+            ticket.id,
+            field="kickoff",
+            actor="human",
+            now=clock.now_unix(),
+            next_ceiling=NO_FURTHER,
+            at_cap=AtCap.propose,
+        )
+        days_data.add_day_ticket(
+            conn,
+            resolve_day_id("today", clock.now(), config.boundary_hour),
+            ticket.id,
+            clock.now_unix(),
+        )
+    definition = _definition()
+    catalog = EmployeeBackendCatalog(
+        (static_employee_backend_registration(definition, SdkAcpEmployeeChildFactory(definition)),)
     )
-    assert proposed["stage"] == "needs_understanding"
-    assert proposed["ticket_status"] == "awaiting_approval"
-    assert proposed["fields"]["understanding"]["proposal"]["body"].startswith(
-        "Purpose/outcome"
-    )
-
-    approved = api.direct_post(
-        server,
-        f"/api/tickets/{ticket_id}/accept/understanding",
-        {"next_ceiling": "needs_stages", "at_cap": "propose"},
-    )
-    assert approved["stage"] == "needs_stages"
-    assert approved["fields"]["understanding"]["proposal"] is None
-    assert approved["fields"]["understanding"]["value"].startswith("Purpose/outcome")
-
-
-def test_new_worker_understanding_public_chat_proposal_and_browser_progression(
-    server, context_factory, open_page, cli, api
-) -> None:
-    ticket_id = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "new_worker",
-        "--title",
-        "Design a research worker",
-    )["id"]
-    api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
-    _run_automatic_opening(server, ticket_id)
-
-    detail = api.get(server, f"/api/tickets/{ticket_id}")
-    assert detail["stage"] == "needs_understanding"
-    assert detail["default_stage_ownership_mode"] == "paired"
-    assert detail["effective_stage_ownership_mode"] == "paired"
-    assert detail["employee_session_id"] == "fake-sess-1"
-    assert detail["ticket_status"] == "paired_work"
-    assert detail["fields"]["understanding"]["proposal"] is None
-
-    second_turn = _post_chat(server, ticket_id, "Continue the Understanding conversation.")
-    _wait_for_chat_turn_complete(api, server, ticket_id, second_turn["id"])
-    detail = api.get(server, f"/api/tickets/{ticket_id}")
-    assert detail["employee_session_id"] == "fake-sess-1"
-    assert detail["ticket_status"] == "paired_work"
-
-    page = open_page(
-        context_factory(),
-        server,
-        f"#/ticket/{ticket_id}",
-        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"][data-stage="needs_understanding"]',
-        settled=True,
-    )
-    assert page.eval_on_selector_all(
-        "details[data-field]",
-        "els => els.map(el => el.getAttribute('data-field'))",
-    ) == ["kickoff", "understanding", "stages", "thinking", "drafting", "closeout"]
-    assert (
-        page.locator(".ticket-facts [data-stage-owner]").get_attribute("data-default-owner")
-        == "paired"
-    )
-    assert (
-        page.locator(".ticket-facts [data-stage-owner]").get_attribute("data-effective-owner")
-        == "paired"
-    )
-    assert (
-        page.locator('details[data-field="understanding"]').get_attribute("data-stage-state")
-        == "current-paired-work"
-    )
-
-    cli(
-        server,
-        "worker",
-        "propose",
-        ticket_id,
-        "--body-file",
-        "-",
-        "--recap",
-        "Understanding ready.",
-        stdin=(
-            "Purpose/outcome: design a research worker.\n"
-            "Risks/judgment: source trust and stop criteria need human review.\n"
-            "Constraints/examples/boundaries: cite sources; do not browse without need."
+    app = create_app(
+        config,
+        clock,
+        lambda: connect(str(db_path)),
+        conversation_test_options=ConversationTestOptions(
+            employee_runtime_definitions=build_employee_runtime_definitions(catalog),
         ),
     )
-    detail = _wait_for_ticket(
-        api,
-        server,
+    return app, db_path, ticket.id
+
+
+def _wait_for_ticket(client: TestClient, ticket_id: str, predicate) -> dict[str, Any]:
+    deadline = time.monotonic() + 10
+    last: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        response = client.get(f"/api/tickets/{ticket_id}")
+        assert response.status_code == 200, response.text
+        last = response.json()
+        if predicate(last):
+            return last
+        time.sleep(0.02)
+    raise AssertionError(f"ticket condition not met: {last!r}")
+
+
+def _receive_until(
+    websocket: WebSocketTestSession,
+    predicate,
+    *,
+    limit: int = 64,
+) -> list[dict[str, Any]]:
+    envelopes: list[dict[str, Any]] = []
+    for _ in range(limit):
+        envelope = websocket.receive_json()
+        envelopes.append(envelope)
+        if predicate(envelope):
+            return envelopes
+    raise AssertionError(f"conversation predicate not reached: {envelopes!r}")
+
+
+def _is_ready(envelope: dict[str, Any]) -> bool:
+    return envelope["type"] == "connection" and envelope["payload"]["state"] == "ready"
+
+
+def _is_idle(envelope: dict[str, Any]) -> bool:
+    return envelope["type"] == "activity" and envelope["payload"]["state"] == "idle"
+
+
+def _run_opening_and_human_turn(
+    client: TestClient,
+    db_path: Path,
+    ticket_id: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    dispatched = client.post(f"/api/test/run-step/{ticket_id}")
+    assert dispatched.status_code == 200, dispatched.text
+    opened = _wait_for_ticket(
+        client,
         ticket_id,
-        lambda ticket: ticket["fields"]["understanding"]["proposal"] is not None,
+        lambda ticket: ticket["ticket_status"] == "paired_work",
     )
-    assert detail["stage"] == "needs_understanding"
-    assert detail["ticket_status"] == "awaiting_approval"
+    assert opened["employee_session_id"] is not None
 
-    page.wait_for_selector(
-        'details[data-field="understanding"] [data-approval-block][data-mode="gating-pending"]',
-        timeout=WAIT_MS,
-    )
-    page.locator('details[data-field="understanding"] [data-accept]').click()
-    page.wait_for_selector(
-        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"][data-stage="needs_stages"]',
-        timeout=WAIT_MS,
-    )
+    with client.websocket_connect("/api/conversation") as websocket:
+        websocket.send_json({"type": "attach", "employeeId": ticket_id})
+        replay = _receive_until(websocket, _is_ready)
+        reset = next(item for item in replay if item["payload"].get("state") == "reset")
+        assert reset["acpSessionId"] == opened["employee_session_id"]
+        websocket.send_json(
+            {
+                "type": "prompt",
+                "employeeId": ticket_id,
+                "clientMessageId": "new-worker-human-1",
+                "deliveryChoice": "normal",
+                "prompt": {
+                    "sessionId": opened["employee_session_id"],
+                    "prompt": [
+                        {
+                            "type": "text",
+                            "text": "Continue the Understanding conversation.",
+                        }
+                    ],
+                    "_meta": {"script": "default"},
+                },
+            }
+        )
+        turn = _receive_until(websocket, _is_idle)
 
-    detail = api.get(server, f"/api/tickets/{ticket_id}")
-    assert detail["stage"] == "needs_stages"
-    assert detail["fields"]["understanding"]["proposal"] is None
-    assert "Purpose/outcome" in detail["fields"]["understanding"]["value"]
+    with connect(str(db_path)) as conn:
+        binding = conn.execute(
+            "SELECT acp_session_id, binding_generation "
+            "FROM conversation_session_bindings WHERE employee_id = ?",
+            (ticket_id,),
+        ).fetchone()
+        run = conn.execute(
+            "SELECT status, employee_session_id FROM employee_step_runs WHERE ticket_id = ?",
+            (ticket_id,),
+        ).fetchone()
+    assert binding is not None and tuple(binding) == (opened["employee_session_id"], 1)
+    assert run is not None and tuple(run) == ("complete", opened["employee_session_id"])
+    return opened, turn
+
+
+def test_new_worker_understanding_uses_one_acp_session_for_automatic_and_human_demand(
+    tmp_path: Path,
+) -> None:
+    app, db_path, ticket_id = _application(tmp_path)
+    with TestClient(app) as client:
+        opened, turn = _run_opening_and_human_turn(client, db_path, ticket_id)
+        after = client.get(f"/api/tickets/{ticket_id}").json()
+
+    assert opened["stage"] == "needs_understanding"
+    assert opened["fields"]["understanding"]["proposal"] is None
+    assert after["employee_session_id"] == opened["employee_session_id"]
+    assert after["ticket_status"] == "paired_work"
+    assert "typed answer" in json.dumps(turn)
+
+
+def test_new_worker_understanding_proposal_parks_and_public_accept_advances(
+    tmp_path: Path,
+) -> None:
+    app, db_path, ticket_id = _application(tmp_path)
+    with TestClient(app) as client:
+        _run_opening_and_human_turn(client, db_path, ticket_id)
+        proposed = client.post(
+            f"/api/tickets/{ticket_id}/propose",
+            headers=_AGENT,
+            json={
+                "body": "Purpose, judgment risks, and boundaries captured.",
+                "recap": "Understanding ready.",
+            },
+        )
+        assert proposed.status_code == 200, proposed.text
+        assert proposed.json()["ticket_status"] == "awaiting_approval"
+        accepted = client.post(
+            f"/api/tickets/{ticket_id}/accept/understanding",
+            json={"next_ceiling": "needs_stages", "at_cap": "propose"},
+        )
+
+    assert accepted.status_code == 200, accepted.text
+    body = accepted.json()
+    assert body["stage"] == "needs_stages"
+    assert body["fields"]["understanding"]["proposal"] is None
+    assert body["fields"]["understanding"]["value"].startswith("Purpose")

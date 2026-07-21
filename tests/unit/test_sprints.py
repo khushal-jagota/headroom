@@ -52,9 +52,10 @@ def _insert_ticket(
     # shortcut for setting child/blocker ticket-states (only NOT-NULL non-defaulted
     # columns are supplied; project may stay NULL under its CHECK).
     conn.execute(
-        "INSERT INTO tickets (id, title, worker_type, stage, sprint_item_id, ceiling, "
+        "INSERT INTO tickets (id, title, worker_type, employee_backend, stage, "
+        "sprint_item_id, ceiling, "
         "ticket_status, fields, created_at, updated_at) "
-        "VALUES (?, ?, 'coding', ?, ?, 'needs_success', ?, ?, 0, 0)",
+        "VALUES (?, ?, 'coding', 'hermes', ?, ?, 'needs_success', ?, ?, 0, 0)",
         (ticket_id, "child", stage, sprint_item_id, ticket_status, _EMPTY_CODING_FIELDS),
     )
 

@@ -29,9 +29,11 @@ from planner.tickets.contracts import (
 )
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
+    PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
+    ConfiguredEmployeeRuntimeDefinitions,
     configured_worker_type_registry,
-    install_worker_type_registry_for_test,
-    restore_production_worker_type_registry_for_test,
+    install_employee_runtime_definitions_for_test,
+    restore_employee_runtime_definitions_for_test,
 )
 from planner.worker_types.contracts import WorkerTypeDefinition
 from planner.worker_types.registry import WorkerTypeRegistry
@@ -56,6 +58,7 @@ def _two_type_registry():
         # "panels-worker-coding"), so the catalog must carry it or R14 fails.
         known_skills=frozenset({"panels-worker", "panels-worker-coding"}),
         known_toolset_profiles=frozenset({"default"}),
+        employee_backend_catalog=(PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog),
     )
 
 
@@ -63,11 +66,17 @@ def _two_type_registry():
 def two_type_registry():
     """Install a registry carrying coding + a coding-shaped second type for the
     persistence doors, then restore production composition after the test."""
-    install_worker_type_registry_for_test(_two_type_registry())
+    registry = _two_type_registry()
+    previous_definitions = install_employee_runtime_definitions_for_test(
+        ConfiguredEmployeeRuntimeDefinitions(
+            registry.employee_backend_catalog,
+            registry,
+        )
+    )
     try:
         yield
     finally:
-        restore_production_worker_type_registry_for_test()
+        restore_employee_runtime_definitions_for_test(previous_definitions)
 
 
 @pytest.fixture
@@ -106,8 +115,8 @@ def _raw_insert_ticket(
     # Direct SQL bypasses the create/write doors (the enumerating CHECKs are gone), so
     # a deliberately corrupt row can be planted for the boot-audit tests.
     conn.execute(
-        "INSERT INTO tickets (id, title, worker_type, stage, ceiling, fields, "
-        "created_at, updated_at) VALUES (?, 'T', ?, ?, ?, ?, 1, 1)",
+        "INSERT INTO tickets (id, title, worker_type, employee_backend, stage, ceiling, fields, "
+        "created_at, updated_at) VALUES (?, 'T', ?, 'hermes', ?, ?, ?, 1, 1)",
         (ticket_id, worker_type, stage, ceiling, fields),
     )
 

@@ -11,6 +11,34 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PLAN_BIN = REPO_ROOT / ".venv" / "bin" / "panels"
 
 
+def test_ticket_cli_forwards_employee_backend_create_and_set(server, cli, api) -> None:
+    created = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--employee-backend",
+        "hermes",
+        "--title",
+        "CLI backend selection",
+        "--kickoff-note",
+        "Keep Kickoff pristine",
+    )
+    assert created["employee_backend"] == "hermes"
+    updated = cli(
+        server,
+        "ticket",
+        "set",
+        created["id"],
+        "employee-backend",
+        "--value",
+        "hermes",
+    )
+    assert updated["employee_backend"] == "hermes"
+    assert api.get(server, f"/api/tickets/{created['id']}")["employee_backend"] == "hermes"
+
+
 def test_ticket_create_sprint_item_parents_it(server, cli, api) -> None:
     # --item -> --sprint-item: the option renamed; still parents the ticket under the item.
     iid = cli(server, "sprint", "item", "create", "--title", "Item A", "--project", "Vylo")["id"]
@@ -36,7 +64,7 @@ def test_ticket_list_day_filter(server, cli, api) -> None:
     # `ticket list --day today` scopes to the day's board (day_tickets join).
     t_on = cli(server, "ticket", "create", "--worker-type", "coding", "--title", "On today")["id"]
     t_off = cli(server, "ticket", "create", "--worker-type", "coding", "--title", "Off day")["id"]
-    cli(server, "day", "add-ticket", t_on, "--date", "today")   # add t_on to today's day
+    cli(server, "day", "add-ticket", t_on, "--date", "today")  # add t_on to today's day
 
     listed = cli(server, "ticket", "list", "--day", "today")
     ids = [t["id"] for t in listed["tickets"]]
@@ -62,9 +90,13 @@ def test_project_create_list_and_project_id_item_filter(server, cli) -> None:
 
     item = cli(
         server,
-        "sprint", "item", "create",
-        "--title", "Project id backlog item",
-        "--project-id", project["id"],
+        "sprint",
+        "item",
+        "create",
+        "--title",
+        "Project id backlog item",
+        "--project-id",
+        project["id"],
     )
     listed_items = cli(server, "sprint", "item", "list", "--project-id", project["id"])
     assert [entry["id"] for entry in listed_items["items"]] == [item["id"]]
@@ -79,15 +111,21 @@ def test_queue_pickup_command_removed(server) -> None:
         cwd=str(REPO_ROOT),
         timeout=30,
     )
-    assert proc.returncode != 0                     # no such command
-    assert "queue" in (proc.stderr + proc.stdout)   # click's "No such command 'queue'"
+    assert proc.returncode != 0  # no such command
+    assert "queue" in (proc.stderr + proc.stdout)  # click's "No such command 'queue'"
 
 
 def test_ticket_approval_copy_events_and_worker_note_shape(server, cli, api) -> None:
     tid = cli(
         server,
-        "ticket", "create", "--worker-type", "coding", "--title", "CLI approve ticket",
-        "--kickoff-note", "intake context from user",
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "CLI approve ticket",
+        "--kickoff-note",
+        "intake context from user",
     )["id"]
     created = api.get(server, f"/api/tickets/{tid}")
     assert created["stage"] == "needs_kickoff"
@@ -113,7 +151,12 @@ def test_ticket_approval_copy_events_and_worker_note_shape(server, cli, api) -> 
 
     cli(
         server,
-        "worker", "propose", "--body-file", "-", "--recap", "Ready to approve.",
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Ready to approve.",
         ticket_id=tid,
         stdin="success body",
     )
@@ -159,8 +202,14 @@ def test_ticket_approval_copy_events_and_worker_note_shape(server, cli, api) -> 
 def test_sprint_ticket_commands_use_sprint_option_and_current_selector(server, cli, api) -> None:
     sprint = cli(
         server,
-        "sprint", "create", "--name", "CLI sprint",
-        "--date-start", "2026-07-01", "--date-end", "2026-07-14",
+        "sprint",
+        "create",
+        "--name",
+        "CLI sprint",
+        "--date-start",
+        "2026-07-01",
+        "--date-end",
+        "2026-07-14",
     )
     tid = cli(
         server,

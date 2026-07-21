@@ -11,6 +11,7 @@
     gatingFieldFor,
     type Lifecycle
   } from "../lib/lifecycle";
+  import type { Snippet } from "svelte";
   import type { TicketField } from "../lib/types";
 
   let {
@@ -25,6 +26,7 @@
     showRecap = false,
     emptyText = "Not written yet.",
     editableValue = true,
+    beforeApproval,
     onAccept,
     onSaveNote,
     onSaveValue
@@ -40,6 +42,7 @@
     showRecap?: boolean;
     emptyText?: string;
     editableValue?: boolean;
+    beforeApproval?: Snippet;
     onAccept: (payload: Record<string, unknown>) => Promise<unknown>;
     onSaveNote?: (raw: string) => Promise<unknown>;
     onSaveValue?: (raw: string) => Promise<unknown>;
@@ -73,6 +76,10 @@
     <Disclosure title="Notes" variant="support" defaultOpen={false} data-content-section="notes">
       <MarkdownBlock text={slot.user_note} />
     </Disclosure>
+  {/if}
+
+  {#if beforeApproval}
+    {@render beforeApproval()}
   {/if}
 
   {#if isDropped}

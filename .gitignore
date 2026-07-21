@@ -10,3 +10,4 @@ playwright-report/
 .DS_Store
 *.egg-info/
 .gstack/
+agent_backends/node_modules/

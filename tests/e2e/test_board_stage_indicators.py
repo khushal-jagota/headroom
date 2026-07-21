@@ -1,4 +1,4 @@
-"""Focused board stage-indicator rendering regressions."""
+"""Focused Workspace hierarchy and running-indicator regressions."""
 
 from __future__ import annotations
 
@@ -35,171 +35,7 @@ def _set_ticket_updated_at(server, ticket_id: str, updated_at: int) -> None:
         )
 
 
-def _stage(page, card: str, field: str) -> str:
-    return f'{card} [data-stage-field="{field}"]'
-
-
-def test_workspace_row_byline_shows_registered_type_active_stage_and_mark(
-    server, context_factory, open_page, cli, api
-) -> None:
-    active = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "new_worker",
-        "--title",
-        "Board new worker metadata",
-    )["id"]
-    done = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Board done metadata",
-    )["id"]
-    running = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Board running metadata",
-    )["id"]
-    takeover = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Board takeover metadata",
-    )["id"]
-    for ticket_id in (active, done, running, takeover):
-        _add_today(api, server, ticket_id)
-    _set_ticket_stage(server, active, "needs_stages")
-    _set_ticket_status(server, active, "empty")
-    _set_ticket_stage(server, done, "done")
-    _set_ticket_stage(server, running, "needs_success")
-    _set_ticket_status(server, running, "agent_running_step")
-    _set_ticket_stage(server, takeover, "needs_plan")
-    _set_ticket_status(server, takeover, "user_takeover")
-
-    page = open_page(
-        context_factory(),
-        server,
-        "#/workspace",
-        'section[data-screen="workspace"]',
-        settled=True,
-    )
-
-    card = f'[data-card][data-ticket-id="{active}"]'
-    page.wait_for_selector(card, timeout=WAIT_MS)
-    assert page.text_content(f"{card} .list-row-title").strip() == "Board new worker metadata"
-    page.wait_for_function(
-        """selector =>
-          document.querySelector(selector)?.textContent.trim() === 'New Worker · Stages'
-        """,
-        arg=f"{card} .board-workspace-row-byline",
-        timeout=WAIT_MS,
-    )
-    assert page.text_content(f"{card} .board-workspace-row-byline").strip() == (
-        "New Worker · Stages"
-    )
-    assert (
-        page.eval_on_selector_all(
-            f"{card} .board-workspace-row-byline .board-workspace-stage-mark",
-            "els => els.length",
-        )
-        == 1
-    )
-    assert (
-        page.eval_on_selector_all(
-            f"{card} > .board-workspace-stage-rail .board-workspace-stage-mark",
-            "els => els.length",
-        )
-        == 0
-    )
-    assert page.get_attribute(_stage(page, card, "stages"), "data-stage-state") == (
-        "current-waiting"
-    )
-
-    geometry = page.eval_on_selector(
-        card,
-        """card => {
-          const rect = selector => card.querySelector(selector).getBoundingClientRect();
-          const title = rect('.list-row-title');
-          const byline = rect('.board-workspace-row-byline');
-          const metadata = rect('.board-workspace-row-metadata');
-          const rail = rect('.board-workspace-stage-rail');
-          const mark = rect('.board-workspace-stage-mark');
-          return { title, byline, metadata, rail, mark };
-        }""",
-    )
-    assert geometry["title"]["bottom"] <= geometry["byline"]["top"]
-    assert abs(geometry["metadata"]["left"] - geometry["byline"]["left"]) < 1
-    assert abs(geometry["rail"]["right"] - geometry["byline"]["right"]) < 1
-    assert abs(geometry["mark"]["right"] - geometry["rail"]["right"]) < 1
-    assert (
-        abs(
-            (geometry["mark"]["top"] + geometry["mark"]["bottom"]) / 2
-            - (geometry["byline"]["top"] + geometry["byline"]["bottom"]) / 2
-        )
-        < 1
-    )
-
-    page.uncheck("[data-hide-done-toggle]")
-    done_card = f'[data-card][data-ticket-id="{done}"]'
-    page.wait_for_selector(done_card, timeout=WAIT_MS)
-    assert page.text_content(f"{done_card} .board-workspace-row-byline").strip() == (
-        "Coding · Done"
-    )
-    assert (
-        page.eval_on_selector_all(
-            f"{done_card} .board-workspace-row-byline .board-workspace-stage-mark",
-            "els => els.length",
-        )
-        == 1
-    )
-    assert page.get_attribute(_stage(page, done_card, "closeout"), "data-stage-state") == (
-        "completed"
-    )
-
-    running_card = f'[data-card][data-ticket-id="{running}"]'
-    page.wait_for_selector(running_card, timeout=WAIT_MS)
-    assert page.text_content(f"{running_card} .board-workspace-row-byline").strip() == (
-        "Coding · Success"
-    )
-    assert page.get_attribute(_stage(page, running_card, "success"), "data-stage-state") == (
-        "current-running"
-    )
-    assert (
-        page.eval_on_selector_all(
-            f'{running_card} [data-marker="agent-running-step"]', "els => els.length"
-        )
-        == 1
-    )
-
-    takeover_card = f'[data-card][data-ticket-id="{takeover}"]'
-    page.wait_for_selector(takeover_card, timeout=WAIT_MS)
-    assert page.text_content(f"{takeover_card} .board-workspace-row-byline").strip() == (
-        "Coding · Plan"
-    )
-    assert page.get_attribute(_stage(page, takeover_card, "plan"), "data-stage-state") == (
-        "current-waiting"
-    )
-    assert (
-        page.eval_on_selector_all(
-            f'{takeover_card} [data-marker="user-takeover"]', "els => els.length"
-        )
-        == 1
-    )
-
-
-def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
+def test_workspace_ticket_rows_contain_only_title_and_existing_condition_mark(
     server, context_factory, open_page, cli, api
 ) -> None:
     waiting = cli(
@@ -209,16 +45,20 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
         "--worker-type",
         "coding",
         "--title",
-        "Board waiting indicator",
+        "Waiting ticket",
+        "--project-id",
+        "project_vylo",
     )["id"]
-    pending = cli(
+    running = cli(
         server,
         "ticket",
         "create",
         "--worker-type",
         "coding",
         "--title",
-        "Board pending indicator",
+        "Running ticket",
+        "--project-id",
+        "project_vylo",
     )["id"]
     errored = cli(
         server,
@@ -227,128 +67,60 @@ def test_board_stage_rail_keeps_markers_and_distinguishes_errored(
         "--worker-type",
         "coding",
         "--title",
-        "Board errored indicator",
+        "Errored ticket",
+        "--project-id",
+        "project_vylo",
     )["id"]
-    implementation = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Board implementation indicator",
-    )["id"]
-    closeout = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Board closeout indicator",
-    )["id"]
-    done = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Board done indicator",
-    )["id"]
-    for ticket_id in (waiting, pending, errored, implementation, closeout, done):
+    for ticket_id in (waiting, running, errored):
         _add_today(api, server, ticket_id)
-
-    cli(
-        server,
-        "worker",
-        "propose",
-        "--body-file",
-        "-",
-        "--recap",
-        "Success proposed.",
-        ticket_id=pending,
-        stdin="Pending success body.",
-    )
+        _set_ticket_stage(server, ticket_id, "needs_success")
+    _set_ticket_status(server, running, "agent_running_step")
     _set_ticket_status(server, errored, "errored")
-    _set_ticket_stage(server, implementation, "needs_implementation")
-    _set_ticket_stage(server, closeout, "needs_closeout")
-    _set_ticket_stage(server, done, "done")
 
     page = open_page(
         context_factory(),
         server,
         "#/workspace",
-        'section[data-screen="workspace"]',
+        '[data-project-key="project_vylo"]',
         settled=True,
     )
-    page.uncheck("[data-hide-done-toggle]")
 
     waiting_card = f'[data-card][data-ticket-id="{waiting}"]'
-    pending_card = f'[data-card][data-ticket-id="{pending}"]'
+    running_card = f'[data-card][data-ticket-id="{running}"]'
     errored_card = f'[data-card][data-ticket-id="{errored}"]'
-    implementation_card = f'[data-card][data-ticket-id="{implementation}"]'
-    closeout_card = f'[data-card][data-ticket-id="{closeout}"]'
-    done_card = f'[data-card][data-ticket-id="{done}"]'
-    for card in (
-        waiting_card,
-        pending_card,
-        errored_card,
-        implementation_card,
-        closeout_card,
-        done_card,
+    for selector, title in (
+        (waiting_card, "Waiting ticket"),
+        (running_card, "Running ticket"),
+        (errored_card, "Errored ticket"),
     ):
-        page.wait_for_selector(card, timeout=WAIT_MS)
-        assert (
-            page.eval_on_selector_all(f"{card} .board-workspace-stage-mark", "els => els.length")
-            == 1
-        )
+        page.wait_for_selector(selector, timeout=WAIT_MS)
+        assert page.text_content(f"{selector} .list-row-title").strip() == title
+        assert page.locator(f"{selector} .board-workspace-row-byline").count() == 0
+        assert page.locator(f"{selector} .board-workspace-row-metadata").count() == 0
 
-    assert page.get_attribute(_stage(page, waiting_card, "success"), "data-stage-state") == (
-        "current-waiting"
-    )
-    assert (
-        page.eval_on_selector_all(
-            f'{waiting_card} [data-marker="pending-proposal"], '
-            f'{waiting_card} [data-marker="agent-running-step"], '
-            f'{waiting_card} [data-marker="errored"]',
-            "els => els.length",
-        )
-        == 0
-    )
+    for card in (waiting_card, running_card, errored_card):
+        assert page.locator(f"{card} > *").count() == 2
+        assert page.locator(f"{card} .board-workspace-stage-mark").count() == 1
 
-    assert page.get_attribute(_stage(page, pending_card, "success"), "data-stage-state") == (
-        "current-awaiting-approval"
+    waiting_mark = page.locator(
+        f'{waiting_card} .board-workspace-stage-mark[data-stage-state="current-waiting"]'
     )
-    assert (
-        page.eval_on_selector_all(
-            f'{pending_card} [data-marker="pending-proposal"]', "els => els.length"
-        )
-        == 1
-    )
+    assert waiting_mark.count() == 1
+    assert waiting_mark.get_attribute("data-marker") is None
 
-    assert page.get_attribute(_stage(page, errored_card, "success"), "data-stage-state") == (
-        "errored"
+    running_mark = page.locator(
+        f'{running_card} [data-marker="agent-running-step"][data-stage-state="current-running"]'
     )
-    assert (
-        page.eval_on_selector_all(f'{errored_card} [data-marker="errored"]', "els => els.length")
-        == 1
-    )
+    assert running_mark.count() == 1
+    assert running_mark.get_attribute("data-stage-field") == "success"
 
-    assert (
-        page.get_attribute(_stage(page, implementation_card, "implementation"), "data-stage-state")
-        == "current-waiting"
+    errored_mark = page.locator(
+        f'{errored_card} [data-marker="errored"][data-stage-state="errored"]'
     )
-    assert (
-        page.get_attribute(_stage(page, closeout_card, "closeout"), "data-stage-state")
-        == "current-waiting"
-    )
-    assert page.get_attribute(_stage(page, done_card, "closeout"), "data-stage-state") == (
-        "completed"
-    )
+    assert errored_mark.count() == 1
 
 
-def test_workspace_groups_and_orders_tickets_with_hide_done_as_its_only_filter(
+def test_workspace_groups_populated_project_worker_and_stage_sections_in_contract_order(
     server, context_factory, open_page, cli, api
 ) -> None:
     coding_success = cli(
@@ -362,36 +134,36 @@ def test_workspace_groups_and_orders_tickets_with_hide_done_as_its_only_filter(
         "--project-id",
         "project_vylo",
     )["id"]
-    older_activity = cli(
+    older_plan = cli(
         server,
         "ticket",
         "create",
         "--worker-type",
         "coding",
         "--title",
-        "Vylo older activity",
+        "Vylo older plan",
         "--project-id",
         "project_vylo",
     )["id"]
-    newer_activity = cli(
+    newer_plan = cli(
         server,
         "ticket",
         "create",
         "--worker-type",
         "coding",
         "--title",
-        "Vylo newer activity",
+        "Vylo newer plan",
         "--project-id",
         "project_vylo",
     )["id"]
-    done_activity = cli(
+    done = cli(
         server,
         "ticket",
         "create",
         "--worker-type",
         "coding",
         "--title",
-        "Vylo done activity",
+        "Vylo done",
         "--project-id",
         "project_vylo",
     )["id"]
@@ -424,7 +196,7 @@ def test_workspace_groups_and_orders_tickets_with_hide_done_as_its_only_filter(
         "--worker-type",
         "coding",
         "--title",
-        "Learning errored ticket",
+        "Learning ticket",
         "--project-id",
         "project_learning",
     )["id"]
@@ -439,9 +211,9 @@ def test_workspace_groups_and_orders_tickets_with_hide_done_as_its_only_filter(
     )["id"]
     for ticket_id in (
         coding_success,
-        older_activity,
-        newer_activity,
-        done_activity,
+        older_plan,
+        newer_plan,
+        done,
         new_worker_stages,
         new_worker_thinking,
         learning,
@@ -449,17 +221,14 @@ def test_workspace_groups_and_orders_tickets_with_hide_done_as_its_only_filter(
     ):
         _add_today(api, server, ticket_id)
 
-    _set_ticket_stage(server, older_activity, "needs_plan")
-    _set_ticket_stage(server, newer_activity, "needs_plan")
-    _set_ticket_stage(server, done_activity, "done")
+    _set_ticket_stage(server, coding_success, "needs_success")
+    _set_ticket_stage(server, older_plan, "needs_plan")
+    _set_ticket_stage(server, newer_plan, "needs_plan")
+    _set_ticket_stage(server, done, "done")
+    _set_ticket_stage(server, new_worker_stages, "needs_stages")
     _set_ticket_stage(server, new_worker_thinking, "needs_thinking")
-    _set_ticket_status(server, learning, "errored")
-    _set_ticket_updated_at(server, coding_success, 5)
-    _set_ticket_updated_at(server, older_activity, 10)
-    _set_ticket_updated_at(server, newer_activity, 30)
-    _set_ticket_updated_at(server, done_activity, 20)
-    _set_ticket_updated_at(server, new_worker_stages, 100)
-    _set_ticket_updated_at(server, new_worker_thinking, 200)
+    _set_ticket_updated_at(server, older_plan, 10)
+    _set_ticket_updated_at(server, newer_plan, 30)
 
     page = open_page(
         context_factory(),
@@ -469,53 +238,172 @@ def test_workspace_groups_and_orders_tickets_with_hide_done_as_its_only_filter(
         settled=True,
     )
 
-    page.wait_for_selector('[data-project-key="project_learning"]', timeout=WAIT_MS)
-    page.wait_for_selector('[data-project-key="project_vylo"]', timeout=WAIT_MS)
-    page.wait_for_selector('[data-project-key="__no_project__"]', timeout=WAIT_MS)
+    project_labels = page.eval_on_selector_all(
+        "[data-project-section] > summary .board-workspace-project-label",
+        "els => els.map(el => el.textContent.trim())",
+    )
+    assert project_labels == ["Learning", "Vylo", "No project"]
+    project_geometry = page.eval_on_selector_all(
+        "[data-project-section]",
+        "els => els.map(el => ({marginTop: getComputedStyle(el).marginTop, "
+        "fontSize: getComputedStyle("
+        "el.querySelector('.board-workspace-project-label')).fontSize}))",
+    )
+    assert [item["fontSize"] for item in project_geometry] == ["40px", "40px", "40px"]
+    assert [item["marginTop"] for item in project_geometry] == ["0px", "44px", "44px"]
+
+    vylo = '[data-project-key="project_vylo"]'
+    worker_labels = page.eval_on_selector_all(
+        f"{vylo} > .disclosure-body > .board-workspace-index-items "
+        "> [data-worker-section] > summary .board-workspace-worker-label",
+        "els => els.map(el => el.textContent.trim())",
+    )
+    assert worker_labels == ["Coding", "New Worker"]
+    worker_type = page.eval_on_selector(
+        f"{vylo} [data-worker-type='coding'] .board-workspace-worker-label",
+        "el => ({fontSize: getComputedStyle(el).fontSize, "
+        "textTransform: getComputedStyle(el).textTransform})",
+    )
+    assert worker_type == {"fontSize": "20px", "textTransform": "none"}
+
+    coding = f'{vylo} [data-worker-type="coding"]'
+    coding_stage_labels = page.eval_on_selector_all(
+        f"{coding} > .disclosure-body > .board-workspace-worker-stages "
+        "> [data-stage-section] > summary .board-workspace-stage-label",
+        "els => els.map(el => el.textContent.trim())",
+    )
+    assert coding_stage_labels == ["Success", "Plan"]
+    stage_type = page.eval_on_selector(
+        f"{coding} [data-stage-key='needs_success'] .board-workspace-stage-label",
+        "el => ({fontSize: getComputedStyle(el).fontSize, "
+        "textTransform: getComputedStyle(el).textTransform})",
+    )
+    assert stage_type == {"fontSize": "11px", "textTransform": "uppercase"}
+    assert page.locator(f'{coding} [data-stage-key="needs_kickoff"]').count() == 0
+    assert page.locator(f'{coding} [data-stage-key="done"]').count() == 0
+
+    plan = f'{coding} [data-stage-key="needs_plan"]'
+    plan_titles = page.eval_on_selector_all(
+        f"{plan} [data-card] .list-row-title",
+        "els => els.map(el => el.textContent.trim())",
+    )
+    assert plan_titles == ["Vylo newer plan", "Vylo older plan"]
+
+    new_worker = f'{vylo} [data-worker-type="new_worker"]'
+    new_worker_stage_labels = page.eval_on_selector_all(
+        f"{new_worker} > .disclosure-body > .board-workspace-worker-stages "
+        "> [data-stage-section] > summary .board-workspace-stage-label",
+        "els => els.map(el => el.textContent.trim())",
+    )
+    assert new_worker_stage_labels == ["Stages", "Thinking"]
+    assert page.locator(f'{new_worker} [data-stage-key="needs_understanding"]').count() == 0
+
     assert page.is_checked("[data-hide-done-toggle]")
-    assert page.locator('[aria-label="Ticket status"]').count() == 0
-    assert page.locator(f'[data-card][data-ticket-id="{done_activity}"]').count() == 0
-    headers = page.eval_on_selector_all(
-        "[data-project-section] .board-workspace-index-heading-main .section-heading-label",
-        "els => els.map(el => el.textContent.trim())",
-    )
-    assert headers == ["Learning", "Vylo", "No project"]
+    assert page.locator(f'[data-card][data-ticket-id="{done}"]').count() == 0
 
-    vylo_titles = page.eval_on_selector_all(
-        '[data-project-key="project_vylo"] [data-card] .list-row-title',
-        "els => els.map(el => el.textContent.trim())",
-    )
-    assert vylo_titles == [
-        "Vylo coding success",
-        "Vylo newer activity",
-        "Vylo older activity",
-        "Vylo new worker stages",
-        "Vylo new worker thinking",
-    ]
-
-    assert page.eval_on_selector_all(
-        "[data-card]",
-        "els => els.every(el => el.querySelectorAll('.board-workspace-stage-mark').length === 1)",
-    )
-
-    page.wait_for_selector(f'[data-card][data-ticket-id="{learning}"]', timeout=WAIT_MS)
     page.click('.shell-links a[data-screen="day"]')
     page.wait_for_selector('section[data-screen="day"]', timeout=WAIT_MS)
     page.click('.shell-links a[data-screen="workspace"]')
     page.wait_for_selector("[data-hide-done-toggle]", timeout=WAIT_MS)
     assert page.is_checked("[data-hide-done-toggle]")
-    page.wait_for_selector(
-        f'[data-card][data-ticket-id="{done_activity}"]',
-        state="detached",
-        timeout=WAIT_MS,
-    )
+    assert page.locator(f'[data-card][data-ticket-id="{done}"]').count() == 0
 
     page.uncheck("[data-hide-done-toggle]")
-    page.wait_for_selector(f'[data-card][data-ticket-id="{done_activity}"]', timeout=WAIT_MS)
+    page.wait_for_selector(f'[data-card][data-ticket-id="{done}"]', timeout=WAIT_MS)
+    assert page.locator(f'{coding} [data-stage-key="done"]').count() == 1
 
     page.click('.shell-links a[data-screen="day"]')
     page.wait_for_selector('section[data-screen="day"]', timeout=WAIT_MS)
     page.click('.shell-links a[data-screen="workspace"]')
     page.wait_for_selector("[data-hide-done-toggle]", timeout=WAIT_MS)
     assert not page.is_checked("[data-hide-done-toggle]")
-    page.wait_for_selector(f'[data-card][data-ticket-id="{done_activity}"]', timeout=WAIT_MS)
+    page.wait_for_selector(f'[data-card][data-ticket-id="{done}"]', timeout=WAIT_MS)
+
+
+def test_workspace_group_disclosures_are_independent_and_chevrons_reveal_on_intent(
+    server, context_factory, open_page, cli, api
+) -> None:
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Nested disclosure ticket",
+        "--project-id",
+        "project_vylo",
+    )["id"]
+    _add_today(api, server, ticket_id)
+    _set_ticket_stage(server, ticket_id, "needs_plan")
+
+    page = open_page(
+        context_factory(),
+        server,
+        "#/workspace",
+        '[data-project-key="project_vylo"]',
+        settled=True,
+    )
+
+    project = '[data-project-key="project_vylo"]'
+    worker = f'{project} [data-worker-type="coding"]'
+    stage = f'{worker} [data-stage-key="needs_plan"]'
+    card = f'[data-card][data-ticket-id="{ticket_id}"]'
+    assert page.locator(project).get_attribute("open") == ""
+    assert page.locator(worker).get_attribute("open") == ""
+    assert page.locator(stage).get_attribute("open") == ""
+
+    project_chevron = page.locator(f"{project} > summary > .disclosure-chev")
+    worker_chevron = page.locator(f"{worker} > summary > .disclosure-chev")
+    assert project_chevron.evaluate("el => getComputedStyle(el).opacity") == "0"
+    assert worker_chevron.evaluate("el => getComputedStyle(el).opacity") == "0"
+    page.hover(f"{project} > summary")
+    page.wait_for_function(
+        "selector => getComputedStyle(document.querySelector(selector)).opacity === '1'",
+        arg=f"{project} > summary > .disclosure-chev",
+        timeout=WAIT_MS,
+    )
+    assert worker_chevron.evaluate("el => getComputedStyle(el).opacity") == "0"
+    chevron_geometry = page.eval_on_selector(
+        f"{project} > summary",
+        "summary => ({summary: summary.getBoundingClientRect(), "
+        "chevron: summary.querySelector('.disclosure-chev').getBoundingClientRect()})",
+    )
+    assert abs(chevron_geometry["summary"]["right"] - chevron_geometry["chevron"]["right"]) < 1
+
+    page.click(f"{project} > summary")
+    page.click(f"{project} > summary")
+    page.mouse.move(0, 0)
+    page.wait_for_function(
+        "selector => getComputedStyle(document.querySelector(selector)).opacity === '0'",
+        arg=f"{project} > summary > .disclosure-chev",
+        timeout=WAIT_MS,
+    )
+    page.keyboard.press("Tab")
+    page.wait_for_function(
+        "selector => getComputedStyle(document.querySelector(selector)).opacity === '1'",
+        arg=f"{worker} > summary > .disclosure-chev",
+        timeout=WAIT_MS,
+    )
+
+    page.click(f"{stage} > summary")
+    assert page.locator(stage).get_attribute("open") is None
+    assert page.locator(worker).get_attribute("open") == ""
+    assert page.locator(project).get_attribute("open") == ""
+    assert page.locator(card).is_hidden()
+    page.click(f"{stage} > summary")
+    assert page.locator(card).is_visible()
+
+    page.click(f"{worker} > summary")
+    assert page.locator(worker).get_attribute("open") is None
+    assert page.locator(project).get_attribute("open") == ""
+    assert page.locator(stage).get_attribute("open") == ""
+    assert page.locator(card).is_hidden()
+    page.click(f"{worker} > summary")
+    assert page.locator(card).is_visible()
+
+    page.click(f"{project} > summary")
+    assert page.locator(project).get_attribute("open") is None
+    assert page.locator(worker).get_attribute("open") == ""
+    assert page.locator(stage).get_attribute("open") == ""
+    assert page.locator(card).is_hidden()

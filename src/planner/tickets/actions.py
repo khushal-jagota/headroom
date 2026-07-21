@@ -32,6 +32,7 @@ def create_ticket(
     title_max_chars: int,
     automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
     worker_type: str,
+    employee_backend: str | None = None,
     kickoff_note: str = "",
     project_id: str | None = None,
     priority: Priority = Priority.P3,
@@ -52,6 +53,7 @@ def create_ticket(
         sprint_id=sprint_id,
         sprint_item_id=sprint_item_id,
         worker_type=worker_type,
+        employee_backend=employee_backend,
     )
     automatic_employee_step_eligibility_wake.wake()
     return ticket
@@ -68,6 +70,7 @@ def create_ticket_from_external_work(
     title_max_chars: int,
     automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
     worker_type: str,
+    employee_backend: str | None = None,
     kickoff_note: str | None = None,
     recap: str | None = None,
     project_id: str | None = None,
@@ -92,6 +95,7 @@ def create_ticket_from_external_work(
         sprint_id=sprint_id,
         sprint_item_id=sprint_item_id,
         worker_type=worker_type,
+        employee_backend=employee_backend,
     )
     automatic_employee_step_eligibility_wake.wake()
     return ticket

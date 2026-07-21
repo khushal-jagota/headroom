@@ -29,9 +29,14 @@ def parse_ideas(text: str, source_file: str) -> tuple[list[ParsedIdea], list[Ski
         if heading == "Ideas":
             bullets, orphans = parse_bullets(body)
             if orphans:
-                skipped.append(SkippedSection(
-                    source_file, heading, REASON_PROSE, excerpt_of("\n".join(orphans)),
-                ))
+                skipped.append(
+                    SkippedSection(
+                        source_file,
+                        heading,
+                        REASON_PROSE,
+                        excerpt_of("\n".join(orphans)),
+                    )
+                )
             for bullet in bullets:
                 ideas.append(_idea_from_bullet(bullet))
         elif body.strip() != "":

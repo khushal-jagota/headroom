@@ -1,0 +1,469 @@
+[
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "sessionId": "session-acp-00",
+      "update": {
+        "content": {
+          "text": "Please inspect the typed transcript.",
+          "type": "text"
+        },
+        "messageId": "message-user-1",
+        "sessionUpdate": "user_message_chunk"
+      }
+    },
+    "sequence": 1,
+    "type": "acp_session_update",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "sessionId": "session-acp-00",
+      "update": {
+        "content": {
+          "data": "aW1hZ2U=",
+          "mimeType": "image/png",
+          "type": "image"
+        },
+        "messageId": "message-user-1",
+        "sessionUpdate": "user_message_chunk"
+      }
+    },
+    "sequence": 2,
+    "type": "acp_session_update",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "sessionId": "session-acp-00",
+      "update": {
+        "content": {
+          "text": "This stays typed as thought.",
+          "type": "text"
+        },
+        "messageId": "message-thought-1",
+        "sessionUpdate": "agent_thought_chunk"
+      }
+    },
+    "sequence": 3,
+    "type": "acp_session_update",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "sessionId": "session-acp-00",
+      "update": {
+        "content": {
+          "text": "The transcript is typed.",
+          "type": "text"
+        },
+        "messageId": "message-agent-1",
+        "sessionUpdate": "agent_message_chunk"
+      }
+    },
+    "sequence": 4,
+    "type": "acp_session_update",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "sessionId": "session-acp-00",
+      "update": {
+        "content": [
+          {
+            "content": {
+              "text": "Opening contract.md",
+              "type": "text"
+            },
+            "type": "content"
+          }
+        ],
+        "kind": "read",
+        "sessionUpdate": "tool_call",
+        "status": "in_progress",
+        "title": "Read contract",
+        "toolCallId": "tool-1"
+      }
+    },
+    "sequence": 5,
+    "type": "acp_session_update",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "sessionId": "session-acp-00",
+      "update": {
+        "entries": [
+          {
+            "content": "Freeze the wire",
+            "priority": "high",
+            "status": "in_progress"
+          }
+        ],
+        "sessionUpdate": "plan"
+      }
+    },
+    "sequence": 6,
+    "type": "acp_session_update",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "sessionId": "session-acp-00",
+      "update": {
+        "availableCommands": [
+          {
+            "description": "Compact the active context",
+            "name": "compact"
+          }
+        ],
+        "sessionUpdate": "available_commands_update"
+      }
+    },
+    "sequence": 7,
+    "type": "acp_session_update",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "sessionId": "session-acp-00",
+      "update": {
+        "sessionUpdate": "usage_update",
+        "size": 1000,
+        "used": 120
+      }
+    },
+    "sequence": 8,
+    "type": "acp_session_update",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "detail": "Thinking",
+      "sequence": 9,
+      "state": "thinking"
+    },
+    "sequence": 9,
+    "type": "activity",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "choice": "queue",
+      "clientMessageId": "client-message-1",
+      "queuePosition": 1,
+      "state": "queued"
+    },
+    "sequence": 10,
+    "type": "delivery_receipt",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "items": [
+        {
+          "clientMessageId": "client-message-1",
+          "enqueueSequence": 1,
+          "enqueuedAt": 1752960000,
+          "prompt": {
+            "prompt": [
+              {
+                "text": "Please inspect the typed transcript.",
+                "type": "text"
+              },
+              {
+                "data": "aW1hZ2U=",
+                "mimeType": "image/png",
+                "type": "image"
+              }
+            ],
+            "sessionId": "session-acp-00"
+          }
+        }
+      ]
+    },
+    "sequence": 11,
+    "type": "queue_snapshot",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "boundaryId": "compaction-1",
+      "state": "compacted",
+      "trigger": "automatic"
+    },
+    "sequence": 12,
+    "type": "context_compaction",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "backendKey": "scripted",
+      "deadlineAt": 1752960300,
+      "employeeId": "employee-acp-00",
+      "lifecycle": "pending",
+      "openedSequence": 13,
+      "request": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow once",
+            "optionId": "allow-once"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Reject",
+            "optionId": "reject-once"
+          }
+        ],
+        "sessionId": "session-acp-00",
+        "toolCall": {
+          "kind": "read",
+          "status": "pending",
+          "title": "Read contract",
+          "toolCallId": "tool-1"
+        }
+      },
+      "requestId": "permission-1"
+    },
+    "sequence": 13,
+    "type": "permission_request",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "requestId": "permission-1",
+      "response": {
+        "outcome": {
+          "optionId": "allow-once",
+          "outcome": "selected"
+        }
+      },
+      "settledSequence": 14
+    },
+    "sequence": 14,
+    "type": "permission_outcome",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "detail": "Conversation reloaded",
+      "resetBindingGeneration": 3,
+      "state": "reset",
+      "supportsSteer": true
+    },
+    "sequence": 15,
+    "type": "connection",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "reason": "The agent update did not match the pinned ACP schema.",
+      "rejectedSessionUpdate": "future_update",
+      "status": "Agent sent an unsupported update"
+    },
+    "sequence": 16,
+    "type": "protocol_update_rejected",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "clientMessageId": "client-message-1",
+      "prompt": {
+        "prompt": [
+          {
+            "text": "Please inspect the typed transcript.",
+            "type": "text"
+          },
+          {
+            "data": "aW1hZ2U=",
+            "mimeType": "image/png",
+            "type": "image"
+          }
+        ],
+        "sessionId": "session-acp-00"
+      }
+    },
+    "sequence": 17,
+    "type": "human_echo",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "prompt": {
+        "prompt": [
+          {
+            "text": "Please inspect the typed transcript.",
+            "type": "text"
+          },
+          {
+            "data": "aW1hZ2U=",
+            "mimeType": "image/png",
+            "type": "image"
+          }
+        ],
+        "sessionId": "session-acp-00"
+      },
+      "promptId": "worker-prompt-1",
+      "source": "worker"
+    },
+    "sequence": 18,
+    "type": "programmatic_prompt",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "lifecycle": "active",
+      "terminalId": "terminal-1",
+      "terminalOutput": {
+        "exitStatus": {
+          "exitCode": 0
+        },
+        "output": "line one\nline two\n",
+        "truncated": true
+      }
+    },
+    "sequence": 19,
+    "type": "terminal_state",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "detail": "Conversation ready",
+      "state": "ready",
+      "supportsSteer": true
+    },
+    "sequence": 19,
+    "type": "connection",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "detail": "Conversation closed",
+      "state": "closed",
+      "supportsSteer": false
+    },
+    "sequence": 20,
+    "type": "connection",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
+      "detail": "Conversation unavailable",
+      "state": "error",
+      "supportsSteer": false
+    },
+    "sequence": 21,
+    "type": "connection",
+    "wireVersion": 1
+  }
+]

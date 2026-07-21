@@ -12,10 +12,15 @@
     lifecycleFor,
     recapVisibleFor
   } from "../lib/lifecycle";
-  import type { StageOwnershipMode, TicketDetail } from "../lib/types";
-  import ChatPanel from "../components/ChatPanel.svelte";
+  import type {
+    EmployeeConfigurationSnapshot,
+    StageOwnershipMode,
+    TicketDetail
+  } from "../lib/types";
+  import AcpConversation from "../components/AcpConversation.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
+  import EmployeeConfigurationSetup from "../components/EmployeeConfigurationSetup.svelte";
   import EnumPill from "../components/EnumPill.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
@@ -30,7 +35,6 @@
   const ticket = resourceCatalogue.ticket(stableId);
   const sprints = resourceCatalogue.sprintSummaries();
   const projects = resourceCatalogue.projects();
-  const chatStatus = resourceCatalogue.chatGatewayStatus(stableId);
   const currentSprint = resourceCatalogue.currentSprint();
   const manifest = resourceCatalogue.workerTypeManifests();
 
@@ -47,7 +51,6 @@
         !manifest.data.worker_types.some((item) => item.worker_type === ticket.data?.worker_type)
     )
   );
-
   const emptyTicketFieldText = "Not written yet.";
   const emptyTicketRecapText = "No recap yet.";
 
@@ -116,6 +119,16 @@
     return mutateJsonWithResourceEffect(
       `/api/tickets/${stableId}/value/${field}`,
       { method: "PUT", body: { body } },
+      { kind: "ticketChanged", ticketId: stableId }
+    );
+  }
+
+  function saveEmployeeConfiguration(
+    configuration: EmployeeConfigurationSnapshot
+  ): Promise<TicketDetail> {
+    return mutateJsonWithResourceEffect<TicketDetail>(
+      `/api/tickets/${stableId}/employee-configuration`,
+      { method: "PUT", body: configuration },
       { kind: "ticketChanged", ticketId: stableId }
     );
   }
@@ -196,6 +209,11 @@
     return STATUS_DISPLAY[status] || status.replace(/_/g, " ");
   }
 
+  function conversationEmployeeLabel(detail: TicketDetail): string {
+    const workerLabel = lc?.workerTypeLabel ?? labelize(detail.worker_type);
+    return /worker$/i.test(workerLabel) ? workerLabel : `${workerLabel} worker`;
+  }
+
   function hasBlockerRows(detail: TicketDetail): boolean {
     const summary = detail.blocker_summary;
     return Boolean(summary && (summary.blocked_by.length > 0 || summary.blocks.length > 0));
@@ -205,7 +223,6 @@
     ticket.dispose();
     sprints.dispose();
     projects.dispose();
-    chatStatus.dispose();
     currentSprint.dispose();
     manifest.dispose();
   });
@@ -392,6 +409,16 @@
           {/if}
 
           <div class="fields">
+            {#snippet employeeConfigurationSetup()}
+              <EmployeeConfigurationSetup
+                ticketId={stableId}
+                employeeBackends={manifest.data?.employee_backends ?? []}
+                employeeBackend={detail.employee_backend}
+                employeeLaunchModel={detail.employee_launch_model}
+                employeeLaunchReasoningEffort={detail.employee_launch_reasoning_effort}
+                onSave={saveEmployeeConfiguration}
+              />
+            {/snippet}
             {#each lc?.fieldIds ?? [] as name}
               {@const slot = fieldSlot(detail, name)}
               {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
@@ -403,6 +430,9 @@
                 ticketStage={detail.stage}
                 ceiling={detail.ceiling}
                 emptyText={emptyTicketFieldText}
+                beforeApproval={name === "kickoff" && detail.employee_configuration_editable
+                  ? employeeConfigurationSetup
+                  : undefined}
                 onAccept={(payload) => acceptField(name, payload)}
                 onSaveNote={(raw) => saveNote(name, raw)}
                 onSaveValue={(raw) => saveValue(name, raw)}
@@ -412,9 +442,10 @@
         </div>
       </main>
       <aside class="chat-rail" data-chat>
-        <ChatPanel
-          entityId={stableId}
-          available={chatStatus.data?.available ?? true}
+        <AcpConversation
+          employeeId={stableId}
+          employeeLabel={conversationEmployeeLabel(detail)}
+          deferInitialAttach={detail.employee_configuration_editable}
         />
       </aside>
     </div>

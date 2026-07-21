@@ -17,7 +17,6 @@ class Day:                         # §3.4 — overview = four structured day fi
     watchout: str                  # markdown
     if_today_lands: str            # markdown
     notes: str
-    chat_session_key: str | None
     created_at: int
     updated_at: int
 

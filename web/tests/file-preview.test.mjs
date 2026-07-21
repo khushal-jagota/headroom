@@ -19,7 +19,6 @@ const {
   markdownExpansionFor,
   previewHashHref,
   resolvePreview,
-  chatFileTarget,
   targetFromHref,
   ticketFileTarget
 } = await import(modulePath);
@@ -43,30 +42,6 @@ assert.equal(resolvePreview(ticketHtml).kind, "html");
 
 const ticketImage = { kind: "ticket-file", ticketId: "t_file123", path: "images/pic.webp" };
 assert.equal(resolvePreview(ticketImage).kind, "image");
-
-const chatImage = { kind: "chat-file", entityId: "agent_panels_chief_of_staff", path: "abc123.png" };
-assert.deepEqual(resolvePreview(chatImage), {
-  kind: "image",
-  target: chatImage,
-  href: "/files/chats/agent_panels_chief_of_staff/abc123.png",
-  label: "abc123.png",
-  previewHref:
-    "#/preview?source=chat&entity=agent_panels_chief_of_staff&path=abc123.png"
-});
-assert.deepEqual(
-  targetFromHref("/files/chats/agent_panels_chief_of_staff/abc123.png"),
-  chatImage
-);
-assert.deepEqual(chatFileTarget("t_file123", "nested/image.webp"), {
-  kind: "chat-file",
-  entityId: "t_file123",
-  path: "nested/image.webp"
-});
-assert.equal(chatFileTarget("t_file123", "../t_other/image.png"), null);
-assert.throws(
-  () => resolvePreview({ kind: "chat-file", entityId: "t_file123", path: "%2e%2e/image.png" }),
-  /unsafe chat file target/
-);
 
 const ticketVideo = { kind: "ticket-file", ticketId: "t_file123", path: "clips/demo.mp4" };
 assert.equal(resolvePreview(ticketVideo).kind, "video");

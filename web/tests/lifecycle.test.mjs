@@ -127,7 +127,8 @@ const codingManifest = {
     "done"
   ],
   default_ceiling: "needs_success",
-  worker_profile_id: "panels-worker-coding"
+  worker_profile_id: "panels-worker-coding",
+  default_employee_backend: "hermes"
 };
 
 // --- Part A: coding byte-identity vs a HARDCODED copy of today's ui.ts maps ------
@@ -351,10 +352,17 @@ const researchManifest = {
   ],
   ceiling_range: ["needs_findings", "needs_writeup", "done"],
   default_ceiling: "needs_findings",
-  worker_profile_id: "research-worker"
+  worker_profile_id: "research-worker",
+  default_employee_backend: "probe-backend"
 };
 
-const response = { worker_types: [codingManifest, researchManifest] };
+const response = {
+  employee_backends: ["hermes", "probe-backend"],
+  worker_types: [codingManifest, researchManifest]
+};
+assert.deepEqual(response.employee_backends, ["hermes", "probe-backend"]);
+assert.equal(codingManifest.default_employee_backend, "hermes");
+assert.equal(researchManifest.default_employee_backend, "probe-backend");
 const lc2 = lifecycleFor(response, "research");
 assert.ok(lc2, "lifecycleFor(response, 'research') resolves");
 assert.equal(lc2.workerType, "research");

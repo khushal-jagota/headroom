@@ -21,7 +21,6 @@ import pytest
 from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
-from planner.core.adapters.registry import build_adapters
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -45,13 +44,13 @@ def app_db(tmp_path: Path):
     boot.close()
     config = load_config(
         path=None,
-        env={"PLAN_TEST_MODE": "1", "PLAN_GATEWAY_ADAPTER": "fake", "PLAN_DB_PATH": str(db_path)},
+        env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)},
     )
 
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    return create_app(config, build_clock(config), build_adapters(config), conn_factory), db_path
+    return create_app(config, build_clock(config), conn_factory), db_path
 
 
 def _create(client: TestClient, worker_type: str) -> str:

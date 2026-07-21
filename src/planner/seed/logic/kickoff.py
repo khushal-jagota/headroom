@@ -16,18 +16,20 @@ from planner.seed.logic.blocks import (
 )
 
 KICKOFF_HEADINGS: Final[dict[str, str]] = {
-    "Limiting Factor": "limiting_factor", "Primary Bet": "primary_bet",
-    "Supports": "supports", "Pre-mortem": "premortem",       # snapshot spells "Pre-mortem"
+    "Limiting Factor": "limiting_factor",
+    "Primary Bet": "primary_bet",
+    "Supports": "supports",
+    "Pre-mortem": "premortem",  # snapshot spells "Pre-mortem"
 }
 REVIEW_HEADINGS: Final[dict[str, str]] = {
-    "Outcomes": "outcomes", "Solo Reflection": "solo_reflection",
-    "Joint Discussion": "joint_discussion", "Updates to Thinking": "updates_to_thinking",
-    "Carry-forward": "carry_forward",                        # snapshot spells "Carry-forward"
+    "Outcomes": "outcomes",
+    "Solo Reflection": "solo_reflection",
+    "Joint Discussion": "joint_discussion",
+    "Updates to Thinking": "updates_to_thinking",
+    "Carry-forward": "carry_forward",  # snapshot spells "Carry-forward"
 }
 
-_DATE_RANGE_RE = re.compile(
-    r"^Date range:\s*(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})\s*$"
-)
+_DATE_RANGE_RE = re.compile(r"^Date range:\s*(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})\s*$")
 
 
 def sprint_name(date_start: str, date_end: str) -> str:

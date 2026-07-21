@@ -8,9 +8,11 @@ payloads, event order, and error codes from the T04 plan.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
 from planner.core.contracts import EventKind
 from planner.core.errors import ErrorCode, PlannerError
@@ -47,6 +49,15 @@ class _RecordingEligibilityWake:
 
     def wake(self) -> None:
         self.wakes += 1
+
+
+@pytest.fixture
+def probe_runtime() -> Iterator[None]:
+    install_probe_registry()
+    try:
+        yield
+    finally:
+        uninstall_probe_registry()
 
 
 _AUTOMATIC_PLANNING_DAY_ID = "day_2099-01-01"
@@ -199,6 +210,66 @@ def test_ordinary_create_parks_ordinary_kickoff_field_proposal(
         machine.has_pending_parked_proposal(t, worker_type_definition=CODING_WORKER_TYPE_DEFINITION)
         is True
     )
+
+
+def test_action_create_uses_worker_default_or_registered_override_before_mutation(
+    tmp_db: Connection,
+    cfg: Config,
+    fake_clock: TestClock,
+    probe_runtime: None,
+) -> None:
+    wake = _RecordingEligibilityWake()
+    defaulted = actions.create_ticket(
+        tmp_db,
+        title="Probe default",
+        actor="human",
+        now=fake_clock.now_unix(),
+        title_max_chars=TITLE_MAX_CHARS,
+        automatic_employee_step_eligibility_wake=wake,
+        worker_type="probe",
+    )
+    overridden = actions.create_ticket(
+        tmp_db,
+        title="Probe override",
+        actor="human",
+        now=fake_clock.now_unix(),
+        title_max_chars=TITLE_MAX_CHARS,
+        automatic_employee_step_eligibility_wake=wake,
+        worker_type="probe",
+        employee_backend="hermes",
+    )
+    counts_before = tuple(
+        tmp_db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        for table in ("tickets", "events")
+    )
+    with pytest.raises(PlannerError) as raised:
+        actions.create_ticket(
+            tmp_db,
+            title="Probe rejected",
+            actor="human",
+            now=fake_clock.now_unix(),
+            title_max_chars=TITLE_MAX_CHARS,
+            automatic_employee_step_eligibility_wake=wake,
+            worker_type="probe",
+            employee_backend="missing-backend",
+        )
+
+    assert defaulted.employee_backend == "probe-backend"
+    assert overridden.employee_backend == "hermes"
+    assert raised.value.code is ErrorCode.validation
+    assert wake.wakes == 2
+    assert (
+        tuple(
+            tmp_db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in ("tickets", "events")
+        )
+        == counts_before
+    )
+    assert [
+        event.payload["employee_backend"]
+        for event in _events(tmp_db, cfg, defaulted.id) + _events(tmp_db, cfg, overridden.id)
+        if event.kind == EventKind.ticket_created.value
+    ] == ["probe-backend", "hermes"]
 
 
 def test_review_exposes_kickoff_as_ordinary_ticket_decision(
@@ -494,9 +565,7 @@ def test_claim_running_step_employee_session_id_logs_lookup_event(
     assert updated.employee_session_id == "sess-early"
     assert data.read_ticket_by_employee_session_id(tmp_db, "sess-early").id == t.id
     events = _events(tmp_db, cfg, t.id, EventKind.employee_session_changed)
-    assert [event.payload for event in events] == [
-        {"employee_session_id": "sess-early"}
-    ]
+    assert [event.payload for event in events] == [{"employee_session_id": "sess-early"}]
 
 
 @pytest.mark.parametrize("force_fresh_employee_session", [False, True])

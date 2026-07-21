@@ -1,0 +1,52 @@
+[
+  {
+    "probeId": "load_replay_before_response",
+    "description": "load replay finishes before the load response",
+    "productionOwner": "ACP-01"
+  },
+  {
+    "probeId": "typed_thought",
+    "description": "live/replayed thought stays typed and never assistant text",
+    "productionOwner": "ACP-03"
+  },
+  {
+    "probeId": "message_grouping",
+    "description": "stable message IDs and deterministic missing-ID turn fallback group correctly",
+    "productionOwner": "ACP-03"
+  },
+  {
+    "probeId": "plan_tool_reconciliation",
+    "description": "plan snapshots replace and tool progress reconciles by tool-call ID",
+    "productionOwner": "ACP-03"
+  },
+  {
+    "probeId": "permission_exactly_once",
+    "description": "permission cancel/death/disconnect/timeout settles exactly once",
+    "productionOwner": "ACP-02"
+  },
+  {
+    "probeId": "durable_refresh",
+    "description": "refresh targets the same durable employee session/binding generation",
+    "productionOwner": "ACP-01"
+  },
+  {
+    "probeId": "delivery_capabilities",
+    "description": "steer is real or visibly unavailable; common Queue and Send Now remain broker-owned",
+    "productionOwner": "ACP-02"
+  },
+  {
+    "probeId": "compaction_visibility",
+    "description": "explicit/automatic compaction has live state and inspectable completion",
+    "productionOwner": "ACP-02"
+  },
+  {
+    "probeId": "callback_wire_order",
+    "description": "concurrent SDK callbacks reduce/broadcast in wire order",
+    "productionOwner": "ACP-01"
+  },
+  {
+    "probeId": "protocol_rejection",
+    "description": "unknown/partial replay yields protocol_update_rejected, never text fallback",
+    "productionOwner": "ACP-03"
+  }
+]

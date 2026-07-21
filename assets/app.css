@@ -1069,6 +1069,231 @@ button.list-row:hover .list-row-title {
   border-color: var(--text-faint);
 }
 
+/* ── ACP transcript: stanzas, seams, pills ──────────────────────────────────
+ * The transcript renders as direct flex children of .chat-thread; nesting is
+ * expressed by disclosure, never by borders or indentation. */
+.acp-transcript { display: contents; }
+.acp-transcript img { display: block; max-width: 100%; }
+.acp-transcript audio { max-width: 100%; }
+.acp-unsupported { color: var(--text-faint); }
+
+/* Stanza: one beat of work — a Thinking/Thought line; disclosure reveals the
+ * full thought then the steps it drove. */
+.acp-stanza { display: grid; gap: var(--space-1); }
+.acp-stanza-body { display: grid; gap: var(--space-1); margin-top: var(--space-1); }
+
+.acp-think {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  max-width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-faint);
+  font-family: var(--font-ui);
+}
+.acp-think:hover { color: var(--text-strong); }
+.acp-think-word {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-mono);
+}
+.acp-think-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: var(--type-serif-sm);
+  color: var(--text-faintest);
+}
+.acp-think.is-live .acp-think-word {
+  background: linear-gradient(90deg, var(--text-faint) 30%, var(--text-strong) 50%, var(--text-faint) 70%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+  animation: acp-shimmer var(--motion-loop-bounce) linear infinite;
+}
+.acp-think-body {
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-sm);
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+/* Wide step output (code wells, markdown pre) must scroll inside its own box,
+   never widen the stanza: cap every grid level's items so a long line cannot
+   push the track — and its sibling rows — past the pane. */
+.acp-stanza > *,
+.acp-stanza-body > *,
+.acp-steps > * { min-width: 0; }
+
+/* Steps: kind glyph, title, edit counts, right-aligned status mark. */
+.acp-steps { display: grid; gap: var(--space-1); }
+.acp-step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) 0;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  font-family: var(--font-ui);
+  color: var(--text-muted);
+}
+.acp-step--expandable { cursor: pointer; }
+.acp-step--expandable:hover .acp-step-title { color: var(--text-strong); }
+.acp-step-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--space-4);
+  height: var(--space-4);
+  font-size: var(--type-sm);
+  color: var(--text-faint);
+}
+.acp-step-icon svg {
+  width: 1em;
+  height: 1em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.acp-step-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--type-sm);
+  color: var(--text-muted);
+}
+.acp-step-counts {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+}
+.acp-step-add { color: var(--accent-done); }
+.acp-step-del { color: var(--accent-error); }
+.acp-step-mark {
+  margin-left: auto;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+}
+.acp-step-counts + .acp-step-mark { margin-left: var(--space-2); }
+.acp-mark-ok { color: var(--accent-done); }
+.acp-mark-fail { color: var(--accent-error); }
+.acp-mark-pend { color: var(--text-faintest); }
+.acp-spin {
+  margin-left: auto;
+  flex: none;
+  width: var(--space-3);
+  height: var(--space-3);
+  border: var(--border-strong) solid var(--surface-overlay);
+  border-top-color: var(--accent-bright);
+  border-radius: var(--radius-pill);
+  animation: acp-spin var(--motion-loop-spin) linear infinite;
+}
+.acp-step-detail { margin: var(--space-1) 0 var(--space-2); }
+
+/* Command / terminal output: a sunken mono well (no raw input/output). */
+.acp-code-well {
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--text-default);
+}
+.acp-code-well-label { color: var(--text-faint); }
+.acp-code-well pre { margin: 0; white-space: pre-wrap; }
+
+/* Compaction seam: dashed full-width divider, centred uppercase mono label. */
+.acp-compaction {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.acp-compaction::before,
+.acp-compaction::after {
+  content: "";
+  flex: 1;
+  border-top: var(--border-hairline) dashed var(--border-color);
+}
+.acp-compaction span {
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.acp-compaction--failed span { color: var(--accent-error); }
+.acp-compaction.is-live span {
+  background: linear-gradient(90deg, var(--text-faint) 30%, var(--text-strong) 50%, var(--text-faint) 70%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+  animation: acp-shimmer var(--motion-loop-bounce) linear infinite;
+}
+
+/* Turn-end and wire-exception pills: centred, flat, outline. */
+.acp-turn-end {
+  align-self: center;
+  border: var(--border-hairline) solid var(--text-faintest);
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--text-faint);
+}
+.acp-turn-end--error {
+  border-color: var(--accent-error);
+  color: var(--accent-error);
+}
+.acp-pill-group {
+  align-self: center;
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+}
+.acp-pill {
+  background: transparent;
+  border: var(--border-hairline) solid var(--accent-error);
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--accent-error);
+}
+.acp-pill:hover { color: var(--text-strong); }
+.acp-pill-reason {
+  max-width: 82%;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--text-faint);
+}
+
+@keyframes acp-shimmer { to { background-position: -200% 0; } }
+@keyframes acp-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .acp-think.is-live .acp-think-word,
+  .acp-compaction.is-live span,
+  .acp-spin { animation: none; }
+}
+
 /* --- Chat panel (v2 — the ticket's employee; Vylo restraint) ------------- */
 /* Message history + input. No dividers: the thread fades into a whisper header and
  * a recessed composer. One user pill; the employee is bubble-less prose. */
@@ -1084,20 +1309,89 @@ button.list-row:hover .list-row-title {
   flex: none;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   padding: var(--space-2) var(--space-1) var(--space-1);
 }
 
-.chat-dot { width: 7px; height: 7px; border-radius: var(--radius-pill); flex: none; }
-.chat-dot--on { background: var(--accent-done); }
-.chat-dot--off { background: var(--text-faintest); }
+.chat-conn-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  flex: none;
+  background: var(--accent-error);
+}
 
 .chat-lbl {
   font-size: var(--type-xs);
-  color: var(--text-faint);
+  color: var(--text-default);
   font-family: var(--font-mono);
   letter-spacing: var(--tracking-mono);
 }
+
+.chat-state {
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--text-faint);
+}
+.chat-state--attn { color: var(--accent-text); }
+
+.chat-head-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.chat-usage {
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--text-faintest);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chat-overflow { position: relative; display: flex; }
+
+.chat-overflow-btn {
+  background: none;
+  border: none;
+  color: var(--text-faintest);
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+  line-height: 1;
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+.chat-overflow-btn:hover { color: var(--text-muted); background: var(--surface-overlay); }
+
+.chat-overflow-menu {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: 2;
+  min-width: 160px;
+  background: var(--surface-raised);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--space-1);
+  display: grid;
+}
+
+.chat-overflow-item {
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: var(--type-sm);
+  text-align: left;
+  padding: var(--space-1) var(--space-2);
+}
+.chat-overflow-item:hover { color: var(--text-strong); background: var(--surface-overlay); }
+.chat-overflow-item--confirm { color: var(--accent-error); }
+.chat-overflow-item--confirm:hover { color: var(--accent-error); }
 
 .chat-thread-shell {
   position: relative;
@@ -1170,197 +1464,23 @@ button.list-row:hover .list-row-title {
   font-size: var(--type-serif-sm);
   line-height: 1.6;
 }
-
-.chat-outcome {
+/* programmatic prompts = visible system context, never hidden or mistaken for user prose */
+.chat-system {
   align-self: stretch;
-  display: grid;
-  gap: var(--space-2);
-  margin-top: calc(-1 * var(--space-3));
-  padding: var(--space-1) 0 var(--space-1) var(--space-3);
-  border-left: var(--border-strong) solid var(--accent-error);
-}
-.chat-outcome--interrupted {
-  border-left-color: var(--accent-bright);
-}
-.chat-outcome-title {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  color: var(--accent-error);
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  line-height: 1.4;
-}
-.chat-outcome--interrupted .chat-outcome-title {
-  color: var(--accent-bright);
-}
-.chat-outcome-title strong {
-  color: inherit;
-  font-weight: 700;
-}
-.chat-outcome-title span,
-.chat-outcome-detail {
-  color: var(--text-faintest);
-}
-.chat-outcome-detail {
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  line-height: 1.45;
-}
-.chat-continue {
-  justify-self: start;
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--accent-bright);
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  font-weight: 700;
-  line-height: 1;
-  padding: var(--space-2) var(--space-3);
-  cursor: pointer;
-  transition: background var(--motion-fast) var(--motion-ease),
-    border-color var(--motion-fast) var(--motion-ease),
-    color var(--motion-fast) var(--motion-ease);
-}
-.chat-continue:hover:not(:disabled) {
-  background: var(--accent-surface);
-  border-color: var(--accent-bright);
-  color: var(--accent-text);
-}
-.chat-continue:disabled {
-  cursor: wait;
-  color: var(--text-faintest);
-}
-
-/* thinking = inline activity and three bubble-less dots in the employee's spot */
-.chat-pending-block {
-  align-self: stretch;
-  min-width: 0;
-}
-.chat-pending-row {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) 0;
+  border-inline-start: var(--border-hairline) solid var(--text-faint);
   color: var(--text-faint);
-  font-size: var(--type-xs);
-  line-height: 1.4;
-}
-.chat-activity-toggle {
-  width: 100%;
-  border: 0;
-  background: none;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.chat-activity-toggle:hover { color: var(--text-muted); }
-.chat-activity-toggle:focus-visible {
-  outline: var(--border-hairline) solid var(--accent-bright);
-  outline-offset: var(--space-1);
-}
-.chat-activity-chevron {
-  margin-left: auto;
-  color: var(--text-faintest);
-  font-family: var(--font-mono);
-  font-size: var(--type-sm);
-}
-.chat-activity-details {
-  list-style: none;
-  margin: var(--space-1) 0 var(--space-1) var(--space-3);
-  padding: var(--space-1) 0 var(--space-1) var(--space-4);
-  border-left: var(--border-hairline) solid var(--border-color);
-}
-.chat-activity-entry {
-  position: relative;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: var(--space-2);
-  min-width: 0;
-  padding: var(--space-1) 0;
-  color: var(--text-faint);
-  font-size: var(--type-xs);
-  line-height: 1.4;
-}
-.chat-activity-marker {
-  position: absolute;
-  top: var(--space-2);
-  left: calc(-1 * var(--space-4) - var(--space-1));
-  width: var(--space-2);
-  height: var(--space-2);
-  border: var(--border-hairline) solid var(--text-faintest);
-  border-radius: var(--radius-pill);
-  background: var(--surface-sunken);
-}
-.chat-activity-entry--running .chat-activity-marker {
-  border-color: var(--accent-bright);
-  background: var(--accent-bright);
-}
-.chat-activity-category {
-  color: var(--text-faintest);
-  font-family: var(--font-mono);
-}
-.chat-activity-label {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.chat-activity-state {
-  color: var(--text-faintest);
-  font-family: var(--font-mono);
-}
-.chat-activity-entry--running .chat-activity-state { color: var(--accent-bright); }
-.chat-dots { display: inline-flex; gap: 5px; flex: 0 0 auto; }
-.chat-dots i {
-  width: 6px; height: 6px; border-radius: var(--radius-pill);
-  background: var(--text-faint);
-  animation: chat-bounce var(--motion-loop-bounce) var(--motion-ease) infinite;
-}
-.chat-pending-label {
-  min-width: 0;
-}
-.chat-dots i:nth-child(2) { animation-delay: 0.16s; }
-.chat-dots i:nth-child(3) { animation-delay: 0.32s; }
-@keyframes chat-bounce {
-  0%, 70%, 100% { opacity: 0.35; transform: translateY(0); }
-  35% { opacity: 1; transform: translateY(-3px); }
-}
-
-.chat-off {
-  margin: auto;
-  color: var(--text-faint);
-  font-size: var(--type-sm);
-  text-align: center;
-  padding: 0 var(--space-4);
-}
-.chat-off-sub { color: var(--text-faintest); margin-top: var(--space-1); }
-
-.chat-empty { margin: auto 0; }
-/* the empty prompt is system voice — serif like everything the system says */
-.chat-empty-h {
-  margin: 0;
-  color: var(--text-muted);
   font-family: var(--font-serif);
-  font-size: var(--type-lg);
-  font-weight: 500;
-  letter-spacing: var(--tracking-title);
-  line-height: 1.3;
+  font-size: var(--type-serif-sm);
+  line-height: 1.6;
+  padding-inline-start: var(--space-3);
 }
-
-/* employee slash-command display output = bare monospace, no bubble */
-.chat-sys {
-  align-self: stretch;
+.chat-system-label {
+  color: var(--text-faint);
   font-family: var(--font-mono);
   font-size: var(--type-xs);
-  line-height: 1.5;
-  color: var(--text-faint);
-  white-space: pre-wrap;
-  word-break: break-word;
+  letter-spacing: 0.03em;
+  margin-block-end: var(--space-1);
+  text-transform: uppercase;
 }
 
 /* composer = one recessed field; the container IS the input */
@@ -1380,6 +1500,10 @@ button.list-row:hover .list-row-title {
     inset 0 1px 2px rgba(0, 0, 0, 0.35),
     0 0 0 2px color-mix(in srgb, var(--accent-bright) 18%, transparent);
 }
+
+/* The task-progress popover shares the raised-popover shadow; the property
+ * lives here because component styles may not declare box-shadow. */
+.task-pop { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }
 
 /* the "/" command menu = a raised popover above the composer; a read of the
  * gateway catalog. No dividers, no accent — grouped rows fade into the surface. */
@@ -1433,53 +1557,6 @@ button.list-row:hover .list-row-title {
   text-overflow: ellipsis;
 }
 .chat-box:focus-within { border-color: color-mix(in srgb, var(--accent-bright) 40%, transparent); }
-.chat-clarification {
-  display: grid;
-  gap: var(--space-2);
-  padding: 0 0 var(--space-2);
-  min-width: 0;
-}
-.chat-clarification-question {
-  color: var(--text-strong);
-  font-size: var(--type-sm);
-  line-height: 1.45;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.chat-clarification-choices {
-  display: grid;
-  gap: var(--space-1);
-  min-width: 0;
-}
-.chat-clarification-choice {
-  width: 100%;
-  min-width: 0;
-  text-align: left;
-  color: var(--text-muted);
-  background: color-mix(in srgb, var(--surface-overlay) 44%, transparent);
-  border: 0;
-  border-radius: var(--radius-md);
-  padding: var(--space-2);
-  font: inherit;
-  font-size: var(--type-sm);
-  line-height: 1.4;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  cursor: pointer;
-}
-.chat-clarification-choice:hover {
-  background: var(--surface-overlay);
-  color: var(--text-strong);
-}
-.chat-clarification-choice--selected {
-  border: var(--border-hairline) solid var(--accent-bright);
-  background: color-mix(in srgb, var(--accent-bright) 10%, var(--surface-overlay));
-  color: var(--text-strong);
-}
-.chat-clarification-choice:disabled {
-  cursor: default;
-  opacity: 0.65;
-}
 .chat-image-previews {
   display: flex;
   gap: var(--space-2);
@@ -1599,10 +1676,80 @@ button.list-row:hover .list-row-title {
   transition: background var(--motion-base) var(--motion-ease), color var(--motion-base) var(--motion-ease);
 }
 .chat-send.on { background: var(--accent-bright); color: var(--accent-ink); }
+.chat-send.stop {
+  background: transparent;
+  border: var(--border-hairline) solid var(--accent-error);
+  color: var(--accent-error);
+  font-size: var(--type-xs);
+}
 .chat-send:disabled { opacity: 0.5; cursor: default; }
 
-@media (prefers-reduced-motion: reduce) {
-  .chat-dots i { animation: none; }
+/* Delivery segment: compact segmented pill in the footer, present only mid-turn */
+.chat-seg {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--space-2);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+.chat-seg button {
+  background: transparent;
+  border: 0;
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-faintest);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-mono);
+  cursor: pointer;
+  line-height: 1.2;
+}
+.chat-seg button:hover { color: var(--text-muted); }
+.chat-seg button.on { background: var(--surface-overlay); color: var(--text-strong); }
+.chat-seg button:disabled { color: var(--text-faintest); opacity: 0.45; cursor: default; }
+
+/* Queue tray: queued prompts fused to the top of the sending box — same sunken
+ * surface, inset horizontally, top corners rounded, bottom edge open. The box
+ * keeps its full native rounding in all states. */
+.chat-box-stack { display: grid; }
+.chat-queue-tray {
+  margin: 0 var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  list-style: none;
+  display: grid;
+  background: var(--surface-sunken);
+  border: var(--border-hairline) solid var(--border-color);
+  border-bottom: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+.chat-qrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--type-xs);
+}
+.chat-qrow + .chat-qrow { border-top: var(--border-hairline) solid var(--border-color); }
+.chat-qrow-n { flex: none; font-family: var(--font-mono); color: var(--text-faintest); }
+.chat-qrow-txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-qrow-x {
+  flex: none;
+  background: none;
+  border: 0;
+  padding: 0 2px;
+  color: var(--text-faintest);
+  cursor: pointer;
+  font-size: var(--type-sm);
+  line-height: 1;
+}
+.chat-qrow-x:hover { color: var(--accent-error); }
+
+/* Composer receipt: only failures speak — a mono error line under the box */
+.chat-receipt {
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--accent-error);
 }
 
 /* --- Proposal / scope / review (T15) ------------------------------------- */
@@ -1970,7 +2117,6 @@ select {
   padding: var(--space-4) var(--space-5) var(--space-7);
   border-right: var(--border-hairline) solid var(--border-color);
   --board-workspace-rail-pad-x: var(--space-3);
-  --board-workspace-stage-rail-width: 0.9rem;
 }
 
 .board-workspace-right {
@@ -2078,72 +2224,137 @@ select {
   cursor: pointer;
 }
 
-/* Project sections stack with space between them — no rule, no box; the uppercase
- * heading and its right-aligned count carry the grouping. The gap above each
- * heading is the group separator (mockup: 16px section + the heading's own pad). */
+/* Project → worker type → current stage. Scale carries the project boundary; worker
+ * types are the only boxed level, and stage rules provide the finer subdivision. */
 .board-workspace-index-section {
   position: relative;
-  margin-top: var(--space-5);
 }
 
-.disclosure--project > .disclosure-summary {
+.board-workspace-index-section + .board-workspace-index-section {
+  margin-top: calc(var(--space-7) - var(--space-1));
+}
+
+.disclosure--workspace-project > .disclosure-summary,
+.disclosure--workspace-worker > .disclosure-summary,
+.disclosure--workspace-stage > .disclosure-summary {
   width: 100%;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-2);
   text-align: left;
-  margin: 0 0 var(--space-2);
-  padding: var(--space-2) var(--board-workspace-rail-pad-x) var(--space-1);
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  line-height: 1.35;
-  text-transform: uppercase;
-  color: var(--text-faint);
+  margin: 0;
 }
 
-.board-workspace-index-heading-main {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
+.disclosure--workspace-project > .disclosure-summary {
+  padding: var(--space-2) 0;
+  color: var(--text-strong);
+}
+
+.board-workspace-project-label {
   min-width: 0;
-}
-
-.board-workspace-index-chevron {
-  flex: 0 0 auto;
-  color: var(--text-faintest);
-  transition: transform var(--motion-fast) var(--motion-ease);
-}
-
-.disclosure--project[open] > .disclosure-summary .board-workspace-index-chevron {
-  transform: rotate(90deg);
-}
-
-.board-workspace-index-count {
-  flex: 0 0 auto;
-  color: var(--text-faintest);
-  font-size: var(--type-xs);
+  font-family: var(--font-serif);
+  font-size: calc(var(--space-7) - var(--space-2));
+  font-weight: 500;
+  line-height: 1;
 }
 
 .board-workspace-index-items {
   display: flex;
   flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  margin-top: var(--space-3);
+}
+
+.disclosure--workspace-worker {
+  min-width: 0;
+  padding: var(--space-4);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: transparent;
+}
+
+.disclosure--workspace-worker > .disclosure-summary {
+  color: var(--text-muted);
+}
+
+.disclosure--workspace-worker[open] > .disclosure-summary {
+  margin-bottom: var(--space-4);
+}
+
+.board-workspace-worker-label {
+  min-width: 0;
+  font-family: var(--font-ui);
+  font-size: var(--type-lg);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+.board-workspace-worker-stages,
+.board-workspace-stage-tickets {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
 }
 
-/* Slim rows: a title, then one byline whose left text carries type + stage while
- * the existing stage mark owns the far-right edge. */
+.disclosure--workspace-stage + .disclosure--workspace-stage {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+.disclosure--workspace-stage > .disclosure-summary {
+  color: var(--text-muted);
+}
+
+.disclosure--workspace-stage[open] > .disclosure-summary {
+  margin-bottom: var(--space-1);
+}
+
+.board-workspace-stage-label {
+  min-width: 0;
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+/* Every level uses the shared trailing disclosure mark. The mark stays at the far
+ * edge and appears only when its own summary carries pointer or keyboard intent. */
+.disclosure--workspace-project > .disclosure-summary > .disclosure-chev,
+.disclosure--workspace-worker > .disclosure-summary > .disclosure-chev,
+.disclosure--workspace-stage > .disclosure-summary > .disclosure-chev {
+  flex: 0 0 auto;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--motion-ease);
+}
+
+.disclosure--workspace-project > .disclosure-summary:hover > .disclosure-chev,
+.disclosure--workspace-project > .disclosure-summary:focus-visible > .disclosure-chev,
+.disclosure--workspace-worker > .disclosure-summary:hover > .disclosure-chev,
+.disclosure--workspace-worker > .disclosure-summary:focus-visible > .disclosure-chev,
+.disclosure--workspace-stage > .disclosure-summary:hover > .disclosure-chev,
+.disclosure--workspace-stage > .disclosure-summary:focus-visible > .disclosure-chev {
+  opacity: 1;
+}
+
+/* Ticket rows contain only the title and the existing condition mark. */
 .list-row--board {
   width: 100%;
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
   border: 0;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) 0;
   text-align: left;
   font-size: var(--type-sm);
   line-height: 1.35;
@@ -2165,64 +2376,14 @@ select {
 
 .list-row--board .list-row-title {
   display: block;
-  flex: none;
+  min-width: 0;
   overflow-wrap: anywhere;
   color: inherit;
   font-size: inherit;
 }
 
-.board-workspace-row-main {
-  display: block;
-  min-width: 0;
-}
-
-.board-workspace-row-byline {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  min-width: 0;
-  margin-top: var(--space-1);
-  color: var(--text-faint);
-  font-size: var(--type-xs);
-  line-height: 1.2;
-}
-
-.board-workspace-row-metadata {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-.board-workspace-row-type,
-.board-workspace-row-stage {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.board-workspace-row-stage {
-  color: var(--text-muted);
-}
-
-.board-workspace-row-separator {
-  flex: 0 0 auto;
-  color: var(--text-faintest);
-}
-
-.board-workspace-stage-rail {
-  width: var(--board-workspace-stage-rail-width);
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-1);
-  justify-self: end;
-}
-
 .board-workspace-stage-mark {
-  flex: 0 0 0.7rem;
+  flex: 0 0 auto;
 }
 
 /* --- Ticket screen (T16) ------------------------------------------------- */
@@ -2490,6 +2651,33 @@ select {
 
 .ticket-stage-section--review {
   gap: var(--space-4);
+}
+
+/* Kickoff's Employee launch setup is one quiet form row, not another surface. */
+.employee-configuration-setup {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  font-family: var(--font-ui);
+}
+
+.employee-configuration-state {
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+}
+
+.employee-configuration-setup .pill:focus-within {
+  outline: var(--border-strong) solid var(--accent-bright);
+  outline-offset: var(--border-hairline);
+}
+
+.employee-configuration-problem {
+  display: flex;
+  align-items: center;
+  flex-basis: 100%;
+  gap: var(--space-3);
 }
 
 /* THE APPROVAL — a raised surface (background, no border). */

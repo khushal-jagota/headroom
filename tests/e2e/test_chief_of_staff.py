@@ -5,18 +5,7 @@ These are intentionally unanchored so they do not affect the verify item scorer.
 
 from __future__ import annotations
 
-from playwright.sync_api import Page
-
 WAIT_MS = 10_000
-
-
-def _wait_chat_text(page: Page, who: str, text: str) -> None:
-    page.wait_for_function(
-        "({ who, text }) => Array.from(document.querySelectorAll(`[data-chat-msg=\"${who}\"]`))"
-        ".some(el => el.textContent.includes(text))",
-        arg={"who": who, "text": text},
-        timeout=WAIT_MS,
-    )
 
 
 def _workspace_ticket(ticket_id: str) -> str:
@@ -26,7 +15,7 @@ def _workspace_ticket(ticket_id: str) -> str:
     )
 
 
-def test_chief_of_staff_route_nav_and_chat(server, context_factory, open_page) -> None:
+def test_chief_of_staff_route_nav_and_acp_mount(server, context_factory, open_page) -> None:
     page = open_page(
         context_factory(),
         server,
@@ -39,11 +28,7 @@ def test_chief_of_staff_route_nav_and_chat(server, context_factory, open_page) -
     assert page.inner_text("h1") == "Chief of Staff"
     assert page.get_attribute("[data-chat-input]", "placeholder") == "Message Chief of Staff..."
 
-    page.fill("[data-chat-input]", "triage the workspace")
-    page.click("[data-chat-send]")
-
-    _wait_chat_text(page, "you", "triage the workspace")
-    _wait_chat_text(page, "planner", "echo: triage the workspace")
+    assert page.locator("[data-acp-conversation-pane]").count() == 1
 
 
 def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
@@ -76,11 +61,6 @@ def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
     assert page.is_checked("[data-hide-done-toggle]")
     assert page.locator('[aria-label="Ticket status"]').count() == 0
 
-    page.fill("[data-chat-input]", "triage from workspace")
-    page.click("[data-chat-send]")
-    _wait_chat_text(page, "you", "triage from workspace")
-    _wait_chat_text(page, "planner", "echo: triage from workspace")
-
     card = f'[data-card][data-ticket-id="{tid}"]'
     page.click(card)
     page.wait_for_url(f"{server.base}/#/workspace/{tid}", timeout=WAIT_MS)
@@ -93,8 +73,7 @@ def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
     page.wait_for_url(f"{server.base}/#/workspace", timeout=WAIT_MS)
     page.wait_for_selector(ticket, state="detached", timeout=WAIT_MS)
     page.wait_for_selector('section[data-screen="workspace"] [data-chat-input]', timeout=WAIT_MS)
-    _wait_chat_text(page, "you", "triage from workspace")
-    _wait_chat_text(page, "planner", "echo: triage from workspace")
+    assert page.locator("[data-acp-conversation-pane]").count() == 1
 
 
 def test_workspace_ticket_route_restores_on_load_refresh_and_history(

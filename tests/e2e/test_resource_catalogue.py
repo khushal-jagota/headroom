@@ -214,9 +214,6 @@ def test_project_name_event_refetches_only_subscribed_aggregate_set_and_matching
         f"/api/tickets/{ticket_id}",
         "/api/review",
         "/api/sprints",
-        f"/api/chat/{ticket_id}/state",
-        f"/api/chat/{ticket_id}/status",
-        "/api/chat/commands",
         "/api/worker-types",
     ]
 
@@ -237,9 +234,6 @@ def test_project_name_event_refetches_only_subscribed_aggregate_set_and_matching
     for path in [
         "/api/review",
         "/api/sprints",
-        f"/api/chat/{ticket_id}/state",
-        f"/api/chat/{ticket_id}/status",
-        "/api/chat/commands",
         "/api/worker-types",
     ]:
         assert _count(requests, server, path) == 0, path
@@ -250,7 +244,7 @@ def test_project_name_event_refetches_only_subscribed_aggregate_set_and_matching
     assert _count(requests, server, f"/api/tickets/{ticket_id}") == 0
 
 
-def test_ticket_employee_session_and_chat_events_have_exact_network_dependencies(
+def test_ticket_employee_session_and_step_events_have_exact_network_dependencies(
     server, context_factory, open_page, cli
 ) -> None:
     ticket_id = cli(
@@ -260,7 +254,7 @@ def test_ticket_employee_session_and_chat_events_have_exact_network_dependencies
         "--worker-type",
         "coding",
         "--title",
-        "Chat event catalogue ticket",
+        "Employee event catalogue ticket",
     )["id"]
     requests: list[tuple[str, str]] = []
     page = open_page(
@@ -280,25 +274,16 @@ def test_ticket_employee_session_and_chat_events_have_exact_network_dependencies
 
     emit("employee_session_changed")
     assert _count(requests, server, f"/api/tickets/{ticket_id}") == 1
-    assert _count(requests, server, f"/api/chat/{ticket_id}/state") == 0
     assert _count(requests, server, "/api/sprint/current") == 0
     assert _count(requests, server, "/api/review") == 0
 
-    for kind in [
-        "chat_message_recorded",
-        "chat_turn_started",
-        "chat_turn_updated",
-        "chat_turn_finished",
-    ]:
-        emit(kind)
-        assert _count(requests, server, f"/api/chat/{ticket_id}/state") == 1, kind
-        assert _count(requests, server, f"/api/tickets/{ticket_id}") == 0, kind
-        assert _count(requests, server, "/api/sprint/current") == 0, kind
-        assert _count(requests, server, "/api/review") == 0, kind
+    emit("employee_step_started")
+    assert _count(requests, server, f"/api/tickets/{ticket_id}") == 1
+    assert _count(requests, server, "/api/sprint/current") == 1
+    assert _count(requests, server, "/api/review") == 0
 
     previous = page.evaluate("window.__plannerDebug.flushes")
     requests.clear()
     _append_event(server, "idea_unrelated", "idea_created")
     _wait_for_flush(page, previous)
-    assert _count(requests, server, f"/api/chat/{ticket_id}/state") == 0
     assert _count(requests, server, f"/api/tickets/{ticket_id}") == 0

@@ -83,6 +83,7 @@ def test_registry_rejects_missing_or_terminal_default_ownership() -> None:
             ),
             known_skills=frozenset({"probe-worker"}),
             known_toolset_profiles=frozenset({"default"}),
+            employee_backend_catalog=registry.employee_backend_catalog,
         )
     assert missing.value.code is ErrorCode.validation
     assert missing.value.message == "non-terminal stage must declare default ownership"
@@ -104,6 +105,7 @@ def test_registry_rejects_missing_or_terminal_default_ownership() -> None:
             ),
             known_skills=frozenset({"probe-worker"}),
             known_toolset_profiles=frozenset({"default"}),
+            employee_backend_catalog=registry.employee_backend_catalog,
         )
     assert terminal.value.code is ErrorCode.validation
     assert terminal.value.message == "terminal stage may not declare default ownership"

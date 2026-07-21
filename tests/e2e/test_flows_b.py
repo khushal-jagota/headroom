@@ -129,9 +129,13 @@ def _snap_ticket(p: Page):
 
 def _snap_board(p: Page, mid):
     card = f'[data-card][data-ticket-stage="needs_implementation"][data-ticket-id="{mid}"]'
+    stage = '[data-worker-type="coding"] [data-stage-key="needs_implementation"]'
     return {
         "title": p.inner_text(f"{card} .list-row-title"),
-        "pend": p.eval_on_selector_all(f'{card} [data-marker="pending-proposal"]', "e=>e.length"),
+        "stage": p.inner_text(f"{stage} > summary .board-workspace-stage-label"),
+        "nested": p.eval_on_selector_all(f"{stage} {card}", "e=>e.length"),
+        "marks": p.eval_on_selector_all(f"{card} .board-workspace-stage-mark", "e=>e.length"),
+        "marker": p.get_attribute(f"{card} .board-workspace-stage-mark", "data-marker"),
     }
 
 
@@ -443,7 +447,13 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     _reload_settle(page_b, ready_b)
     page_b.wait_for_selector(mid_b, timeout=WAIT_MS)
     after_b = _snap_board(page_b, mid)
-    expected_b = {"title": E31_TITLE, "pend": 1}
+    expected_b = {
+        "title": E31_TITLE,
+        "stage": "IMPLEMENTATION",
+        "nested": 1,
+        "marks": 1,
+        "marker": "pending-proposal",
+    }
     assert before_b == after_b == expected_b, (before_b, after_b)
 
     # Day surface — the overview renders structured fields; a reload restores.

@@ -4,7 +4,6 @@
   import type { FilePreviewTarget } from "../lib/filePreview";
   import {
     MANAGED_HTML_PREVIEW_SANDBOX,
-    chatFileTarget,
     prepareManagedHtmlPreviewDocument,
     resolvePreview,
     ticketFileTarget
@@ -17,9 +16,6 @@
     const path = params.get("path") || "";
     if (params.get("source") === "ticket") {
       return ticketFileTarget(params.get("ticket") || "", path);
-    }
-    if (params.get("source") === "chat") {
-      return chatFileTarget(params.get("entity") || "", path);
     }
     return null;
   }

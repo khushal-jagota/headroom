@@ -9,7 +9,6 @@ from typing import Any
 
 import pytest
 
-from planner.chat import data as chat_data
 from planner.core import links as core_links
 from planner.core.contracts import EventKind, LinkKind
 from planner.core.db import connect, create_schema
@@ -18,6 +17,7 @@ from planner.days import data as days_data
 from planner.runtime.automatic_employee_step_eligibility import (
     is_eligible_for_automatic_employee_step,
 )
+from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, StageOwnershipMode, Ticket, TicketStatus
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
@@ -90,54 +90,17 @@ def _worker_turn(
     now: int,
     status: str = "complete",
 ) -> None:
-    turn = chat_data.start_turn(
-        conn,
-        ticket_id,
-        origin="worker",
-        mode="worker_step",
-        visible_role="worker",
-        visible_text="automatic opening",
-        output_role="assistant",
-        phase="thinking",
-        activity_label="Thinking",
-        now=now,
-    )
+    repository = SqliteEmployeeStepRepository()
+    turn = repository.start(conn, ticket_id, now=now)
     if status != "running":
-        chat_data.settle_chat_turn(
+        repository.settle(
             conn,
-            turn.id,
-            entity_id=ticket_id,
+            turn.employee_step_id,
+            ticket_id=ticket_id,
             status=status,  # type: ignore[arg-type]
-            reply_text="opened",
-            output_role="assistant",
-            error=None,
+            error="failed" if status == "errored" else None,
             now=now + 1,
         )
-
-
-def _human_turn(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> None:
-    turn = chat_data.start_turn(
-        conn,
-        ticket_id,
-        origin="human",
-        mode="message",
-        visible_role="human",
-        visible_text="earlier paired discussion",
-        output_role="assistant",
-        phase="thinking",
-        activity_label="Thinking",
-        now=now,
-    )
-    chat_data.settle_chat_turn(
-        conn,
-        turn.id,
-        entity_id=ticket_id,
-        status="complete",
-        reply_text="continued",
-        output_role="assistant",
-        error=None,
-        now=now + 1,
-    )
 
 
 @pytest.mark.parametrize(
@@ -234,7 +197,6 @@ def test_paired_work_existing_session_is_eligible_for_later_silent_paired_stage(
     conn = _db(tmp_path)
     try:
         ticket = _ticket(conn, worker_type="exploration", ceiling="needs_answer")
-        _human_turn(conn, ticket.id, now=4)
         conn.execute(
             "UPDATE tickets SET stage = 'needs_answer', ticket_status = 'paired_work', "
             "employee_session_id = 'existing-session' WHERE id = ?",
@@ -360,7 +322,7 @@ def test_historical_paired_event_without_previous_effective_mode_remains_a_marke
     "break_one_conjunct",
     [
         "membership",
-        "active_chat_turn",
+        "active_employee_step",
         "terminal",
         "next_gate",
         "proposal",
@@ -384,19 +346,8 @@ def test_paired_stage_preserves_every_non_ownership_eligibility_factor(
         definition: WorkerTypeDefinition | Any = NEW_WORKER_TYPE_DEFINITION
         if break_one_conjunct == "membership":
             days_data.remove_day_ticket(conn, PLANNING_DAY_ID, ticket.id, 5)
-        elif break_one_conjunct == "active_chat_turn":
-            chat_data.start_turn(
-                conn,
-                ticket.id,
-                origin="human",
-                mode="message",
-                visible_role="human",
-                visible_text="hello",
-                output_role="assistant",
-                phase="thinking",
-                activity_label="Thinking",
-                now=5,
-            )
+        elif break_one_conjunct == "active_employee_step":
+            SqliteEmployeeStepRepository().start(conn, ticket.id, now=5)
         elif break_one_conjunct == "terminal":
             conn.execute("UPDATE tickets SET stage = 'done' WHERE id = ?", (ticket.id,))
         elif break_one_conjunct == "next_gate":
@@ -587,7 +538,6 @@ def test_only_an_active_blocking_source_blocks(tmp_path: Path, settled_stage: st
         conn.close()
 
 
-@pytest.mark.parametrize("origin", ["human", "worker"])
 @pytest.mark.parametrize(
     ("turn_status", "expected"),
     [
@@ -597,35 +547,22 @@ def test_only_an_active_blocking_source_blocks(tmp_path: Path, settled_stage: st
         ("interrupted", True),
     ],
 )
-def test_only_a_running_chat_turn_blocks_automatic_employee_step(
+def test_only_a_running_employee_step_blocks_automatic_employee_step(
     tmp_path: Path,
-    origin: str,
     turn_status: str,
     expected: bool,
 ) -> None:
     conn = _db(tmp_path)
     try:
         ticket = _ticket(conn)
-        turn = chat_data.start_turn(
-            conn,
-            ticket.id,
-            origin=origin,
-            mode="message" if origin == "human" else "worker_step",
-            visible_role="human" if origin == "human" else "worker",
-            visible_text="hello" if origin == "human" else "",
-            output_role="assistant",
-            phase="thinking",
-            activity_label="Thinking",
-            now=4,
-        )
+        repository = SqliteEmployeeStepRepository()
+        turn = repository.start(conn, ticket.id, now=4)
         if turn_status != "running":
-            chat_data.settle_chat_turn(
+            repository.settle(
                 conn,
-                turn.id,
-                entity_id=ticket.id,
+                turn.employee_step_id,
+                ticket_id=ticket.id,
                 status=turn_status,  # type: ignore[arg-type]
-                reply_text="finished",
-                output_role="assistant",
                 error="failed" if turn_status == "errored" else None,
                 now=5,
             )
@@ -645,7 +582,7 @@ def test_only_a_running_chat_turn_blocks_automatic_employee_step(
         "proposal",
         "scope",
         "blocker",
-        "active_chat_turn",
+        "active_employee_step",
     ],
 )
 def test_all_conjuncts_true_then_one_factor_at_a_time_false(
@@ -705,18 +642,7 @@ def test_all_conjuncts_true_then_one_factor_at_a_time_false(
             blocker = _ticket(conn, planning_day_id=None)
             core_links.add_link(conn, blocker.id, ticket.id, LinkKind.blocks, 5)
         else:
-            chat_data.start_turn(
-                conn,
-                ticket.id,
-                origin="human",
-                mode="message",
-                visible_role="human",
-                visible_text="hello",
-                output_role="assistant",
-                phase="thinking",
-                activity_label="Thinking",
-                now=5,
-            )
+            SqliteEmployeeStepRepository().start(conn, ticket.id, now=5)
 
         assert not _eligible(conn, ticket, definition=definition)
     finally:
@@ -773,5 +699,5 @@ def test_claim_writer_has_only_the_required_complete_eligibility_seam() -> None:
 
     eligibility_path = root / "src/planner/runtime/automatic_employee_step_eligibility.py"
     eligibility_source = eligibility_path.read_text(encoding="utf-8")
-    assert "chat_turns" in eligibility_source
-    assert "status = 'running'" in eligibility_source
+    assert "SqliteEmployeeStepRepository" in eligibility_source
+    assert ".running_exists(" in eligibility_source

@@ -1,0 +1,63 @@
+ACP-04 focused checks
+=====================
+
+Ruff
+----
+Command:
+.venv/bin/ruff check src/planner/conversation src/planner/runtime/acp_step_gateway.py src/planner/core/db.py src/planner/core/server.py src/planner/chat/data.py tests/unit/test_acp_binding_repository.py tests/unit/test_acp_conversation_composition.py tests/unit/test_acp_conversation_websocket.py tests/unit/test_acp_step_gateway.py tests/unit/test_conversation_hub.py tests/unit/test_conversation_turn_broker.py tests/e2e/test_acp_conversation.py tests/support/acp_e2e_server.py tests/support/acp_scripted_agent.py
+
+Output:
+All checks passed!
+
+Mypy
+-----
+Command:
+.venv/bin/mypy src/planner/conversation src/planner/runtime/acp_step_gateway.py src/planner/core/server.py src/planner/core/loops.py
+
+Output:
+Success: no issues found in 24 source files
+
+Focused Python
+--------------
+Command:
+.venv/bin/pytest -q tests/unit/test_acp_binding_repository.py tests/unit/test_conversation_hub.py tests/unit/test_acp_conversation_websocket.py tests/unit/test_acp_step_gateway.py tests/unit/test_acp_conversation_composition.py tests/unit/test_employee_step_runner.py tests/unit/test_acp_employee_registry.py tests/unit/test_conversation_turn_broker.py tests/unit/test_conversation_permission_broker.py tests/unit/test_hermes_acp_backend.py tests/e2e/test_acp_conversation.py
+
+Output:
+........................................................................ [ 43%]
+........................................................................ [ 87%]
+....................                                                     [100%]
+
+164 passed.
+
+One dependency warning was emitted by fastapi.testclient: Starlette's httpx TestClient integration
+is deprecated in favour of httpx2. There were no test warnings from ACP-04 code.
+
+Web suites
+----------
+Command:
+node --test web/tests/acp-contracts.test.mjs web/tests/acp-browser-state.test.mjs web/tests/acp-browser-conformance.test.mjs web/tests/acp-browser-components.test.mjs web/tests/acp-production-mount.test.mjs
+
+Output:
+5 tests passed; 0 failed.
+Each suite printed its `all assertions passed` marker.
+
+Svelte
+------
+Command:
+npm --prefix web run check
+
+Output:
+svelte-check found 0 errors and 0 warnings
+
+Whitespace
+----------
+Command:
+git diff --check -- src/planner web/src tests web/tests
+
+Output:
+exit code 0; no output
+
+Not run
+-------
+- ./verify (orchestrator-owned authoritative integration gate)
+- production frontend build / web/dist refresh

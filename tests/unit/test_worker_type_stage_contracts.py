@@ -11,7 +11,6 @@ from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
 from planner.cli.main import main
-from planner.core.adapters.registry import build_adapters
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -36,13 +35,13 @@ def _app(tmp_path: Path):
     boot.close()
     config = load_config(
         path=None,
-        env={"PLAN_TEST_MODE": "1", "PLAN_GATEWAY_ADAPTER": "fake", "PLAN_DB_PATH": str(db_path)},
+        env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)},
     )
 
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    return create_app(config, build_clock(config), build_adapters(config), conn_factory)
+    return create_app(config, build_clock(config), conn_factory)
 
 
 def test_ticket_contract_requires_worker_type_and_stored_stage() -> None:
@@ -107,6 +106,7 @@ def _create_almost_v20_ticket_table(
           id TEXT PRIMARY KEY,
           title TEXT NOT NULL CHECK (length(title) <= 200),
           worker_type TEXT NOT NULL,
+          employee_backend TEXT NOT NULL,
           stage TEXT NOT NULL DEFAULT 'needs_kickoff',
           priority TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
           deadline TEXT,
@@ -128,9 +128,9 @@ def _create_almost_v20_ticket_table(
           updated_at INTEGER NOT NULL
         );
         INSERT INTO tickets (
-          id, title, worker_type, stage, ceiling, fields, created_at, updated_at
+          id, title, worker_type, employee_backend, stage, ceiling, fields, created_at, updated_at
         ) VALUES (
-          't_incomplete', 'Incomplete', 'coding', 'needs_success', 'needs_success',
+          't_incomplete', 'Incomplete', 'coding', 'hermes', 'needs_success', 'needs_success',
           '{_EMPTY_FIELDS_DEFAULT}', 1, 1
         );
         """

@@ -130,7 +130,10 @@ def test_plain_read_requires_registry_for_ownership_metadata(
         title_max_chars=200,
     )
     uninstall_probe_registry()
-    with pytest.raises(PlannerError) as exc:
-        tickets_data.read_ticket(tmp_db, ticket.id)
-    assert exc.value.code is ErrorCode.not_found
-    assert exc.value.detail == {"worker_type": "probe"}
+    try:
+        with pytest.raises(PlannerError) as exc:
+            tickets_data.read_ticket(tmp_db, ticket.id)
+        assert exc.value.code is ErrorCode.not_found
+        assert exc.value.detail == {"worker_type": "probe"}
+    finally:
+        install_probe_registry()

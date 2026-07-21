@@ -1,220 +1,200 @@
-# Chat
+# Conversation
 
-Chat is how you talk to a ticket's worker directly, and how you reach the underlying
-AI system's catalogue of commands and skills. The live chat surface is on a ticket:
-a real conversation with that ticket's employee.
+Panels has one conversation system. The Chief of Staff, a Ticket's human discussion,
+and that Ticket's Automatic Employee steps all use the same ACP session machinery.
+There is no second Chat database, relay, neutral protocol, or history adapter.
 
-## The ticket chat
+## What the browser connects to
 
-The chat panel on a ticket is a real conversation with that ticket's employee.
-Ordinary messages and commands both enter through one request:
-`POST /api/chat/{entity_id}/turns`. That request starts a server-owned chat turn,
-then one `ChatTurnLifecycle` owns the rest of that human turn. It atomically creates
-the visible turn, delivers it to Hermes, records typed activity and output, and lets
-the first completion, error, or Pause settle it. There is no separate send, command,
-or browser streaming route. The browser reads one `ChatState` resource: durable
-visible messages, terminal failed or interrupted outcomes, and the active turn, if
-one is running. The same resource survives navigation, remounts, reloads, WebSocket
-misses, and simple polling. It is built only from Panels-owned database rows.
-Reading it never contacts Hermes, loads Employee session history, or changes a
-Ticket's Employee session id.
+The Svelte pane opens one WebSocket at `/api/conversation` and attaches with an
+employee id. A Ticket's employee id is its Ticket id. The Chief of Staff uses the
+fixed Chief employee id.
 
-When the panel first loads, it starts at the latest message. New messages and live
-output stay in view while the reader is at or near the bottom. An upward scroll
-immediately leaves the viewport in the reader's control as the conversation grows.
-The Latest button appears whenever the bottom of the conversation is meaningfully
-below the viewport, even when no new content has arrived. Using it, or manually
-returning near the bottom, resumes following.
+The server is the ACP client. It uses the official ACP client library to start each
+agent backend as a child process and speak ACP over standard input and output. The
+browser never connects to an agent process directly.
 
-The small image button directly beside `/` can add one or more images to a message.
-Paste and drop use the same intake path. Pending images appear as a compact row in
-the composer, and each one can be removed before sending. A message may contain text
-and images or only images. Panels keeps the selected images in the composer until the
-turn starts successfully, so an upload or start error can be retried without choosing
-the files again. Invalid selections show the normal quiet chat error and do not start
-a turn.
+The server answers with typed ACP state. The browser renders human and agent messages,
+thought disclosures, tool calls, plans, terminal output, permissions, delivery
+receipts, connection state, and compaction boundaries. It does not parse a second
+Panels transcript format. Reloading or reconnecting attaches to the durable ACP
+binding and rebuilds the pane from the backend's replay.
 
-Chat images for tickets, days, and the Chief of Staff share the managed
-`files/chats/<entity-id>/` tree. The visible human line remains ordinary Markdown
-with managed-file links in the selected order, and the shared file preview renders
-those links inline both immediately and after a reload. Delivery to the AI is
-separate: Panels attaches each saved image to the live Hermes session in order,
-then submits one prompt for that turn. A transcript preview by itself is not proof
-that the AI received the image.
+Replay is integrity-checked and held as a subscriber-local bootstrap. It does not
+occupy the bounded queue used for live browser updates. A connected browser crossing
+a session refresh or replacement receives one ordered replay cutover before later
+live updates, so it cannot see a partial replacement transcript. Production keeps up
+to 1,024 live envelopes per browser; exceeding that limit means the browser is
+genuinely not consuming and closes only that subscription. Replay-unavailable and
+slow-browser closures write content-free structured warnings with the employee,
+session, generation, connection, counts, and configured limits. Replay bootstrap and
+cutover envelopes do not count as queued live envelopes in those warnings.
 
-Hermes is still the transport. Before any human Ticket command, image attachment, or
-prompt is written, the lifecycle binds the candidate Hermes session to the
-still-running turn and to the Ticket's `employee_session_id`. The database writer
-compares the candidate with the Ticket's current id, updates the Ticket and turn
-together, and returns the effective id. The gateway uses the live Hermes session for
-that returned id. This means a concurrent winner is the session that actually receives
-the input, not merely the value Panels records later. Day and top-level-agent Chat keep
-their own Chat-specific session keys because they have no Ticket employee identity.
-The visible transcript and live activity indicator belong to Panels:
-`chat_messages` records the product-facing lines, and `chat_turns` records the
-current phase, partial output, error, completion, and whether Pause is available.
+Each envelope carries the employee, ACP session, binding generation, and sequence.
+The browser accepts only one contiguous generation. A gap or identity mismatch fails
+closed and forces a fresh attach instead of silently showing mixed conversation state.
 
-While a turn is running, the quiet activity row shows the latest safe summary. Its
-chevron opens an ordered list of thinking phases, tool use, and commands for that
-turn. Panels stores only the category, short label, state, identity, and timing
-needed to keep that list current. It never stores reasoning text, tool arguments,
-or tool and command output in the activity list. Repeated updates change the same
-entry where Hermes supplies an identity, the list keeps at most 100 entries, and
-the entries are removed when the turn settles.
+The conversation composition has one owner for each responsibility:
 
-When a worker asks a clarification question, the same active worker turn stores the
-request id, question, and optional choices. The existing composer expands to show
-that question. A choice or typed answer goes to `clarify.respond` on the exact live
-Employee session and request that asked it; it does not start an ordinary Chat turn.
-Panels keeps the question pending if Hermes rejects or cannot confirm the answer.
-After Hermes accepts it, Panels mirrors the question and answer into the visible
-transcript and clears only the answered request, so a following question cannot be
-lost. Any ordinary composer draft is restored after the clarification closes.
+- `ConversationHub` owns browser attachment, typed replay, and publication.
+- `AcpEmployeeRegistry` owns the live ACP child for an employee.
+- `ConversationTurnBroker` owns active delivery, Steer, Send Now, Queue, Stop, and
+  compaction transitions.
+- `ConversationPermissionBroker` owns each pending ACP permission request and its
+  first valid answer.
+- `SqliteConversationBindingRepository` owns durable employee-to-session bindings.
 
-That split matters: writing a row to Panels chat state does not append anything to
-the employee's Hermes conversation. A normal Ticket Chat send reaches the employee
-because it goes through the Ticket's `employee_session_id` and is then mirrored into
-Panels Chat. Direct `chat_messages` or `chat_turns` writes are only UI/audit state
-unless the same text is also delivered through Hermes.
+_Code paths:_ `src/planner/conversation/`, `web/src/lib/acp/`, and
+`web/src/components/acp/`.
 
-For a **paired** Stage, this ordinary user-originated Ticket Chat path is how work
-continues. It reaches the same durable Employee session and worker context as the rest of
-the Ticket. Finishing a Chat turn without a proposal leaves the Ticket in **paired work**.
-A real worker proposal moves it to approval and always parks there, even when the Ticket's
-scope would auto-accept a worker-owned proposal. Chat itself never settles the gated
-field or advances the Stage.
+## Sending work
 
-The EmployeeStepRunner uses the same chat-state projection but a separate delivery
-path. It claims a Ticket and calls the employee-only `run_ticket_step`; it does not
-enter `ChatTurnLifecycle` or the human gateway method. When it starts a worker step,
-it writes a worker line and an active turn. Gateway deltas and future tool/activity
-events update that turn. When the worker settles, the assistant reply is recorded as
-a message and the active turn disappears.
+When the employee is idle, a prompt starts normally. While work is active, the pane
+offers the choices the shared broker can honestly provide:
 
-Human admission and the Employee's final claim use the same SQLite write lock. Human
-admission rechecks `ticket_status` inside that transaction, while Automatic
-Employee-step eligibility rechecks that there is no running Panels Chat turn. If the
-ticket is already at `agent_running_step`, the send or command returns
-`already_running` instead of creating a competing turn. If a human turn wins first,
-the Employee claim does nothing. The chat state remains readable in both cases.
+- **Steer** sends guidance into the active turn when the backend supports native
+  steering.
+- **Send Now** interrupts the active turn and starts this prompt next.
+- **Queue** keeps prompts in server-owned FIFO order.
+- **Stop** requests cancellation of the active turn.
 
-The visible active turn can be paused from the chat panel. While a turn is active,
-the composer's send button becomes the pause button; pressing it interrupts that
-chat session and settles the `chat_turns` row as interrupted with any partial output
-kept. The same Pause action controls a visible human-origin or worker-origin turn.
-Pause does not change the Ticket's runtime status or Stage ownership, and Chat settlement
-does not wake Automatic Employee-step discovery.
+Delivery receipts say whether a prompt was accepted, queued, started, interrupted,
+or rejected. The UI does not invent completion from a timeout. Backend failure is
+shown as failure; a slow operation may remain slow.
 
-Stop changes the visible Panels turn immediately. It does not guess that Hermes has
-finished unwinding the interrupted work. A following send goes straight to Hermes
-and follows Hermes's native `streaming`, `queued`, or `steered` result. The gateway
-keeps each accepted send tied to its own consequence, so delayed interruption or
-completion events cannot finish the wrong visible turn.
+Hermes supports native Steer. Codex and Claude Code do not, so their active-turn
+choices are Send Now or Queue instead. The broker and browser use the same delivery
+states for all three backends. The pinned Claude adapter can keep publishing old
+provider-side background work after a terminal requested-cancel response, so Stop and
+Send Now retire its exact child and privately load the unchanged durable session into
+a fresh child before more work starts. Hermes and Codex reuse their child after a
+normal terminal cancellation response.
 
-For a Ticket, `employee_session_id` names the durable Hermes conversation shared by
-human Ticket Chat and Employee steps. A gateway or Panels restart resumes that id and
-does not replay prior input. If Hermes rotates it, Panels binds the rotated candidate
-before using it and records `employee_session_changed`. Typing exactly `/new` is the
-one forced-fresh case: its newly created candidate replaces the prior id before the
-command completes. If delivery becomes uncertain, Panels reports the gateway outcome
-honestly and does not guess or retry the prompt automatically.
+Commands come from ACP `available_commands_update`. The composer offers those commands
+directly, without a second Panels command catalogue. Picker, paste, and drop image
+intake all create ordered ACP image content blocks. Images are sent inline to the
+agent; Panels does not upload them to a managed conversation-file tree.
 
-A failed or interrupted Chat turn stays in the transcript. Safe partial output is
-kept, and the outcome row says whether the turn failed or was interrupted. Continue is
-offered only when the settled human turn is still the latest turn, is bound to the
-current stored Hermes session, has not already been continued, and no other turn is
-active. Continue sends a new instruction to the existing session. It does not resend
-the original prompt or create a fallback session.
+Tool requests use the ACP reverse services owned by the conversation composition.
+Permission choices are tied to the exact employee, session, generation, and active
+turn. A stale browser or stale worker cannot answer a later permission request.
 
-Employee session history is a separate, deliberate inspection. A direct caller asks
-for `GET /api/tickets/{ticket_id}/employee-session-history`; there is no generic Chat
-history route. The result is Hermes' authoritative record of what that employee
-actually received and produced. It may include pending internal context, revision
-guidance, system or tool content, or other material intentionally absent from Panels
-Chat. It is never copied into an empty Panels transcript. A Ticket without an Employee
-session id returns an empty history without starting Hermes.
+## Durable session identity
 
-After a process restart, a running human chat turn is settled as interrupted with its
-partial output kept, then Panels creates one visible system recovery turn and resumes
-the same stored Hermes session. That recovery message asks Hermes to continue the
-interrupted response; it does not resend the original human message. Ticket worker
-recovery is separate, so a ticket already owned by `agent_running_step` is not also
-continued through ordinary chat recovery.
+`conversation_session_bindings` is the durable ACP owner. It stores the employee,
+entity, backend, ACP session id, binding generation, and compacted-boundary provenance.
+A Ticket mirrors the same ACP session id in `tickets.employee_session_id` because
+Ticket correctness and worker lookup need it. The Chief has no second mirror.
 
-The Chief of Staff page uses the same chat state shape with its top-level entity id.
-Only the gateway routing differs: chief messages go to the `panels-chief-of-staff`
-role, while ticket and day chat keep the worker gateway. The hosted
-`POST /api/messages/chief` endpoint is a narrow shell over the same human-turn
-service, not a second delivery path.
+Creating or replacing a binding is compare-and-swap work. A Ticket binding and its
+mirror change in one transaction, and one ACP session cannot belong to two employees.
+After a server restart, the first demand loads the stored binding and replay. Starting
+a new conversation deliberately creates a new ACP session and advances the generation.
 
-Hosted clients can send a plain HTTP Chief message without using the local Panels
-CLI:
+The production backend catalog contains exactly `hermes`, `codex`, and `claude`.
+Each Worker type supplies a starting Worker, Model, and Reasoning effort; a new Ticket
+copies that trio once and then owns it. During pristine Kickoff, those controls appear
+only inside the Kickoff approval area. Hermes offers Model and no Reasoning. Codex and
+Claude Code offer Model plus the Reasoning choices supported by that model. The first
+durable binding, or moving beyond Kickoff, freezes the Ticket's launch setup and removes
+the controls. Gemini is not registered.
 
-```
-curl -X POST https://<tailscale-serve-name>/api/messages/chief \
-  -H 'Content-Type: application/json' \
-  --data '{"text":"What should I look at next?"}'
-```
+For the first unbound session, Panels applies an explicit Model before an explicit
+Reasoning choice, then writes the binding only if the Ticket still owns the setup used
+to prepare that session. The stored model and reasoning remain after binding as the
+historical Kickoff request, not the worker's current settings. A bound load, child
+replacement, compaction recovery, or later New Conversation never reapplies or presents
+them as current. Human prompts and Automatic Employee steps still share the selected
+backend and durable binding.
 
-Python scripts use the same JSON body:
+Claude Code runs one initialize-only preflight when Panels starts. That temporary
+child is closed before startup completes and creates no worker session. Codex is lazy:
+its child starts only on first demand. Actual Ticket and Chief sessions for every
+backend still start or resume through the same registry and binding machinery.
 
-```
-import requests
+## Employee role skills
 
-response = requests.post(
-    "https://<tailscale-serve-name>/api/messages/chief",
-    json={"text": "What should I look at next?"},
-    timeout=30,
-)
-response.raise_for_status()
-turn = response.json()
-```
+Panels keeps one canonical copy of its skills under `skills/`. The repository exposes
+that directory at the backends' native project locations: `.agents/skills` for Codex
+and `.claude/skills` for Claude Code. Hermes startup exposes the same source directories
+under the configured planner Hermes home. These are links, not copied skill files, so
+every installed Panels skill comes from the same source.
 
-The body must be exactly one nonblank string field: `{"text": "..."}`. Panels sends
-that text through the real Chief Hermes session with message mode and returns the
-created chat turn. If a Chief turn is already running, the route returns
-`already_running` with HTTP 409. Browser clients in hosted mode must use the
-configured canonical HTTPS origin; script clients may omit `Origin`.
+A newly created ACP conversation adds its employee role to the first real prompt sent
+through that session. A Ticket adds `panels-worker`; the Chief adds
+`panels-chief-of-staff`. The first prompt may come from the browser or Automatic
+Employee work. Text-only slash commands pass through unchanged and leave the role ready for the
+next ordinary prompt. Later ordinary prompts and a loaded, forked, or replacement child
+do not add the role again. Starting New conversation successfully creates a new session
+and therefore adds the role to that conversation's first ordinary prompt.
 
-_Code paths:_ `src/planner/chat/` (the gateway-backed chat service and state writer),
-`web/src/components/ChatPanel.svelte` and `web/src/components/ChatComposer.svelte`
-(the panel).
+The role line is ACP delivery context, and it is visible in the transcript as a
+\`System message · role\` entry. Panels does not remove or normalize role echoes from
+live updates or replay. A genuine message that happens to equal the role line remains
+visible too. Claude receives the same ordinary ACP prompt behavior as the other
+backends; Panels does not modify Claude's system prompt.
 
-## Slash commands and skills
+Automatic Employee prompts are also visible immediately as \`System message · worker\`.
+The broker publishes the exact prompt admitted to ACP, including any role prefix, at
+prompt start. The browser keeps that typed event in its ordered timeline, so it does
+not require a hard refresh to reveal a programmatic prompt. ACP replay remains the
+source for rebuilding the conversation after reload.
 
-Type a "/" in a ticket's chat and a menu opens listing everything the underlying
-agent system can do: a long catalogue of built-in commands and, in their own section,
-**skills** — short instruction documents that teach a worker a particular job. The
-catalogue is fetched once from the gateway and remembered, so the menu opens
-instantly after the first time.
+## Human and Automatic Employee work share the session
 
-The menu hides commands that do not make sense in a web chat, such as quitting the
-underlying worker. The commands it does show run on the ticket's own worker:
+A human prompt in the Ticket pane and an Automatic Employee step reach the same
+durable ACP session. The automatic path is not a hidden transcript writer. It uses
+`AcpStepGateway`, which submits the real worker prompt through the same hub and broker.
 
-- **Skills run.** Picking a skill runs it straight into that ticket's employee: the
-  worker reads those instructions and acts on them for this ticket.
-- **Display commands render as system lines.** Picking or typing a command such as
-  `/status` executes it and shows the gateway's command output in the chat trace.
+Pending worker context is prepared into that real model prompt before delivery. Its
+exact revisions are acknowledged only after ACP admits the prompt. If admission fails,
+the pending context stays pending for the next legitimate attempt. Writing an event or
+correctness row is never treated as delivery to the model.
 
-Typing exactly `/new` starts a fresh underlying Hermes conversation for that Ticket.
-Panels stores the new durable `employee_session_id`, shows `New session started.` as
-a system line, and sends the next ordinary message through the new session's live
-handle. The visible Panels transcript stays in place. Commands with arguments, such
-as `/new title`, continue through the ordinary command path.
+`employee_step_runs` records only execution ownership and settlement. It contains the
+step id, Ticket id, status, employee session id, error, and timestamps. It contains no
+prompt, reply, transcript, usage, activity, tool data, image, or browser state.
+
+## Compaction
+
+Compaction has a deliberately small Panels surface. The pane shows one content-free
+started boundary and then one content-free completed boundary or exact failure. It
+never displays the backend's compacted context or asks the user to inspect a summary.
+
+Compaction may be automatic or requested through `/compact`. Panels waits up to 300
+seconds to observe its terminal result. It preserves the typed boundary in replay and
+keeps all compacted context private. Reload and restart return to the resulting durable
+session. A genuine protocol, backend, or observation-budget failure remains visible
+with its exact reason.
+
+## Files and previews
+
+Conversation images are inline ACP content, not stored files. Durable Ticket artifacts
+remain under the Ticket file tree and use `/files/tickets/...`. Tool locations and
+message links can still use the shared generic/Ticket preview component. Markdown,
+HTML, image, audio, video, download, and external-link safety remains owned by the
+shared file-preview code.
+
+There is no Day conversation, conversation-file route, or Employee-session-history
+HTTP route. The ACP pane and backend replay are the one conversation view.
+
+## One-way database cutover
+
+Schema version 25 performs the one-time removal of the former Chat/session tables and
+Day conversation field. It preserves only worker-step correctness history in
+`employee_step_runs`, interrupts a row that was running during migration, clears old
+session bindings and Ticket mirrors, and starts later conversation demand fresh.
+Fresh databases contain only the ACP-era schema. This migration is not a compatibility
+mode and no runtime code reads the removed tables.
 
 ## Handoffs
 
-- **The employee runtime** (`employee-runtime.md`) — the live worker the chat talks
-  to, and the role skills it can be handed.
-- **Days** (`days.md`) — the day no longer has its own chat surface; loose capture
-  is a future day/rollover capability, not current UI.
-
-## Deferred
-
-- **Chat is not queued behind an active worker step.** Sending chat or running a
-  command while the worker step is active returns `already_running`; explicit Employee
-  session history remains readable.
+- **The employee runtime** (`employee-runtime.md`) owns discovery, execution, and
+  Employee-step settlement.
+- **Tickets & the gates** (`tickets-and-gates.md`) owns Stage, scope, proposals, and
+  the Ticket session mirror.
+- **The front end** (`frontend.md`) owns the ACP pane and shared preview rendering.
 
 ---
 
-_Last verified: 2026-07-14._
+_Last verified: 2026-07-21 (single ACP conversation with three production backends)._

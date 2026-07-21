@@ -1,0 +1,37 @@
+ACP-05 Send Now post-recovery human boundary focused checks
+Date: 2026-07-20
+
+Red proof
+
+$ .venv/bin/pytest tests/unit/test_conversation_hub.py::test_requested_cancel_recovery_rebinds_two_browsers_same_binding_with_ordered_replay_and_queue -x -vv
+FAILED: TypeError: ConversationHub.commit_requested_cancel_recovery_transition() takes 5 positional arguments but 6 were given
+
+$ .venv/bin/ruff check src/planner/conversation/runtime_ports.py src/planner/conversation/turn_broker.py src/planner/conversation/hub.py tests/unit/test_conversation_turn_broker.py tests/unit/test_conversation_hub.py tests/e2e/test_acp_conversation.py
+All checks passed!
+
+$ .venv/bin/mypy --strict src/planner/conversation/runtime_ports.py src/planner/conversation/turn_broker.py src/planner/conversation/hub.py
+Success: no issues found in 3 source files
+
+$ .venv/bin/pytest -q tests/unit/test_conversation_hub.py tests/unit/test_conversation_turn_broker.py tests/e2e/test_acp_conversation.py
+........................................................................ [ 97%]
+..                                                                       [100%]
+74 passed; existing Starlette TestClient deprecation warning only
+
+$ cd web && node tests/acp-browser-state.test.mjs
+acp-browser-state.test.mjs: all assertions passed
+
+$ cd web && node tests/acp-browser-components.test.mjs
+acp-browser-components.test.mjs: all assertions passed
+
+$ cd web && node tests/acp-browser-conformance.test.mjs
+acp-browser-conformance.test.mjs: all assertions passed
+
+$ cd web && node tests/acp-contracts.test.mjs
+acp-contracts.test.mjs: all assertions passed
+
+$ cd web && npm run check
+> check
+> svelte-check --tsconfig ./tsconfig.json
+svelte-check found 0 errors and 0 warnings
+
+Canonical ./verify was not run. ACP-10 owns the final gate.

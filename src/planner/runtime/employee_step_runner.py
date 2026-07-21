@@ -1,7 +1,7 @@
 """Accept and execute one employee step for a Ticket.
 
 The runner owns prompt construction, the Ticket claim, the worker Hermes session,
-Panels worker Chat state, and settlement. Automatic Employee-step discovery is a
+durable Employee-step correctness state, and settlement. Automatic Employee-step discovery is a
 separate responsibility in
 :mod:`planner.runtime.automatic_employee_step_discovery_loop`.
 """
@@ -15,17 +15,16 @@ from contextlib import closing
 from dataclasses import dataclass
 from time import monotonic as _monotonic
 
-from planner.chat import data as chat_data
-from planner.chat import service as chat_service
 from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic import dates
-from planner.minds.shared_gateway import SharedGateway, SharedGatewayBusy
 from planner.runtime import automatic_employee_step_eligibility
 from planner.runtime.automatic_employee_step_eligibility_wake import (
     AutomaticEmployeeStepEligibilityWake,
 )
+from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
+from planner.runtime.step_gateway import EmployeeStepGatewayBusy, StepGateway
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     EmployeeSessionIdTransition,
@@ -41,11 +40,11 @@ _log = logging.getLogger(__name__)
 _REVISION_GUIDANCE_PREFIX = "The user rejected your proposal and provided the following guidance:"
 _RESTART_RECOVERY_MESSAGE = (
     "Panels restarted while this ticket Employee turn was running. "
-    "Resume the existing Hermes conversation for this ticket. "
+    "Resume the existing employee conversation for this ticket. "
     "First inspect the canonical ticket and the existing conversation. "
     "Then continue unfinished work and avoid repeating completed actions. "
     "Then file the currently requested proposal through the normal Panels worker tools. "
-    "And if you already filed that proposal, only say so in Chat."
+    "And if you already filed that proposal, only say so in the conversation."
 )
 
 
@@ -54,10 +53,9 @@ class _WorkerSessionClaimLost(Exception):
 
 
 @dataclass(frozen=True)
-class _MatchedEmployeeSessionTurnSnapshot:
+class _MatchedEmployeeStepSnapshot:
     employee_session_id: str
     ticket_id: str
-    turn_id: str
 
 
 def _next_step_prompt(
@@ -135,7 +133,7 @@ class EmployeeStepRunner:
         db_path: str,
         clock: Clock,
         *,
-        gateway: SharedGateway,
+        gateway: StepGateway,
         automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
         boundary_hour: int,
         busy_timeout_ms: int = 5000,
@@ -259,7 +257,8 @@ class EmployeeStepRunner:
             self._stopping = True
             active_ticket_ids = tuple(sorted(self._active_ticket_ids)) if first_stop else ()
 
-        matched_session_turns: list[_MatchedEmployeeSessionTurnSnapshot] = []
+        matched_steps: list[_MatchedEmployeeStepSnapshot] = []
+        repository = SqliteEmployeeStepRepository()
         for ticket_id in active_ticket_ids:
             try:
                 with closing(
@@ -275,24 +274,15 @@ class EmployeeStepRunner:
                         employee_session_id = ticket.employee_session_id
                         if not employee_session_id:
                             continue
-                        active_turn = chat_data.read_active_turn(conn, ticket_id)
+                        running_step = repository.read_running(conn, ticket_id)
                         if (
-                            active_turn is None
-                            or active_turn.origin != "worker"
-                            or active_turn.mode != "worker_step"
+                            running_step is not None
+                            and running_step.employee_session_id == employee_session_id
                         ):
-                            continue
-                        turn_session_id = chat_data.read_running_turn_session_key(
-                            conn,
-                            active_turn.id,
-                            entity_id=ticket_id,
-                        )
-                        if turn_session_id == employee_session_id:
-                            matched_session_turns.append(
-                                _MatchedEmployeeSessionTurnSnapshot(
+                            matched_steps.append(
+                                _MatchedEmployeeStepSnapshot(
                                     employee_session_id=employee_session_id,
                                     ticket_id=ticket_id,
-                                    turn_id=active_turn.id,
                                 )
                             )
                     finally:
@@ -302,19 +292,19 @@ class EmployeeStepRunner:
                     "employee shutdown snapshot could not acquire SQLite (ticket=%s)",
                     ticket_id,
                 )
-        matched_session_turn_snapshot = tuple(matched_session_turns)
+        matched_step_snapshot = tuple(matched_steps)
 
-        for matched_session_turn in matched_session_turn_snapshot:
+        for matched_step in matched_step_snapshot:
             try:
                 self._gateway.interrupt(
-                    matched_session_turn.employee_session_id,
-                    matched_session_turn.ticket_id,
+                    matched_step.employee_session_id,
+                    matched_step.ticket_id,
                     deadline=deadline,
                 )
             except Exception:
                 _log.exception(
                     "employee session interrupt failed during shutdown (ticket=%s)",
-                    matched_session_turn.ticket_id,
+                    matched_step.ticket_id,
                 )
 
         with self._active_cond:
@@ -324,37 +314,6 @@ class EmployeeStepRunner:
                 self._active_cond.wait_for(
                     lambda: self._active == 0,
                     timeout=max(0.0, deadline - _monotonic()),
-                )
-            active_ticket_ids_after_drain = frozenset(self._active_ticket_ids)
-
-        turns_to_settle = tuple(
-            (matched_session_turn.ticket_id, matched_session_turn.turn_id)
-            for matched_session_turn in matched_session_turn_snapshot
-            if matched_session_turn.ticket_id in active_ticket_ids_after_drain
-        )
-        for ticket_id, turn_id in turns_to_settle:
-            try:
-                with closing(
-                    connect(
-                        self._db_path,
-                        self._remaining_shutdown_busy_timeout_ms(deadline),
-                    )
-                ) as conn:
-                    self._apply_remaining_shutdown_busy_timeout(conn, deadline)
-                    chat_data.settle_chat_turn(
-                        conn,
-                        turn_id,
-                        entity_id=ticket_id,
-                        status="interrupted",
-                        reply_text="",
-                        output_role="assistant",
-                        error=None,
-                        now=self._clock.now_unix(),
-                    )
-            except sqlite3.OperationalError:
-                _log.exception(
-                    "employee shutdown settlement could not acquire SQLite (ticket=%s)",
-                    ticket_id,
                 )
 
     def _is_stopping(self) -> bool:
@@ -423,6 +382,7 @@ class EmployeeStepRunner:
         restart_recovery: bool,
     ) -> bool:
         conn = connect(self._db_path, self._busy_timeout_ms)
+        repository = SqliteEmployeeStepRepository()
         try:
             now = self._clock.now_unix()
             if restart_recovery:
@@ -431,21 +391,13 @@ class EmployeeStepRunner:
                     return False
                 if claimed.employee_session_id is None:
                     error = "restart recovery has no existing Employee session"
-                    stale_worker_turn = chat_data.read_active_turn(conn, ticket_id)
-                    if (
-                        stale_worker_turn is not None
-                        and stale_worker_turn.origin == "worker"
-                        and stale_worker_turn.mode == "worker_step"
-                    ):
-                        chat_data.settle_chat_turn(
+                    running = repository.read_running(conn, ticket_id)
+                    if running is not None:
+                        repository.settle(
                             conn,
-                            stale_worker_turn.id,
-                            entity_id=ticket_id,
+                            running.employee_step_id,
+                            ticket_id=ticket_id,
                             status="errored",
-                            reply_text="",
-                            output_role="system"
-                            if stale_worker_turn.output_role == "system"
-                            else "assistant",
                             error=error,
                             now=now,
                         )
@@ -457,7 +409,6 @@ class EmployeeStepRunner:
                     )
                     return True
                 prompt = _RESTART_RECOVERY_MESSAGE
-                show_prompt_in_chat = False
                 require_existing_session = True
             elif revision_guidance is None:
                 automatic_claim = tickets_data.claim_automatic_employee_step(
@@ -485,7 +436,6 @@ class EmployeeStepRunner:
                     claimed,
                     worker_type_definition=worker_type_definition,
                 )
-                show_prompt_in_chat = True
                 require_existing_session = False
             else:
                 claimed = tickets_data.read_ticket(conn, ticket_id)
@@ -500,30 +450,29 @@ class EmployeeStepRunner:
                     )
                     return True
                 prompt = f"{_REVISION_GUIDANCE_PREFIX}\n\n{revision_guidance}"
-                show_prompt_in_chat = False
                 require_existing_session = True
 
             current_employee_session_id = claimed.employee_session_id
             if restart_recovery:
-                worker_turn = chat_data.roll_running_turn_for_recovery(
-                    conn,
-                    ticket_id,
-                    origin="worker",
-                    mode="worker_step",
-                    visible_role="system",
-                    visible_text=prompt,
-                    output_role="assistant",
-                    phase="thinking",
-                    activity_label="Restarting Employee",
-                    now=now,
-                    expected_session_key=claimed.employee_session_id,
-                )
-                if worker_turn is None:
+                assert claimed.employee_session_id is not None
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    employee_step = repository.replace_running_for_restart(
+                        conn,
+                        ticket_id,
+                        expected_employee_session_id=claimed.employee_session_id,
+                        now=now,
+                    )
+                    conn.execute("COMMIT")
+                except BaseException:
+                    conn.execute("ROLLBACK")
+                    raise
+                if employee_step is None:
                     tickets_data.mark_run_errored_if_still_running_step(
                         conn,
                         ticket_id,
                         error=(
-                            "restart recovery stale worker turn Employee session id "
+                            "restart recovery stale Employee-step session id "
                             "does not match the stored Employee session"
                         ),
                         now=now,
@@ -531,57 +480,61 @@ class EmployeeStepRunner:
                     return True
             else:
                 try:
-                    worker_turn = chat_service.start_worker_turn(
-                        conn,
-                        ticket_id,
-                        visible_text=prompt if show_prompt_in_chat else "",
-                        now=now,
-                    )
-                except PlannerError as exc:
-                    if exc.code is ErrorCode.already_running:
-                        tickets_data.mark_run_errored_if_still_running_step(
+                    conn.execute("BEGIN IMMEDIATE")
+                    try:
+                        employee_step = repository.start(
                             conn,
                             ticket_id,
-                            error="employee worker turn collided with an active chat turn",
-                            now=self._clock.now_unix(),
+                            now=now,
+                            employee_session_id=claimed.employee_session_id,
                         )
-                        return True
-                    raise
+                        conn.execute("COMMIT")
+                    except BaseException:
+                        conn.execute("ROLLBACK")
+                        raise
+                except sqlite3.IntegrityError:
+                    tickets_data.mark_run_errored_if_still_running_step(
+                        conn,
+                        ticket_id,
+                        error="employee step collided with an active Employee step",
+                        now=self._clock.now_unix(),
+                    )
+                    return True
 
             def persist_employee_session_id(candidate_employee_session_id: str) -> None:
                 nonlocal current_employee_session_id
                 event_now = self._clock.now_unix()
-                updated = tickets_data.claim_running_step_employee_session_id(
-                    conn,
-                    ticket_id,
-                    transition=EmployeeSessionIdTransition(
-                        expected_employee_session_id=current_employee_session_id,
-                        candidate_employee_session_id=candidate_employee_session_id,
-                    ),
-                    now=event_now,
-                )
-                if (
-                    updated.ticket_status is not TicketStatus.agent_running_step
-                    or updated.employee_session_id != candidate_employee_session_id
-                ):
-                    raise _WorkerSessionClaimLost
-                current_employee_session_id = updated.employee_session_id
-                chat_service.attach_worker_session_key(
-                    conn,
-                    ticket_id,
-                    worker_turn.id,
-                    candidate_employee_session_id,
-                    event_now,
-                )
-
-            def observe_gateway_event(event: dict[str, object]) -> None:
-                chat_service.observe_worker_gateway_event(
-                    conn,
-                    ticket_id,
-                    worker_turn.id,
-                    event,
-                    self._clock.now_unix(),
-                )
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    current_ticket = tickets_data.read_ticket(conn, ticket_id)
+                    if current_ticket.ticket_status is not TicketStatus.agent_running_step:
+                        raise _WorkerSessionClaimLost
+                    effective_session_id = (
+                        tickets_data.write_employee_session_id_in_transaction(
+                            conn,
+                            ticket_id,
+                            transition=EmployeeSessionIdTransition(
+                                expected_employee_session_id=current_employee_session_id,
+                                candidate_employee_session_id=candidate_employee_session_id,
+                            ),
+                            force_fresh_employee_session=False,
+                            now=event_now,
+                        )
+                    )
+                    bound = repository.bind_session(
+                        conn,
+                        employee_step.employee_step_id,
+                        ticket_id=ticket_id,
+                        employee_session_id=candidate_employee_session_id,
+                        now=event_now,
+                    )
+                    if effective_session_id != candidate_employee_session_id or bound is None:
+                        raise _WorkerSessionClaimLost
+                    conn.execute("COMMIT")
+                except BaseException:
+                    conn.execute("ROLLBACK")
+                    raise
+                current_employee_session_id = candidate_employee_session_id
 
             def finish_running_step(candidate_employee_session_id: str | None) -> None:
                 if candidate_employee_session_id is None:
@@ -623,8 +576,7 @@ class EmployeeStepRunner:
                         claimed.employee_session_id,
                         ticket_id,
                         prompt,
-                        observe_gateway_event,
-                        on_session_key=persist_employee_session_id,
+                        on_employee_session_id=persist_employee_session_id,
                         require_existing_session=True,
                     )
                 else:
@@ -632,18 +584,20 @@ class EmployeeStepRunner:
                         claimed.employee_session_id,
                         ticket_id,
                         prompt,
-                        observe_gateway_event,
-                        on_session_key=persist_employee_session_id,
+                        on_employee_session_id=persist_employee_session_id,
                     )
-            except SharedGatewayBusy as exc:
-                chat_service.fail_worker_turn(
+            except EmployeeStepGatewayBusy as exc:
+                repository.settle(
                     conn,
-                    ticket_id,
-                    worker_turn.id,
-                    "session busy",
-                    self._clock.now_unix(),
+                    employee_step.employee_step_id,
+                    ticket_id=ticket_id,
+                    status="interrupted",
+                    error="session busy",
+                    now=self._clock.now_unix(),
                 )
-                busy_employee_session_id = exc.session_key or current_employee_session_id
+                busy_employee_session_id = (
+                    exc.employee_session_id or current_employee_session_id
+                )
                 if busy_employee_session_id is None:
                     tickets_data.release_run_claim_to_empty_if_still_running_step(
                         conn,
@@ -666,12 +620,13 @@ class EmployeeStepRunner:
                     "employee runner skipped an unowned worker session (ticket=%s)",
                     ticket_id,
                 )
-                chat_service.fail_worker_turn(
+                repository.settle(
                     conn,
-                    ticket_id,
-                    worker_turn.id,
-                    "worker session ownership was lost",
-                    self._clock.now_unix(),
+                    employee_step.employee_step_id,
+                    ticket_id=ticket_id,
+                    status="errored",
+                    error="worker session ownership was lost",
+                    now=self._clock.now_unix(),
                 )
                 finish_running_step(current_employee_session_id)
                 return True
@@ -679,76 +634,58 @@ class EmployeeStepRunner:
                 _log.exception("employee step crashed (ticket=%s)", ticket_id)
                 error = f"employee step crashed: {exc}"
                 if self._is_stopping():
-                    chat_service.finish_worker_turn(
-                        conn,
-                        ticket_id,
-                        worker_turn.id,
-                        "",
-                        "interrupted",
-                        self._clock.now_unix(),
-                    )
                     return False
-                chat_service.fail_worker_turn(
+                repository.settle(
                     conn,
-                    ticket_id,
-                    worker_turn.id,
-                    error,
-                    self._clock.now_unix(),
+                    employee_step.employee_step_id,
+                    ticket_id=ticket_id,
+                    status="errored",
+                    error=error,
+                    now=self._clock.now_unix(),
                 )
                 mark_errored(error, current_employee_session_id)
                 return True
 
-            result_employee_session_id = result.session_key or current_employee_session_id
+            result_employee_session_id = (
+                result.employee_session_id or current_employee_session_id
+            )
+            if self._is_stopping():
+                return False
             if result.status == "complete":
-                settled_worker_turn = chat_data.finish_turn(
+                settled_employee_step = repository.settle(
                     conn,
-                    worker_turn.id,
-                    entity_id=ticket_id,
-                    reply_text=result.text,
-                    output_role="assistant",
+                    employee_step.employee_step_id,
+                    ticket_id=ticket_id,
                     status="complete",
+                    error=None,
                     now=self._clock.now_unix(),
                 )
-                if settled_worker_turn is None or settled_worker_turn.status != "complete":
-                    if self._is_stopping():
-                        return False
+                if settled_employee_step is None:
                     mark_errored(
-                        (settled_worker_turn.error if settled_worker_turn is not None else None)
-                        or "run interrupted",
+                        "run interrupted",
                         result_employee_session_id,
                     )
                     return True
                 finish_running_step(result_employee_session_id)
             elif result.status == "interrupted":
-                chat_service.finish_worker_turn(
+                repository.settle(
                     conn,
-                    ticket_id,
-                    worker_turn.id,
-                    result.text,
-                    "interrupted",
-                    self._clock.now_unix(),
+                    employee_step.employee_step_id,
+                    ticket_id=ticket_id,
+                    status="interrupted",
+                    error=None,
+                    now=self._clock.now_unix(),
                 )
-                if self._is_stopping():
-                    return False
                 mark_errored("run interrupted", result_employee_session_id)
             else:
                 error = result.error or "gateway run failed"
-                if self._is_stopping():
-                    chat_service.finish_worker_turn(
-                        conn,
-                        ticket_id,
-                        worker_turn.id,
-                        result.text,
-                        "interrupted",
-                        self._clock.now_unix(),
-                    )
-                    return False
-                chat_service.fail_worker_turn(
+                repository.settle(
                     conn,
-                    ticket_id,
-                    worker_turn.id,
-                    error,
-                    self._clock.now_unix(),
+                    employee_step.employee_step_id,
+                    ticket_id=ticket_id,
+                    status="errored",
+                    error=error,
+                    now=self._clock.now_unix(),
                 )
                 mark_errored(error, result_employee_session_id)
             return True

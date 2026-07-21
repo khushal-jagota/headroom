@@ -1,16 +1,13 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { relayChief, retryRelayChiefMeta } from "../lib/capabilities";
   import { resourceCatalogue } from "../lib/resourceCatalogue";
   import { labelize } from "../lib/ui";
   import type { FieldStageVisualState } from "../lib/ui";
-  import { lifecycleFor, type WorkerTypesResponse } from "../lib/lifecycle";
+  import type { WorkerTypesResponse } from "../lib/lifecycle";
   import Button from "../components/Button.svelte";
-  import ChatPanel from "../components/ChatPanel.svelte";
-  import ChiefNeutralPane from "../components/ChiefNeutralPane.svelte";
+  import AcpConversation from "../components/AcpConversation.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ResourceState from "../components/ResourceState.svelte";
-  import SectionHeading from "../components/SectionHeading.svelte";
   import StageMark from "../components/StageMark.svelte";
   import TicketRoute from "./TicketRoute.svelte";
 
@@ -19,17 +16,6 @@
   const chiefOfStaffEntityId = "agent_panels_chief_of_staff";
   const noProjectKey = "__no_project__";
   const board = resourceCatalogue.board();
-  // The legacy gateway-status resource is meaningful only on the legacy (disabled) path — a
-  // Chief-addressed status call falls through EntityRoutingGateway to the worker gateway. Create
-  // it lazily so the neutral/unknown/error branches never subscribe it (mirrors ChiefOfStaffRoute).
-  let chiefChatStatus: ReturnType<typeof resourceCatalogue.chatGatewayStatus> | null = null;
-
-  function legacyChiefChatStatus(): ReturnType<typeof resourceCatalogue.chatGatewayStatus> {
-    if (chiefChatStatus === null) {
-      chiefChatStatus = resourceCatalogue.chatGatewayStatus(chiefOfStaffEntityId);
-    }
-    return chiefChatStatus;
-  }
   const manifest = resourceCatalogue.workerTypeManifests();
   let columns = $derived(board.data?.columns || []);
   let allCards = $derived(columns.flatMap((column) => column.cards));
@@ -60,24 +46,16 @@
     if (stageState === "current-waiting" && card.ticket_status === "user_takeover") {
       return "user-takeover";
     }
-    if (stageState === "current-paired-work") {
-      return "paired-work";
-    }
+    if (stageState === "current-paired-work") return "paired-work";
     return null;
   }
 
-  // The board rail marks only the CURRENT stage, driven from the fields t_tt04a puts
-  // on each card (gating_field, is_done, ticket_status, has_pending_proposal). The
-  // manifest resource supplies only the registered worker-type label; it never drives
-  // the mark. The current stage is the card's own gating field (null for a done/dropped
-  // card → the "closeout" cosmetic fallback the e2e pins).
+  // The stage heading carries position; the existing mark still carries the ticket's
+  // current condition (waiting, running, needs approval, paired, errored, or complete).
   function currentStageField(card: Record<string, any>): string {
     return card.gating_field || "closeout";
   }
 
-  // The current stage's visual state: for the current gating field, ticketStageVisualState
-  // reduces to "completed" when done, else the status/proposal classification — the fieldSlot
-  // is never "passed" at its own gating state, so no manifest lookup is needed here.
   function currentStageState(card: Record<string, any>): FieldStageVisualState {
     if (card.is_done) return "completed";
     if (card.ticket_status === "agent_running_step") return "current-running";
@@ -121,11 +99,29 @@
     return index !== undefined && index >= 0 ? index : Number.MAX_SAFE_INTEGER;
   }
 
+  type StageSection = {
+    key: string;
+    label: string;
+    cards: Record<string, any>[];
+  };
+
+  type WorkerSection = {
+    key: string;
+    label: string;
+    stages: StageSection[];
+  };
+
+  type ProjectSection = {
+    key: string;
+    label: string;
+    workers: WorkerSection[];
+  };
+
   function buildProjectSections(
     sourceColumns: Array<{ stage: string; cards: Record<string, any>[] }>,
     shouldHideDone: boolean,
     workerTypes: WorkerTypesResponse | undefined
-  ): Array<{ key: string; label: string; cards: Record<string, any>[] }> {
+  ): ProjectSection[] {
     const groups = new Map<string, { key: string; label: string; cards: Record<string, any>[] }>();
     let sequence = 0;
 
@@ -144,30 +140,64 @@
       }
     }
 
-    for (const group of groups.values()) {
-      group.cards.sort((left, right) => {
-        const workerTypeDelta =
-          workerTypeSortValue(workerTypes, left) - workerTypeSortValue(workerTypes, right);
-        if (workerTypeDelta) return workerTypeDelta;
-
-        const stageDelta = stageSortValue(workerTypes, left) - stageSortValue(workerTypes, right);
-        if (stageDelta) return stageDelta;
-
-        const activityDelta = activitySortValue(right) - activitySortValue(left);
-        return activityDelta || left.boardSequence - right.boardSequence;
-      });
-    }
-
-    return Array.from(groups.values()).sort((left, right) => {
+    const sortedProjects = Array.from(groups.values()).sort((left, right) => {
       if (left.key === noProjectKey) return 1;
       if (right.key === noProjectKey) return -1;
       return left.label.localeCompare(right.label, undefined, { sensitivity: "base" });
+    });
+
+    return sortedProjects.map((project) => {
+      const cardsByWorker = new Map<string, Record<string, any>[]>();
+      for (const card of project.cards) {
+        if (!cardsByWorker.has(card.worker_type)) cardsByWorker.set(card.worker_type, []);
+        cardsByWorker.get(card.worker_type)?.push(card);
+      }
+
+      const workers = Array.from(cardsByWorker.entries())
+        .sort(([leftType, leftCards], [rightType, rightCards]) => {
+          const manifestDelta =
+            workerTypeSortValue(workerTypes, leftCards[0]) -
+            workerTypeSortValue(workerTypes, rightCards[0]);
+          return manifestDelta || leftType.localeCompare(rightType);
+        })
+        .map(([workerType, cards]) => {
+          const cardsByStage = new Map<string, Record<string, any>[]>();
+          for (const card of cards) {
+            if (!cardsByStage.has(card.stage)) cardsByStage.set(card.stage, []);
+            cardsByStage.get(card.stage)?.push(card);
+          }
+
+          const stages = Array.from(cardsByStage.entries())
+            .sort(([leftStage, leftCards], [rightStage, rightCards]) => {
+              const manifestDelta =
+                stageSortValue(workerTypes, leftCards[0]) - stageSortValue(workerTypes, rightCards[0]);
+              return manifestDelta || leftStage.localeCompare(rightStage);
+            })
+            .map(([stage, stageCards]) => ({
+              key: stage,
+              label: currentStageLabel(stageCards[0]),
+              cards: stageCards.sort((left, right) => {
+                const activityDelta = activitySortValue(right) - activitySortValue(left);
+                return activityDelta || left.boardSequence - right.boardSequence;
+              })
+            }));
+
+          const manifestWorker = workerTypes?.worker_types.find(
+            (candidate) => candidate.worker_type === workerType
+          );
+          return {
+            key: workerType,
+            label: manifestWorker?.label ?? labelize(workerType),
+            stages
+          };
+        });
+
+      return { key: project.key, label: project.label, workers };
     });
   }
 
   onDestroy(() => {
     board.dispose();
-    chiefChatStatus?.dispose();
     manifest.dispose();
   });
 </script>
@@ -205,62 +235,76 @@
             </label>
           </div>
 
-          {#each projectSections as section}
+          {#each projectSections as project}
             <Disclosure
-              variant="project"
+              variant="workspace-project"
               class="board-workspace-index-section"
-              chevron="none"
+              chevron="trailing"
               defaultOpen={true}
               data-project-section=""
-              data-project-key={section.key}
+              data-project-key={project.key}
             >
               {#snippet summary()}
-                <span class="board-workspace-index-heading-main">
-                  <span class="board-workspace-index-chevron">▸</span>
-                  <SectionHeading label={section.label} />
-                </span>
-                <span class="board-workspace-index-count">{section.cards.length}</span>
+                <span class="board-workspace-project-label">{project.label}</span>
               {/snippet}
 
               <div class="board-workspace-index-items">
-                {#each section.cards as card}
-                  {@const stageField = currentStageField(card)}
-                  {@const stageState = currentStageState(card)}
-                  {@const marker = stageMarker(card, stageState)}
-                  {@const cardLifecycle = lifecycleFor(manifest.data, card.worker_type)}
-                  <button
-                    type="button"
-                    class="list-row list-row--board"
-                    class:active={rightPaneMode === "ticket" && selectedCard?.id === card.id}
-                    onclick={() => selectCard(card.id)}
-                    data-card=""
-                    data-ticket-id={card.id}
-                    data-ticket-stage={card.stage}
-                    data-ticket-status={card.ticket_status}
+                {#each project.workers as worker}
+                  <Disclosure
+                    variant="workspace-worker"
+                    chevron="trailing"
+                    defaultOpen={true}
+                    data-worker-section=""
+                    data-worker-type={worker.key}
                   >
-                    <span class="board-workspace-row-main">
-                      <span class="list-row-title">{card.title}</span>
-                      <span class="board-workspace-row-byline">
-                        <span class="board-workspace-row-metadata">
-                          <span class="board-workspace-row-type">
-                            {cardLifecycle?.workerTypeLabel ?? labelize(card.worker_type)}
-                          </span>
-                          <span class="board-workspace-row-separator" aria-hidden="true"> · </span>
-                          <span class="board-workspace-row-stage">{currentStageLabel(card)}</span>
-                        </span>
-                        <span class="board-workspace-stage-rail" aria-label="Ticket current stage">
-                          <StageMark
-                            state={stageState}
-                            class="board-workspace-stage-mark"
-                            data-stage-field={stageField}
-                            data-stage-state={stageState}
-                            data-marker={marker || undefined}
-                            aria-label={`${stageField} ${stageState.replace(/-/g, " ")}`}
-                          />
-                        </span>
-                      </span>
-                    </span>
-                  </button>
+                    {#snippet summary()}
+                      <span class="board-workspace-worker-label">{worker.label}</span>
+                    {/snippet}
+
+                    <div class="board-workspace-worker-stages">
+                      {#each worker.stages as stage}
+                        <Disclosure
+                          variant="workspace-stage"
+                          chevron="trailing"
+                          defaultOpen={true}
+                          data-stage-section=""
+                          data-stage-key={stage.key}
+                        >
+                          {#snippet summary()}
+                            <span class="board-workspace-stage-label">{stage.label}</span>
+                          {/snippet}
+
+                          <div class="board-workspace-stage-tickets">
+                            {#each stage.cards as card}
+                              {@const stageField = currentStageField(card)}
+                              {@const stageState = currentStageState(card)}
+                              {@const marker = stageMarker(card, stageState)}
+                              <button
+                                type="button"
+                                class="list-row list-row--board"
+                                class:active={rightPaneMode === "ticket" && selectedCard?.id === card.id}
+                                onclick={() => selectCard(card.id)}
+                                data-card=""
+                                data-ticket-id={card.id}
+                                data-ticket-stage={card.stage}
+                                data-ticket-status={card.ticket_status}
+                              >
+                                <span class="list-row-title">{card.title}</span>
+                                <StageMark
+                                  state={stageState}
+                                  class="board-workspace-stage-mark"
+                                  data-stage-field={stageField}
+                                  data-stage-state={stageState}
+                                  data-marker={marker || undefined}
+                                  aria-label={`${stageField} ${stageState.replace(/-/g, " ")}`}
+                                />
+                              </button>
+                            {/each}
+                          </div>
+                        </Disclosure>
+                      {/each}
+                    </div>
+                  </Disclosure>
                 {/each}
               </div>
             </Disclosure>
@@ -274,29 +318,10 @@
         >
           {#if rightPaneMode === "chief"}
             <div class="board-workspace-desk-inner">
-              {#if $relayChief === "enabled"}
-                <ChiefNeutralPane entityId={chiefOfStaffEntityId} label="Chief of Staff" />
-              {:else if $relayChief === "disabled"}
-                {@const status = legacyChiefChatStatus()}
-                <ChatPanel
-                  entityId={chiefOfStaffEntityId}
-                  available={status.data?.available ?? true}
-                  label="Chief of Staff"
-                />
-              {:else if $relayChief === "error"}
-                <div class="chief-chat-placeholder" data-chief-meta-error>
-                  <p>Could not load Chief of Staff.</p>
-                  <button
-                    type="button"
-                    data-chief-meta-retry
-                    onclick={() => void retryRelayChiefMeta()}
-                  >
-                    Retry
-                  </button>
-                </div>
-              {:else}
-                <div class="chief-chat-placeholder" data-chief-meta-loading></div>
-              {/if}
+              <AcpConversation
+                employeeId={chiefOfStaffEntityId}
+                employeeLabel="Chief of Staff"
+              />
             </div>
           {:else if selectedCard}
             {#key selectedCard.id}
