@@ -6,14 +6,15 @@ bottom; the blow-by-blow is git's.
 
 ## Current work cycle (2026-07-21): Hide completed chat task lists closeout
 
-Ticket `t_3udvypru` is integrating `ticket/t_3udvypru-hide-completed-task-lists` with current
-`main` at `83f2fbb`. The task strip keeps its existing active-turn gate but additionally requires
-at least one pending or in-progress task, so a stored all-completed plan cannot reappear during a
-later turn. The current merge preserves newer environment and GFM work and rebuilds the combined
-frontend bundle from merged source. The prospective merged tree passes the mounted-browser regression
-and canonical `./verify`: Ruff, strict Mypy across 146 source files, 1,234 unit tests, build/frontend
-checks with zero Svelte diagnostics, and 109 e2e tests; final `VERIFY: PASS`. Next: advance `main` and
-rerun the canonical gate there. No blockers.
+Ticket `t_3udvypru` is integrated on `main` at merge commit `2c272c6`. The task strip keeps its
+existing active-turn gate but additionally requires at least one pending or in-progress task, so a
+stored all-completed plan cannot reappear during a later turn. Integration preserved the newer
+environment and GFM work and rebuilt the combined frontend bundle from merged source.
+
+Both the prospective merge and the final `main` tree pass the mounted-browser regression and canonical
+`./verify`: Ruff, strict Mypy across 146 source files, 1,234 unit tests, build/frontend checks with zero
+Svelte diagnostics, and 109 e2e tests; final `VERIFY: PASS`. No restart or deployment was required.
+Next: propose Closeout for approval; no blockers.
 
 ## Current work cycle (2026-07-21): canonical-verify integration repairs
 
