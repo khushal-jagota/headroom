@@ -4,6 +4,19 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-21): proper GFM rendering closeout
+
+Ticket `t_vznnv05w` is integrated on `main`. Every shared Markdown surface now uses the
+Vite-owned unified/remark/rehype GFM pipeline; raw HTML remains inert, unsafe content is
+sanitized, and managed previews, chat images, exact tokens, and direct editing retain their
+existing lifecycle. The old `assets/markdown.js` seam is removed and the live docs and built
+frontend are current.
+
+The stale ticket branch was merged with current ACP and frontend work before landing. The
+settled tree passes the canonical `./verify`: Ruff, strict Mypy, 1,102 unit tests, compile/CSS
+checks, zero Svelte diagnostics, production build and frontend tests, and 108 Playwright E2E
+tests. Final result: `VERIFY: PASS`.
+
 ## Current work cycle (2026-07-21): ACP browser replay and live backpressure
 
 Live diagnosis proved employees continued working and filing proposals while every fresh Chief and
