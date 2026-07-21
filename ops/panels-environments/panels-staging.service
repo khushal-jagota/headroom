@@ -1,0 +1,20 @@
+[Unit]
+Description=Panels staging environment
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=panels-worker
+WorkingDirectory=/opt/panels/staging
+EnvironmentFile=/etc/panels/environments/staging.env
+ExecStart=/usr/bin/env panels environment run --kind staging --environment-root /var/lib/panels/environments --repository-root /opt/panels/staging
+Restart=on-failure
+RestartSec=5
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/panels/environments /opt/panels/staging
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

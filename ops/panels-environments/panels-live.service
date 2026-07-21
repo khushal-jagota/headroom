@@ -1,0 +1,20 @@
+[Unit]
+Description=Panels live environment
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=panels-live
+WorkingDirectory=/opt/panels/live
+EnvironmentFile=/etc/panels/environments/live.env
+ExecStart=/usr/bin/env panels environment run --kind live --environment-root /var/lib/panels/environments --repository-root /opt/panels/live
+Restart=on-failure
+RestartSec=5
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/panels/environments/live /opt/panels/live
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

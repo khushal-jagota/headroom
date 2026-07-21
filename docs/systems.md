@@ -111,6 +111,10 @@ the periodic timer remain canonical.
 
 _Code paths:_ `src/planner/runtime/` and `src/planner/worker_context/`.
 
+Runtime environments let the same foreground server run as separate live, staging, or
+preview instances with distinct databases, managed files, Hermes homes, logs, locks,
+control sockets, ports, and credential references. See [`runtime environments`](environments.md).
+
 ### 5. The ACP Conversation System
 
 `ConversationComposition` is the one production conversation composition. It owns:
