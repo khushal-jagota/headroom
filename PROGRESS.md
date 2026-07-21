@@ -4,20 +4,118 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
-## Current work cycle (2026-07-21): Hide completed chat task lists
+## Current work cycle (2026-07-21): Hide completed chat task lists closeout
 
-Ticket `t_3udvypru` is complete in Implementation on
-`ticket/t_3udvypru-hide-completed-task-lists`. The task strip keeps its existing active-turn gate but
-additionally requires at least one pending or in-progress task, so a stored all-completed plan cannot
-reappear during a later turn. This was small enough to implement directly as one derived UI predicate
-plus mounted-browser regression coverage. The regression first failed on the old predicate, then passed
-with mixed-plan visibility and completed-only hiding across an idle-to-active cycle.
+Ticket `t_3udvypru` is integrating `ticket/t_3udvypru-hide-completed-task-lists` with current
+`main` at `83f2fbb`. The task strip keeps its existing active-turn gate but additionally requires
+at least one pending or in-progress task, so a stored all-completed plan cannot reappear during a
+later turn. The current merge preserves newer environment and GFM work and rebuilds the combined
+frontend bundle from merged source. The prospective merged tree passes the mounted-browser regression
+and canonical `./verify`: Ruff, strict Mypy across 146 source files, 1,234 unit tests, build/frontend
+checks with zero Svelte diagnostics, and 109 e2e tests; final `VERIFY: PASS`. Next: advance `main` and
+rerun the canonical gate there. No blockers.
 
-The first isolated-worktree `./verify` exposed only missing local ACP adapter dependencies; after
-materializing that existing toolchain with no product change, the canonical rerun passed Ruff, strict
-Mypy, 1,102 unit tests, build and frontend checks (including zero Svelte diagnostics and the mounted
-browser regression), and 107 e2e tests: `VERIFY: PASS`. Next: propose Implementation for approval; no
-blockers.
+## Current work cycle (2026-07-21): canonical-verify integration repairs
+
+On current `main`, the environment closeout repairs remove the retired test-mode
+`PLAN_GATEWAY_ADAPTER` assignment and adapt the process-level runtime-isolation e2e to the
+current ACP-era system. That e2e now proves independent project/database and managed-file
+mutations, plus distinct skill-only Hermes homes with no copied session, auth, or config state;
+real unrelated durable sessions remain covered by the official ACP smoke instead.
+
+What just passed:
+
+- Focused Ruff passed for the changed environment, ingress-closure, and process-e2e files.
+- `test_chat_ingress_contract.py` passed: deleted chat routes and legacy tables remain absent.
+- All `test_environment_*.py` unit tests passed.
+- Strict mypy passed across 144 source files, and `git diff --check` passed.
+
+The requested process-level e2e passed after the current-ACP adaptation:
+`pytest tests/e2e/test_environment_runtime_isolation.py -q`.
+
+Next step:
+
+- Final evidence: canonical `./verify` passed Ruff, strict mypy across 146 source files, 1,234
+  unit tests, compile/CSS checks, zero Svelte diagnostics, production frontend build/tests, and
+  109 e2e tests; final `VERIFY: PASS`.
+- The integrated environment closeout is ready to propose. No operator server, VPS services,
+  credentials, or deployment were touched.
+
+## Current work cycle (2026-07-21): isolated runtime review corrections
+
+Starting point is commit `78b2b5a`. This closeout fixes three independent review findings
+without touching the operator server: normal environment launches now resolve the operator's
+Hermes Python selection before HOME is scrubbed and pass it as contract-owned
+`PLAN_HERMES_PYTHON`; the official ACP smoke now checks `end_turn` plus exact agent text; and
+each smoke session is loaded through a fresh ACP child before its id is reported. Smoke-created
+sessions are unrelated durable sessions owned by their isolated Hermes homes and are not deleted.
+
+RED evidence:
+
+- Added a focused CLI/run-env regression for the missing `PLAN_HERMES_PYTHON` contract value.
+- Added official ACP smoke regressions for failed stop reason/output and fresh-child loading.
+- The intended RED commands could not execute in this isolated checkout because its `.venv` and
+  project dependencies are absent and network/package installation is unavailable. Current code
+  inspection confirms each new assertion targets a present defect.
+
+Current hypothesis:
+
+- The minimal fixes are confined to the launch-env contract, official Hermes smoke lifecycle,
+  the focused tests, and live environment documentation. Credential confinement and production
+  Hermes backend defaults remain unchanged.
+
+Next step:
+
+- Run the requested unit, Hermes backend, Ruff, strict mypy, and diff gates when the project
+  environment is available, then record the full evidence and commit.
+
+## Current work cycle (2026-07-21): isolated runtime integration closeout
+
+Ticket `t_2r1u7f39` is cherry-picked onto the current ACP-era main worktree at `28c439e`.
+The integration keeps the current typed ACP conversation and documentation architecture.
+Only stale environment seams are being adapted: deleted `planner.minds` smoke/config modules
+now use the official ACP stack, and removed chat-managed-file storage now uses the current
+database-backed managed-file layout.
+
+Current hypothesis:
+
+- The environment implementation is otherwise isolated and should need only compatibility
+  repairs at those two seams. The opt-in Hermes smoke must still launch distinct real sessions
+  from separate nonproduction Hermes homes.
+
+What just passed:
+
+- Added a focused RED/GREEN unit test for the official ACP Hermes smoke child. The smoke path now
+  passes only parsed credential-file key names into an opt-in Hermes definition extension; the
+  child revalidates those names, retains their values, and still overrides HOME/HERMES settings
+  while scrubbing ambient PLAN/PYTHONPATH/session pollution. Production Hermes inheritance is
+  unchanged.
+- The requested environment unit suite passes with `PYTHONPATH=src`, Ruff passes across `src` and
+  `tests`, strict mypy passes across 144 source files, and `git diff --check` is clean. The
+  environment e2e is intentionally deferred to parent verification after merge because this
+  isolated worktree cannot use the main editable `panels` binary.
+
+Next step:
+
+- Commit the settled integration repair. The parent agent owns the later full `./verify`.
+
+Blockers:
+
+- The process-level environment E2E cannot bind Unix control sockets in this sandbox; the parent
+  environment can rerun it where socket binding is permitted.
+
+## Current work cycle (2026-07-21): proper GFM rendering closeout
+
+Ticket `t_vznnv05w` is integrated on `main`. Every shared Markdown surface now uses the
+Vite-owned unified/remark/rehype GFM pipeline; raw HTML remains inert, unsafe content is
+sanitized, and managed previews, chat images, exact tokens, and direct editing retain their
+existing lifecycle. The old `assets/markdown.js` seam is removed and the live docs and built
+frontend are current.
+
+The stale ticket branch was merged with current ACP and frontend work before landing. The
+settled tree passes the canonical `./verify`: Ruff, strict Mypy, 1,102 unit tests, compile/CSS
+checks, zero Svelte diagnostics, production build and frontend tests, and 108 Playwright E2E
+tests. Final result: `VERIFY: PASS`.
 
 ## Current work cycle (2026-07-21): ACP browser replay and live backpressure
 

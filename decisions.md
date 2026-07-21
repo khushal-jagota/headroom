@@ -21,6 +21,33 @@ exists. They are kept intact here until then so nothing is dropped before it has
 
 ---
 
+## D-isolated-runtime-acp-integration — Keep ACP and adapt environment seams
+
+The isolated-runtime commit is integrated against the current ACP-era main tree. Deleted
+`planner.minds` modules are not restored: the opt-in Hermes smoke launches each non-production
+instance through the official conversation ACP child factory, with the instance Hermes home and
+`HOME` in the scrubbed subprocess environment. Deleted chat-managed-file storage is not restored:
+the fake fixture writes both representative files under the current ticket-managed file root.
+This keeps the environment feature while preserving the current conversation and file ownership
+boundaries.
+
+The official environment Hermes smoke carries credential-file names as CLI metadata into its
+subprocess, never credential values. The child validates those names again and passes them through
+the shared confined-environment builder via an opt-in definition extension. The production Hermes
+catalog continues to use only `HERMES_INHERITED_ENVIRONMENT_NAMES`, preserving its scrubbed-env
+boundary and avoiding any legacy `planner.minds` compatibility layer.
+
+## D-isolated-runtime-review-corrections — Resolve launch inputs before scrubbing and verify durable smoke sessions
+
+The ordinary environment runner explicitly resolves the operator-selected Hermes Python path from
+the caller's ambient mapping before replacing `HOME`, then writes only that value as the
+contract-owned `PLAN_HERMES_PYTHON`; arbitrary ambient `PLAN_*` values remain excluded. The
+official ACP smoke captures typed agent-message text and validates both `end_turn` and the exact
+response requested by its prompt. It closes the first child and loads the returned session id in
+a fresh child against the same isolated home before printing `stored=`, so authentication or
+model refusal cannot masquerade as success and persistence is proven. Smoke sessions are
+unrelated durable sessions belonging to those homes, not temporary sessions to delete.
+
 # Workspace
 
 ## D-workspace-three-level-grouping — Derive hierarchy from the existing board and manifest
@@ -424,6 +451,27 @@ the controlled command is unavailable, the worker reports the operator action an
 This is an operational safety seam, not an OS security sandbox; same-user hostile-process
 isolation remains out of scope.
 
+## D-isolated-runtime-environments — One contract, separate mutable instances, host account for live
+
+`live`, stable `staging`, and disposable `preview-<id>` use the ordinary `panels serve` runtime through
+one repository-owned environment contract. Every instance has its own database, managed files, Hermes
+home/session state, port, control socket, locks, logs, credentials reference, and repository/worktree.
+Staging and previews share only one immutable versioned synthetic fixture definition; each materializes
+its own mutable database and files, and reset rebuilds only that instance. Live never receives fake data
+and is ultimately protected from `panels-worker` by the operator-owned `panels-live` Linux account.
+
+Launch starts from a scrubbed allowlist rather than overlaying the invoking shell. Runtime provider
+credentials come only from the prepared instance's validated file; Tailscale setup authority is not an
+application runtime credential. `panels environment run` requires a caller-provided repository root,
+checks it against the prepared allowed roots, and uses that exact root for exec, so a manifest cannot
+self-authorize a different worktree. Destructive operations are non-live only and hold the same
+port-scoped lifecycle lease through the full mutation.
+
+The repository checks path/resource collisions, fake-state independence, and three concurrent real
+server processes locally. Checked-in systemd/account assets are render/install inputs, not proof that
+Linux ownership exists: VPS enforcement remains false until an operator installs and verifies the
+accounts, permissions, credentials, units, and ingress on the target host.
+
 ## D-automatic-employee-step-eligibility — One complete automatic-start decision
 
 **Automatic Employee-step eligibility** is the whole answer to whether Planner may automatically start a
@@ -681,6 +729,19 @@ interactions, every preview kind, exact Markdown token round-tripping, stable pr
 unrelated Chat updates, recursive-preview limits, and existing safety rules remain fixed. The existing
 `FilePreviewTarget` + `FilePreview` seam and the hardened Markdown renderer keep the responsibilities they
 already earn; read and edit callers stop coordinating their lifecycle themselves.
+
+## D-managed-markdown-gfm-pipeline — Standards parsing replaces the handwritten subset
+
+Panels renders Markdown through one Vite-owned unified/remark/rehype GFM pipeline instead of extending
+the line-oriented classic asset. Raw HTML remains inert because executable HTML belongs in managed HTML
+artifacts; a strict sanitizer admits only renderer-authored semantic output and the exact-link-token
+metadata required by managed previews. `managedMarkdown.ts` remains the sole DOM owner. Once a rendered
+surface is edited, reverse rehype/remark conversion emits canonical GFM while collision-proof temporary
+placeholders preserve atomic preview and rendered-image tokens, definitions for surviving references
+remain attached to their rendered surface, and generated preview descendants stay excluded. Deleted
+references do not leave stale definitions. The migration removes every old global/static renderer seam
+and retains the complete existing editing, retry, paste, Escape, move/delete, teardown,
+recursive-preview, and self-link contract.
 
 ## D-file-preview-contract — Ticket files are managed content behind one preview contract
 

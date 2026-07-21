@@ -777,7 +777,11 @@ def test_editable_markdown_file_links_round_trip_as_raw_markdown(
         "Editable file links",
     )["id"]
     _write_ticket_files(server, ticket_id)
-    body = _links(ticket_id)
+    reference_token = "[Reference notes][notes-ref]"
+    reference_definition = (
+        f"[notes-ref]: /files/tickets/{ticket_id}/notes/space%20name.md \"Reference title\""
+    )
+    body = f"{_links(ticket_id)}\n\n{reference_token}\n\n{reference_definition}"
     fields = {
         "success": {"value": body, "proposal": None, "user_note": None},
         "approach": {"value": None, "proposal": None, "user_note": None},
@@ -828,7 +832,10 @@ def test_editable_markdown_file_links_round_trip_as_raw_markdown(
     stored_body = _wait_for_field_text(api, server, ticket_id, "success", edited_text)
     for label, href in _expected_hrefs(ticket_id).items():
         assert f"[{label}]({href})" in stored_body
-    assert stored_body.rstrip().endswith(edited_text)
+    assert reference_token in stored_body
+    assert reference_definition in stored_body
+    assert stored_body.rstrip().endswith(reference_definition)
+    assert edited_text in stored_body
     assert "data-file-preview" not in stored_body
     assert "<iframe" not in stored_body
     assert "<video" not in stored_body

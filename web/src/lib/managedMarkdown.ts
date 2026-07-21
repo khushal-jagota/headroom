@@ -1,6 +1,7 @@
 import { mount, unmount } from "svelte";
 import FilePreview from "../components/FilePreview.svelte";
 import { targetFromHref } from "./filePreview";
+import { renderMarkdownToElement, serializeMarkdownDomToSource } from "./markdownPipeline";
 
 export type ReadOnlyManagedMarkdownInput = Readonly<{
   source: unknown;
@@ -124,20 +125,32 @@ export function createManagedMarkdownSurface(
     depth: number,
     visited: readonly string[]
   ): void {
-    for (const anchor of Array.from(root.querySelectorAll("a[href]"))) {
-      const href = anchor.getAttribute("href");
+    for (const renderedTarget of Array.from(root.querySelectorAll("a[href], img[src]"))) {
+      if (!root.contains(renderedTarget)) continue;
+      const isImage = renderedTarget.tagName === "IMG";
+      const href = renderedTarget.getAttribute(isImage ? "src" : "href");
       if (!href) continue;
-      const sourceToken = anchor.getAttribute("data-markdown-source-token");
-      const target = targetFromHref(href, anchor.textContent || href);
+      const sourceToken = renderedTarget.getAttribute("data-markdown-source-token");
+      const referenceIdentifier = renderedTarget.getAttribute(
+        "data-markdown-reference-identifier"
+      );
+      const label = isImage
+        ? renderedTarget.getAttribute("alt") || href
+        : renderedTarget.textContent || href;
+      const target = targetFromHref(href, label);
+      if (isImage && target.kind === "external-link") continue;
       const slot = document.createElement("span");
       slot.className = "file-preview-slot";
       if (mode === "editable") {
         slot.contentEditable = "false";
         slot.dataset.markdownAtomicSlot = "true";
         if (sourceToken) slot.dataset.markdownSourceToken = sourceToken;
-        anchor.replaceWith(caretGuard("before"), slot, caretGuard("after"));
+        if (referenceIdentifier) {
+          slot.dataset.markdownReferenceIdentifier = referenceIdentifier;
+        }
+        renderedTarget.replaceWith(caretGuard("before"), slot, caretGuard("after"));
       } else {
-        anchor.replaceWith(slot);
+        renderedTarget.replaceWith(slot);
       }
       const preview: MountedPreview = {
         slot,
@@ -171,23 +184,14 @@ export function createManagedMarkdownSurface(
       return;
     }
 
-    const rendered = window.Planner?.markdown?.render?.(source);
-    if (rendered) {
-      rendered.classList.add("markdown-block");
-      mountRenderedPreviews(
-        rendered,
-        presentation?.depth || 0,
-        presentation?.visited || []
-      );
-      host.appendChild(rendered);
-    } else if (mode === "read-only") {
-      const fallback = document.createElement("div");
-      fallback.className = "markdown markdown-block";
-      fallback.textContent = source;
-      host.appendChild(fallback);
-    } else {
-      host.textContent = source;
-    }
+    const rendered = renderMarkdownToElement(source);
+    rendered.classList.add("markdown-block");
+    mountRenderedPreviews(
+      rendered,
+      presentation?.depth || 0,
+      presentation?.visited || []
+    );
+    host.appendChild(rendered);
 
     if (mode === "editable") {
       setEmptyState(source);
@@ -242,14 +246,14 @@ export function createManagedMarkdownSurface(
     read(): string {
       if (destroyed) return "";
       const markdownBlock = directMarkdownBlock(host);
-      const raw = serializeBlockContainer(markdownBlock || host);
+      const raw = serializeMarkdownDomToSource(markdownBlock || host);
       setEmptyState(raw);
       return raw;
     },
     refreshEmptyState(): void {
       if (destroyed) return;
       const markdownBlock = directMarkdownBlock(host);
-      setEmptyState(serializeBlockContainer(markdownBlock || host));
+      setEmptyState(serializeMarkdownDomToSource(markdownBlock || host));
     },
     destroy
   };
@@ -278,98 +282,4 @@ function directMarkdownBlock(host: HTMLElement): HTMLElement | null {
   const only = meaningful[0];
   if (!(only instanceof HTMLElement)) return null;
   return only.classList.contains("markdown-block") ? only : null;
-}
-
-function editableText(value: string | null): string {
-  return (value || "").replace(/\u200b/g, "").replace(/\u00a0/g, " ");
-}
-
-function serializeBlockContainer(parent: Node): string {
-  const blocks: string[] = [];
-  let text = "";
-  for (const child of Array.from(parent.childNodes)) {
-    if (child.nodeType === Node.TEXT_NODE) {
-      text += editableText(child.textContent);
-      continue;
-    }
-    if (!(child instanceof HTMLElement)) continue;
-    if (child.tagName === "BR") {
-      text += "\n";
-      continue;
-    }
-    const block = serializeBlockElement(child);
-    if (block === null) {
-      text += serializeInlineNode(child);
-      continue;
-    }
-    if (text !== "") {
-      blocks.push(text);
-      text = "";
-    }
-    if (block !== "") blocks.push(block);
-  }
-  if (text !== "") blocks.push(text);
-  return blocks.join("\n\n");
-}
-
-function serializeBlockElement(element: HTMLElement): string | null {
-  const tag = element.tagName;
-  if (tag === "H1" || tag === "H2" || tag === "H3") {
-    return `${"#".repeat(Number(tag.slice(1)))} ${serializeInlineChildren(element)}`;
-  }
-  if (tag === "P") return serializeInlineChildren(element);
-  if (tag === "UL") return serializeList(element, false);
-  if (tag === "OL") return serializeList(element, true);
-  if (tag === "PRE") return serializePre(element);
-  if (tag === "DIV") {
-    const nested = serializeBlockContainer(element);
-    return nested || serializeInlineChildren(element);
-  }
-  return null;
-}
-
-function serializeList(element: HTMLElement, ordered: boolean): string {
-  const items = Array.from(element.children).filter(
-    (child): child is HTMLElement => child instanceof HTMLElement && child.tagName === "LI"
-  );
-  return items
-    .map((item, index) => {
-      const marker = ordered ? `${index + 1}. ` : "- ";
-      return `${marker}${serializeInlineChildren(item).replace(/\n+/g, " ")}`;
-    })
-    .join("\n");
-}
-
-function serializePre(element: HTMLElement): string {
-  const code = element.querySelector("code");
-  const text = code ? code.textContent || "" : element.textContent || "";
-  return `\`\`\`\n${text}\n\`\`\``;
-}
-
-function serializeInlineChildren(parent: Node): string {
-  return Array.from(parent.childNodes).map(serializeInlineNode).join("");
-}
-
-function serializeInlineNode(node: Node): string {
-  if (node.nodeType === Node.TEXT_NODE) return editableText(node.textContent);
-  if (!(node instanceof HTMLElement)) return "";
-  if (node.hasAttribute("data-markdown-caret-guard")) return editableText(node.textContent);
-  const atomicToken = node.getAttribute("data-markdown-source-token");
-  if (node.getAttribute("data-markdown-atomic-slot") === "true" && atomicToken !== null) {
-    return atomicToken;
-  }
-  const tag = node.tagName;
-  if (tag === "BR") return "\n";
-  if (tag === "STRONG" || tag === "B") return `**${serializeInlineChildren(node)}**`;
-  if (tag === "EM" || tag === "I") return `*${serializeInlineChildren(node)}*`;
-  if (tag === "CODE") {
-    const text = node.textContent || "";
-    return text.includes("`") ? text : `\`${text}\``;
-  }
-  if (tag === "A") {
-    const text = serializeInlineChildren(node);
-    const href = node.getAttribute("href");
-    return href ? `[${text}](${href})` : text;
-  }
-  return serializeInlineChildren(node);
 }

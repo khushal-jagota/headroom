@@ -23,6 +23,7 @@ async function productionFiles(directory, suffixes) {
 
 // Static ownership and deletion contract.
 const ownerSource = await readFile(ownerUrl, "utf8");
+const pipelineSource = await readFile(new URL("../src/lib/markdownPipeline.ts", import.meta.url), "utf8");
 for (const declaration of [
   "export type ReadOnlyManagedMarkdownInput",
   "export interface ReadOnlyManagedMarkdownSurface",
@@ -45,10 +46,8 @@ const sourceByName = new Map(
   )
 );
 for (const token of [
-  "window.Planner?.markdown?.render",
   "new MutationObserver",
-  "data-markdown-source-token",
-  "serializeBlockContainer"
+  "markdownAtomicSlot"
 ]) {
   assert.deepEqual(
     [...sourceByName].filter(([, source]) => source.includes(token)).map(([name]) => name),
@@ -56,6 +55,24 @@ for (const token of [
     token
   );
 }
+for (const token of ["renderMarkdownToElement", "serializeMarkdownDomToSource"]) {
+  assert.deepEqual(
+    [...sourceByName].filter(([, source]) => source.includes(token)).map(([name]) => name).sort(),
+    ["managedMarkdown.ts", "markdownPipeline.ts"],
+    token
+  );
+}
+for (const token of ["data-markdown-source-token"]) {
+  assert.deepEqual(
+    [...sourceByName].filter(([, source]) => source.includes(token)).map(([name]) => name).sort(),
+    ["managedMarkdown.ts", "markdownPipeline.ts"],
+    token
+  );
+}
+assert.ok(ownerSource.includes('from "./markdownPipeline"'));
+assert.ok(pipelineSource.includes("remarkGfm"));
+assert.ok(pipelineSource.includes("rehypeSanitize"));
+assert.ok(pipelineSource.includes("rehypeToRemark"));
 for (const token of ['from "svelte"', 'FilePreview.svelte']) {
   assert.deepEqual(
     [...sourceByName]
@@ -93,10 +110,16 @@ for (const deletedExport of [
 ]) {
   assert.ok(![...sourceByName.values()].some((source) => source.includes(deletedExport)));
 }
-const markdownRenderer = await readFile(new URL("../../assets/markdown.js", import.meta.url), "utf8");
-assert.match(markdownRenderer, /data-markdown-source-token/);
-assert.match(markdownRenderer, /\.innerHTML\s*=/);
 assert.ok(![...sourceByName.values()].some((source) => /\.innerHTML\s*=/.test(source)));
+await assert.rejects(readFile(new URL("../../assets/markdown.js", import.meta.url), "utf8"), {
+  code: "ENOENT"
+});
+assert.ok(!(await readFile(new URL("../index.html", import.meta.url), "utf8")).includes(
+  "/assets/markdown.js"
+));
+assert.ok(!(await readFile(new URL("../src/vite-env.d.ts", import.meta.url), "utf8")).includes(
+  "Planner?:"
+));
 assert.ok((await readFile(new URL("../package.json", import.meta.url), "utf8")).includes(
   "tests/managed-markdown.test.mjs"
 ));
@@ -267,6 +290,13 @@ class FakeElement extends FakeNode {
     const matches = [];
     const match = (element) => {
       if (selector === "a[href]") return element.tagName === "A" && element.hasAttribute("href");
+      if (selector === "img[src]") return element.tagName === "IMG" && element.hasAttribute("src");
+      if (selector === "a[href], img[src]") {
+        return (
+          (element.tagName === "A" && element.hasAttribute("href")) ||
+          (element.tagName === "IMG" && element.hasAttribute("src"))
+        );
+      }
       if (selector === "code") return element.tagName === "CODE";
       return false;
     };
@@ -340,11 +370,12 @@ globalThis.__managedMarkdownSvelte = {
   },
   FilePreview: {}
 };
-globalThis.__managedMarkdownTargetFromHref = (href, label) => ({
-  kind: "external-link",
-  href,
-  label
-});
+globalThis.__managedMarkdownTargetFromHref = (href, label) => {
+  if (href === "/files/chats/t_demo/images/shot.png") {
+    return { kind: "chat-file", entityId: "t_demo", path: "images/shot.png" };
+  }
+  return { kind: "external-link", href, label };
+};
 
 function text(value) {
   return new FakeText(value);
@@ -357,7 +388,31 @@ function element(tag, children = [], attributes = {}) {
 function renderedMarkdown(source) {
   const rendered = element("div");
   rendered.classList.add("markdown");
-  if (source.includes("[Doc]")) {
+  if (source.startsWith("[![Attached image]")) {
+    rendered.appendChild(
+      element("p", [
+        element("a", [element("img", [], {
+          src: "/files/chats/t_demo/images/shot.png",
+          alt: "Attached image",
+          "data-markdown-source-token":
+            "![Attached image](/files/chats/t_demo/images/shot.png)"
+        })], {
+          href: "https://example.com/image-link",
+          "data-markdown-source-token":
+            "[![Attached image](/files/chats/t_demo/images/shot.png)](https://example.com/image-link)"
+        })
+      ])
+    );
+  } else if (source.includes("![Attached image]")) {
+    rendered.appendChild(
+      element("p", [element("img", [], {
+        src: "/files/chats/t_demo/images/shot.png",
+        alt: "Attached image",
+        "data-markdown-source-token":
+          "![Attached image](/files/chats/t_demo/images/shot.png)"
+      })])
+    );
+  } else if (source.includes("[Doc]")) {
     rendered.appendChild(
       element("p", [text("Before "), element("a", [text("Doc")], {
         href: "/files/tickets/t_demo/doc.md",
@@ -370,9 +425,85 @@ function renderedMarkdown(source) {
   return rendered;
 }
 
+function editableText(value) {
+  return (value || "").replace(/\u200b/g, "").replace(/\u00a0/g, " ");
+}
+
+function serializeInlineChildren(parent) {
+  return Array.from(parent.childNodes).map(serializeInlineNode).join("");
+}
+
+function serializeInlineNode(node) {
+  if (node.nodeType === FakeNode.TEXT_NODE) return editableText(node.textContent);
+  if (!(node instanceof FakeElement)) return "";
+  if (node.hasAttribute("data-markdown-caret-guard")) return editableText(node.textContent);
+  const atomicToken = node.getAttribute("data-markdown-source-token");
+  if (node.getAttribute("data-markdown-atomic-slot") === "true" && atomicToken !== null) {
+    return atomicToken;
+  }
+  if (node.tagName === "BR") return "\n";
+  if (node.tagName === "STRONG" || node.tagName === "B") {
+    return `**${serializeInlineChildren(node)}**`;
+  }
+  if (node.tagName === "EM" || node.tagName === "I") return `*${serializeInlineChildren(node)}*`;
+  if (node.tagName === "CODE") return `\`${node.textContent || ""}\``;
+  if (node.tagName === "A") {
+    const href = node.getAttribute("href");
+    const label = serializeInlineChildren(node);
+    return href ? `[${label}](${href})` : label;
+  }
+  return serializeInlineChildren(node);
+}
+
+function serializeForTest(parent) {
+  const blocks = [];
+  let textValue = "";
+  for (const child of Array.from(parent.childNodes)) {
+    if (child.nodeType === FakeNode.TEXT_NODE) {
+      textValue += editableText(child.textContent);
+      continue;
+    }
+    if (!(child instanceof FakeElement)) continue;
+    let block = null;
+    if (child.tagName === "H1" || child.tagName === "H2" || child.tagName === "H3") {
+      block = `${"#".repeat(Number(child.tagName.slice(1)))} ${serializeInlineChildren(child)}`;
+    } else if (child.tagName === "P") {
+      block = serializeInlineChildren(child);
+    } else if (child.tagName === "UL" || child.tagName === "OL") {
+      block = child.children
+        .filter((item) => item.tagName === "LI")
+        .map((item, index) => {
+          const marker = child.tagName === "OL" ? `${index + 1}. ` : "- ";
+          return `${marker}${serializeInlineChildren(item).replace(/\n+/g, " ")}`;
+        })
+        .join("\n");
+    } else if (child.tagName === "PRE") {
+      const code = child.querySelector("code");
+      block = `\`\`\`\n${code ? code.textContent || "" : child.textContent || ""}\n\`\`\``;
+    } else if (child.tagName === "DIV") {
+      block = serializeForTest(child) || serializeInlineChildren(child);
+    }
+    if (block === null) {
+      textValue += serializeInlineNode(child);
+      continue;
+    }
+    if (textValue !== "") {
+      blocks.push(textValue);
+      textValue = "";
+    }
+    if (block !== "") blocks.push(block);
+  }
+  if (textValue !== "") blocks.push(textValue);
+  return blocks.join("\n\n");
+}
+
+globalThis.__managedMarkdownPipeline = {
+  renderMarkdownToElement: renderedMarkdown,
+  serializeMarkdownDomToSource: serializeForTest
+};
+
 globalThis.window = {
-  location: { origin: "https://panels.test" },
-  Planner: { markdown: { render: renderedMarkdown } }
+  location: { origin: "https://panels.test" }
 };
 
 const executableSource = ownerSource
@@ -387,6 +518,10 @@ const executableSource = ownerSource
   .replace(
     'import { targetFromHref } from "./filePreview";',
     "const targetFromHref = globalThis.__managedMarkdownTargetFromHref;"
+  )
+  .replace(
+    'import { renderMarkdownToElement, serializeMarkdownDomToSource } from "./markdownPipeline";',
+    "const { renderMarkdownToElement, serializeMarkdownDomToSource } = globalThis.__managedMarkdownPipeline;"
   );
 const compiled = ts.transpileModule(executableSource, {
   compilerOptions: {
@@ -415,12 +550,10 @@ assert.equal(readOnly.mode, "read-only");
 assert.equal(readOnlyHost.children[0].className, "quiet-line");
 assert.equal(readOnlyHost.children[0].textContent, "(none)");
 
-window.Planner.markdown.render = undefined;
 readOnly.update({ source: "safe <text>", emptyText: "(none)", depth: 0, visited: [] });
-assert.equal(readOnlyHost.children[0].className, "markdown markdown-block");
+assert.ok(readOnlyHost.children[0].classList.contains("markdown-block"));
 assert.equal(readOnlyHost.children[0].textContent, "safe <text>");
 
-window.Planner.markdown.render = renderedMarkdown;
 readOnly.update({
   source: "[Doc](ignored)",
   emptyText: "(none)",
@@ -467,6 +600,42 @@ readOnly.destroy();
 readOnly.update({ source: "after destroy", emptyText: "x", depth: 0, visited: [] });
 assert.equal(readOnlyHost.children[0], postChangeChild);
 assert.equal(unmountCalls.length, unmountCount + 2);
+
+const imageReadOnlyHost = host();
+const imageReadOnly = createManagedMarkdownSurface(imageReadOnlyHost, { mode: "read-only" });
+const imageMountCount = mountCalls.length;
+imageReadOnly.update({
+  source: "![Attached image](/files/chats/t_demo/images/shot.png)",
+  emptyText: "",
+  depth: 0,
+  visited: []
+});
+assert.equal(imageReadOnlyHost.querySelectorAll("img[src]").length, 0);
+assert.equal(mountCalls.length, imageMountCount + 1);
+assert.deepEqual(mountCalls.at(-1).options.props.target, {
+  kind: "chat-file",
+  entityId: "t_demo",
+  path: "images/shot.png"
+});
+imageReadOnly.destroy();
+
+const linkedImageHost = host();
+const linkedImageReadOnly = createManagedMarkdownSurface(linkedImageHost, { mode: "read-only" });
+const linkedImageMountCount = mountCalls.length;
+linkedImageReadOnly.update({
+  source:
+    "[![Attached image](/files/chats/t_demo/images/shot.png)](https://example.com/image-link)",
+  emptyText: "",
+  depth: 0,
+  visited: []
+});
+assert.equal(mountCalls.length, linkedImageMountCount + 1);
+assert.deepEqual(mountCalls.at(-1).options.props.target, {
+  kind: "external-link",
+  href: "https://example.com/image-link",
+  label: "https://example.com/image-link"
+});
+linkedImageReadOnly.destroy();
 
 // Editable first paint, dirty same-source reset, observer reuse, and final-DOM reconciliation.
 const editableHost = host();

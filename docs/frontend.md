@@ -98,9 +98,12 @@ share.
   load/replay is the one conversation projection, and reconnect uses the same strict
   employee/session/generation boundary as live delivery. A pristine-Kickoff Ticket defers
   the pane's initial attach so merely opening the page cannot freeze its backend choice.
-- **The markdown renderer is hardened.** Written text (briefs, notes, ideas) renders
-  through a markdown pass built so a crafted link that a browser would quietly treat
-  as runnable code is impossible to express.
+- **Markdown is GFM and sanitized.** Written text (briefs, notes, ideas) renders
+  through a Vite-owned unified pipeline. It supports CommonMark and ordinary GFM,
+  including tables, task lists, strikethrough, autolinks, reference links, fenced
+  code, block quotes, thematic breaks, and nested mixed lists. Raw HTML stays visible
+  as text. A strict sanitizer removes scripts, event handlers, unsafe URLs, ids,
+  styles, and DOM-clobbering attributes before any DOM node is created.
 - **Shared scroll areas keep their place.** Panels reserves stable scrollbar space on
   its shared vertical and horizontal scroll areas, so content does not move when a
   scrollbar appears. On a mouse or trackpad the thumb stays quiet until hover, focus,
@@ -207,10 +210,9 @@ _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 `web/src/lib/resources.svelte.ts` (the generic cache engine), `web/src/lib/ws.ts`
 (the event doorbell), `web/src/lib/acp/` and `web/src/components/acp/` (the typed
 conversation controller, state, transport, transcript, and composer), and the
-remaining `web/src/lib/` helpers (API, Managed Markdown,
-`labelize`, dates), `assets/tokens.css`
-(design tokens), `assets/app.css` (shared styling), `assets/markdown.js` (the
-hardened renderer), `web/dist/` (built app served by FastAPI).
+remaining `web/src/lib/` helpers (API, Managed Markdown, `markdownPipeline.ts`,
+`labelize`, dates), `assets/tokens.css` (design tokens), `assets/app.css` (shared
+styling), `web/dist/` (built app served by FastAPI).
 
 ## Handoffs
 
@@ -230,4 +232,4 @@ hardened renderer), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-20 (single ACP conversation pane, Resource Catalogue, and shared file previews)._
+_Last verified: 2026-07-21 (single ACP conversation pane, GFM rendering, Resource Catalogue, and shared file previews)._

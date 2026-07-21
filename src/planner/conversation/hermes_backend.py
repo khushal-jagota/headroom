@@ -35,6 +35,7 @@ def build_hermes_acp_backend_definition(
     hermes_home: Path,
     hermes_source_root: Path,
     turn_strategy: BackendTurnStrategy,
+    additional_inherited_environment_names: tuple[str, ...] = (),
 ) -> AgentBackendDefinition:
     for field_name, path in (
         ("hermes_executable", hermes_executable),
@@ -48,7 +49,10 @@ def build_hermes_acp_backend_definition(
     return AgentBackendDefinition(
         backend_key=HERMES_BACKEND_KEY,
         argv=(str(hermes_executable), "acp"),
-        inherited_environment_names=HERMES_INHERITED_ENVIRONMENT_NAMES,
+        inherited_environment_names=(
+            *HERMES_INHERITED_ENVIRONMENT_NAMES,
+            *additional_inherited_environment_names,
+        ),
         environment_overrides=(
             ("HERMES_HOME", str(hermes_home)),
             ("HERMES_PYTHON_SRC_ROOT", str(hermes_source_root)),
