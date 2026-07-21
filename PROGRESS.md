@@ -24,7 +24,11 @@ The requested process-level e2e passed after the current-ACP adaptation:
 
 Next step:
 
-- Commit these scoped repairs, then run one canonical `./verify`.
+- Final evidence: canonical `./verify` passed Ruff, strict mypy across 146 source files, 1,234
+  unit tests, compile/CSS checks, zero Svelte diagnostics, production frontend build/tests, and
+  109 e2e tests; final `VERIFY: PASS`.
+- The integrated environment closeout is ready to propose. No operator server, VPS services,
+  credentials, or deployment were touched.
 
 ## Current work cycle (2026-07-21): isolated runtime review corrections
 
