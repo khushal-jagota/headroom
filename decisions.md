@@ -650,6 +650,19 @@ unrelated Chat updates, recursive-preview limits, and existing safety rules rema
 `FilePreviewTarget` + `FilePreview` seam and the hardened Markdown renderer keep the responsibilities they
 already earn; read and edit callers stop coordinating their lifecycle themselves.
 
+## D-managed-markdown-gfm-pipeline — Standards parsing replaces the handwritten subset
+
+Panels renders Markdown through one Vite-owned unified/remark/rehype GFM pipeline instead of extending
+the line-oriented classic asset. Raw HTML remains inert because executable HTML belongs in managed HTML
+artifacts; a strict sanitizer admits only renderer-authored semantic output and the exact-link-token
+metadata required by managed previews. `managedMarkdown.ts` remains the sole DOM owner. Once a rendered
+surface is edited, reverse rehype/remark conversion emits canonical GFM while collision-proof temporary
+placeholders preserve atomic preview and rendered-image tokens, definitions for surviving references
+remain attached to their rendered surface, and generated preview descendants stay excluded. Deleted
+references do not leave stale definitions. The migration removes every old global/static renderer seam
+and retains the complete existing editing, retry, paste, Escape, move/delete, teardown,
+recursive-preview, and self-link contract.
+
 ## D-file-preview-contract — Ticket files are managed content behind one preview contract
 
 Canonical ticket fields, notes, proposals, results, and chat stay SQLite text. Standalone work

@@ -4,6 +4,55 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-18): proper GFM rendering across Panels
+
+Current build stage:
+
+- Ticket `t_vznnv05w` is implemented in this isolated worktree on branch
+  `ticket/t_vznnv05w-gfm` from `main` at `c215d6d`.
+- The approved route replaces the classic `assets/markdown.js` subset with a Vite-owned
+  unified/remark/rehype GFM pipeline while keeping `managedMarkdown.ts` the sole owner of
+  rendering, previews, editing, serialization, and teardown.
+- The pre-implementation review's three acceptance clarifications are implemented: every old
+  global/static seam is removed, the complete editing/preview lifecycle suite remains in force,
+  and recursive Markdown preview/self-link coverage stays alongside the new nested-list case.
+- New unified dependencies, lockfiles, and vendored `web/node_modules` files are staged under the
+  repository's existing dependency convention. No commit has been made.
+
+What just passed:
+
+- RED-first frontend coverage drove the Vite-owned pipeline, nested mixed lists, GFM structures,
+  raw-HTML-as-text sanitization, unsafe URL/attribute stripping, exact link/image/reference tokens,
+  canonical edited round-trips, retained-only reference definitions, and atomic placeholder
+  collision safety across editable text, metadata, and serialized attributes.
+- The old static/global seams are removed: `assets/markdown.js`, the `web/index.html` script tag,
+  `Window.Planner.markdown` typing, generated `web/dist` references, and stale live guidance.
+- Complete web unit tests pass with `npm test`; Svelte check reports zero errors/warnings;
+  production frontend build passes; the nine load-bearing editing/preview/nested-list Playwright
+  cases pass, including a real reference-style managed-link edit/reload round-trip.
+- The first implementation review found three issues: lost reference definitions, unstaged
+  vendored dependencies, and stale top-level guidance. All were fixed. The second review found
+  stale definitions after deleting a reference and an attribute-value placeholder collision; both
+  were reproduced RED and fixed. A later full-suite run exposed that proper GFM image elements
+  bypassed managed chat-image previews; managed images now re-enter the existing FilePreview owner,
+  while external images remain semantic images. The three failing browser cases pass, a linked-image
+  detached-descendant lifecycle regression is covered, and the final narrow `gpt-5.5` review reports
+  `NO VIOLATIONS`.
+
+Current hypothesis:
+
+- Confirmed: one standards pipeline improves GFM coverage without weakening Panels' Markdown
+  safety or managed-preview editing contract. Exact tokens and surviving reference definitions
+  travel as renderer metadata; generated preview descendants never enter canonical Markdown.
+
+Next step:
+
+- Run the single canonical `./verify` against this settled staged tree.
+
+Blockers:
+
+- None.
+
 ## Current work cycle (2026-07-17): Hermes integration restructure — S0 protocol spike
 
 Exploration note (2026-07-18): the VPS agent-GUI survey found a possible simplification

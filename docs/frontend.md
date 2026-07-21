@@ -3,8 +3,8 @@
 The front end is the web page the human uses — where every decision that matters
 lives. It is a Svelte app built by Vite. FastAPI serves the built `web/dist`
 document at `/`; the Vite chunks are mounted under `/_app/`. Shared tokens,
-application CSS, and the hardened markdown renderer still live in `assets/` so the
-look and written-text rendering stay centralized.
+and application CSS still live in `assets/`. Markdown rendering is owned by Vite code
+under `web/src/lib/`, so written-text behavior is type-checked with the app.
 
 ## The screens
 
@@ -93,9 +93,14 @@ share.
   An empty Panels Chat stays empty. `ChatState` reads only durable Panels messages,
   terminal outcomes, and the live turn; it never retries with or merges Hermes
   history. The browser has no Employee-history pane or transcript-merging control.
-- **The markdown renderer is hardened.** Written text (briefs, notes, ideas) renders
-  through a markdown pass built so a crafted link that a browser would quietly treat
-  as runnable code is impossible to express.
+- **Markdown is GFM and sanitized.** Written text (briefs, notes, ideas) renders
+  through a Vite-owned unified pipeline: remark parses CommonMark plus GFM, raw HTML
+  is kept as visible text, original link and image Markdown tokens are attached from
+  source positions, remark-rehype builds HTML syntax trees, and an explicit
+  rehype-sanitize schema removes scripts, event handlers, unsafe URLs, ids, styles,
+  and DOM-clobbering attributes before any DOM node is created. Tables, task lists,
+  strikethrough, autolinks, reference links, fenced code, block quotes, thematic
+  breaks, and nested mixed lists render through that one path.
 - **Shared scroll areas keep their place.** Panels reserves stable scrollbar space on
   its shared vertical and horizontal scroll areas, so content does not move when a
   scrollbar appears. On a mouse or trackpad the thumb stays quiet until hover, focus,
@@ -137,14 +142,21 @@ share.
   existing focus, blur/save, keyboard, paste, and Escape behavior. Links stay mounted
   as atomic preview blocks while the surrounding text is edited. Each block retains
   its original Markdown link token, so saving emits ordinary Markdown and ignores
-  generated images, media controls, nested Markdown, and iframe content. There is no
+  generated images, media controls, nested Markdown, and iframe content. Before
+  reverse conversion, the Markdown pipeline replaces each atomic preview island with
+  a collision-proof placeholder, converts the remaining DOM through rehype-to-remark
+  and remark-stringify, then restores the exact stored source token. Definitions for
+  surviving reference links stay attached to the rendered surface and return in
+  canonical form after an edit, so preserved reference tokens remain resolvable while
+  deleted references do not leave stale definitions. There is no
   separate source mode and no Edit/Save/Cancel control set. Browser edits may move an
   atomic block within the editable DOM; that move keeps its mounted component alive,
   while actual deletion still unmounts it and cancels pending work.
 - **Managed Markdown has one DOM owner.** `managedMarkdown.ts` alone renders Markdown,
   mounts and unmounts file previews, turns editable preview links into atomic blocks,
   reads edited Markdown, maintains empty state, and cleans up observers and components.
-  `MarkdownBlock` only supplies read-only content and presentation values.
+  It calls `markdownPipeline.ts` for the forward GFM/sanitization pass and the reverse
+  canonical Markdown pass. `MarkdownBlock` only supplies read-only content and presentation values.
   `InlineEdit` only coordinates focus, save, retry, keyboard, paste, Escape, and the
   choice between Markdown and plain text. A failed Markdown save keeps the exact
   attempted source so a later blur can retry without another edit.
@@ -199,9 +211,8 @@ _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 `web/src/lib/resourceCatalogue.ts` (cached reads, event dependencies, and mutation effects),
 `web/src/lib/resources.svelte.ts` (the generic cache engine), `web/src/lib/ws.ts`
 (the WebSocket doorbell), and the remaining `web/src/lib/` helpers (API, Managed Markdown,
-`labelize`, dates), `assets/tokens.css`
-(design tokens), `assets/app.css` (shared styling), `assets/markdown.js` (the
-hardened renderer), `web/dist/` (built app served by FastAPI).
+`markdownPipeline.ts`, `labelize`, dates), `assets/tokens.css`
+(design tokens), `assets/app.css` (shared styling), `web/dist/` (built app served by FastAPI).
 
 ## Handoffs
 
@@ -221,4 +232,4 @@ hardened renderer), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-14 (Resource Catalogue ownership, Managed Markdown ownership, per-type ticket rendering, and shared scrollbar behavior verified)._
+_Last verified: 2026-07-18 (Resource Catalogue ownership, Managed Markdown ownership, GFM Markdown rendering and sanitization, per-type ticket rendering, and shared scrollbar behavior verified)._

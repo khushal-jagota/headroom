@@ -367,9 +367,9 @@ Neither set refreshes Board, current Sprint, or Review. Day and top-level-agent
 Day Chat events do not refresh the Day projection. Explicit Employee session history
 is an ordinary uncached read, not a Panels Chat resource.
 
-Managed Markdown has one browser-DOM owner. `managedMarkdown.ts` renders through the
-hardened renderer, mounts file previews, maintains editable atomic blocks, serializes
-edits, reconciles moved or deleted previews, and tears everything down. The
+Managed Markdown has one browser-DOM owner. `managedMarkdown.ts` calls the Vite-owned
+GFM/sanitization pipeline, mounts file previews, maintains editable atomic blocks,
+serializes edits, reconciles moved or deleted previews, and tears everything down. The
 `MarkdownBlock` and `InlineEdit` components only supply product values and coordinate
 read-only presentation or ordinary editing and save behavior. Plain contenteditable
 helpers remain separate from Markdown lifecycle work.
@@ -377,7 +377,8 @@ helpers remain separate from Markdown lifecycle work.
 Code paths: `web/src/App.svelte`, `web/src/routes/`,
 `web/src/lib/resourceCatalogue.ts`, `web/src/lib/resources.svelte.ts`,
 `web/src/lib/ws.ts`,
-`web/src/lib/managedMarkdown.ts`, `web/src/lib/editableText.ts`.
+`web/src/lib/managedMarkdown.ts`, `web/src/lib/markdownPipeline.ts`,
+`web/src/lib/editableText.ts`.
 
 ### 8. The CLI And Authority System
 
