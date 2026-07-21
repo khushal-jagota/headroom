@@ -26,6 +26,7 @@ from acp.schema import (
     RequestPermissionResponse,
     SessionInfoUpdate,
     SessionNotification,
+    SetSessionConfigOptionResponse,
     TextContentBlock,
     UserMessageChunk,
 )
@@ -118,6 +119,8 @@ class _FakeChild:
         self.load_requests: list[LoadSessionRequest] = []
         self.capture_load_requests: list[LoadSessionRequest] = []
         self.prompt_requests: list[PromptRequest] = []
+        self.configuration_requests: list[tuple[str, str, str]] = []
+        self.closed_session_ids: list[str] = []
         self.closed = False
         self.force_closed = False
 
@@ -128,6 +131,15 @@ class _FakeChild:
     async def new_session(self, request: NewSessionRequest) -> NewSessionResponse:
         self.new_requests.append(request)
         return NewSessionResponse(session_id="session-claude")
+
+    async def set_config_option(
+        self, session_id: str, config_id: str, value: str
+    ) -> SetSessionConfigOptionResponse:
+        self.configuration_requests.append((session_id, config_id, value))
+        return SetSessionConfigOptionResponse(config_options=[])
+
+    async def close_session(self, session_id: str) -> None:
+        self.closed_session_ids.append(session_id)
 
     async def load_session(self, request: LoadSessionRequest) -> LoadSessionResponse:
         self.load_requests.append(request)
@@ -343,6 +355,8 @@ def test_claude_factory_passes_new_and_load_metadata_through_unchanged() -> None
         )
 
         await child.new_session(new_request)
+        await child.set_config_option("session-claude", "model-id", "model-a")
+        await child.close_session("session-claude")
         await child.load_session(load_request)
         await child.capture_load_session(load_request, ingress)
 
@@ -350,6 +364,10 @@ def test_claude_factory_passes_new_and_load_metadata_through_unchanged() -> None
         assert delegate.new_requests == [new_request]
         assert delegate.load_requests == [load_request]
         assert delegate.capture_load_requests == [load_request]
+        assert delegate.configuration_requests == [
+            ("session-claude", "model-id", "model-a")
+        ]
+        assert delegate.closed_session_ids == ["session-claude"]
         for delivered in (
             delegate.new_requests[0],
             delegate.load_requests[0],

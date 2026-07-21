@@ -35,6 +35,9 @@ from planner.conversation.backend_contracts import (
 )
 from planner.conversation.composition import ConversationTestOptions
 from planner.conversation.contracts import CHIEF_OF_STAFF_ENTITY_ID
+from planner.conversation.employee_configuration import (
+    StableAcpEmployeeSessionConfigurationAdapter,
+)
 from planner.conversation.employee_registry import ConversationIngressSource
 from planner.conversation.hermes_turn_strategy import (
     HERMES_SUMMARY_PREFIX,
@@ -131,6 +134,9 @@ def _definition(
             "ACP_TEST_MALFORMED_DURING_PROMPT",
             "ACP_TEST_DURABLE_STORE_PATH",
             "ACP_TEST_FORK_SESSION",
+            "ACP_TEST_CONFIG_AUDIT_PATH",
+            "ACP_TEST_CONFIG_FAIL",
+            "ACP_TEST_CONFIG_DISAPPEAR_REASONING",
         ),
         environment_overrides=(),
         expected_agent_name="panels-scripted-agent",
@@ -182,10 +188,19 @@ def _application_with_backends(
     backends: tuple[tuple[AgentBackendDefinition, Any], ...],
     browser_capacity: int = 128,
     reset_buffer_byte_limit: int = 1_048_576,
+    employee_configuration_adapters: dict[str, Any] | None = None,
 ) -> Any:
     catalog = EmployeeBackendCatalog(
         tuple(
-            static_employee_backend_registration(definition, factory)
+            static_employee_backend_registration(
+                definition,
+                factory,
+                employee_configuration_adapter=(
+                    None
+                    if employee_configuration_adapters is None
+                    else employee_configuration_adapters.get(definition.backend_key)
+                ),
+            )
             for definition, factory in backends
         )
     )
@@ -470,14 +485,14 @@ def test_ticket_route_worker_selector_is_preselected_catalog_only_and_first_prom
             "request",
             lambda request: backend_mutation_requests.append(request.url)
             if request.method == "PUT"
-            and request.url.endswith(f"/api/tickets/{ticket_id}/employee-backend")
+            and request.url.endswith(f"/api/tickets/{ticket_id}/employee-configuration")
             else None,
         )
         try:
             page.goto(f"{base_url}/#/ticket/{ticket_id}")
             pane = page.locator("[data-acp-conversation-pane]")
             pane.wait_for(timeout=10_000)
-            selector = page.locator('[data-ticket-employee-backend-editable="true"] select')
+            selector = page.locator("[data-employee-configuration-worker] select")
             selector.wait_for(timeout=10_000)
             assert selector.input_value() == "hermes"
             assert selector.locator("option").evaluate_all(
@@ -499,7 +514,10 @@ def test_ticket_route_worker_selector_is_preselected_catalog_only_and_first_prom
                 )
 
             selector.select_option("probe-backend")
-            page.locator('[data-ticket-employee-backend="probe-backend"]').wait_for(timeout=10_000)
+            page.locator(
+                '[data-employee-configuration-setup]'
+                '[data-employee-configuration-backend="probe-backend"]'
+            ).wait_for(timeout=10_000)
             assert len(backend_mutation_requests) == 1
             with connect(str(database_path)) as conn:
                 assert tuple(
@@ -523,9 +541,8 @@ def test_ticket_route_worker_selector_is_preselected_catalog_only_and_first_prom
             pane.locator("[data-acp-message]").filter(has_text="typed answer").wait_for(
                 timeout=10_000
             )
-            page.locator('[data-ticket-employee-backend-editable="false"]').wait_for(timeout=10_000)
-            assert (
-                page.locator('[data-ticket-employee-backend-editable="true"] select').count() == 0
+            page.locator("[data-employee-configuration-setup]").wait_for(
+                state="detached", timeout=10_000
             )
         finally:
             page.close()
@@ -558,9 +575,7 @@ def test_ticket_route_kickoff_advance_enables_exactly_one_eager_attach(
         page = browser.new_page()
         try:
             page.goto(f"{base_url}/#/ticket/{ticket_id}")
-            page.locator('[data-ticket-employee-backend-editable="true"] select').wait_for(
-                timeout=10_000
-            )
+            page.locator("[data-employee-configuration-worker] select").wait_for(timeout=10_000)
             with connect(str(database_path)) as conn:
                 assert (
                     conn.execute(
@@ -576,7 +591,9 @@ def test_ticket_route_kickoff_advance_enables_exactly_one_eager_attach(
                 timeout=10,
             )
             assert accepted.status_code == 200, accepted.text
-            page.locator('[data-ticket-employee-backend-editable="false"]').wait_for(timeout=10_000)
+            page.locator("[data-employee-configuration-setup]").wait_for(
+                state="detached", timeout=10_000
+            )
             page.locator("[data-acp-status]").filter(has_text="idle").wait_for(timeout=10_000)
         finally:
             page.close()
@@ -673,6 +690,150 @@ def test_fake_non_hermes_human_and_automatic_step_share_backend_and_session(
     assert binding is not None and mirror is not None
     assert tuple(binding) == ("probe-backend", session_id)
     assert tuple(mirror) == ("probe-backend", session_id)
+
+
+def test_employee_configuration_catalog_does_not_bind_and_first_prompt_uses_selection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = str(tmp_path / "employee-configuration.db")
+    configuration_audit_path = tmp_path / "employee-configuration-audit.jsonl"
+    monkeypatch.setenv(
+        "ACP_TEST_CONFIG_AUDIT_PATH", str(configuration_audit_path)
+    )
+    config = load_config(
+        env={
+            "PLAN_TEST_MODE": "1",
+            "PLAN_DB_PATH": db_path,
+            "PLAN_LOGS_DIR": str(tmp_path / "logs"),
+            "PLAN_FAKE_NOW": "2026-07-20T12:00:00+00:00",
+            "PLAN_DISPATCH_ENABLED": "0",
+        }
+    )
+    clock = build_clock(config)
+    definition = _definition(backend_key="hermes")
+    factory = SdkAcpEmployeeChildFactory(definition)
+    adapter = StableAcpEmployeeSessionConfigurationAdapter(
+        definition=definition,
+        child_factory=factory,
+        workspace_root=REPOSITORY_ROOT,
+    )
+    catalog = EmployeeBackendCatalog(
+        (
+            static_employee_backend_registration(
+                definition,
+                factory,
+                employee_configuration_adapter=adapter,
+            ),
+        )
+    )
+    runtime_definitions = build_employee_runtime_definitions(catalog)
+    with connect(db_path) as conn:
+        create_schema(conn)
+        ticket = tickets_data.create_ticket(
+            conn,
+            worker_type="coding",
+            title="Configured first prompt",
+            actor="test",
+            now=clock.now_unix(),
+            title_max_chars=200,
+            employee_backend="hermes",
+            employee_runtime_definitions=runtime_definitions,
+        )
+
+    app = _application_with_backends(
+        config,
+        clock,
+        ((definition, factory),),
+        employee_configuration_adapters={"hermes": adapter},
+    )
+    with TestClient(app) as client:
+        discovered = client.get(
+            "/api/employee-configuration-catalog",
+            params={
+                "employee_backend": "hermes",
+                "candidate_model": "probe-alt",
+            },
+        )
+        assert discovered.status_code == 200, discovered.text
+        assert discovered.json()["reasoning_efforts"] == [
+            {"value": "probe-low", "label": "Low", "description": None}
+        ]
+        with connect(db_path) as conn:
+            assert conn.execute(
+                "SELECT employee_session_id FROM tickets WHERE id = ?", (ticket.id,)
+            ).fetchone()[0] is None
+            assert conn.execute(
+                "SELECT 1 FROM conversation_session_bindings WHERE employee_id = ?",
+                (ticket.id,),
+            ).fetchone() is None
+
+        configured = client.put(
+            f"/api/tickets/{ticket.id}/employee-configuration",
+            json={
+                "employee_backend": "hermes",
+                "employee_launch_model": "probe-alt",
+                "employee_launch_reasoning_effort": "probe-low",
+            },
+        )
+        assert configured.status_code == 200, configured.text
+
+        with client.websocket_connect("/api/conversation") as websocket:
+            websocket.send_json({"type": "attach", "employeeId": ticket.id})
+            initial = _receive_until(websocket, _is_ready)
+            session_id = str(initial[0]["acpSessionId"])
+            websocket.send_json(
+                _prompt_action(
+                    ticket.id,
+                    session_id,
+                    "configured-first-prompt",
+                    "use configured session",
+                )
+            )
+            _receive_until(websocket, _is_idle)
+
+    audit = [
+        json.loads(line) for line in configuration_audit_path.read_text().splitlines()
+    ]
+    prompt_event = next(item for item in audit if item["event"] == "prompt")
+    durable_process_id = prompt_event["processId"]
+    durable_events = [
+        {key: value for key, value in item.items() if key != "processId"}
+        for item in audit
+        if item["processId"] == durable_process_id
+    ]
+    assert durable_events == [
+        {
+            "event": "set_config_option",
+            "sessionId": session_id,
+            "configId": "scripted-model",
+            "value": "probe-alt",
+        },
+        {
+            "event": "set_config_option",
+            "sessionId": session_id,
+            "configId": "scripted-reasoning",
+            "value": "probe-low",
+        },
+        {
+            "event": "prompt",
+            "sessionId": session_id,
+            "model": "probe-alt",
+            "reasoning": "probe-low",
+        },
+    ]
+    with connect(db_path) as conn:
+        stored = conn.execute(
+            "SELECT employee_launch_model, employee_launch_reasoning_effort, "
+            "employee_session_id FROM tickets WHERE id = ?",
+            (ticket.id,),
+        ).fetchone()
+        binding_count = conn.execute(
+            "SELECT COUNT(*) FROM conversation_session_bindings WHERE employee_id = ?",
+            (ticket.id,),
+        ).fetchone()[0]
+    assert tuple(stored) == ("probe-alt", "probe-low", session_id)
+    assert binding_count == 1
 
 
 def test_new_ticket_and_chief_sessions_deliver_one_role_kickoff_without_visible_text(

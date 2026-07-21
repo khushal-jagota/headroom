@@ -44,6 +44,7 @@ from planner.conversation.turn_broker import (
 )
 from planner.conversation.wire_contracts import CancelAction, HumanEcho
 from planner.core.db import connect, create_schema
+from planner.tickets.contracts import EmployeeLaunchConfiguration
 from planner.worker_types.configuration import PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS
 
 
@@ -261,7 +262,17 @@ async def _ticket_database(
         backend_key="hermes",
         binding_generation=1,
     )
-    await repository.compare_and_swap(None, binding)
+    employee = await repository.resolve_employee("t_hub")
+    await repository.compare_and_swap_initial(
+        binding,
+        EmployeeLaunchConfiguration(
+            employee_backend=employee.backend_key,
+            employee_launch_model=employee.employee_launch_model,
+            employee_launch_reasoning_effort=(
+                employee.employee_launch_reasoning_effort
+            ),
+        ),
+    )
     return db_path, repository
 
 

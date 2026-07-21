@@ -28,6 +28,7 @@ from planner.worker_types.configuration import (
 )
 
 from .backend_contracts import AcpConversationIngress
+from .employee_configuration import EmployeeConfigurationCatalogService
 from .employee_registry import (
     AcpEmployeeRegistry,
     ConversationIngressSource,
@@ -90,6 +91,7 @@ class ConversationComposition:
     broker: ConversationTurnBroker
     permission_broker: ConversationPermissionBroker
     step_gateway: AcpStepGateway
+    employee_configuration_catalog: EmployeeConfigurationCatalogService
     employee_backend_startup_preflights: tuple[Callable[[], Awaitable[None]], ...]
     _employee_backend_startup_preflights_ran: bool = False
 
@@ -198,6 +200,8 @@ class ConversationComposition:
             materialized_backends=materialized_backends,
             resolve_binding=repository.resolve,
             compare_and_swap_binding=repository.compare_and_swap,
+            compare_and_swap_initial_binding=repository.compare_and_swap_initial,
+            resolve_employee=repository.resolve_employee,
             resolve_compaction_boundaries=repository.resolve_compaction_boundaries,
             compare_and_swap_compaction=repository.compare_and_swap_compaction,
             conversation_ingress=cast(AcpConversationIngress, reject_unscoped_ingress),
@@ -238,12 +242,21 @@ class ConversationComposition:
         permission_broker.set_worker_settlement_guard(
             step_gateway.guard_worker_permission_settlement
         )
+        employee_configuration_catalog = EmployeeConfigurationCatalogService(
+            {
+                backend.definition.backend_key: (
+                    backend.resolved_employee_configuration_adapter()
+                )
+                for backend in materialized_backends
+            }
+        )
         return cls(
             hub=hub,
             registry=registry,
             broker=broker,
             permission_broker=permission_broker,
             step_gateway=step_gateway,
+            employee_configuration_catalog=employee_configuration_catalog,
             employee_backend_startup_preflights=tuple(
                 backend.startup_preflight
                 for backend in materialized_backends

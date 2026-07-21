@@ -59,6 +59,14 @@ def test_production_employee_backend_catalog_is_ordered_hermes_codex_claude() ->
     } == {"hermes"}
 
 
+def test_worker_profile_declares_complete_employee_defaults() -> None:
+    for worker_type in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types():
+        profile = PRODUCTION_WORKER_TYPE_REGISTRY.require(worker_type).worker_profile
+        assert profile.default_employee_backend == "hermes"
+        assert profile.default_employee_model is None
+        assert profile.default_employee_reasoning_effort is None
+
+
 def assert_error(
     definition: WorkerTypeDefinition,
     message: str,
@@ -126,6 +134,9 @@ def test_coding_definition_owns_complete_behavior() -> None:
         if not stage.is_terminal
     )
     assert definition.worker_profile.specialist_skill == "panels-worker-coding"
+    assert definition.worker_profile.default_employee_backend == "hermes"
+    assert definition.worker_profile.default_employee_model is None
+    assert definition.worker_profile.default_employee_reasoning_effort is None
     definition.validate_ticket_position("dropped", "done")
 
 
@@ -473,6 +484,8 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
         "default_ceiling": "needs_kickoff",
         "worker_profile_id": "panels-worker-coding",
         "default_employee_backend": "hermes",
+        "default_employee_model": None,
+        "default_employee_reasoning_effort": None,
     }
     assert json.loads(json.dumps(coding)) == coding
     assert (

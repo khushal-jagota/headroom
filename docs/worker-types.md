@@ -31,7 +31,8 @@ Each Worker type is one immutable `WorkerTypeDefinition`. The definition contain
   non-terminal Stage (`worker`, `user`, or `paired`);
 - the separate `dropped` terminal Stage;
 - the ordered fields carried by its Tickets;
-- the worker profile, including the specialist skill and default Employee backend;
+- the worker profile, including the specialist skill and the default Employee backend,
+  model, and reasoning effort copied onto a new Ticket;
 - whether work completed outside Panels may be reconciled as a settled field prefix.
 
 The definition also answers the workflow questions that used to be spread across Ticket
@@ -122,8 +123,9 @@ also the manifest order.
 
 The same composition owns the ordered production Employee-backend catalog. Its exact
 keys are `hermes`, `codex`, and `claude`; Gemini is not registered. Every shipped Worker
-type currently defaults to `hermes`, but that default is part of the Worker-type
-definition rather than a global fallback.
+type currently starts with `hermes`, its native model, and no Reasoning choice. Those
+three starting values belong to the Worker-type definition rather than to a global
+fallback.
 
 Tests build an explicit Employee-backend catalog and Worker-type registry as one exact
 configuration value. This can include the additional `probe` Worker type and fake backend
@@ -153,39 +155,53 @@ There is no `/api/seed` route or `panels seed` command.
 `GET /api/worker-types` lists the configured Employee backends in stable catalog order,
 then calls the Worker-type registry's `manifest` method for each definition. Every
 Worker-type entry contains the label, Stages, gates, advance map, fields, ceiling range,
-default ceiling, specialist skill id, and default Employee backend. Every Stage also
-carries its default ownership mode; terminal Stages carry none. The Ticket response
-supplies the current Stage's default and effective ownership, so clients do not
-reconstruct the rule.
+default ceiling, specialist skill id, and default Employee backend, model, and reasoning
+effort. Every Stage also carries its default ownership mode; terminal Stages carry none.
+The Ticket response supplies the current Stage's default and effective ownership, so
+clients do not reconstruct the rule.
 
 The frontend derives one lifecycle per Worker type from this served manifest. It renders a
 Ticket against the entry matching the Ticket's stored `worker_type`. Coding, `new_worker`,
 `exploration`, and `initiative_planning` Tickets therefore show their own Stage spines
 without frontend type tables.
 
-During pristine Kickoff, the Ticket header renders the catalog as a worker selector with
-the Worker type's stored default already selected. Choosing another entry writes that
-Ticket's override. Once a session or binding exists, or the Ticket moves beyond Kickoff,
-the header shows the frozen backend instead of an editable selector.
+During pristine Kickoff, the Kickoff section shows the Ticket's launch setup beside its
+approval flow: Worker, Model, and Reasoning when that Worker and model support it. The
+controls start with the values already copied onto the Ticket. Their model and reasoning
+choices come from the selected backend, not from a frontend list. Once a session or
+binding exists, or the Ticket moves beyond Kickoff, the controls disappear. They do not
+move into the header or become a display of the worker's current settings.
 
 _Code paths:_ `src/planner/core/server.py` serves the registry manifest;
 `web/src/lib/lifecycle.ts` derives the frontend lifecycle.
 
-## The Ticket chooses the Employee backend
+## The Ticket owns its Employee launch setup
 
-Each Worker type supplies the backend initially selected for a new Ticket. The creation
-boundary stores that registered key as `employee_backend`; callers may instead provide an
-explicit registered key. This is a per-Ticket choice, not a second kind of Worker type.
+Each Worker type supplies the Worker, Model, and Reasoning values used to start a new
+Ticket. Creation copies the trio once. From then on, the Ticket owns it; changing the
+Worker type's defaults later does not change existing Tickets, and switching a Ticket's
+Worker does not restore an earlier set of choices.
 
-The choice may change only while the Ticket is still at pristine Kickoff, has no Employee
-session, and has no durable conversation binding. The first Employee demand or any move
-past Kickoff freezes it. Human conversation and Automatic Employee work then resolve the
-same stored key and durable ACP session. A missing, unknown, or contradictory backend
-fails at the boundary instead of falling back to another registration.
+The complete trio may change only while the Ticket is still at pristine Kickoff, has no
+Employee session, and has no durable conversation binding. One save replaces the whole
+setup. Changing Worker resets Model and Reasoning to that backend's native defaults.
+Changing Model retains an explicit Reasoning choice only when the new model still supports it.
+The first Employee demand or any move past Kickoff freezes the setup.
+
+Hermes offers Model but not Reasoning. Codex and Claude Code offer Model, and their
+Reasoning choices depend on the selected model. Leaving Model or Reasoning at its native
+value means the backend chooses its own default. A missing or unavailable explicit value
+fails visibly instead of silently selecting something else.
+
+The stored model and reasoning are requests for the first session, not a live settings
+mirror. After the Ticket binds a session they remain only as the historical Kickoff
+request, while human conversation and Automatic Employee work use the same stored
+backend and durable ACP session.
 
 _Code paths:_ `src/planner/conversation/backend_catalog.py` owns the ordered backend
 catalog; `src/planner/worker_types/configuration.py` composes it with the Worker-type
-registry; `src/planner/tickets/data.py` stores and freezes the Ticket choice.
+registry; `src/planner/tickets/data.py` stores and freezes the Ticket setup; and
+`web/src/components/EmployeeConfigurationSetup.svelte` renders the Kickoff controls.
 
 ## How a worker finds its specialist
 
@@ -213,9 +229,12 @@ Panels dispatches one automatic opening turn into the durable Employee session, 
 conversation continues that same session, and an Understanding proposal waits for approval
 before the Ticket advances to Stages.
 
-Startup provisions the listed skill directories into the planner Hermes home. A new
-specialist must therefore be both known to Worker type configuration and included in the
-planner skill list.
+The repository exposes the same skill source at Codex's and Claude Code's native project
+skill locations, while startup links the listed skills into the planner Hermes home. The
+first real prompt in a new Ticket conversation tells the selected backend to use the
+installed `panels-worker` role; the role then finds this Ticket's specialist. A new
+specialist must therefore be known to Worker type configuration and available through
+the backend skill links.
 
 _Code paths:_ `skills/panels-worker/SKILL.md`, the specialist skills under `skills/`,
 `src/planner/tickets/api.py`, `src/planner/cli/main.py`, and
@@ -228,9 +247,10 @@ One new Worker type needs one definition and one production registration path:
 1. Write the specialist `SKILL.md` under `skills/<name>/`, with guidance for each working
    Stage.
 2. Add one definition module under `src/planner/worker_types/`. Construct an immutable
-   `WorkerTypeDefinition` with its ordered Stages, fields, worker profile, and
-   reconciliation support. Give every non-terminal Stage a deliberate default ownership
-   mode; `done` and `dropped` have none. Novel Stage and field ids are plain strings.
+   `WorkerTypeDefinition` with its ordered Stages, fields, worker profile, starting
+   Employee backend/model/reasoning values, and reconciliation support. Give every
+   non-terminal Stage a deliberate default ownership mode; `done` and `dropped` have
+   none. Novel Stage and field ids are plain strings.
 3. In `src/planner/worker_types/configuration.py`, add the specialist skill to the known
    skills catalog and add the definition to `_PRODUCTION_WORKER_TYPE_DEFINITIONS`. Do not
    register it anywhere else.
@@ -265,4 +285,4 @@ prefix, and reconciliation support before changing state.
 
 ---
 
-_Last verified: 2026-07-20._
+_Last verified: 2026-07-21._

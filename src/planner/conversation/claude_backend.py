@@ -29,6 +29,7 @@ from acp.schema import (
     RequestPermissionResponse,
     SessionInfoUpdate,
     SessionNotification,
+    SetSessionConfigOptionResponse,
     TextContentBlock,
 )
 
@@ -50,6 +51,7 @@ from .claude_turn_strategy import (
     is_claude_compaction_control,
 )
 from .contracts import ConversationEmployee
+from .employee_configuration import StableAcpEmployeeSessionConfigurationAdapter
 from .sdk_child import SdkAcpEmployeeChildFactory, build_panels_initialize_request
 from .wire_contracts import ProtocolUpdateRejectedPayload
 
@@ -197,6 +199,11 @@ def build_claude_employee_backend_registration() -> EmployeeBackendRegistration:
         child_factory = ClaudeAcpEmployeeChildFactory(
             definition,
         )
+        employee_configuration_adapter = StableAcpEmployeeSessionConfigurationAdapter(
+            definition=definition,
+            child_factory=child_factory,
+            workspace_root=context.repository_root,
+        )
         preflight = ClaudeBackendStartupPreflight(
             definition=definition,
             child_factory=child_factory,
@@ -207,6 +214,7 @@ def build_claude_employee_backend_registration() -> EmployeeBackendRegistration:
             child_factory=child_factory,
             is_executable=preflight.is_executable,
             startup_preflight=preflight.run,
+            employee_configuration_adapter=employee_configuration_adapter,
         )
 
     return EmployeeBackendRegistration(
@@ -259,6 +267,14 @@ class _ClaudeAcpEmployeeChild(AcpEmployeeChild):
 
     async def new_session(self, request: NewSessionRequest) -> NewSessionResponse:
         return await self._delegate.new_session(request)
+
+    async def set_config_option(
+        self, session_id: str, config_id: str, value: str
+    ) -> SetSessionConfigOptionResponse:
+        return await self._delegate.set_config_option(session_id, config_id, value)
+
+    async def close_session(self, session_id: str) -> None:
+        await self._delegate.close_session(session_id)
 
     async def load_session(self, request: LoadSessionRequest) -> LoadSessionResponse:
         return await self._delegate.load_session(request)

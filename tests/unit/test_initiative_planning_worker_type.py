@@ -96,6 +96,8 @@ INITIATIVE_PLANNING_MANIFEST = {
     "default_ceiling": "needs_kickoff",
     "worker_profile_id": "panels-worker-initiative-planning",
     "default_employee_backend": "hermes",
+    "default_employee_model": None,
+    "default_employee_reasoning_effort": None,
 }
 
 

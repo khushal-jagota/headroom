@@ -40,6 +40,7 @@ from acp.schema import (
     RequestPermissionRequest,
     RequestPermissionResponse,
     SessionNotification,
+    SetSessionConfigOptionResponse,
     TerminalOutputRequest,
     TerminalOutputResponse,
     WaitForTerminalExitRequest,
@@ -108,9 +109,7 @@ def build_panels_initialize_request(
             ),
             terminal=reverse.terminal,
         ),
-        client_info=Implementation(
-            name="panels", title="Panels", version=__version__
-        ),
+        client_info=Implementation(name="panels", title="Panels", version=__version__),
     )
 
 
@@ -123,9 +122,7 @@ def build_confined_child_environment(
     ambient = os.environ if ambient_environment is None else ambient_environment
     sdk_defaults = default_environment()
     undeclared_defaults = sorted(
-        name
-        for name in sdk_defaults
-        if name not in definition.inherited_environment_names
+        name for name in sdk_defaults if name not in definition.inherited_environment_names
     )
     if undeclared_defaults:
         raise AcpChildEnvironmentPolicyError(
@@ -134,9 +131,7 @@ def build_confined_child_environment(
         )
 
     environment = {
-        name: ambient[name]
-        for name in definition.inherited_environment_names
-        if name in ambient
+        name: ambient[name] for name in definition.inherited_environment_names if name in ambient
     }
     environment.update(definition.environment_overrides)
     for name in tuple(environment):
@@ -195,9 +190,7 @@ class _SdkClientBridge:
     def on_connect(self, agent: object) -> None:
         del agent
 
-    async def session_update(
-        self, session_id: str, update: Any, **kwargs: Any
-    ) -> None:
+    async def session_update(self, session_id: str, update: Any, **kwargs: Any) -> None:
         notification = SessionNotification(
             session_id=session_id,
             update=update,
@@ -456,8 +449,7 @@ class SdkAcpEmployeeChild(AcpEmployeeChild):
         assert response.agent_capabilities is not None
         session_capabilities = response.agent_capabilities.session_capabilities
         self._supports_session_fork = (
-            session_capabilities is not None
-            and session_capabilities.fork is not None
+            session_capabilities is not None and session_capabilities.fork is not None
         )
         return response
 
@@ -469,6 +461,30 @@ class SdkAcpEmployeeChild(AcpEmployeeChild):
             mcp_servers=request.mcp_servers,
             **(request.field_meta or {}),
         )
+
+    async def set_config_option(
+        self, session_id: str, config_id: str, value: str
+    ) -> SetSessionConfigOptionResponse:
+        self._require_alive()
+        return await self._connection.set_config_option(
+            config_id=config_id,
+            session_id=session_id,
+            value=value,
+        )
+
+    async def set_legacy_session_model(self, session_id: str, model_id: str) -> None:
+        """Send the removed ACP model request for a backend that still implements it."""
+
+        self._require_alive()
+        raw_connection = cast(Any, self._connection)._conn
+        await raw_connection.send_request(
+            "session/set_model",
+            {"sessionId": session_id, "modelId": model_id},
+        )
+
+    async def close_session(self, session_id: str) -> None:
+        self._require_alive()
+        await self._connection.close_session(session_id=session_id)
 
     async def load_session(self, request: LoadSessionRequest) -> LoadSessionResponse:
         async with self._load_lock:
@@ -505,9 +521,7 @@ class SdkAcpEmployeeChild(AcpEmployeeChild):
 
     async def prompt(self, request: PromptRequest) -> PromptResponse:
         self._require_alive()
-        epoch = self._ordered_ingress.begin_response_consumption_epoch(
-            "session/prompt"
-        )
+        epoch = self._ordered_ingress.begin_response_consumption_epoch("session/prompt")
         try:
             response = await self._connection.prompt(
                 session_id=request.session_id,
@@ -724,9 +738,7 @@ class SdkAcpEmployeeChildFactory:
                 await ordered_ingress.close(
                     drain=intentional_close and error is None and not task_cancelled,
                     cause=error
-                    or AcpSessionUpdateIngressClosed(
-                        "ACP child connection lifetime ended"
-                    ),
+                    or AcpSessionUpdateIngressClosed("ACP child connection lifetime ended"),
                 )
                 await settle_death(None if intentional_close else error)
 

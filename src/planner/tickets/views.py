@@ -62,6 +62,8 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "title": ticket.title,
         "worker_type": ticket.worker_type,
         "employee_backend": ticket.employee_backend,
+        "employee_launch_model": ticket.employee_launch_model,
+        "employee_launch_reasoning_effort": ticket.employee_launch_reasoning_effort,
         "stage": str(ticket.stage),
         "priority": ticket.priority.value,
         "deadline": ticket.deadline,
@@ -157,6 +159,9 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
             "blocker_summary": blocker_summary_json(blocker_summary),
             "effective_sprint_id": tickets_data.get_effective_sprint_id(conn, ticket_id),
             "day_ids": [str(r["day_id"]) for r in day_rows],
+            "employee_configuration_editable": tickets_data.employee_configuration_editable(
+                conn, ticket
+            ),
         }
     )
     return detail

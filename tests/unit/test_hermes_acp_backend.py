@@ -9,8 +9,12 @@ from acp.transports import default_environment
 
 from planner.conversation import (
     HERMES_ACP_AGENT_VERSION,
+    HERMES_BACKEND_KEY,
     HERMES_INHERITED_ENVIRONMENT_NAMES,
     ConversationEmployee,
+    EmployeeBackendBuildContext,
+    HermesEmployeeSessionConfigurationAdapter,
+    backend_catalog,
     build_confined_child_environment,
     build_hermes_acp_backend_definition,
 )
@@ -51,16 +55,13 @@ def _definition(strategy: _HermesStrategy | None = None) -> Any:
 def test_hermes_definition_is_exact_and_strategy_is_injected() -> None:
     strategy = _HermesStrategy()
     definition = _definition(strategy)
-    assert definition.backend_key == "hermes"
+    assert definition.backend_key == HERMES_BACKEND_KEY == "hermes"
     assert definition.argv == ("/opt/hermes/bin/hermes", "acp")
     assert definition.expected_agent_name == "hermes-agent"
     assert definition.expected_agent_version == HERMES_ACP_AGENT_VERSION == "0.18.2"
     assert definition.turn_capabilities.supports_steer is True
     assert definition.turn_capabilities.observes_compaction is True
-    assert (
-        definition.turn_capabilities.requires_fresh_child_after_requested_cancel
-        is False
-    )
+    assert definition.turn_capabilities.requires_fresh_child_after_requested_cancel is False
     assert definition.reverse_service_capabilities.filesystem is False
     assert definition.reverse_service_capabilities.terminal is False
     assert definition.reverse_service_capabilities.permission is True
@@ -127,6 +128,50 @@ def test_hermes_definition_rejects_relative_paths(keyword: str, path: Path) -> N
             **values,  # type: ignore[arg-type]
             turn_strategy=_HermesStrategy(),
         )
+
+
+def test_production_hermes_registration_reuses_exact_resolved_installation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source_root = (tmp_path / "hermes-source").resolve()
+    hermes_python = source_root / "venv" / "bin" / "python"
+    hermes_executable = hermes_python.with_name("hermes")
+    hermes_executable.parent.mkdir(parents=True)
+    hermes_python.write_text("", encoding="utf-8")
+    hermes_executable.write_text("", encoding="utf-8")
+    hermes_executable.chmod(0o755)
+    planner_home = (tmp_path / "planner-hermes-home").resolve()
+    provisioned: list[Path] = []
+    monkeypatch.setattr(backend_catalog, "resolve_hermes_python", lambda: hermes_python)
+    monkeypatch.setattr(
+        backend_catalog,
+        "provision_planner_home_skills",
+        lambda home: provisioned.append(Path(home)),
+    )
+
+    registration = next(
+        item
+        for item in backend_catalog.PRODUCTION_EMPLOYEE_BACKEND_REGISTRATIONS
+        if item.backend_key == HERMES_BACKEND_KEY
+    )
+    materialized = registration.runtime_builder(
+        EmployeeBackendBuildContext(
+            data_directory=tmp_path,
+            planner_home_default=planner_home,
+            repository_root=REPOSITORY_ROOT,
+        )
+    )
+    adapter = materialized.employee_configuration_adapter
+    assert isinstance(adapter, HermesEmployeeSessionConfigurationAdapter)
+    assert materialized.definition.argv == (str(hermes_executable), "acp")
+    assert materialized.definition.environment_overrides == (
+        ("HERMES_HOME", str(planner_home)),
+        ("HERMES_PYTHON_SRC_ROOT", str(source_root)),
+    )
+    assert adapter._hermes_python == hermes_python  # noqa: SLF001
+    assert adapter._hermes_home == planner_home  # noqa: SLF001
+    assert adapter._hermes_source_root == source_root  # noqa: SLF001
+    assert provisioned == [planner_home]
 
 
 def test_generic_runtime_has_no_backend_name_conditional() -> None:

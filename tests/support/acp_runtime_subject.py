@@ -132,6 +132,12 @@ class ProductionAcp01ConformanceSubject:
         catalog = EmployeeBackendCatalog(
             (static_employee_backend_registration(definition, factory),)
         )
+
+        async def compare_initial(
+            candidate: ConversationSessionBinding, _configuration: object
+        ) -> ConversationSessionBinding:
+            return await repository.compare_and_swap(None, candidate)
+
         registry = AcpEmployeeRegistry(
             backend_catalog=catalog,
             materialized_backends=catalog.materialize(
@@ -139,6 +145,7 @@ class ProductionAcp01ConformanceSubject:
             ),
             resolve_binding=repository.resolve,
             compare_and_swap_binding=repository.compare_and_swap,
+            compare_and_swap_initial_binding=compare_initial,
             conversation_ingress=ingress,
             permission_callback=permission,
         )

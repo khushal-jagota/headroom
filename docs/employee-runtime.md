@@ -78,6 +78,13 @@ human pane. Its session callback binds the exact ACP session to both the Ticket 
 and the running Employee-step record before prompt admission can complete. If another
 owner won, the current run does not send through an unowned session.
 
+On the first unbound demand, the registry creates a session and applies the Ticket's
+explicit launch Model first, followed by its explicit Reasoning effort when supported.
+Only then may it publish the first binding and admit the prompt. The binding write also
+proves that the Ticket's complete launch setup has not changed while the session was
+being prepared. An unavailable explicit choice retires the candidate session without a
+binding or prompt.
+
 Pending worker context is a separate durable service. The gateway prepares its exact
 text into the model prompt, admits that prompt through ACP, and only then acknowledges
 the included context revisions. A pre-admission failure keeps those revisions pending.
@@ -124,21 +131,29 @@ transaction. A stale permission cannot act on a newer run.
 
 The base role is `panels-worker`. It reads the Ticket's Worker type, loads that type's
 specialist skill, and uses the `panels` CLI to inspect the Ticket and file proposals.
-For Hermes, startup links the repository's role skills into the configured planner
-Hermes home. Claude Code receives the same Panels worker role through its session
-configuration.
+Panels exposes the repository's role skills through each backend's native skill
+location: project links for Codex and Claude Code, and startup links in the configured
+planner Hermes home. A new Ticket session receives the `panels-worker` instruction in
+its first real prompt, whether that first prompt comes from the human pane or Automatic
+Employee work. Panels does not alter Claude Code's system prompt.
 
 Application composition builds one ordered Employee-backend catalog and validates every
-Worker type's default against it. Ticket creation stores that default unless the caller
-chooses another registered backend. Both the human pane and `EmployeeStepRunner` resolve
-the Ticket's stored choice, and the durable binding must agree with it. There is no
-runtime fallback to a different backend.
+Worker type's default against it. Ticket creation copies that type's starting Worker,
+Model, and Reasoning values once. Both the human pane and `EmployeeStepRunner` resolve
+the Ticket's stored launch setup before first binding, and the durable binding must agree
+with its Worker. There is no runtime fallback to a different backend or explicit value.
 
 The ordered production catalog is exactly `hermes`, `codex`, and `claude`. The server
 uses the official ACP client library to run each adapter over standard input and
 output. All three use the Ticket workspace root, support observed compaction and ACP
 permissions, and can carry both human and Automatic Employee work. Hermes supports
 native Steer. Codex and Claude Code do not; Queue and Send Now remain available.
+
+Hermes exposes Model selection and no Reasoning selection. Codex and Claude Code expose
+both through ACP, with Reasoning choices discovered again for the selected Model. After
+the first binding, the stored launch model and reasoning are historical only. Bound
+loads, child replacement, compaction recovery, and New Conversation do not reapply them;
+the ACP session owns its live configuration.
 
 Claude Code receives an initialize-only preflight at server startup, and the temporary
 child closes without creating a session. Codex starts lazily on first demand. Neither
@@ -163,4 +178,4 @@ startup behavior changes the Ticket's durable backend choice or session identity
 
 ---
 
-_Last verified: 2026-07-20 (three-backend ACP Employee runtime and correctness-only run records)._
+_Last verified: 2026-07-21 (three-backend ACP Employee runtime and correctness-only run records)._

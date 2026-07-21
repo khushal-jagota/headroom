@@ -17,6 +17,7 @@ from acp.schema import (
     PromptRequest,
     PromptResponse,
     SessionNotification,
+    SetSessionConfigOptionResponse,
     TextContentBlock,
     UserMessageChunk,
 )
@@ -45,6 +46,9 @@ class _FakeChild:
         self.load_updates: list[SessionNotification] = []
         self.capture_load_updates: list[SessionNotification] = []
         self.prompt_updates: list[SessionNotification] = []
+        self.configuration_requests: list[tuple[str, str, str]] = []
+        self.legacy_model_requests: list[tuple[str, str]] = []
+        self.closed_session_ids: list[str] = []
 
     async def initialize(self, request: InitializeRequest) -> InitializeResponse:
         del request
@@ -56,6 +60,18 @@ class _FakeChild:
         if isinstance(response, BaseException):
             raise response
         return response
+
+    async def set_config_option(
+        self, session_id: str, config_id: str, value: str
+    ) -> SetSessionConfigOptionResponse:
+        self.configuration_requests.append((session_id, config_id, value))
+        return SetSessionConfigOptionResponse(config_options=[])
+
+    async def set_legacy_session_model(self, session_id: str, model_id: str) -> None:
+        self.legacy_model_requests.append((session_id, model_id))
+
+    async def close_session(self, session_id: str) -> None:
+        self.closed_session_ids.append(session_id)
 
     async def load_session(self, request: LoadSessionRequest) -> LoadSessionResponse:
         self.load_requests.append(request)
@@ -164,9 +180,30 @@ def test_ticket_new_session_decorates_only_its_first_prompt_delivery() -> None:
         ]
         assert first.field_meta == {"trace": "preserved"}
         assert second == original_second
-        assert original_first.prompt == [
-            TextContentBlock(type="text", text="First real work")
+        assert original_first.prompt == [TextContentBlock(type="text", text="First real work")]
+
+    asyncio.run(exercise())
+
+
+def test_role_skill_wrapper_forwards_configuration_model_and_session_close_unchanged() -> None:
+    async def exercise() -> None:
+        delegate = _FakeFactory()
+        child = await RoleSkillKickoffAcpEmployeeChildFactory(delegate).create(
+            _employee(), 1, None, None, None
+        )
+
+        response = await child.set_config_option("session-new", "model-id", "model-a")
+        await child.set_legacy_session_model("session-new", "openrouter:provider-model")
+        await child.close_session("session-new")
+
+        assert response == SetSessionConfigOptionResponse(config_options=[])
+        assert delegate.children[0].configuration_requests == [
+            ("session-new", "model-id", "model-a")
         ]
+        assert delegate.children[0].legacy_model_requests == [
+            ("session-new", "openrouter:provider-model")
+        ]
+        assert delegate.children[0].closed_session_ids == ["session-new"]
 
     asyncio.run(exercise())
 
@@ -247,9 +284,7 @@ def test_command_shaped_first_prompt_does_not_consume_the_role_arm() -> None:
         delivered_command, delivered_ordinary = delegate.children[0].prompt_requests
         assert delivered_command == command
         assert [
-            block.text
-            for block in delivered_ordinary.prompt
-            if isinstance(block, TextContentBlock)
+            block.text for block in delivered_ordinary.prompt if isinstance(block, TextContentBlock)
         ] == [
             "Use the installed `panels-worker` skill.",
             "Start the Ticket",

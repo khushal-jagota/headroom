@@ -84,6 +84,8 @@ PROBE_MANIFEST = {
     "default_ceiling": "needs_kickoff",
     "worker_profile_id": "probe-worker",
     "default_employee_backend": "probe-backend",
+    "default_employee_model": "probe-model",
+    "default_employee_reasoning_effort": "probe-high",
 }
 
 # The gating accept event order the engine emits for a direct gating accept with an

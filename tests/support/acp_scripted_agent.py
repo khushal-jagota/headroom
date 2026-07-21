@@ -22,6 +22,7 @@ from acp.schema import (
     AvailableCommand,
     AvailableCommandsUpdate,
     ClientCapabilities,
+    CloseSessionResponse,
     ContentToolCallContent,
     ForkSessionResponse,
     Implementation,
@@ -32,9 +33,12 @@ from acp.schema import (
     PlanEntry,
     PromptResponse,
     SessionCapabilities,
+    SessionConfigOptionSelect,
+    SessionConfigSelectOption,
     SessionForkCapabilities,
     SessionInfoUpdate,
     SessionNotification,
+    SetSessionConfigOptionResponse,
     TextContentBlock,
     ToolCallProgress,
     ToolCallStart,
@@ -69,9 +73,7 @@ def _audit_prompt_receipt(session_id: str, prompt: list[Any]) -> None:
     record = {
         "sessionId": session_id,
         "prompt": [
-            item.model_dump(mode="json", by_alias=True)
-            if hasattr(item, "model_dump")
-            else item
+            item.model_dump(mode="json", by_alias=True) if hasattr(item, "model_dump") else item
             for item in prompt
         ],
     }
@@ -99,28 +101,33 @@ def _audit_requested_cancel_late_send(session_id: str) -> None:
         stream.write(json.dumps(record, separators=(",", ":")) + "\n")
 
 
+def _audit_legacy_model(record: dict[str, Any]) -> None:
+    audit_path = os.environ.get("ACP_TEST_LEGACY_MODEL_AUDIT_PATH")
+    if audit_path is None:
+        return
+    payload = {"processId": os.getpid(), **record}
+    with Path(audit_path).open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(payload, separators=(",", ":")) + "\n")
+
+
 class ScriptedAcpAgent:
     def __init__(self) -> None:
         self._client: Client | None = None
         self._next_session_number = 1
         self._durable_store_path = (
-            Path(value)
-            if (value := os.environ.get("ACP_TEST_DURABLE_STORE_PATH"))
-            else None
+            Path(value) if (value := os.environ.get("ACP_TEST_DURABLE_STORE_PATH")) else None
         )
         self._durable_session_updates = self._load_durable_store()
-        self._session_updates: dict[str, list[Any]] = copy.deepcopy(
-            self._durable_session_updates
-        )
+        self._session_updates: dict[str, list[Any]] = copy.deepcopy(self._durable_session_updates)
         existing_numbers = [
             int(session_id.rsplit("-", 1)[1])
             for session_id in self._session_updates
-            if session_id.startswith("scripted-session-")
-            and session_id.rsplit("-", 1)[1].isdigit()
+            if session_id.startswith("scripted-session-") and session_id.rsplit("-", 1)[1].isdigit()
         ]
         if existing_numbers:
             self._next_session_number = max(existing_numbers) + 1
         self._cancel_events: dict[str, asyncio.Event] = {}
+        self._session_configuration: dict[str, dict[str, str]] = {}
         self._post_fork_metadata_complete: dict[str, asyncio.Event] = {}
         self._prompt_release_socket: socket.socket | None = None
         prompt_release_udp = os.environ.get("ACP_TEST_PROMPT_RELEASE_UDP")
@@ -192,17 +199,20 @@ class ScriptedAcpAgent:
         if os.environ.get("ACP_TEST_HERMES_HISTORY") == "1":
             raw_fixture = json.loads(HERMES_REPLAY_FIXTURE.read_text())
             self._session_updates[session_id] = [
-                SessionNotification.model_validate(item, strict=True).update
-                for item in raw_fixture
+                SessionNotification.model_validate(item, strict=True).update for item in raw_fixture
             ]
-        self._durable_session_updates[session_id] = copy.deepcopy(
-            self._session_updates[session_id]
-        )
+        self._durable_session_updates[session_id] = copy.deepcopy(self._session_updates[session_id])
         self._persist_durable_store()
         self._cancel_events[session_id] = asyncio.Event()
+        self._session_configuration[session_id] = {
+            "model": "probe-model",
+            "reasoning": "probe-high",
+        }
+        _audit_legacy_model({"event": "new_session", "sessionId": session_id})
         _diagnostic(f"new {session_id}")
         return NewSessionResponse(
             session_id=session_id,
+            config_options=self._configuration_options(session_id),
             field_meta={
                 "scripted": {
                     "cwd": cwd,
@@ -215,6 +225,71 @@ class ScriptedAcpAgent:
                 }
             },
         )
+
+    async def set_config_option(
+        self,
+        session_id: str,
+        config_id: str,
+        value: str | bool,
+        **kwargs: Any,
+    ) -> SetSessionConfigOptionResponse:
+        del kwargs
+        if os.environ.get("ACP_TEST_CONFIG_FAIL") == config_id:
+            raise RuntimeError(f"scripted configuration failure: {config_id}")
+        if not isinstance(value, str):
+            raise ValueError("scripted configuration accepts select values only")
+        configuration = self._session_configuration[session_id]
+        if config_id == "scripted-model":
+            if value not in {"probe-model", "probe-alt"}:
+                raise ValueError("unknown scripted model")
+            configuration["model"] = value
+            if value == "probe-alt":
+                configuration["reasoning"] = "probe-low"
+        elif config_id == "scripted-reasoning":
+            available = (
+                {"probe-low", "probe-high"}
+                if configuration["model"] == "probe-model"
+                else {"probe-low"}
+            )
+            if value not in available:
+                raise ValueError("unknown scripted reasoning effort")
+            configuration["reasoning"] = value
+        else:
+            raise ValueError("unknown scripted configuration option")
+        self._audit_configuration(
+            {
+                "event": "set_config_option",
+                "sessionId": session_id,
+                "configId": config_id,
+                "value": value,
+            }
+        )
+        return SetSessionConfigOptionResponse(
+            config_options=self._configuration_options(session_id)
+        )
+
+    async def set_legacy_session_model(self, session_id: str, model_id: str) -> dict[str, Any]:
+        if os.environ.get("ACP_TEST_LEGACY_MODEL_FAIL") == "1":
+            raise RuntimeError("scripted legacy model failure")
+        if session_id not in self._session_configuration:
+            raise ValueError("unknown scripted session")
+        self._session_configuration[session_id]["model"] = model_id
+        _audit_legacy_model(
+            {
+                "event": "set_model",
+                "sessionId": session_id,
+                "modelId": model_id,
+            }
+        )
+        return {}
+
+    async def close_session(self, session_id: str, **kwargs: Any) -> CloseSessionResponse:
+        del kwargs
+        self._audit_configuration({"event": "close_session", "sessionId": session_id})
+        self._session_configuration.pop(session_id, None)
+        self._session_updates.pop(session_id, None)
+        self._cancel_events.pop(session_id, None)
+        return CloseSessionResponse()
 
     async def fork_session(
         self,
@@ -249,9 +324,7 @@ class ScriptedAcpAgent:
             self._post_fork_metadata_complete[fork_session_id] = metadata_complete
             asyncio.get_running_loop().call_soon(
                 asyncio.create_task,
-                self._emit_post_fork_metadata(
-                    session_id, fork_session_id, metadata_complete
-                ),
+                self._emit_post_fork_metadata(session_id, fork_session_id, metadata_complete),
             )
         return ForkSessionResponse(
             session_id=fork_session_id,
@@ -293,9 +366,7 @@ class ScriptedAcpAgent:
         if os.environ.get("ACP_TEST_POST_LOAD_METADATA") == "1":
             asyncio.get_running_loop().call_soon(
                 asyncio.create_task,
-                self._emit_ephemeral_available_commands(
-                    session_id, "post-load-metadata"
-                ),
+                self._emit_ephemeral_available_commands(session_id, "post-load-metadata"),
             )
         return LoadSessionResponse()
 
@@ -306,15 +377,30 @@ class ScriptedAcpAgent:
         **kwargs: Any,
     ) -> PromptResponse:
         _audit_prompt_receipt(session_id, prompt)
+        configuration = self._session_configuration.get(session_id)
+        if configuration is not None:
+            _audit_legacy_model(
+                {
+                    "event": "prompt",
+                    "sessionId": session_id,
+                    "modelId": configuration["model"],
+                }
+            )
+            self._audit_configuration(
+                {
+                    "event": "prompt",
+                    "sessionId": session_id,
+                    "model": configuration["model"],
+                    "reasoning": configuration["reasoning"],
+                }
+            )
         script = str(kwargs.get("script", "default"))
         if script == "default" and any(
-            "[ACP_TEST_WAIT_FOR_CANCEL]" in str(getattr(item, "text", ""))
-            for item in prompt
+            "[ACP_TEST_WAIT_FOR_CANCEL]" in str(getattr(item, "text", "")) for item in prompt
         ):
             script = "wait_for_cancel"
         if script == "default" and any(
-            "[ACP_TEST_PERMISSION]" in str(getattr(item, "text", ""))
-            for item in prompt
+            "[ACP_TEST_PERMISSION]" in str(getattr(item, "text", "")) for item in prompt
         ):
             script = "permission"
         _diagnostic(f"prompt {session_id} {script}")
@@ -494,9 +580,7 @@ class ScriptedAcpAgent:
                 AgentMessageChunk(
                     session_update="agent_message_chunk",
                     message_id="reverse-terminal-result",
-                    content=_text(
-                        f"{output.output}|{waited.exit_code}|{output.truncated}"
-                    ),
+                    content=_text(f"{output.output}|{waited.exit_code}|{output.truncated}"),
                 ),
             )
             return PromptResponse(stop_reason="end_turn")
@@ -561,9 +645,7 @@ class ScriptedAcpAgent:
             AgentPlanUpdate(
                 session_update="plan",
                 entries=[
-                    PlanEntry(
-                        content="Replacement snapshot", priority="high", status="completed"
-                    )
+                    PlanEntry(content="Replacement snapshot", priority="high", status="completed")
                 ],
             ),
         )
@@ -609,9 +691,7 @@ class ScriptedAcpAgent:
         if self._prompt_release_socket is not None:
             await asyncio.to_thread(self._prompt_release_socket.recvfrom, 1)
         if script == "automatic_compaction":
-            self._install_live_compacted_history(
-                session_id, "Inspectable automatic summary"
-            )
+            self._install_live_compacted_history(session_id, "Inspectable automatic summary")
         if script in {"explicit_compaction", "explicit_compaction_marker_free"}:
             await self._emit(
                 session_id,
@@ -631,15 +711,64 @@ class ScriptedAcpAgent:
             if script == "explicit_compaction_marker_free":
                 self._install_live_marker_free_compacted_history(session_id)
             else:
-                self._install_live_compacted_history(
-                    session_id, "Inspectable explicit summary"
-                )
+                self._install_live_compacted_history(session_id, "Inspectable explicit summary")
         return PromptResponse(stop_reason="end_turn")
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
         del kwargs
         _diagnostic(f"cancel {session_id}")
         self._cancel_events[session_id].set()
+
+    def _configuration_options(self, session_id: str) -> list[SessionConfigOptionSelect]:
+        configuration = self._session_configuration[session_id]
+        model = SessionConfigOptionSelect(
+            type="select",
+            id="scripted-model",
+            name="Model",
+            category="model",
+            current_value=configuration["model"],
+            options=[
+                SessionConfigSelectOption(
+                    value="probe-model", name="Probe model", description="Primary scripted model"
+                ),
+                SessionConfigSelectOption(
+                    value="probe-alt", name="Probe alternate", description=None
+                ),
+            ],
+        )
+        if (
+            os.environ.get("ACP_TEST_CONFIG_DISAPPEAR_REASONING") == "1"
+            and configuration["model"] == "probe-alt"
+        ):
+            return [model]
+        efforts = (
+            (
+                SessionConfigSelectOption(value="probe-low", name="Low"),
+                SessionConfigSelectOption(value="probe-high", name="High"),
+            )
+            if configuration["model"] == "probe-model"
+            else (SessionConfigSelectOption(value="probe-low", name="Low"),)
+        )
+        return [
+            model,
+            SessionConfigOptionSelect(
+                type="select",
+                id="scripted-reasoning",
+                name="Reasoning",
+                category="thought_level",
+                current_value=configuration["reasoning"],
+                options=list(efforts),
+            ),
+        ]
+
+    @staticmethod
+    def _audit_configuration(record: dict[str, Any]) -> None:
+        audit_path = os.environ.get("ACP_TEST_CONFIG_AUDIT_PATH")
+        if audit_path is None:
+            return
+        payload = {"processId": os.getpid(), **record}
+        with Path(audit_path).open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(payload, separators=(",", ":")) + "\n")
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         if method != "emit_malformed_update":
@@ -655,9 +784,7 @@ class ScriptedAcpAgent:
 
     async def _emit(self, session_id: str, update: Any) -> None:
         self._session_updates[session_id].append(update)
-        self._durable_session_updates[session_id] = copy.deepcopy(
-            self._session_updates[session_id]
-        )
+        self._durable_session_updates[session_id] = copy.deepcopy(self._session_updates[session_id])
         self._persist_durable_store()
         await self.client.session_update(session_id=session_id, update=update)
 
@@ -679,9 +806,7 @@ class ScriptedAcpAgent:
         finally:
             metadata_complete.set()
 
-    async def _emit_ephemeral_available_commands(
-        self, session_id: str, command_name: str
-    ) -> None:
+    async def _emit_ephemeral_available_commands(self, session_id: str, command_name: str) -> None:
         await self.client.session_update(
             session_id=session_id,
             update=AvailableCommandsUpdate(
@@ -696,10 +821,7 @@ class ScriptedAcpAgent:
         )
 
     def _install_live_compacted_history(self, session_id: str, summary: str) -> None:
-        text = (
-            f"{HERMES_SUMMARY_PREFIX}\n\n{summary}\n\n"
-            f"{HERMES_SUMMARY_END_MARKER}"
-        )
+        text = f"{HERMES_SUMMARY_PREFIX}\n\n{summary}\n\n{HERMES_SUMMARY_END_MARKER}"
         self._session_updates[session_id] = [
             AgentMessageChunk(
                 session_update="agent_message_chunk",
@@ -768,9 +890,7 @@ class ScriptedAcpAgent:
             }
         }
         temporary = path.with_suffix(path.suffix + ".tmp")
-        temporary.write_text(
-            json.dumps(payload, separators=(",", ":")), encoding="utf-8"
-        )
+        temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
         temporary.replace(path)
 
     async def _emit_malformed_update(self, *, session_id: str, partial: bool) -> None:
@@ -792,7 +912,36 @@ class ScriptedAcpAgent:
 
 
 async def _main() -> None:
-    await acp.run_agent(ScriptedAcpAgent(), use_unstable_protocol=True)
+    from acp.agent import connection as agent_connection
+
+    agent = ScriptedAcpAgent()
+    standard_router_builder = agent_connection.build_agent_router
+
+    def build_scripted_router(routed_agent: Any, *, use_unstable_protocol: bool = False) -> Any:
+        standard_router = standard_router_builder(
+            routed_agent, use_unstable_protocol=use_unstable_protocol
+        )
+
+        async def route(method: str, params: object, is_notification: bool) -> object:
+            if method != "session/set_model":
+                return await standard_router(method, params, is_notification)
+            if (
+                is_notification
+                or not isinstance(params, dict)
+                or set(params) != {"sessionId", "modelId"}
+                or not isinstance(params["sessionId"], str)
+                or not isinstance(params["modelId"], str)
+            ):
+                raise ValueError("invalid legacy model request")
+            return await agent.set_legacy_session_model(params["sessionId"], params["modelId"])
+
+        return route
+
+    agent_connection.build_agent_router = build_scripted_router
+    try:
+        await acp.run_agent(agent, use_unstable_protocol=True)
+    finally:
+        agent_connection.build_agent_router = standard_router_builder
 
 
 if __name__ == "__main__":

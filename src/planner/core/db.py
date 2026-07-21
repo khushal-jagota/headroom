@@ -15,7 +15,7 @@ from planner.core.legacy_execution_route import (
 )
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 26
+SCHEMA_VERSION: Final = 27
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS tickets (
   title                TEXT NOT NULL CHECK (length(title) <= 200),
   worker_type          TEXT NOT NULL,                -- immutable registry id; NO enumerating CHECK (open registry)
   employee_backend     TEXT NOT NULL,                -- selected registered ACP backend; no live fallback
+  employee_launch_model TEXT,                        -- historical first-session Kickoff request; NULL = native default
+  employee_launch_reasoning_effort TEXT,             -- historical first-session Kickoff request; NULL = native default
   stage                TEXT NOT NULL DEFAULT 'needs_kickoff',  -- directly stored; registry validates workflow relationships
   priority             TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
   deadline             TEXT,
@@ -219,6 +221,15 @@ def create_schema(conn: sqlite3.Connection) -> None:
         raise RuntimeError(
             "v26 Ticket schema is missing the required non-null employee_backend column "
             "without a default"
+        )
+    if incoming_version < 27:
+        if conn.in_transaction:
+            conn.commit()
+        _migrate_to_v27(conn)
+    elif not _tickets_table_is_v27(conn):
+        raise RuntimeError(
+            "v27 Ticket schema is missing the nullable Employee launch configuration columns "
+            "without defaults"
         )
     _create_indexes(conn)
 
@@ -440,6 +451,48 @@ def _migrate_to_v26(conn: sqlite3.Connection) -> None:
     finally:
         if foreign_keys_enabled:
             conn.execute("PRAGMA foreign_keys=ON")
+
+
+def _tickets_table_is_v27(conn: sqlite3.Connection) -> bool:
+    columns = {str(row[1]): row for row in conn.execute("PRAGMA table_info(tickets)")}
+    return all(
+        column is not None and int(column[3]) == 0 and column[4] is None
+        for column in (
+            columns.get("employee_launch_model"),
+            columns.get("employee_launch_reasoning_effort"),
+        )
+    )
+
+
+def _migrate_to_v27(conn: sqlite3.Connection) -> None:
+    """Add nullable historical first-session launch configuration to Tickets."""
+
+    if conn.in_transaction:
+        raise RuntimeError("Ticket v27 migration requires an autocommit connection")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        columns = _table_columns(conn, "tickets")
+        if "employee_launch_model" not in columns:
+            conn.execute("ALTER TABLE tickets ADD COLUMN employee_launch_model TEXT")
+        if "employee_launch_reasoning_effort" not in columns:
+            conn.execute(
+                "ALTER TABLE tickets ADD COLUMN employee_launch_reasoning_effort TEXT"
+            )
+        if not _tickets_table_is_v27(conn):
+            raise RuntimeError(
+                "Ticket v27 migration could not establish nullable launch configuration"
+            )
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(
+                f"foreign key check failed after Ticket v27 migration: {violations!r}"
+            )
+        conn.execute("PRAGMA user_version=27")
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:

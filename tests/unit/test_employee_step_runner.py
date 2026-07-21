@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic
 
+import pytest
+from tests.support.acp_e2e_server import build_scripted_employee_runtime_definitions
+
+from planner.conversation.composition import (
+    ConversationComposition,
+    ConversationTestOptions,
+)
+from planner.conversation.contracts import ConversationSessionBinding
 from planner.core.clock import RealClock
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
@@ -19,7 +29,12 @@ from planner.runtime.step_gateway import (
     EmployeeStepRunResult,
 )
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, AtCap, TicketStatus
+from planner.tickets.contracts import (
+    NO_FURTHER,
+    AtCap,
+    EmployeeLaunchConfiguration,
+    TicketStatus,
+)
 
 BOUNDARY_HOUR = 5
 
@@ -66,6 +81,31 @@ class _Gateway:
 
     def status(self) -> _Status:
         return _Status()
+
+
+class _ConversationLoopThread:
+    def __init__(self) -> None:
+        self.loop = asyncio.new_event_loop()
+        self.started = threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+        assert self.started.wait(1)
+
+    def _run(self) -> None:
+        asyncio.set_event_loop(self.loop)
+        self.started.set()
+        self.loop.run_forever()
+
+    def close(self) -> None:
+        self.loop.call_soon_threadsafe(self.loop.stop)
+        self.thread.join(timeout=1)
+        self.loop.close()
+
+
+def _read_json_lines(path: Path) -> list[dict[str, object]]:
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line]
 
 
 def _eligible_ticket(tmp_path: Path) -> tuple[str, str]:
@@ -139,6 +179,129 @@ def test_automatic_step_uses_acp_and_stores_no_transcript(tmp_path: Path) -> Non
     )
     assert len(gateway.calls) == 1
     assert gateway.calls[0][1] == ticket_id
+
+
+def test_first_automatic_prompt_uses_selected_model_then_reasoning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path, ticket_id = _eligible_ticket(tmp_path)
+    config_audit_path = tmp_path / "automatic-config-audit.jsonl"
+    monkeypatch.setenv("ACP_TEST_CONFIG_AUDIT_PATH", str(config_audit_path))
+    conn = connect(db_path)
+    conn.execute(
+        "UPDATE tickets SET employee_backend = 'probe-backend', "
+        "employee_launch_model = 'probe-alt', "
+        "employee_launch_reasoning_effort = 'probe-low' WHERE id = ?",
+        (ticket_id,),
+    )
+    conn.close()
+
+    loop_thread = _ConversationLoopThread()
+    composition: ConversationComposition | None = None
+    runner: EmployeeStepRunner | None = None
+    binding_observations: list[ConversationSessionBinding] = []
+    try:
+
+        async def build_composition() -> ConversationComposition:
+            built = ConversationComposition.build(
+                db_path=db_path,
+                busy_timeout_ms=5000,
+                clock=RealClock(),
+                repository_root=tmp_path,
+                loop=asyncio.get_running_loop(),
+                test_options=ConversationTestOptions(
+                    employee_runtime_definitions=(
+                        build_scripted_employee_runtime_definitions()
+                    )
+                ),
+            )
+            original_initial_binding = (
+                built.registry._compare_and_swap_initial_binding  # noqa: SLF001
+            )
+            assert original_initial_binding is not None
+
+            async def observe_initial_binding(
+                candidate: ConversationSessionBinding,
+                configuration: EmployeeLaunchConfiguration,
+            ) -> ConversationSessionBinding:
+                audit = _read_json_lines(config_audit_path)
+                assert [
+                    (event["event"], event.get("configId"), event.get("value"))
+                    for event in audit
+                ] == [
+                    ("set_config_option", "scripted-model", "probe-alt"),
+                    ("set_config_option", "scripted-reasoning", "probe-low"),
+                ]
+                assert configuration == EmployeeLaunchConfiguration(
+                    employee_backend="probe-backend",
+                    employee_launch_model="probe-alt",
+                    employee_launch_reasoning_effort="probe-low",
+                )
+                binding_observations.append(candidate)
+                return await original_initial_binding(candidate, configuration)
+
+            built.registry._compare_and_swap_initial_binding = (  # noqa: SLF001
+                observe_initial_binding
+            )
+            return built
+
+        composition = asyncio.run_coroutine_threadsafe(
+            build_composition(), loop_thread.loop
+        ).result(timeout=5)
+        runner = EmployeeStepRunner(
+            db_path,
+            RealClock(),
+            gateway=composition.step_gateway,
+            automatic_employee_step_eligibility_wake=(
+                NoOpAutomaticEmployeeStepEligibilityWake()
+            ),
+            boundary_hour=BOUNDARY_HOUR,
+        )
+
+        runner.try_run_automatic_step(ticket_id)
+        assert runner.wait_idle(timeout=8)
+
+        audit = _read_json_lines(config_audit_path)
+        assert [event["event"] for event in audit] == [
+            "set_config_option",
+            "set_config_option",
+            "prompt",
+        ]
+        assert audit[-1]["model"] == "probe-alt"
+        assert audit[-1]["reasoning"] == "probe-low"
+        assert len({event["processId"] for event in audit}) == 1
+        assert len(binding_observations) == 1
+        assert audit[-1]["sessionId"] == binding_observations[0].acp_session_id
+
+        conn = connect(db_path)
+        binding_rows = conn.execute(
+            "SELECT acp_session_id, backend_key, binding_generation "
+            "FROM conversation_session_bindings WHERE employee_id = ?",
+            (ticket_id,),
+        ).fetchall()
+        step = conn.execute(
+            "SELECT status, employee_session_id FROM employee_step_runs "
+            "WHERE ticket_id = ?",
+            (ticket_id,),
+        ).fetchone()
+        ticket = tickets_data.read_ticket(conn, ticket_id)
+        conn.close()
+        assert [tuple(row) for row in binding_rows] == [
+            (binding_observations[0].acp_session_id, "probe-backend", 1)
+        ]
+        assert tuple(step) == ("complete", binding_observations[0].acp_session_id)
+        assert ticket.employee_session_id == binding_observations[0].acp_session_id
+        assert ticket.employee_launch_model == "probe-alt"
+        assert ticket.employee_launch_reasoning_effort == "probe-low"
+    finally:
+        if runner is not None:
+            runner.stop(deadline=monotonic() + 2)
+        if composition is not None:
+            asyncio.run_coroutine_threadsafe(
+                composition.shutdown(loop_thread.loop.time() + 5),
+                loop_thread.loop,
+            ).result(timeout=6)
+        loop_thread.close()
 
 
 def test_busy_step_interrupts_record_and_releases_ticket(tmp_path: Path) -> None:

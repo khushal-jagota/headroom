@@ -2810,3 +2810,30 @@ directive to the human. Claude's provider-specific `_meta.systemPrompt` append i
 all supported backends the same role source and delivery mechanism without modifying an upstream
 adapter, copying skill files, maintaining a second registry, or adding durable first-turn state. The
 bounded slice collapses plan review into implementation and receives one independent final diff review.
+
+## D-worker-type-default-agent-configuration — Defaults seed one Ticket's Kickoff setup
+
+Each Worker type owns the default Employee backend, model, and reasoning effort for its Tickets. A new
+Ticket copies the Worker type's supported defaults into that Ticket exactly once. The Worker type is
+only the source of the starting values: afterward the user edits the Ticket's current Worker, Model,
+and Reasoning directly. There is no reset-to-Worker-type-default action, no remembered per-backend
+matrix, and switching back to a Worker does not restore the Worker type's original values.
+
+These are not header or ongoing conversation controls. They live inside the Kickoff section beside
+the point where Kickoff is approved, and are editable only during the existing pristine-Kickoff
+window. The saved model and reasoning values are historical first-session launch inputs, not a live
+mirror: after first binding ACP owns the session state, Panels does not reapply them on a load, and
+the UI does not show them as current settings. The controls are backend-capability-aware: Codex and Claude
+expose Worker, Model, and Reasoning, while Hermes exposes Worker and Model only because its pinned ACP
+adapter has no functional session reasoning control. Combined setup presets are deferred.
+
+## D-first-ticket-binding-fails-closed-on-launch-authority — Never bypass the prepared trio
+
+An unbound Ticket may enter the durable ACP binding table only through the initial-binding operation
+that compares the complete prepared Worker/Model/Reasoning launch request with the current Ticket row
+inside the same transaction. The registry may retain optional constructor seams for Chief and
+already-bound test runtimes, but it rejects an unbound Ticket before spawning when that operation is
+absent. If another first binding wins, a Ticket race loser must also have the repository Employee
+resolver: it re-resolves the winner after binding and requires launch Model/Reasoning to be null before
+loading it. There is no compatibility fallback to ordinary binding CAS or to clearing the loser's
+in-memory request, because either would weaken the one-time launch boundary.

@@ -35,11 +35,14 @@ part of the Kickoff proposal. A new ordinary ticket parks a Kickoff field propos
 for review before any worker turn can start. Approving Kickoff settles the Kickoff
 field, then the ticket enters the worker stages.
 
-The Ticket also stores the Employee backend that will run its conversation. Creation uses
-the Worker type's registered default unless the caller supplies another registered
-backend. The choice may be changed only during pristine Kickoff, before a session or
-conversation binding exists. Advancing Kickoff or making the first Employee demand
-freezes it.
+The Ticket also stores the Worker, Model, and Reasoning requested for its first Employee
+session. Creation copies the Worker type's three starting values once. The Kickoff
+section shows the editable controls beside approval only while Kickoff is pristine and
+no session or conversation binding exists. Hermes has no Reasoning control; Codex and
+Claude Code show the Reasoning values supported by the selected model. Advancing Kickoff
+or making the first Employee demand freezes the complete setup and removes the controls.
+The stored model and reasoning then remain historical launch choices, not a display of
+the session's current settings.
 
 After Kickoff, a ticket fills its blanks in order: a **success condition** (what
 does done mean?), an **approach** (how, roughly?), a **plan** (concretely, step by
@@ -69,6 +72,12 @@ employee and the exact stored `employee_backend` used to open it. The Ticket mir
 session id in `employee_session_id`. Human prompts, Automatic Employee steps, and revision
 guidance all reach that same backend and session, and Panels resumes it after a restart
 instead of replaying the original prompt.
+
+Before that first binding is written, Panels applies any explicit launch Model and then
+any explicit Reasoning choice to the new session. The binding is accepted only if the
+Ticket still owns the same complete setup. Once bound, loading and recovery trust the
+ACP session's own configuration. New Conversation also starts without reapplying the
+historical Kickoff model or reasoning.
 
 The ACP backend's typed replay is the conversation transcript. Panels does not keep a
 second message or active-turn table, and there is no separate Employee-history HTTP
@@ -258,4 +267,4 @@ _Code paths:_ `src/planner/core/events.py`.
 
 ---
 
-_Last verified: 2026-07-20._
+_Last verified: 2026-07-21._

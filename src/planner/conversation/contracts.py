@@ -71,11 +71,23 @@ class ConversationEmployee(_ConversationModel):
     entity_id: str
     workspace_roots: tuple[Path, ...]
     backend_key: str
+    employee_launch_model: str | None = None
+    employee_launch_reasoning_effort: str | None = None
 
     @field_validator("employee_id", "entity_id", "backend_key")
     @classmethod
     def _validate_identifiers(cls, value: str, info: object) -> str:
         field_name = getattr(info, "field_name", "identifier")
+        return _require_non_empty_text(value, field_name=field_name)
+
+    @field_validator("employee_launch_model", "employee_launch_reasoning_effort")
+    @classmethod
+    def _validate_optional_launch_identifier(
+        cls, value: str | None, info: object
+    ) -> str | None:
+        if value is None:
+            return None
+        field_name = getattr(info, "field_name", "launch identifier")
         return _require_non_empty_text(value, field_name=field_name)
 
     @field_validator("workspace_roots")

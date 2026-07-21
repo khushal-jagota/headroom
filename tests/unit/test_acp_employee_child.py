@@ -80,9 +80,7 @@ def _definition(*, expected_name: str = "panels-scripted-agent") -> AgentBackend
         environment_overrides=(),
         expected_agent_name=expected_name,
         expected_agent_version="1.0.0",
-        turn_capabilities=BackendTurnCapabilities(
-            supports_steer=False, observes_compaction=False
-        ),
+        turn_capabilities=BackendTurnCapabilities(supports_steer=False, observes_compaction=False),
         reverse_service_capabilities=ReverseServiceCapabilities(
             filesystem=False, terminal=False, permission=True
         ),
@@ -166,9 +164,7 @@ def test_private_epoch_routes_matching_pre_request_update_by_exact_session_id() 
             )
         )
 
-        await asyncio.wait_for(
-            ingress.finish_response_consumption_epoch(epoch), timeout=1
-        )
+        await asyncio.wait_for(ingress.finish_response_consumption_epoch(epoch), timeout=1)
         assert ordinary == []
         assert private == [candidate]
         assert ingress.fatal_error is None
@@ -198,9 +194,7 @@ def test_private_epoch_keeps_other_session_public_and_waits_for_observed_prefix(
             private_ingress=_append_async(private),
             private_session_id="candidate-session",
         )
-        source = _thought("ordinary source").model_copy(
-            update={"session_id": "source-session"}
-        )
+        source = _thought("ordinary source").model_copy(update={"session_id": "source-session"})
 
         ingress.observe_stream(_raw_event(source))
         ingress.fulfill_typed(source)
@@ -268,9 +262,7 @@ def test_private_epoch_routes_malformed_session_identity_to_visible_rejection() 
             )
         )
 
-        await asyncio.wait_for(
-            ingress.finish_response_consumption_epoch(epoch), timeout=1
-        )
+        await asyncio.wait_for(ingress.finish_response_consumption_epoch(epoch), timeout=1)
         assert private == []
         assert len(ordinary) == 1
         rejection = ordinary[0]
@@ -286,9 +278,7 @@ def test_response_epoch_rejects_incomplete_private_routing_shape() -> None:
         ingress = OrderedAcpConversationIngress(_discard)
         ingress.start()
         with pytest.raises(ValueError, match="private session ID"):
-            ingress.begin_response_consumption_epoch(
-                "session/load", private_ingress=_discard
-            )
+            ingress.begin_response_consumption_epoch("session/load", private_ingress=_discard)
         with pytest.raises(ValueError, match="private ingress"):
             ingress.begin_response_consumption_epoch(
                 "session/load", private_session_id="candidate-session"
@@ -342,6 +332,7 @@ def test_invalid_observer_frame_consumes_visible_rejection_without_typed_callbac
     async def exercise() -> None:
         received: list[SessionNotification | ProtocolUpdateRejectedPayload] = []
         ingress = OrderedAcpConversationIngress(received.append)  # type: ignore[arg-type]
+
         # Use an async callable while retaining a compact assertion sink.
         async def sink(item: SessionNotification | ProtocolUpdateRejectedPayload) -> None:
             received.append(item)
@@ -467,7 +458,8 @@ def test_sink_exception_is_generation_fatal_and_wakes_load_barrier() -> None:
             raise ValueError("downstream failed")
 
         ingress = OrderedAcpConversationIngress(
-            failing_sink, fatal_callback=fatals.append  # type: ignore[arg-type]
+            failing_sink,
+            fatal_callback=fatals.append,  # type: ignore[arg-type]
         )
         ingress.start()
         ingress.begin_load_epoch()
@@ -502,9 +494,7 @@ def test_overflow_is_fatal_but_drains_already_accepted_fulfilled_prefix() -> Non
             received.append(item)
             consumed.set()
 
-        ingress = OrderedAcpConversationIngress(
-            sink, max_items=1, fatal_callback=fatals.append
-        )
+        ingress = OrderedAcpConversationIngress(sink, max_items=1, fatal_callback=fatals.append)
         ingress.start()
         accepted = _thought("accepted")
         ingress.observe_stream(_raw_event(accepted))
@@ -529,9 +519,7 @@ def test_overflow_preserves_callbacks_delayed_until_the_next_event_loop_turn() -
             if len(received) == 2:
                 two_consumed.set()
 
-        ingress = OrderedAcpConversationIngress(
-            sink, max_items=2, fatal_callback=fatals.append
-        )
+        ingress = OrderedAcpConversationIngress(sink, max_items=2, fatal_callback=fatals.append)
         ingress.start()
         ingress.begin_load_epoch()
         ingress.observe_stream(
@@ -709,9 +697,7 @@ def test_official_sdk_child_delegates_and_load_waits_for_sink_consumption() -> N
 
         async def permission(request: Any) -> RequestPermissionResponse:
             return RequestPermissionResponse(
-                outcome=AllowedOutcome(
-                    outcome="selected", option_id=request.options[0].option_id
-                )
+                outcome=AllowedOutcome(outcome="selected", option_id=request.options[0].option_id)
             )
 
         async def death(cause: BaseException | None) -> None:
@@ -750,13 +736,85 @@ def test_official_sdk_child_delegates_and_load_waits_for_sink_consumption() -> N
         await asyncio.wait_for(load_task, timeout=3)
         await child.cancel(CancelNotification(session_id=created.session_id))
         assert any(
-            isinstance(item, SessionNotification)
-            and isinstance(item.update, AgentThoughtChunk)
+            isinstance(item, SessionNotification) and isinstance(item.update, AgentThoughtChunk)
             for item in received
         )
         await child.close()
         await child.close()
         assert death_causes == [None]
+
+    asyncio.run(exercise())
+
+
+def test_official_sdk_child_sets_config_options_and_closes_temporary_session() -> None:
+    async def exercise() -> None:
+        definition = _definition()
+        child = await SdkAcpEmployeeChildFactory(definition).create(
+            _employee(), 1, _discard, _deny_permission, _discard_death
+        )
+        try:
+            await child.initialize(build_panels_initialize_request(definition))
+            created = await child.new_session(
+                NewSessionRequest(cwd=str(REPOSITORY_ROOT), mcp_servers=[])
+            )
+            assert created.config_options is not None
+            model = next(option for option in created.config_options if option.category == "model")
+            refreshed = await child.set_config_option(created.session_id, model.id, "probe-alt")
+            assert any(
+                option.category == "model" and option.current_value == "probe-alt"
+                for option in refreshed.config_options
+                if hasattr(option, "current_value")
+            )
+            await child.close_session(created.session_id)
+        finally:
+            await child.close()
+
+    asyncio.run(exercise())
+
+
+def test_official_sdk_child_sends_exact_legacy_model_request_before_prompt(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        audit_path = tmp_path / "legacy-model-audit.jsonl"
+        definition = replace(
+            _definition(),
+            environment_overrides=(("ACP_TEST_LEGACY_MODEL_AUDIT_PATH", str(audit_path)),),
+        )
+        child = await SdkAcpEmployeeChildFactory(definition).create(
+            _employee(), 1, _discard, _deny_permission, _discard_death
+        )
+        try:
+            await child.initialize(build_panels_initialize_request(definition))
+            created = await child.new_session(
+                NewSessionRequest(cwd=str(REPOSITORY_ROOT), mcp_servers=[])
+            )
+            await child.set_legacy_session_model(created.session_id, "openrouter:provider/model")
+            await child.prompt(
+                PromptRequest(
+                    session_id=created.session_id,
+                    prompt=[TextContentBlock(type="text", text="configured work")],
+                )
+            )
+        finally:
+            await child.close()
+
+        audit = [json.loads(line) for line in audit_path.read_text().splitlines()]
+        assert [
+            {key: value for key, value in item.items() if key != "processId"} for item in audit
+        ] == [
+            {"event": "new_session", "sessionId": created.session_id},
+            {
+                "event": "set_model",
+                "sessionId": created.session_id,
+                "modelId": "openrouter:provider/model",
+            },
+            {
+                "event": "prompt",
+                "sessionId": created.session_id,
+                "modelId": "openrouter:provider/model",
+            },
+        ]
 
     asyncio.run(exercise())
 
@@ -828,8 +886,7 @@ def test_official_sdk_child_forks_exact_session_and_privately_loads_ordered_repl
         await asyncio.wait_for(load, timeout=2)
         assert replay
         assert all(
-            isinstance(item, SessionNotification)
-            and item.session_id == forked.session_id
+            isinstance(item, SessionNotification) and item.session_id == forked.session_id
             for item in replay
         )
         await child.close()
@@ -896,22 +953,13 @@ def test_official_sdk_post_fork_updates_route_by_exact_session_without_deadlock(
                     return
                 params = event.message.get("params")
                 update = params.get("update") if isinstance(params, dict) else None
-                commands = (
-                    update.get("availableCommands")
-                    if isinstance(update, dict)
-                    else None
-                )
-                if (
-                    isinstance(update, dict)
-                    and update.get("sessionUpdate") == "user_message_chunk"
-                ):
+                commands = update.get("availableCommands") if isinstance(update, dict) else None
+                if isinstance(update, dict) and update.get("sessionUpdate") == "user_message_chunk":
                     wire_order.append("candidate-replay")
                 if not isinstance(commands, list):
                     return
                 command_names = [
-                    command.get("name")
-                    for command in commands
-                    if isinstance(command, dict)
+                    command.get("name") for command in commands if isinstance(command, dict)
                 ]
                 if command_names == ["candidate-after-fork"]:
                     wire_order.append("candidate-update")
@@ -943,13 +991,11 @@ def test_official_sdk_post_fork_updates_route_by_exact_session_without_deadlock(
             await asyncio.wait_for(load, timeout=2)
 
             assert all(
-                isinstance(item, SessionNotification)
-                and item.session_id == created.session_id
+                isinstance(item, SessionNotification) and item.session_id == created.session_id
                 for item in ordinary
             )
             assert all(
-                isinstance(item, SessionNotification)
-                and item.session_id == forked.session_id
+                isinstance(item, SessionNotification) and item.session_id == forked.session_id
                 for item in private
             )
             assert [
@@ -968,12 +1014,8 @@ def test_official_sdk_post_fork_updates_route_by_exact_session_without_deadlock(
             ]
             assert private_command_names[0] == "candidate-after-fork"
             assert "compact" in private_command_names
-            assert wire_order.index("candidate-update") < wire_order.index(
-                "candidate-load-request"
-            )
-            assert wire_order.index("source-update") < wire_order.index(
-                "candidate-replay"
-            )
+            assert wire_order.index("candidate-update") < wire_order.index("candidate-load-request")
+            assert wire_order.index("source-update") < wire_order.index("candidate-replay")
             assert child.alive
             assert child._ordered_ingress.fatal_error is None  # noqa: SLF001
             assert not child._ordered_ingress._response_epochs  # noqa: SLF001
@@ -1003,9 +1045,8 @@ def test_official_sdk_post_load_metadata_returns_to_ordinary_ingress() -> None:
             item: SessionNotification | ProtocolUpdateRejectedPayload,
         ) -> None:
             ordinary.append(item)
-            if (
-                isinstance(item, SessionNotification)
-                and isinstance(item.update, AvailableCommandsUpdate)
+            if isinstance(item, SessionNotification) and isinstance(
+                item.update, AvailableCommandsUpdate
             ):
                 metadata_observed.set()
 
@@ -1033,9 +1074,9 @@ def test_official_sdk_post_load_metadata_returns_to_ordinary_ingress() -> None:
             assert isinstance(metadata, SessionNotification)
             assert metadata.session_id == created.session_id
             assert isinstance(metadata.update, AvailableCommandsUpdate)
-            assert [
-                command.name for command in metadata.update.available_commands
-            ] == ["post-load-metadata"]
+            assert [command.name for command in metadata.update.available_commands] == [
+                "post-load-metadata"
+            ]
         finally:
             await child.close()
 
@@ -1236,9 +1277,7 @@ def test_initialize_protocol_identity_version_and_load_capability_fail_closed(
     environment_overrides: tuple[tuple[str, str], ...], message: str
 ) -> None:
     async def exercise() -> None:
-        definition = replace(
-            _definition(), environment_overrides=environment_overrides
-        )
+        definition = replace(_definition(), environment_overrides=environment_overrides)
         deaths: list[BaseException | None] = []
 
         async def death(cause: BaseException | None) -> None:
@@ -1293,9 +1332,7 @@ def test_stderr_flood_is_continuously_drained_into_bounded_replacement_tail() ->
             _definition(),
             environment_overrides=(("ACP_TEST_STDERR_BYTES", "70000"),),
         )
-        child = await SdkAcpEmployeeChildFactory(
-            definition, stderr_tail_max_bytes=1024
-        ).create(
+        child = await SdkAcpEmployeeChildFactory(definition, stderr_tail_max_bytes=1024).create(
             _employee(), 1, _discard, _deny_permission, _discard_death
         )
         # Initialization cannot complete if the subprocess blocks on an undrained
@@ -1315,9 +1352,9 @@ def test_force_shutdown_during_stderr_flood_kills_child_without_stranding_initia
             _definition(),
             environment_overrides=(("ACP_TEST_STDERR_BYTES", "5000000"),),
         )
-        child = await SdkAcpEmployeeChildFactory(
-            definition, stderr_tail_max_bytes=1024
-        ).create(_employee(), 1, _discard, _deny_permission, _discard_death)
+        child = await SdkAcpEmployeeChildFactory(definition, stderr_tail_max_bytes=1024).create(
+            _employee(), 1, _discard, _deny_permission, _discard_death
+        )
         initialize = asyncio.create_task(
             child.initialize(build_panels_initialize_request(definition))
         )

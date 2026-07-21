@@ -2202,6 +2202,33 @@ select {
   gap: var(--space-4);
 }
 
+/* Kickoff's Employee launch setup is one quiet form row, not another surface. */
+.employee-configuration-setup {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  font-family: var(--font-ui);
+}
+
+.employee-configuration-state {
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+}
+
+.employee-configuration-setup .pill:focus-within {
+  outline: var(--border-strong) solid var(--accent-bright);
+  outline-offset: var(--border-hairline);
+}
+
+.employee-configuration-problem {
+  display: flex;
+  align-items: center;
+  flex-basis: 100%;
+  gap: var(--space-3);
+}
+
 /* THE APPROVAL — a raised surface (background, no border). */
 .approval {
   background: var(--surface-raised);

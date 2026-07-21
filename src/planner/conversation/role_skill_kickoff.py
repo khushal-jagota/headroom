@@ -17,6 +17,7 @@ from acp.schema import (
     PromptRequest,
     PromptResponse,
     SessionNotification,
+    SetSessionConfigOptionResponse,
     TextContentBlock,
     UserMessageChunk,
 )
@@ -26,6 +27,7 @@ from .backend_contracts import (
     AcpEmployeeChild,
     AcpEmployeeChildFactory,
     ChildDeathCallback,
+    LegacyAcpSessionModelSelection,
     PermissionRequestCallback,
 )
 from .contracts import ConversationEmployee
@@ -70,9 +72,7 @@ class _RoleDirectiveEchoNormalizer:
         visible_content = payload.update.content.model_copy(
             update={"text": text[len(flattened_prefix) :]}
         )
-        visible_update = payload.update.model_copy(
-            update={"content": visible_content}
-        )
+        visible_update = payload.update.model_copy(update={"content": visible_content})
         return payload.model_copy(update={"update": visible_update})
 
 
@@ -81,9 +81,7 @@ class _ScopedRoleDirectiveEchoIngress:
         self._downstream = downstream
         self._normalizer: _RoleDirectiveEchoNormalizer | None = None
 
-    def arm(
-        self, session_id: str, role_directive: str
-    ) -> _RoleDirectiveEchoNormalizer:
+    def arm(self, session_id: str, role_directive: str) -> _RoleDirectiveEchoNormalizer:
         if self._normalizer is not None:
             raise RuntimeError("role directive echo ingress is already armed")
         normalizer = _RoleDirectiveEchoNormalizer(session_id, role_directive)
@@ -137,10 +135,21 @@ class _RoleSkillKickoffAcpEmployeeChild(AcpEmployeeChild):
         self._armed_session_id = response.session_id
         return response
 
+    async def set_config_option(
+        self, session_id: str, config_id: str, value: str
+    ) -> SetSessionConfigOptionResponse:
+        return await self._delegate.set_config_option(session_id, config_id, value)
+
+    async def set_legacy_session_model(self, session_id: str, model_id: str) -> None:
+        if not isinstance(self._delegate, LegacyAcpSessionModelSelection):
+            raise TypeError("ACP child does not support legacy session model selection")
+        await self._delegate.set_legacy_session_model(session_id, model_id)
+
+    async def close_session(self, session_id: str) -> None:
+        await self._delegate.close_session(session_id)
+
     async def load_session(self, request: LoadSessionRequest) -> LoadSessionResponse:
-        normalizer = self._normal_ingress.arm(
-            request.session_id, self._role_directive
-        )
+        normalizer = self._normal_ingress.arm(request.session_id, self._role_directive)
         try:
             return await self._delegate.load_session(request)
         finally:
@@ -151,9 +160,7 @@ class _RoleSkillKickoffAcpEmployeeChild(AcpEmployeeChild):
         request: LoadSessionRequest,
         private_ingress: AcpConversationIngress,
     ) -> LoadSessionResponse:
-        normalizer = _RoleDirectiveEchoNormalizer(
-            request.session_id, self._role_directive
-        )
+        normalizer = _RoleDirectiveEchoNormalizer(request.session_id, self._role_directive)
 
         async def visible_private_ingress(
             payload: SessionNotification | ProtocolUpdateRejectedPayload,
@@ -170,10 +177,7 @@ class _RoleSkillKickoffAcpEmployeeChild(AcpEmployeeChild):
         return await self._delegate.fork_session(request)
 
     async def prompt(self, request: PromptRequest) -> PromptResponse:
-        if (
-            request.session_id != self._armed_session_id
-            or self._is_command_shaped(request)
-        ):
+        if request.session_id != self._armed_session_id or self._is_command_shaped(request):
             return await self._delegate.prompt(request)
         self._armed_session_id = None
         delivered = request.model_copy(
@@ -184,9 +188,7 @@ class _RoleSkillKickoffAcpEmployeeChild(AcpEmployeeChild):
                 ]
             }
         )
-        normalizer = self._normal_ingress.arm(
-            request.session_id, self._role_directive
-        )
+        normalizer = self._normal_ingress.arm(request.session_id, self._role_directive)
         try:
             return await self._delegate.prompt(delivered)
         finally:
@@ -239,6 +241,4 @@ class RoleSkillKickoffAcpEmployeeChildFactory(AcpEmployeeChildFactory):
             permission_callback,
             death_callback,
         )
-        return _RoleSkillKickoffAcpEmployeeChild(
-            child, role_directive, normal_ingress
-        )
+        return _RoleSkillKickoffAcpEmployeeChild(child, role_directive, normal_ingress)

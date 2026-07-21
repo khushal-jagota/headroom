@@ -82,11 +82,20 @@ After a server restart, the first demand loads the stored binding and replay. St
 a new conversation deliberately creates a new ACP session and advances the generation.
 
 The production backend catalog contains exactly `hermes`, `codex`, and `claude`.
-Each Worker type supplies the default for new Tickets. During pristine Kickoff, the
-Ticket pane may select another registered backend. The first session or binding, or
-moving beyond Kickoff, freezes that Ticket's stored choice. Human prompts and
-Automatic Employee steps then use that selected backend and the same binding. Gemini
-is not registered.
+Each Worker type supplies a starting Worker, Model, and Reasoning effort; a new Ticket
+copies that trio once and then owns it. During pristine Kickoff, those controls appear
+only inside the Kickoff approval area. Hermes offers Model and no Reasoning. Codex and
+Claude Code offer Model plus the Reasoning choices supported by that model. The first
+durable binding, or moving beyond Kickoff, freezes the Ticket's launch setup and removes
+the controls. Gemini is not registered.
+
+For the first unbound session, Panels applies an explicit Model before an explicit
+Reasoning choice, then writes the binding only if the Ticket still owns the setup used
+to prepare that session. The stored model and reasoning remain after binding as the
+historical Kickoff request, not the worker's current settings. A bound load, child
+replacement, compaction recovery, or later New Conversation never reapplies or presents
+them as current. Human prompts and Automatic Employee steps still share the selected
+backend and durable binding.
 
 Claude Code runs one initialize-only preflight when Panels starts. That temporary
 child is closed before startup completes and creates no worker session. Codex is lazy:
@@ -174,4 +183,4 @@ mode and no runtime code reads the removed tables.
 
 ---
 
-_Last verified: 2026-07-20 (single ACP conversation with three production backends)._
+_Last verified: 2026-07-21 (single ACP conversation with three production backends)._
