@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -20,7 +21,10 @@ from fastapi import WebSocket
 from pydantic import ValidationError
 from starlette.websockets import WebSocketDisconnect
 
-from .configuration import ACP_NEW_CONVERSATION_TIMEOUT_SECONDS
+from .configuration import (
+    ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES,
+    ACP_NEW_CONVERSATION_TIMEOUT_SECONDS,
+)
 from .contracts import (
     ContextCompaction,
     ConversationActivity,
@@ -85,6 +89,7 @@ from .wire_contracts import (
 REPLAY_UNAVAILABLE_CLOSE_REASON = "conversation replay unavailable; retry"
 SLOW_CONSUMER_CLOSE_REASON = "conversation client is too slow"
 INVALID_ACTION_CLOSE_REASON = "invalid conversation action"
+_LOGGER = logging.getLogger(__name__)
 
 
 class _EnvelopeBase(TypedDict):
@@ -97,13 +102,89 @@ class _EnvelopeBase(TypedDict):
     sequence: int
 
 
+@dataclass(frozen=True, slots=True)
+class _ReplayCutover:
+    envelopes: tuple[str, ...]
+
+
+class _BrowserOutboundQueue:
+    """Subscriber-local replay followed by a bounded queue of live items."""
+
+    def __init__(self, capacity: int) -> None:
+        self.maxsize = capacity
+        self._bootstrap: deque[str] = deque()
+        self._live: asyncio.Queue[str] = asyncio.Queue(maxsize=capacity)
+        self._cutovers: deque[tuple[int, _ReplayCutover]] = deque()
+        self._live_put_count = 0
+        self._live_get_count = 0
+        self._available = asyncio.Event()
+
+    def set_initial_bootstrap(self, envelopes: tuple[str, ...]) -> None:
+        if self._bootstrap or not self._live.empty():
+            raise RuntimeError("initial replay bootstrap must precede live delivery")
+        self._bootstrap.extend(envelopes)
+
+    def put_replay_cutover_nowait(self, envelopes: tuple[str, ...]) -> None:
+        if self._live.full():
+            raise asyncio.QueueFull
+        self._cutovers.append(
+            (self._live_put_count, _ReplayCutover(envelopes))
+        )
+        self._available.set()
+
+    def put_nowait(self, serialized: str) -> None:
+        self._live.put_nowait(serialized)
+        self._live_put_count += 1
+        self._available.set()
+
+    async def get(self) -> str:
+        while True:
+            try:
+                return self.get_nowait()
+            except asyncio.QueueEmpty:
+                self._available.clear()
+                try:
+                    return self.get_nowait()
+                except asyncio.QueueEmpty:
+                    await self._available.wait()
+
+    def get_nowait(self) -> str:
+        if self._bootstrap:
+            return self._bootstrap.popleft()
+        if (
+            self._cutovers
+            and self._cutovers[0][0] == self._live_get_count
+        ):
+            _cutoff, cutover = self._cutovers.popleft()
+            self._bootstrap.extend(cutover.envelopes)
+            return self.get_nowait()
+        item = self._live.get_nowait()
+        self._live_get_count += 1
+        return item
+
+    def empty(self) -> bool:
+        return not self._bootstrap and not self._cutovers and self._live.empty()
+
+    def qsize(self) -> int:
+        return (
+            len(self._bootstrap)
+            + sum(len(item.envelopes) for _cutoff, item in self._cutovers)
+            + self._live.qsize()
+        )
+
+    def live_qsize(self) -> int:
+        return self._live.qsize()
+
+
 @dataclass(slots=True)
 class BrowserSubscription:
     connection_id: str
     employee_id: str
-    queue: asyncio.Queue[str]
+    queue: asyncio.Queue[str] | _BrowserOutboundQueue
     close_reason: str | None = None
     closed: asyncio.Event = field(default_factory=asyncio.Event)
+    permission_detach_task: asyncio.Task[None] | None = None
+    closure_logged: bool = False
 
 
 @dataclass(slots=True)
@@ -116,6 +197,8 @@ class _StreamState:
     ready: bool = False
     reset_buffer: list[str] = field(default_factory=list)
     reset_buffer_bytes: int = 0
+    reset_buffer_envelope_count: int = 0
+    reset_buffer_attempted_bytes: int = 0
     reset_buffer_available: bool = True
     persistent_rejection: ProtocolUpdateRejectedPayload | None = None
     browsers: dict[str, BrowserSubscription] = field(default_factory=dict)
@@ -180,7 +263,7 @@ class ConversationHub:
         repository: SqliteConversationBindingRepository,
         *,
         ingress_capacity: int = 256,
-        browser_capacity: int = 128,
+        browser_capacity: int = ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES,
         reset_buffer_byte_limit: int = 1_048_576,
         new_conversation_timeout_seconds: float = ACP_NEW_CONVERSATION_TIMEOUT_SECONDS,
         connection_id_factory: Callable[[], str] | None = None,
@@ -213,6 +296,7 @@ class ConversationHub:
         self._terminal_service: Any | None = None
         self._sequencers: dict[str, _EmployeeSequencer] = {}
         self._streams: dict[str, _StreamState] = {}
+        self._subscriptions: dict[str, BrowserSubscription] = {}
         self._source_capture: dict[
             tuple[str, int, int], deque[SessionNotification | ProtocolUpdateRejectedPayload]
         ] = {}
@@ -370,20 +454,21 @@ class ConversationHub:
         subscription = BrowserSubscription(
             connection_id=connection_id,
             employee_id=employee_id,
-            queue=asyncio.Queue(maxsize=self._browser_capacity),
+            queue=_BrowserOutboundQueue(self._browser_capacity),
         )
         await self._require_permission_broker().attach_browser(employee, connection_id)
+        self._subscriptions[connection_id] = subscription
         try:
             if binding is None:
                 record = await self._require_registry().get_or_spawn(employee)
                 binding = record.binding
                 if last_seen_binding_generation is not None:
                     raise ValueError("cursor cannot target a newly created binding")
-                await self._enqueue_and_wait(
-                    employee_id,
-                    lambda: self._attach_subscription(record, subscription),
+                await self._establish_stream(
+                    record,
+                    sequence_floor=0,
+                    initial_subscription=subscription,
                 )
-                await self._establish_stream(record, sequence_floor=0)
                 return subscription
 
             stream = self._streams.get(employee_id)
@@ -392,13 +477,15 @@ class ConversationHub:
                     raise ValueError("conversation cursor sequence is in the future")
             if stream is None or stream.binding != binding or not stream.ready:
                 record = await self._require_registry().attach(employee)
-                await self._enqueue_and_wait(
-                    employee_id,
-                    lambda: self._attach_subscription(record, subscription),
-                )
+                if stream is not None:
+                    await self._enqueue_and_wait(
+                        employee_id,
+                        lambda: self._open_capture(stream),
+                    )
                 await self._establish_stream(
                     record,
                     sequence_floor=last_seen_sequence or 0,
+                    initial_subscription=subscription,
                 )
                 return subscription
 
@@ -412,21 +499,23 @@ class ConversationHub:
                     lambda: self._attach_active_subscription(stream, subscription, attach_state),
                 )
                 if subscription.close_reason is not None:
-                    await self._require_permission_broker().detach_browser(connection_id)
+                    await self._detach_subscription_permission(subscription)
                 return subscription
 
-            await self._enqueue_and_wait(
-                employee_id,
-                lambda: self._attach_subscription_for_refresh(stream, subscription),
-            )
+            await self._enqueue_and_wait(employee_id, lambda: self._open_capture(stream))
             record = await self._require_registry().attach(employee)
-            await self._establish_stream(record, sequence_floor=stream.sequence)
+            await self._establish_stream(
+                record,
+                sequence_floor=stream.sequence,
+                initial_subscription=subscription,
+            )
             return subscription
         except BaseException:
-            await self._require_permission_broker().detach_browser(connection_id)
+            await self._detach_subscription_permission(subscription)
             raise
 
     async def detach_browser(self, connection_id: str) -> None:
+        subscription = self._subscriptions.get(connection_id)
         employee_id: str | None = None
         for candidate_id, stream in self._streams.items():
             if connection_id in stream.browsers:
@@ -437,7 +526,11 @@ class ConversationHub:
                 employee_id,
                 lambda: self._streams[employee_id].browsers.pop(connection_id, None),
             )
-        await self._require_permission_broker().detach_browser(connection_id)
+        if subscription is not None:
+            await self._detach_subscription_permission(subscription)
+            self._subscriptions.pop(connection_id, None)
+        else:
+            await self._require_permission_broker().detach_browser(connection_id)
 
     async def dispatch_action(self, connection_id: str, action: BrowserAction) -> None:
         if self._closing:
@@ -624,36 +717,42 @@ class ConversationHub:
                     id(replacement_handle.record_identity),
                 ),
                 runtime_handle=replacement_handle,
-                browsers=old_stream.browsers,
                 supports_steer=(
                     replacement_handle.definition.turn_capabilities.supports_steer
                 ),
             )
             state.committed_handle = replacement_handle
-            self._streams[employee_id] = stream
-            self._publish_connection_now(stream, "reset", "Conversation compacted")
-            self._publish_replay_batch_now(
-                stream,
-                replacement_handle,
-                replay,
-                compacted_boundaries,
+            def build_replay() -> None:
+                self._publish_connection_now(stream, "reset", "Conversation compacted")
+                self._publish_replay_batch_now(
+                    stream,
+                    replacement_handle,
+                    replay,
+                    compacted_boundaries,
+                )
+                permitted_sources = {
+                    (
+                        employee_id,
+                        token.original_handle.child_generation,
+                        id(token.original_handle.record_identity),
+                    ),
+                    stream.source_key,
+                }
+                while state.quarantined_ingress:
+                    quarantined = state.quarantined_ingress.popleft()
+                    if (
+                        quarantined.session_id
+                        == replacement_handle.binding.acp_session_id
+                        and quarantined.source_key in permitted_sources
+                    ):
+                        self._publish_source_payload(stream, quarantined.payload)
+                self._publish_connection_now(stream, "ready", "Ready")
+
+            replay_available = self._commit_detached_stream_candidate(
+                stream, old_stream.browsers, build_replay
             )
-            permitted_sources = {
-                (
-                    employee_id,
-                    token.original_handle.child_generation,
-                    id(token.original_handle.record_identity),
-                ),
-                stream.source_key,
-            }
-            while state.quarantined_ingress:
-                quarantined = state.quarantined_ingress.popleft()
-                if (
-                    quarantined.session_id == replacement_handle.binding.acp_session_id
-                    and quarantined.source_key in permitted_sources
-                ):
-                    self._publish_source_payload(stream, quarantined.payload)
-            self._publish_connection_now(stream, "ready", "Ready")
+            if not replay_available:
+                return
             for queued in queued_prompts:
                 self._publish_human_echo_now(
                     stream,
@@ -865,22 +964,31 @@ class ConversationHub:
                 runtime_handle=replacement_handle,
                 sequence=old_stream.sequence,
                 persistent_rejection=old_stream.persistent_rejection,
-                browsers=old_stream.browsers,
                 supports_steer=(
                     replacement_handle.definition.turn_capabilities.supports_steer
                 ),
             )
-            self._streams[employee_id] = stream
-            self._publish_connection_now(
-                stream, "reset", "Conversation runtime recovered"
+            def build_replay() -> None:
+                self._publish_connection_now(
+                    stream, "reset", "Conversation runtime recovered"
+                )
+                self._publish_replay_batch_now(
+                    stream,
+                    replacement_handle,
+                    replay,
+                    compacted_boundaries,
+                )
+                self._publish_connection_now(stream, "ready", "Ready")
+
+            replay_available = self._commit_detached_stream_candidate(
+                stream, old_stream.browsers, build_replay
             )
-            self._publish_replay_batch_now(
-                stream,
-                replacement_handle,
-                replay,
-                compacted_boundaries,
-            )
-            self._publish_connection_now(stream, "ready", "Ready")
+            if not replay_available:
+                state.held_source_payloads.clear()
+                self._settle_requested_cancel_recovery_transition_state(
+                    employee_id, state
+                )
+                return
             for queued in queued_prompts:
                 self._publish_human_echo_now(
                     stream,
@@ -1234,6 +1342,7 @@ class ConversationHub:
         *,
         sequence_floor: int,
         force_new_binding: bool = False,
+        initial_subscription: BrowserSubscription | None = None,
     ) -> None:
         source = ConversationIngressSource(
             employee=record.employee,
@@ -1255,9 +1364,9 @@ class ConversationHub:
                 compacted_boundaries,
                 sequence_floor=sequence_floor,
                 force_new_binding=force_new_binding,
+                initial_subscription=initial_subscription,
             ),
         )
-        await self._publish_connection(record.employee, record.binding, "ready", "Ready")
 
     def _bind_stream(
         self,
@@ -1270,6 +1379,7 @@ class ConversationHub:
         *,
         sequence_floor: int,
         force_new_binding: bool,
+        initial_subscription: BrowserSubscription | None = None,
     ) -> None:
         employee_id = source.employee.employee_id
         previous = self._streams.get(employee_id)
@@ -1291,20 +1401,67 @@ class ConversationHub:
             runtime_handle=runtime_handle,
             sequence=sequence,
             persistent_rejection=persistent,
-            browsers=browsers,
+            browsers={},
             supports_steer=runtime_handle.definition.turn_capabilities.supports_steer,
         )
-        self._streams[employee_id] = stream
-        self._publish_connection_now(stream, "reset", "Conversation loaded")
-        if persistent is not None:
-            self._publish_rejection_now(stream, persistent)
-        captured = self._source_capture.pop(stream.source_key, deque())
-        self._publish_replay_batch_now(
+        def build_replay() -> None:
+            self._publish_connection_now(stream, "reset", "Conversation loaded")
+            if persistent is not None:
+                self._publish_rejection_now(stream, persistent)
+            captured = self._source_capture.pop(stream.source_key, deque())
+            self._publish_replay_batch_now(
+                stream,
+                runtime_handle,
+                tuple(captured),
+                compacted_boundaries,
+            )
+            self._publish_connection_now(stream, "ready", "Ready")
+
+        self._commit_detached_stream_candidate(
             stream,
-            runtime_handle,
-            tuple(captured),
-            compacted_boundaries,
+            browsers,
+            build_replay,
+            initial_subscription=initial_subscription,
         )
+
+    def _commit_detached_stream_candidate(
+        self,
+        stream: _StreamState,
+        existing_browsers: dict[str, BrowserSubscription],
+        build_replay: Callable[[], None],
+        *,
+        initial_subscription: BrowserSubscription | None = None,
+    ) -> bool:
+        try:
+            build_replay()
+        except Exception:
+            stream.reset_buffer_available = False
+            stream.reset_buffer = []
+            stream.reset_buffer_bytes = 0
+        stream.browsers = dict(existing_browsers)
+        if initial_subscription is not None:
+            stream.browsers[initial_subscription.connection_id] = initial_subscription
+        self._streams[stream.employee.employee_id] = stream
+        if not stream.reset_buffer_available:
+            for browser in tuple(stream.browsers.values()):
+                self._close_browser_subscription(
+                    stream, browser, REPLAY_UNAVAILABLE_CLOSE_REASON, "replay"
+                )
+            return False
+
+        replay = tuple(stream.reset_buffer)
+        for browser in tuple(existing_browsers.values()):
+            try:
+                queue = cast(_BrowserOutboundQueue, browser.queue)
+                queue.put_replay_cutover_nowait(replay)
+            except asyncio.QueueFull:
+                self._close_browser_subscription(
+                    stream, browser, SLOW_CONSUMER_CLOSE_REASON, "live"
+                )
+        if initial_subscription is not None:
+            queue = cast(_BrowserOutboundQueue, initial_subscription.queue)
+            queue.set_initial_bootstrap(replay)
+        return True
 
     def _publish_replay_batch_now(
         self,
@@ -1342,28 +1499,6 @@ class ConversationHub:
         stream.source_key = (stream.employee.employee_id, -1, -1)
         stream.runtime_handle = None
 
-    def _attach_subscription(
-        self, record: AcpEmployeeRecord, subscription: BrowserSubscription
-    ) -> None:
-        stream = self._streams.get(record.employee.employee_id)
-        if stream is None:
-            stream = _StreamState(
-                employee=record.employee,
-                binding=record.binding,
-                source_key=(record.employee.employee_id, -1, -1),
-            )
-            self._streams[record.employee.employee_id] = stream
-        stream.browsers[subscription.connection_id] = subscription
-
-    @staticmethod
-    def _attach_subscription_for_refresh(
-        stream: _StreamState, subscription: BrowserSubscription
-    ) -> None:
-        stream.browsers[subscription.connection_id] = subscription
-        stream.ready = False
-        stream.source_key = (stream.employee.employee_id, -1, -1)
-        stream.runtime_handle = None
-
     def _attach_active_subscription(
         self,
         stream: _StreamState,
@@ -1372,15 +1507,14 @@ class ConversationHub:
     ) -> None:
         del attach_state
         if not stream.reset_buffer_available:
-            subscription.close_reason = REPLAY_UNAVAILABLE_CLOSE_REASON
+            self._close_browser_subscription(
+                stream, subscription, REPLAY_UNAVAILABLE_CLOSE_REASON, "replay"
+            )
             return
-        if len(stream.reset_buffer) >= subscription.queue.maxsize:
-            subscription.close_reason = REPLAY_UNAVAILABLE_CLOSE_REASON
-            return
-        for serialized in stream.reset_buffer:
-            subscription.queue.put_nowait(serialized)
-        stream.browsers[subscription.connection_id] = subscription
         self._publish_connection_now(stream, "ready", "Ready")
+        queue = cast(_BrowserOutboundQueue, subscription.queue)
+        queue.set_initial_bootstrap(tuple(stream.reset_buffer))
+        stream.browsers[subscription.connection_id] = subscription
 
     def _ingest_source(
         self,
@@ -1621,22 +1755,85 @@ class ConversationHub:
         if validated.type == "connection" and validated.payload.state == "reset":
             stream.reset_buffer = []
             stream.reset_buffer_bytes = 0
+            stream.reset_buffer_envelope_count = 0
+            stream.reset_buffer_attempted_bytes = 0
             stream.reset_buffer_available = True
         encoded_size = len(serialized.encode("utf-8"))
+        stream.reset_buffer_envelope_count += 1
+        stream.reset_buffer_attempted_bytes += encoded_size
         if stream.reset_buffer_available:
             if stream.reset_buffer_bytes + encoded_size <= self._reset_buffer_byte_limit:
                 stream.reset_buffer.append(serialized)
                 stream.reset_buffer_bytes += encoded_size
             else:
                 stream.reset_buffer_available = False
-        for connection_id, browser in tuple(stream.browsers.items()):
+                stream.reset_buffer = []
+                stream.reset_buffer_bytes = 0
+        for browser in tuple(stream.browsers.values()):
             try:
                 browser.queue.put_nowait(serialized)
             except asyncio.QueueFull:
-                stream.browsers.pop(connection_id, None)
-                browser.close_reason = SLOW_CONSUMER_CLOSE_REASON
-                browser.closed.set()
-                asyncio.create_task(self._require_permission_broker().detach_browser(connection_id))
+                self._close_browser_subscription(
+                    stream, browser, SLOW_CONSUMER_CLOSE_REASON, "live"
+                )
+
+    def _close_browser_subscription(
+        self,
+        stream: _StreamState,
+        browser: BrowserSubscription,
+        reason: str,
+        phase: Literal["replay", "live"],
+    ) -> None:
+        stream.browsers.pop(browser.connection_id, None)
+        browser.close_reason = reason
+        browser.closed.set()
+        if not browser.closure_logged:
+            browser.closure_logged = True
+            _LOGGER.warning(
+                json.dumps(
+                    {
+                        "event": "conversation_browser_subscription_closed",
+                        "closure_phase": phase,
+                        "employee_id": stream.employee.employee_id,
+                        "acp_session_id": stream.binding.acp_session_id,
+                        "binding_generation": stream.binding.binding_generation,
+                        "connection_id": browser.connection_id,
+                        "close_reason": reason,
+                        "replay_envelope_count": stream.reset_buffer_envelope_count,
+                        "replay_byte_count": stream.reset_buffer_attempted_bytes,
+                        "replay_byte_limit": self._reset_buffer_byte_limit,
+                        "live_queue_envelope_count": (
+                            browser.queue.live_qsize()
+                            if isinstance(browser.queue, _BrowserOutboundQueue)
+                            else browser.queue.qsize()
+                        ),
+                        "live_queue_capacity": browser.queue.maxsize,
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            )
+        self._claim_permission_detach(browser)
+
+    def _claim_permission_detach(
+        self, subscription: BrowserSubscription
+    ) -> asyncio.Task[None]:
+        if subscription.permission_detach_task is None:
+            subscription.permission_detach_task = asyncio.create_task(
+                self._require_permission_broker().detach_browser(
+                    subscription.connection_id
+                ),
+                name=(
+                    "panels.acp.permission-browser-detach."
+                    f"{subscription.connection_id}"
+                ),
+            )
+        return subscription.permission_detach_task
+
+    async def _detach_subscription_permission(
+        self, subscription: BrowserSubscription
+    ) -> None:
+        await self._claim_permission_detach(subscription)
 
     async def _wait_for_compaction_transition(
         self, employee_id: str

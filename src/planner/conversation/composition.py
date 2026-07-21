@@ -28,6 +28,7 @@ from planner.worker_types.configuration import (
 )
 
 from .backend_contracts import AcpConversationIngress
+from .configuration import ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES
 from .employee_configuration import EmployeeConfigurationCatalogService
 from .employee_registry import (
     AcpEmployeeRegistry,
@@ -114,7 +115,7 @@ class ConversationComposition:
         if test_options is None:
             employee_runtime_definitions = configured_employee_runtime_definitions()
             ingress_capacity = 256
-            browser_capacity = 128
+            browser_capacity = ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES
             reset_buffer_byte_limit = 1_048_576
             connection_id_factory = None
             worker_client_message_id_factory = None

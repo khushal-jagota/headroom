@@ -4,6 +4,30 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-21): ACP browser replay and live backpressure
+
+Live diagnosis proved employees continued working and filing proposals while every fresh Chief and
+Ticket conversation attachment failed before delivering one envelope. Six direct WebSocket probes
+closed with 1013 `conversation client is too slow`. The server synchronously loaded replay into the
+128-envelope live browser queue before starting its writer, so a valid long history was classified as
+a slow client.
+
+The fix is complete. First load, idle refresh, compaction, requested-cancel recovery, and active
+attach now build and validate replay away from browser live queues. The attaching browser receives a
+subscriber-local bootstrap; an already-connected browser receives an ordered cutover whose replay
+does not consume live capacity. The production live queue remains genuine slow-client isolation and
+is raised to 1,024 envelopes. Replay-unavailable and slow-live-client closures emit content-free
+structured warnings, and permission-browser detachment is idempotent across server closure and
+WebSocket finalization.
+
+The first independent implementation review found production compaction/recovery bypasses, a
+pre-writer refresh race, missing replay-classification failure handling, and an incorrect live-queue
+log count. All were corrected and re-reviewed. Focused evidence is Ruff clean, strict Mypy clean, 29
+hub/composition tests, and 4 selected real-WebSocket/slow-client tests. The settled canonical
+`./verify` passed: Ruff; strict Mypy across 134 source files; 1,102 unit tests; compile/CSS/JS checks;
+zero Svelte diagnostics; production frontend build and all frontend tests; and 107 e2e tests. Final
+result: `VERIFY: PASS`. Next: commit the settled fix.
+
 ## Current work cycle (2026-07-21): project-and-Worker-type Closeout lanes
 
 Ticket `t_scvazj90` is integrated on `ticket/t_scvazj90-closeout-lanes` against current

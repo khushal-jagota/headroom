@@ -20,6 +20,16 @@ receipts, connection state, and compaction boundaries. It does not parse a secon
 Panels transcript format. Reloading or reconnecting attaches to the durable ACP
 binding and rebuilds the pane from the backend's replay.
 
+Replay is integrity-checked and held as a subscriber-local bootstrap. It does not
+occupy the bounded queue used for live browser updates. A connected browser crossing
+a session refresh or replacement receives one ordered replay cutover before later
+live updates, so it cannot see a partial replacement transcript. Production keeps up
+to 1,024 live envelopes per browser; exceeding that limit means the browser is
+genuinely not consuming and closes only that subscription. Replay-unavailable and
+slow-browser closures write content-free structured warnings with the employee,
+session, generation, connection, counts, and configured limits. Replay bootstrap and
+cutover envelopes do not count as queued live envelopes in those warnings.
+
 Each envelope carries the employee, ACP session, binding generation, and sequence.
 The browser accepts only one contiguous generation. A gap or identity mismatch fails
 closed and forces a fresh attach instead of silently showing mixed conversation state.

@@ -2873,3 +2873,14 @@ absent. If another first binding wins, a Ticket race loser must also have the re
 resolver: it re-resolves the winner after binding and requires launch Model/Reasoning to be null before
 loading it. There is no compatibility fallback to ordinary binding CAS or to clearing the loser's
 in-memory request, because either would weaken the one-time launch boundary.
+# D-acp-replay-is-not-live-browser-backpressure
+
+ACP conversation replay and live browser backpressure are different responsibilities. A complete
+valid replay is streamed as the subscriber-local bootstrap phase of an ordered browser subscription;
+it is never preloaded into the bounded live-delivery queue. First load, refresh, compaction, and
+runtime recovery all build and validate a detached replay candidate before committing it. The newly
+attaching browser receives that bootstrap directly; an existing browser receives an ordered cutover,
+with later live updates behind it. The production live queue remains slow-client isolation and is
+raised from 128 to 1,024 envelopes for operational headroom. Replay integrity failures and genuine
+live slow-client evictions close through one idempotent permission-detach owner and are logged with
+identity, generation, counts, and limits but no conversation content.

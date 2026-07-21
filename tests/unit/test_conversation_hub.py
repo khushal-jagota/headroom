@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +63,13 @@ class _Strategy:
 
     async def capture_compaction(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
+
+
+class _MalformedReplayStrategy(_Strategy):
+    def classify_replay(
+        self, _binding: Any, _replay: tuple[Any, ...], _boundaries: tuple[Any, ...]
+    ) -> tuple[Any, ...]:
+        raise ValueError("sentinel malformed replay content")
 
 
 class _Child:
@@ -143,8 +151,13 @@ class _Broker:
 
 
 class _Permissions:
-    def __init__(self) -> None:
+    def __init__(self, *, block_detach: bool = False) -> None:
         self.attached: set[str] = set()
+        self.detach_calls: list[str] = []
+        self.detach_started = asyncio.Event()
+        self.detach_release = asyncio.Event()
+        if not block_detach:
+            self.detach_release.set()
 
     async def attach_browser(
         self, employee: ConversationEmployee, browser_connection_id: str
@@ -153,6 +166,9 @@ class _Permissions:
         self.attached.add(browser_connection_id)
 
     async def detach_browser(self, browser_connection_id: str) -> None:
+        self.detach_calls.append(browser_connection_id)
+        self.detach_started.set()
+        await self.detach_release.wait()
         self.attached.discard(browser_connection_id)
 
 
@@ -400,7 +416,7 @@ def test_compaction_transition_orders_both_candidate_origins_once_before_ready(
         registry = _Registry(record, handle)
         broker = _Broker()
         permissions = _Permissions()
-        hub = ConversationHub(repository)
+        hub = ConversationHub(repository, browser_capacity=4)
         hub.bind_owners(  # type: ignore[arg-type]
             registry=registry, broker=broker, permission_broker=permissions
         )
@@ -481,6 +497,10 @@ def test_compaction_transition_orders_both_candidate_origins_once_before_ready(
         await hub.registry_conversation_ingress(original_source, source_candidate)
         await hub.registry_conversation_ingress(replacement_source, fresh_candidate)
         await hub._enqueue_and_wait("t_hub", lambda: None)  # noqa: SLF001
+        for subscription in (first, second):
+            ordinary = json.loads(subscription.queue.get_nowait())
+            assert ordinary["sequence"] == 4
+            assert ordinary["payload"]["update"]["content"]["text"] == "ordinary N"
 
         await repository.compare_and_swap(handle.binding, replacement_binding)
         registry.record = AcpEmployeeRecord(
@@ -512,9 +532,8 @@ def test_compaction_transition_orders_both_candidate_origins_once_before_ready(
         assert not waiting_attach.done()
 
         for subscription in (first, second):
-            envelopes = [json.loads(subscription.queue.get_nowait()) for _ in range(9)]
+            envelopes = [json.loads(subscription.queue.get_nowait()) for _ in range(8)]
             assert [item["type"] for item in envelopes] == [
-                "acp_session_update",
                 "connection",
                 "acp_session_update",
                 "acp_session_update",
@@ -524,32 +543,89 @@ def test_compaction_transition_orders_both_candidate_origins_once_before_ready(
                 "queue_snapshot",
                 "acp_session_update",
             ]
-            assert envelopes[0]["sequence"] == 4
-            assert [item["sequence"] for item in envelopes[1:]] == list(range(1, 9))
-            assert [item["acpSessionId"] for item in envelopes] == [
-                "session-hub",
-                *(["session-fork"] * 8),
-            ]
+            assert [item["sequence"] for item in envelopes] == list(range(1, 9))
+            assert all(item["acpSessionId"] == "session-fork" for item in envelopes)
             assert [
-                envelopes[1]["payload"]["state"],
-                envelopes[5]["payload"]["state"],
+                envelopes[0]["payload"]["state"],
+                envelopes[4]["payload"]["state"],
             ] == ["reset", "ready"]
             assert [
                 envelopes[index]["payload"]["update"]["content"]["text"]
-                for index in (0, 2, 3, 4, 8)
+                for index in (1, 2, 3, 7)
             ] == [
-                "ordinary N",
                 "durable summary",
                 "source candidate",
                 "fresh candidate",
                 "later N+1",
             ]
-            assert envelopes[6]["payload"]["prompt"]["sessionId"] == "session-fork"
-            assert envelopes[7]["payload"]["items"][0]["clientMessageId"] == ("queued-1")
+            assert envelopes[5]["payload"]["prompt"]["sessionId"] == "session-fork"
+            assert envelopes[6]["payload"]["items"][0]["clientMessageId"] == ("queued-1")
         assert not hub._compaction_transitions["t_hub"].quarantined_ingress  # noqa: SLF001
         await hub.complete_compaction_transition(token, replacement_handle)
         attached = await asyncio.wait_for(waiting_attach, timeout=1)
         assert attached.connection_id == "browser-after-compaction"
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_malformed_compaction_replay_closes_without_prefix_logs_safely_and_detaches_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        permissions = _Permissions(block_detach=True)
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=permissions,
+        )
+        browser = await hub.attach_browser("t_hub", connection_id="browser-malformed")
+        await asyncio.wait_for(browser.queue.get(), timeout=1)
+        await asyncio.wait_for(browser.queue.get(), timeout=1)
+        token = await hub.begin_compaction_transition(
+            handle, asyncio.get_running_loop().time() + 1
+        )
+        replacement_binding = ConversationSessionBinding(
+            employee_id=handle.employee.employee_id,
+            acp_session_id="session-malformed",
+            backend_key=handle.binding.backend_key,
+            binding_generation=2,
+        )
+        replacement_handle = ConversationRuntimeHandle(
+            handle.employee,
+            replacement_binding,
+            handle.child_generation + 1,
+            _Child(),
+            replace(handle.definition, turn_strategy=_MalformedReplayStrategy()),
+            object(),
+        )
+        await repository.compare_and_swap(handle.binding, replacement_binding)
+
+        await hub.commit_compaction_transition(token, replacement_handle, (), ())
+
+        assert browser.close_reason == REPLAY_UNAVAILABLE_CLOSE_REASON
+        assert browser.closed.is_set()
+        assert browser.queue.empty()
+        await asyncio.wait_for(permissions.detach_started.wait(), timeout=1)
+        finalizer = asyncio.create_task(hub.detach_browser(browser.connection_id))
+        await asyncio.sleep(0)
+        permissions.detach_release.set()
+        await asyncio.wait_for(finalizer, timeout=1)
+        assert permissions.detach_calls == [browser.connection_id]
+        records = [
+            json.loads(record.message)
+            for record in caplog.records
+            if "conversation_browser_subscription_closed" in record.message
+        ]
+        assert len(records) == 1
+        assert records[0]["closure_phase"] == "replay"
+        assert records[0]["replay_envelope_count"] == 1
+        assert records[0]["live_queue_envelope_count"] == 0
+        assert "sentinel malformed replay content" not in caplog.text
+        await hub.complete_compaction_transition(token, replacement_handle)
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
@@ -563,7 +639,7 @@ def test_requested_cancel_recovery_rebinds_two_browsers_same_binding_with_ordere
         record, handle = _runtime(tmp_path)
         registry = _Registry(record, handle)
         broker = _Broker()
-        hub = ConversationHub(repository)
+        hub = ConversationHub(repository, browser_capacity=4)
         hub.bind_owners(  # type: ignore[arg-type]
             registry=registry,
             broker=broker,
@@ -642,41 +718,43 @@ def test_requested_cancel_recovery_rebinds_two_browsers_same_binding_with_ordere
         await hub.commit_requested_cancel_recovery_transition(
             token,
             replacement_handle,
-            (replay,),
+            (replay, replay, replay),
             (queued,),
             successor_echo,
         )
         attached = await asyncio.wait_for(waiting_attach, timeout=1)
         assert attached.connection_id == "browser-after-recovery"
         for subscription in (first, second):
-            envelopes = [json.loads(subscription.queue.get_nowait()) for _ in range(6)]
+            envelopes = [json.loads(subscription.queue.get_nowait()) for _ in range(8)]
             assert [item["type"] for item in envelopes] == [
                 "connection",
+                "acp_session_update",
+                "acp_session_update",
                 "acp_session_update",
                 "connection",
                 "human_echo",
                 "human_echo",
                 "queue_snapshot",
             ]
-            assert [item["sequence"] for item in envelopes] == [4, 5, 6, 7, 8, 9]
+            assert [item["sequence"] for item in envelopes] == list(range(4, 12))
             assert [
                 envelopes[0]["payload"]["state"],
-                envelopes[2]["payload"]["state"],
+                envelopes[4]["payload"]["state"],
             ] == ["reset", "ready"]
             assert envelopes[0]["payload"]["detail"] == ("Conversation runtime recovered")
             assert envelopes[1]["payload"]["update"]["content"]["text"] == ("durable replay")
-            assert envelopes[3]["payload"]["clientMessageId"] == "queued-1"
-            assert envelopes[3]["payload"]["prompt"] == queued.prompt.model_dump(
+            assert envelopes[5]["payload"]["clientMessageId"] == "queued-1"
+            assert envelopes[5]["payload"]["prompt"] == queued.prompt.model_dump(
                 mode="json", by_alias=True, exclude_none=True
             )
-            assert envelopes[4]["payload"]["clientMessageId"] == ("send-now-successor")
-            assert envelopes[4]["payload"]["prompt"] == (
+            assert envelopes[6]["payload"]["clientMessageId"] == ("send-now-successor")
+            assert envelopes[6]["payload"]["prompt"] == (
                 successor_echo.prompt.model_dump(mode="json", by_alias=True, exclude_none=True)
             )
-            assert envelopes[5]["payload"]["items"][0]["clientMessageId"] == ("queued-1")
+            assert envelopes[7]["payload"]["items"][0]["clientMessageId"] == ("queued-1")
             assert all(
                 item["clientMessageId"] != "send-now-successor"
-                for item in envelopes[5]["payload"]["items"]
+                for item in envelopes[7]["payload"]["items"]
             )
 
         # Attaching the waiter publishes its ordinary ready state to all browsers.
@@ -1019,6 +1097,70 @@ def test_source_ingress_before_binding_flushes_between_reset_and_ready(
     asyncio.run(exercise())
 
 
+def test_first_load_bootstrap_survives_one_live_update_before_writer_starts(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        hub = ConversationHub(repository, browser_capacity=1)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+
+        subscription = await hub.attach_browser("t_hub", connection_id="browser-first")
+        await hub.publish_activity(record.employee, record.binding, "thinking", "interleaved")
+
+        assert not subscription.closed.is_set()
+        assert subscription.queue.live_qsize() == 1  # type: ignore[union-attr]
+        envelopes = [
+            json.loads(await asyncio.wait_for(subscription.queue.get(), timeout=1))
+            for _ in range(3)
+        ]
+        assert [item["sequence"] for item in envelopes] == [1, 2, 3]
+        assert envelopes[-1]["payload"]["detail"] == "interleaved"
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_idle_refresh_bootstrap_survives_one_live_update_before_writer_starts(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        hub = ConversationHub(repository, browser_capacity=1)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        existing = await hub.attach_browser("t_hub", connection_id="browser-existing")
+        await asyncio.wait_for(existing.queue.get(), timeout=1)
+        await asyncio.wait_for(existing.queue.get(), timeout=1)
+
+        refreshing = await hub.attach_browser("t_hub", connection_id="browser-refreshing")
+        await hub.publish_activity(record.employee, record.binding, "thinking", "after refresh")
+
+        assert not refreshing.closed.is_set()
+        assert refreshing.queue.live_qsize() == 1  # type: ignore[union-attr]
+        envelopes = [
+            json.loads(await asyncio.wait_for(refreshing.queue.get(), timeout=1))
+            for _ in range(3)
+        ]
+        assert [item["payload"].get("state") for item in envelopes[:2]] == [
+            "reset",
+            "ready",
+        ]
+        assert envelopes[-1]["payload"]["detail"] == "after refresh"
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
 def test_restart_reset_raises_same_binding_floor(tmp_path: Path) -> None:
     async def exercise() -> None:
         _db_path, repository = await _ticket_database(tmp_path)
@@ -1066,19 +1208,21 @@ def test_existing_binding_ensure_stream_ready_loads_once(tmp_path: Path) -> None
     asyncio.run(exercise())
 
 
-def test_stale_old_session_ingress_does_not_close_replacement_child(tmp_path: Path) -> None:
+def test_connected_browser_crosses_replacement_replay_larger_than_live_queue(
+    tmp_path: Path,
+) -> None:
     async def exercise() -> None:
         _db_path, repository = await _ticket_database(tmp_path)
         record, handle = _runtime(tmp_path)
-        hub = ConversationHub(repository)
+        hub = ConversationHub(repository, browser_capacity=1)
         hub.bind_owners(  # type: ignore[arg-type]
             registry=_Registry(record, handle),
             broker=_Broker(),
             permission_broker=_Permissions(),
         )
         subscription = await hub.attach_browser("t_hub", connection_id="browser-a")
-        await subscription.queue.get()
-        await subscription.queue.get()
+        await asyncio.wait_for(subscription.queue.get(), timeout=1)
+        await asyncio.wait_for(subscription.queue.get(), timeout=1)
         stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
         await hub._enqueue_and_wait(  # noqa: SLF001
             record.employee.employee_id,
@@ -1120,11 +1264,22 @@ def test_stale_old_session_ingress_does_not_close_replacement_child(tmp_path: Pa
                 force_new_binding=True,
             ),
         )
-        await hub._publish_connection(  # noqa: SLF001
-            record.employee, replacement_binding, "ready", "Ready"
+        envelopes = [
+            json.loads(await asyncio.wait_for(subscription.queue.get(), timeout=1))
+            for _ in range(2)
+        ]
+        await hub.publish_activity(
+            record.employee, replacement_binding, "thinking", "after replacement"
         )
-        envelopes = [json.loads(await subscription.queue.get()) for _ in range(2)]
-        assert [item["payload"]["state"] for item in envelopes] == ["reset", "ready"]
+        envelopes.append(
+            json.loads(await asyncio.wait_for(subscription.queue.get(), timeout=1))
+        )
+        assert [item["type"] for item in envelopes] == [
+            "connection",
+            "connection",
+            "activity",
+        ]
+        assert [item["sequence"] for item in envelopes] == [1, 2, 3]
         assert all(item["acpSessionId"] == "session-replacement" for item in envelopes)
         assert record.child.alive is True
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
@@ -1132,79 +1287,131 @@ def test_stale_old_session_ingress_does_not_close_replacement_child(tmp_path: Pa
     asyncio.run(exercise())
 
 
-def test_active_attach_reserves_queue_slot_for_ready(tmp_path: Path) -> None:
+def test_active_turn_attach_orders_replay_larger_than_live_queue_before_ready_and_live(
+    tmp_path: Path,
+) -> None:
     async def exercise() -> None:
         _db_path, repository = await _ticket_database(tmp_path)
         record, handle = _runtime(tmp_path)
         broker = _Broker()
-        hub = ConversationHub(repository, browser_capacity=2)
+        hub = ConversationHub(repository, browser_capacity=1)
         hub.bind_owners(  # type: ignore[arg-type]
             registry=_Registry(record, handle),
             broker=broker,
             permission_broker=_Permissions(),
         )
         original = await hub.attach_browser("t_hub", connection_id="browser-a")
-        await original.queue.get()
-        await original.queue.get()
+        await asyncio.wait_for(original.queue.get(), timeout=1)
+        await asyncio.wait_for(original.queue.get(), timeout=1)
+        await hub.publish_activity(record.employee, record.binding, "thinking", "replayed")
+        await asyncio.wait_for(original.queue.get(), timeout=1)
         broker.phase = "running"
 
-        active = await hub.attach_browser("t_hub", connection_id="browser-b")
-        assert active.close_reason == REPLAY_UNAVAILABLE_CLOSE_REASON
-        assert active.queue.empty()
+        active = await hub.attach_browser(
+            "t_hub",
+            connection_id="browser-b",
+            last_seen_binding_generation=1,
+            last_seen_sequence=3,
+        )
+        assert active.close_reason is None
+        await hub.publish_activity(record.employee, record.binding, "thinking", "live")
+        envelopes = [
+            json.loads(await asyncio.wait_for(active.queue.get(), timeout=1))
+            for _ in range(5)
+        ]
+        assert [item["sequence"] for item in envelopes] == [1, 2, 3, 4, 5]
+        assert [item["payload"].get("detail") for item in envelopes[-2:]] == [
+            "Ready",
+            "live",
+        ]
         assert active.closed.is_set() is False
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
 
 
-def test_slow_browser_is_evicted_without_blocking_healthy_browser(tmp_path: Path) -> None:
+def test_slow_live_browser_is_evicted_without_blocking_healthy_browser_and_logs_safe_context(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     async def exercise() -> None:
         _db_path, repository = await _ticket_database(tmp_path)
         record, handle = _runtime(tmp_path)
         broker = _Broker()
+        permissions = _Permissions(block_detach=True)
         hub = ConversationHub(repository, browser_capacity=3)
         hub.bind_owners(  # type: ignore[arg-type]
             registry=_Registry(record, handle),
             broker=broker,
-            permission_broker=_Permissions(),
+            permission_broker=permissions,
         )
         healthy = await hub.attach_browser("t_hub", connection_id="browser-healthy")
-        await healthy.queue.get()
-        await healthy.queue.get()
+        await asyncio.wait_for(healthy.queue.get(), timeout=1)
+        await asyncio.wait_for(healthy.queue.get(), timeout=1)
         broker.phase = "running"
         slow = await hub.attach_browser("t_hub", connection_id="browser-slow")
         assert slow.queue.qsize() == 3
-        await healthy.queue.get()
+        await asyncio.wait_for(healthy.queue.get(), timeout=1)
 
-        await hub.publish_activity(record.employee, record.binding, "thinking", "live")
-        delivered = json.loads(await healthy.queue.get())
-        assert delivered["type"] == "activity"
+        delivered = None
+        for index in range(4):
+            await hub.publish_activity(
+                record.employee, record.binding, "thinking", f"live-{index}"
+            )
+            delivered = json.loads(
+                await asyncio.wait_for(healthy.queue.get(), timeout=1)
+            )
+        assert delivered is not None and delivered["type"] == "activity"
         assert slow.closed.is_set()
         assert slow.close_reason == SLOW_CONSUMER_CLOSE_REASON
+        await asyncio.wait_for(permissions.detach_started.wait(), timeout=1)
+        finalizer = asyncio.create_task(hub.detach_browser(slow.connection_id))
+        await asyncio.sleep(0)
+        permissions.detach_release.set()
+        await asyncio.wait_for(finalizer, timeout=1)
+        assert permissions.detach_calls.count(slow.connection_id) == 1
+        records = [
+            json.loads(record.message)
+            for record in caplog.records
+            if "conversation_browser_subscription_closed" in record.message
+        ]
+        assert len(records) == 1
+        assert records[0]["closure_phase"] == "live"
+        assert records[0]["live_queue_capacity"] == 3
+        assert records[0]["live_queue_envelope_count"] == 3
+        assert "live-3" not in caplog.text
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
 
 
-def test_reset_overflow_rejects_active_replay_without_partial_prefix(tmp_path: Path) -> None:
+def test_reset_overflow_rejects_replay_without_partial_prefix_and_logs_safe_context(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     async def exercise() -> None:
         _db_path, repository = await _ticket_database(tmp_path)
         record, handle = _runtime(tmp_path)
         broker = _Broker()
         hub = ConversationHub(repository, reset_buffer_byte_limit=1)
+        permissions = _Permissions()
         hub.bind_owners(  # type: ignore[arg-type]
             registry=_Registry(record, handle),
             broker=broker,
-            permission_broker=_Permissions(),
+            permission_broker=permissions,
         )
-        live = await hub.attach_browser("t_hub", connection_id="browser-live")
-        assert json.loads(await live.queue.get())["payload"]["state"] == "reset"
-        assert json.loads(await live.queue.get())["payload"]["state"] == "ready"
-        broker.phase = "running"
-
         replay = await hub.attach_browser("t_hub", connection_id="browser-replay")
         assert replay.close_reason == REPLAY_UNAVAILABLE_CLOSE_REASON
         assert replay.queue.empty()
+        await hub.detach_browser(replay.connection_id)
+        assert permissions.detach_calls == [replay.connection_id]
+        records = [
+            json.loads(record.message)
+            for record in caplog.records
+            if "conversation_browser_subscription_closed" in record.message
+        ]
+        assert len(records) == 1
+        assert records[0]["closure_phase"] == "replay"
+        assert records[0]["replay_byte_limit"] == 1
+        assert "Conversation loaded" not in caplog.text
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())

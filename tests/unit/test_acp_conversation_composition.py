@@ -39,6 +39,7 @@ from planner.conversation.composition import (
     ConversationTestOptions,
     _BindOnceAsyncCallback,
 )
+from planner.conversation.configuration import ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES
 from planner.conversation.wire_contracts import CancelAction
 from planner.core import loops as loops_module
 from planner.core.clock import TestClock as MutableTestClock
@@ -191,6 +192,44 @@ def test_bind_once_callbacks_fail_closed_until_exactly_one_binding() -> None:
         assert await slot("after") == "after-bound"
         with pytest.raises(RuntimeError, match="already bound"):
             slot.bind(callback)
+
+    asyncio.run(exercise())
+
+
+def test_production_browser_capacity_is_1024_and_test_options_can_override(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        db_path, clock, _ticket_id = _database(tmp_path)
+        production = ConversationComposition.build(
+            db_path=db_path,
+            busy_timeout_ms=5000,
+            clock=clock,
+            repository_root=Path.cwd(),
+            loop=asyncio.get_running_loop(),
+            test_options=None,
+        )
+        assert ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES == 1_024
+        assert production.hub._browser_capacity == 1_024  # noqa: SLF001
+        await production.shutdown(asyncio.get_running_loop().time() + 1)
+
+        override_db = str(tmp_path / "override.db")
+        definition = _definition()
+        override = ConversationComposition.build(
+            db_path=override_db,
+            busy_timeout_ms=5000,
+            clock=clock,
+            repository_root=tmp_path,
+            loop=asyncio.get_running_loop(),
+            test_options=ConversationTestOptions(
+                employee_runtime_definitions=_runtime_definitions(
+                    definition, _Factory(definition)
+                ),
+                browser_capacity=3,
+            ),
+        )
+        assert override.hub._browser_capacity == 3  # noqa: SLF001
+        await override.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
 
