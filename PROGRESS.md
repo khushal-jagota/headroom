@@ -4,7 +4,41 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
-## Current work cycle (2026-07-19): ACP migration — architecture and contract freeze
+## Current work cycle (2026-07-21): ACP-11 native role skills and first-message delivery
+
+ACP-10 and the ACP migration are already complete on `main` at `34bb5c1`. ACP-11 implements the
+owner's follow-up consistency decision without changing an upstream adapter: the repository's
+canonical `skills/` directory is linked into the native Codex and Claude project roots, while the
+existing Hermes-home provisioning remains the Hermes installation path. Claude's provider-specific
+system-prompt append is removed.
+
+Every successful new Ticket or Chief ACP session arms one role instruction. The first ordinary
+message consumes it regardless of whether the message came from the browser or Automatic Employee
+work. A first text-only slash command passes through unchanged and leaves the role armed. Loaded,
+forked, and replacement children do not re-arm it. Prompt/replay echo normalization is one-shot and
+operation-scoped, including Hermes' flattened text replay, so the Panels transcript remains exactly
+the supplied prompt.
+
+One independent implementation-review round found three concrete P1s: failed replacement session
+creation lost the old arm, first slash commands were converted into model prompts, and permanent
+exact-text filtering both missed Hermes' merged replay and risked hiding legitimate text. All three
+are corrected. The settled focused gate passes Ruff, strict Mypy, 37 unit tests, and all 18 ACP
+conversation e2e tests. Root also tightened command recognition to text-only prompts and inspected
+the pinned Hermes flattening/command paths directly.
+
+Live Safari dogfood against the current server is complete. A fresh Chief conversation accepted
+`/help` as a real command, then loaded `panels-chief-of-staff` on the next message and returned the
+requested exact reply. A fresh Ticket conversation loaded `panels-worker` and returned its requested
+exact reply. Reload replay showed only the human messages, skill activity, and answers; neither role
+directive appeared.
+
+The single final `./verify` passed on the settled product/test tree: Ruff; strict Mypy across 130
+source files; 1,027 unit tests; compile/CSS/JS checks; zero Svelte diagnostics; the production build
+and every frontend suite; and 104 Playwright e2e tests. Final result: `VERIFY: PASS`. Only this
+verification-result documentation changed afterward. Next: commit the staged ACP-11 slice on `main`
+and leave the unrelated frontend worktree/node_modules changes untouched. Blockers: none.
+
+## Prior work cycle (2026-07-19): ACP migration — architecture and contract freeze
 
 Owner direction: ACP replaces both non-ACP conversation paths and becomes the single system. P2 of
 the shared-registry program is superseded and will not be implemented; P1's employee-keyed child

@@ -6,7 +6,7 @@ import asyncio
 import threading
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
@@ -34,6 +34,7 @@ from .employee_registry import (
 )
 from .hub import ConversationHub
 from .permission_broker import ConversationPermissionBroker
+from .role_skill_kickoff import RoleSkillKickoffAcpEmployeeChildFactory
 from .runtime_ports import ConversationRuntimeHandle
 from .sqlite_binding_repository import SqliteConversationBindingRepository
 from .turn_broker import ConversationTurnBroker
@@ -127,11 +128,21 @@ class ConversationComposition:
                 test_options.permission_request_id_factory or cls._new_identifier
             )
         catalog = employee_runtime_definitions.employee_backend_catalog
-        materialized_backends = catalog.materialize(
-            EmployeeBackendBuildContext(
-                data_directory=Path(db_path).expanduser().parent.resolve(strict=False),
-                planner_home_default=planner_home_default,
-                repository_root=repository_root,
+        materialized_backends = tuple(
+            replace(
+                backend,
+                child_factory=RoleSkillKickoffAcpEmployeeChildFactory(
+                    backend.child_factory
+                ),
+            )
+            for backend in catalog.materialize(
+                EmployeeBackendBuildContext(
+                    data_directory=Path(db_path).expanduser().parent.resolve(
+                        strict=False
+                    ),
+                    planner_home_default=planner_home_default,
+                    repository_root=repository_root,
+                )
             )
         )
 

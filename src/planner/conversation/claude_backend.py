@@ -82,10 +82,6 @@ CLAUDE_STARTUP_PREFLIGHT_TIMEOUT_SECONDS: Final = 30.0
 _NODE_VERSION = re.compile(r"^v(?P<major>[0-9]+)(?:\.[0-9]+){2}$")
 
 
-class ClaudeBackendRequestMetadataError(ValueError):
-    pass
-
-
 class ClaudeBackendStartupError(RuntimeError):
     pass
 
@@ -200,7 +196,6 @@ def build_claude_employee_backend_registration() -> EmployeeBackendRegistration:
         )
         child_factory = ClaudeAcpEmployeeChildFactory(
             definition,
-            repository_root=context.repository_root,
         )
         preflight = ClaudeBackendStartupPreflight(
             definition=definition,
@@ -218,35 +213,6 @@ def build_claude_employee_backend_registration() -> EmployeeBackendRegistration:
         backend_key=CLAUDE_BACKEND_KEY,
         runtime_builder=materialize,
     )
-
-
-def _worker_system_prompt_append(repository_root: Path) -> str:
-    worker_skill = repository_root / "skills/panels-worker/SKILL.md"
-    specialist_skill_directory = repository_root / "skills"
-    if not worker_skill.is_file() or not specialist_skill_directory.is_dir():
-        raise ValueError("Panels worker skill sources are missing")
-    return (
-        f"Read and follow the Panels worker role at {worker_skill}. "
-        "Use PLAN_TICKET_ID as the Ticket identity. Whenever that role says to call "
-        "skill_view for a named specialist, read that specialist's SKILL.md directly "
-        f"from {specialist_skill_directory}/<specialist>/SKILL.md instead."
-    )
-
-
-def _decorate_session_request[RequestT: (NewSessionRequest, LoadSessionRequest)](
-    request: RequestT, system_prompt_append: str
-) -> RequestT:
-    metadata = {} if request.field_meta is None else dict(request.field_meta)
-    if "systemPrompt" in metadata:
-        raise ClaudeBackendRequestMetadataError(
-            "Claude session metadata already contains systemPrompt"
-        )
-    metadata["systemPrompt"] = {
-        "type": "preset",
-        "preset": "claude_code",
-        "append": system_prompt_append,
-    }
-    return request.model_copy(update={"field_meta": metadata})
 
 
 def _normalize_claude_ingress(
@@ -273,9 +239,8 @@ def _normalize_claude_ingress(
 
 
 class _ClaudeAcpEmployeeChild(AcpEmployeeChild):
-    def __init__(self, delegate: AcpEmployeeChild, system_prompt_append: str) -> None:
+    def __init__(self, delegate: AcpEmployeeChild) -> None:
         self._delegate = delegate
-        self._system_prompt_append = system_prompt_append
 
     @property
     def generation(self) -> int:
@@ -293,14 +258,10 @@ class _ClaudeAcpEmployeeChild(AcpEmployeeChild):
         return await self._delegate.initialize(request)
 
     async def new_session(self, request: NewSessionRequest) -> NewSessionResponse:
-        return await self._delegate.new_session(
-            _decorate_session_request(request, self._system_prompt_append)
-        )
+        return await self._delegate.new_session(request)
 
     async def load_session(self, request: LoadSessionRequest) -> LoadSessionResponse:
-        return await self._delegate.load_session(
-            _decorate_session_request(request, self._system_prompt_append)
-        )
+        return await self._delegate.load_session(request)
 
     async def capture_load_session(
         self,
@@ -313,7 +274,7 @@ class _ClaudeAcpEmployeeChild(AcpEmployeeChild):
             await private_ingress(_normalize_claude_ingress(payload))
 
         return await self._delegate.capture_load_session(
-            _decorate_session_request(request, self._system_prompt_append),
+            request,
             cast(AcpConversationIngress, normalized_private_ingress),
         )
 
@@ -344,14 +305,11 @@ class ClaudeAcpEmployeeChildFactory(AcpEmployeeChildFactory):
         self,
         definition: AgentBackendDefinition,
         *,
-        repository_root: Path,
         delegate_factory: AcpEmployeeChildFactory | None = None,
     ) -> None:
         if definition.backend_key != CLAUDE_BACKEND_KEY:
             raise ValueError("Claude child factory requires the Claude backend definition")
-        _require_absolute_path(repository_root, field_name="repository_root")
         self.definition = definition
-        self.worker_system_prompt_append = _worker_system_prompt_append(repository_root)
         self._delegate_factory = delegate_factory or SdkAcpEmployeeChildFactory(definition)
 
     async def create(
@@ -374,7 +332,7 @@ class ClaudeAcpEmployeeChildFactory(AcpEmployeeChildFactory):
             permission_callback,
             death_callback,
         )
-        return _ClaudeAcpEmployeeChild(delegate, self.worker_system_prompt_append)
+        return _ClaudeAcpEmployeeChild(delegate)
 
 
 class ClaudeBackendStartupPreflight:

@@ -93,6 +93,30 @@ child is closed before startup completes and creates no worker session. Codex is
 its child starts only on first demand. Actual Ticket and Chief sessions for every
 backend still start or resume through the same registry and binding machinery.
 
+## Employee role skills
+
+Panels keeps one canonical copy of its skills under `skills/`. The repository exposes
+that directory at the backends' native project locations: `.agents/skills` for Codex
+and `.claude/skills` for Claude Code. Hermes startup exposes the same source directories
+under the configured planner Hermes home. These are links, not copied skill files, so
+every installed Panels skill comes from the same source.
+
+A newly created ACP conversation adds its employee role to the first real prompt sent
+through that session. A Ticket adds `panels-worker`; the Chief adds
+`panels-chief-of-staff`. The first prompt may come from the browser or Automatic
+Employee work. Text-only slash commands pass through unchanged and leave the role ready for the
+next ordinary prompt. Later ordinary prompts and a loaded, forked, or replacement child
+do not add the role again. Starting New conversation successfully creates a new session
+and therefore adds the role to that conversation's first ordinary prompt.
+
+The role line is ACP delivery context. Only while that prompt or a session replay is in
+progress, Panels removes its one synthetic echoed role chunk. It also handles Hermes
+flattening the role and original text into one chunk. The filter is scoped to that exact
+session and one echo, so a genuine message that happens to equal the role line remains
+visible. The conversation therefore shows only what the human or Automatic Employee
+supplied. Claude receives the same ordinary ACP prompt behavior as the other backends;
+Panels does not modify Claude's system prompt.
+
 ## Human and Automatic Employee work share the session
 
 A human prompt in the Ticket pane and an Automatic Employee step reach the same

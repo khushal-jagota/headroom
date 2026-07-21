@@ -34,6 +34,7 @@ from planner.conversation.backend_contracts import (
     ReverseServiceCapabilities,
 )
 from planner.conversation.composition import ConversationTestOptions
+from planner.conversation.contracts import CHIEF_OF_STAFF_ENTITY_ID
 from planner.conversation.employee_registry import ConversationIngressSource
 from planner.conversation.hermes_turn_strategy import (
     HERMES_SUMMARY_PREFIX,
@@ -450,6 +451,14 @@ def _prompt_action(
     }
 
 
+def _audited_prompt_texts(item: dict[str, Any]) -> list[str]:
+    return [
+        block["text"]
+        for block in item["prompt"]
+        if block["type"] == "text"
+    ]
+
+
 def test_ticket_route_worker_selector_is_preselected_catalog_only_and_first_prompt_attaches(
     tmp_path: Path,
     browser: Browser,
@@ -522,7 +531,10 @@ def test_ticket_route_worker_selector_is_preselected_catalog_only_and_first_prom
             page.close()
 
         audit = [json.loads(line) for line in audit_path.read_text().splitlines()]
-        assert audit[-1]["prompt"][0]["text"] == "browser through Vite"
+        assert _audited_prompt_texts(audit[-1]) == [
+            "Use the installed `panels-worker` skill.",
+            "browser through Vite",
+        ]
         with connect(str(database_path)) as conn:
             binding = conn.execute(
                 "SELECT backend_key, acp_session_id FROM conversation_session_bindings "
@@ -642,8 +654,12 @@ def test_fake_non_hermes_human_and_automatic_step_share_backend_and_session(
 
     audit = [json.loads(line) for line in audit_path.read_text().splitlines()]
     assert [item["sessionId"] for item in audit] == [session_id, session_id]
-    assert audit[0]["prompt"][0]["text"] == "probe human prompt"
-    assert "Work ticket" in audit[1]["prompt"][0]["text"]
+    assert _audited_prompt_texts(audit[0]) == [
+        "Use the installed `panels-worker` skill.",
+        "probe human prompt",
+    ]
+    assert len(_audited_prompt_texts(audit[1])) == 1
+    assert "Work ticket" in _audited_prompt_texts(audit[1])[0]
     with connect(db_path) as conn:
         binding = conn.execute(
             "SELECT backend_key, acp_session_id FROM conversation_session_bindings "
@@ -657,6 +673,192 @@ def test_fake_non_hermes_human_and_automatic_step_share_backend_and_session(
     assert binding is not None and mirror is not None
     assert tuple(binding) == ("probe-backend", session_id)
     assert tuple(mirror) == ("probe-backend", session_id)
+
+
+def test_new_ticket_and_chief_sessions_deliver_one_role_kickoff_without_visible_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ticket_db_path = str(tmp_path / "ticket-role-kickoff.db")
+    ticket_audit_path = tmp_path / "ticket-role-kickoff-audit.jsonl"
+    monkeypatch.setenv("ACP_TEST_PROMPT_AUDIT_PATH", str(ticket_audit_path))
+    ticket_config = load_config(
+        env={
+            "PLAN_TEST_MODE": "1",
+            "PLAN_DB_PATH": ticket_db_path,
+            "PLAN_LOGS_DIR": str(tmp_path / "ticket-logs"),
+            "PLAN_FAKE_NOW": "2026-07-20T12:00:00+00:00",
+            "PLAN_DISPATCH_ENABLED": "0",
+        }
+    )
+    ticket_clock = build_clock(ticket_config)
+    with connect(ticket_db_path) as conn:
+        create_schema(conn)
+        ticket = _seed_eligible_ticket(
+            conn,
+            ticket_clock,
+            ticket_config.boundary_hour,
+            title="Automatic role kickoff",
+        )
+
+    ticket_app = _application(ticket_config, ticket_clock, _definition())
+    with TestClient(ticket_app) as client:
+        with client.websocket_connect("/api/conversation") as ticket_socket:
+            ticket_socket.send_json({"type": "attach", "employeeId": ticket.id})
+            ticket_initial = _receive_until(ticket_socket, _is_ready)
+            ticket_session_id = str(ticket_initial[0]["acpSessionId"])
+
+            response = client.post(f"/api/test/run-step/{ticket.id}")
+            assert response.status_code == 200, response.text
+            assert ticket_app.state.employee_step_runner.wait_idle(timeout=5)
+            automatic_live = _receive_until(ticket_socket, _is_idle)
+            assert "Work ticket" in json.dumps(automatic_live)
+            assert "Use the installed" not in json.dumps(automatic_live)
+
+            ticket_socket.send_json(
+                _prompt_action(
+                    ticket.id,
+                    ticket_session_id,
+                    "ticket-later",
+                    "Ticket later prompt",
+                )
+            )
+            ticket_later_live = _receive_until(ticket_socket, _is_idle)
+            assert "Use the installed" not in json.dumps(ticket_later_live)
+
+        with client.websocket_connect("/api/conversation") as ticket_replay_socket:
+            ticket_replay_socket.send_json(
+                {"type": "attach", "employeeId": ticket.id}
+            )
+            ticket_replay = _receive_until(ticket_replay_socket, _is_ready)
+            assert "Work ticket" in json.dumps(ticket_replay)
+            assert "Use the installed" not in json.dumps(ticket_replay)
+
+    ticket_audit = [
+        json.loads(line) for line in ticket_audit_path.read_text().splitlines()
+    ]
+    ticket_deliveries = [
+        [block["text"] for block in item["prompt"] if block["type"] == "text"]
+        for item in ticket_audit
+    ]
+    assert ticket_deliveries[0][0] == "Use the installed `panels-worker` skill."
+    assert "Work ticket" in ticket_deliveries[0][1]
+    assert ticket_deliveries[1:] == [["Ticket later prompt"]]
+
+    chief_db_path = str(tmp_path / "chief-role-kickoff.db")
+    chief_audit_path = tmp_path / "chief-role-kickoff-audit.jsonl"
+    monkeypatch.setenv("ACP_TEST_PROMPT_AUDIT_PATH", str(chief_audit_path))
+    monkeypatch.setenv(
+        "ACP_TEST_DURABLE_STORE_PATH",
+        str(tmp_path / "chief-role-kickoff-sessions.json"),
+    )
+    chief_config = load_config(
+        env={
+            "PLAN_TEST_MODE": "1",
+            "PLAN_DB_PATH": chief_db_path,
+            "PLAN_LOGS_DIR": str(tmp_path / "chief-logs"),
+            "PLAN_FAKE_NOW": "2026-07-20T12:00:00+00:00",
+            "PLAN_DISPATCH_ENABLED": "0",
+        }
+    )
+    chief_clock = build_clock(chief_config)
+    with connect(chief_db_path) as conn:
+        create_schema(conn)
+
+    chief_app = _application(chief_config, chief_clock, _definition())
+    with TestClient(chief_app) as client:
+        with client.websocket_connect("/api/conversation") as chief_socket:
+            chief_socket.send_json(
+                {"type": "attach", "employeeId": CHIEF_OF_STAFF_ENTITY_ID}
+            )
+            chief_initial = _receive_until(chief_socket, _is_ready)
+            chief_session_id = str(chief_initial[0]["acpSessionId"])
+            chief_socket.send_json(
+                _prompt_action(
+                    CHIEF_OF_STAFF_ENTITY_ID,
+                    chief_session_id,
+                    "chief-first",
+                    "Chief first prompt",
+                )
+            )
+            chief_first_live = _receive_until(chief_socket, _is_idle)
+            assert "Use the installed" not in json.dumps(chief_first_live)
+            chief_socket.send_json(
+                _prompt_action(
+                    CHIEF_OF_STAFF_ENTITY_ID,
+                    chief_session_id,
+                    "chief-later",
+                    "Chief later prompt",
+                )
+            )
+            chief_later_live = _receive_until(chief_socket, _is_idle)
+            assert "Use the installed" not in json.dumps(chief_later_live)
+
+            chief_socket.send_json(
+                {"type": "new_conversation", "employeeId": CHIEF_OF_STAFF_ENTITY_ID}
+            )
+            chief_replacement = _receive_until(
+                chief_socket,
+                lambda item: _is_ready(item) and item["bindingGeneration"] == 2,
+            )
+            replacement_reset = next(
+                item
+                for item in chief_replacement
+                if item["type"] == "connection"
+                and item["payload"]["state"] == "reset"
+                and item["bindingGeneration"] == 2
+            )
+            replacement_session_id = str(replacement_reset["acpSessionId"])
+            assert replacement_session_id != chief_session_id
+            chief_socket.send_json(
+                _prompt_action(
+                    CHIEF_OF_STAFF_ENTITY_ID,
+                    replacement_session_id,
+                    "chief-fresh",
+                    "Chief fresh prompt",
+                )
+            )
+            chief_fresh_live = _receive_until(chief_socket, _is_idle)
+            assert "Use the installed" not in json.dumps(chief_fresh_live)
+
+        with client.websocket_connect("/api/conversation") as replay_socket:
+            replay_socket.send_json(
+                {"type": "attach", "employeeId": CHIEF_OF_STAFF_ENTITY_ID}
+            )
+            replay = _receive_until(replay_socket, _is_ready)
+            assert "Use the installed" not in json.dumps(replay)
+
+    restarted_app = _application(chief_config, chief_clock, _definition())
+    with TestClient(restarted_app) as restarted_client:
+        with restarted_client.websocket_connect("/api/conversation") as loaded_chief:
+            loaded_chief.send_json(
+                {"type": "attach", "employeeId": CHIEF_OF_STAFF_ENTITY_ID}
+            )
+            loaded = _receive_until(loaded_chief, _is_ready)
+            loaded_session_id = str(loaded[0]["acpSessionId"])
+            assert loaded_session_id == replacement_session_id
+            loaded_chief.send_json(
+                _prompt_action(
+                    CHIEF_OF_STAFF_ENTITY_ID,
+                    loaded_session_id,
+                    "chief-loaded",
+                    "Chief loaded continuation",
+                )
+            )
+            loaded_live = _receive_until(loaded_chief, _is_idle)
+            assert "Use the installed" not in json.dumps(loaded_live)
+
+    chief_audit = [json.loads(line) for line in chief_audit_path.read_text().splitlines()]
+    chief_deliveries = [
+        [block["text"] for block in item["prompt"] if block["type"] == "text"]
+        for item in chief_audit
+    ]
+    assert chief_deliveries == [
+        ["Use the installed `panels-chief-of-staff` skill.", "Chief first prompt"],
+        ["Chief later prompt"],
+        ["Use the installed `panels-chief-of-staff` skill.", "Chief fresh prompt"],
+        ["Chief loaded continuation"],
+    ]
 
 
 def test_fresh_uvicorn_process_resumes_durable_binding(tmp_path: Path) -> None:
@@ -1456,12 +1658,12 @@ def test_browser_and_worker_share_one_real_sdk_session(
         assert complete_audit[1] == {"callbackSessionId": session_id}
         audit = [item for item in complete_audit if "sessionId" in item]
         assert [item["sessionId"] for item in audit] == [session_id] * 5
-        assert [item["prompt"][0]["text"] for item in audit] == [
-            "human prompt",
-            "worker prompt",
-            "permission prompt",
-            "hold prompt",
-            "queued prompt",
+        assert [_audited_prompt_texts(item) for item in audit] == [
+            ["Use the installed `panels-worker` skill.", "human prompt"],
+            ["worker prompt"],
+            ["permission prompt"],
+            ["hold prompt"],
+            ["queued prompt"],
         ]
         assert all(
             "DB rows are not ACP delivery" not in json.dumps(item, separators=(",", ":"))
@@ -1784,7 +1986,7 @@ def test_official_requested_cancel_exception_recovers_same_session_for_stop_and_
         "requested_cancel_late_send_completed",
     ]
     prompt_records = [json.loads(line) for line in prompt_audit.read_text().splitlines()]
-    prompts_by_text = [item["prompt"][0]["text"] for item in prompt_records]
+    prompts_by_text = [_audited_prompt_texts(item)[-1] for item in prompt_records]
     assert prompts_by_text.count("stop predecessor") == 1
     assert prompts_by_text.count("stop follow up") == 1
     assert prompts_by_text.count("send now predecessor") == 1
@@ -1793,12 +1995,12 @@ def test_official_requested_cancel_exception_recovers_same_session_for_stop_and_
     assert all(
         item["sessionId"] == stop_session
         for item in prompt_records
-        if item["prompt"][0]["text"].startswith("stop ")
+        if _audited_prompt_texts(item)[-1].startswith("stop ")
     )
     assert all(
         item["sessionId"] == send_now_session
         for item in prompt_records
-        if item["prompt"][0]["text"].startswith("send now ")
+        if _audited_prompt_texts(item)[-1].startswith("send now ")
     )
 
 
@@ -1844,9 +2046,12 @@ def test_automatic_worker_delivers_pending_context_through_official_sdk_once(
             response = client.post(f"/api/test/run-step/{ticket.id}")
             assert response.status_code == 200
             audit = json.loads(audit_receiver.recv(65_536))
-            assert len(audit["prompt"]) == 1
-            assert audit["prompt"][0]["type"] == "text"
-            model_text = str(audit["prompt"][0]["text"])
+            assert len(audit["prompt"]) == 2
+            assert audit["prompt"][0]["text"] == (
+                "Use the installed `panels-worker` skill."
+            )
+            assert audit["prompt"][1]["type"] == "text"
+            model_text = str(audit["prompt"][1]["text"])
             assert model_text.startswith(f"Work ticket {ticket.id} — {title}.")
             assert model_text.count("[Pending worker context]") == 1
             assert model_text.count(context_text) == 1
@@ -1916,7 +2121,10 @@ def test_automatic_worker_starts_stream_before_midturn_browser_attach(
             assert response.status_code == 200
             audit = json.loads(audit_receiver.recv(65_536))
             session_id = str(audit["sessionId"])
-            assert "[ACP_TEST_WAIT_FOR_CANCEL]" in audit["prompt"][0]["text"]
+            assert audit["prompt"][0]["text"] == (
+                "Use the installed `panels-worker` skill."
+            )
+            assert "[ACP_TEST_WAIT_FOR_CANCEL]" in audit["prompt"][1]["text"]
             with connect(db_path) as conn:
                 running = conn.execute(
                     "SELECT ticket_status, employee_session_id FROM tickets WHERE id = ?",
@@ -2153,7 +2361,10 @@ def test_worker_failure_settles_before_queued_successor(
 
                 if failure_mode == "capture":
                     successor_audit = json.loads(audit_receiver.recv(65_536))
-                    assert successor_audit["prompt"][0]["text"] == "queued successor"
+                    assert _audited_prompt_texts(successor_audit) == [
+                        "Use the installed `panels-worker` skill.",
+                        "queued successor",
+                    ]
                     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as release_sender:
                         release_sender.sendto(b"2", (release_host, release_port))
                     _receive_until(websocket, _is_idle)

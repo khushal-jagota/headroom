@@ -2797,4 +2797,16 @@ Final Safari Computer Use against the unchanged verified build loaded the real P
 content-free compaction, and idle Worker. The registered functional-worker tuple remains exactly
 `hermes, codex, claude`; Gemini remains absent. The independent review has zero unresolved findings,
 the legacy/docs/backend/Computer Use artifacts all pass, the requirement ledger has zero unproved
-rows, and ACP-10 plus the full ACP migration are complete.
+ rows, and ACP-10 plus the full ACP migration are complete.
+
+## D-acp11-native-role-skills-and-message-kickoff — Use backend-native discovery and ordinary ACP delivery
+
+Panels exposes its canonical repository `skills/` directory through Codex's `.agents/skills` and
+Claude's `.claude/skills`, while retaining the existing Hermes-home symlinks. A shared ACP child
+decorator adds the appropriate installed role skill to whichever real prompt arrives first in each
+new conversation: `panels-worker` for Tickets and `panels-chief-of-staff` for the Chief. It does not
+repeat on later prompts or loaded/forked continuations, and replay does not attribute the delivery-only
+directive to the human. Claude's provider-specific `_meta.systemPrompt` append is removed. This gives
+all supported backends the same role source and delivery mechanism without modifying an upstream
+adapter, copying skill files, maintaining a second registry, or adding durable first-turn state. The
+bounded slice collapses plan review into implementation and receives one independent final diff review.

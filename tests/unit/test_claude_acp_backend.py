@@ -40,7 +40,6 @@ from planner.conversation.claude_backend import (
     CLAUDE_BACKEND_KEY,
     CLAUDE_INHERITED_ENVIRONMENT_NAMES,
     ClaudeAcpEmployeeChildFactory,
-    ClaudeBackendRequestMetadataError,
     ClaudeBackendStartupError,
     ClaudeBackendStartupPreflight,
     build_claude_acp_backend_definition,
@@ -306,12 +305,11 @@ def test_claude_definition_rejects_unresolved_runtime_paths(
         )
 
 
-def test_claude_factory_decorates_new_and_load_without_mutating_caller_metadata() -> None:
+def test_claude_factory_passes_new_and_load_metadata_through_unchanged() -> None:
     async def exercise() -> None:
         fake = _FakeFactory(_initialize_response())
         factory = ClaudeAcpEmployeeChildFactory(
             _definition(),
-            repository_root=REPOSITORY_ROOT,
             delegate_factory=fake,
         )
         delivered: list[SessionNotification] = []
@@ -349,30 +347,27 @@ def test_claude_factory_decorates_new_and_load_without_mutating_caller_metadata(
         await child.capture_load_session(load_request, ingress)
 
         delegate = fake.children[0]
-        for decorated in (
+        assert delegate.new_requests == [new_request]
+        assert delegate.load_requests == [load_request]
+        assert delegate.capture_load_requests == [load_request]
+        for delivered in (
             delegate.new_requests[0],
             delegate.load_requests[0],
             delegate.capture_load_requests[0],
         ):
-            assert decorated.field_meta is not original_meta
-            assert decorated.field_meta is not None
-            assert decorated.field_meta["trace"] == {"id": "keep"}
-            assert decorated.field_meta["systemPrompt"] == {
-                "type": "preset",
-                "preset": "claude_code",
-                "append": factory.worker_system_prompt_append,
-            }
-            assert str(REPOSITORY_ROOT / "skills/panels-worker/SKILL.md") in (
-                factory.worker_system_prompt_append
-            )
-            assert str(REPOSITORY_ROOT / "skills") in factory.worker_system_prompt_append
+            assert delivered.field_meta == {"trace": {"id": "keep"}}
+            assert delivered.field_meta is not None
+            assert "systemPrompt" not in delivered.field_meta
         assert original_meta == {"trace": {"id": "keep"}}
 
-        conflicting = new_request.model_copy(
+        caller_owned = new_request.model_copy(
             update={"field_meta": {"systemPrompt": "caller-owned"}}
         )
-        with pytest.raises(ClaudeBackendRequestMetadataError, match="systemPrompt"):
-            await child.new_session(conflicting)
+        await child.new_session(caller_owned)
+        assert delegate.new_requests[-1] == caller_owned
+        assert delegate.new_requests[-1].field_meta == {
+            "systemPrompt": "caller-owned"
+        }
 
     asyncio.run(exercise())
 
@@ -382,7 +377,6 @@ def test_claude_factory_suppresses_only_exact_compaction_control_chunks() -> Non
         fake = _FakeFactory(_initialize_response())
         factory = ClaudeAcpEmployeeChildFactory(
             _definition(),
-            repository_root=REPOSITORY_ROOT,
             delegate_factory=fake,
         )
         delivered: list[SessionNotification] = []
@@ -574,7 +568,6 @@ def test_claude_startup_preflight_is_initialize_only_and_closes_before_ready() -
         fake = _FakeFactory(_initialize_response())
         factory = ClaudeAcpEmployeeChildFactory(
             _definition(),
-            repository_root=REPOSITORY_ROOT,
             delegate_factory=fake,
         )
         preflight = ClaudeBackendStartupPreflight(
@@ -629,7 +622,6 @@ def test_claude_startup_preflight_fails_closed_on_mismatch(
         fake = _FakeFactory(response)
         factory = ClaudeAcpEmployeeChildFactory(
             _definition(),
-            repository_root=REPOSITORY_ROOT,
             delegate_factory=fake,
         )
         preflight = ClaudeBackendStartupPreflight(
@@ -719,7 +711,6 @@ def test_claude_startup_preflight_hang_uses_one_deadline_and_force_closes() -> N
         fake = _HangingInitializeAndCloseFactory(_initialize_response())
         factory = ClaudeAcpEmployeeChildFactory(
             _definition(),
-            repository_root=REPOSITORY_ROOT,
             delegate_factory=fake,
         )
         preflight = ClaudeBackendStartupPreflight(
@@ -782,7 +773,6 @@ def test_claude_startup_preflight_cancellation_during_spawn_settles_late_child()
         fake = _CancellationResistantSpawnFactory(_initialize_response())
         factory = ClaudeAcpEmployeeChildFactory(
             _definition(),
-            repository_root=REPOSITORY_ROOT,
             delegate_factory=fake,
         )
         preflight = ClaudeBackendStartupPreflight(
@@ -810,7 +800,6 @@ def test_claude_startup_preflight_cancellation_during_initialize_settles_child()
         fake = _HangingInitializeFactory(_initialize_response())
         factory = ClaudeAcpEmployeeChildFactory(
             _definition(),
-            repository_root=REPOSITORY_ROOT,
             delegate_factory=fake,
         )
         preflight = ClaudeBackendStartupPreflight(
@@ -844,7 +833,6 @@ def test_exact_claude_package_initialize_preflight_uses_no_session_or_prompt() -
         definition = _definition()
         factory = ClaudeAcpEmployeeChildFactory(
             definition,
-            repository_root=REPOSITORY_ROOT,
         )
         preflight = ClaudeBackendStartupPreflight(
             definition=definition,
@@ -859,8 +847,6 @@ def test_exact_claude_package_initialize_preflight_uses_no_session_or_prompt() -
 
 
 def test_factory_conforms_to_generic_child_factory_protocol() -> None:
-    factory = ClaudeAcpEmployeeChildFactory(
-        _definition(), repository_root=REPOSITORY_ROOT
-    )
+    factory = ClaudeAcpEmployeeChildFactory(_definition())
     generic_factory: AcpEmployeeChildFactory = factory
     assert generic_factory is factory
