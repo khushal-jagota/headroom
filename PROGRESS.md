@@ -4,6 +4,21 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-21): project-and-Worker-type Closeout lanes
+
+Ticket `t_scvazj90` is integrated on `ticket/t_scvazj90-closeout-lanes` against current
+`main`. Closeout still uses the complete Automatic Employee-step eligibility decision;
+its only added scheduling fact is that any non-empty matching effective-project +
+Worker-type Closeout occupies the lane. Discovery chooses the oldest eligible waiter per
+free lane, and the existing `BEGIN IMMEDIATE` claim rechecks the complete decision. No
+queue, lease, claim record, migration, staging-PR queue, or Integration Worker was added.
+
+The three merge conflicts were integration-only: preserve current ACP runtime docs, keep
+both current gateway and Closeout test imports, and retain the current build snapshot.
+The settled product/test tree passes Ruff, strict mypy across 134 source files, 1,098 unit
+tests, frontend checks/build/tests, and 105 Playwright E2E tests in the canonical
+`./verify` run: `VERIFY: PASS`.
+
 ## Current work cycle (2026-07-21): Visible system and programmatic prompts
 
 The conversation pane now shows Panels-supplied prompts instead of hiding them. The broker publishes
