@@ -33,6 +33,13 @@ E24_BODY = "Agent-drafted success criteria."
 E25_ORIG = "# Original proposal\n\n- old structure"
 E25_EDIT = "# Original proposal v2\n\n- kept structure\n- serialized from DOM"
 NOOP_MARKDOWN_BODY = "# Raw forms\n\n* star bullet\n\n1) ordered paren\n\n_line italic_"
+NESTED_GFM_BODY = (
+    "1. Parent ordered item\n"
+    "   - Mixed child bullet\n"
+    "     continuation content\n"
+    "   - Second child bullet\n"
+    "2. Second ordered item"
+)
 SELECT_NODE_CONTENTS = (
     "node => { const r = document.createRange(); r.selectNodeContents(node);"
     " const s = getSelection(); s.removeAllRanges(); s.addRange(r); }"
@@ -440,6 +447,45 @@ def test_markdown_approval_focus_noop_keeps_raw_source(
             ).fetchall()
             == []
         )
+
+
+def test_review_approval_renders_nested_mixed_gfm_lists(
+    server, context_factory, open_page, cli, api
+):
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Nested GFM approval",
+    )["id"]
+    cli(
+        server,
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Nested list ready.",
+        ticket_id=tid,
+        stdin=NESTED_GFM_BODY,
+    )
+
+    _add_to_today(api, server, tid)
+    card = f'[data-review-card][data-ticket-id="{tid}"]'
+    page = open_page(context_factory(), server, "#/review", card, settled=True)
+
+    draft = page.locator(f"{card} .approval-draft")
+    top_level_ordered = draft.locator(".markdown-block > ol").first
+    assert top_level_ordered.locator(":scope > li").count() == 2
+    first_item = top_level_ordered.locator(":scope > li").first
+    assert first_item.locator(":scope > ul > li").count() == 2
+    assert (
+        first_item.locator(":scope > ul > li").first.inner_text()
+        == "Mixed child bullet continuation content"
+    )
 
 
 def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api):

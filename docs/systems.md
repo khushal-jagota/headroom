@@ -111,6 +111,10 @@ the periodic timer remain canonical.
 
 _Code paths:_ `src/planner/runtime/` and `src/planner/worker_context/`.
 
+Runtime environments let the same foreground server run as separate live, staging, or
+preview instances with distinct databases, managed files, Hermes homes, logs, locks,
+control sockets, ports, and credential references. See [`runtime environments`](environments.md).
+
 ### 5. The ACP Conversation System
 
 `ConversationComposition` is the one production conversation composition. It owns:
@@ -162,8 +166,11 @@ and `/api/conversation` in `src/planner/core/server.py`.
 ### 6. The Human UI System
 
 The web app is Svelte built by Vite. FastAPI serves `web/dist` at `/`, Vite chunks
-under `/_app/`, and the shared token, application CSS, and safe Markdown assets under
-`/assets/`.
+under `/_app/`, and the shared token and application CSS under `/assets/`.
+
+Every shared Markdown surface uses one Vite-owned GFM pipeline. Raw HTML stays visible
+as text, unsafe content is removed before DOM creation, and managed links keep their
+exact source tokens through direct editing and preview lifecycles.
 
 Canonical product reads use one Resource Catalogue. Events invalidate only the keyed
 resources they affect, such as `ticket:<id>`, `board`, `review`, or `sprint:current`.
@@ -232,4 +239,4 @@ _Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission
 
 ---
 
-_Last verified: 2026-07-20 (three-backend ACP conversation and Employee-step runtime)._
+_Last verified: 2026-07-21 (three-backend ACP conversation, GFM rendering, and Employee-step runtime)._
