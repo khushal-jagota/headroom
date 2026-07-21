@@ -118,13 +118,17 @@ next ordinary prompt. Later ordinary prompts and a loaded, forked, or replacemen
 do not add the role again. Starting New conversation successfully creates a new session
 and therefore adds the role to that conversation's first ordinary prompt.
 
-The role line is ACP delivery context. Only while that prompt or a session replay is in
-progress, Panels removes its one synthetic echoed role chunk. It also handles Hermes
-flattening the role and original text into one chunk. The filter is scoped to that exact
-session and one echo, so a genuine message that happens to equal the role line remains
-visible. The conversation therefore shows only what the human or Automatic Employee
-supplied. Claude receives the same ordinary ACP prompt behavior as the other backends;
-Panels does not modify Claude's system prompt.
+The role line is ACP delivery context, and it is visible in the transcript as a
+\`System message · role\` entry. Panels does not remove or normalize role echoes from
+live updates or replay. A genuine message that happens to equal the role line remains
+visible too. Claude receives the same ordinary ACP prompt behavior as the other
+backends; Panels does not modify Claude's system prompt.
+
+Automatic Employee prompts are also visible immediately as \`System message · worker\`.
+The broker publishes the exact prompt admitted to ACP, including any role prefix, at
+prompt start. The browser keeps that typed event in its ordered timeline, so it does
+not require a hard refresh to reveal a programmatic prompt. ACP replay remains the
+source for rebuilding the conversation after reload.
 
 ## Human and Automatic Employee work share the session
 

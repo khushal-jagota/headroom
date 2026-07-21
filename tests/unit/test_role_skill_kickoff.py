@@ -334,7 +334,7 @@ def test_failed_new_load_capture_and_fork_do_not_arm_role_kickoff() -> None:
     asyncio.run(exercise())
 
 
-def test_live_role_echo_filter_is_one_shot_and_allows_directive_text_collision() -> None:
+def test_live_role_echoes_are_visible_without_filtering_or_collision_suppression() -> None:
     async def exercise() -> None:
         delegate = _FakeFactory()
         factory = RoleSkillKickoffAcpEmployeeChildFactory(delegate)
@@ -352,7 +352,7 @@ def test_live_role_echo_filter_is_one_shot_and_allows_directive_text_collision()
         ]
 
         await child.new_session(_new_request())
-        await child.prompt(_prompt("session-new", directive))
+        await child.prompt(child.prompt_for_display(_prompt("session-new", directive)))
         await delegate.update_ingress(_user_chunk("session-new", directive))
 
         assert [
@@ -360,12 +360,12 @@ def test_live_role_echo_filter_is_one_shot_and_allows_directive_text_collision()
             for notification in delivered
             if isinstance(notification.update, UserMessageChunk)
             and isinstance(notification.update.content, TextContentBlock)
-        ] == [directive, directive]
+        ] == [directive, directive, directive]
 
     asyncio.run(exercise())
 
 
-def test_load_and_capture_replay_normalize_flattened_hermes_role_echo_once() -> None:
+def test_load_and_capture_replay_forwards_role_echoes_unchanged() -> None:
     async def exercise() -> None:
         delegate = _FakeFactory()
         factory = RoleSkillKickoffAcpEmployeeChildFactory(delegate)
@@ -402,9 +402,9 @@ def test_load_and_capture_replay_normalize_flattened_hermes_role_echo_once() -> 
             and isinstance(notification.update.content, TextContentBlock)
         ] == [
             directive,
-            "Replayed original",
+            f"{directive}\nReplayed original",
             directive,
-            directive,
+            f"{directive}\n{directive}",
             directive,
         ]
 

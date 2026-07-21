@@ -210,6 +210,7 @@
         protocolRejections={snapshot.protocolRejections}
         unsupportedAgentContent={snapshot.unsupportedAgentContent}
         terminalStates={snapshot.terminalStates}
+        programmaticPrompts={snapshot.programmaticPrompts}
         onThoughtExpanded={(messageId, partIndex, expanded) => stableController.setThoughtExpanded(messageId, partIndex, expanded)}
         onToolExpanded={(toolCallId, expanded) => stableController.setToolExpanded(toolCallId, expanded)}
       />

@@ -113,8 +113,19 @@ function runStateAssertions(subject, fixtureStream) {
   for (const envelope of fixtureStream.filter((item) => item.type === "acp_session_update")) {
     reduce(envelope);
   }
+  reduce(baseEnvelope(9, "programmatic_prompt", {
+    promptId: "worker-prompt-1",
+    source: "worker",
+    prompt: {
+      sessionId: "session-1",
+      prompt: [{ type: "text", text: "Automatic Employee prompt" }],
+    },
+  }));
 
   const snapshot = subject.projectConversationSnapshot(state);
+  assert.equal(snapshot.programmaticPrompts["worker-prompt-1"].payload.source, "worker");
+  assert.equal(snapshot.programmaticPrompts["worker-prompt-1"].payload.prompt.prompt[0].text, "Automatic Employee prompt");
+  assert.deepEqual(snapshot.timeline.at(-1), { kind: "programmatic_prompt", promptId: "worker-prompt-1" });
   const thoughtPart = snapshot.session.messages
     .flatMap((message) => message.parts)
     .find((part) => part.type === "thought");

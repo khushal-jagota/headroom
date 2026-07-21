@@ -27,6 +27,7 @@ import type {
   ConversationActivity,
   ConversationPermissionRequest,
   ConversationTerminalState,
+  ProgrammaticPrompt,
   QueuedPrompt,
   ServerEnvelope,
   TurnDeliveryReceipt,
@@ -49,6 +50,7 @@ export interface ConversationCursor {
 
 export type TimelineReference =
   | { readonly kind: 'message'; readonly messageId: string }
+  | { readonly kind: 'programmatic_prompt'; readonly promptId: string }
   | { readonly kind: 'compaction'; readonly compactionBoundaryId: string }
   | { readonly kind: 'delivery'; readonly deliveryClientMessageId: string }
   | { readonly kind: 'protocol_rejection'; readonly protocolRejectionSequence: number };
@@ -79,6 +81,10 @@ export interface ProtocolRejectionViewState {
   readonly rejectedSessionUpdate: string;
   readonly reason: string;
   readonly status: 'Agent sent an unsupported update';
+}
+
+export interface ProgrammaticPromptViewState {
+  readonly payload: DeepReadonly<ProgrammaticPrompt>;
 }
 
 export interface UnsupportedAgentContent {
@@ -118,6 +124,7 @@ export interface ConversationSnapshot {
   readonly optimisticHumans: Readonly<Record<string, OptimisticHumanState>>;
   readonly permissions: Readonly<Record<string, PermissionViewState>>;
   readonly terminalStates: Readonly<Record<string, DeepReadonly<ConversationTerminalState>>>;
+  readonly programmaticPrompts: Readonly<Record<string, ProgrammaticPromptViewState>>;
   readonly disposed: boolean;
 }
 
@@ -154,6 +161,7 @@ export interface ConversationState {
   optimisticHumans: Record<string, OptimisticHumanState>;
   permissions: Record<string, { request: ConversationPermissionRequest; submittingOptionId: string | null }>;
   terminalStates: Record<string, ConversationTerminalState>;
+  programmaticPrompts: Record<string, ProgrammaticPromptViewState>;
   fallback: FallbackBookkeeping;
   disposed: boolean;
 }
@@ -204,6 +212,7 @@ export function createConversationState(employeeId: string): ConversationState {
     optimisticHumans: {},
     permissions: {},
     terminalStates: {},
+    programmaticPrompts: {},
     fallback: {
       turnOrdinal: 0,
       currentRole: null,
@@ -539,6 +548,18 @@ function reduceEnvelope(
     }
     case 'human_echo':
       return replacePromptMessage(state, envelope.payload.clientMessageId, envelope.payload.prompt, dependencies);
+    case 'programmatic_prompt':
+      return {
+        ...state,
+        programmaticPrompts: {
+          ...state.programmaticPrompts,
+          [envelope.payload.promptId]: { payload: envelope.payload },
+        },
+        timeline: appendTimelineOnce(state, {
+          kind: 'programmatic_prompt',
+          promptId: envelope.payload.promptId,
+        }),
+      };
     case 'terminal_state':
       return {
         ...state,
@@ -758,6 +779,7 @@ export function projectConversationSnapshot(state: ConversationState): Conversat
     optimisticHumans: state.optimisticHumans,
     permissions: state.permissions,
     terminalStates: state.terminalStates,
+    programmaticPrompts: state.programmaticPrompts,
     disposed: state.disposed,
   }) as ConversationSnapshot;
   projectionCache.set(state, snapshot);

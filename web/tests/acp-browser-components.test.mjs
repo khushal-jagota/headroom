@@ -45,6 +45,8 @@ for (const fileName of inventory) {
 
 assert.match(sources["TranscriptView.svelte"], /MarkdownBlock/);
 assert.match(sources["TranscriptView.svelte"], /FilePreview/);
+assert.match(sources["TranscriptView.svelte"], /data-acp-programmatic-prompt/);
+assert.match(sources["TranscriptView.svelte"], /System message · \{item\.source\}/);
 // The compaction seam is a centred, flat divider whose lowercase mono label is
 // built from the payload state and trigger (no token counts, no summary).
 assert.match(sources["TranscriptView.svelte"], /context compacted · \$\{payload\.trigger\}/);

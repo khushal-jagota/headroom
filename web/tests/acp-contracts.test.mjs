@@ -130,6 +130,7 @@ assert.deepEqual(
     'connection',
     'protocol_update_rejected',
     'human_echo',
+    'programmatic_prompt',
     'terminal_state',
   ],
 );

@@ -1900,6 +1900,17 @@ and optimistic-human-echo events. It does not introduce a neutral translation vo
 resolves `D-transcript-ownership-open`: the agent's typed `session/load` replay is the conversation
 source; the browser holds live view state; canonical product data remains server-owned separately.
 
+## D-acp-visible-programmatic-prompts — Show every Panels-supplied prompt in the transcript
+
+Panels must not hide its own delivery context. At the broker's ACP admission point, the
+exact prompt sent by Automatic Employee work is published as a typed
+\`programmatic_prompt\` envelope with source \`worker\`. The one-shot employee role prefix
+is published with source \`role\` when it is added to a prompt. The browser renders both
+as visible system messages in sequence. This closes the production Hermes gap where a
+programmatic prompt appeared only after hard refresh because Hermes replayed it but did
+not emit a live user-message chunk. The ACP session remains the durable source for
+reload replay; the new envelope is a live visibility event, not a second transcript.
+
 ## D-acp-ordered-ingress — One consumer serializes each employee/session update stream
 
 The ACP SDK may invoke client callbacks concurrently even though frames arrive in order. Each

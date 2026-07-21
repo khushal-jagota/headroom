@@ -252,6 +252,11 @@ class _Acp02Publisher:
         del employee, binding
         self.compactions.append(compaction)
 
+    async def publish_programmatic_prompt(
+        self, employee: Any, binding: Any, prompt: Any
+    ) -> None:
+        del employee, binding, prompt
+
     async def publish_permission_request(
         self,
         employee: ConversationEmployee,

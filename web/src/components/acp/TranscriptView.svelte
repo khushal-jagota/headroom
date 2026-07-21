@@ -19,6 +19,7 @@
     protocolRejections,
     unsupportedAgentContent,
     terminalStates,
+    programmaticPrompts,
     activity = null,
     onThoughtExpanded,
     onToolExpanded
@@ -29,6 +30,7 @@
     protocolRejections: ConversationSnapshot["protocolRejections"];
     unsupportedAgentContent: ConversationSnapshot["unsupportedAgentContent"];
     terminalStates: ConversationSnapshot["terminalStates"];
+    programmaticPrompts: ConversationSnapshot["programmaticPrompts"];
     /** Delivery receipts no longer render in the transcript; accepted so the
      *  pane's existing invocation stays untouched. */
     receipts?: ConversationSnapshot["receipts"];
@@ -41,6 +43,7 @@
 
   type RenderItem =
     | { kind: "user"; key: string; messageId: string; content: readonly DeepReadonly<ContentBlock>[] }
+    | { kind: "programmatic"; key: string; promptId: string; content: readonly DeepReadonly<ContentBlock>[]; source: "worker" | "role" }
     | { kind: "agent-content"; key: string; messageId: string; content: readonly DeepReadonly<ContentBlock>[] }
     | { kind: "stanza"; key: string; stanza: TranscriptStanza; live: boolean }
     | { kind: "compaction"; key: string; boundaryId: string }
@@ -51,7 +54,18 @@
   let items = $derived.by<RenderItem[]>(() => {
     const out: RenderItem[] = [];
     for (const reference of timeline) {
-      if (reference.kind === "message") {
+      if (reference.kind === "programmatic_prompt") {
+        const prompt = programmaticPrompts[reference.promptId];
+        if (prompt) {
+          out.push({
+            kind: "programmatic",
+            key: `s:${reference.promptId}`,
+            promptId: reference.promptId,
+            content: prompt.payload.prompt.prompt,
+            source: prompt.payload.source,
+          });
+        }
+      } else if (reference.kind === "message") {
         const message = session.messages.find((item) => item.id === reference.messageId);
         if (!message) continue;
         if (message.role === "user") {
@@ -138,6 +152,11 @@
   {#each items as item (item.key)}
     {#if item.kind === "user"}
       <article class="chat-u" data-acp-message={item.messageId}>{@render contentBlocks(item.content)}</article>
+    {:else if item.kind === "programmatic"}
+      <article class="chat-system" data-acp-programmatic-prompt={item.promptId}>
+        <div class="chat-system-label">System message · {item.source}</div>
+        {@render contentBlocks(item.content)}
+      </article>
     {:else if item.kind === "agent-content"}
       <article class="chat-a" data-acp-message={item.messageId}>{@render contentBlocks(item.content)}</article>
     {:else if item.kind === "stanza"}

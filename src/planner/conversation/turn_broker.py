@@ -31,6 +31,7 @@ from .contracts import (
     ConversationCompactionBoundaryProvenance,
     ConversationEmployee,
     ConversationSessionBinding,
+    ProgrammaticPrompt,
     QueuedPrompt,
     TurnDeliveryChoice,
     TurnDeliveryReceipt,
@@ -390,6 +391,35 @@ class _Actor:
         if not self._matches_runtime(submitted_handle) or self.lifecycle != "open":
             raise ConversationTurnBrokerError("conversation stopped before prompt start")
         lease = await self.runtime.acquire_runtime_lease(submitted_handle)
+        delivered_prompt = self._prompt_for_display(submission.prompt)
+        original_blocks = tuple(submission.prompt.prompt)
+        delivered_blocks = tuple(delivered_prompt.prompt)
+        if submission.origin == "worker":
+            await self.publisher.publish_programmatic_prompt(
+                self.handle.employee,
+                self.handle.binding,
+                ProgrammaticPrompt(
+                    prompt_id=submission.client_message_id,
+                    prompt=delivered_prompt,
+                    source="worker",
+                ),
+            )
+        elif (
+            len(delivered_blocks) > len(original_blocks)
+            and delivered_blocks[-len(original_blocks) :] == original_blocks
+        ):
+            role_prompt = delivered_prompt.model_copy(
+                update={"prompt": list(delivered_blocks[: -len(original_blocks)])}
+            )
+            await self.publisher.publish_programmatic_prompt(
+                self.handle.employee,
+                self.handle.binding,
+                ProgrammaticPrompt(
+                    prompt_id=f"{submission.client_message_id}:role",
+                    prompt=role_prompt,
+                    source="role",
+                ),
+            )
         self.prompt_epoch += 1
         epoch = self.prompt_epoch
         if self.prompt_started_hook is not None:
@@ -430,7 +460,7 @@ class _Actor:
             await self.activity("compacting", "Compacting conversation context")
 
         prompt_task = asyncio.create_task(
-            lease.prompt(submission.prompt),
+            lease.prompt(delivered_prompt),
             name=(
                 f"panels.acp.prompt.{self.handle.employee.employee_id}."
                 f"{submitted_handle.child_generation}.{epoch}"
@@ -440,7 +470,7 @@ class _Actor:
             epoch=epoch,
             client_message_id=submission.client_message_id,
             choice=submission.choice,
-            prompt=submission.prompt,
+            prompt=delivered_prompt,
             lease=lease,
             task=prompt_task,
             origin=submission.origin,
@@ -460,6 +490,17 @@ class _Actor:
         if not is_explicit:
             await self.activity("thinking", "Employee is responding")
         return tracked_handle
+
+    def _prompt_for_display(self, prompt: PromptRequest) -> PromptRequest:
+        prepare = getattr(self.handle.child, "prompt_for_display", None)
+        if prepare is None:
+            return prompt
+        displayed = prepare(prompt)
+        if not isinstance(displayed, PromptRequest):
+            raise ConversationTurnBrokerError(
+                "prompt display preparation returned an invalid ACP prompt"
+            )
+        return displayed
 
     @staticmethod
     def _settle_tracked(

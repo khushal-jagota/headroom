@@ -1396,6 +1396,24 @@ button.list-row:hover .list-row-title {
   font-size: var(--type-serif-sm);
   line-height: 1.6;
 }
+/* programmatic prompts = visible system context, never hidden or mistaken for user prose */
+.chat-system {
+  align-self: stretch;
+  border-inline-start: var(--border-hairline) solid var(--text-faint);
+  color: var(--text-faint);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-sm);
+  line-height: 1.6;
+  padding-inline-start: var(--space-3);
+}
+.chat-system-label {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: 0.03em;
+  margin-block-end: var(--space-1);
+  text-transform: uppercase;
+}
 
 /* composer = one recessed field; the container IS the input */
 .chat-box {

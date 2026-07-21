@@ -379,6 +379,34 @@
     "entityId": "ticket-acp-00",
     "entityKind": "ticket",
     "payload": {
+      "prompt": {
+        "prompt": [
+          {
+            "text": "Please inspect the typed transcript.",
+            "type": "text"
+          },
+          {
+            "data": "aW1hZ2U=",
+            "mimeType": "image/png",
+            "type": "image"
+          }
+        ],
+        "sessionId": "session-acp-00"
+      },
+      "promptId": "worker-prompt-1",
+      "source": "worker"
+    },
+    "sequence": 18,
+    "type": "programmatic_prompt",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-acp-00",
+    "bindingGeneration": 3,
+    "employeeId": "employee-acp-00",
+    "entityId": "ticket-acp-00",
+    "entityKind": "ticket",
+    "payload": {
       "lifecycle": "active",
       "terminalId": "terminal-1",
       "terminalOutput": {
@@ -389,7 +417,7 @@
         "truncated": true
       }
     },
-    "sequence": 18,
+    "sequence": 19,
     "type": "terminal_state",
     "wireVersion": 1
   },

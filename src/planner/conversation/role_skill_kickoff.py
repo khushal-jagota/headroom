@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Final, cast
+from typing import Final
 
 from acp.schema import (
     CancelNotification,
@@ -16,10 +16,8 @@ from acp.schema import (
     NewSessionResponse,
     PromptRequest,
     PromptResponse,
-    SessionNotification,
     SetSessionConfigOptionResponse,
     TextContentBlock,
-    UserMessageChunk,
 )
 
 from .backend_contracts import (
@@ -31,7 +29,6 @@ from .backend_contracts import (
     PermissionRequestCallback,
 )
 from .contracts import ConversationEmployee
-from .wire_contracts import ProtocolUpdateRejectedPayload
 
 _TICKET_ROLE_DIRECTIVE: Final = "Use the installed `panels-worker` skill."
 _CHIEF_ROLE_DIRECTIVE: Final = "Use the installed `panels-chief-of-staff` skill."
@@ -43,77 +40,16 @@ def _role_directive(employee: ConversationEmployee) -> str:
     return _CHIEF_ROLE_DIRECTIVE
 
 
-class _RoleDirectiveEchoNormalizer:
-    def __init__(self, session_id: str, role_directive: str) -> None:
-        self._session_id = session_id
-        self._role_directive = role_directive
-        self._consumed = False
-
-    def normalize(
-        self,
-        payload: SessionNotification | ProtocolUpdateRejectedPayload,
-    ) -> SessionNotification | ProtocolUpdateRejectedPayload | None:
-        if (
-            self._consumed
-            or not isinstance(payload, SessionNotification)
-            or payload.session_id != self._session_id
-            or not isinstance(payload.update, UserMessageChunk)
-            or not isinstance(payload.update.content, TextContentBlock)
-        ):
-            return payload
-        text = payload.update.content.text
-        if text == self._role_directive:
-            self._consumed = True
-            return None
-        flattened_prefix = f"{self._role_directive}\n"
-        if not text.startswith(flattened_prefix):
-            return payload
-        self._consumed = True
-        visible_content = payload.update.content.model_copy(
-            update={"text": text[len(flattened_prefix) :]}
-        )
-        visible_update = payload.update.model_copy(update={"content": visible_content})
-        return payload.model_copy(update={"update": visible_update})
-
-
-class _ScopedRoleDirectiveEchoIngress:
-    def __init__(self, downstream: AcpConversationIngress) -> None:
-        self._downstream = downstream
-        self._normalizer: _RoleDirectiveEchoNormalizer | None = None
-
-    def arm(self, session_id: str, role_directive: str) -> _RoleDirectiveEchoNormalizer:
-        if self._normalizer is not None:
-            raise RuntimeError("role directive echo ingress is already armed")
-        normalizer = _RoleDirectiveEchoNormalizer(session_id, role_directive)
-        self._normalizer = normalizer
-        return normalizer
-
-    def disarm(self, normalizer: _RoleDirectiveEchoNormalizer) -> None:
-        if self._normalizer is not normalizer:
-            raise RuntimeError("role directive echo ingress arm changed unexpectedly")
-        self._normalizer = None
-
-    async def __call__(
-        self,
-        payload: SessionNotification | ProtocolUpdateRejectedPayload,
-    ) -> None:
-        normalizer = self._normalizer
-        visible = payload if normalizer is None else normalizer.normalize(payload)
-        if visible is not None:
-            await self._downstream(visible)
-
-
 class _RoleSkillKickoffAcpEmployeeChild(AcpEmployeeChild):
     def __init__(
         self,
         delegate: AcpEmployeeChild,
         role_directive: str,
-        normal_ingress: _ScopedRoleDirectiveEchoIngress,
     ) -> None:
         self._delegate = delegate
         self._role_directive = role_directive
-        self._normal_ingress = normal_ingress
         self._armed_session_id: str | None = None
+        self._prepared_prompt_ids: set[int] = set()
 
     @property
     def generation(self) -> int:
@@ -149,38 +85,36 @@ class _RoleSkillKickoffAcpEmployeeChild(AcpEmployeeChild):
         await self._delegate.close_session(session_id)
 
     async def load_session(self, request: LoadSessionRequest) -> LoadSessionResponse:
-        normalizer = self._normal_ingress.arm(request.session_id, self._role_directive)
-        try:
-            return await self._delegate.load_session(request)
-        finally:
-            self._normal_ingress.disarm(normalizer)
+        return await self._delegate.load_session(request)
 
     async def capture_load_session(
         self,
         request: LoadSessionRequest,
         private_ingress: AcpConversationIngress,
     ) -> LoadSessionResponse:
-        normalizer = _RoleDirectiveEchoNormalizer(request.session_id, self._role_directive)
-
-        async def visible_private_ingress(
-            payload: SessionNotification | ProtocolUpdateRejectedPayload,
-        ) -> None:
-            visible = normalizer.normalize(payload)
-            if visible is not None:
-                await private_ingress(visible)
-
-        return await self._delegate.capture_load_session(
-            request, cast(AcpConversationIngress, visible_private_ingress)
-        )
+        return await self._delegate.capture_load_session(request, private_ingress)
 
     async def fork_session(self, request: ForkSessionRequest) -> ForkSessionResponse:
         return await self._delegate.fork_session(request)
 
     async def prompt(self, request: PromptRequest) -> PromptResponse:
+        return await self._delegate.prompt(self._prompt_for_display(request, consume=True))
+
+    def prompt_for_display(self, request: PromptRequest) -> PromptRequest:
+        return self._prompt_for_display(request, consume=False)
+
+    def _prompt_for_display(self, request: PromptRequest, *, consume: bool) -> PromptRequest:
+        prepared = id(request) in self._prepared_prompt_ids
+        if prepared:
+            self._prepared_prompt_ids.discard(id(request))
+            if consume:
+                self._armed_session_id = None
+            return request
         if request.session_id != self._armed_session_id or self._is_command_shaped(request):
-            return await self._delegate.prompt(request)
-        self._armed_session_id = None
-        delivered = request.model_copy(
+            return request
+        if consume:
+            self._armed_session_id = None
+        prepared_request = request.model_copy(
             update={
                 "prompt": [
                     TextContentBlock(type="text", text=self._role_directive),
@@ -188,11 +122,8 @@ class _RoleSkillKickoffAcpEmployeeChild(AcpEmployeeChild):
                 ]
             }
         )
-        normalizer = self._normal_ingress.arm(request.session_id, self._role_directive)
-        try:
-            return await self._delegate.prompt(delivered)
-        finally:
-            self._normal_ingress.disarm(normalizer)
+        self._prepared_prompt_ids.add(id(prepared_request))
+        return prepared_request
 
     @staticmethod
     def _is_command_shaped(request: PromptRequest) -> bool:
@@ -232,13 +163,11 @@ class RoleSkillKickoffAcpEmployeeChildFactory(AcpEmployeeChildFactory):
         death_callback: ChildDeathCallback,
     ) -> AcpEmployeeChild:
         role_directive = _role_directive(employee)
-        normal_ingress = _ScopedRoleDirectiveEchoIngress(update_ingress)
-
         child = await self._delegate.create(
             employee,
             generation,
-            cast(AcpConversationIngress, normal_ingress),
+            update_ingress,
             permission_callback,
             death_callback,
         )
-        return _RoleSkillKickoffAcpEmployeeChild(child, role_directive, normal_ingress)
+        return _RoleSkillKickoffAcpEmployeeChild(child, role_directive)

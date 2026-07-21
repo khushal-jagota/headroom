@@ -97,6 +97,12 @@ export interface HumanEcho {
   prompt: PromptRequest;
 }
 
+export interface ProgrammaticPrompt {
+  promptId: string;
+  prompt: PromptRequest;
+  source: 'worker' | 'role';
+}
+
 export interface ConversationTerminalState {
   terminalId: string;
   lifecycle: 'active' | 'released';
@@ -132,6 +138,7 @@ export type ServerEnvelope =
       payload: ProtocolUpdateRejectedPayload;
     })
   | (ServerEnvelopeBase & { type: 'human_echo'; payload: HumanEcho })
+  | (ServerEnvelopeBase & { type: 'programmatic_prompt'; payload: ProgrammaticPrompt })
   | TerminalStateEnvelope;
 
 export type BrowserAction =

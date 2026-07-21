@@ -40,6 +40,7 @@ const envelopeTypes = new Set<ServerEnvelope['type']>([
   'connection',
   'protocol_update_rejected',
   'human_echo',
+  'programmatic_prompt',
   'terminal_state',
 ]);
 
@@ -274,6 +275,11 @@ function validatePayload(value: Record<string, unknown>): boolean {
     case 'human_echo':
       return hasExactKeys(payload, ['clientMessageId', 'prompt'])
         && isString(payload.clientMessageId)
+        && isPrompt(payload.prompt, acpSessionId);
+    case 'programmatic_prompt':
+      return hasExactKeys(payload, ['promptId', 'prompt', 'source'])
+        && isString(payload.promptId)
+        && (payload.source === 'worker' || payload.source === 'role')
         && isPrompt(payload.prompt, acpSessionId);
     case 'terminal_state':
       return isTerminalState(payload);

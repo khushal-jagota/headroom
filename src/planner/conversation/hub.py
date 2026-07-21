@@ -32,6 +32,7 @@ from .contracts import (
     ConversationPermissionRequest,
     ConversationSessionBinding,
     ConversationTerminalState,
+    ProgrammaticPrompt,
     QueuedPrompt,
     TurnDeliveryReceipt,
 )
@@ -70,6 +71,7 @@ from .wire_contracts import (
     PermissionOutcomeEnvelope,
     PermissionRequestEnvelope,
     PermissionResponseAction,
+    ProgrammaticPromptEnvelope,
     PromptAction,
     ProtocolUpdateRejectedEnvelope,
     ProtocolUpdateRejectedPayload,
@@ -966,6 +968,22 @@ class ConversationHub:
                 **self._base(employee, binding, sequence),
                 type="delivery_receipt",
                 payload=receipt,
+            ),
+        )
+
+    async def publish_programmatic_prompt(
+        self,
+        employee: ConversationEmployee,
+        binding: ConversationSessionBinding,
+        prompt: ProgrammaticPrompt,
+    ) -> None:
+        await self._publish(
+            employee,
+            binding,
+            lambda sequence: ProgrammaticPromptEnvelope(
+                **self._base(employee, binding, sequence),
+                type="programmatic_prompt",
+                payload=prompt,
             ),
         )
 

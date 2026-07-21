@@ -61,6 +61,8 @@ from planner.conversation import (
     PermissionOutcomeEnvelope,
     PermissionRequestEnvelope,
     PermissionResponseAction,
+    ProgrammaticPrompt,
+    ProgrammaticPromptEnvelope,
     PromptAction,
     ProtocolUpdateRejectedEnvelope,
     ProtocolUpdateRejectedPayload,
@@ -292,8 +294,17 @@ def build_server_envelopes() -> list[object]:
             type="human_echo",
             payload=HumanEcho(client_message_id="client-message-1", prompt=prompt),
         ),
-        TerminalStateEnvelope(
+        ProgrammaticPromptEnvelope(
             **_common(18),
+            type="programmatic_prompt",
+            payload=ProgrammaticPrompt(
+                prompt_id="worker-prompt-1",
+                prompt=prompt,
+                source="worker",
+            ),
+        ),
+        TerminalStateEnvelope(
+            **_common(19),
             type="terminal_state",
             payload=ConversationTerminalState(
                 terminal_id="terminal-1",

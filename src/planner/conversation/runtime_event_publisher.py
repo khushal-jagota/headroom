@@ -15,6 +15,7 @@ from .contracts import (
     ConversationPermissionRequest,
     ConversationSessionBinding,
     ConversationTerminalState,
+    ProgrammaticPrompt,
     QueuedPrompt,
     TurnDeliveryReceipt,
 )
@@ -36,6 +37,13 @@ class ConversationRuntimeEventPublisher(Protocol):
         employee: ConversationEmployee,
         binding: ConversationSessionBinding,
         receipt: TurnDeliveryReceipt,
+    ) -> None: ...
+
+    async def publish_programmatic_prompt(
+        self,
+        employee: ConversationEmployee,
+        binding: ConversationSessionBinding,
+        prompt: ProgrammaticPrompt,
     ) -> None: ...
 
     async def publish_queue_snapshot(

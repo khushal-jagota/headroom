@@ -63,6 +63,7 @@ ContextCompactionState = Literal["compacting", "compacted", "failed"]
 ContextCompactionTrigger = Literal["explicit", "automatic"]
 ConversationPermissionLifecycle = Literal["pending", "answered", "cancelled"]
 ConversationTerminalLifecycle = Literal["active", "released"]
+ProgrammaticPromptSource = Literal["worker", "role"]
 
 
 class ConversationEmployee(_ConversationModel):
@@ -213,6 +214,17 @@ class QueuedPrompt(_ConversationModel):
     @classmethod
     def _validate_client_message_id(cls, value: str) -> str:
         return _require_non_empty_text(value, field_name="client_message_id")
+
+
+class ProgrammaticPrompt(_ConversationModel):
+    prompt_id: str
+    prompt: PromptRequest
+    source: ProgrammaticPromptSource
+
+    @field_validator("prompt_id")
+    @classmethod
+    def _validate_prompt_id(cls, value: str) -> str:
+        return _require_non_empty_text(value, field_name="prompt_id")
 
 
 class ContextCompaction(_ConversationModel):

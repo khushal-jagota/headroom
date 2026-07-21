@@ -175,6 +175,7 @@ class _Publisher:
         self.permission_requests: list[ConversationPermissionRequest] = []
         self.permission_outcomes: list[ConversationPermissionOutcome] = []
         self.terminal_states: list[Any] = []
+        self.programmatic_prompts: list[Any] = []
 
     async def publish_activity(self, employee: Any, binding: Any, state: Any, detail: str):
         del employee, binding
@@ -194,6 +195,10 @@ class _Publisher:
     async def publish_compaction(self, employee: Any, binding: Any, compaction: Any):
         del employee, binding
         self.events.append(("compaction", compaction))
+
+    async def publish_programmatic_prompt(self, employee: Any, binding: Any, prompt: Any):
+        del employee, binding
+        self.programmatic_prompts.append(prompt)
 
     async def publish_permission_request(
         self,
@@ -506,7 +511,7 @@ def _fixture(
 
 def test_tracked_rejection_tears_down_before_queued_successor_can_start() -> None:
     async def exercise() -> None:
-        broker, child, _publisher, handle, _runtime = _fixture()
+        broker, child, publisher, handle, _runtime = _fixture()
         prompt_started = asyncio.Event()
         release_barrier = asyncio.Event()
         terminal_order: list[str] = []
@@ -541,6 +546,10 @@ def test_tracked_rejection_tears_down_before_queued_successor_can_start() -> Non
             after_prompt_settled=lambda _handle: terminal_order.append("collector-removed"),
         )
         await prompt_started.wait()
+        assert [
+            (item.prompt_id, item.source, item.prompt.prompt[0].text)
+            for item in publisher.programmatic_prompts
+        ] == [("worker-1", "worker", "worker")]
         await broker.deliver(
             handle,
             "queued-1",

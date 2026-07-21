@@ -4,7 +4,17 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
-## Current work cycle (2026-07-21): Worker model and reasoning selection
+## Current work cycle (2026-07-21): Visible system and programmatic prompts
+
+The conversation pane now shows Panels-supplied prompts instead of hiding them. The broker publishes
+the exact admitted Automatic Employee prompt and the one-shot employee role prefix as typed
+\`programmatic_prompt\` envelopes; the browser folds them into the ordered transcript with visible
+\`System message · worker\` or \`System message · role\` labels. Role echo filtering is removed, so live
+and replayed ACP updates are forwarded unchanged. Ruff, strict mypy, 1,085 unit tests, the frontend
+build/check/suites, and 105 Playwright E2E tests all pass in the final canonical \`./verify\` run:
+\`VERIFY: PASS\`.
+
+## Previous work cycle (2026-07-21): Worker model and reasoning selection
 
 ACP-10 and the ACP migration are already complete on `main` at `34bb5c1`. ACP-11 implements the
 owner's follow-up consistency decision without changing an upstream adapter: the repository's

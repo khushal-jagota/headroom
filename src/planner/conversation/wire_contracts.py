@@ -15,6 +15,7 @@ from .contracts import (
     ConversationPermissionOutcome,
     ConversationPermissionRequest,
     ConversationTerminalState,
+    ProgrammaticPrompt,
     QueuedPrompt,
     TurnDeliveryChoice,
     TurnDeliveryReceipt,
@@ -197,6 +198,17 @@ class HumanEchoEnvelope(_ServerEnvelope):
         return self
 
 
+class ProgrammaticPromptEnvelope(_ServerEnvelope):
+    type: Literal["programmatic_prompt"]
+    payload: ProgrammaticPrompt
+
+    @model_validator(mode="after")
+    def _validate_prompt_session(self) -> Self:
+        if self.payload.prompt.session_id != self.acp_session_id:
+            raise ValueError("programmatic prompt sessionId must match the envelope session")
+        return self
+
+
 class TerminalStateEnvelope(_ServerEnvelope):
     type: Literal["terminal_state"]
     payload: ConversationTerminalState
@@ -213,6 +225,7 @@ type ServerEnvelope = Annotated[
     | ConnectionEnvelope
     | ProtocolUpdateRejectedEnvelope
     | HumanEchoEnvelope
+    | ProgrammaticPromptEnvelope
     | TerminalStateEnvelope,
     Field(discriminator="type"),
 ]

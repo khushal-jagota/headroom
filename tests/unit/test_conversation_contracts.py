@@ -54,6 +54,8 @@ from planner.conversation import (
     PermissionOutcomeEnvelope,
     PermissionRequestEnvelope,
     PermissionResponseAction,
+    ProgrammaticPrompt,
+    ProgrammaticPromptEnvelope,
     PromptAction,
     ProtocolUpdateRejectedEnvelope,
     QueuedPrompt,
@@ -500,8 +502,17 @@ def test_server_envelope_union_covers_all_variants_and_sdk_alias_serialization()
             type="human_echo",
             payload=HumanEcho(client_message_id="client-1", prompt=_prompt()),
         ),
-        TerminalStateEnvelope(
+        ProgrammaticPromptEnvelope(
             **_common(11),
+            type="programmatic_prompt",
+            payload=ProgrammaticPrompt(
+                prompt_id="worker-1",
+                prompt=_prompt(),
+                source="worker",
+            ),
+        ),
+        TerminalStateEnvelope(
+            **_common(12),
             type="terminal_state",
             payload=ConversationTerminalState(
                 terminal_id="terminal-1",
@@ -525,6 +536,7 @@ def test_server_envelope_union_covers_all_variants_and_sdk_alias_serialization()
         "connection",
         "protocol_update_rejected",
         "human_echo",
+        "programmatic_prompt",
         "terminal_state",
     ]
     serialized = serialize_params(envelopes[0])
@@ -711,6 +723,15 @@ def test_terminal_state_envelope_serializes_exact_payload_and_validates_common_i
             **_common(),
             type="human_echo",
             payload=HumanEcho(client_message_id="client-1", prompt=_prompt("other-session")),
+        ),
+        lambda: ProgrammaticPromptEnvelope(
+            **_common(),
+            type="programmatic_prompt",
+            payload=ProgrammaticPrompt(
+                prompt_id="worker-1",
+                prompt=_prompt("other-session"),
+                source="worker",
+            ),
         ),
     ],
 )

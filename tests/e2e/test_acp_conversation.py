@@ -855,7 +855,7 @@ def test_employee_configuration_catalog_does_not_bind_and_first_prompt_uses_sele
     assert binding_count == 1
 
 
-def test_new_ticket_and_chief_sessions_deliver_one_role_kickoff_without_visible_text(
+def test_new_ticket_and_chief_sessions_show_visible_role_and_worker_prompts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -893,7 +893,8 @@ def test_new_ticket_and_chief_sessions_deliver_one_role_kickoff_without_visible_
             assert ticket_app.state.employee_step_runner.wait_idle(timeout=5)
             automatic_live = _receive_until(ticket_socket, _is_idle)
             assert "Work ticket" in json.dumps(automatic_live)
-            assert "Use the installed" not in json.dumps(automatic_live)
+            assert "Use the installed" in json.dumps(automatic_live)
+            assert '"source": "worker"' in json.dumps(automatic_live)
 
             ticket_socket.send_json(
                 _prompt_action(
@@ -912,7 +913,7 @@ def test_new_ticket_and_chief_sessions_deliver_one_role_kickoff_without_visible_
             )
             ticket_replay = _receive_until(ticket_replay_socket, _is_ready)
             assert "Work ticket" in json.dumps(ticket_replay)
-            assert "Use the installed" not in json.dumps(ticket_replay)
+            assert "Use the installed" in json.dumps(ticket_replay)
 
     ticket_audit = [
         json.loads(line) for line in ticket_audit_path.read_text().splitlines()
@@ -962,7 +963,7 @@ def test_new_ticket_and_chief_sessions_deliver_one_role_kickoff_without_visible_
                 )
             )
             chief_first_live = _receive_until(chief_socket, _is_idle)
-            assert "Use the installed" not in json.dumps(chief_first_live)
+            assert "Use the installed" in json.dumps(chief_first_live)
             chief_socket.send_json(
                 _prompt_action(
                     CHIEF_OF_STAFF_ENTITY_ID,
@@ -999,14 +1000,14 @@ def test_new_ticket_and_chief_sessions_deliver_one_role_kickoff_without_visible_
                 )
             )
             chief_fresh_live = _receive_until(chief_socket, _is_idle)
-            assert "Use the installed" not in json.dumps(chief_fresh_live)
+            assert "Use the installed" in json.dumps(chief_fresh_live)
 
         with client.websocket_connect("/api/conversation") as replay_socket:
             replay_socket.send_json(
                 {"type": "attach", "employeeId": CHIEF_OF_STAFF_ENTITY_ID}
             )
             replay = _receive_until(replay_socket, _is_ready)
-            assert "Use the installed" not in json.dumps(replay)
+            assert "Use the installed" in json.dumps(replay)
 
     restarted_app = _application(chief_config, chief_clock, _definition())
     with TestClient(restarted_app) as restarted_client:
@@ -2343,8 +2344,13 @@ def test_automatic_worker_starts_stream_before_midturn_browser_attach(
                     if item["type"] == "acp_session_update"
                     and item["payload"]["update"]["sessionUpdate"] == "user_message_chunk"
                 ]
-                assert len(worker_user_updates) == 1
+                assert len(worker_user_updates) == 2
                 assert worker_user_updates[0]["acpSessionId"] == session_id
+                assert any(
+                    "Use the installed `panels-worker` skill."
+                    in item["payload"]["update"]["content"]["text"]
+                    for item in worker_user_updates
+                )
 
                 app.state.conversation.step_gateway.interrupt(
                     session_id,
