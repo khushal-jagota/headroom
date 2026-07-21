@@ -509,11 +509,15 @@ def test_ticket_route_worker_selector_is_preselected_catalog_only_and_first_prom
 
             pane.locator("[data-chat-input]").fill("browser through Vite")
             pane.locator("[data-chat-send]").click()
-            pane.locator("[data-acp-thought]").wait_for(timeout=10_000)
-            pane.locator('[data-acp-tool="tool-1"]').wait_for(timeout=10_000)
+            # The turn streams a stanza (the thought beat) and lands its answer;
+            # expanding the stanza reveals the tool step that thought drove.
+            stanza = pane.locator("[data-acp-stanza]").first
+            stanza.wait_for(timeout=10_000)
             pane.locator("[data-acp-message]").filter(has_text="typed answer").wait_for(
                 timeout=10_000
             )
+            stanza.locator(".acp-think").click()
+            pane.locator('[data-acp-step="tool-1"]').wait_for(timeout=10_000)
             page.locator('[data-ticket-employee-backend-editable="false"]').wait_for(timeout=10_000)
             assert (
                 page.locator('[data-ticket-employee-backend-editable="true"] select').count() == 0
@@ -565,7 +569,22 @@ def test_ticket_route_kickoff_advance_enables_exactly_one_eager_attach(
             )
             assert accepted.status_code == 200, accepted.text
             page.locator('[data-ticket-employee-backend-editable="false"]').wait_for(timeout=10_000)
-            page.locator("[data-acp-status]").filter(has_text="idle").wait_for(timeout=10_000)
+            # The header is silent at idle, so settle on the thing under test:
+            # wait until the eager attach has committed its session binding.
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                with connect(str(database_path)) as conn:
+                    if (
+                        conn.execute(
+                            "SELECT 1 FROM conversation_session_bindings WHERE employee_id = ?",
+                            (ticket_id,),
+                        ).fetchone()
+                        is not None
+                    ):
+                        break
+                time.sleep(0.05)
+            else:
+                raise AssertionError("eager attach did not create a session binding")
         finally:
             page.close()
 

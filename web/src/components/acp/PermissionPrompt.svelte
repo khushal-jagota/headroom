@@ -12,12 +12,35 @@
   } = $props();
 
   let titleId = $derived(`acp-permission-title-${permission.request.requestId}`);
-  let statusId = $derived(`acp-permission-status-${permission.request.requestId}`);
-  let diffs = $derived(
-    (permission.request.request.toolCall.content ?? []).filter((content) => content.type === "diff")
-  );
+  let toolCall = $derived(permission.request.request.toolCall);
+  let diffs = $derived((toolCall.content ?? []).filter((content) => content.type === "diff"));
   let permissionElement = $state<HTMLElement>();
   let optionsElement = $state<HTMLDivElement>();
+
+  let options = $derived(permission.request.request.options);
+  let rejectOptions = $derived(options.filter((option) => option.kind.startsWith("reject")));
+  let allowOptions = $derived(options.filter((option) => !option.kind.startsWith("reject")));
+  // The filled primary is the last option whose kind is an ACP allow kind; invented kinds
+  // stay quiet outline on the right.
+  let primaryOptionId = $derived(
+    [...allowOptions].reverse().find((option) => option.kind.startsWith("allow"))?.optionId
+  );
+
+  // Countdown to the server-owned deadline; ticks per second, clamps at 0:00, never cancels.
+  let now = $state(Date.now());
+  let countdown = $derived.by(() => {
+    if (!permission.request.deadlineAt) return null;
+    const remaining = Math.max(0, Math.floor((permission.request.deadlineAt - now) / 1000));
+    return `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")}`;
+  });
+
+  $effect(() => {
+    if (!permission.request.deadlineAt) return;
+    const interval = setInterval(() => {
+      now = Date.now();
+    }, 1000);
+    return () => clearInterval(interval);
+  });
 
   $effect(() => {
     const target = permissionElement;
@@ -38,51 +61,102 @@
   bind:this={permissionElement}
   class="acp-permission"
   aria-labelledby={titleId}
-  aria-describedby={statusId}
   data-acp-permission={permission.request.requestId}
 >
-  <div id={titleId} class="acp-permission-title">
-    {permission.request.request.toolCall.title ?? "Agent permission request"}
+  <div class="acp-permission-head">
+    {#if toolCall.kind}
+      <span class="acp-permission-kind">{toolCall.kind}</span>
+    {/if}
+    <span id={titleId} class="acp-permission-title">
+      {toolCall.title ?? "Agent permission request"}
+    </span>
+    {#if countdown}
+      <span class="acp-permission-count">{countdown}</span>
+    {/if}
   </div>
   <div bind:this={optionsElement} class="acp-permission-options" role="group" aria-label="Permission options">
-    {#each permission.request.request.options as option (option.optionId)}
+    {#each rejectOptions as option (option.optionId)}
       <button
         type="button"
+        class="acp-permission-reject"
         data-permission-kind={option.kind}
         disabled={permission.submittingOptionId !== null}
         aria-pressed={permission.submittingOptionId === option.optionId}
         onclick={() => onSelect(permission.request.requestId, option.optionId)}
       >
-        {permission.submittingOptionId === option.optionId ? `${option.name}…` : option.name}
+        {option.name}
       </button>
     {/each}
-  </div>
-  <div id={statusId} class="acp-permission-status" aria-live="polite">
-    {permission.submittingOptionId ? "Sending permission response" : "Waiting for your decision"}
+    {#each allowOptions as option, index (option.optionId)}
+      <button
+        type="button"
+        class="acp-permission-allow"
+        class:primary={option.optionId === primaryOptionId}
+        class:gather={index === 0}
+        data-permission-kind={option.kind}
+        disabled={permission.submittingOptionId !== null}
+        aria-pressed={permission.submittingOptionId === option.optionId}
+        onclick={() => onSelect(permission.request.requestId, option.optionId)}
+      >
+        {option.name}
+      </button>
+    {/each}
   </div>
 </section>
 
 <style>
   .acp-permission {
     background: var(--accent-surface);
-    border: var(--border-hairline) solid var(--accent-bright);
     border-radius: var(--radius-md);
     color: var(--accent-text);
     display: grid;
     gap: var(--space-3);
     padding: var(--space-3);
   }
-  .acp-permission-title { font-family: var(--font-ui); font-size: var(--type-sm); }
-  .acp-permission-options { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  button {
+  .acp-permission-head { display: flex; align-items: baseline; gap: var(--space-2); }
+  .acp-permission-kind {
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
+    letter-spacing: var(--tracking-label);
+    text-transform: uppercase;
+    color: var(--accent-bright);
+  }
+  .acp-permission-title { font-family: var(--font-ui); font-size: var(--type-sm); color: var(--accent-text); }
+  .acp-permission-count {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
+    color: var(--accent-bright);
+    font-variant-numeric: tabular-nums;
+  }
+  .acp-permission-options { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+  .acp-permission-options .acp-permission-allow.gather { margin-left: auto; }
+  button { font: inherit; cursor: pointer; }
+  .acp-permission-reject {
     background: transparent;
-    border: var(--border-hairline) solid var(--accent-bright);
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-faint);
+    padding: var(--space-2) 0;
+  }
+  .acp-permission-reject:hover,
+  .acp-permission-reject:focus-visible { color: var(--accent-error); }
+  .acp-permission-allow {
+    background: transparent;
+    border: var(--border-hairline) solid rgba(154, 173, 210, 0.45);
     border-radius: var(--radius-sm);
     color: var(--accent-text);
-    cursor: pointer;
-    font: inherit;
     padding: var(--space-2) var(--space-3);
   }
+  .acp-permission-allow:hover,
+  .acp-permission-allow:focus-visible { border-color: var(--accent-bright); }
+  .acp-permission-allow.primary {
+    background: var(--accent-bright);
+    border-color: var(--accent-bright);
+    color: var(--accent-ink);
+    font-weight: 600;
+    padding: var(--space-2) var(--space-4);
+  }
+  .acp-permission-allow.primary:hover { filter: brightness(1.08); }
   button:disabled { cursor: default; opacity: 0.7; }
-  .acp-permission-status { font-family: var(--font-mono); font-size: var(--type-xs); }
 </style>

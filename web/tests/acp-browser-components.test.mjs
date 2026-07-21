@@ -19,9 +19,9 @@ const expectedInventory = [
   "ConversationStatus.svelte",
   "DiffView.svelte",
   "PermissionPrompt.svelte",
-  "PlanView.svelte",
-  "ThoughtView.svelte",
-  "ToolCallCard.svelte",
+  "StanzaView.svelte",
+  "StepView.svelte",
+  "TaskProgressStrip.svelte",
   "TranscriptView.svelte",
 ];
 const inventory = (await readdir(componentDirectory)).filter((name) => name.endsWith(".svelte")).sort();
@@ -45,7 +45,10 @@ for (const fileName of inventory) {
 
 assert.match(sources["TranscriptView.svelte"], /MarkdownBlock/);
 assert.match(sources["TranscriptView.svelte"], /FilePreview/);
-assert.match(sources["TranscriptView.svelte"], /Context \{compaction\.payload\.state\} · \{compaction\.payload\.trigger\}/);
+// The compaction seam is a centred, flat divider whose lowercase mono label is
+// built from the payload state and trigger (no token counts, no summary).
+assert.match(sources["TranscriptView.svelte"], /context compacted · \$\{payload\.trigger\}/);
+assert.match(sources["TranscriptView.svelte"], /context compaction failed · \$\{payload\.reason \?\? payload\.trigger\}/);
 assert.doesNotMatch(sources["TranscriptView.svelte"], /compaction\.payload\.summary|onCompactionExpanded|aria-controls=`acp-compaction/);
 assert.doesNotMatch(sources["AcpConversationPane.svelte"], /setCompactionExpanded|onCompactionExpanded/);
 assert.match(sources["AcpComposer.svelte"], /ConversationComposer/);
@@ -93,8 +96,8 @@ const messages = [
     timestamp: 2,
     parts: [
       { type: "thought", thought: [{ type: "text", text: "Private typed thought" }], expanded: false },
-      { type: "content", content: [{ type: "text", text: "Agent runtime answer" }] },
       { type: "tool_calls", toolCalls: [tool] },
+      { type: "content", content: [{ type: "text", text: "Agent runtime answer" }] },
       { type: "plan", plan },
     ],
   },
@@ -127,7 +130,7 @@ const initialSnapshot = {
     { kind: "delivery", deliveryClientMessageId: "older-key" },
     { kind: "delivery", deliveryClientMessageId: "newer-key" },
   ],
-  activity: { state: "working", detail: "Working", sequence: 22 },
+  activity: { state: "waiting_for_permission", detail: "Waiting for permission", sequence: 22 },
   connection: { state: "ready", detail: "Ready", supportsSteer: false },
   recoverableConnectionError: null,
   protocolRejections: {},
@@ -431,11 +434,7 @@ mount(AcpConversationPane, {
 
   await writeFile(runtimePermissionProbePath, `
 from playwright.sync_api import sync_playwright
-import re
 import sys
-
-def normalize_svelte_scope(markup):
-    return re.sub(r"svelte-[a-z0-9]+", "svelte-SCOPE", markup)
 
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
@@ -444,25 +443,23 @@ with sync_playwright() as playwright:
     page.goto(sys.argv[1], wait_until="networkidle")
 
     permission = page.locator("[data-acp-permission='permission-runtime']")
+    # No diff content on the wire yet, so the sunken diff well is absent.
     assert permission.locator("[data-acp-diff]").count() == 0
-    no_content_markup = permission.inner_html()
-    expected_pre_change_no_diff_markup = (
-        '<div class="acp-permission-title svelte-SCOPE" id="acp-permission-title-permission-runtime">Approve runtime tool</div>'
-        ' <div class="acp-permission-options svelte-SCOPE" role="group" aria-label="Permission options">'
-        '<button type="button" class="svelte-SCOPE" data-permission-kind="allow_once" aria-pressed="false">Allow once</button>'
-        '<button type="button" class="svelte-SCOPE" data-permission-kind="allow_always" aria-pressed="false">Always allow</button>'
-        '<button type="button" class="svelte-SCOPE" data-permission-kind="reject_once" aria-pressed="false">Reject</button>'
-        '</div> <div class="acp-permission-status svelte-SCOPE" aria-live="polite" id="acp-permission-status-permission-runtime">Waiting for your decision</div>'
-    )
-    assert normalize_svelte_scope(no_content_markup) == expected_pre_change_no_diff_markup, repr(no_content_markup)
     assert permission.locator(".acp-permission-title").inner_text() == "Approve runtime tool"
-    assert permission.get_by_role("group", name="Permission options").get_by_role("button").all_inner_texts() == [
-        "Allow once", "Always allow", "Reject"
+    # Redesign: reject options gather left as ghost buttons, allow options right,
+    # the last allow is the filled primary. No status line anywhere.
+    option_group = permission.get_by_role("group", name="Permission options")
+    options = option_group.get_by_role("button")
+    assert options.all_inner_texts() == ["Reject", "Allow once", "Always allow"]
+    assert [options.nth(index).get_attribute("data-permission-kind") for index in range(3)] == [
+        "reject_once", "allow_once", "allow_always"
     ]
-    assert permission.locator(".acp-permission-status").inner_text() == "Waiting for your decision"
+    assert permission.locator(".acp-permission-reject").all_inner_texts() == ["Reject"]
+    assert permission.locator(".acp-permission-allow.primary").inner_text() == "Always allow"
+    assert permission.locator(".acp-permission-status").count() == 0
 
     page.evaluate("window.__showPermissionNonDiffContent()")
-    assert permission.inner_html() == no_content_markup
+    # Non-diff tool content stays out of the prompt entirely.
     assert permission.locator("[data-acp-diff]").count() == 0
     assert page.get_by_text("NON-DIFF PERMISSION CONTENT MUST STAY HIDDEN").count() == 0
 
@@ -487,13 +484,14 @@ with sync_playwright() as playwright:
     assert page.get_by_text("ARBITRARY PERMISSION CONTENT MUST STAY HIDDEN").count() == 0
     assert page.get_by_text("permission-terminal-must-stay-hidden").count() == 0
 
-    options = permission.get_by_role("group", name="Permission options").get_by_role("button")
-    assert [options.nth(index).get_attribute("data-permission-kind") for index in range(3)] == [
-        "allow_once", "allow_always", "reject_once"
-    ]
-    options.nth(1).click()
-    assert options.nth(1).get_attribute("aria-pressed") == "true"
+    # Selecting the filled primary (last allow) disables every option while the
+    # decision is in flight, with opacity only — no status text appears.
+    options = option_group.get_by_role("button")
+    primary = permission.locator(".acp-permission-allow.primary")
+    primary.click()
+    assert primary.get_attribute("aria-pressed") == "true"
     assert all(options.nth(index).is_disabled() for index in range(3))
+    assert permission.locator(".acp-permission-status").count() == 0
     assert {
         "type": "permission",
         "requestId": "permission-runtime",

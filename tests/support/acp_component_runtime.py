@@ -25,18 +25,25 @@ def main() -> None:
         page.set_default_timeout(5_000)
         page.goto(arguments.url, wait_until="networkidle")
 
+        # Structure: pane, transcript, task strip, permission prompt, composer.
         assert page.locator("[data-acp-conversation-pane]").count() == 1
         assert page.locator("[data-acp-transcript]").count() == 1
-        assert page.locator("[data-acp-thought]").count() == 1
-        assert page.locator("[data-acp-tool='tool-runtime']").count() == 1
-        assert page.locator("[data-acp-plan]").count() == 1
+        assert page.locator("[data-acp-task-strip]").count() == 1
         assert page.locator("[data-acp-permission='permission-runtime']").count() == 1
         assert page.locator("[data-acp-composer]").count() == 1
-        assert page.get_by_role("status").count() == 1
-        assert "waiting for permission" in page.get_by_role("status").inner_text()
-        assert "42 / 100 tokens" in page.get_by_role("status").inner_text()
-        assert page.get_by_role("alert").count() == 0
 
+        # Header is silent identity + usage. The retired status strip is gone;
+        # usage carries no "tokens" word and no cost (none on the wire here).
+        assert page.locator(".chat-lbl").inner_text() == "Runtime employee"
+        assert page.locator(".chat-usage").inner_text() == "42 / 100"
+        assert "tokens" not in page.locator(".chat-usage").inner_text()
+        assert page.get_by_role("status").count() == 0
+        # The one header exception in play: a pending permission speaks "waiting
+        # for you"; connection is healthy so no trouble dot shows.
+        assert page.locator(".chat-state").inner_text() == "waiting for you"
+        assert page.locator(".chat-conn-dot").count() == 0
+
+        # Messages keep their voices: right-aligned user bubble, bubble-less agent.
         messages = page.locator("[data-acp-message]")
         assert messages.count() == 2
         assert messages.nth(0).get_attribute("data-acp-message") == "human-runtime"
@@ -44,19 +51,33 @@ def main() -> None:
         assert "Human runtime message" in messages.nth(0).inner_text()
         assert "Agent runtime answer" in messages.nth(1).inner_text()
 
-        thought = page.get_by_role("button", name="Thinking")
-        assert thought.get_attribute("aria-expanded") == "false"
-        assert page.get_by_text("Private typed thought").count() == 0
-        thought.click()
-        assert thought.get_attribute("aria-expanded") == "true"
-        assert page.get_by_text("Private typed thought").count() == 1
+        # A stanza is one beat of work: a Thought line plus the steps it drove.
+        # Settled turn -> the word is "Thought"; the first line of thought text is
+        # the italic preview. Collapsed by default: no body, no steps in the DOM.
+        stanza = page.locator("[data-acp-stanza]")
+        assert stanza.count() == 1
+        think = stanza.get_by_role("button").first
+        assert think.locator(".acp-think-word").inner_text() == "Thought"
+        assert think.locator(".acp-think-preview").inner_text() == "Private typed thought"
+        assert think.get_attribute("aria-expanded") == "false"
+        assert stanza.locator(".acp-think-body").count() == 0
+        assert stanza.locator("[data-acp-step='tool-runtime']").count() == 0
 
-        tool = page.locator("[data-acp-tool='tool-runtime'] > button")
-        assert "Runtime tool" in tool.inner_text()
-        assert "shell · completed" in tool.inner_text()
-        assert tool.get_attribute("aria-expanded") == "false"
-        tool.click()
-        assert tool.get_attribute("aria-expanded") == "true"
+        # Expanding the stanza reveals the full thought body and its steps.
+        think.click()
+        assert think.get_attribute("aria-expanded") == "true"
+        assert stanza.locator(".acp-think-body").count() == 1
+        step = page.locator("[data-acp-step='tool-runtime']")
+        assert step.count() == 1
+        assert "Runtime tool" in step.inner_text()
+        # Right-aligned status mark: completed reads as a green check.
+        assert step.locator(".acp-step-mark.acp-mark-ok").inner_text() == "✓"
+
+        # Expanding the step reveals its detail (diff + terminal well). Raw JSON
+        # input/output is dropped: no toggle, no raw payload text anywhere.
+        assert step.get_attribute("aria-expanded") == "false"
+        step.click()
+        assert step.get_attribute("aria-expanded") == "true"
         assert page.locator("[data-acp-diff]").count() == 1
         assert page.get_by_role("table", name="Line changes for runtime.txt").count() == 1
         assert page.get_by_role("cell", name="Deleted").count() == 1
@@ -65,42 +86,66 @@ def main() -> None:
         assert "released" in terminal.inner_text()
         assert "runtime output" in terminal.inner_text()
         assert "Earlier output was truncated" in terminal.inner_text()
-        raw = page.get_by_role("button", name="Raw input and output")
-        assert raw.get_attribute("aria-expanded") == "false"
-        raw.click()
-        assert raw.get_attribute("aria-expanded") == "true"
-        assert "runtime-input" in page.locator("#acp-tool-raw-tool-runtime").inner_text()
-        assert "runtime-output" in page.locator("#acp-tool-raw-tool-runtime").inner_text()
+        assert page.get_by_role("button", name="Raw input and output").count() == 0
+        assert page.get_by_text("runtime-input").count() == 0
+        assert page.get_by_text("runtime-output").count() == 0
 
-        plan = page.get_by_role("region", name="Current plan")
-        assert "Ship runtime proof" in plan.inner_text()
-        assert "in_progress · high" in plan.inner_text()
+        # Task pill: a plan exists and the turn is active, so the centred pill
+        # reads "{done} / {total} tasks" with the entries in a popover. The
+        # spinner rides only while thinking/compacting, not while parked on a
+        # permission, so none shows here.
+        task_pill = page.locator(".task-pill")
+        assert task_pill.get_attribute("aria-label") == "0 of 1 tasks complete"
+        assert task_pill.inner_text() == "0 / 1 tasks"
+        assert task_pill.locator(".acp-spin").count() == 0
+        assert "Ship runtime proof" in page.locator(".task-pop").text_content()
 
-        permission_group = page.get_by_role("group", name="Permission options")
-        options = permission_group.get_by_role("button")
-        assert options.all_inner_texts() == ["Allow once", "Always allow", "Reject"]
+        # Compaction seams are centred flat dividers with lowercase mono labels;
+        # no token counts, no summary, no disclosure button.
+        compaction = page.locator("[data-acp-compaction='compaction-runtime']")
+        assert compaction.inner_text() == "context compacted · explicit"
+        assert compaction.get_by_role("button").count() == 0
+        assert "summary" not in compaction.inner_text().lower()
+        failed_compaction = page.locator("[data-acp-compaction='compaction-failed-runtime']")
+        assert failed_compaction.inner_text() == (
+            "context compaction failed · Exact runtime compaction failure"
+        )
+        assert failed_compaction.get_by_role("button").count() == 0
+        assert "summary" not in failed_compaction.inner_text().lower()
+
+        # Permission: reject gathers left, allow right, last allow is the filled
+        # primary. No status text. Selecting disables every option (opacity only).
+        option_group = page.get_by_role("group", name="Permission options")
+        options = option_group.get_by_role("button")
+        assert options.all_inner_texts() == ["Reject", "Allow once", "Always allow"]
         assert [options.nth(index).get_attribute("data-permission-kind") for index in range(3)] == [
+            "reject_once",
             "allow_once",
             "allow_always",
-            "reject_once",
         ]
-        options.nth(1).click()
-        assert options.nth(1).get_attribute("aria-pressed") == "true"
+        assert page.locator(".acp-permission-allow.primary").inner_text() == "Always allow"
+        assert page.locator(".acp-permission-status").count() == 0
+        page.locator(".acp-permission-allow.primary").click()
+        assert page.locator(".acp-permission-allow.primary").get_attribute("aria-pressed") == "true"
         assert all(options.nth(index).is_disabled() for index in range(3))
-        permission_action = {
+        assert page.locator(".acp-permission-status").count() == 0
+        assert {
             "type": "permission",
             "requestId": "permission-runtime",
             "optionId": "allow-always",
-        }
-        assert permission_action in action_log(page)
+        } in action_log(page)
 
-        delivery_group = page.get_by_role("group", name="Delivery choice")
-        assert delivery_group.get_by_role("button", name="Steer").is_disabled()
-        send_now = delivery_group.get_by_role("button", name="Send Now")
+        # Delivery choice: a segmented control shown only while a turn is active,
+        # left of the send control. Steer is disabled (not hidden) when the
+        # employee can't steer. The active-turn control is Stop, so a follow-up is
+        # submitted with Enter and carries the chosen delivery.
+        delivery_group = page.get_by_role("group", name="Delivery")
+        assert delivery_group.get_by_role("button", name="steer").is_disabled()
+        send_now = delivery_group.get_by_role("button", name="send now")
         send_now.click()
         assert send_now.get_attribute("aria-pressed") == "true"
         page.locator("[data-chat-input]").fill("Runtime follow-up")
-        page.locator("[data-chat-send]").click()
+        page.locator("[data-chat-input]").press("Enter")
         page.wait_for_function("window.__acpActions.some((item) => item.type === 'prompt')")
         assert {
             "type": "prompt",
@@ -108,20 +153,30 @@ def main() -> None:
             "choice": "send_now",
         } in action_log(page)
 
+        # Queue tray: queued prompts render fused above the box with a per-item
+        # cancel; delivery markers no longer live in the transcript.
         queue = page.get_by_role("list", name="Queued prompts")
         assert "Queued runtime prompt" in queue.inner_text()
-        queue.get_by_role("button", name="Cancel").click()
-        page.get_by_role("button", name="Stop").click()
-        page.get_by_role("button", name="New conversation").click()
+        queue.get_by_role("button", name="Cancel queued prompt").click()
+        # Send <-> Stop is one control; while active it is the red-outline Stop.
+        page.get_by_role("button", name="Stop the turn").click()
         actions = action_log(page)
         assert {"type": "cancelQueued", "clientMessageId": "queue-runtime"} in actions
         assert {"type": "cancelActive"} in actions
-        assert {"type": "newConversation"} in actions
 
-        receipt = page.locator(".acp-receipt")
+        # Only failures speak below the box: the latest receipt was rejected.
+        receipt = page.locator(".chat-receipt")
         assert "rejected · latest older-key update" in receipt.inner_text()
         assert "queue 2" not in receipt.inner_text()
 
+        # New conversation lives in the header overflow menu behind a Confirm step.
+        page.get_by_role("button", name="Conversation options").click()
+        page.get_by_role("menuitem", name="New conversation").click()
+        page.get_by_role("menuitem", name="Confirm").click()
+        assert {"type": "newConversation"} in action_log(page)
+
+        # Composer error handling across delivery state, image ordering, and the
+        # steer guard — a rejected send keeps the draft and previews intact.
         page.evaluate("window.__setConversationDeliveryState(false, false, false)")
         composer_input = page.locator("[data-chat-input]")
         composer_input.fill("Retry with ordered images")
@@ -146,6 +201,7 @@ def main() -> None:
             for index in range(2)
         ] == ["first.png", "second.png"]
 
+        # Idle -> the control is Send; submitting with no cursor is rejected.
         page.locator("[data-chat-send]").click()
         composer_error = page.locator("[data-acp-composer-error]")
         composer_error.wait_for(state="attached")
@@ -155,14 +211,13 @@ def main() -> None:
         assert page.evaluate("window.__acpRevokedObjectUrls") == []
 
         page.evaluate("window.__setConversationDeliveryState(true, true, true)")
-        steer = page.get_by_role("group", name="Delivery choice").get_by_role(
-            "button", name="Steer"
-        )
+        steer = page.get_by_role("group", name="Delivery").get_by_role("button", name="steer")
         steer.click()
         assert steer.get_attribute("aria-pressed") == "true"
         page.evaluate("window.__setConversationDeliveryState(true, false, true)")
         assert steer.is_disabled()
-        page.locator("[data-chat-send]").click()
+        # Active -> the control is Stop; submit the steer draft with Enter.
+        composer_input.press("Enter")
         page.wait_for_function(
             "document.querySelector('[data-acp-composer-error]')?.textContent "
             "=== 'Steer is unavailable for this employee'"
@@ -173,7 +228,7 @@ def main() -> None:
         assert page.evaluate("window.__acpRevokedObjectUrls") == []
 
         page.evaluate("window.__setConversationDeliveryState(true, true, true)")
-        page.locator("[data-chat-send]").click()
+        composer_input.press("Enter")
         page.wait_for_function(
             "document.querySelectorAll('[data-chat-image-preview]').length === 0"
         )
@@ -208,29 +263,21 @@ def main() -> None:
             {"ok": True, "clientMessageId": "runtime-client"},
         ]
 
-        compaction = page.locator("[data-acp-compaction='compaction-runtime']")
-        assert compaction.inner_text() == "Context compacted · explicit"
-        assert compaction.get_by_role("button").count() == 0
-        assert "Runtime compaction summary" not in compaction.inner_text()
-        failed_compaction = page.locator(
-            "[data-acp-compaction='compaction-failed-runtime']"
-        )
-        assert failed_compaction.inner_text() == (
-            "Context failed · automatic · Exact runtime compaction failure"
-        )
-        assert failed_compaction.get_by_role("button").count() == 0
-        assert "summary" not in failed_compaction.inner_text().lower()
-
+        # The retired status strip's screen-reader alert behaviour is preserved
+        # invisibly: new errors fire an off-screen role="alert" and no visible
+        # role="status" strip returns.
+        status_alert = page.locator("[data-acp-alert]")
         page.evaluate("window.__raiseConnectionError()")
-        page.get_by_role("alert").wait_for(state="attached")
-        assert page.get_by_role("status").count() == 1
-        assert page.get_by_role("alert").inner_text() == "Runtime connection failed"
-        assert "Runtime connection failed" in page.get_by_role("status").inner_text()
+        status_alert.wait_for(state="attached")
+        assert page.get_by_role("status").count() == 0
+        assert status_alert.inner_text() == "Runtime connection failed"
+        # Connection trouble also raises the silent red dot beside the name.
+        assert page.locator(".chat-conn-dot").count() == 1
 
         page.evaluate("window.__raiseProtocolError()")
-        page.get_by_role("alert").wait_for(state="attached")
-        assert page.get_by_role("status").count() == 1
-        assert page.get_by_role("alert").inner_text() == "Agent sent an unsupported update"
+        status_alert.wait_for(state="attached")
+        assert page.get_by_role("status").count() == 0
+        assert status_alert.inner_text() == "Agent sent an unsupported update"
         protocol = page.locator("[data-acp-protocol-rejection]")
         protocol_button = protocol.get_by_role("button")
         assert protocol_button.get_attribute("aria-expanded") == "false"

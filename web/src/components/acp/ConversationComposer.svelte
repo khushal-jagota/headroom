@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { AvailableCommand } from "@agentclientprotocol/sdk";
   import { onDestroy } from "svelte";
+  import type { TurnDeliveryChoice } from "../../lib/acp/contracts";
   import type { DeepReadonly } from "../../lib/acp/conversationState";
   import {
     clearSentPendingConversationImages,
@@ -19,6 +20,11 @@
     submitDisabled = false,
     initialText = "",
     placeholder = "Message the employee...",
+    active = false,
+    supportsSteer = true,
+    deliveryChoice = "queue",
+    onDeliveryChoice,
+    onStop,
     onDraft,
     onSubmit,
     onError
@@ -28,6 +34,11 @@
     submitDisabled?: boolean;
     initialText?: string;
     placeholder?: string;
+    active?: boolean;
+    supportsSteer?: boolean;
+    deliveryChoice?: TurnDeliveryChoice;
+    onDeliveryChoice?: (choice: TurnDeliveryChoice) => void;
+    onStop?: () => void;
     onDraft?: (text: string) => void;
     onSubmit: (
       text: string,
@@ -196,6 +207,11 @@
     void send(item.name);
   }
 
+  function onSendClick(): void {
+    if (active) onStop?.();
+    else void send();
+  }
+
   function onKeydown(event: KeyboardEvent): void {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -291,15 +307,41 @@
       multiple
       onchange={imageChanged}
     />
+    {#if active}
+      <div class="chat-seg" data-chat-delivery role="group" aria-label="Delivery">
+        <button
+          type="button"
+          class:on={deliveryChoice === "queue"}
+          aria-pressed={deliveryChoice === "queue"}
+          onclick={() => onDeliveryChoice?.("queue")}
+        >queue</button>
+        <button
+          type="button"
+          class:on={deliveryChoice === "send_now"}
+          aria-pressed={deliveryChoice === "send_now"}
+          onclick={() => onDeliveryChoice?.("send_now")}
+        >send now</button>
+        <button
+          type="button"
+          class:on={deliveryChoice === "steer"}
+          aria-pressed={deliveryChoice === "steer"}
+          disabled={!supportsSteer}
+          title={supportsSteer ? "Steer the active turn" : "Steer is unavailable for this employee"}
+          onclick={() => onDeliveryChoice?.("steer")}
+        >steer</button>
+      </div>
+    {/if}
     <button
       type="button"
-      class={`chat-send${text.trim() || pendingImages.length ? " on" : ""}`}
-      data-chat-send
-      disabled={disabled || submitDisabled || busy || (!text.trim() && pendingImages.length === 0)}
-      onclick={() => void send()}
-      title="Send"
+      class={`chat-send${active ? " stop" : text.trim() || pendingImages.length ? " on" : ""}`}
+      data-chat-send={active ? undefined : true}
+      data-chat-stop={active ? true : undefined}
+      disabled={active ? false : disabled || submitDisabled || busy || (!text.trim() && pendingImages.length === 0)}
+      onclick={onSendClick}
+      title={active ? "Stop the turn" : "Send"}
+      aria-label={active ? "Stop the turn" : undefined}
     >
-      ↑
+      {active ? "■" : "↑"}
     </button>
   </div>
   <div class="chat-menu" data-chat-menu hidden={!menuOpen}>

@@ -20,8 +20,7 @@
     employeeLabel,
     onPrompt,
     onCancelActive,
-    onCancelQueued,
-    onNewConversation
+    onCancelQueued
   }: {
     commands: readonly DeepReadonly<AvailableCommand>[];
     queue: readonly DeepReadonly<QueuedPrompt>[];
@@ -33,7 +32,6 @@
     onPrompt: (contentBlocks: ContentBlock[], choice: TurnDeliveryChoice) => ConversationActionResult;
     onCancelActive: () => void;
     onCancelQueued: (clientMessageId: string) => void;
-    onNewConversation: () => void;
   } = $props();
 
   let deliveryChoice = $state<TurnDeliveryChoice>("queue");
@@ -42,6 +40,13 @@
   let latestReceipt = $derived(
     latestReceiptClientMessageId ? receipts[latestReceiptClientMessageId] ?? null : null
   );
+  // Only failures speak below the box; rejected deliveries are the sole receipt state shown.
+  let rejectedReceipt = $derived(
+    latestReceipt && latestReceipt.state === "rejected"
+      ? `rejected${latestReceipt.reason ? ` · ${latestReceipt.reason}` : ""}`
+      : null
+  );
+
   async function imageBlock(file: File): Promise<ContentBlock> {
     const bytes = new Uint8Array(await file.arrayBuffer());
     let binary = "";
@@ -73,87 +78,44 @@
 </script>
 
 <section class="acp-composer" data-acp-composer>
-  {#if queue.length}
-    <ol class="acp-queue" aria-label="Queued prompts">
-      {#each queue as item (item.clientMessageId)}
-        <li>
-          <span>{promptLabel(item.prompt)}</span>
-          <button type="button" onclick={() => onCancelQueued(item.clientMessageId)}>Cancel</button>
-        </li>
-      {/each}
-    </ol>
-  {/if}
-
-  {#if active}
-    <div class="acp-delivery" role="group" aria-label="Delivery choice">
-      <button
-        type="button"
-        aria-pressed={deliveryChoice === "steer"}
-        disabled={!supportsSteer}
-        title={supportsSteer ? "Steer the active turn" : "Steer is unavailable for this employee"}
-        onclick={() => (deliveryChoice = "steer")}
-      >Steer</button>
-      <button
-        type="button"
-        aria-pressed={deliveryChoice === "send_now"}
-        onclick={() => (deliveryChoice = "send_now")}
-      >Send Now</button>
-      <button
-        type="button"
-        aria-pressed={deliveryChoice === "queue"}
-        onclick={() => (deliveryChoice = "queue")}
-      >Queue</button>
-    </div>
-    {#if !supportsSteer}<div class="acp-steer-help">Steer is unavailable for this employee.</div>{/if}
-  {/if}
-
-  <ConversationComposer
-    {commands}
-    placeholder={`Message ${employeeLabel}...`}
-    onSubmit={submit}
-    onError={setComposerError}
-  />
-
-  <div class="acp-lifecycle">
-    {#if active}<button type="button" onclick={onCancelActive}>Stop</button>{/if}
-    <button type="button" onclick={onNewConversation}>New conversation</button>
-  </div>
-
-  <div class="acp-receipt" aria-live="polite">
-    {#if composerError}
-      <span data-acp-composer-error>{composerError}</span>
-    {:else if latestReceipt}
-      {latestReceipt.state}{latestReceipt.queuePosition ? ` · queue ${latestReceipt.queuePosition}` : ""}{latestReceipt.reason ? ` · ${latestReceipt.reason}` : ""}
+  <div class="chat-box-stack">
+    {#if queue.length}
+      <ol class="chat-queue-tray" aria-label="Queued prompts">
+        {#each queue as item, index (item.clientMessageId)}
+          <li class="chat-qrow">
+            <span class="chat-qrow-n">{index + 1}</span>
+            <span class="chat-qrow-txt">{promptLabel(item.prompt)}</span>
+            <button
+              type="button"
+              class="chat-qrow-x"
+              aria-label="Cancel queued prompt"
+              onclick={() => onCancelQueued(item.clientMessageId)}
+            >×</button>
+          </li>
+        {/each}
+      </ol>
     {/if}
+
+    <ConversationComposer
+      {commands}
+      placeholder={`Message ${employeeLabel}...`}
+      {active}
+      {supportsSteer}
+      {deliveryChoice}
+      onDeliveryChoice={(choice) => (deliveryChoice = choice)}
+      onStop={onCancelActive}
+      onSubmit={submit}
+      onError={setComposerError}
+    />
   </div>
+
+  {#if composerError}
+    <div class="chat-receipt" role="alert" data-acp-composer-error>{composerError}</div>
+  {:else if rejectedReceipt}
+    <div class="chat-receipt" role="alert">{rejectedReceipt}</div>
+  {/if}
 </section>
 
 <style>
   .acp-composer { display: grid; gap: var(--space-2); }
-  .acp-queue { display: grid; gap: var(--space-1); list-style: none; margin: 0; padding: 0; }
-  .acp-queue li {
-    align-items: center;
-    color: var(--text-muted);
-    display: flex;
-    font-size: var(--type-xs);
-    gap: var(--space-2);
-    justify-content: space-between;
-  }
-  .acp-delivery, .acp-lifecycle { display: flex; flex-wrap: wrap; gap: var(--space-1); }
-  button {
-    background: transparent;
-    border: var(--border-hairline) solid var(--border-color);
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
-    cursor: pointer;
-    font: inherit;
-    padding: var(--space-1) var(--space-2);
-  }
-  button[aria-pressed="true"] { border-color: var(--accent-bright); color: var(--text-strong); }
-  button:disabled { cursor: default; color: var(--text-faintest); }
-  .acp-steer-help, .acp-receipt {
-    color: var(--text-faint);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-  }
 </style>

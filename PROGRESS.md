@@ -2751,3 +2751,9 @@ references point into `decisions.md`.
 - **2026-07-04..07-06 — Original build + ticket-redesign** (`SPEC.md`-era): the full planner shipped and
   audited; `SPEC.md` later retired. The one retained impasse is the §12 snapshot contradiction.
   [D-snapshot-contradiction]
+
+## Chat panel redesign — worktree chat-panel-redesign (2026-07-21)
+Stage: wave 1 in flight. Design intent: orchestration/chat-redesign/{DESIGN.md,mockup.html,catalogue.html} (owner-reviewed mockup, all rulings applied).
+Tickets: orchestration/tickets/chat-redesign/ — T1 header, T2 transcript stanzas, T4 permission (wave 1, parallel, disjoint files); T3 task pill + T5 composer (wave 2); T6 test reconciliation + full ./verify (wave 3).
+Venv being built in worktree for final verify. No commits yet — owner commits.
+Wave 3 complete (2026-07-21): T6 reconciled all tests (web suite + tests/support/acp_component_runtime.py + e2e selectors) and surfaced a genuine TranscriptView keying regression (duplicate user render-item keys crashed the transcript on first prompt) — fixed by orchestrator (per-part keys). Combined-diff review's blocker (transcript CSS written to main tree by T2) recovered into worktree; main tree restored clean. agent_backends npm ci was needed in the fresh worktree (22 env-only unit failures before it). Final reserved ./verify: PASS — all gates ok (ruff, mypy, unit, build check, frontend, e2e 103 passed). Branch worktree-chat-panel-redesign ready for owner commit; nothing committed.

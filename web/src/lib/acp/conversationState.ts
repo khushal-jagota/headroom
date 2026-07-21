@@ -764,6 +764,109 @@ export function projectConversationSnapshot(state: ConversationState): Conversat
   return snapshot;
 }
 
+/**
+ * A stanza is one beat of agent work: a Thinking line plus the tool calls that
+ * thought drove, in arrival order. Grouping is a pure projection of an agent
+ * message's ordered `parts` — the server timeline stays the single source of
+ * truth. A new thought burst (a `thought` part following tool calls) starts a
+ * new stanza; tool calls arriving before any thought open a bare stanza the
+ * following thought then fills.
+ */
+export interface TranscriptStanza {
+  readonly key: string;
+  readonly messageId: string;
+  /** Index of the owning `thought` part, or null for a bare (thoughtless) stanza. */
+  readonly thoughtPartIndex: number | null;
+  readonly thought: readonly DeepReadonly<ContentBlock>[] | null;
+  /** Persisted disclosure state of the owning thought part (false for bare stanzas). */
+  readonly thoughtExpanded: boolean;
+  readonly steps: readonly DeepReadonly<ToolCallState>[];
+  readonly hasFailure: boolean;
+}
+
+export type MessageBlock =
+  | {
+      readonly kind: 'content';
+      readonly key: string;
+      readonly partIndex: number;
+      readonly content: readonly DeepReadonly<ContentBlock>[];
+    }
+  | { readonly kind: 'stanza'; readonly stanza: TranscriptStanza };
+
+interface MutableStanza {
+  thoughtPartIndex: number | null;
+  thought: readonly DeepReadonly<ContentBlock>[] | null;
+  thoughtExpanded: boolean;
+  steps: DeepReadonly<ToolCallState>[];
+}
+
+/**
+ * Project one agent message's ordered `parts` into the render blocks the
+ * transcript shows: prose content blocks and stanzas, in arrival order. `plan`
+ * parts are intentionally dropped — the plan lives outside the transcript now,
+ * while its data stays untouched in the snapshot.
+ */
+export function groupMessageBlocks(message: DeepReadonly<Message>): MessageBlock[] {
+  const blocks: MessageBlock[] = [];
+  let current: MutableStanza | null = null;
+
+  const flush = (): void => {
+    if (!current) return;
+    const firstStep = current.steps[0];
+    const suffix = current.thoughtPartIndex !== null
+      ? `p${current.thoughtPartIndex}`
+      : firstStep
+        ? `t${firstStep.toolCallId}`
+        : 'empty';
+    blocks.push({
+      kind: 'stanza',
+      stanza: {
+        key: `${message.id}:stanza:${suffix}`,
+        messageId: message.id,
+        thoughtPartIndex: current.thoughtPartIndex,
+        thought: current.thought,
+        thoughtExpanded: current.thoughtExpanded,
+        steps: current.steps,
+        hasFailure: current.steps.some((step) => step.status === 'failed'),
+      },
+    });
+    current = null;
+  };
+
+  message.parts.forEach((part, partIndex) => {
+    if (part.type === 'thought') {
+      if (current && current.thought === null) {
+        current.thought = part.thought;
+        current.thoughtPartIndex = partIndex;
+        current.thoughtExpanded = part.expanded ?? false;
+      } else {
+        flush();
+        current = {
+          thoughtPartIndex: partIndex,
+          thought: part.thought,
+          thoughtExpanded: part.expanded ?? false,
+          steps: [],
+        };
+      }
+    } else if (part.type === 'tool_calls') {
+      if (!current) {
+        current = { thoughtPartIndex: null, thought: null, thoughtExpanded: false, steps: [] };
+      }
+      current.steps.push(...part.toolCalls);
+    } else if (part.type === 'content') {
+      flush();
+      blocks.push({
+        kind: 'content',
+        key: `${message.id}:content:${partIndex}`,
+        partIndex,
+        content: part.content,
+      });
+    }
+  });
+  flush();
+  return blocks;
+}
+
 export function safeDisplayText(value: unknown): string {
   if (typeof value === 'string') return value;
   try {

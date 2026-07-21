@@ -1008,6 +1008,224 @@ button.list-row:hover .list-row-title {
   border-color: var(--text-faint);
 }
 
+/* ── ACP transcript: stanzas, seams, pills ──────────────────────────────────
+ * The transcript renders as direct flex children of .chat-thread; nesting is
+ * expressed by disclosure, never by borders or indentation. */
+.acp-transcript { display: contents; }
+.acp-transcript img { display: block; max-width: 100%; }
+.acp-transcript audio { max-width: 100%; }
+.acp-unsupported { color: var(--text-faint); }
+
+/* Stanza: one beat of work — a Thinking/Thought line; disclosure reveals the
+ * full thought then the steps it drove. */
+.acp-stanza { display: grid; gap: var(--space-1); }
+.acp-stanza-body { display: grid; gap: var(--space-1); margin-top: var(--space-1); }
+
+.acp-think {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  max-width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-faint);
+  font-family: var(--font-ui);
+}
+.acp-think:hover { color: var(--text-strong); }
+.acp-think-word {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-mono);
+}
+.acp-think-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: var(--type-serif-sm);
+  color: var(--text-faintest);
+}
+.acp-think.is-live .acp-think-word {
+  background: linear-gradient(90deg, var(--text-faint) 30%, var(--text-strong) 50%, var(--text-faint) 70%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+  animation: acp-shimmer var(--motion-loop-bounce) linear infinite;
+}
+.acp-think-body {
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-sm);
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+/* Steps: kind glyph, title, edit counts, right-aligned status mark. */
+.acp-steps { display: grid; gap: var(--space-1); }
+.acp-step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-1) 0;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  font-family: var(--font-ui);
+  color: var(--text-muted);
+}
+.acp-step--expandable { cursor: pointer; }
+.acp-step--expandable:hover .acp-step-title { color: var(--text-strong); }
+.acp-step-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--space-4);
+  height: var(--space-4);
+  font-size: var(--type-sm);
+  color: var(--text-faint);
+}
+.acp-step-icon svg {
+  width: 1em;
+  height: 1em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.acp-step-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--type-sm);
+  color: var(--text-muted);
+}
+.acp-step-counts {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+}
+.acp-step-add { color: var(--accent-done); }
+.acp-step-del { color: var(--accent-error); }
+.acp-step-mark {
+  margin-left: auto;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+}
+.acp-step-counts + .acp-step-mark { margin-left: var(--space-2); }
+.acp-mark-ok { color: var(--accent-done); }
+.acp-mark-fail { color: var(--accent-error); }
+.acp-mark-pend { color: var(--text-faintest); }
+.acp-spin {
+  margin-left: auto;
+  flex: none;
+  width: var(--space-3);
+  height: var(--space-3);
+  border: var(--border-strong) solid var(--surface-overlay);
+  border-top-color: var(--accent-bright);
+  border-radius: var(--radius-pill);
+  animation: acp-spin var(--motion-loop-spin) linear infinite;
+}
+.acp-step-detail { margin: var(--space-1) 0 var(--space-2); }
+
+/* Command / terminal output: a sunken mono well (no raw input/output). */
+.acp-code-well {
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--text-default);
+}
+.acp-code-well-label { color: var(--text-faint); }
+.acp-code-well pre { margin: 0; white-space: pre-wrap; }
+
+/* Compaction seam: dashed full-width divider, centred uppercase mono label. */
+.acp-compaction {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.acp-compaction::before,
+.acp-compaction::after {
+  content: "";
+  flex: 1;
+  border-top: var(--border-hairline) dashed var(--border-color);
+}
+.acp-compaction span {
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.acp-compaction--failed span { color: var(--accent-error); }
+.acp-compaction.is-live span {
+  background: linear-gradient(90deg, var(--text-faint) 30%, var(--text-strong) 50%, var(--text-faint) 70%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+  animation: acp-shimmer var(--motion-loop-bounce) linear infinite;
+}
+
+/* Turn-end and wire-exception pills: centred, flat, outline. */
+.acp-turn-end {
+  align-self: center;
+  border: var(--border-hairline) solid var(--text-faintest);
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--text-faint);
+}
+.acp-turn-end--error {
+  border-color: var(--accent-error);
+  color: var(--accent-error);
+}
+.acp-pill-group {
+  align-self: center;
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+}
+.acp-pill {
+  background: transparent;
+  border: var(--border-hairline) solid var(--accent-error);
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--accent-error);
+}
+.acp-pill:hover { color: var(--text-strong); }
+.acp-pill-reason {
+  max-width: 82%;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--text-faint);
+}
+
+@keyframes acp-shimmer { to { background-position: -200% 0; } }
+@keyframes acp-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .acp-think.is-live .acp-think-word,
+  .acp-compaction.is-live span,
+  .acp-spin { animation: none; }
+}
+
 /* --- Chat panel (v2 — the ticket's employee; Vylo restraint) ------------- */
 /* Message history + input. No dividers: the thread fades into a whisper header and
  * a recessed composer. One user pill; the employee is bubble-less prose. */
@@ -1023,20 +1241,89 @@ button.list-row:hover .list-row-title {
   flex: none;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   padding: var(--space-2) var(--space-1) var(--space-1);
 }
 
-.chat-dot { width: 7px; height: 7px; border-radius: var(--radius-pill); flex: none; }
-.chat-dot--on { background: var(--accent-done); }
-.chat-dot--off { background: var(--text-faintest); }
+.chat-conn-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  flex: none;
+  background: var(--accent-error);
+}
 
 .chat-lbl {
   font-size: var(--type-xs);
-  color: var(--text-faint);
+  color: var(--text-default);
   font-family: var(--font-mono);
   letter-spacing: var(--tracking-mono);
 }
+
+.chat-state {
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--text-faint);
+}
+.chat-state--attn { color: var(--accent-text); }
+
+.chat-head-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.chat-usage {
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--text-faintest);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chat-overflow { position: relative; display: flex; }
+
+.chat-overflow-btn {
+  background: none;
+  border: none;
+  color: var(--text-faintest);
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+  line-height: 1;
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+.chat-overflow-btn:hover { color: var(--text-muted); background: var(--surface-overlay); }
+
+.chat-overflow-menu {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: 2;
+  min-width: 160px;
+  background: var(--surface-raised);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--space-1);
+  display: grid;
+}
+
+.chat-overflow-item {
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: var(--type-sm);
+  text-align: left;
+  padding: var(--space-1) var(--space-2);
+}
+.chat-overflow-item:hover { color: var(--text-strong); background: var(--surface-overlay); }
+.chat-overflow-item--confirm { color: var(--accent-error); }
+.chat-overflow-item--confirm:hover { color: var(--accent-error); }
 
 .chat-thread-shell {
   position: relative;
@@ -1127,6 +1414,10 @@ button.list-row:hover .list-row-title {
     inset 0 1px 2px rgba(0, 0, 0, 0.35),
     0 0 0 2px color-mix(in srgb, var(--accent-bright) 18%, transparent);
 }
+
+/* The task-progress popover shares the raised-popover shadow; the property
+ * lives here because component styles may not declare box-shadow. */
+.task-pop { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }
 
 /* the "/" command menu = a raised popover above the composer; a read of the
  * gateway catalog. No dividers, no accent — grouped rows fade into the surface. */
@@ -1299,7 +1590,81 @@ button.list-row:hover .list-row-title {
   transition: background var(--motion-base) var(--motion-ease), color var(--motion-base) var(--motion-ease);
 }
 .chat-send.on { background: var(--accent-bright); color: var(--accent-ink); }
+.chat-send.stop {
+  background: transparent;
+  border: var(--border-hairline) solid var(--accent-error);
+  color: var(--accent-error);
+  font-size: var(--type-xs);
+}
 .chat-send:disabled { opacity: 0.5; cursor: default; }
+
+/* Delivery segment: compact segmented pill in the footer, present only mid-turn */
+.chat-seg {
+  display: inline-flex;
+  align-items: center;
+  margin-left: var(--space-2);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+.chat-seg button {
+  background: transparent;
+  border: 0;
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-faintest);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-mono);
+  cursor: pointer;
+  line-height: 1.2;
+}
+.chat-seg button:hover { color: var(--text-muted); }
+.chat-seg button.on { background: var(--surface-overlay); color: var(--text-strong); }
+.chat-seg button:disabled { color: var(--text-faintest); opacity: 0.45; cursor: default; }
+
+/* Queue tray: queued prompts fused to the top of the sending box — same sunken
+ * surface, inset horizontally, top corners rounded, bottom edge open. The box
+ * keeps its full native rounding in all states. */
+.chat-box-stack { display: grid; }
+.chat-queue-tray {
+  margin: 0 var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  list-style: none;
+  display: grid;
+  background: var(--surface-sunken);
+  border: var(--border-hairline) solid var(--border-color);
+  border-bottom: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+.chat-qrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--type-xs);
+}
+.chat-qrow + .chat-qrow { border-top: var(--border-hairline) solid var(--border-color); }
+.chat-qrow-n { flex: none; font-family: var(--font-mono); color: var(--text-faintest); }
+.chat-qrow-txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-qrow-x {
+  flex: none;
+  background: none;
+  border: 0;
+  padding: 0 2px;
+  color: var(--text-faintest);
+  cursor: pointer;
+  font-size: var(--type-sm);
+  line-height: 1;
+}
+.chat-qrow-x:hover { color: var(--accent-error); }
+
+/* Composer receipt: only failures speak — a mono error line under the box */
+.chat-receipt {
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  color: var(--accent-error);
+}
 
 /* --- Proposal / scope / review (T15) ------------------------------------- */
 
