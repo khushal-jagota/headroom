@@ -26,9 +26,12 @@ Implementation commit `71c5971` is on feature branch `ticket/t_xb76vw05-workspac
 schema v28 retained and the Ticket projection moved to v29. The merged frontend bundle was regenerated. The
 prospective merged tree's canonical `./verify` passed Ruff, strict Mypy across 148 source files, 1,274 unit
 tests, compile/CSS checks, zero Svelte diagnostics, production frontend build and all frontend tests, and 110
-Playwright E2E tests; final `VERIFY: PASS`. Closeout is in progress. Next step: create the merge commit,
-advance `main` without losing its unrelated uncommitted ingress-capacity edit, then record the final target
-revision.
+Playwright E2E tests; final `VERIFY: PASS`. Implementation commit: `71c5971`; base: `3efab7a`; integration
+merge/main revision: `e4c4b07`. Main v28 was preserved and the Ticket projection is v29; the merged bundle was
+regenerated. Main advanced by fast-forward to `e4c4b07`. The pre-existing unrelated uncommitted ingress-capacity
+edit in `composition.py` was removed temporarily and reapplied exactly, and the pre-existing
+nested-worktree/untracked-worktree state was left alone. No deploy or server restart was performed or required.
+Next step: propose Closeout.
 
 ## Current work cycle (2026-07-21): Hide completed chat task lists closeout
 
