@@ -1,0 +1,30 @@
+# Panels environment Linux inputs
+
+These files are checked-in render/install inputs only. They do not install users,
+write permissions, enable units, start services, configure networking, or prove VPS
+enforcement by themselves.
+
+The live runtime uses the ordinary Linux account `panels-live`. The staging runtime
+and preview runtimes use the ordinary Linux account `panels-worker`. The live state, config, and credentials must stay unreadable and unwritable by `panels-worker`; the worker account is for nonproduction runtime state only.
+The shared `/etc/panels/environments` directory is traversable by the service users
+so each unit can open its own credential file. The live credential file remains
+`0640 panels-live:panels-live`, so `panels-worker` can traverse the parent but cannot
+read or write live credential content. Staging and preview credential files are
+`0640 panels-worker:panels-worker`.
+
+All services call the same foreground entry point with an environment-specific
+repository root:
+
+```sh
+panels environment run --repository-root /opt/panels/<environment>
+```
+
+The static units use distinct repository root conventions: live uses
+`/opt/panels/live`, staging uses `/opt/panels/staging`, and previews use
+`/opt/panels/previews/<preview-id>`. A unit's `WorkingDirectory`, `ExecStart`
+`--repository-root`, and `ReadWritePaths` repository entry must name the same path.
+The repository path is the caller-trusted working directory and is writable because
+Panels workers operate that checkout on the VPS. Runtime writes belong under
+`/var/lib/panels/environments`, and credential files belong under
+`/etc/panels/environments`. Repositories cannot be shared across live, staging, or
+preview instances.
