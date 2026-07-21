@@ -4,6 +4,21 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-21): Hide completed chat task lists
+
+Ticket `t_3udvypru` is complete in Implementation on
+`ticket/t_3udvypru-hide-completed-task-lists`. The task strip keeps its existing active-turn gate but
+additionally requires at least one pending or in-progress task, so a stored all-completed plan cannot
+reappear during a later turn. This was small enough to implement directly as one derived UI predicate
+plus mounted-browser regression coverage. The regression first failed on the old predicate, then passed
+with mixed-plan visibility and completed-only hiding across an idle-to-active cycle.
+
+The first isolated-worktree `./verify` exposed only missing local ACP adapter dependencies; after
+materializing that existing toolchain with no product change, the canonical rerun passed Ruff, strict
+Mypy, 1,102 unit tests, build and frontend checks (including zero Svelte diagnostics and the mounted
+browser regression), and 107 e2e tests: `VERIFY: PASS`. Next: propose Implementation for approval; no
+blockers.
+
 ## Current work cycle (2026-07-21): ACP browser replay and live backpressure
 
 Live diagnosis proved employees continued working and filing proposals while every fresh Chief and

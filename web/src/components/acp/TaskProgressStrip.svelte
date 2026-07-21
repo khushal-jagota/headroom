@@ -18,7 +18,10 @@
   const SPINNER_STATES = ["thinking", "working", "compacting"];
 
   let activeTurn = $derived(activity !== null && ACTIVE_STATES.includes(activity.state));
-  let pillVisible = $derived(activeTurn && plan.length > 0);
+  let hasActiveTask = $derived(
+    plan.some((entry) => entry.status === "pending" || entry.status === "in_progress")
+  );
+  let pillVisible = $derived(activeTurn && hasActiveTask);
   let showSpinner = $derived(activity !== null && SPINNER_STATES.includes(activity.state));
   let doneCount = $derived(plan.filter((entry) => entry.status === "completed").length);
 
