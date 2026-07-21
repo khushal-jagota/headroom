@@ -4,7 +4,106 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
-## Current work cycle (2026-07-19): ACP migration — architecture and contract freeze
+## Current work cycle (2026-07-21): Worker model and reasoning selection
+
+ACP-10 and the ACP migration are already complete on `main` at `34bb5c1`. ACP-11 implements the
+owner's follow-up consistency decision without changing an upstream adapter: the repository's
+canonical `skills/` directory is linked into the native Codex and Claude project roots, while the
+existing Hermes-home provisioning remains the Hermes installation path. Claude's provider-specific
+system-prompt append is removed.
+
+Every successful new Ticket or Chief ACP session arms one role instruction. The first ordinary
+message consumes it regardless of whether the message came from the browser or Automatic Employee
+work. A first text-only slash command passes through unchanged and leaves the role armed. Loaded,
+forked, and replacement children do not re-arm it. Prompt/replay echo normalization is one-shot and
+operation-scoped, including Hermes' flattened text replay, so the Panels transcript remains exactly
+the supplied prompt.
+
+One independent implementation-review round found three concrete P1s: failed replacement session
+creation lost the old arm, first slash commands were converted into model prompts, and permanent
+exact-text filtering both missed Hermes' merged replay and risked hiding legitimate text. All three
+are corrected. The settled focused gate passes Ruff, strict Mypy, 37 unit tests, and all 18 ACP
+conversation e2e tests. Root also tightened command recognition to text-only prompts and inspected
+the pinned Hermes flattening/command paths directly.
+
+Live Safari dogfood against the current server is complete. A fresh Chief conversation accepted
+`/help` as a real command, then loaded `panels-chief-of-staff` on the next message and returned the
+requested exact reply. A fresh Ticket conversation loaded `panels-worker` and returned its requested
+exact reply. Reload replay showed only the human messages, skill activity, and answers; neither role
+directive appeared.
+
+The single final `./verify` passed on the settled product/test tree: Ruff; strict Mypy across 130
+source files; 1,027 unit tests; compile/CSS/JS checks; zero Svelte diagnostics; the production build
+and every frontend suite; and 104 Playwright e2e tests. Final result: `VERIFY: PASS`. Only this
+verification-result documentation changed afterward. ACP-11 then landed on `main` as `b097f92`.
+
+Current research establishes that Codex and Claude expose live model and reasoning selectors through
+ACP session config options. The pinned Hermes ACP adapter exposes model selection but no functional
+session reasoning option. Owner direction is now settled for the first UI: separate Worker, Model,
+and Reasoning controls live inside the Kickoff section beside approval, not in the Ticket header or
+conversation chrome; omit Reasoning when Hermes is selected. Each Worker type's trio seeds a new
+Ticket once, after which the user edits that Ticket's values directly—there is no reset or restoration
+to Worker-type defaults. Model and reasoning are persisted as the requested first-session launch
+configuration, not a live mirror: after initial binding ACP owns the session state, bound-session
+loads do not reapply the stored values, and no post-Kickoff UI presents them as current settings.
+Combined presets and post-Kickoff controls are deferred.
+
+The implementation contract and four-ticket frontier are now published at
+`orchestration/acp-model-selection/contract.md` and `tickets.md`: MR-01 owns the generic persisted
+Ticket configuration, atomic pristine-Kickoff writer, catalog boundary, inside-Kickoff UI, and
+session-application lifecycle; MR-02 through MR-04 add Hermes, Codex, and Claude provider behavior.
+MR-01 and the three provider implementation plans are complete. The focused MR-01 plan review's
+only finding—a losing first-binding candidate could carry stale launch inputs while adopting the
+winner—is corrected and the narrow check is `READY`. The combined provider plan review is also
+`READY`; MR-02 now explicitly owns its exact Hermes legacy-wire compatibility seam serially after
+MR-01, while MR-03/MR-04 remain provider-local and parallel-safe.
+
+MR-01's Ticket schema/domain/API and Kickoff UI slices are complete. The domain slice passes scoped
+Ruff, strict Mypy, and 129 focused unit tests; it adds v27, seed-once defaults, pure dependency
+normalization, the exact atomic writer/catalog REST shell, the server-owned pristine flag, calm
+catalog failure, CLI adaptation, and both writer/first-binding race orders. The UI slice passes
+Svelte check, its runtime component proof, the full frontend test script, and a production build;
+Worker is gone from the header and the quiet setup row exists only beside Kickoff approval with
+loading/error/Retry and stale-response protection. Its independent review found only missing
+canonical test registration and invisible keyboard focus. Both are corrected: the new suites run
+inside `npm test`, and a registered production-CSS browser proof verifies the restrained visible
+focus treatment. The narrow correction review is `READY`.
+
+The generic ACP catalog plus first-unbound-session configuration slice is complete. Its one focused
+independent review found no production-code defect and only two bounded proof gaps: automatic-first
+work must observe the selected pair through the shared gateway, and bound attach/recovery/compaction
+must explicitly observe zero configuration reapplication. Both are now closed with tests only: the
+real EmployeeStepRunner/AcpStepGateway route proves configuration then binding then first automatic
+prompt, and an observing adapter proves zero reapplication across every named bound path. The narrow
+correction check is `READY`, so MR-01 is complete.
+The persisted fields are deliberately named `employee_launch_model`
+and `employee_launch_reasoning_effort` so they cannot be mistaken for live state. Stable ACP
+configuration runs model before refreshed reasoning, and temporary discovery sessions are closed.
+The first Ticket binding is fail-closed on the prepared complete trio; a CAS loser can adopt only
+after repository re-resolution clears launch inputs. Existing loads, replacement/recovery,
+compaction, and New Conversation do not reapply historical values. The settled combined MR-01 gate
+passes 404 domain/runtime unit tests, the registered frontend suite, zero Svelte diagnostics, and
+the focused catalog-no-binding/first-prompt E2E proof. All three provider registrations are now
+complete. Codex and Claude share their durable factories with the generic semantic-category adapter.
+Hermes uses a standalone read-only current-provider probe and the exact legacy
+`session/set_model` wire, with no Reasoning. The settled cross-provider gate passes Ruff, strict
+Mypy across 31 conversation files, 343 focused Python tests, the registered frontend suite, and zero
+Svelte diagnostics. The one combined provider/docs implementation review is `READY` with no P0/P1
+findings. The first canonical `./verify` passed Ruff, strict Mypy, the frontend/build gates, and 103
+of 105 Playwright tests, but failed because two pre-existing route tests still targeted the
+deliberately removed header Worker selector. A bounded independent spot check confirmed no
+production defect. Those tests now target the inside-Kickoff setup and prove it disappears after
+first binding or Kickoff approval; the corrected slice passes 2/2. The settled replacement
+`./verify` then exposed six more stale exact-shape unit fixtures: four Worker-type manifests omitted
+the two new default fields, and one external-work event pair omitted the seeded launch values. No
+production correction was needed. The fixtures now assert the complete public shapes and the exact
+slice passes 6/6. The final clean `./verify` passes Ruff, strict Mypy across 134 source files, 1,084
+unit tests, compile/CSS/JS checks, zero Svelte diagnostics, the production build and registered
+frontend suites, and 105 Playwright e2e tests: `VERIFY: PASS`. Three fresh live Tickets are ready for
+real Safari dogfood; the Mac is currently locked, so UI operation resumes after the owner unlocks it.
+Blockers: desktop unlock only.
+
+## Prior work cycle (2026-07-19): ACP migration — architecture and contract freeze
 
 Owner direction: ACP replaces both non-ACP conversation paths and becomes the single system. P2 of
 the shared-registry program is superseded and will not be implemented; P1's employee-keyed child

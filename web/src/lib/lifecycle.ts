@@ -40,6 +40,8 @@ export type WorkerTypeManifest = {
   default_ceiling: string;
   worker_profile_id: string;
   default_employee_backend: string;
+  default_employee_model: string | null;
+  default_employee_reasoning_effort: string | null;
 };
 
 export type WorkerTypesResponse = {

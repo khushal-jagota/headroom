@@ -16,6 +16,7 @@ from .backend_contracts import (
     ReverseServiceCapabilities,
 )
 from .contracts import ConversationEmployee
+from .employee_configuration import StableAcpEmployeeSessionConfigurationAdapter
 from .sdk_child import SdkAcpEmployeeChildFactory
 
 if TYPE_CHECKING:
@@ -187,14 +188,22 @@ def build_codex_employee_backend_registration() -> EmployeeBackendRegistration:
             turn_strategy=strategy,
         )
         entrypoint = Path(definition.argv[1])
+        child_factory = SdkAcpEmployeeChildFactory(definition)
         return MaterializedEmployeeBackendRegistration(
             definition=definition,
-            child_factory=SdkAcpEmployeeChildFactory(definition),
+            child_factory=child_factory,
             is_executable=lambda: codex_acp_adapter_is_executable(
                 node_executable=node,
                 codex_acp_entrypoint=entrypoint,
             ),
             startup_preflight=None,
+            employee_configuration_adapter=(
+                StableAcpEmployeeSessionConfigurationAdapter(
+                    definition=definition,
+                    child_factory=child_factory,
+                    workspace_root=repository_root,
+                )
+            ),
         )
 
     return EmployeeBackendRegistration(CODEX_BACKEND_KEY, materialize)

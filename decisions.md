@@ -2810,3 +2810,42 @@ rows, and ACP-10 plus the full ACP migration are complete.
 - Combined-diff review (independent, read-only) findings and resolutions: (1) BLOCKER — T2 wrote the 218-line transcript CSS block into the MAIN tree's assets/app.css (worktree-boundary violation its report did not surface); block extracted from the main-tree diff, inserted into the worktree app.css, main tree restored clean (`git checkout -- assets/app.css`, pure-addition diff verified first). (2) Failure stanzas/steps were permanently forced open; changed to open-once-on-failure (failureOpened flag), collapsible afterwards, aria-expanded now truthful. (3) `working` activity reconciled as live/active in TranscriptView + TaskProgressStrip (composer already counted it); currently unreachable on the wire but now consistent. (4) PermissionPrompt's imperative mount() for diffs accepted as-is — teardown correct, works.
 - T6 surfaced a genuine production regression (not a test artifact): TranscriptView keyed user render-items by message id alone (`u:${id}`), so a multi-part user message produced duplicate keys → Svelte each_key_duplicate runtime crash on the first prompt, freezing the transcript. Orchestrator fix: key includes the part index (`u:${id}:p${partIndex}`), mirroring the agent branch's per-part keys. check/build/web-suite green after.
 - T6 env note accepted: `.venv/bin/pip install -e . --no-deps` in the worktree to register planner for verify's python gates (no source change).
+
+## D-acp11-native-role-skills-and-message-kickoff — Use backend-native discovery and ordinary ACP delivery
+
+Panels exposes its canonical repository `skills/` directory through Codex's `.agents/skills` and
+Claude's `.claude/skills`, while retaining the existing Hermes-home symlinks. A shared ACP child
+decorator adds the appropriate installed role skill to whichever real prompt arrives first in each
+new conversation: `panels-worker` for Tickets and `panels-chief-of-staff` for the Chief. It does not
+repeat on later prompts or loaded/forked continuations, and replay does not attribute the delivery-only
+directive to the human. Claude's provider-specific `_meta.systemPrompt` append is removed. This gives
+all supported backends the same role source and delivery mechanism without modifying an upstream
+adapter, copying skill files, maintaining a second registry, or adding durable first-turn state. The
+bounded slice collapses plan review into implementation and receives one independent final diff review.
+
+## D-worker-type-default-agent-configuration — Defaults seed one Ticket's Kickoff setup
+
+Each Worker type owns the default Employee backend, model, and reasoning effort for its Tickets. A new
+Ticket copies the Worker type's supported defaults into that Ticket exactly once. The Worker type is
+only the source of the starting values: afterward the user edits the Ticket's current Worker, Model,
+and Reasoning directly. There is no reset-to-Worker-type-default action, no remembered per-backend
+matrix, and switching back to a Worker does not restore the Worker type's original values.
+
+These are not header or ongoing conversation controls. They live inside the Kickoff section beside
+the point where Kickoff is approved, and are editable only during the existing pristine-Kickoff
+window. The saved model and reasoning values are historical first-session launch inputs, not a live
+mirror: after first binding ACP owns the session state, Panels does not reapply them on a load, and
+the UI does not show them as current settings. The controls are backend-capability-aware: Codex and Claude
+expose Worker, Model, and Reasoning, while Hermes exposes Worker and Model only because its pinned ACP
+adapter has no functional session reasoning control. Combined setup presets are deferred.
+
+## D-first-ticket-binding-fails-closed-on-launch-authority — Never bypass the prepared trio
+
+An unbound Ticket may enter the durable ACP binding table only through the initial-binding operation
+that compares the complete prepared Worker/Model/Reasoning launch request with the current Ticket row
+inside the same transaction. The registry may retain optional constructor seams for Chief and
+already-bound test runtimes, but it rejects an unbound Ticket before spawning when that operation is
+absent. If another first binding wins, a Ticket race loser must also have the repository Employee
+resolver: it re-resolves the winner after binding and requires launch Model/Reasoning to be null before
+loading it. There is no compatibility fallback to ordinary binding CAS or to clearing the loser's
+in-memory request, because either would weaken the one-time launch boundary.

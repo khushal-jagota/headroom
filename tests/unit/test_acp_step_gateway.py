@@ -38,6 +38,7 @@ from planner.conversation.turn_broker import (
 from planner.core.db import connect, create_schema
 from planner.runtime.acp_step_gateway import AcpStepGateway
 from planner.runtime.step_gateway import EmployeeStepGatewayBusy
+from planner.tickets.contracts import EmployeeLaunchConfiguration
 from planner.worker_context.contracts import (
     PreparedWorkerPrompt,
     WorkerContextReceipt,
@@ -791,7 +792,19 @@ def _seed_guard_database(
         backend_key="hermes",
         binding_generation=1,
     )
-    asyncio.run(repository.compare_and_swap(None, binding))
+    employee = asyncio.run(repository.resolve_employee("t_gateway"))
+    asyncio.run(
+        repository.compare_and_swap_initial(
+            binding,
+            EmployeeLaunchConfiguration(
+                employee_backend=employee.backend_key,
+                employee_launch_model=employee.employee_launch_model,
+                employee_launch_reasoning_effort=(
+                    employee.employee_launch_reasoning_effort
+                ),
+            ),
+        )
+    )
     return db_path, repository, binding
 
 

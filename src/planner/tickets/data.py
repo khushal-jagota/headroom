@@ -24,6 +24,7 @@ from planner.runtime.employee_step_repository import SqliteEmployeeStepRepositor
 from planner.tickets import worker_context as ticket_worker_context
 from planner.tickets.contracts import (
     AtCap,
+    EmployeeLaunchConfiguration,
     EmployeeSessionIdTransition,
     FieldSlot,
     NextCeiling,
@@ -37,6 +38,7 @@ from planner.tickets.contracts import (
 )
 from planner.tickets.logic import (
     admission,
+    employee_configuration,
     external_work,
     fields_codec,
     machine,
@@ -136,6 +138,16 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         updated_at=row["updated_at"],
         worker_type=worker_type,
         employee_backend=str(row["employee_backend"]),
+        employee_launch_model=(
+            str(row["employee_launch_model"])
+            if row["employee_launch_model"] is not None
+            else None
+        ),
+        employee_launch_reasoning_effort=(
+            str(row["employee_launch_reasoning_effort"])
+            if row["employee_launch_reasoning_effort"] is not None
+            else None
+        ),
     )
 
 
@@ -435,53 +447,110 @@ def claim_running_step_employee_session_id(
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def write_employee_backend(
+def employee_launch_configuration(ticket: Ticket) -> EmployeeLaunchConfiguration:
+    return EmployeeLaunchConfiguration(
+        employee_backend=ticket.employee_backend,
+        employee_launch_model=ticket.employee_launch_model,
+        employee_launch_reasoning_effort=ticket.employee_launch_reasoning_effort,
+    )
+
+
+def employee_configuration_editable(
+    conn: sqlite3.Connection,
+    ticket: Ticket,
+) -> bool:
+    if (
+        ticket.stage != "needs_kickoff"
+        or ticket.ticket_status not in {TicketStatus.awaiting_approval, TicketStatus.empty}
+        or ticket.employee_session_id is not None
+    ):
+        return False
+    return (
+        conn.execute(
+            "SELECT 1 FROM conversation_session_bindings WHERE employee_id = ?",
+            (ticket.id,),
+        ).fetchone()
+        is None
+    )
+
+
+def write_employee_configuration(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
+    expected_employee_configuration: EmployeeLaunchConfiguration,
     employee_backend: str,
+    employee_launch_model: str | None,
+    employee_launch_reasoning_effort: str | None,
     employee_backend_catalog: EmployeeBackendCatalog,
+    advertised_models: frozenset[str] | None,
+    reasoning_supported: bool | None,
+    advertised_reasoning_efforts: frozenset[str] | None,
     now: int,
 ) -> Ticket:
-    """Select the Ticket's backend only during its pristine Kickoff window."""
+    """Atomically replace the complete launch request during pristine Kickoff."""
 
     with _txn(conn):
-        candidate = employee_backend_catalog.require_registered(employee_backend)
+        registered_backend = employee_backend_catalog.require_registered(employee_backend)
         ticket = _load_ticket_for_write(conn, ticket_id)
-        if ticket.employee_backend == candidate:
-            return ticket
-        if (
-            ticket.stage != "needs_kickoff"
-            or ticket.ticket_status not in {TicketStatus.awaiting_approval, TicketStatus.empty}
-            or ticket.employee_session_id is not None
-        ):
+        current = employee_launch_configuration(ticket)
+        if current != expected_employee_configuration:
             raise PlannerError(
                 ErrorCode.already_running,
-                "employee backend is frozen after Kickoff or employee demand",
+                "Employee configuration changed while its options were loading",
                 {"ticket_id": ticket_id},
             )
-        binding_exists = conn.execute(
-            "SELECT 1 FROM conversation_session_bindings WHERE employee_id = ?",
-            (ticket_id,),
-        ).fetchone()
-        if binding_exists is not None:
+        candidate = EmployeeLaunchConfiguration(
+            employee_backend=registered_backend,
+            employee_launch_model=employee_launch_model,
+            employee_launch_reasoning_effort=employee_launch_reasoning_effort,
+        )
+        normalized = employee_configuration.normalize_employee_launch_configuration(
+            current,
+            candidate,
+            advertised_models=advertised_models,
+            reasoning_supported=reasoning_supported,
+            advertised_reasoning_efforts=advertised_reasoning_efforts,
+        )
+        if current == normalized:
+            return ticket
+        if not employee_configuration_editable(conn, ticket):
             raise PlannerError(
                 ErrorCode.already_running,
-                "employee backend is frozen after employee demand",
+                "Employee configuration is frozen after Kickoff or Employee demand",
                 {"ticket_id": ticket_id},
             )
         conn.execute(
-            "UPDATE tickets SET employee_backend = ?, updated_at = ? WHERE id = ?",
-            (candidate, now, ticket_id),
+            "UPDATE tickets SET employee_backend = ?, employee_launch_model = ?, "
+            "employee_launch_reasoning_effort = ?, updated_at = ? WHERE id = ?",
+            (
+                normalized.employee_backend,
+                normalized.employee_launch_model,
+                normalized.employee_launch_reasoning_effort,
+                now,
+                ticket_id,
+            ),
         )
         append_event(
             conn,
             ticket_id,
             EventKind.ticket_updated,
             {
-                "field": "employee_backend",
-                "from": ticket.employee_backend,
-                "to": candidate,
+                "field": "employee_configuration",
+                "from": {
+                    "employee_backend": current.employee_backend,
+                    "employee_launch_model": current.employee_launch_model,
+                    "employee_launch_reasoning_effort": (
+                        current.employee_launch_reasoning_effort
+                    ),
+                },
+                "to": {
+                    "employee_backend": normalized.employee_backend,
+                    "employee_launch_model": normalized.employee_launch_model,
+                    "employee_launch_reasoning_effort": (
+                        normalized.employee_launch_reasoning_effort
+                    ),
+                },
             },
             now,
         )
@@ -513,6 +582,21 @@ def create_ticket(
         employee_backend
         if employee_backend is not None
         else worker_type_definition.worker_profile.default_employee_backend
+    )
+    employee_backend_was_overridden = (
+        employee_backend is not None
+        and selected_employee_backend
+        != worker_type_definition.worker_profile.default_employee_backend
+    )
+    selected_employee_launch_model = (
+        None
+        if employee_backend_was_overridden
+        else worker_type_definition.worker_profile.default_employee_model
+    )
+    selected_employee_launch_reasoning_effort = (
+        None
+        if employee_backend_was_overridden
+        else worker_type_definition.worker_profile.default_employee_reasoning_effort
     )
     initial_stage = worker_type_definition.default_ceiling()
     default_ceiling = worker_type_definition.default_ceiling()
@@ -554,17 +638,20 @@ def create_ticket(
                 )
         conn.execute(
             "INSERT INTO tickets ("
-            "id, title, worker_type, employee_backend, stage, priority, deadline, "
+            "id, title, worker_type, employee_backend, employee_launch_model, "
+            "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, "
             "ticket_status, stage_ownership_overrides, "
             "employee_session_id, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
                 title,
                 worker_type,
                 selected_employee_backend,
+                selected_employee_launch_model,
+                selected_employee_launch_reasoning_effort,
                 initial_stage,
                 priority.value,
                 deadline,
@@ -584,7 +671,12 @@ def create_ticket(
             conn,
             ticket_id,
             EventKind.ticket_created,
-            {"stage": initial_stage, "employee_backend": selected_employee_backend},
+            {
+                "stage": initial_stage,
+                "employee_backend": selected_employee_backend,
+                "employee_launch_model": selected_employee_launch_model,
+                "employee_launch_reasoning_effort": selected_employee_launch_reasoning_effort,
+            },
             now,
         )
         append_event(
@@ -639,6 +731,21 @@ def create_ticket_from_external_work(
         if employee_backend is not None
         else worker_type_definition.worker_profile.default_employee_backend
     )
+    employee_backend_was_overridden = (
+        employee_backend is not None
+        and selected_employee_backend
+        != worker_type_definition.worker_profile.default_employee_backend
+    )
+    selected_employee_launch_model = (
+        None
+        if employee_backend_was_overridden
+        else worker_type_definition.worker_profile.default_employee_model
+    )
+    selected_employee_launch_reasoning_effort = (
+        None
+        if employee_backend_was_overridden
+        else worker_type_definition.worker_profile.default_employee_reasoning_effort
+    )
     # External work is "already done elsewhere": seed at the type's FIRST WORKER stage
     # (needs_success / needs_understanding / needs_alpha), NOT the leading needs_kickoff — the
     # applied decision then jumps it to target_stage. first_worker_stage is the concept
@@ -679,16 +786,19 @@ def create_ticket_from_external_work(
 
         conn.execute(
             "INSERT INTO tickets ("
-            "id, title, worker_type, employee_backend, stage, priority, deadline, "
+            "id, title, worker_type, employee_backend, employee_launch_model, "
+            "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, ticket_status, stage_ownership_overrides, "
             "employee_session_id, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
                 title,
                 worker_type,
                 selected_employee_backend,
+                selected_employee_launch_model,
+                selected_employee_launch_reasoning_effort,
                 # Seed at the type's FIRST WORKER stage. The applied external-work
                 # decision then moves it to target_stage; the seed only needs to be a
                 # valid non-terminal worker stage so the pre-persist guard passes
@@ -713,7 +823,12 @@ def create_ticket_from_external_work(
             conn,
             ticket_id,
             EventKind.ticket_created,
-            {"stage": first_worker, "employee_backend": selected_employee_backend},
+            {
+                "stage": first_worker,
+                "employee_backend": selected_employee_backend,
+                "employee_launch_model": selected_employee_launch_model,
+                "employee_launch_reasoning_effort": selected_employee_launch_reasoning_effort,
+            },
             now,
         )
         _append_item_children_changed(conn, sprint_item_id, ticket_id, "created", now)

@@ -25,7 +25,10 @@ from acp.schema import (
     PromptResponse,
     RequestPermissionRequest,
     RequestPermissionResponse,
+    SessionConfigOptionSelect,
+    SessionConfigSelectOption,
     SessionNotification,
+    SetSessionConfigOptionResponse,
     TextContentBlock,
 )
 from tests.support.acp_conformance import (
@@ -54,8 +57,10 @@ from planner.conversation import (
     ConversationSessionBinding,
     EmployeeBackendBuildContext,
     EmployeeBackendCatalog,
+    EmployeeConfigurationError,
     ProtocolUpdateRejectedPayload,
     ReverseServiceCapabilities,
+    StableAcpEmployeeSessionConfigurationAdapter,
     static_employee_backend_registration,
 )
 
@@ -169,7 +174,81 @@ class _FakeChild:
         self._session_number += 1
         session_id = f"{self.definition.backend_key}-{self.generation}-{self._session_number}"
         self.current_session_id = session_id
-        return NewSessionResponse(session_id=session_id)
+        return NewSessionResponse(
+            session_id=session_id,
+            config_options=[
+                SessionConfigOptionSelect(
+                    type="select",
+                    id="model-option",
+                    name="Model",
+                    category="model",
+                    current_value="model-a",
+                    options=[
+                        SessionConfigSelectOption(value="model-a", name="Model A"),
+                        SessionConfigSelectOption(value="model-b", name="Model B"),
+                    ],
+                ),
+                SessionConfigOptionSelect(
+                    type="select",
+                    id="reasoning-initial",
+                    name="Reasoning",
+                    category="thought_level",
+                    current_value="low",
+                    options=[
+                        SessionConfigSelectOption(value="low", name="Low"),
+                    ],
+                ),
+            ],
+        )
+
+    async def set_config_option(
+        self, session_id: str, config_id: str, value: str
+    ) -> SetSessionConfigOptionResponse:
+        del session_id
+        if self.operation_observer is not None:
+            self.operation_observer(f"set_config_option:{config_id}:{value}")
+        if config_id == "model-option":
+            return SetSessionConfigOptionResponse(
+                config_options=[
+                    SessionConfigOptionSelect(
+                        type="select",
+                        id="model-refreshed",
+                        name="Model",
+                        category="model",
+                        current_value=value,
+                        options=[
+                            SessionConfigSelectOption(value="model-a", name="Model A"),
+                            SessionConfigSelectOption(value="model-b", name="Model B"),
+                        ],
+                    ),
+                    SessionConfigOptionSelect(
+                        type="select",
+                        id="reasoning-refreshed",
+                        name="Reasoning",
+                        category="thought_level",
+                        current_value="high",
+                        options=[
+                            SessionConfigSelectOption(value="high", name="High"),
+                        ],
+                    ),
+                ]
+            )
+        return SetSessionConfigOptionResponse(
+            config_options=[
+                SessionConfigOptionSelect(
+                    type="select",
+                    id="reasoning-refreshed",
+                    name="Reasoning",
+                    category="thought_level",
+                    current_value=value,
+                    options=[SessionConfigSelectOption(value="high", name="High")],
+                )
+            ]
+        )
+
+    async def close_session(self, session_id: str) -> None:
+        if self.operation_observer is not None:
+            self.operation_observer(f"close_session:{session_id}")
 
     async def load_session(self, request: LoadSessionRequest) -> LoadSessionResponse:
         if self.operation_observer is not None:
@@ -375,6 +454,9 @@ def _registry(
     resolve: Any | None = None,
     compare_and_swap: Any | None = None,
     child_death: Any | None = None,
+    configuration_adapters: dict[str, Any] | None = None,
+    compare_and_swap_initial: Any | None = None,
+    resolve_employee: Any | None = None,
 ) -> AcpEmployeeRegistry:
     async def discard(
         payload: SessionNotification | ProtocolUpdateRejectedPayload,
@@ -382,6 +464,11 @@ def _registry(
         del payload
 
     ordinary_compare_and_swap = compare_and_swap or repository.compare_and_swap
+
+    async def ordinary_compare_and_swap_initial(
+        candidate: ConversationSessionBinding, _configuration: object
+    ) -> ConversationSessionBinding:
+        return await ordinary_compare_and_swap(None, candidate)
 
     async def compare_compaction(
         expected: ConversationSessionBinding,
@@ -400,7 +487,15 @@ def _registry(
 
     catalog = EmployeeBackendCatalog(
         tuple(
-            static_employee_backend_registration(definition, factories[backend_key])
+            static_employee_backend_registration(
+                definition,
+                factories[backend_key],
+                employee_configuration_adapter=(
+                    None
+                    if configuration_adapters is None
+                    else configuration_adapters.get(backend_key)
+                ),
+            )
             for backend_key, definition in definitions.items()
         )
     )
@@ -411,6 +506,10 @@ def _registry(
         ),
         resolve_binding=resolve or repository.resolve,
         compare_and_swap_binding=ordinary_compare_and_swap,
+        compare_and_swap_initial_binding=(
+            compare_and_swap_initial or ordinary_compare_and_swap_initial
+        ),
+        resolve_employee=resolve_employee,
         resolve_compaction_boundaries=repository.resolve_compaction_boundaries,
         compare_and_swap_compaction=compare_compaction,
         conversation_ingress=ingress or discard,
@@ -437,6 +536,284 @@ def test_concurrent_first_demand_coalesces_and_persists_generation_one() -> None
         assert request.cwd == "/work/second"
         assert request.additional_directories == ["/work/first"]
         assert request.mcp_servers == []
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_first_unbound_session_configures_model_then_reasoning_before_binding() -> None:
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        operations: list[str] = []
+        factory = _FakeFactory(definition)
+        factory.operation_observer = operations.append
+        repository = InMemoryAcpBindingRepository()
+        adapter = StableAcpEmployeeSessionConfigurationAdapter(
+            definition=definition,
+            child_factory=factory,
+            workspace_root=Path("/work"),
+        )
+        requested = _employee().model_copy(
+            update={
+                "employee_launch_model": "model-b",
+                "employee_launch_reasoning_effort": "high",
+            }
+        )
+
+        async def compare_initial(
+            candidate: ConversationSessionBinding, configuration: object
+        ) -> ConversationSessionBinding:
+            del configuration
+            operations.append("binding")
+            return await repository.compare_and_swap(None, candidate)
+
+        async def resolve_employee(_employee_id: str) -> ConversationEmployee:
+            return requested.model_copy(
+                update={
+                    "employee_launch_model": None,
+                    "employee_launch_reasoning_effort": None,
+                }
+            )
+
+        registry = _registry(
+            {"alpha": definition},
+            {"alpha": factory},
+            repository,
+            configuration_adapters={"alpha": adapter},
+            compare_and_swap_initial=compare_initial,
+            resolve_employee=resolve_employee,
+        )
+
+        record = await registry.get_or_spawn(requested)
+
+        assert operations[:5] == [
+            "initialize",
+            "new_session",
+            "set_config_option:model-option:model-b",
+            "set_config_option:reasoning-refreshed:high",
+            "binding",
+        ]
+        assert record.employee.employee_launch_model is None
+        assert record.employee.employee_launch_reasoning_effort is None
+
+        operations.clear()
+        replacement = await registry.new_conversation(record.employee)
+        assert replacement.binding.binding_generation == 2
+        assert operations == ["new_session"]
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_bound_load_replacement_compaction_and_new_conversation_do_not_reapply_kickoff_values() -> (
+    None
+):
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        operations: list[str] = []
+        factory = _FakeFactory(definition)
+        factory.operation_observer = operations.append
+        repository = InMemoryAcpBindingRepository()
+        delegate = StableAcpEmployeeSessionConfigurationAdapter(
+            definition=definition,
+            child_factory=factory,
+            workspace_root=Path("/work"),
+        )
+
+        class _ObservingAdapter:
+            def __init__(self) -> None:
+                self.configure_calls = 0
+
+            @property
+            def backend_key(self) -> str:
+                return delegate.backend_key
+
+            async def discover_catalog(self, candidate_model: str | None) -> object:
+                return await delegate.discover_catalog(candidate_model)
+
+            async def configure_initial_session(
+                self, child: object, response: object, launch_configuration: object
+            ) -> None:
+                self.configure_calls += 1
+                await delegate.configure_initial_session(  # type: ignore[arg-type]
+                    child, response, launch_configuration
+                )
+
+        adapter = _ObservingAdapter()
+        historical_employee = _employee().model_copy(
+            update={
+                "employee_launch_model": "model-b",
+                "employee_launch_reasoning_effort": "high",
+            }
+        )
+        await repository.seed(
+            ConversationSessionBinding(
+                employee_id=historical_employee.employee_id,
+                backend_key=historical_employee.backend_key,
+                acp_session_id="alpha-existing",
+                binding_generation=1,
+            )
+        )
+        registry = _registry(
+            {"alpha": definition},
+            {"alpha": factory},
+            repository,
+            configuration_adapters={"alpha": adapter},
+        )
+
+        loaded = await registry.get_or_spawn(historical_employee)
+        attached = await registry.attach(historical_employee)
+        assert loaded.binding == attached.binding
+        assert factory.children[0].load_requests[0].session_id == "alpha-existing"
+        assert factory.children[0].private_load_requests[0].session_id == (
+            "alpha-existing"
+        )
+
+        handle = await registry.resolve_runtime_handle("employee-a", 1)
+        deadline = asyncio.get_running_loop().time() + 2
+        requested_cancel = await registry.replace_runtime_after_requested_cancel(
+            await registry.acquire_runtime_lease(handle), deadline
+        )
+        prepared = await registry.prepare_compaction_capture(
+            await registry.acquire_runtime_lease(requested_cancel.replacement_handle),
+            "configuration-negative-proof",
+            deadline,
+        )
+        compacted = await registry.commit_compaction_capture(prepared, deadline)
+        replacement = await registry.new_conversation(historical_employee)
+
+        assert requested_cancel.replacement_handle.binding.binding_generation == 1
+        assert compacted.replacement_handle.binding.binding_generation == 2
+        assert replacement.binding.binding_generation == 3
+        assert adapter.configure_calls == 0
+        assert not any(
+            operation.startswith("set_config_option:") for operation in operations
+        )
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_first_binding_loser_re_resolves_bound_winner_without_reconfiguration() -> None:
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        operations: list[str] = []
+        factory = _FakeFactory(definition)
+        factory.operation_observer = operations.append
+        repository = InMemoryAcpBindingRepository()
+        adapter = StableAcpEmployeeSessionConfigurationAdapter(
+            definition=definition,
+            child_factory=factory,
+            workspace_root=Path("/work"),
+        )
+        requested = _employee().model_copy(
+            update={
+                "employee_launch_model": "model-b",
+                "employee_launch_reasoning_effort": "high",
+            }
+        )
+        winner = ConversationSessionBinding(
+            employee_id=requested.employee_id,
+            acp_session_id="winner-session",
+            backend_key="alpha",
+            binding_generation=1,
+        )
+        first_resolution = True
+
+        async def resolve_binding(
+            _employee_id: str,
+        ) -> ConversationSessionBinding | None:
+            nonlocal first_resolution
+            if first_resolution:
+                first_resolution = False
+                return None
+            return winner
+
+        async def compare_initial(
+            _candidate: ConversationSessionBinding, _configuration: object
+        ) -> ConversationSessionBinding:
+            operations.append("binding-lost")
+            return winner
+
+        async def resolve_employee(_employee_id: str) -> ConversationEmployee:
+            operations.append("resolve-bound-employee")
+            return requested.model_copy(
+                update={
+                    "employee_launch_model": None,
+                    "employee_launch_reasoning_effort": None,
+                }
+            )
+
+        registry = _registry(
+            {"alpha": definition},
+            {"alpha": factory},
+            repository,
+            resolve=resolve_binding,
+            configuration_adapters={"alpha": adapter},
+            compare_and_swap_initial=compare_initial,
+            resolve_employee=resolve_employee,
+        )
+
+        record = await registry.get_or_spawn(requested)
+
+        assert len(factory.children) == 2
+        assert sum(operation.startswith("set_config_option:") for operation in operations) == 2
+        assert operations[-3:] == [
+            "resolve-bound-employee",
+            "initialize",
+            "load_session",
+        ]
+        assert record.binding == winner
+        assert record.employee.employee_launch_model is None
+        assert record.employee.employee_launch_reasoning_effort is None
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_invalid_initial_selection_retires_child_without_binding() -> None:
+    class _RejectingAdapter:
+        backend_key = "alpha"
+
+        async def discover_catalog(self, candidate_model: str | None) -> object:
+            del candidate_model
+            raise AssertionError("catalog discovery is outside this registry test")
+
+        async def configure_initial_session(
+            self, child: object, response: object, launch_configuration: object
+        ) -> None:
+            del child, response, launch_configuration
+            raise EmployeeConfigurationError("selected reasoning disappeared")
+
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        factory = _FakeFactory(definition)
+        repository = InMemoryAcpBindingRepository()
+        binding_attempted = False
+
+        async def compare_initial(*args: object) -> ConversationSessionBinding:
+            nonlocal binding_attempted
+            binding_attempted = True
+            raise AssertionError(args)
+
+        registry = _registry(
+            {"alpha": definition},
+            {"alpha": factory},
+            repository,
+            configuration_adapters={"alpha": _RejectingAdapter()},
+            compare_and_swap_initial=compare_initial,
+        )
+        requested = _employee().model_copy(
+            update={"employee_launch_reasoning_effort": "missing"}
+        )
+
+        with pytest.raises(EmployeeConfigurationError, match="disappeared"):
+            await registry.get_or_spawn(requested)
+
+        assert binding_attempted is False
+        assert await repository.resolve(requested.employee_id) is None
+        assert len(factory.children) == 1
+        assert factory.children[0].alive is False
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())

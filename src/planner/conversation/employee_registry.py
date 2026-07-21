@@ -19,6 +19,8 @@ from acp.schema import (
     SessionNotification,
 )
 
+from planner.tickets.contracts import EmployeeLaunchConfiguration
+
 from .backend_catalog import (
     EmployeeBackendCatalog,
     MaterializedEmployeeBackendRegistration,
@@ -38,6 +40,7 @@ from .contracts import (
     ConversationEmployee,
     ConversationSessionBinding,
 )
+from .employee_configuration import EmployeeSessionConfigurationAdapter
 from .runtime_ports import (
     CompactionCaptureTransition,
     ConversationCompactionCaptureDeadlineExpired,
@@ -61,6 +64,11 @@ CompareAndSwapConversationBinding = Callable[
     [ConversationSessionBinding | None, ConversationSessionBinding],
     Awaitable[ConversationSessionBinding],
 ]
+CompareAndSwapInitialConversationBinding = Callable[
+    [ConversationSessionBinding, EmployeeLaunchConfiguration],
+    Awaitable[ConversationSessionBinding],
+]
+ResolveConversationEmployee = Callable[[str], Awaitable[ConversationEmployee]]
 ResolveConversationCompactionBoundaries = Callable[
     [ConversationSessionBinding],
     Awaitable[tuple[ConversationCompactionBoundaryProvenance, ...]],
@@ -159,6 +167,8 @@ class AcpEmployeeRegistry:
         materialized_backends: tuple[MaterializedEmployeeBackendRegistration, ...],
         resolve_binding: ResolveConversationBinding,
         compare_and_swap_binding: CompareAndSwapConversationBinding,
+        compare_and_swap_initial_binding: CompareAndSwapInitialConversationBinding | None = None,
+        resolve_employee: ResolveConversationEmployee | None = None,
         conversation_ingress: AcpConversationIngress,
         permission_callback: PermissionRequestCallback,
         conversation_child_death_callback: ConversationChildDeathCallback | None = None,
@@ -183,6 +193,16 @@ class AcpEmployeeRegistry:
         }
         self._resolve_binding = resolve_binding
         self._compare_and_swap_binding = compare_and_swap_binding
+        self._compare_and_swap_initial_binding = compare_and_swap_initial_binding
+        self._resolve_employee = resolve_employee
+        self._employee_configuration_adapters: dict[
+            str, EmployeeSessionConfigurationAdapter
+        ] = {
+            backend.definition.backend_key: (
+                backend.resolved_employee_configuration_adapter()
+            )
+            for backend in materialized_backends
+        }
         self._conversation_ingress = conversation_ingress
         self._permission_callback = permission_callback
         self._conversation_child_death_callback = conversation_child_death_callback
@@ -214,7 +234,8 @@ class AcpEmployeeRegistry:
             if (
                 current is not None
                 and current.child.alive
-                and current.employee == employee
+                and self._employee_runtime_identity(current.employee)
+                == self._employee_runtime_identity(employee)
                 and current.binding.backend_key == employee.backend_key
             ):
                 return current
@@ -245,7 +266,8 @@ class AcpEmployeeRegistry:
                 had_live_record = (
                     (record := self._records.get(employee.employee_id)) is not None
                     and record.child.alive
-                    and record.employee == employee
+                    and self._employee_runtime_identity(record.employee)
+                    == self._employee_runtime_identity(employee)
                 )
                 task = asyncio.create_task(
                     self._attach_wave(employee, had_live_record),
@@ -435,6 +457,13 @@ class AcpEmployeeRegistry:
         binding = await self._resolve_binding(employee.employee_id)
         if binding is not None:
             self._validate_binding(employee.employee_id, binding)
+        elif (
+            employee.entity_kind == "ticket"
+            and self._compare_and_swap_initial_binding is None
+        ):
+            raise AcpEmployeeBindingError(
+                "first Ticket binding requires launch-configuration compare-and-swap"
+            )
 
         child: AcpEmployeeChild | None = None
         try:
@@ -442,13 +471,28 @@ class AcpEmployeeRegistry:
             child = await self._spawn_initialized_child(employee, generation, definition)
             if binding is None:
                 response = await child.new_session(self._new_request(employee))
+                launch_configuration = self._launch_configuration(employee)
+                if launch_configuration is not None:
+                    await self._employee_configuration_adapters[
+                        employee.backend_key
+                    ].configure_initial_session(
+                        child,
+                        response,
+                        launch_configuration,
+                    )
                 candidate = ConversationSessionBinding(
                     employee_id=employee.employee_id,
                     acp_session_id=response.session_id,
                     backend_key=employee.backend_key,
                     binding_generation=1,
                 )
-                winner = await self._compare_and_swap_binding(None, candidate)
+                if launch_configuration is None:
+                    winner = await self._compare_and_swap_binding(None, candidate)
+                else:
+                    assert self._compare_and_swap_initial_binding is not None
+                    winner = await self._compare_and_swap_initial_binding(
+                        candidate, launch_configuration
+                    )
             elif binding.backend_key == employee.backend_key:
                 await child.load_session(self._load_request(employee, binding.acp_session_id))
                 winner = binding
@@ -468,7 +512,10 @@ class AcpEmployeeRegistry:
                 await child.close()
                 child = None
                 return await self._adopt_winner(employee, winner)
-            return await self._publish(employee, winner, generation, child)
+            bound_employee = await self._resolve_bound_employee(
+                employee, winner, require_repository_resolution=False
+            )
+            return await self._publish(bound_employee, winner, generation, child)
         except BaseException:
             if child is not None:
                 await child.close()
@@ -479,7 +526,9 @@ class AcpEmployeeRegistry:
         self, requested_employee: ConversationEmployee, winner: ConversationSessionBinding
     ) -> AcpEmployeeRecord:
         self._validate_binding(requested_employee.employee_id, winner)
-        adopted_employee = requested_employee.model_copy(update={"backend_key": winner.backend_key})
+        adopted_employee = await self._resolve_bound_employee(
+            requested_employee, winner, require_repository_resolution=True
+        )
         async with self._lock:
             self._require_open_locked()
             generation = self._allocate_generation_locked(requested_employee.employee_id)
@@ -1603,7 +1652,13 @@ class AcpEmployeeRegistry:
         ConversationRuntimeHandle,
         tuple[SessionNotification | ProtocolUpdateRejectedPayload, ...],
     ]:
-        adopted_employee = original.employee.model_copy(update={"backend_key": winner.backend_key})
+        adopted_employee = original.employee.model_copy(
+            update={
+                "backend_key": winner.backend_key,
+                "employee_launch_model": None,
+                "employee_launch_reasoning_effort": None,
+            }
+        )
         async with self._lock:
             self._require_open_locked()
             if not self._handle_matches_record(
@@ -1892,9 +1947,64 @@ class AcpEmployeeRegistry:
     def _record_matches(record: AcpEmployeeRecord, employee: ConversationEmployee) -> bool:
         return (
             record.child.alive
-            and record.employee == employee
+            and AcpEmployeeRegistry._employee_runtime_identity(record.employee)
+            == AcpEmployeeRegistry._employee_runtime_identity(employee)
             and record.binding.backend_key == employee.backend_key
         )
+
+    @staticmethod
+    def _employee_runtime_identity(employee: ConversationEmployee) -> ConversationEmployee:
+        return employee.model_copy(
+            update={
+                "employee_launch_model": None,
+                "employee_launch_reasoning_effort": None,
+            }
+        )
+
+    @staticmethod
+    def _launch_configuration(
+        employee: ConversationEmployee,
+    ) -> EmployeeLaunchConfiguration | None:
+        if employee.entity_kind != "ticket":
+            return None
+        return EmployeeLaunchConfiguration(
+            employee_backend=employee.backend_key,
+            employee_launch_model=employee.employee_launch_model,
+            employee_launch_reasoning_effort=(
+                employee.employee_launch_reasoning_effort
+            ),
+        )
+
+    async def _resolve_bound_employee(
+        self,
+        requested_employee: ConversationEmployee,
+        binding: ConversationSessionBinding,
+        *,
+        require_repository_resolution: bool,
+    ) -> ConversationEmployee:
+        if self._resolve_employee is None:
+            if require_repository_resolution and requested_employee.entity_kind == "ticket":
+                raise AcpEmployeeBindingError(
+                    "first-binding loser requires bound Employee re-resolution"
+                )
+            resolved = requested_employee.model_copy(
+                update={
+                    "backend_key": binding.backend_key,
+                    "employee_launch_model": None,
+                    "employee_launch_reasoning_effort": None,
+                }
+            )
+        else:
+            resolved = await self._resolve_employee(requested_employee.employee_id)
+        if (
+            resolved.backend_key != binding.backend_key
+            or resolved.employee_launch_model is not None
+            or resolved.employee_launch_reasoning_effort is not None
+        ):
+            raise AcpEmployeeBindingError(
+                "bound Employee resolution retained launch configuration"
+            )
+        return resolved
 
     @staticmethod
     def _consume_shutdown_task_results(

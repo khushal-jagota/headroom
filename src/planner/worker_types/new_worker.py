@@ -39,8 +39,8 @@ NEW_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     ),
     worker_profile=WorkerProfile(
         specialist_skill="panels-worker-new-worker",
-        model=None,
-        reasoning_effort=None,
+        default_employee_model=None,
+        default_employee_reasoning_effort=None,
         toolset_profile="default",
         default_employee_backend="hermes",
     ),

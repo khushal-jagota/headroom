@@ -8,6 +8,7 @@ from planner.conversation.contracts import (
     ConversationCompactionBoundaryProvenance,
     ConversationSessionBinding,
 )
+from planner.tickets.contracts import EmployeeLaunchConfiguration
 
 
 class InMemoryAcpBindingRepository:
@@ -56,6 +57,14 @@ class InMemoryAcpBindingRepository:
             self._bindings[candidate.employee_id] = candidate
             self._compaction_boundaries[candidate.employee_id] = ()
             return candidate
+
+    async def compare_and_swap_initial(
+        self,
+        candidate: ConversationSessionBinding,
+        prepared_employee_configuration: EmployeeLaunchConfiguration,
+    ) -> ConversationSessionBinding:
+        del prepared_employee_configuration
+        return await self.compare_and_swap(None, candidate)
 
     async def compare_and_swap_compaction(
         self,

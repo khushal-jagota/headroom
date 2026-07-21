@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from acp.schema import (
     CancelNotification,
@@ -22,6 +22,7 @@ from acp.schema import (
     RequestPermissionRequest,
     RequestPermissionResponse,
     SessionNotification,
+    SetSessionConfigOptionResponse,
 )
 
 from .contracts import (
@@ -58,9 +59,7 @@ class BackendTurnStrategy(Protocol):
         self,
         session_binding: ConversationSessionBinding,
         replay: tuple[SessionNotification | ProtocolUpdateRejectedPayload, ...],
-        compacted_boundaries: tuple[
-            ConversationCompactionBoundaryProvenance, ...
-        ],
+        compacted_boundaries: tuple[ConversationCompactionBoundaryProvenance, ...],
     ) -> tuple[ConversationReplayItem, ...]: ...
 
     async def steer(
@@ -159,6 +158,12 @@ class AcpEmployeeChild(Protocol):
 
     async def new_session(self, request: NewSessionRequest) -> NewSessionResponse: ...
 
+    async def set_config_option(
+        self, session_id: str, config_id: str, value: str
+    ) -> SetSessionConfigOptionResponse: ...
+
+    async def close_session(self, session_id: str) -> None: ...
+
     async def load_session(self, request: LoadSessionRequest) -> LoadSessionResponse: ...
 
     async def capture_load_session(
@@ -174,6 +179,13 @@ class AcpEmployeeChild(Protocol):
     async def cancel(self, notification: CancelNotification) -> None: ...
 
     async def close(self) -> None: ...
+
+
+@runtime_checkable
+class LegacyAcpSessionModelSelection(Protocol):
+    """Narrow capability for agents that retain ACP's removed model method."""
+
+    async def set_legacy_session_model(self, session_id: str, model_id: str) -> None: ...
 
 
 class AcpEmployeeChildFactory(Protocol):

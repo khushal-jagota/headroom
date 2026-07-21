@@ -174,11 +174,21 @@ def test_external_create_backend_default_override_and_unknown_before_mutation(
         )
         assert _events(db_path, defaulted.json()["id"])[0] == (
             "ticket_created",
-            {"stage": "needs_alpha", "employee_backend": "probe-backend"},
+            {
+                "stage": "needs_alpha",
+                "employee_backend": "probe-backend",
+                "employee_launch_model": "probe-model",
+                "employee_launch_reasoning_effort": "probe-high",
+            },
         )
         assert _events(db_path, overridden.json()["id"])[0] == (
             "ticket_created",
-            {"stage": "needs_alpha", "employee_backend": "hermes"},
+            {
+                "stage": "needs_alpha",
+                "employee_backend": "hermes",
+                "employee_launch_model": None,
+                "employee_launch_reasoning_effort": None,
+            },
         )
     finally:
         check.close()

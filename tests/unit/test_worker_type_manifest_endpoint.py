@@ -82,6 +82,16 @@ def test_worker_type_manifest_serves_exact_defaults_and_ordered_employee_backend
         "hermes",
         "probe-backend",
     ]
+    assert [item["default_employee_model"] for item in served["worker_types"]] == [
+        None,
+        None,
+        None,
+        None,
+        "probe-model",
+    ]
+    assert [
+        item["default_employee_reasoning_effort"] for item in served["worker_types"]
+    ] == [None, None, None, None, "probe-high"]
     assert (
         PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog.registered_backend_keys()
         == ("hermes", "codex", "claude")

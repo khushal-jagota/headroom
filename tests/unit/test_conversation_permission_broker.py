@@ -366,6 +366,7 @@ def test_real_sdk_permission_callback_is_admitted_by_turn_epoch_and_cancelled_on
             materialized_backends=(materialized_backend,),
             resolve_binding=repository.resolve,
             compare_and_swap_binding=repository.compare_and_swap,
+            compare_and_swap_initial_binding=repository.compare_and_swap_initial,
             conversation_ingress=ingress,
             permission_callback=fallback_permission,
             conversation_child_death_callback=child_death,

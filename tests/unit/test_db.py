@@ -184,14 +184,25 @@ def _insert_v25_ticket(conn: sqlite3.Connection, ticket_id: str = "t_v25_backend
     )
 
 
-def test_fresh_v26_ticket_employee_backend_is_not_null_and_has_no_default(tmp_path) -> None:
-    conn = connect(str(tmp_path / "fresh-v26-backend.db"))
+def test_fresh_v27_ticket_configuration_is_nullable_and_binding_schema_has_no_copy(
+    tmp_path,
+) -> None:
+    conn = connect(str(tmp_path / "fresh-v27-configuration.db"))
     create_schema(conn)
-    column = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(tickets)")}[
-        "employee_backend"
-    ]
-    assert column["notnull"] == 1
-    assert column["dflt_value"] is None
+    columns = {
+        str(row["name"]): row for row in conn.execute("PRAGMA table_info(tickets)")
+    }
+    assert columns["employee_backend"]["notnull"] == 1
+    assert columns["employee_backend"]["dflt_value"] is None
+    for name in ("employee_launch_model", "employee_launch_reasoning_effort"):
+        assert columns[name]["notnull"] == 0
+        assert columns[name]["dflt_value"] is None
+    binding_columns = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(conversation_session_bindings)")
+    }
+    assert "employee_launch_model" not in binding_columns
+    assert "employee_launch_reasoning_effort" not in binding_columns
 
     insert_without_backend = (
         "INSERT INTO tickets (id, title, worker_type, ceiling, fields, created_at, updated_at) "
@@ -220,8 +231,10 @@ def test_v25_to_v26_assigns_exact_hermes_and_preserves_ticket_bytes(tmp_path) ->
 
     after = dict(conn.execute("SELECT * FROM tickets").fetchone())
     assert after.pop("employee_backend") == "hermes"
+    assert after.pop("employee_launch_model") is None
+    assert after.pop("employee_launch_reasoning_effort") is None
     assert after == before
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 26
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 27
     conn.close()
 
 
@@ -292,7 +305,94 @@ def test_v26_reopen_preserves_non_hermes_selection_and_is_idempotent(tmp_path) -
         == sql_before
     )
     assert tuple(conn.execute("SELECT * FROM tickets").fetchone()) == row_before
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 26
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 27
+    conn.close()
+
+
+def test_v26_to_v27_preserves_ticket_and_binding_bytes_and_seeds_null_configuration(
+    tmp_path,
+) -> None:
+    conn = connect(str(tmp_path / "v26-to-v27-configuration.db"))
+    create_schema(conn)
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute("DROP TABLE tickets")
+    conn.execute(db_module._V26_TICKETS_TABLE_SQL.replace("tickets_new", "tickets"))
+    conn.execute(
+        "INSERT INTO tickets ("
+        "id, title, worker_type, employee_backend, stage, priority, deadline, project_id, "
+        "sprint_item_id, sprint_id, recap, ceiling, at_cap, ticket_status, "
+        "stage_ownership_overrides, employee_session_id, alias, fields, created_at, updated_at"
+        ") VALUES ('t_v26_configuration', 'V26 configuration bytes', 'coding', "
+        "'probe-backend', 'needs_plan', 'P1', '2026-08-01', 'project_vylo', NULL, NULL, "
+        "'Exact recap', 'needs_closeout', 'stop', 'user_takeover', "
+        "'{\"needs_plan\":\"user\"}', 'session-v26', 'v26-alias', ?, 101, 202)",
+        (_EMPTY_CODING_FIELDS,),
+    )
+    conn.execute(
+        "INSERT INTO conversation_session_bindings "
+        "(employee_id, entity_kind, entity_id, acp_session_id, backend_key, "
+        "binding_generation, compaction_boundaries_json, created_at, updated_at) VALUES "
+        "('t_v26_configuration', 'ticket', 't_v26_configuration', 'session-v26', "
+        "'probe-backend', 7, '[]', 111, 222)"
+    )
+    conn.execute("PRAGMA user_version=26")
+    conn.execute("PRAGMA foreign_keys=ON")
+    ticket_before = dict(
+        conn.execute("SELECT * FROM tickets WHERE id = 't_v26_configuration'").fetchone()
+    )
+    binding_before = tuple(
+        conn.execute(
+            "SELECT * FROM conversation_session_bindings "
+            "WHERE employee_id = 't_v26_configuration'"
+        ).fetchone()
+    )
+
+    create_schema(conn)
+
+    ticket_after = dict(
+        conn.execute("SELECT * FROM tickets WHERE id = 't_v26_configuration'").fetchone()
+    )
+    assert ticket_after.pop("employee_launch_model") is None
+    assert ticket_after.pop("employee_launch_reasoning_effort") is None
+    assert ticket_after == ticket_before
+    assert tuple(
+        conn.execute(
+            "SELECT * FROM conversation_session_bindings "
+            "WHERE employee_id = 't_v26_configuration'"
+        ).fetchone()
+    ) == binding_before
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 27
+    conn.close()
+
+
+def test_v27_reopen_preserves_explicit_ticket_configuration_and_is_idempotent(
+    tmp_path,
+) -> None:
+    conn = connect(str(tmp_path / "v27-reopen-configuration.db"))
+    create_schema(conn)
+    conn.execute(
+        "INSERT INTO tickets "
+        "(id, title, worker_type, employee_backend, employee_launch_model, "
+        "employee_launch_reasoning_effort, ceiling, fields, created_at, updated_at) "
+        "VALUES ('t_v27_configuration', 'Configured', 'coding', 'codex', "
+        "'gpt-5.6-sol', 'high', 'needs_kickoff', '{}', 1, 2)"
+    )
+    row_before = tuple(conn.execute("SELECT * FROM tickets").fetchone())
+    sql_before = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()[0]
+
+    create_schema(conn)
+    create_schema(conn)
+
+    assert tuple(conn.execute("SELECT * FROM tickets").fetchone()) == row_before
+    assert (
+        conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+        ).fetchone()[0]
+        == sql_before
+    )
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 27
     conn.close()
 
 
@@ -2282,7 +2382,7 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(tm
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     create_schema(conn)
-    assert SCHEMA_VERSION == 26
+    assert SCHEMA_VERSION == 27
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     info = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(tickets)")}
@@ -2995,7 +3095,7 @@ def test_pre_column_v24_binding_schema_reopens_with_empty_provenance(
     }["compaction_boundaries_json"]
     assert column["notnull"] == 1
     assert column["dflt_value"] == "'[]'"
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 26
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 27
     conn.close()
 
 
@@ -3028,7 +3128,7 @@ def test_amended_v24_binding_schema_reopens_without_rewriting_provenance(
     )
     create_schema(conn)
     assert conn.execute("SELECT 1 FROM conversation_session_bindings").fetchone() is None
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 26
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 27
     conn.close()
 
 
@@ -3228,7 +3328,7 @@ def test_v25_cutover_converts_worker_correctness_and_deletes_conversation_state(
     ):
         assert not db_module._table_exists(conn, table)
     assert "chat_session_key" not in db_module._table_columns(conn, "days")
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 26
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 27
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     create_schema(conn)
     assert conn.execute("SELECT COUNT(*) FROM employee_step_runs").fetchone()[0] == 3
@@ -3374,9 +3474,9 @@ def test_create_schema_reaches_only_consolidated_ticket_rebuild_after_lock(tmp_p
     create_schema(conn)
 
     begin_index = statements.index("BEGIN IMMEDIATE")
-    # The two historical Ticket rebuilds, v25 cutover, and terminal v26 backend
-    # rebuild are the only write locks.
-    assert statements.count("BEGIN IMMEDIATE") == 4
+    # The two historical Ticket rebuilds, v25 cutover, terminal v26 backend rebuild,
+    # and additive v27 launch-configuration migration are the only write locks.
+    assert statements.count("BEGIN IMMEDIATE") == 5
     ticket_snapshot_index = next(
         index
         for index, statement in enumerate(statements)

@@ -29,7 +29,33 @@ from planner.conversation.sqlite_binding_repository import (
     SqliteConversationBindingRepository as _SqliteConversationBindingRepository,
 )
 from planner.core.db import connect, create_schema
+from planner.tickets.contracts import EmployeeLaunchConfiguration
 from planner.worker_types.configuration import PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS
+
+
+class _TestSqliteConversationBindingRepository(
+    _SqliteConversationBindingRepository
+):
+    async def compare_and_swap(
+        self,
+        expected: ConversationSessionBinding | None,
+        candidate: ConversationSessionBinding,
+    ) -> ConversationSessionBinding:
+        if expected is not None:
+            return await super().compare_and_swap(expected, candidate)
+        employee = await self.resolve_employee(candidate.employee_id)
+        if employee.entity_kind == "agent":
+            return await super().compare_and_swap(expected, candidate)
+        return await self.compare_and_swap_initial(
+            candidate,
+            EmployeeLaunchConfiguration(
+                employee_backend=employee.backend_key,
+                employee_launch_model=employee.employee_launch_model,
+                employee_launch_reasoning_effort=(
+                    employee.employee_launch_reasoning_effort
+                ),
+            ),
+        )
 
 
 def SqliteConversationBindingRepository(
@@ -40,7 +66,7 @@ def SqliteConversationBindingRepository(
     employee_backend_catalog: EmployeeBackendCatalog | None = None,
     chief_backend_key: str = "hermes",
 ) -> _SqliteConversationBindingRepository:
-    return _SqliteConversationBindingRepository(
+    return _TestSqliteConversationBindingRepository(
         db_path,
         workspace_root=workspace_root,
         integer_now=integer_now,
@@ -67,16 +93,21 @@ def _insert_ticket(
     *,
     employee_session_id: str | None = None,
     employee_backend: str = "hermes",
+    employee_launch_model: str | None = None,
+    employee_launch_reasoning_effort: str | None = None,
 ) -> None:
     conn.execute(
         "INSERT INTO tickets "
-        "(id, title, worker_type, employee_backend, stage, ceiling, fields, employee_session_id, "
-        "created_at, updated_at) VALUES (?, ?, 'coding', ?, "
+        "(id, title, worker_type, employee_backend, employee_launch_model, "
+        "employee_launch_reasoning_effort, stage, ceiling, fields, employee_session_id, "
+        "created_at, updated_at) VALUES (?, ?, 'coding', ?, ?, ?, "
         "'needs_kickoff', 'needs_kickoff', ?, ?, 10, 20)",
         (
             ticket_id,
             ticket_id,
             employee_backend,
+            employee_launch_model,
+            employee_launch_reasoning_effort,
             json.dumps(
                 {
                     field: {"value": None, "proposal": None, "user_note": None}
@@ -94,6 +125,51 @@ def _insert_ticket(
             employee_session_id,
         ),
     )
+
+
+def test_initial_binding_rejects_session_prepared_from_stale_ticket_configuration(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "stale-employee-configuration.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    _insert_ticket(
+        conn,
+        "t_alpha",
+        employee_launch_model="model-new",
+        employee_launch_reasoning_effort="high",
+    )
+    conn.close()
+    repository = SqliteConversationBindingRepository(
+        str(db_path), workspace_root=tmp_path, integer_now=lambda: 30
+    )
+    candidate = ConversationSessionBinding(
+        employee_id="t_alpha",
+        acp_session_id="session-stale",
+        backend_key="hermes",
+        binding_generation=1,
+    )
+
+    with pytest.raises(ConversationBindingError, match="changed before first binding"):
+        asyncio.run(
+            repository.compare_and_swap_initial(
+                candidate,
+                EmployeeLaunchConfiguration(
+                    employee_backend="hermes",
+                    employee_launch_model="model-old",
+                    employee_launch_reasoning_effort="low",
+                ),
+            )
+        )
+
+    conn = connect(str(db_path))
+    assert conn.execute(
+        "SELECT employee_session_id FROM tickets WHERE id = 't_alpha'"
+    ).fetchone()["employee_session_id"] is None
+    assert conn.execute(
+        "SELECT COUNT(*) AS total FROM conversation_session_bindings"
+    ).fetchone()["total"] == 0
+    conn.close()
 
 
 def test_stored_selection_drives_resolution_first_cas_and_registered_availability(

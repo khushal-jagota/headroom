@@ -12,10 +12,15 @@
     lifecycleFor,
     recapVisibleFor
   } from "../lib/lifecycle";
-  import type { StageOwnershipMode, TicketDetail } from "../lib/types";
+  import type {
+    EmployeeConfigurationSnapshot,
+    StageOwnershipMode,
+    TicketDetail
+  } from "../lib/types";
   import AcpConversation from "../components/AcpConversation.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
+  import EmployeeConfigurationSetup from "../components/EmployeeConfigurationSetup.svelte";
   import EnumPill from "../components/EnumPill.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
@@ -46,21 +51,6 @@
         !manifest.data.worker_types.some((item) => item.worker_type === ticket.data?.worker_type)
     )
   );
-  let pristineKickoff = $derived(
-    Boolean(
-      ticket.data &&
-        ticket.data.stage === "needs_kickoff" &&
-        ["awaiting_approval", "empty"].includes(ticket.data.ticket_status || "empty") &&
-        ticket.data.employee_session_id === null
-    )
-  );
-  let employeeBackendOptions = $derived(
-    (manifest.data?.employee_backends || []).map((backend) => ({
-      value: backend,
-      label: labelize(backend)
-    }))
-  );
-
   const emptyTicketFieldText = "Not written yet.";
   const emptyTicketRecapText = "No recap yet.";
 
@@ -133,10 +123,12 @@
     );
   }
 
-  function saveEmployeeBackend(employeeBackend: string): Promise<unknown> {
-    return mutateJsonWithResourceEffect(
-      `/api/tickets/${stableId}/employee-backend`,
-      { method: "PUT", body: { employee_backend: employeeBackend } },
+  function saveEmployeeConfiguration(
+    configuration: EmployeeConfigurationSnapshot
+  ): Promise<TicketDetail> {
+    return mutateJsonWithResourceEffect<TicketDetail>(
+      `/api/tickets/${stableId}/employee-configuration`,
+      { method: "PUT", body: configuration },
       { kind: "ticketChanged", ticketId: stableId }
     );
   }
@@ -299,29 +291,6 @@
             <Pill keyLabel="worker type" data-worker-type={detail.worker_type}>
               {lc?.workerTypeLabel ?? labelize(detail.worker_type)}
             </Pill>
-            {#if pristineKickoff}
-              <span
-                data-ticket-employee-backend={detail.employee_backend}
-                data-ticket-employee-backend-editable="true"
-              >
-                <EnumPill
-                  keyLabel="worker"
-                  value={detail.employee_backend}
-                  options={employeeBackendOptions}
-                  onChange={(employeeBackend) => {
-                    if (employeeBackend !== detail.employee_backend) {
-                      void saveEmployeeBackend(employeeBackend);
-                    }
-                  }}
-                />
-              </span>
-            {:else}
-              <Pill
-                keyLabel="worker"
-                data-ticket-employee-backend={detail.employee_backend}
-                data-ticket-employee-backend-editable="false"
-              >{labelize(detail.employee_backend)}</Pill>
-            {/if}
             <Pill keyLabel="due">
               {detail.deadline || ""}
               <input
@@ -440,6 +409,16 @@
           {/if}
 
           <div class="fields">
+            {#snippet employeeConfigurationSetup()}
+              <EmployeeConfigurationSetup
+                ticketId={stableId}
+                employeeBackends={manifest.data?.employee_backends ?? []}
+                employeeBackend={detail.employee_backend}
+                employeeLaunchModel={detail.employee_launch_model}
+                employeeLaunchReasoningEffort={detail.employee_launch_reasoning_effort}
+                onSave={saveEmployeeConfiguration}
+              />
+            {/snippet}
             {#each lc?.fieldIds ?? [] as name}
               {@const slot = fieldSlot(detail, name)}
               {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
@@ -451,6 +430,9 @@
                 ticketStage={detail.stage}
                 ceiling={detail.ceiling}
                 emptyText={emptyTicketFieldText}
+                beforeApproval={name === "kickoff" && detail.employee_configuration_editable
+                  ? employeeConfigurationSetup
+                  : undefined}
                 onAccept={(payload) => acceptField(name, payload)}
                 onSaveNote={(raw) => saveNote(name, raw)}
                 onSaveValue={(raw) => saveValue(name, raw)}
@@ -463,7 +445,7 @@
         <AcpConversation
           employeeId={stableId}
           employeeLabel={conversationEmployeeLabel(detail)}
-          deferInitialAttach={pristineKickoff}
+          deferInitialAttach={detail.employee_configuration_editable}
         />
       </aside>
     </div>

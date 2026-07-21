@@ -18,7 +18,14 @@ from planner.core.contracts import ErrorCode, PlannerError
 from .backend_contracts import AcpEmployeeChildFactory, AgentBackendDefinition
 from .claude_backend import build_claude_employee_backend_registration
 from .codex_backend import build_codex_employee_backend_registration
-from .hermes_backend import build_hermes_acp_backend_definition
+from .employee_configuration import (
+    EmployeeSessionConfigurationAdapter,
+    NativeEmployeeSessionConfigurationAdapter,
+)
+from .hermes_backend import HERMES_BACKEND_KEY, build_hermes_acp_backend_definition
+from .hermes_employee_configuration import (
+    HermesEmployeeSessionConfigurationAdapter,
+)
 from .hermes_turn_strategy import HermesAcpTurnStrategy
 from .sdk_child import SdkAcpEmployeeChildFactory
 
@@ -27,9 +34,7 @@ from .sdk_child import SdkAcpEmployeeChildFactory
 class EmployeeBackendBuildContext:
     data_directory: Path
     planner_home_default: Path | None = None
-    repository_root: Path = field(
-        default_factory=lambda: Path(__file__).resolve().parents[3]
-    )
+    repository_root: Path = field(default_factory=lambda: Path(__file__).resolve().parents[3])
 
     def __post_init__(self) -> None:
         if not self.repository_root.is_absolute():
@@ -42,6 +47,14 @@ class MaterializedEmployeeBackendRegistration:
     child_factory: AcpEmployeeChildFactory
     is_executable: Callable[[], bool]
     startup_preflight: Callable[[], Awaitable[None]] | None = None
+    employee_configuration_adapter: EmployeeSessionConfigurationAdapter | None = None
+
+    def resolved_employee_configuration_adapter(
+        self,
+    ) -> EmployeeSessionConfigurationAdapter:
+        return self.employee_configuration_adapter or NativeEmployeeSessionConfigurationAdapter(
+            self.definition.backend_key
+        )
 
 
 EmployeeBackendRuntimeBuilder = Callable[
@@ -122,12 +135,14 @@ def static_employee_backend_registration(
     child_factory: AcpEmployeeChildFactory,
     *,
     is_executable: Callable[[], bool] | None = None,
+    employee_configuration_adapter: EmployeeSessionConfigurationAdapter | None = None,
 ) -> EmployeeBackendRegistration:
     built = MaterializedEmployeeBackendRegistration(
         definition=definition,
         child_factory=child_factory,
         is_executable=is_executable or (lambda: True),
         startup_preflight=None,
+        employee_configuration_adapter=employee_configuration_adapter,
     )
     return EmployeeBackendRegistration(
         backend_key=definition.backend_key,
@@ -171,23 +186,30 @@ def _materialize_hermes(
         raise FileNotFoundError(
             f"Hermes ACP executable is missing or not executable: {hermes_executable}"
         )
+    hermes_source_root = hermes_src_root(hermes_python)
     strategy = HermesAcpTurnStrategy(concurrent_prompt=None, capture_updates=None)
     definition = build_hermes_acp_backend_definition(
         hermes_executable=hermes_executable,
         hermes_home=planner_home,
-        hermes_source_root=hermes_src_root(hermes_python),
+        hermes_source_root=hermes_source_root,
         turn_strategy=strategy,
     )
+    child_factory = SdkAcpEmployeeChildFactory(definition)
     return MaterializedEmployeeBackendRegistration(
         definition=definition,
-        child_factory=SdkAcpEmployeeChildFactory(definition),
+        child_factory=child_factory,
         is_executable=lambda: _hermes_executable_is_available(hermes_executable),
         startup_preflight=None,
+        employee_configuration_adapter=HermesEmployeeSessionConfigurationAdapter(
+            hermes_python=hermes_python,
+            hermes_home=planner_home,
+            hermes_source_root=hermes_source_root,
+        ),
     )
 
 
 PRODUCTION_EMPLOYEE_BACKEND_REGISTRATIONS = (
-    EmployeeBackendRegistration("hermes", _materialize_hermes),
+    EmployeeBackendRegistration(HERMES_BACKEND_KEY, _materialize_hermes),
     build_codex_employee_backend_registration(),
     build_claude_employee_backend_registration(),
 )

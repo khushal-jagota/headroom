@@ -82,16 +82,49 @@ After a server restart, the first demand loads the stored binding and replay. St
 a new conversation deliberately creates a new ACP session and advances the generation.
 
 The production backend catalog contains exactly `hermes`, `codex`, and `claude`.
-Each Worker type supplies the default for new Tickets. During pristine Kickoff, the
-Ticket pane may select another registered backend. The first session or binding, or
-moving beyond Kickoff, freezes that Ticket's stored choice. Human prompts and
-Automatic Employee steps then use that selected backend and the same binding. Gemini
-is not registered.
+Each Worker type supplies a starting Worker, Model, and Reasoning effort; a new Ticket
+copies that trio once and then owns it. During pristine Kickoff, those controls appear
+only inside the Kickoff approval area. Hermes offers Model and no Reasoning. Codex and
+Claude Code offer Model plus the Reasoning choices supported by that model. The first
+durable binding, or moving beyond Kickoff, freezes the Ticket's launch setup and removes
+the controls. Gemini is not registered.
+
+For the first unbound session, Panels applies an explicit Model before an explicit
+Reasoning choice, then writes the binding only if the Ticket still owns the setup used
+to prepare that session. The stored model and reasoning remain after binding as the
+historical Kickoff request, not the worker's current settings. A bound load, child
+replacement, compaction recovery, or later New Conversation never reapplies or presents
+them as current. Human prompts and Automatic Employee steps still share the selected
+backend and durable binding.
 
 Claude Code runs one initialize-only preflight when Panels starts. That temporary
 child is closed before startup completes and creates no worker session. Codex is lazy:
 its child starts only on first demand. Actual Ticket and Chief sessions for every
 backend still start or resume through the same registry and binding machinery.
+
+## Employee role skills
+
+Panels keeps one canonical copy of its skills under `skills/`. The repository exposes
+that directory at the backends' native project locations: `.agents/skills` for Codex
+and `.claude/skills` for Claude Code. Hermes startup exposes the same source directories
+under the configured planner Hermes home. These are links, not copied skill files, so
+every installed Panels skill comes from the same source.
+
+A newly created ACP conversation adds its employee role to the first real prompt sent
+through that session. A Ticket adds `panels-worker`; the Chief adds
+`panels-chief-of-staff`. The first prompt may come from the browser or Automatic
+Employee work. Text-only slash commands pass through unchanged and leave the role ready for the
+next ordinary prompt. Later ordinary prompts and a loaded, forked, or replacement child
+do not add the role again. Starting New conversation successfully creates a new session
+and therefore adds the role to that conversation's first ordinary prompt.
+
+The role line is ACP delivery context. Only while that prompt or a session replay is in
+progress, Panels removes its one synthetic echoed role chunk. It also handles Hermes
+flattening the role and original text into one chunk. The filter is scoped to that exact
+session and one echo, so a genuine message that happens to equal the role line remains
+visible. The conversation therefore shows only what the human or Automatic Employee
+supplied. Claude receives the same ordinary ACP prompt behavior as the other backends;
+Panels does not modify Claude's system prompt.
 
 ## Human and Automatic Employee work share the session
 
@@ -150,4 +183,4 @@ mode and no runtime code reads the removed tables.
 
 ---
 
-_Last verified: 2026-07-20 (single ACP conversation with three production backends)._
+_Last verified: 2026-07-21 (single ACP conversation with three production backends)._

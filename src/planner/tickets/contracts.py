@@ -175,8 +175,10 @@ class StageBody(TypedDict, total=False):  # POST /tickets/{id}/stage
     to_stage: str  # Stage id; required (default "" is rejected)
 
 
-class EmployeeBackendBody(TypedDict):
+class EmployeeConfigurationBody(TypedDict):
     employee_backend: str
+    employee_launch_model: str | None
+    employee_launch_reasoning_effort: str | None
 
 
 class LinkBody(TypedDict, total=False):  # POST /links (ticket-anchored, homed here)
@@ -191,6 +193,9 @@ class Ticket:  # §3.3 — column names match exactly
     title: str  # <= TITLE_MAX_CHARS (200), every write path
     worker_type: str  # immutable registry id selected at creation
     employee_backend: str  # immutable after the first employee demand
+    # Historical first-session Kickoff request; null means backend-native default.
+    employee_launch_model: str | None = field(default=None, kw_only=True)
+    employee_launch_reasoning_effort: str | None = field(default=None, kw_only=True)
     stage: str  # directly stored Stage id
     priority: Priority  # default P3
     deadline: str | None  # ISO date
@@ -210,6 +215,19 @@ class Ticket:  # §3.3 — column names match exactly
     fields: TicketFields
     created_at: int
     updated_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class EmployeeLaunchConfiguration:
+    """The Ticket-owned, first-session launch request.
+
+    After the first binding these values remain historical Kickoff provenance; they
+    are not a mirror of the ACP session's current configuration.
+    """
+
+    employee_backend: str
+    employee_launch_model: str | None
+    employee_launch_reasoning_effort: str | None
 
 
 @dataclass(frozen=True)

@@ -6,7 +6,7 @@ import asyncio
 import threading
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
@@ -28,12 +28,14 @@ from planner.worker_types.configuration import (
 )
 
 from .backend_contracts import AcpConversationIngress
+from .employee_configuration import EmployeeConfigurationCatalogService
 from .employee_registry import (
     AcpEmployeeRegistry,
     ConversationIngressSource,
 )
 from .hub import ConversationHub
 from .permission_broker import ConversationPermissionBroker
+from .role_skill_kickoff import RoleSkillKickoffAcpEmployeeChildFactory
 from .runtime_ports import ConversationRuntimeHandle
 from .sqlite_binding_repository import SqliteConversationBindingRepository
 from .turn_broker import ConversationTurnBroker
@@ -89,6 +91,7 @@ class ConversationComposition:
     broker: ConversationTurnBroker
     permission_broker: ConversationPermissionBroker
     step_gateway: AcpStepGateway
+    employee_configuration_catalog: EmployeeConfigurationCatalogService
     employee_backend_startup_preflights: tuple[Callable[[], Awaitable[None]], ...]
     _employee_backend_startup_preflights_ran: bool = False
 
@@ -127,11 +130,21 @@ class ConversationComposition:
                 test_options.permission_request_id_factory or cls._new_identifier
             )
         catalog = employee_runtime_definitions.employee_backend_catalog
-        materialized_backends = catalog.materialize(
-            EmployeeBackendBuildContext(
-                data_directory=Path(db_path).expanduser().parent.resolve(strict=False),
-                planner_home_default=planner_home_default,
-                repository_root=repository_root,
+        materialized_backends = tuple(
+            replace(
+                backend,
+                child_factory=RoleSkillKickoffAcpEmployeeChildFactory(
+                    backend.child_factory
+                ),
+            )
+            for backend in catalog.materialize(
+                EmployeeBackendBuildContext(
+                    data_directory=Path(db_path).expanduser().parent.resolve(
+                        strict=False
+                    ),
+                    planner_home_default=planner_home_default,
+                    repository_root=repository_root,
+                )
             )
         )
 
@@ -187,6 +200,8 @@ class ConversationComposition:
             materialized_backends=materialized_backends,
             resolve_binding=repository.resolve,
             compare_and_swap_binding=repository.compare_and_swap,
+            compare_and_swap_initial_binding=repository.compare_and_swap_initial,
+            resolve_employee=repository.resolve_employee,
             resolve_compaction_boundaries=repository.resolve_compaction_boundaries,
             compare_and_swap_compaction=repository.compare_and_swap_compaction,
             conversation_ingress=cast(AcpConversationIngress, reject_unscoped_ingress),
@@ -227,12 +242,21 @@ class ConversationComposition:
         permission_broker.set_worker_settlement_guard(
             step_gateway.guard_worker_permission_settlement
         )
+        employee_configuration_catalog = EmployeeConfigurationCatalogService(
+            {
+                backend.definition.backend_key: (
+                    backend.resolved_employee_configuration_adapter()
+                )
+                for backend in materialized_backends
+            }
+        )
         return cls(
             hub=hub,
             registry=registry,
             broker=broker,
             permission_broker=permission_broker,
             step_gateway=step_gateway,
+            employee_configuration_catalog=employee_configuration_catalog,
             employee_backend_startup_preflights=tuple(
                 backend.startup_preflight
                 for backend in materialized_backends

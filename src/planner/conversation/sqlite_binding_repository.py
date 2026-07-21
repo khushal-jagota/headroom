@@ -10,7 +10,10 @@ from pathlib import Path
 
 from planner.core.db import connect
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import EmployeeSessionIdTransition
+from planner.tickets.contracts import (
+    EmployeeLaunchConfiguration,
+    EmployeeSessionIdTransition,
+)
 
 from .backend_catalog import EmployeeBackendCatalog
 from .contracts import (
@@ -73,6 +76,21 @@ class SqliteConversationBindingRepository:
             candidate,
             None,
             (),
+            None,
+        )
+
+    async def compare_and_swap_initial(
+        self,
+        candidate: ConversationSessionBinding,
+        prepared_employee_configuration: EmployeeLaunchConfiguration,
+    ) -> ConversationSessionBinding:
+        return await asyncio.to_thread(
+            self._compare_and_swap_sync,
+            None,
+            candidate,
+            None,
+            (),
+            prepared_employee_configuration,
         )
 
     async def compare_and_swap_compaction(
@@ -90,6 +108,7 @@ class SqliteConversationBindingRepository:
             candidate,
             expected_compaction_boundaries,
             candidate_compaction_boundaries,
+            None,
         )
 
     def is_backend_available(self, backend_key: str) -> bool:
@@ -105,9 +124,13 @@ class SqliteConversationBindingRepository:
     def _resolve_employee_sync(self, employee_id: str) -> ConversationEmployee:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
-            entity_kind, _mirror, selected_backend = self._classify_and_read_mirror(
-                conn, employee_id
-            )
+            (
+                entity_kind,
+                _mirror,
+                selected_backend,
+                employee_launch_model,
+                employee_launch_reasoning_effort,
+            ) = self._classify_and_read_mirror(conn, employee_id)
             binding = self._read_validated_binding(conn, employee_id)
             backend_key = binding.backend_key if binding is not None else selected_backend
             return ConversationEmployee(
@@ -116,6 +139,12 @@ class SqliteConversationBindingRepository:
                 entity_id=employee_id,
                 workspace_roots=(self._workspace_root,),
                 backend_key=backend_key,
+                employee_launch_model=(
+                    employee_launch_model if binding is None else None
+                ),
+                employee_launch_reasoning_effort=(
+                    employee_launch_reasoning_effort if binding is None else None
+                ),
             )
         finally:
             conn.close()
@@ -142,6 +171,7 @@ class SqliteConversationBindingRepository:
         candidate: ConversationSessionBinding,
         expected_compaction_boundaries: tuple[ConversationCompactionBoundaryProvenance, ...] | None,
         candidate_compaction_boundaries: tuple[ConversationCompactionBoundaryProvenance, ...],
+        prepared_employee_configuration: EmployeeLaunchConfiguration | None,
     ) -> ConversationSessionBinding:
         if expected is not None and expected.employee_id != candidate.employee_id:
             raise ConversationBindingError("binding CAS employee identity mismatch")
@@ -161,9 +191,13 @@ class SqliteConversationBindingRepository:
         conn = connect(self._db_path, self._busy_timeout_ms)
         conn.execute("BEGIN IMMEDIATE")
         try:
-            entity_kind, mirror_session, selected_backend = self._classify_and_read_mirror(
-                conn, candidate.employee_id
-            )
+            (
+                entity_kind,
+                mirror_session,
+                selected_backend,
+                employee_launch_model,
+                employee_launch_reasoning_effort,
+            ) = self._classify_and_read_mirror(conn, candidate.employee_id)
             self._require_registered_backend(candidate.backend_key)
             if candidate.backend_key != selected_backend:
                 raise ConversationBindingError(
@@ -193,7 +227,31 @@ class SqliteConversationBindingRepository:
                     raise ConversationBindingError(
                         "unbound employee already has a different product mirror"
                     )
+                if entity_kind == "ticket":
+                    actual_employee_configuration = EmployeeLaunchConfiguration(
+                        employee_backend=selected_backend,
+                        employee_launch_model=employee_launch_model,
+                        employee_launch_reasoning_effort=(
+                            employee_launch_reasoning_effort
+                        ),
+                    )
+                    if prepared_employee_configuration is None:
+                        raise ConversationBindingError(
+                            "first Ticket binding requires prepared employee configuration"
+                        )
+                    if actual_employee_configuration != prepared_employee_configuration:
+                        raise ConversationBindingError(
+                            "Ticket employee configuration changed before first binding"
+                        )
+                elif prepared_employee_configuration is not None:
+                    raise ConversationBindingError(
+                        "Chief binding cannot carry Ticket employee configuration"
+                    )
             else:
+                if prepared_employee_configuration is not None:
+                    raise ConversationBindingError(
+                        "replacement binding cannot carry launch configuration"
+                    )
                 if candidate.backend_key != expected.backend_key:
                     raise ConversationBindingError("replacement binding must preserve its backend")
                 if candidate.binding_generation != expected.binding_generation + 1:
@@ -302,9 +360,13 @@ class SqliteConversationBindingRepository:
         ).fetchone()
         if row is None:
             return None, ()
-        entity_kind, mirror_session, selected_backend = self._classify_and_read_mirror(
-            conn, employee_id
-        )
+        (
+            entity_kind,
+            mirror_session,
+            selected_backend,
+            _employee_launch_model,
+            _employee_launch_reasoning_effort,
+        ) = self._classify_and_read_mirror(conn, employee_id)
         if str(row["entity_kind"]) != entity_kind or str(row["entity_id"]) != employee_id:
             raise ConversationBindingError("binding entity metadata is inconsistent")
         if entity_kind == "ticket" and row["acp_session_id"] != mirror_session:
@@ -373,18 +435,27 @@ class SqliteConversationBindingRepository:
 
     def _classify_and_read_mirror(
         self, conn: sqlite3.Connection, employee_id: str
-    ) -> tuple[ConversationEntityKind, str | None, str]:
+    ) -> tuple[ConversationEntityKind, str | None, str, str | None, str | None]:
         ticket = conn.execute(
-            "SELECT employee_session_id, employee_backend FROM tickets WHERE id = ?",
+            "SELECT employee_session_id, employee_backend, employee_launch_model, "
+            "employee_launch_reasoning_effort FROM tickets WHERE id = ?",
             (employee_id,),
         ).fetchone()
         if ticket is not None:
             mirror = ticket["employee_session_id"]
             selected_backend = str(ticket["employee_backend"])
             self._require_registered_backend(selected_backend)
-            return "ticket", None if mirror is None else str(mirror), selected_backend
+            model = ticket["employee_launch_model"]
+            reasoning = ticket["employee_launch_reasoning_effort"]
+            return (
+                "ticket",
+                None if mirror is None else str(mirror),
+                selected_backend,
+                None if model is None else str(model),
+                None if reasoning is None else str(reasoning),
+            )
         if employee_id == CHIEF_OF_STAFF_ENTITY_ID:
-            return "agent", None, self._chief_backend_key
+            return "agent", None, self._chief_backend_key, None, None
         raise ValueError("employee must be an existing Ticket or the Chief of Staff")
 
     def _require_registered_backend(self, backend_key: str) -> None:

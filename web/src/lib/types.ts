@@ -65,6 +65,9 @@ export type TicketDetail = {
   title: string;
   worker_type: string;
   employee_backend: string;
+  employee_launch_model: string | null;
+  employee_launch_reasoning_effort: string | null;
+  employee_configuration_editable: boolean;
   stage: string;
   ceiling: string;
   at_cap: string;
@@ -85,6 +88,28 @@ export type TicketDetail = {
   blocker_summary?: BlockerSummary;
   recap?: string | null;
   fields: Record<string, TicketField>;
+};
+
+export type EmployeeConfigurationOption = {
+  value: string;
+  label: string;
+  description: string | null;
+};
+
+export type EmployeeConfigurationCatalog = {
+  employee_backend: string;
+  candidate_model: string | null;
+  native_model: string | null;
+  models: EmployeeConfigurationOption[];
+  reasoning_supported: boolean;
+  native_reasoning_effort: string | null;
+  reasoning_efforts: EmployeeConfigurationOption[];
+};
+
+export type EmployeeConfigurationSnapshot = {
+  employee_backend: string;
+  employee_launch_model: string | null;
+  employee_launch_reasoning_effort: string | null;
 };
 
 export type TicketDeletionResponse = {

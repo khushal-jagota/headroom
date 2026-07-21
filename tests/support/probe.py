@@ -52,8 +52,8 @@ PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     ),
     worker_profile=WorkerProfile(
         specialist_skill=PROBE_SPECIALIST_SKILL,
-        model=None,
-        reasoning_effort=None,
+        default_employee_model="probe-model",
+        default_employee_reasoning_effort="probe-high",
         toolset_profile="default",
         default_employee_backend="probe-backend",
     ),

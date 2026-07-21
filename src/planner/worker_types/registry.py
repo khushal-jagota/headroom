@@ -192,6 +192,18 @@ def _validate_definition(
         )
 
     employee_backend_catalog.require_registered(definition.worker_profile.default_employee_backend)
+    for field_name, value in (
+        ("default_employee_model", definition.worker_profile.default_employee_model),
+        (
+            "default_employee_reasoning_effort",
+            definition.worker_profile.default_employee_reasoning_effort,
+        ),
+    ):
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise fail(
+                f"{field_name} must be null or a non-empty string",
+                {"worker_type": worker_type, field_name: value},
+            )
 
     if type(definition.supports_prefix_reconciliation) is not bool:
         raise fail(
@@ -288,4 +300,8 @@ class WorkerTypeRegistry:
             "default_ceiling": definition.default_ceiling(),
             "worker_profile_id": definition.worker_profile.specialist_skill,
             "default_employee_backend": (definition.worker_profile.default_employee_backend),
+            "default_employee_model": definition.worker_profile.default_employee_model,
+            "default_employee_reasoning_effort": (
+                definition.worker_profile.default_employee_reasoning_effort
+            ),
         }

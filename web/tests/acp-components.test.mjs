@@ -18,16 +18,25 @@ const indexPath = join(webRoot, "tests", `.acp07-component-index-${process.pid}.
 let serverProcess;
 
 const ticketRouteSource = await readFile(new URL("../src/routes/TicketRoute.svelte", import.meta.url), "utf8");
-assert.match(ticketRouteSource, /manifest\.data\?\.employee_backends[^]*\.map\(\(backend\)/);
-assert.match(ticketRouteSource, /keyLabel="worker"[^]*options=\{employeeBackendOptions\}/);
-assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/employee-backend/);
-assert.match(ticketRouteSource, /body: \{ employee_backend: employeeBackend \}/);
+const employeeConfigurationSource = await readFile(
+  new URL("../src/components/EmployeeConfigurationSetup.svelte", import.meta.url),
+  "utf8",
+);
+assert.match(ticketRouteSource, /<EmployeeConfigurationSetup/);
+assert.match(ticketRouteSource, /beforeApproval=\{name === "kickoff" && detail\.employee_configuration_editable/);
+assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/employee-configuration/);
 assert.match(ticketRouteSource, /kind: "ticketChanged", ticketId: stableId/);
-assert.match(ticketRouteSource, /stage === "needs_kickoff"/);
-assert.match(ticketRouteSource, /\["awaiting_approval", "empty"\]/);
-assert.match(ticketRouteSource, /employee_session_id === null/);
-assert.match(ticketRouteSource, /deferInitialAttach=\{pristineKickoff\}/);
+assert.match(ticketRouteSource, /deferInitialAttach=\{detail\.employee_configuration_editable\}/);
+assert.doesNotMatch(ticketRouteSource, /pristineKickoff|employeeBackendOptions|\/employee-backend/);
+assert.match(employeeConfigurationSource, /employee_launch_model/);
+assert.match(employeeConfigurationSource, /employee_launch_reasoning_effort/);
+assert.match(employeeConfigurationSource, /employee-configuration-catalog/);
+assert.match(employeeConfigurationSource, /query\.set\("candidate_model", model\)/);
+assert.match(employeeConfigurationSource, /AbortController/);
+assert.match(employeeConfigurationSource, /requestGeneration/);
+assert.match(employeeConfigurationSource, /data-employee-configuration-retry/);
 assert.doesNotMatch(ticketRouteSource, /["'](?:hermes|codex|claude(?: code)?)["']/i);
+assert.doesNotMatch(employeeConfigurationSource, /["'](?:hermes|codex|claude(?: code)?)["']/i);
 assert.doesNotMatch(ticketRouteSource, /<style>|settings|employee backend|ACP backend/i);
 
 for (const fileName of [

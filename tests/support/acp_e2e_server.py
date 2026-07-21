@@ -20,6 +20,9 @@ from planner.conversation.backend_contracts import (
     ReverseServiceCapabilities,
 )
 from planner.conversation.composition import ConversationTestOptions
+from planner.conversation.employee_configuration import (
+    StableAcpEmployeeSessionConfigurationAdapter,
+)
 from planner.conversation.sdk_child import SdkAcpEmployeeChildFactory
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -60,6 +63,9 @@ def _scripted_definition(backend_key: str) -> AgentBackendDefinition:
             "ACP_TEST_PROMPT_AUDIT_UDP",
             "ACP_TEST_PROMPT_RELEASE_UDP",
             "ACP_TEST_MALFORMED_DURING_PROMPT",
+            "ACP_TEST_CONFIG_AUDIT_PATH",
+            "ACP_TEST_CONFIG_FAIL",
+            "ACP_TEST_CONFIG_DISAPPEAR_REASONING",
         ),
         environment_overrides=(),
         expected_agent_name="panels-scripted-agent",
@@ -77,7 +83,14 @@ def build_scripted_employee_runtime_definitions() -> ConfiguredEmployeeRuntimeDe
         tuple(
             static_employee_backend_registration(
                 definition,
-                SdkAcpEmployeeChildFactory(definition),
+                (factory := SdkAcpEmployeeChildFactory(definition)),
+                employee_configuration_adapter=(
+                    StableAcpEmployeeSessionConfigurationAdapter(
+                        definition=definition,
+                        child_factory=factory,
+                        workspace_root=REPOSITORY_ROOT,
+                    )
+                ),
             )
             for definition in definitions
         )

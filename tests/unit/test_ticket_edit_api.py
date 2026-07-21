@@ -7,6 +7,7 @@ import threading
 from collections.abc import Iterator
 from pathlib import Path
 from sqlite3 import Connection
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -20,6 +21,10 @@ from tests.support.probe import (
 
 from planner.conversation import sqlite_binding_repository as binding_repository_module
 from planner.conversation.contracts import ConversationSessionBinding
+from planner.conversation.employee_configuration import (
+    EmployeeConfigurationCatalog,
+    EmployeeConfigurationCatalogOption,
+)
 from planner.conversation.sqlite_binding_repository import SqliteConversationBindingRepository
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -31,7 +36,7 @@ from planner.days import data as days_data
 from planner.runtime import automatic_employee_step_eligibility
 from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, AtCap
+from planner.tickets.contracts import NO_FURTHER, AtCap, EmployeeLaunchConfiguration
 from planner.worker_context import data as worker_context_data
 
 
@@ -131,6 +136,8 @@ def _snapshot(db_path: Path, ticket_id: str) -> dict[str, Any]:
                 ticket.project_id,
                 ticket.sprint_id,
                 ticket.employee_backend,
+                ticket.employee_launch_model,
+                ticket.employee_launch_reasoning_effort,
                 str(ticket.stage),
                 ticket.ticket_status.value,
             ),
@@ -149,7 +156,19 @@ def _snapshot(db_path: Path, ticket_id: str) -> dict[str, Any]:
         conn.close()
 
 
-def test_ticket_create_backend_default_override_and_unknown_before_mutation(
+def _employee_configuration_body(
+    employee_backend: str,
+    employee_launch_model: str | None = None,
+    employee_launch_reasoning_effort: str | None = None,
+) -> dict[str, object]:
+    return {
+        "employee_backend": employee_backend,
+        "employee_launch_model": employee_launch_model,
+        "employee_launch_reasoning_effort": employee_launch_reasoning_effort,
+    }
+
+
+def test_ticket_creation_copies_worker_type_configuration_once(
     tmp_path: Path,
     probe_runtime: None,
 ) -> None:
@@ -183,8 +202,12 @@ def test_ticket_create_backend_default_override_and_unknown_before_mutation(
 
     assert defaulted.status_code == 200
     assert defaulted.json()["employee_backend"] == "probe-backend"
+    assert defaulted.json()["employee_launch_model"] == "probe-model"
+    assert defaulted.json()["employee_launch_reasoning_effort"] == "probe-high"
     assert overridden.status_code == 200
     assert overridden.json()["employee_backend"] == "hermes"
+    assert overridden.json()["employee_launch_model"] is None
+    assert overridden.json()["employee_launch_reasoning_effort"] is None
     assert rejected.status_code == 400
     assert rejected.json()["error"]["code"] == "validation"
     check = connect(str(db_path))
@@ -209,7 +232,7 @@ def test_ticket_create_backend_default_override_and_unknown_before_mutation(
         check.close()
 
 
-def test_employee_backend_endpoint_allows_pristine_statuses_and_emits_exact_event(
+def test_employee_configuration_endpoint_allows_pristine_statuses_and_emits_exact_event(
     tmp_path: Path,
     probe_runtime: None,
 ) -> None:
@@ -222,16 +245,18 @@ def test_employee_backend_endpoint_allows_pristine_statuses_and_emits_exact_even
 
     with TestClient(app) as client:
         awaiting = client.put(
-            f"/api/tickets/{awaiting_id}/employee-backend",
-            json={"employee_backend": "hermes"},
+            f"/api/tickets/{awaiting_id}/employee-configuration",
+            json=_employee_configuration_body("hermes"),
         )
         empty = client.put(
-            f"/api/tickets/{empty_id}/employee-backend",
-            json={"employee_backend": "hermes"},
+            f"/api/tickets/{empty_id}/employee-configuration",
+            json=_employee_configuration_body("hermes"),
         )
 
     assert awaiting.status_code == empty.status_code == 200
     assert awaiting.json()["employee_backend"] == empty.json()["employee_backend"] == "hermes"
+    assert awaiting.json()["employee_configuration_editable"] is True
+    assert empty.json()["employee_configuration_editable"] is True
     check = connect(str(db_path))
     try:
         for ticket_id in (awaiting_id, empty_id):
@@ -242,16 +267,154 @@ def test_employee_backend_endpoint_allows_pristine_statuses_and_emits_exact_even
             ]
             assert [event.payload for event in events] == [
                 {
-                    "field": "employee_backend",
-                    "from": "probe-backend",
-                    "to": "hermes",
+                    "field": "employee_configuration",
+                    "from": _employee_configuration_body(
+                        "probe-backend", "probe-model", "probe-high"
+                    ),
+                    "to": _employee_configuration_body("hermes"),
                 }
             ]
     finally:
         check.close()
 
 
-def test_employee_backend_same_value_is_noop_even_after_freeze(
+def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
+    tmp_path: Path,
+    probe_runtime: None,
+) -> None:
+    class CatalogService:
+        async def catalog(self, employee_backend: str, candidate_model: str | None):
+            reasoning_values = ("low",) if candidate_model == "probe-b" else ("low", "high")
+            return SimpleNamespace(
+                models=tuple(
+                    SimpleNamespace(value=value) for value in ("probe-a", "probe-b")
+                ),
+                reasoning_supported=True,
+                reasoning_efforts=tuple(
+                    SimpleNamespace(value=value) for value in reasoning_values
+                ),
+            )
+
+    app, db_path = _make_app(tmp_path)
+    app.state.conversation = SimpleNamespace(
+        employee_configuration_catalog=CatalogService()
+    )
+    ticket_id = _create_pristine_ticket(db_path)
+
+    with TestClient(app) as client:
+        selected = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("probe-backend", "probe-a", "high"),
+        )
+        model_changed = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("probe-backend", "probe-b", "high"),
+        )
+        backend_changed = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("hermes", "not-a-hermes-model", "extreme"),
+        )
+        switched_back = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("probe-backend", "probe-a", "high"),
+        )
+
+    assert selected.status_code == 200
+    assert (
+        selected.json()["employee_launch_model"],
+        selected.json()["employee_launch_reasoning_effort"],
+    ) == ("probe-a", "high")
+    assert model_changed.status_code == 200
+    assert (
+        model_changed.json()["employee_launch_model"],
+        model_changed.json()["employee_launch_reasoning_effort"],
+    ) == ("probe-b", None)
+    assert backend_changed.status_code == 200
+    assert (
+        backend_changed.json()["employee_backend"],
+        backend_changed.json()["employee_launch_model"],
+        backend_changed.json()["employee_launch_reasoning_effort"],
+    ) == ("hermes", None, None)
+    assert switched_back.status_code == 200
+    assert (
+        switched_back.json()["employee_backend"],
+        switched_back.json()["employee_launch_model"],
+        switched_back.json()["employee_launch_reasoning_effort"],
+    ) == ("probe-backend", None, None)
+
+
+def test_employee_configuration_catalog_failure_is_a_retryable_product_error(
+    tmp_path: Path,
+    probe_runtime: None,
+) -> None:
+    class FailingCatalogService:
+        async def catalog(self, employee_backend: str, candidate_model: str | None):
+            del employee_backend, candidate_model
+            raise RuntimeError("private adapter failure")
+
+    app, _db_path = _make_app(tmp_path)
+    app.state.conversation = SimpleNamespace(
+        employee_configuration_catalog=FailingCatalogService()
+    )
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/employee-configuration-catalog",
+            params={"employee_backend": "probe-backend"},
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {
+            "code": "gateway_offline",
+            "message": "employee configuration catalog is unavailable",
+            "detail": {},
+        }
+    }
+    assert "private adapter failure" not in response.text
+
+
+def test_employee_configuration_catalog_endpoint_serves_the_exact_product_shape(
+    tmp_path: Path,
+    probe_runtime: None,
+) -> None:
+    expected = EmployeeConfigurationCatalog(
+        employee_backend="probe-backend",
+        candidate_model="probe-model",
+        native_model="probe-native",
+        models=(EmployeeConfigurationCatalogOption(value="probe-model", label="Probe"),),
+        reasoning_supported=True,
+        native_reasoning_effort="probe-high",
+        reasoning_efforts=(
+            EmployeeConfigurationCatalogOption(value="probe-high", label="High"),
+        ),
+    )
+
+    class CatalogService:
+        async def catalog(self, employee_backend: str, candidate_model: str | None):
+            assert (employee_backend, candidate_model) == (
+                "probe-backend",
+                "probe-model",
+            )
+            return expected
+
+    app, _db_path = _make_app(tmp_path)
+    app.state.conversation = SimpleNamespace(
+        employee_configuration_catalog=CatalogService()
+    )
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/employee-configuration-catalog",
+            params={
+                "employee_backend": "probe-backend",
+                "candidate_model": "probe-model",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == expected.model_dump(mode="json")
+
+
+def test_employee_configuration_noop_after_freeze_emits_nothing(
     tmp_path: Path,
     probe_runtime: None,
 ) -> None:
@@ -261,11 +424,14 @@ def test_employee_backend_same_value_is_noop_even_after_freeze(
 
     with TestClient(app) as client:
         response = client.put(
-            f"/api/tickets/{ticket_id}/employee-backend",
-            json={"employee_backend": "probe-backend"},
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body(
+                "probe-backend", "probe-model", "probe-high"
+            ),
         )
 
     assert response.status_code == 200
+    assert response.json()["employee_configuration_editable"] is False
     assert _snapshot(db_path, ticket_id) == before
 
 
@@ -280,7 +446,7 @@ def test_employee_backend_same_value_is_noop_even_after_freeze(
         ("UPDATE tickets SET employee_session_id = 'session-existing' WHERE id = ?", ()),
     ),
 )
-def test_employee_backend_change_rejects_after_each_ticket_freeze_boundary(
+def test_employee_configuration_change_rejects_every_pristine_freeze_boundary(
     tmp_path: Path,
     probe_runtime: None,
     mutation_sql: str,
@@ -295,15 +461,15 @@ def test_employee_backend_change_rejects_after_each_ticket_freeze_boundary(
 
     with TestClient(app) as client:
         response = client.put(
-            f"/api/tickets/{ticket_id}/employee-backend",
-            json={"employee_backend": "hermes"},
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("hermes"),
         )
 
     assert response.status_code == 409
     assert _snapshot(db_path, ticket_id) == before
 
 
-def test_employee_backend_change_rejects_after_binding_and_endpoint_is_direct_exact_body(
+def test_employee_configuration_endpoint_requires_the_exact_complete_nullable_body(
     tmp_path: Path,
     probe_runtime: None,
 ) -> None:
@@ -322,37 +488,60 @@ def test_employee_backend_change_rejects_after_binding_and_endpoint_is_direct_ex
 
     with TestClient(app) as client:
         bound = client.put(
-            f"/api/tickets/{ticket_id}/employee-backend",
-            json={"employee_backend": "hermes"},
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("hermes"),
         )
         indirect = client.put(
-            f"/api/tickets/{ticket_id}/employee-backend",
-            json={"employee_backend": "probe-backend"},
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("probe-backend"),
             headers={"X-Plan-Actor": "worker"},
         )
         extra = client.put(
-            f"/api/tickets/{ticket_id}/employee-backend",
-            json={"employee_backend": "probe-backend", "extra": True},
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json={**_employee_configuration_body("probe-backend"), "extra": True},
         )
         unknown = client.put(
-            f"/api/tickets/{ticket_id}/employee-backend",
-            json={"employee_backend": "missing-backend"},
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("missing-backend"),
         )
+        missing = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json={"employee_backend": "probe-backend"},
+        )
+        wrong_nullable_type = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json={
+                **_employee_configuration_body("probe-backend"),
+                "employee_launch_model": 42,
+            },
+        )
+        detail = client.get(f"/api/tickets/{ticket_id}")
 
     assert bound.status_code == 409
     assert indirect.status_code == 400
     assert indirect.json()["error"]["code"] == "agent_forbidden"
     assert extra.status_code == 400
     assert unknown.status_code == 400
+    assert missing.status_code == 400
+    assert wrong_nullable_type.status_code == 400
+    assert detail.status_code == 200
+    assert detail.json()["employee_configuration_editable"] is False
     assert _snapshot(db_path, ticket_id) == before
 
 
-def test_employee_backend_writer_and_first_binding_races_never_persist_a_mismatch(
+def test_employee_configuration_writer_and_first_binding_race_in_both_commit_orders(
     tmp_path: Path,
     probe_runtime: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def prepare(name: str) -> tuple[Path, str, ConversationSessionBinding]:
+    def prepare(
+        name: str,
+    ) -> tuple[
+        Path,
+        str,
+        ConversationSessionBinding,
+        EmployeeLaunchConfiguration,
+    ]:
         db_path = tmp_path / f"{name}.db"
         conn = connect(str(db_path))
         create_schema(conn)
@@ -364,6 +553,7 @@ def test_employee_backend_writer_and_first_binding_races_never_persist_a_mismatc
             now=1,
             title_max_chars=200,
         )
+        prepared_configuration = tickets_data.employee_launch_configuration(ticket)
         conn.close()
         return (
             db_path,
@@ -374,9 +564,15 @@ def test_employee_backend_writer_and_first_binding_races_never_persist_a_mismatc
                 backend_key="probe-backend",
                 binding_generation=1,
             ),
+            prepared_configuration,
         )
 
-    writer_first_path, writer_first_id, writer_first_candidate = prepare("writer-first")
+    (
+        writer_first_path,
+        writer_first_id,
+        writer_first_candidate,
+        writer_first_prepared,
+    ) = prepare("writer-first")
     cas_waiting = threading.Event()
     release_cas = threading.Event()
     real_binding_connect = binding_repository_module.connect
@@ -408,7 +604,12 @@ def test_employee_backend_writer_and_first_binding_races_never_persist_a_mismatc
 
         def bind_after_writer() -> None:
             try:
-                asyncio.run(writer_first_repository.compare_and_swap(None, writer_first_candidate))
+                asyncio.run(
+                    writer_first_repository.compare_and_swap_initial(
+                        writer_first_candidate,
+                        writer_first_prepared,
+                    )
+                )
             except BaseException as error:
                 cas_errors.append(error)
 
@@ -416,11 +617,17 @@ def test_employee_backend_writer_and_first_binding_races_never_persist_a_mismatc
         cas_thread.start()
         assert cas_waiting.wait(2)
         writer_conn = connect(str(writer_first_path))
-        tickets_data.write_employee_backend(
+        tickets_data.write_employee_configuration(
             writer_conn,
             writer_first_id,
+            expected_employee_configuration=writer_first_prepared,
             employee_backend="hermes",
+            employee_launch_model=None,
+            employee_launch_reasoning_effort=None,
             employee_backend_catalog=PROBE_EMPLOYEE_BACKEND_CATALOG,
+            advertised_models=None,
+            reasoning_supported=None,
+            advertised_reasoning_efforts=None,
             now=2,
         )
         writer_conn.close()
@@ -430,10 +637,14 @@ def test_employee_backend_writer_and_first_binding_races_never_persist_a_mismatc
     assert len(cas_errors) == 1
     writer_first_check = connect(str(writer_first_path))
     assert (
-        writer_first_check.execute(
-            "SELECT employee_backend FROM tickets WHERE id = ?", (writer_first_id,)
-        ).fetchone()[0]
-        == "hermes"
+        tuple(
+            writer_first_check.execute(
+                "SELECT employee_backend, employee_launch_model, "
+                "employee_launch_reasoning_effort FROM tickets WHERE id = ?",
+                (writer_first_id,),
+            ).fetchone()
+        )
+        == ("hermes", None, None)
     )
     assert (
         writer_first_check.execute(
@@ -444,7 +655,12 @@ def test_employee_backend_writer_and_first_binding_races_never_persist_a_mismatc
     )
     writer_first_check.close()
 
-    binding_first_path, binding_first_id, binding_first_candidate = prepare("binding-first")
+    (
+        binding_first_path,
+        binding_first_id,
+        binding_first_candidate,
+        binding_first_prepared,
+    ) = prepare("binding-first")
     writer_waiting = threading.Event()
     release_writer = threading.Event()
     writer_paused = False
@@ -462,11 +678,17 @@ def test_employee_backend_writer_and_first_binding_races_never_persist_a_mismatc
         writer_conn = connect(str(binding_first_path))
         writer_conn.set_trace_callback(pause_writer)
         try:
-            tickets_data.write_employee_backend(
+            tickets_data.write_employee_configuration(
                 writer_conn,
                 binding_first_id,
+                expected_employee_configuration=binding_first_prepared,
                 employee_backend="hermes",
+                employee_launch_model=None,
+                employee_launch_reasoning_effort=None,
                 employee_backend_catalog=PROBE_EMPLOYEE_BACKEND_CATALOG,
+                advertised_models=None,
+                reasoning_supported=None,
+                advertised_reasoning_efforts=None,
                 now=2,
             )
         except BaseException as error:
@@ -485,7 +707,12 @@ def test_employee_backend_writer_and_first_binding_races_never_persist_a_mismatc
         chief_backend_key="hermes",
     )
     assert (
-        asyncio.run(binding_first_repository.compare_and_swap(None, binding_first_candidate))
+        asyncio.run(
+            binding_first_repository.compare_and_swap_initial(
+                binding_first_candidate,
+                binding_first_prepared,
+            )
+        )
         == binding_first_candidate
     )
     release_writer.set()
@@ -494,12 +721,19 @@ def test_employee_backend_writer_and_first_binding_races_never_persist_a_mismatc
     assert len(writer_errors) == 1
     binding_first_check = connect(str(binding_first_path))
     row = binding_first_check.execute(
-        "SELECT tickets.employee_backend, conversation_session_bindings.backend_key "
+        "SELECT tickets.employee_backend, tickets.employee_launch_model, "
+        "tickets.employee_launch_reasoning_effort, "
+        "conversation_session_bindings.backend_key "
         "FROM tickets JOIN conversation_session_bindings "
         "ON conversation_session_bindings.employee_id = tickets.id WHERE tickets.id = ?",
         (binding_first_id,),
     ).fetchone()
-    assert tuple(row) == ("probe-backend", "probe-backend")
+    assert tuple(row) == (
+        "probe-backend",
+        binding_first_prepared.employee_launch_model,
+        binding_first_prepared.employee_launch_reasoning_effort,
+        "probe-backend",
+    )
     binding_first_check.close()
 
 

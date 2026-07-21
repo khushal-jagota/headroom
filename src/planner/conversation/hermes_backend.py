@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Final
 
 from .backend_contracts import (
     AgentBackendDefinition,
@@ -12,6 +13,7 @@ from .backend_contracts import (
 )
 from .contracts import ConversationEmployee
 
+HERMES_BACKEND_KEY: Final = "hermes"
 HERMES_ACP_AGENT_VERSION = "0.18.2"
 HERMES_INHERITED_ENVIRONMENT_NAMES = (
     "HOME",
@@ -44,7 +46,7 @@ def build_hermes_acp_backend_definition(
     if hermes_executable.name != "hermes":
         raise ValueError("hermes_executable basename must be 'hermes'")
     return AgentBackendDefinition(
-        backend_key="hermes",
+        backend_key=HERMES_BACKEND_KEY,
         argv=(str(hermes_executable), "acp"),
         inherited_environment_names=HERMES_INHERITED_ENVIRONMENT_NAMES,
         environment_overrides=(
@@ -53,9 +55,7 @@ def build_hermes_acp_backend_definition(
         ),
         expected_agent_name="hermes-agent",
         expected_agent_version=HERMES_ACP_AGENT_VERSION,
-        turn_capabilities=BackendTurnCapabilities(
-            supports_steer=True, observes_compaction=True
-        ),
+        turn_capabilities=BackendTurnCapabilities(supports_steer=True, observes_compaction=True),
         reverse_service_capabilities=ReverseServiceCapabilities(
             filesystem=False, terminal=False, permission=True
         ),

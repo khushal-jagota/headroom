@@ -52,12 +52,12 @@ its old event lines are replaced by one minimal deletion audit.
   it moves through, and the resolution engine, scope, and approval gate that govern
   every advance. The correctness heart of the system.
 - **Worker types** (`worker-types.md`) — the registry that declares each workflow: one
-  Worker type's Stages, gates, fields, specialist skill, and default Employee backend.
-  A new Ticket may override that backend during pristine Kickoff; the engine and the
-  workers both read the stored choices instead of branching.
+  Worker type's Stages, gates, fields, specialist skill, and starting Employee backend,
+  model, and reasoning effort. A new Ticket copies those starting values once, then owns
+  its launch setup during pristine Kickoff.
 - **The employee runtime** (`employee-runtime.md`) — the single AI worker that
   carries each worker-owned ticket Stage forward, and the loop that fires it, watches
-  it, and feeds proposals back through the gate.
+  it, configures its first session, and feeds proposals back through the gate.
 - **Conversation** (`chat.md`) — the typed ACP pane shared by Ticket workers and the
   Chief of Staff, including the `hermes`, `codex`, and `claude` backends, live work,
   commands, permissions, and compaction state.
@@ -86,5 +86,5 @@ its old event lines are replaced by one minimal deletion audit.
 
 ---
 
-_Last verified: 2026-07-20 · Covers the system landscape; each doc carries its own
+_Last verified: 2026-07-21 · Covers the system landscape; each doc carries its own
 code paths._

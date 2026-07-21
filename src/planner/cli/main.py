@@ -624,9 +624,13 @@ def ticket_set(
     elif field == "employee-backend":
         data = http.send(
             "PUT",
-            f"/api/tickets/{ticket_id}/employee-backend",
+            f"/api/tickets/{ticket_id}/employee-configuration",
             as_json=as_json,
-            json_body={"employee_backend": new_value},
+            json_body={
+                "employee_backend": new_value,
+                "employee_launch_model": None,
+                "employee_launch_reasoning_effort": None,
+            },
             request_actor="ordinary",
         )
     else:

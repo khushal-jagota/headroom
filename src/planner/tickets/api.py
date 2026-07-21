@@ -24,6 +24,10 @@ from typing import Annotated, Any, cast
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import PlainTextResponse
 
+from planner.conversation.employee_configuration import (
+    EmployeeConfigurationCatalog,
+    EmployeeConfigurationCatalogService,
+)
 from planner.core import link_actions
 from planner.core.authctx import (
     RequestContext,
@@ -52,7 +56,8 @@ from planner.tickets.contracts import (
     AtCap,
     CreateTicketBody,
     CreateTicketFromExternalWorkBody,
-    EmployeeBackendBody,
+    EmployeeConfigurationBody,
+    EmployeeLaunchConfiguration,
     LinkBody,
     NoteBody,
     ProposeBody,
@@ -532,6 +537,56 @@ async def list_tickets(
     }
 
 
+def _employee_configuration_catalog_service(
+    request: Request,
+) -> EmployeeConfigurationCatalogService:
+    conversation = getattr(request.app.state, "conversation", None)
+    service = (
+        getattr(conversation, "employee_configuration_catalog", None)
+        if conversation is not None
+        else None
+    )
+    if service is None:
+        raise PlannerError(
+            ErrorCode.gateway_offline,
+            "employee configuration catalog is unavailable",
+            {},
+        )
+    return cast(EmployeeConfigurationCatalogService, service)
+
+
+async def _load_employee_configuration_catalog(
+    request: Request,
+    employee_backend: str,
+    candidate_model: str | None,
+) -> EmployeeConfigurationCatalog:
+    service = _employee_configuration_catalog_service(request)
+    try:
+        return await service.catalog(employee_backend, candidate_model)
+    except PlannerError:
+        raise
+    except Exception as error:
+        raise PlannerError(
+            ErrorCode.gateway_offline,
+            "employee configuration catalog is unavailable",
+            {},
+        ) from error
+
+
+@router.get("/employee-configuration-catalog")
+async def get_employee_configuration_catalog(
+    request: Request,
+    employee_backend: str,
+    candidate_model: str | None = None,
+) -> JsonDict:
+    definitions = configured_employee_runtime_definitions()
+    registered_backend = definitions.employee_backend_catalog.require_registered(employee_backend)
+    catalog = await _load_employee_configuration_catalog(
+        request, registered_backend, candidate_model
+    )
+    return catalog.model_dump(mode="json")
+
+
 @router.get("/tickets/{ticket_id}/worker-self")
 async def get_worker_self_ticket(
     ticket_id: str,
@@ -572,31 +627,74 @@ async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk) -> JsonDict:
     return tickets_views.ticket_detail(conn, ticket_id, clk.now_unix())
 
 
-@router.put("/tickets/{ticket_id}/employee-backend")
-async def put_ticket_employee_backend(
+@router.put("/tickets/{ticket_id}/employee-configuration")
+async def put_ticket_employee_configuration(
     ticket_id: str,
     raw: dict[str, Any],
+    request: Request,
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
     require_direct_write(ctx)
-    if set(raw) != {"employee_backend"}:
+    required_keys = {
+        "employee_backend",
+        "employee_launch_model",
+        "employee_launch_reasoning_effort",
+    }
+    if set(raw) != required_keys:
         raise PlannerError(
             ErrorCode.validation,
-            "employee backend update requires exactly employee_backend",
+            "Employee configuration update requires the exact complete body",
             {},
         )
-    body = EmployeeBackendBody(employee_backend=body_str(raw, "employee_backend"))
+    body = EmployeeConfigurationBody(
+        employee_backend=body_str(raw, "employee_backend"),
+        employee_launch_model=body_opt_str(raw, "employee_launch_model"),
+        employee_launch_reasoning_effort=body_opt_str(
+            raw, "employee_launch_reasoning_effort"
+        ),
+    )
     definitions = configured_employee_runtime_definitions()
-    ticket = tickets_data.write_employee_backend(
+    expected = tickets_data.employee_launch_configuration(
+        tickets_data.read_ticket(conn, ticket_id)
+    )
+    registered_backend = definitions.employee_backend_catalog.require_registered(
+        body["employee_backend"]
+    )
+    advertised_models: frozenset[str] | None = None
+    reasoning_supported: bool | None = None
+    advertised_reasoning_efforts: frozenset[str] | None = None
+    candidate = EmployeeLaunchConfiguration(
+        employee_backend=registered_backend,
+        employee_launch_model=body["employee_launch_model"],
+        employee_launch_reasoning_effort=body["employee_launch_reasoning_effort"],
+    )
+    if registered_backend == expected.employee_backend and candidate != expected:
+        catalog = await _load_employee_configuration_catalog(
+            request,
+            registered_backend,
+            body["employee_launch_model"],
+        )
+        advertised_models = frozenset(option.value for option in catalog.models)
+        reasoning_supported = catalog.reasoning_supported
+        advertised_reasoning_efforts = frozenset(
+            option.value for option in catalog.reasoning_efforts
+        )
+    ticket = tickets_data.write_employee_configuration(
         conn,
         ticket_id,
+        expected_employee_configuration=expected,
         employee_backend=body["employee_backend"],
+        employee_launch_model=body["employee_launch_model"],
+        employee_launch_reasoning_effort=body["employee_launch_reasoning_effort"],
         employee_backend_catalog=definitions.employee_backend_catalog,
+        advertised_models=advertised_models,
+        reasoning_supported=reasoning_supported,
+        advertised_reasoning_efforts=advertised_reasoning_efforts,
         now=clk.now_unix(),
     )
-    return tickets_views.ticket_json(ticket, clk.now_unix())
+    return tickets_views.ticket_detail(conn, ticket.id, clk.now_unix())
 
 
 @router.delete("/tickets/{ticket_id}")
