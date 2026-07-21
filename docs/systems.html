@@ -543,8 +543,8 @@
           <p class="eyebrow">Planning v2</p>
           <h1>Systems map</h1>
           <p class="lead">
-            One source of truth, a human approval gate, a worker runtime, and a few
-            places where the boundaries are less clean than the design intent.
+            One planning record, one human approval gate, one Automatic Employee
+            runtime, and one ACP conversation system.
           </p>
           <div class="meta" aria-label="Document facts">
             <span class="pill">SQLite is canonical</span>
@@ -591,7 +591,7 @@
             </li>
             <li>
               <strong>EmployeeStepRunner</strong>
-              <span>one Hermes worker step</span>
+              <span>one ACP worker step</span>
             </li>
           </ol>
         </div>
@@ -617,8 +617,8 @@
             <span>Employee Runtime. AutomaticEmployeeStepDiscoveryLoop checks Automatic Employee-step eligibility; EmployeeStepRunner runs one worker step.</span>
           </li>
           <li>
-            <strong>Where is chat?</strong>
-            <span>Panels stores visible Chat; Hermes owns explicit Employee session history.</span>
+            <strong>Where is conversation?</strong>
+            <span>ACP typed replay and live updates share one durable Employee session.</span>
           </li>
           <li>
             <strong>Why did UI update?</strong>
@@ -715,10 +715,11 @@
                 Stage ownership decides who drives the current Stage: worker, user, or
                 paired. Worker-owned Stages can be discovered automatically, user-owned
                 Stages rest in user takeover, and paired Stages get one automatic opening
-                turn before ordinary Ticket Chat continues the same Employee session.
-                Any real paired proposal parks for approval. Execution route
-                is separate: Panels worker, Hermes with Codex, Hermes with Claude, or no
-                route.
+                turn before human conversation continues the same Employee session.
+                Any real paired proposal parks for approval. The Worker type selects a
+                default backend key. During pristine Kickoff, the Ticket may instead select
+                <code>hermes</code>, <code>codex</code>, or <code>claude</code>. A session,
+                binding, or move beyond Kickoff freezes that stored choice.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/tickets/contracts.py</code>,
@@ -737,47 +738,35 @@
             <div class="detail-body">
               <p>
                 One complete decision owns <strong>Automatic Employee-step eligibility</strong>.
-                It returns yes only when all nine facts hold:
+                It returns yes only when the Ticket is on the planning day, its current
+                Stage and ownership allow automatic work, no proposal or blocker prevents
+                work, scope permits the next proposal, and no Employee step is already running.
               </p>
-              <ol>
-                <li>The Ticket belongs to the supplied <code>planning_day_id</code> — today's day during automatic discovery.</li>
-                <li>Its current Stage's effective ownership is <code>worker</code> or <code>paired</code>.</li>
-                <li>Its <code>ticket_status</code> is <code>empty</code>, or it is a compatibility <code>paired_work</code> row whose current paired Stage has no later worker-step opening-start event in event history.</li>
-                <li>Its Stage is not terminal.</li>
-                <li>Its Stage has a next gated field.</li>
-                <li>That field has no parked proposal.</li>
-                <li>Its <code>ceiling</code> and <code>at_cap</code> allow another proposal; the Ticket is not at or beyond a stopping ceiling.</li>
-                <li>It has no active blocker.</li>
-                <li>It has no running Panels Chat turn, from either a human or an Employee step.</li>
-              </ol>
               <p>
                 AutomaticEmployeeStepDiscoveryLoop is read-only and advisory. It selects
                 only Tickets that belong to today's day, then calls the complete decision for
-                each membership candidate. It does not claim Tickets, write state, or contact Hermes.
+                each membership candidate. It does not claim Tickets, write state, or contact
+                the ACP backend.
               </p>
               <p>
                 EmployeeStepRunner separately owns one worker step. Its final claim starts
                 <code>BEGIN IMMEDIATE</code>, reloads the Ticket and its Worker type definition,
                 resolves the planning day inside the transaction, and calls the same complete
-                decision. A stale discovery result cannot change status, create chat state,
-                call the gateway, or build a prompt. After a successful claim, the runner marks
-                the Ticket running, resumes or creates its durable
-                <code>employee_session_id</code>, submits one prompt through that Hermes
-                conversation, and settles runtime status when the turn ends. Inactive
-                settlement derives the next resting status from the current Stage's
-                effective owner.
+                decision. A stale discovery result cannot change status, create a run, call
+                the gateway, or build a prompt. After a successful claim, the runner creates
+                one running <code>employee_step_runs</code> row and sends the step through
+                <code>AcpStepGateway</code>.
               </p>
               <p>
-                Human Chat admission and the final Employee claim both use SQLite's
-                write lock and recheck the opposing fact inside the transaction. A human
-                turn that wins makes the Employee claim a no-op. An Employee claim that
-                wins first makes human admission fail without creating a visible message
-                or turn.
+                <code>employee_step_runs</code> is correctness state only: identity, status,
+                exact Employee session, error, and timestamps. It stores no prompt, reply,
+                transcript, activity, usage, image, tool, or browser state. One partial index
+                permits at most one running step per Ticket.
               </p>
               <p>
-                A direct requested revision bypasses Automatic Employee-step eligibility and
-                planning-day resolution, uses a reserved runner handoff, and strictly resumes
-                the Ticket's stored <code>employee_session_id</code>.
+                The gateway prepares pending worker context into the actual model prompt
+                before ACP delivery. It acknowledges exact context revisions only after ACP
+                admits the prompt. A correctness row or event is never model context.
               </p>
               <p>
                 Ticket, Day membership, and blocking-link actions commit first, then call
@@ -788,17 +777,13 @@
                 <code>LoopAutomaticEmployeeStepEligibilityWake</code>; processes without the lock receive
                 <code>NoOpAutomaticEmployeeStepEligibilityWake</code>.
               </p>
-              <p>
-                Chat completion, Chat error, and Pause do not send an eligibility wake.
-                They only settle the visible Chat turn. The next SQLite-backed periodic
-                scan observes that the running-chat factor has cleared and may run the
-                Ticket only if ownership and every other condition allow it.
-              </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/runtime/automatic_employee_step_eligibility.py</code>,
                 <code>src/planner/runtime/automatic_employee_step_discovery_loop.py</code>,
                 <code>src/planner/runtime/automatic_employee_step_eligibility_wake.py</code>,
                 <code>src/planner/runtime/employee_step_runner.py</code>,
+                <code>src/planner/runtime/acp_step_gateway.py</code>,
+                <code>src/planner/runtime/employee_step_repository.py</code>,
                 <code>src/planner/tickets/actions.py</code>,
                 <code>src/planner/days/actions.py</code>,
                 <code>src/planner/core/link_actions.py</code>,
@@ -810,50 +795,54 @@
           <details>
             <summary>
               <span class="number">05</span>
-              <span><strong>The Hermes Gateway System</strong><span>The outside worker process boundary.</span></span>
+              <span><strong>The ACP Conversation System</strong><span>One durable session for human and Automatic Employee prompts.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                Hermes is outside the planner. Production startup installs a shared
-                gateway owner on app state. That owner spawns the gateway child
-                lazily on first use. Tests use fake adapters and never call the
-                real gateway.
+                <code>ConversationComposition</code> owns the Employee registry,
+                typed publication hub, turn broker, permission broker, durable binding
+                repository, and the Automatic Employee step gateway. The server is the
+                ACP client and uses the official ACP client library; an agent backend runs
+                as a child process over ACP standard input and output.
               </p>
               <p>
-                Each Ticket stores an <code>employee_session_id</code>. Human Ticket Chat,
-                automatic Employee steps, and revisions all deliver through that durable
-                Hermes conversation. Days and top-level-agent Chat keep their separate,
-                Chat-specific <code>chat_session_key</code>. A later operation or process
-                restart resumes the stored identity instead of replaying input.
+                <code>conversation_session_bindings</code> is the durable owner of ACP
+                session identity. A Ticket mirrors that id in
+                <code>tickets.employee_session_id</code>; the Chief has no second mirror.
+                Human prompts, Automatic Employee steps, and revision guidance all reach
+                the same binding and resume it after restart.
               </p>
               <p>
-                Panels owns product-visible state in <code>chat_messages</code> and
-                <code>chat_turns</code>. Reading <code>ChatState</code> never contacts
-                Hermes or merges Employee history. The direct Ticket route
-                <code>GET /api/tickets/{ticket_id}/employee-session-history</code>
-                explicitly returns the authoritative Hermes record. It may include
-                internal context, revision guidance, system or tool content, or other
-                material intentionally absent from Panels Chat.
+                The turn broker owns active work, Steer, Send Now, Queue, Stop, and
+                compaction. Permissions belong to the exact attached browser and exact
+                session generation. Typed replay and live publication retain messages,
+                thoughts, tools, plans, terminals, permissions, receipts, and lifecycle
+                state without flattening them into a second transcript vocabulary.
               </p>
               <p>
-                Every human Hermes write uses causal session binding. A candidate
-                created or resumed by Hermes reaches the Chat data writer before a
-                command, image attachment, or prompt is sent. The writer atomically
-                updates the entity and running turn and returns the effective key. If
-                another transaction already chose a winner, the gateway writes to that
-                winner's live session. Exact <code>/new</code> is the one forced-fresh
-                case.
+                Compaction is deliberately small in Panels: the transcript shows that it
+                started and then whether it completed or failed with the exact reason.
+                These boundaries contain no context. Panels waits up to 300 seconds to
+                observe the terminal result and never reads or renders compacted context
+                or a summary. Later replay shows the same typed boundary.
               </p>
               <p>
-                Panels Chat rows are product-visible state, not model context. Text an
-                Employee must read has to reach the Hermes gateway session or the actual
-                Employee prompt. A Panels row alone is never delivery.
+                The production catalog contains exactly <code>hermes</code>,
+                <code>codex</code>, and <code>claude</code>; Gemini is not registered.
+                Hermes supports native Steer. Codex and Claude Code do not, so their active
+                turns use Queue or Send Now. Claude Code runs one initialize-only startup
+                preflight and closes that temporary child without creating a session.
+                Codex starts lazily on first demand.
               </p>
               <p class="code-paths">
-                Code paths: <code>src/planner/core/adapters/</code>,
-                <code>src/planner/minds/shared_gateway.py</code>,
-                <code>src/planner/minds/gateway.py</code>,
-                <code>src/planner/minds/config.py</code>
+                Code paths: <code>src/planner/conversation/composition.py</code>,
+                <code>src/planner/conversation/hub.py</code>,
+                <code>src/planner/conversation/turn_broker.py</code>,
+                <code>src/planner/conversation/permission_broker.py</code>,
+                <code>src/planner/conversation/backend_catalog.py</code>,
+                <code>src/planner/conversation/hermes_backend.py</code>,
+                <code>src/planner/conversation/codex_backend.py</code>,
+                <code>src/planner/conversation/claude_backend.py</code>
               </p>
             </div>
           </details>
@@ -861,47 +850,31 @@
           <details>
             <summary>
               <span class="number">06</span>
-              <span><strong>The Chat System</strong><span>Human conversation on the same durable ticket session.</span></span>
+              <span><strong>The ACP Browser Conversation</strong><span>A typed pane over the server-owned conversation.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                Ticket chat, Chief of Staff chat, and automatic worker steps use the
-                same durable chat-state contract. Ordinary messages and commands enter
-                through one <code>POST /api/chat/{entity_id}/turns</code> request. The
-                Chief message endpoint is a narrow shell over that same owner.
+                The browser uses one typed WebSocket at <code>/api/conversation</code>.
+                Attach, load, and live updates share the same Employee, ACP session,
+                binding generation, and sequence. A gap or identity mismatch fails closed
+                and a later contiguous ready epoch recovers the pane.
               </p>
               <p>
-                <code>ChatTurnLifecycle</code> is the single human coordinator. It
-                atomically admits one visible turn, invokes the typed human gateway
-                transport, records safe activity and output, and lets the first
-                completion, error, or Pause settle the turn. The browser observes
-                durable <code>ChatState</code> instead of owning a second HTTP stream.
-                The public active turn exposes whether Pause is available, not durable
-                Employee identity.
+                The ACP pane renders human and agent messages, collapsed thought and
+                tool detail, plans, diffs, terminal state, permissions, receipts, and one
+                persistent status line. The composer offers Steer when supported, Send
+                Now, Queue, Stop, ACP-advertised commands, and ordered inline images.
               </p>
               <p>
-                EmployeeStepRunner remains a separate lane. It stores a new or resumed
-                <code>employee_session_id</code> before calling the employee-only
-                <code>run_ticket_step</code>. It does not use
-                <code>ChatTurnLifecycle</code> or the human transport.
-              </p>
-              <p>
-                Human Chat turns are rejected while
-                <code>ticket_status=agent_running_step</code>. Automatic Employee-step
-                eligibility rejects any running Panels Chat turn. The checks run again
-                under the same transaction lock, so concurrent admission has one winner.
-                Explicit Employee session history stays readable. There is no queue
-                behind the active worker step.
-              </p>
-              <p>
-                Panels Chat rows are product-visible state, not model context. An empty
-                visible transcript stays empty even when Hermes has Employee history.
-                Text an Employee must read has to reach the Hermes gateway session or
-                the actual Employee prompt.
+                Conversation images are ACP content blocks, not files in a separate chat
+                upload system. Generic file previews and durable Ticket artifact previews
+                remain available through their normal file routes.
               </p>
               <p class="code-paths">
-                Code paths: <code>src/planner/chat/</code>,
-                <code>web/src/components/ChatPanel.svelte</code>
+                Code paths: <code>src/planner/conversation/api.py</code>,
+                <code>web/src/components/AcpConversation.svelte</code>,
+                <code>web/src/components/acp/</code>,
+                <code>web/src/lib/acp/</code>
               </p>
             </div>
           </details>
@@ -943,14 +916,10 @@
                 this check; the cache remains generic.
               </p>
               <p>
-                For a Ticket, <code>employee_session_changed</code> refreshes only its
-                Ticket detail. <code>chat_message_recorded</code>,
-                <code>chat_turn_started</code>, <code>chat_turn_updated</code>, and
-                <code>chat_turn_finished</code> refresh only that Ticket's Chat. Neither
-                set refreshes Board, current Sprint, or Review. Day and top-level-agent
-                <code>chat_session_created</code> and those same Chat events refresh only
-                their matching Chat; Day Chat events do not refresh the Day projection.
-                Explicit Employee session history is an ordinary uncached read.
+                ACP conversation state does not enter the REST Resource Catalogue. Its
+                transport, controller, and reducer own one typed socket projection keyed
+                by Employee, session, generation, and sequence. Canonical Ticket, Board,
+                Sprint, and Review reads stay server-owned REST resources.
               </p>
               <p>
                 Managed Markdown has one browser-DOM owner.
@@ -968,6 +937,8 @@
                 <code>web/src/lib/resourceCatalogue.ts</code>,
                 <code>web/src/lib/resources.svelte.ts</code>,
                 <code>web/src/lib/ws.ts</code>,
+                <code>web/src/lib/acp/</code>,
+                <code>web/src/components/acp/</code>,
                 <code>web/src/lib/managedMarkdown.ts</code>,
                 <code>web/src/lib/editableText.ts</code>
               </p>
@@ -1024,8 +995,8 @@
             <span>Own record mutation and event emission. Most live in domain <code>data.py</code> files.</span>
           </li>
           <li>
-            <strong>Hermes</strong>
-            <span>Owns Employee session history. Panels owns visible Chat messages and live turns.</span>
+            <strong>ACP conversation composition</strong>
+            <span>Owns durable bindings, typed replay, active turns, permissions, and backend children.</span>
           </li>
           <li>
             <strong>Frontend</strong>
@@ -1051,15 +1022,14 @@
           <details open>
             <summary>
               <span class="number">01</span>
-              <span><strong>Employee-session ownership is explicit (resolved).</strong><span>The coordinator and canonical writer have separate jobs.</span></span>
+              <span><strong>Employee-session ownership is explicit.</strong><span>One binding owner; one Ticket mirror.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                <code>ChatTurnLifecycle</code> coordinates human admission and delivery.
-                The Ticket data writer alone owns <code>employee_session_id</code>; Chat
-                binding calls it in the transaction that binds the running turn and
-                returns the effective id the gateway must use. Day and top-level-agent
-                Chat keys remain Chat-owned because they are not Employee identity.
+                <code>conversation_session_bindings</code> owns the ACP session and
+                binding generation. A Ticket mirrors the session id atomically; the Chief
+                has no second mirror. Compare-and-swap replacement prevents two Employees
+                from claiming one ACP session.
               </p>
             </div>
           </details>
@@ -1090,19 +1060,6 @@
               </p>
             </div>
           </details>
-          <details>
-            <summary>
-              <span class="number">04</span>
-              <span><strong>Gateway bootstrap is indirect.</strong><span>The registry shape does not show the production owner directly.</span></span>
-            </summary>
-            <div class="detail-body">
-              <p>
-                The adapter registry returns a real adapter placeholder. Production
-                startup replaces app-state adapters with <code>SharedGateway</code>.
-                This keeps tests clean, but it is not obvious from the registry.
-              </p>
-            </div>
-          </details>
         </div>
       </section>
 
@@ -1118,10 +1075,6 @@
             <span>Days materialize, but no worker drafts the next day's overview.</span>
           </li>
           <li>
-            <strong>Chat queue</strong>
-            <span>Human sends are rejected while a ticket worker is active.</span>
-          </li>
-          <li>
             <strong>Idea conversion</strong>
             <span>Ideas stay ideas until promotion or archive exists.</span>
           </li>
@@ -1130,7 +1083,7 @@
 
       <footer>
         HTML companion to <a href="systems.md">systems.md</a>. Last verified:
-        2026-07-14.
+        2026-07-20.
       </footer>
     </main>
   </div>

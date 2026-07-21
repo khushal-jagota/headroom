@@ -57,7 +57,6 @@ def _day_view(conn: sqlite3.Connection, did: str, now: int) -> JsonDict:
         "watchout": day.watchout,
         "if_today_lands": day.if_today_lands,
         "notes": day.notes,
-        "chat_session_key": day.chat_session_key,
         "created_at": day.created_at,
         "updated_at": day.updated_at,
         "tickets": [ticket_json(read_ticket(conn, dt.ticket_id), now) for dt in dts],

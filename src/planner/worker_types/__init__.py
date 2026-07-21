@@ -6,8 +6,6 @@ from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
     PRODUCTION_WORKER_TYPE_REGISTRY,
     configured_worker_type_registry,
-    install_worker_type_registry_for_test,
-    restore_production_worker_type_registry_for_test,
 )
 from planner.worker_types.contracts import (
     FieldDefinition,
@@ -38,6 +36,4 @@ __all__ = [
     "WorkerTypeManifestStage",
     "WorkerTypeRegistry",
     "configured_worker_type_registry",
-    "install_worker_type_registry_for_test",
-    "restore_production_worker_type_registry_for_test",
 ]

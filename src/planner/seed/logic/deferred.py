@@ -31,19 +31,26 @@ def parse_deferred(text: str, source_file: str) -> tuple[list[ParsedItem], list[
         if project is not None:
             bullets, orphans = parse_bullets(body)
             if orphans:
-                skipped.append(SkippedSection(
-                    source_file, heading, REASON_PROSE, excerpt_of("\n".join(orphans)),
-                ))
+                skipped.append(
+                    SkippedSection(
+                        source_file,
+                        heading,
+                        REASON_PROSE,
+                        excerpt_of("\n".join(orphans)),
+                    )
+                )
             for bullet in bullets:
                 priority, title = split_pn_prefix(bullet.text)
-                items.append(ParsedItem(
-                    title=title,
-                    priority=priority if priority is not None else Priority.P3,
-                    project=project,
-                    body="\n".join(emit_body(bullet.children)),
-                    deadline=None,
-                    deferred=True,
-                ))
+                items.append(
+                    ParsedItem(
+                        title=title,
+                        priority=priority if priority is not None else Priority.P3,
+                        project=project,
+                        body="\n".join(emit_body(bullet.children)),
+                        deadline=None,
+                        deferred=True,
+                    )
+                )
         elif body.strip() != "":
             skipped.append(SkippedSection(source_file, heading, REASON_SECTION, excerpt_of(body)))
     return items, skipped

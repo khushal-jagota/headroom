@@ -681,11 +681,14 @@ MUST stay on the legacy path (S3 moves them)"). S3 moves them:
 - **`neutralPane.ts` is already employee-generic** (it takes `employeeEntityId` — verified S2b
   §4.2, "the relay already routes per-employee"; no Chief-specific logic). The ticket pane reuses
   it with the ticket entity id.
-- **A ticket neutral pane component.** Options: (a) reuse `ChiefNeutralPane.svelte` directly with
-  a ticket entity id (if it is already entity-generic), or (b) a thin `TicketNeutralPane.svelte`
-  wrapping the same client. **[Verify S2b's component]** if `ChiefNeutralPane.svelte` hardcodes
-  the Chief entity or Chief-only affordances, a sibling ticket component reuses `neutralPane.ts`;
-  if it is entity-parameterized, reuse it. Prefer reuse; do not duplicate the client.
+- **REUSE `ChiefNeutralPane.svelte` directly — it is already entity-generic (VERIFIED against the
+  shipped S2b code).** `ChiefNeutralPane.svelte:29` takes `{ entityId = "agent_panels_chief_of_staff",
+  label = "Chief of Staff" }` props and wires `employeeEntityId: entityId` + uploads via `entityId`.
+  The ticket route mounts it with the ticket entity id + a ticket label. **No new component; no
+  `neutralPane.ts` duplication.** (Rename the component only if "Chief" in its name becomes
+  misleading — but a rename touches its two Chief callers, so keep the name and mount it generically,
+  OR rename to a neutral `NeutralChatPane.svelte` and update all three callers. Recommend keeping the
+  name to minimize churn; the component is already generic in behavior.)
 - **The capability signal generalizes.** S2b's `relayChief` tri-state (`capabilities.ts`) gates
   the Chief mounts. S3 needs the SAME signal to gate the ticket mount (the flag is one config
   flag — `relay_backend_enabled`). Rename/generalize `relayChief` → a single `relayBackend`
@@ -779,6 +782,22 @@ is extended to drive ticket steps.
   real frame).
 - `test_pool_step_gateway_turn_observer_unregistered_on_settle` — settled/failed turn leaves no
   dangling observer (dispatch a second step, assert clean state).
+- **THE THREE ACK DISPOSITIONS (amended contract §"Worker steps", Collision #A ruled):**
+  - `test_pool_step_gateway_streaming_disposition_owns_current_terminal` — a `streaming` ACK →
+    the step owns the CURRENT execution's next `message.complete`.
+  - `test_pool_step_gateway_queued_disposition_skips_predecessor_terminal` — a `queued` ACK (a
+    human turn is running) → the step SKIPS the predecessor's `message.complete` (the interrupted
+    predecessor) and owns the NEXT terminal, NOT the first (this is the exact hole in the naive
+    design; the test proves A1 closes it).
+  - `test_pool_step_gateway_steered_disposition_errors_no_terminal` — a `steered` ACK → immediate
+    `RunResult("errored", ..., "delivered by steering...")`, watching NO terminal (mirrors
+    `shared_gateway.py:852-861`).
+- `test_pool_step_gateway_interleaved_human_send_during_running_step` (amended contract §"Worker
+  steps") — a human send interleaves on the SAME child while the step is running; the step's
+  settlement still correlates to ITS OWN terminal via the disposition, NOT the human turn's frames.
+  This is the behavior test that dies if A1's ownership is wrong.
+- `test_pool_step_gateway_interrupt_uses_live_id` (§1.6) — `interrupt` resolves the live session id
+  and issues `session.interrupt {session_id: <live id>}` on the child transport; no live id → no-op.
 
 ### 9.2 Backend unit — `tests/unit/test_pool_ticket_adoption.py` (new, §3)
 - `test_ticket_session_adopted_on_first_spawn` — a ticket with a persisted `employee_session_id`

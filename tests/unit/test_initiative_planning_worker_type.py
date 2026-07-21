@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import planner.worker_types as worker_types
-from planner.minds.config import PLANNER_SKILL_NAMES
+from planner.conversation.hermes_backend_configuration import PLANNER_SKILL_NAMES
 from planner.worker_types import configuration
 from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
 
@@ -95,6 +95,9 @@ INITIATIVE_PLANNING_MANIFEST = {
     ],
     "default_ceiling": "needs_kickoff",
     "worker_profile_id": "panels-worker-initiative-planning",
+    "default_employee_backend": "hermes",
+    "default_employee_model": None,
+    "default_employee_reasoning_effort": None,
 }
 
 

@@ -7,7 +7,6 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from planner.core.adapters.registry import build_adapters
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.contracts import EventKind
@@ -62,7 +61,6 @@ def _make_app(tmp_path: Path) -> Any:
         path=None,
         env={
             "PLAN_TEST_MODE": "1",
-            "PLAN_GATEWAY_ADAPTER": "fake",
             "PLAN_DB_PATH": str(db_path),
             "PLAN_WS_HEARTBEAT_MS": "125",
         },
@@ -71,7 +69,7 @@ def _make_app(tmp_path: Path) -> Any:
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    return create_app(config, build_clock(config), build_adapters(config), conn_factory)
+    return create_app(config, build_clock(config), conn_factory)
 
 
 def test_meta_serves_event_stream_heartbeat_cadence(tmp_path: Path) -> None:

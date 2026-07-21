@@ -9,13 +9,13 @@ import json
 import sqlite3
 from typing import Final
 
+from planner.conversation.contracts import parse_conversation_compaction_boundaries_json
 from planner.core.legacy_execution_route import (
     LEGACY_EXECUTION_ROUTE_FIELDS,
-    redact_generated_execution_route_segment,
 )
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 23
+SCHEMA_VERSION: Final = 27
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -64,6 +64,9 @@ CREATE TABLE IF NOT EXISTS tickets (
   id                   TEXT PRIMARY KEY,             -- t_<slug>
   title                TEXT NOT NULL CHECK (length(title) <= 200),
   worker_type          TEXT NOT NULL,                -- immutable registry id; NO enumerating CHECK (open registry)
+  employee_backend     TEXT NOT NULL,                -- selected registered ACP backend; no live fallback
+  employee_launch_model TEXT,                        -- historical first-session Kickoff request; NULL = native default
+  employee_launch_reasoning_effort TEXT,             -- historical first-session Kickoff request; NULL = native default
   stage                TEXT NOT NULL DEFAULT 'needs_kickoff',  -- directly stored; registry validates workflow relationships
   priority             TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
   deadline             TEXT,
@@ -94,68 +97,37 @@ CREATE TABLE IF NOT EXISTS days (
   watchout         TEXT NOT NULL DEFAULT '',         -- overview: Watchout (markdown)
   if_today_lands   TEXT NOT NULL DEFAULT '',         -- overview: If Today Lands (markdown)
   notes            TEXT NOT NULL DEFAULT '',
-  chat_session_key TEXT,
   created_at       INTEGER NOT NULL,
   updated_at       INTEGER NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS agent_chat_sessions (
-  id               TEXT PRIMARY KEY,
-  chat_session_key TEXT,
-  created_at       INTEGER NOT NULL,
-  updated_at       INTEGER NOT NULL
+CREATE TABLE IF NOT EXISTS conversation_session_bindings (
+  employee_id        TEXT PRIMARY KEY,
+  entity_kind        TEXT NOT NULL CHECK (entity_kind IN ('ticket','agent')),
+  entity_id          TEXT NOT NULL,
+  acp_session_id     TEXT NOT NULL UNIQUE,
+  backend_key        TEXT NOT NULL,
+  binding_generation INTEGER NOT NULL CHECK (binding_generation > 0),
+  compaction_boundaries_json TEXT NOT NULL DEFAULT '[]',
+  created_at         INTEGER NOT NULL,
+  updated_at         INTEGER NOT NULL,
+  UNIQUE (entity_kind, entity_id),
+  CHECK (employee_id = entity_id)
 );
 
-CREATE TABLE IF NOT EXISTS chat_turns (
-  id             TEXT PRIMARY KEY,
-  entity_id      TEXT NOT NULL,
-  origin         TEXT NOT NULL CHECK (origin IN ('human','worker','system')),
-  mode           TEXT NOT NULL CHECK (mode IN ('message','command','worker_step')),
-  status         TEXT NOT NULL CHECK (status IN ('running','complete','errored','interrupted')),
-  phase          TEXT NOT NULL CHECK (phase IN ('queued','thinking','doing','responding','settled')),
-  activity_label TEXT,
-  output_role    TEXT NOT NULL CHECK (output_role IN ('assistant','system')),
-  output_text    TEXT NOT NULL DEFAULT '',
-  session_key    TEXT,
-  recovery_of_turn_id TEXT REFERENCES chat_turns(id),
-  error          TEXT,
-  pending_clarification_request_id TEXT,
-  pending_clarification_question   TEXT,
-  pending_clarification_choices    TEXT,
-  started_at     INTEGER NOT NULL,
-  updated_at     INTEGER NOT NULL,
-  completed_at   INTEGER
+CREATE TABLE IF NOT EXISTS employee_step_runs (
+  employee_step_id    TEXT PRIMARY KEY,
+  ticket_id           TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+  status              TEXT NOT NULL
+                      CHECK (status IN ('running','complete','interrupted','errored')),
+  employee_session_id TEXT,
+  error               TEXT,
+  started_at          INTEGER NOT NULL,
+  updated_at          INTEGER NOT NULL,
+  completed_at        INTEGER
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_turns_one_running
-  ON chat_turns(entity_id) WHERE status = 'running';
-CREATE INDEX IF NOT EXISTS idx_chat_turns_entity ON chat_turns(entity_id, started_at);
-
-CREATE TABLE IF NOT EXISTS chat_turn_activity_entries (
-  id                INTEGER PRIMARY KEY AUTOINCREMENT,
-  turn_id           TEXT NOT NULL REFERENCES chat_turns(id) ON DELETE CASCADE,
-  action_identity   TEXT,
-  category          TEXT NOT NULL CHECK (category IN ('thinking','tool','command')),
-  label             TEXT NOT NULL,
-  lifecycle_state   TEXT NOT NULL CHECK (lifecycle_state IN ('running','complete')),
-  started_at        INTEGER NOT NULL,
-  updated_at        INTEGER NOT NULL,
-  completed_at      INTEGER
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_turn_activity_identity
-  ON chat_turn_activity_entries(turn_id, action_identity)
-  WHERE action_identity IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_chat_turn_activity_order
-  ON chat_turn_activity_entries(turn_id, id);
-
-CREATE TABLE IF NOT EXISTS chat_messages (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  entity_id  TEXT NOT NULL,
-  turn_id    TEXT REFERENCES chat_turns(id),
-  role       TEXT NOT NULL CHECK (role IN ('human','assistant','system','worker')),
-  text       TEXT NOT NULL,
-  created_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_chat_messages_entity ON chat_messages(entity_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_employee_step_runs_one_running
+  ON employee_step_runs(ticket_id) WHERE status = 'running';
 
 CREATE TABLE IF NOT EXISTS pending_worker_context (
   worker_entity_id TEXT NOT NULL,
@@ -215,7 +187,13 @@ def connect(db_path: str, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
 
 
 def create_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(DDL)
+    incoming_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    canonical_ddl = DDL
+    if incoming_version < 25:
+        canonical_ddl = ";\n".join(
+            statement for statement in DDL.split(";\n") if "employee_step_runs" not in statement
+        )
+    conn.executescript(canonical_ddl)
     projects_data.seed_default_projects(conn)
     _migrate_project_columns(conn)
     ticket_schema = conn.execute(
@@ -230,11 +208,300 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _migrate_project_summary_column(conn)
     _migrate_derived_sprint_item_status(conn)
     _migrate_links_blocks_only(conn)
-    _migrate_chat_turn_recovery_column(conn)
-    _migrate_chat_turn_pending_clarification(conn)
     _cleanup_legacy_execution_route_records(conn)
+    if incoming_version < 25:
+        if conn.in_transaction:
+            conn.commit()
+        _migrate_to_v25(conn)
+    if incoming_version < 26:
+        if conn.in_transaction:
+            conn.commit()
+        _migrate_to_v26(conn)
+    elif not _tickets_table_is_v26(conn):
+        raise RuntimeError(
+            "v26 Ticket schema is missing the required non-null employee_backend column "
+            "without a default"
+        )
+    if incoming_version < 27:
+        if conn.in_transaction:
+            conn.commit()
+        _migrate_to_v27(conn)
+    elif not _tickets_table_is_v27(conn):
+        raise RuntimeError(
+            "v27 Ticket schema is missing the nullable Employee launch configuration columns "
+            "without defaults"
+        )
     _create_indexes(conn)
-    conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+
+
+def _migrate_to_v25(conn: sqlite3.Connection) -> None:
+    """Atomically replace legacy Chat correctness state with Employee steps."""
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        binding_columns = _table_columns(conn, "conversation_session_bindings")
+        if "compaction_boundaries_json" not in binding_columns:
+            conn.execute(
+                "ALTER TABLE conversation_session_bindings ADD COLUMN "
+                "compaction_boundaries_json TEXT NOT NULL DEFAULT '[]'"
+            )
+        for row in conn.execute(
+            "SELECT compaction_boundaries_json FROM conversation_session_bindings"
+        ):
+            try:
+                parse_conversation_compaction_boundaries_json(row["compaction_boundaries_json"])
+            except ValueError as error:
+                raise RuntimeError(f"conversation binding {error}") from error
+
+        conn.execute("DROP INDEX IF EXISTS idx_employee_step_runs_one_running")
+        conn.execute("DROP TABLE IF EXISTS employee_step_runs")
+        conn.execute(
+            """
+            CREATE TABLE employee_step_runs (
+              employee_step_id    TEXT PRIMARY KEY,
+              ticket_id           TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+              status              TEXT NOT NULL
+                                  CHECK (status IN ('running','complete','interrupted','errored')),
+              employee_session_id TEXT,
+              error               TEXT,
+              started_at          INTEGER NOT NULL,
+              updated_at          INTEGER NOT NULL,
+              completed_at        INTEGER
+            )
+            """
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX idx_employee_step_runs_one_running "
+            "ON employee_step_runs(ticket_id) WHERE status = 'running'"
+        )
+
+        worker_turn_ids: set[str] = set()
+        if _table_exists(conn, "chat_turns"):
+            worker_rows = conn.execute(
+                "SELECT id, entity_id, status, session_key, error, started_at, "
+                "updated_at, completed_at FROM chat_turns "
+                "WHERE origin = 'worker' AND mode = 'worker_step' "
+                "ORDER BY started_at, id"
+            ).fetchall()
+            for row in worker_rows:
+                employee_step_id = str(row["id"])
+                worker_turn_ids.add(employee_step_id)
+                status = str(row["status"])
+                completed_at = row["completed_at"]
+                if status == "running":
+                    status = "interrupted"
+                    completed_at = int(row["updated_at"])
+                conn.execute(
+                    "INSERT INTO employee_step_runs ("
+                    "employee_step_id, ticket_id, status, employee_session_id, error, "
+                    "started_at, updated_at, completed_at"
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        employee_step_id,
+                        str(row["entity_id"]),
+                        status,
+                        row["session_key"],
+                        row["error"],
+                        int(row["started_at"]),
+                        int(row["updated_at"]),
+                        completed_at,
+                    ),
+                )
+
+        if worker_turn_ids:
+            for row in conn.execute(
+                "SELECT id, entity_id, payload FROM events "
+                "WHERE kind = 'chat_turn_started' ORDER BY id"
+            ).fetchall():
+                try:
+                    payload = json.loads(str(row["payload"]))
+                except (TypeError, ValueError):
+                    continue
+                turn_id = payload.get("turn_id") if isinstance(payload, dict) else None
+                if turn_id not in worker_turn_ids:
+                    continue
+                conn.execute(
+                    "UPDATE events SET kind = 'employee_step_started', payload = ? WHERE id = ?",
+                    (
+                        json.dumps({"employee_step_id": turn_id}, separators=(",", ":")),
+                        int(row["id"]),
+                    ),
+                )
+        conn.execute(
+            "DELETE FROM events WHERE kind IN ("
+            "'chat_session_created','chat_message_recorded','chat_turn_started',"
+            "'chat_turn_updated','chat_turn_finished')"
+        )
+        conn.execute(
+            "UPDATE tickets SET ticket_status = 'empty' WHERE ticket_status = 'agent_running_step'"
+        )
+        conn.execute("UPDATE tickets SET employee_session_id = NULL")
+        conn.execute("DELETE FROM conversation_session_bindings")
+
+        if "chat_session_key" in _table_columns(conn, "days"):
+            conn.execute("ALTER TABLE days DROP COLUMN chat_session_key")
+        conn.execute("DROP TABLE IF EXISTS chat_turn_activity_entries")
+        conn.execute("DROP TABLE IF EXISTS chat_messages")
+        conn.execute("DROP TABLE IF EXISTS chat_turns")
+        conn.execute("DROP TABLE IF EXISTS agent_chat_sessions")
+        _v25_cutover_after_destructive_work(conn)
+
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(f"foreign key check failed after v25 cutover: {violations!r}")
+        conn.execute("PRAGMA user_version=25")
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+
+
+def _v25_cutover_after_destructive_work(_conn: sqlite3.Connection) -> None:
+    """Test seam immediately before the durable v25 marker."""
+
+
+_V26_TICKETS_TABLE_SQL: Final = """
+CREATE TABLE tickets_new (
+  id                   TEXT PRIMARY KEY,
+  title                TEXT NOT NULL CHECK (length(title) <= 200),
+  worker_type          TEXT NOT NULL,
+  employee_backend     TEXT NOT NULL,
+  stage                TEXT NOT NULL DEFAULT 'needs_kickoff',
+  priority             TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
+  deadline             TEXT,
+  project_id           TEXT REFERENCES projects(id),
+  sprint_item_id       TEXT REFERENCES sprint_items(id),
+  sprint_id            TEXT REFERENCES sprints(id),
+  recap                TEXT NOT NULL DEFAULT '',
+  ceiling              TEXT NOT NULL,
+  at_cap               TEXT NOT NULL DEFAULT 'propose' CHECK (at_cap IN ('stop','propose')),
+  ticket_status        TEXT NOT NULL DEFAULT 'empty'
+                       CHECK (ticket_status IN ('empty','agent_running_step',
+                                                'awaiting_approval','user_takeover',
+                                                'paired_work','errored')),
+  stage_ownership_overrides TEXT NOT NULL DEFAULT '{}',
+  employee_session_id  TEXT,
+  alias                TEXT,
+  fields               TEXT NOT NULL,
+  created_at           INTEGER NOT NULL,
+  updated_at           INTEGER NOT NULL
+)
+"""
+
+
+def _tickets_table_is_v26(conn: sqlite3.Connection) -> bool:
+    columns = {str(row[1]): row for row in conn.execute("PRAGMA table_info(tickets)")}
+    employee_backend = columns.get("employee_backend")
+    return (
+        employee_backend is not None
+        and int(employee_backend[3]) == 1
+        and employee_backend[4] is None
+    )
+
+
+def _migrate_to_v26(conn: sqlite3.Connection) -> None:
+    """Add the explicit Ticket backend without rewriting post-feature selections."""
+
+    foreign_keys_enabled = bool(conn.execute("PRAGMA foreign_keys").fetchone()[0])
+    if conn.in_transaction:
+        raise RuntimeError("Ticket v26 migration requires an autocommit connection")
+    if foreign_keys_enabled:
+        conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute("DROP TABLE IF EXISTS tickets_new")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        contradictory = conn.execute(
+            "SELECT employee_id, backend_key FROM conversation_session_bindings "
+            "WHERE backend_key != 'hermes' ORDER BY employee_id LIMIT 1"
+        ).fetchone()
+        if contradictory is not None:
+            raise RuntimeError(
+                "Ticket v26 migration found a non-Hermes existing binding: "
+                f"employee_id={contradictory['employee_id']} "
+                f"backend_key={contradictory['backend_key']}"
+            )
+        if not _tickets_table_is_v26(conn):
+            conn.execute(_V26_TICKETS_TABLE_SQL)
+            conn.execute(
+                "INSERT INTO tickets_new ("
+                "id, title, worker_type, employee_backend, stage, priority, deadline, "
+                "project_id, sprint_item_id, sprint_id, recap, ceiling, at_cap, "
+                "ticket_status, stage_ownership_overrides, employee_session_id, alias, "
+                "fields, created_at, updated_at) "
+                "SELECT id, title, worker_type, 'hermes', stage, priority, deadline, "
+                "project_id, sprint_item_id, sprint_id, recap, ceiling, at_cap, "
+                "ticket_status, stage_ownership_overrides, employee_session_id, alias, "
+                "fields, created_at, updated_at FROM tickets ORDER BY id"
+            )
+            conn.execute("DROP TABLE tickets")
+            conn.execute("ALTER TABLE tickets_new RENAME TO tickets")
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(
+                f"foreign key check failed after Ticket v26 migration: {violations!r}"
+            )
+        conn.execute("PRAGMA user_version=26")
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        conn.execute("DROP TABLE IF EXISTS tickets_new")
+        raise
+    finally:
+        if foreign_keys_enabled:
+            conn.execute("PRAGMA foreign_keys=ON")
+
+
+def _tickets_table_is_v27(conn: sqlite3.Connection) -> bool:
+    columns = {str(row[1]): row for row in conn.execute("PRAGMA table_info(tickets)")}
+    return all(
+        column is not None and int(column[3]) == 0 and column[4] is None
+        for column in (
+            columns.get("employee_launch_model"),
+            columns.get("employee_launch_reasoning_effort"),
+        )
+    )
+
+
+def _migrate_to_v27(conn: sqlite3.Connection) -> None:
+    """Add nullable historical first-session launch configuration to Tickets."""
+
+    if conn.in_transaction:
+        raise RuntimeError("Ticket v27 migration requires an autocommit connection")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        columns = _table_columns(conn, "tickets")
+        if "employee_launch_model" not in columns:
+            conn.execute("ALTER TABLE tickets ADD COLUMN employee_launch_model TEXT")
+        if "employee_launch_reasoning_effort" not in columns:
+            conn.execute(
+                "ALTER TABLE tickets ADD COLUMN employee_launch_reasoning_effort TEXT"
+            )
+        if not _tickets_table_is_v27(conn):
+            raise RuntimeError(
+                "Ticket v27 migration could not establish nullable launch configuration"
+            )
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(
+                f"foreign key check failed after Ticket v27 migration: {violations!r}"
+            )
+        conn.execute("PRAGMA user_version=27")
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone()
+        is not None
+    )
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
@@ -242,7 +509,7 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 
 
 def _cleanup_legacy_execution_route_records(conn: sqlite3.Connection) -> None:
-    """Retire route audit rows and redact old generated prompts, including v22 DBs."""
+    """Retire sealed legacy execution-route audit rows."""
     event_ids: list[int] = []
     for row in conn.execute(
         "SELECT id, payload FROM events WHERE kind = 'ticket_updated' "
@@ -255,41 +522,18 @@ def _cleanup_legacy_execution_route_records(conn: sqlite3.Connection) -> None:
         if isinstance(payload, dict) and payload.get("field") in LEGACY_EXECUTION_ROUTE_FIELDS:
             event_ids.append(int(row["id"]))
 
-    message_updates: list[tuple[str, int]] = []
-    for row in conn.execute(
-        "SELECT message.id, message.text FROM chat_messages AS message "
-        "JOIN chat_turns AS turn ON turn.id = message.turn_id "
-        "WHERE message.role = 'worker' AND turn.mode = 'worker_step' "
-        "AND message.text LIKE '%Execution route:%'"
-    ):
-        original = str(row["text"])
-        redacted = redact_generated_execution_route_segment(original)
-        if redacted != original:
-            message_updates.append((redacted, int(row["id"])))
-
-    if not event_ids and not message_updates:
+    if not event_ids:
         return
 
     savepoint = "cleanup_legacy_execution_route_records"
     conn.execute(f"SAVEPOINT {savepoint}")
     try:
         conn.executemany("DELETE FROM events WHERE id = ?", ((event_id,) for event_id in event_ids))
-        conn.executemany("UPDATE chat_messages SET text = ? WHERE id = ?", message_updates)
         conn.execute(f"RELEASE SAVEPOINT {savepoint}")
     except BaseException:
         conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
         conn.execute(f"RELEASE SAVEPOINT {savepoint}")
         raise
-
-
-def _migrate_chat_turn_pending_clarification(conn: sqlite3.Connection) -> None:
-    columns = _table_columns(conn, "chat_turns")
-    if "pending_clarification_request_id" not in columns:
-        conn.execute("ALTER TABLE chat_turns ADD COLUMN pending_clarification_request_id TEXT")
-    if "pending_clarification_question" not in columns:
-        conn.execute("ALTER TABLE chat_turns ADD COLUMN pending_clarification_question TEXT")
-    if "pending_clarification_choices" not in columns:
-        conn.execute("ALTER TABLE chat_turns ADD COLUMN pending_clarification_choices TEXT")
 
 
 # --- sealed historical-to-v20 Ticket migration --------------------------------
@@ -1108,13 +1352,6 @@ def _migrate_links_blocks_only(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_links_to ON links(to_id, kind)")
 
 
-def _migrate_chat_turn_recovery_column(conn: sqlite3.Connection) -> None:
-    if "recovery_of_turn_id" not in _table_columns(conn, "chat_turns"):
-        conn.execute(
-            "ALTER TABLE chat_turns ADD COLUMN recovery_of_turn_id TEXT REFERENCES chat_turns(id)"
-        )
-
-
 def _create_indexes(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_alias "
@@ -1129,10 +1366,6 @@ def _create_indexes(conn: sqlite3.Connection) -> None:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_project_id ON tickets(project_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ideas_project_id ON ideas(project_id)")
-    conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_turns_one_recovery "
-        "ON chat_turns(recovery_of_turn_id) WHERE recovery_of_turn_id IS NOT NULL"
-    )
 
 
 def _migrate_project_columns(conn: sqlite3.Connection) -> None:

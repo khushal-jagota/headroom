@@ -46,6 +46,7 @@ def _ticket(stage: str, fields: TicketFields, *, ceiling: str = "done") -> Ticke
         id="t_test",
         title="T",
         worker_type="coding",
+        employee_backend="hermes",
         stage=stage,
         priority=Priority.P3,
         deadline=None,

@@ -97,6 +97,7 @@ class ScopePair:  # required on every direct accept/edit-accept
 
 class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     worker_type: Required[str]  # required registry type id (no ingress default)
+    employee_backend: str
     title: str  # default ""
     kickoff_note: str  # default ""; proposed intake context / user guidance
     priority: str | None  # Priority value; default P3
@@ -124,6 +125,7 @@ class ReconcileTicketFromExternalWorkBody(TypedDict):
 class CreateTicketFromExternalWorkBody(ReconcileTicketFromExternalWorkBody):
     title: str
     worker_type: str
+    employee_backend: NotRequired[str]
     priority: NotRequired[str | None]
     deadline: NotRequired[str | None]
     project: NotRequired[str | None]
@@ -173,6 +175,12 @@ class StageBody(TypedDict, total=False):  # POST /tickets/{id}/stage
     to_stage: str  # Stage id; required (default "" is rejected)
 
 
+class EmployeeConfigurationBody(TypedDict):
+    employee_backend: str
+    employee_launch_model: str | None
+    employee_launch_reasoning_effort: str | None
+
+
 class LinkBody(TypedDict, total=False):  # POST /links (ticket-anchored, homed here)
     from_id: str  # required (default "" fails endpoint checks)
     to_id: str  # required (default "" fails endpoint checks)
@@ -184,6 +192,10 @@ class Ticket:  # §3.3 — column names match exactly
     id: str
     title: str  # <= TITLE_MAX_CHARS (200), every write path
     worker_type: str  # immutable registry id selected at creation
+    employee_backend: str  # immutable after the first employee demand
+    # Historical first-session Kickoff request; null means backend-native default.
+    employee_launch_model: str | None = field(default=None, kw_only=True)
+    employee_launch_reasoning_effort: str | None = field(default=None, kw_only=True)
     stage: str  # directly stored Stage id
     priority: Priority  # default P3
     deadline: str | None  # ISO date
@@ -203,6 +215,19 @@ class Ticket:  # §3.3 — column names match exactly
     fields: TicketFields
     created_at: int
     updated_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class EmployeeLaunchConfiguration:
+    """The Ticket-owned, first-session launch request.
+
+    After the first binding these values remain historical Kickoff provenance; they
+    are not a mirror of the ACP session's current configuration.
+    """
+
+    employee_backend: str
+    employee_launch_model: str | None
+    employee_launch_reasoning_effort: str | None
 
 
 @dataclass(frozen=True)

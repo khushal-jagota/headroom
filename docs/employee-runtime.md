@@ -1,260 +1,188 @@
 # The employee runtime
 
-Each ticket has a single worker that carries it forward — think of it as an
-**employee** you have handed that one piece of work to. Behind the scenes it is a
-live AI session (a Hermes "mind") that stays with the ticket across its stages. You
-are its manager: you talk to it in the ticket's chat, choose who owns the current Stage,
-set how far worker-owned work may go (its scope), and approve its work. It only ever
-_proposes_ — nothing it writes becomes real until it is accepted, automatically within
-the room you granted or by you in person.
+Each Ticket has one employee conversation that can carry work across Stages. The
+runtime decides when an Automatic Employee step may begin, claims exactly one step,
+sends the real prompt through ACP, and settles the Ticket from the result.
 
-Automatic discovery decides _whether_ a Ticket may start another employee step. A
-separate runner owns the step itself.
+Automatic discovery and execution are separate:
 
 ```
-   AutomaticEmployeeStepDiscoveryLoop      EmployeeStepRunner
-   ───────────────────────────────────      ──────────────────
-   scan today's membership candidates      claim inside one transaction
-   apply the complete eligibility rule ───► resume the Ticket's Hermes session
-                                           run and settle one employee step
-        ▲                                          │
-        └──── best-effort wake after commit ───────┘
-              (SQLite + the timer remain canonical)
+AutomaticEmployeeStepDiscoveryLoop        EmployeeStepRunner
+read today's Ticket membership            claim under one SQLite write lock
+apply the complete eligibility rule  ───► create one correctness-only run
+hand eligible ids to the runner            send through AcpStepGateway
+                                             │
+commit → best-effort wake ◄──────────────────┘
+SQLite and the periodic timer remain canonical
 ```
 
-## Discovery and execution
+## Eligibility and the final claim
 
-One function answers **Automatic Employee-step eligibility**. It returns yes only
-when all ten facts hold:
+Discovery is read-only. It scans Tickets on the current planning day and passes only
+eligible ids to the runner. A Ticket is eligible when all of these current facts hold:
 
-1. The Ticket belongs to the supplied `planning_day_id` — today's day during
-   automatic discovery.
-2. Its current Stage's effective ownership is `worker` or `paired`; user-owned Stages
-   stay in human control.
-3. Its `ticket_status` is `empty`, or it is a compatibility `paired_work` row whose
-   current paired Stage has no later worker-step opening-start event in event history.
-4. Its Stage is not terminal.
-5. Its Stage has a next gated field.
-6. That field has no parked proposal.
-7. Its `ceiling` and `at_cap` allow another proposal; the Ticket is not at or beyond
-   a stopping ceiling.
-8. It has no active blocker.
-9. It has no running Panels Chat turn, whether that visible turn came from a human or
-   an Employee step.
-10. If the Stage gates `closeout`, no Ticket in the same effective project and Worker-type
-    lane is already at Closeout with a non-empty status. A parented Ticket uses its sprint
-    item's project. Projectless Tickets share one projectless lane per Worker type.
+1. It belongs to the supplied planning day.
+2. No `employee_step_runs` row is currently running for it.
+3. Its Stage is not terminal and has a next gated field.
+4. Its effective Stage owner is `worker`, or it is a `paired` Stage that has not
+   already received its opening step.
+5. Its Ticket status matches that ownership state.
+6. No proposal is already parked on the gated field.
+7. Scope permits work at the current ceiling.
+8. The Ticket has no active blocker.
+9. If the Stage gates Closeout, no Ticket in the same effective-project and Worker-type
+   lane is already at Closeout with a non-empty status. A parented Ticket uses its sprint
+   item's project. Projectless Tickets share one projectless lane per Worker type.
 
-**AutomaticEmployeeStepDiscoveryLoop** is read-only and advisory. Its database scan
-selects only Tickets that belong to today's day, ordered by oldest `updated_at` and then
-Ticket id, then it asks the complete eligibility function about each membership candidate.
-Ordinary Stages keep their existing behavior. For Closeout, discovery submits at most one
-waiting Ticket from each free lane in a poll. It passes eligible Ticket ids to the runner,
-but it does not claim a Ticket, touch Hermes, or write Ticket state.
+Discovery orders candidates by oldest `updated_at`, then Ticket id. Ordinary Stages keep
+their existing behavior. For Closeout, one poll submits at most one waiting Ticket from
+each free lane.
 
-**EmployeeStepRunner** separately owns one step through the shared persistent Hermes
-gateway child. Its final claim starts `BEGIN IMMEDIATE`, reloads the Ticket and its
-Worker type definition, resolves the planning day inside that transaction, and asks
-the same complete eligibility function again. A stale discovery result therefore
-cannot change status, create chat state, call the gateway, or build a prompt. After a
-successful claim, the runner assembles the prompt, resumes or creates the Ticket's
-durable session, submits one turn, watches the run end, and settles runtime status
-through the Ticket data writers. Proposals, approvals, takeover, release, and runtime
-start/finish/error use those same writers, so "the code owns the Stage, the worker
-only proposes" holds here too.
+The runner repeats the same decision under `BEGIN IMMEDIATE`. A stale discovery result
+therefore cannot claim the Ticket, create a run, or contact an agent. The transaction
+changes the Ticket to `agent_running_step`, creates the Employee-step record, and writes
+the `employee_step_started` event before the worker prompt begins.
 
-When a successful run clears `agent_running_step`, the canonical writer reapplies the
-current Stage's effective ownership even if the run filed no proposal. It therefore
-cannot turn a live user takeover back into worker-ready state. A Stage change likewise
-derives the next inactive status from the entered Stage's effective ownership. Scope
-still controls autonomous proposal acceptance; it does not choose the owner.
-
-Human Chat admission and the final Employee claim both take SQLite's write lock and
-recheck their opposing fact inside the transaction. Therefore only one side can win:
-a running Chat turn makes the Employee claim a no-op, while
-`agent_running_step` makes human admission fail before it creates a visible message or
-turn.
-
-The runner exists whenever the worker gateway exists. Automatic discovery is
-optional: it may be disabled or another process may own the polling lock. Returning
-Review work for revision deliberately bypasses Automatic Employee-step eligibility
-and planning-day resolution. It reserves a runner handoff before changing the Ticket,
-then releases that handoff after commit. The revision resumes the stored Hermes
-session strictly. If that session is stale, Panels records an errored employee turn
-instead of silently creating a different conversation.
-
-Startup recovery is different again. After both Hermes role gateways are ready, and
-before automatic discovery starts, Panels finds every Ticket still marked
-`agent_running_step`. The runner does not claim the Ticket again, recheck automatic
-eligibility, or rebuild and replay the original step prompt. It strictly resumes the
-stored `employee_session_id` and sends one recovery instruction: inspect the canonical
-Ticket and existing Hermes conversation, continue only unfinished work, and file the
-currently requested proposal through the normal worker tools. If the proposal was
-already filed before the restart, the Employee only says so in Chat.
-
-The stale visible worker turn is settled as interrupted, preserving any partial reply,
-and one fresh recovery turn becomes active with the same Employee session id. A second
-restart rolls that recovery turn the same way, so there is still only one active turn.
-Panels never creates a replacement Hermes session during recovery. A missing stored id,
-or a stale worker turn bound to a different id, marks the still-running Ticket errored
-without contacting Hermes or minting a new identity. If the Ticket already moved past
-`agent_running_step` before startup, Panels only settles the leftover visible worker
-turn; it does not prompt the Employee again.
-
-One employee is one Ticket session, so Hermes' per-session busy guard keeps one turn
-in flight for that Ticket while the shared employee-role child can hold many sessions.
-The Ticket keeps its durable `employee_session_id` across stages. Human Ticket Chat
-and Employee steps both deliver through this conversation. The lightweight Panels
-listener may detach after Hermes is observed idle and no accepted operation remains;
-reopening the employee or restarting Panels resumes the stored session. If delivery is
-unknown, Panels records that honest outcome and never retries the employee prompt
-automatically. After an eligibility-affecting action commits, it calls the payload-free
-best-effort `AutomaticEmployeeStepEligibilityWake.wake()`. Runner settlement does the
-same to continue automatic work. A failed wake is logged and never changes the
-successful action. The wake carries no Ticket id, owns no state, and sends no IPC.
-SQLite and the periodic discovery timer remain canonical. The polling-lock owner uses
-`LoopAutomaticEmployeeStepEligibilityWake`; a process without the lock receives
-`NoOpAutomaticEmployeeStepEligibilityWake`. A ticket that is not on today is outside
-the automatic run set even
-when its status is `empty`; it does not appear on the Board, and the ticket page
-shows this as `auto not on today`.
-
-Chat completion, Chat error, and Pause deliberately send no eligibility wake. They
-only settle the visible Chat turn. The SQLite-backed periodic discovery timer is the
-canonical backstop: its next scan observes that the running-chat factor has cleared and
-may submit the Ticket to the runner if ownership and every other factor allow it.
-
-When Panels stops, it stops finding and accepting new Employee work before ending work
-already in progress. It asks each active Employee to stop, then gives every remaining
-cleanup step only the time left from one shared limit. It still tries to close the worker
-connection and the Chief-of-Staff connection even if one fails. Work cut off this way stays
-on its Ticket, and its visible reply is marked interrupted, so the next start can resume
-the same conversation. If the time has already run out, cleanup checks without waiting;
-that alone does not mean a healthy connection is stuck.
-
-A controlled restart uses this same shutdown and recovery path. A worker finishes its
-durable writes before requesting one. If the command is unavailable, the worker reports
-that restart is required and stops. Server ownership is described in `docs/systems.md`.
+Eligibility-affecting actions commit first and then send a payload-free, best-effort
+wake. The periodic discovery timer and SQLite state are still the backstop, so a lost
+same-process wake cannot lose work.
 
 _Code paths:_ `src/planner/runtime/automatic_employee_step_eligibility.py`,
-`src/planner/runtime/automatic_employee_step_discovery_loop.py`,
-`src/planner/runtime/automatic_employee_step_eligibility_wake.py`,
-`src/planner/runtime/employee_step_runner.py`,
-`src/planner/tickets/actions.py`, `src/planner/days/actions.py`,
-`src/planner/core/link_actions.py`,
-`src/planner/server_lifecycle/`,
-`src/planner/minds/` (the employee primitive: the shared gateway child and its
-per-session busy guard).
+`src/planner/runtime/automatic_employee_step_discovery_loop.py`, and
+`src/planner/runtime/automatic_employee_step_eligibility_wake.py`.
 
-## Talking to the employee, and running skills
+## The correctness record
 
-You reach the employee through the ticket's chat, and you can run a skill into it
-from the slash menu — both go to the same live worker over the same gateway. Those
-are their own system; see `chat.md`.
+`SqliteEmployeeStepRepository` is the only SQL owner of `employee_step_runs`. A row has
+exactly:
 
-### Pending context
+- `employee_step_id`
+- `ticket_id`
+- `status` (`running`, `complete`, `interrupted`, or `errored`)
+- `employee_session_id`
+- `error`
+- `started_at`, `updated_at`, and `completed_at`
 
-Panels keeps a small keyed set of facts that an employee must receive with its next
-model-bound turn. Repeating the same fact refreshes one key instead of creating a
-queue of duplicate messages. For example, a human ticket edit sets `ticket_changed`,
-which tells the employee to reread the ticket.
+The table permits at most one running row per Ticket. Start, restart replacement,
+session binding, first-wins settlement, stale cleanup, and running guards all go
+through the repository. Ticket deletion cascades terminal run history and is rejected
+while a run is active.
 
-The shared worker gateway adds every pending item immediately before it submits the
-next Hermes prompt. This covers an automatic step, a human message, and a model-backed
-slash command. Commands that do not submit a prompt do not consume anything. After
-Hermes accepts a streaming or steered prompt, Panels acknowledges the exact key
-revisions it sent. A queued employee prompt is accepted for later but is not yet
-acknowledged; Panels waits until that prompt's owned execution starts. A failed,
-busy, unknown, or queued-before-start submission keeps the context pending, and a
-newer revision written during a send cannot be erased by the older acknowledgement.
+This row is product correctness state, not conversation state. It never stores a
+prompt, reply, transcript, usage, activity, image, tool, clarification, or browser
+projection.
 
-Panels Chat rows and event rows remain display and audit records. They are not this
-delivery mechanism: a row alone never makes the Employee receive anything. The
-generic storage, contracts, and composition live in
-`src/planner/worker_context/`; ticket-specific keys live with the ticket domain.
+_Code path:_ `src/planner/runtime/employee_step_repository.py`.
 
-The explicit `GET /api/tickets/{ticket_id}/employee-session-history` route is the
-authoritative inspection of what Hermes actually received and produced for the stored
-Employee session. It may show pending context, hidden revision guidance, system or
-tool content, or other real session material absent from Panels Chat. Panels Chat state
-never loads or merges that history.
+## Prompt delivery through ACP
 
-## When a run fails: errors in the event log
+`EmployeeStepRunner` builds the Stage-specific instruction and calls the ACP-only
+`StepGateway` port. Production composes that port as `AcpStepGateway`.
 
-When an employee's run goes wrong, the ticket's history tells you why. A failed run
-used to show only a bare "errored"; now the event log carries the actual reason —
-for example, that a skill the worker needed was not installed — marked in amber so it
-stands out, with the full message allowed to wrap so nothing is cut off. That turns a
-stuck ticket from a mystery into something you can debug.
+The gateway opens or resumes the Ticket's durable binding through the same
+`ConversationHub`, `AcpEmployeeRegistry`, and `ConversationTurnBroker` used by the
+human pane. Its session callback binds the exact ACP session to both the Ticket mirror
+and the running Employee-step record before prompt admission can complete. If another
+owner won, the current run does not send through an unowned session.
 
-## What is proved
+On the first unbound demand, the registry creates a session and applies the Ticket's
+explicit launch Model first, followed by its explicit Reasoning effort when supported.
+Only then may it publish the first binding and admit the prompt. The binding write also
+proves that the Ticket's complete launch setup has not changed while the session was
+being prepared. An unavailable explicit choice retires the candidate session without a
+binding or prompt.
 
-The runtime launches the **`panels-worker`** base role — deliberately Worker-type
-agnostic; it points the worker to load its Worker type's specialist skill on demand
-rather than baking one Worker type's Stages in (see `worker-types.md`). The CLI entry
-point workers use is
-**`panels`**. By default, a server uses the `hermes-home` directory beside its
-configured planning database, resolved to an absolute path before the gateways start.
-An explicit `PLAN_HERMES_HOME` overrides that location. On startup the server links this
-repo's role skills into the selected home — the base `panels-worker`, the per-Worker-type
-specialists (`panels-worker-coding`, `panels-worker-new-worker`,
-`panels-worker-exploration`, `panels-worker-initiative-planning`, and the `probe-worker`
-test fixture), plus `panels`,
-`panels-chief-of-staff`, `panels-sprint-planning`, and `panels-rollover`. That link is what
-lets a worker `skill_view` its specialist. The
-rollover skill is an operating role for manual or thin scheduled prompts, not a
-deterministic server rollover engine. It does not copy or link credentials, provider
-configuration, or global Hermes state; those remain configuration owned by the
-selected home. Ticket chat has been smoked against a non-test server and reached the
-real Hermes worker.
+Pending worker context is a separate durable service. The gateway prepares its exact
+text into the model prompt, admits that prompt through ACP, and only then acknowledges
+the included context revisions. A pre-admission failure keeps those revisions pending.
+The worker sees the context because it is in the actual ACP prompt, not because Panels
+wrote an event, database transcript, or UI row.
 
-The full live worker loop has also been smoked against fresh non-test databases.
-A ticket placed on today was discovered by AutomaticEmployeeStepDiscoveryLoop, run by
-EmployeeStepRunner, and parked at
-`awaiting_approval` after the employee filed a proposal. The explicit Employee session
-history showed the employee-step prompt and worker reply; Panels Chat independently
-showed only its intentionally visible rows.
+Human prompts and Automatic Employee prompts therefore share one durable backend
+conversation. The broker serializes their delivery choices; the runtime does not use
+a separate raw child, pool, relay, or transcript mirror.
 
-A second smoke used a long poll interval to prove that a settled success-condition
-edit wakes discovery instead of waiting for the timer: after the edit committed, its
-eligibility wake led to the employee filing the next approach proposal.
-EmployeeStepRunner persists a created or resumed `employee_session_id` before submitting the
-prompt, so a worker calling `panels worker my-ticket` during its own turn can resolve
-the current ticket immediately.
+_Code paths:_ `src/planner/runtime/acp_step_gateway.py`,
+`src/planner/runtime/step_gateway.py`, `src/planner/conversation/`, and
+`src/planner/worker_context/`.
 
-A live smoke on the default DB also proved that adding a new harmless ticket to
-today wakes eligibility discovery without a follow-up scope edit. The ticket moved to
-`agent_running_step` on the immediate read after the day add, then parked at
-`awaiting_approval` with a success proposal.
+## Settlement and restart
+
+The gateway returns only terminal status, employee session id, and error. The runner
+does not receive transcript text. It settles the exact running record once and then
+applies the existing Ticket outcome:
+
+- a completed worker turn lets proposals and the resolution engine determine the
+  next resting status;
+- an interrupted turn leaves an interrupted correctness record;
+- an errored turn records the error and makes that failure visible in Ticket state;
+- takeover or a lost claim cannot be undone by a late worker completion.
+
+On startup, a stranded running row is not treated as a new prompt. Recovery requires
+the same Ticket session binding, interrupts the old correctness row, creates one
+replacement carrying the same employee session, and resumes through ACP. Stale rows
+that cannot be recovered are interrupted. First-wins settlement prevents shutdown,
+late completion, and restart cleanup from finishing the same run twice.
+
+Shutdown closes discovery admission, interrupts exact bound runs, drains accepted
+work to the configured deadline, and then closes the ACP composition in owner order.
+
+## Permissions
+
+An Automatic Employee permission may be answered only while the exact Ticket,
+session, binding generation, active turn, Ticket status, and running Employee-step row
+still match. The check and transition into settling happen under one immediate SQLite
+transaction. A stale permission cannot act on a newer run.
+
+## Worker roles and Employee backends
+
+The base role is `panels-worker`. It reads the Ticket's Worker type, loads that type's
+specialist skill, and uses the `panels` CLI to inspect the Ticket and file proposals.
+Panels exposes the repository's role skills through each backend's native skill
+location: project links for Codex and Claude Code, and startup links in the configured
+planner Hermes home. A new Ticket session receives the `panels-worker` instruction in
+its first real prompt, whether that first prompt comes from the human pane or Automatic
+Employee work. Panels does not alter Claude Code's system prompt.
+
+Application composition builds one ordered Employee-backend catalog and validates every
+Worker type's default against it. Ticket creation copies that type's starting Worker,
+Model, and Reasoning values once. Both the human pane and `EmployeeStepRunner` resolve
+the Ticket's stored launch setup before first binding, and the durable binding must agree
+with its Worker. There is no runtime fallback to a different backend or explicit value.
+
+The ordered production catalog is exactly `hermes`, `codex`, and `claude`. The server
+uses the official ACP client library to run each adapter over standard input and
+output. All three use the Ticket workspace root, support observed compaction and ACP
+permissions, and can carry both human and Automatic Employee work. Hermes supports
+native Steer. Codex and Claude Code do not; Queue and Send Now remain available.
+
+Hermes exposes Model selection and no Reasoning selection. Codex and Claude Code expose
+both through ACP, with Reasoning choices discovered again for the selected Model. After
+the first binding, the stored launch model and reasoning are historical only. Bound
+loads, child replacement, compaction recovery, and New Conversation do not reapply them;
+the ACP session owns its live configuration.
+
+Claude Code receives an initialize-only preflight at server startup, and the temporary
+child closes without creating a session. Codex starts lazily on first demand. Neither
+startup behavior changes the Ticket's durable backend choice or session identity.
 
 ## Handoffs
 
-- **Worker types** (`worker-types.md`) — how the base worker self-routes to its Worker
-  type's specialist skill, and the registry that declares each Worker type's Stages and
-  worker.
-- **Tickets & the gates** (`tickets-and-gates.md`) — the proposals the employee
-  files, the Stage ownership required for automatic work, the separate scope that
-  decides whether a step auto-accepts, and the approval that wakes Automatic
-  Employee-step eligibility discovery after commit.
-- **Chat** (`chat.md`) — the live conversation with the employee and the slash menu
-  of commands and skills, over the same gateway.
-- **The command-line tool** (`cli.md`) — the surface the employee acts through.
+- **Worker types** (`worker-types.md`) declares Stages, default ownership, and the
+  specialist skill.
+- **Tickets & the gates** (`tickets-and-gates.md`) owns proposals, scope, approval,
+  and Ticket status.
+- **Conversation** (`chat.md`) owns typed browser replay and shared human/worker
+  session behavior.
+- **The command-line tool** (`cli.md`) is the surface the employee acts through.
 
 ## Deferred
 
-- **No retry from an errored run.** Startup can recover a run that was still active
-  when Panels stopped, but an already errored Ticket is stuck — there is no retry or
-  clear. Trigger: an errored-run retry policy is designed.
-- **Rollover scheduling stays outside the employee runtime.** The server provisions the
-  role skill, which is designed for thin morning and afternoon Hermes jobs. Trigger:
-  the product decides that Panels itself should own the schedule. See `days.md`.
-- **Chat is not queued behind an active worker step.** If you talk to the same
-  employee while its worker step is already running, the send is rejected as
-  `already_running`; explicit Employee session history remains readable. The UI still
-  shows thinking dots, then the full answer, rather than streaming token by token.
-- **The "mind" → "employee" rename is unfinished** — some code still calls the
-  employee a "mind" (`src/planner/minds/`, `MindQueue`).
+- **Retry after a settled error.** Startup recovers a stranded running step, but an
+  already errored Ticket still needs a deliberate retry policy.
+- **In-server rollover scheduling.** Panels provisions the rollover role skill; thin
+  scheduled prompts remain outside the deterministic runtime.
 
 ---
 
-_Last verified: 2026-07-18._
+_Last verified: 2026-07-21 (three-backend ACP Employee runtime and correctness-only run records)._

@@ -2,15 +2,30 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
+from collections.abc import Iterator
 from pathlib import Path
 from sqlite3 import Connection
+from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from tests.support.probe import (
+    PROBE_EMPLOYEE_BACKEND_CATALOG,
+    install_probe_registry,
+    uninstall_probe_registry,
+)
 
-from planner.chat import data as chat_data
-from planner.core.adapters.registry import build_adapters
+from planner.conversation import sqlite_binding_repository as binding_repository_module
+from planner.conversation.contracts import ConversationSessionBinding
+from planner.conversation.employee_configuration import (
+    EmployeeConfigurationCatalog,
+    EmployeeConfigurationCatalogOption,
+)
+from planner.conversation.sqlite_binding_repository import SqliteConversationBindingRepository
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.contracts import Priority
@@ -19,8 +34,9 @@ from planner.core.events import read_events_since
 from planner.core.server import create_app
 from planner.days import data as days_data
 from planner.runtime import automatic_employee_step_eligibility
+from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, AtCap
+from planner.tickets.contracts import NO_FURTHER, AtCap, EmployeeLaunchConfiguration
 from planner.worker_context import data as worker_context_data
 
 
@@ -34,13 +50,11 @@ def _make_app(tmp_path: Path, *, trace: list[str] | None = None) -> tuple[FastAP
         env={
             "PLAN_TEST_MODE": "1",
             "PLAN_FAKE_NOW": "2026-07-10T12:00:00+01:00",
-            "PLAN_GATEWAY_ADAPTER": "fake",
             "PLAN_DB_PATH": str(db_path),
             "PLAN_LOGS_DIR": str(tmp_path / "logs"),
         },
     )
     clock = build_clock(config)
-    adapters = build_adapters(config)
 
     def conn_factory() -> Connection:
         conn = connect(str(db_path))
@@ -48,7 +62,7 @@ def _make_app(tmp_path: Path, *, trace: list[str] | None = None) -> tuple[FastAP
             conn.set_trace_callback(trace.append)
         return conn
 
-    return create_app(config, clock, adapters, conn_factory), db_path
+    return create_app(config, clock, conn_factory), db_path
 
 
 def _seed_sprint(conn: Connection, sprint_id: str = "sp_edit") -> None:
@@ -64,7 +78,7 @@ def _create_ticket(db_path: Path, **values: Any) -> str:
     try:
         ticket = tickets_data.create_ticket(
             conn,
-            worker_type="coding",
+            worker_type=values.pop("worker_type", "coding"),
             title=values.pop("title", "Before edit"),
             kickoff_note=values.pop("kickoff_note", "Before note"),
             actor="unattributed",
@@ -86,6 +100,30 @@ def _create_ticket(db_path: Path, **values: Any) -> str:
         conn.close()
 
 
+def _create_pristine_ticket(db_path: Path, *, worker_type: str = "probe") -> str:
+    conn = connect(str(db_path))
+    try:
+        return tickets_data.create_ticket(
+            conn,
+            worker_type=worker_type,
+            title="Pristine backend selection",
+            actor="unattributed",
+            now=1,
+            title_max_chars=200,
+        ).id
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def probe_runtime() -> Iterator[None]:
+    install_probe_registry()
+    try:
+        yield
+    finally:
+        uninstall_probe_registry()
+
+
 def _snapshot(db_path: Path, ticket_id: str) -> dict[str, Any]:
     conn = connect(str(db_path))
     try:
@@ -97,6 +135,9 @@ def _snapshot(db_path: Path, ticket_id: str) -> dict[str, Any]:
                 ticket.deadline,
                 ticket.project_id,
                 ticket.sprint_id,
+                ticket.employee_backend,
+                ticket.employee_launch_model,
+                ticket.employee_launch_reasoning_effort,
                 str(ticket.stage),
                 ticket.ticket_status.value,
             ),
@@ -113,6 +154,587 @@ def _snapshot(db_path: Path, ticket_id: str) -> dict[str, Any]:
         }
     finally:
         conn.close()
+
+
+def _employee_configuration_body(
+    employee_backend: str,
+    employee_launch_model: str | None = None,
+    employee_launch_reasoning_effort: str | None = None,
+) -> dict[str, object]:
+    return {
+        "employee_backend": employee_backend,
+        "employee_launch_model": employee_launch_model,
+        "employee_launch_reasoning_effort": employee_launch_reasoning_effort,
+    }
+
+
+def test_ticket_creation_copies_worker_type_configuration_once(
+    tmp_path: Path,
+    probe_runtime: None,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    with TestClient(app) as client:
+        defaulted = client.post(
+            "/api/tickets", json={"title": "Default backend", "worker_type": "probe"}
+        )
+        overridden = client.post(
+            "/api/tickets",
+            json={
+                "title": "Override backend",
+                "worker_type": "probe",
+                "employee_backend": "hermes",
+            },
+        )
+        before = connect(str(db_path))
+        counts_before = tuple(
+            before.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in ("tickets", "events")
+        )
+        before.close()
+        rejected = client.post(
+            "/api/tickets",
+            json={
+                "title": "Unknown backend",
+                "worker_type": "probe",
+                "employee_backend": "missing-backend",
+            },
+        )
+
+    assert defaulted.status_code == 200
+    assert defaulted.json()["employee_backend"] == "probe-backend"
+    assert defaulted.json()["employee_launch_model"] == "probe-model"
+    assert defaulted.json()["employee_launch_reasoning_effort"] == "probe-high"
+    assert overridden.status_code == 200
+    assert overridden.json()["employee_backend"] == "hermes"
+    assert overridden.json()["employee_launch_model"] is None
+    assert overridden.json()["employee_launch_reasoning_effort"] is None
+    assert rejected.status_code == 400
+    assert rejected.json()["error"]["code"] == "validation"
+    check = connect(str(db_path))
+    try:
+        assert (
+            tuple(
+                check.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in ("tickets", "events")
+            )
+            == counts_before
+        )
+        created_payloads = [
+            event.payload
+            for event in read_events_since(check, 0, 10_000)
+            if event.kind == "ticket_created"
+        ]
+        assert [payload["employee_backend"] for payload in created_payloads] == [
+            "probe-backend",
+            "hermes",
+        ]
+    finally:
+        check.close()
+
+
+def test_employee_configuration_endpoint_allows_pristine_statuses_and_emits_exact_event(
+    tmp_path: Path,
+    probe_runtime: None,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    awaiting_id = _create_pristine_ticket(db_path)
+    empty_id = _create_pristine_ticket(db_path)
+    conn = connect(str(db_path))
+    conn.execute("UPDATE tickets SET ticket_status = 'empty' WHERE id = ?", (empty_id,))
+    conn.close()
+
+    with TestClient(app) as client:
+        awaiting = client.put(
+            f"/api/tickets/{awaiting_id}/employee-configuration",
+            json=_employee_configuration_body("hermes"),
+        )
+        empty = client.put(
+            f"/api/tickets/{empty_id}/employee-configuration",
+            json=_employee_configuration_body("hermes"),
+        )
+
+    assert awaiting.status_code == empty.status_code == 200
+    assert awaiting.json()["employee_backend"] == empty.json()["employee_backend"] == "hermes"
+    assert awaiting.json()["employee_configuration_editable"] is True
+    assert empty.json()["employee_configuration_editable"] is True
+    check = connect(str(db_path))
+    try:
+        for ticket_id in (awaiting_id, empty_id):
+            events = [
+                event
+                for event in read_events_since(check, 0, 10_000)
+                if event.entity_id == ticket_id and event.kind == "ticket_updated"
+            ]
+            assert [event.payload for event in events] == [
+                {
+                    "field": "employee_configuration",
+                    "from": _employee_configuration_body(
+                        "probe-backend", "probe-model", "probe-high"
+                    ),
+                    "to": _employee_configuration_body("hermes"),
+                }
+            ]
+    finally:
+        check.close()
+
+
+def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
+    tmp_path: Path,
+    probe_runtime: None,
+) -> None:
+    class CatalogService:
+        async def catalog(self, employee_backend: str, candidate_model: str | None):
+            reasoning_values = ("low",) if candidate_model == "probe-b" else ("low", "high")
+            return SimpleNamespace(
+                models=tuple(
+                    SimpleNamespace(value=value) for value in ("probe-a", "probe-b")
+                ),
+                reasoning_supported=True,
+                reasoning_efforts=tuple(
+                    SimpleNamespace(value=value) for value in reasoning_values
+                ),
+            )
+
+    app, db_path = _make_app(tmp_path)
+    app.state.conversation = SimpleNamespace(
+        employee_configuration_catalog=CatalogService()
+    )
+    ticket_id = _create_pristine_ticket(db_path)
+
+    with TestClient(app) as client:
+        selected = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("probe-backend", "probe-a", "high"),
+        )
+        model_changed = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("probe-backend", "probe-b", "high"),
+        )
+        backend_changed = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("hermes", "not-a-hermes-model", "extreme"),
+        )
+        switched_back = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("probe-backend", "probe-a", "high"),
+        )
+
+    assert selected.status_code == 200
+    assert (
+        selected.json()["employee_launch_model"],
+        selected.json()["employee_launch_reasoning_effort"],
+    ) == ("probe-a", "high")
+    assert model_changed.status_code == 200
+    assert (
+        model_changed.json()["employee_launch_model"],
+        model_changed.json()["employee_launch_reasoning_effort"],
+    ) == ("probe-b", None)
+    assert backend_changed.status_code == 200
+    assert (
+        backend_changed.json()["employee_backend"],
+        backend_changed.json()["employee_launch_model"],
+        backend_changed.json()["employee_launch_reasoning_effort"],
+    ) == ("hermes", None, None)
+    assert switched_back.status_code == 200
+    assert (
+        switched_back.json()["employee_backend"],
+        switched_back.json()["employee_launch_model"],
+        switched_back.json()["employee_launch_reasoning_effort"],
+    ) == ("probe-backend", None, None)
+
+
+def test_employee_configuration_catalog_failure_is_a_retryable_product_error(
+    tmp_path: Path,
+    probe_runtime: None,
+) -> None:
+    class FailingCatalogService:
+        async def catalog(self, employee_backend: str, candidate_model: str | None):
+            del employee_backend, candidate_model
+            raise RuntimeError("private adapter failure")
+
+    app, _db_path = _make_app(tmp_path)
+    app.state.conversation = SimpleNamespace(
+        employee_configuration_catalog=FailingCatalogService()
+    )
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/employee-configuration-catalog",
+            params={"employee_backend": "probe-backend"},
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {
+            "code": "gateway_offline",
+            "message": "employee configuration catalog is unavailable",
+            "detail": {},
+        }
+    }
+    assert "private adapter failure" not in response.text
+
+
+def test_employee_configuration_catalog_endpoint_serves_the_exact_product_shape(
+    tmp_path: Path,
+    probe_runtime: None,
+) -> None:
+    expected = EmployeeConfigurationCatalog(
+        employee_backend="probe-backend",
+        candidate_model="probe-model",
+        native_model="probe-native",
+        models=(EmployeeConfigurationCatalogOption(value="probe-model", label="Probe"),),
+        reasoning_supported=True,
+        native_reasoning_effort="probe-high",
+        reasoning_efforts=(
+            EmployeeConfigurationCatalogOption(value="probe-high", label="High"),
+        ),
+    )
+
+    class CatalogService:
+        async def catalog(self, employee_backend: str, candidate_model: str | None):
+            assert (employee_backend, candidate_model) == (
+                "probe-backend",
+                "probe-model",
+            )
+            return expected
+
+    app, _db_path = _make_app(tmp_path)
+    app.state.conversation = SimpleNamespace(
+        employee_configuration_catalog=CatalogService()
+    )
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/employee-configuration-catalog",
+            params={
+                "employee_backend": "probe-backend",
+                "candidate_model": "probe-model",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == expected.model_dump(mode="json")
+
+
+def test_employee_configuration_noop_after_freeze_emits_nothing(
+    tmp_path: Path,
+    probe_runtime: None,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _create_ticket(db_path, worker_type="probe")
+    before = _snapshot(db_path, ticket_id)
+
+    with TestClient(app) as client:
+        response = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body(
+                "probe-backend", "probe-model", "probe-high"
+            ),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["employee_configuration_editable"] is False
+    assert _snapshot(db_path, ticket_id) == before
+
+
+@pytest.mark.parametrize(
+    ("mutation_sql", "mutation_parameters"),
+    (
+        ("UPDATE tickets SET stage = 'needs_alpha' WHERE id = ?", ()),
+        ("UPDATE tickets SET ticket_status = 'agent_running_step' WHERE id = ?", ()),
+        ("UPDATE tickets SET ticket_status = 'user_takeover' WHERE id = ?", ()),
+        ("UPDATE tickets SET ticket_status = 'paired_work' WHERE id = ?", ()),
+        ("UPDATE tickets SET ticket_status = 'errored' WHERE id = ?", ()),
+        ("UPDATE tickets SET employee_session_id = 'session-existing' WHERE id = ?", ()),
+    ),
+)
+def test_employee_configuration_change_rejects_every_pristine_freeze_boundary(
+    tmp_path: Path,
+    probe_runtime: None,
+    mutation_sql: str,
+    mutation_parameters: tuple[object, ...],
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _create_pristine_ticket(db_path)
+    conn = connect(str(db_path))
+    conn.execute(mutation_sql, (*mutation_parameters, ticket_id))
+    conn.close()
+    before = _snapshot(db_path, ticket_id)
+
+    with TestClient(app) as client:
+        response = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("hermes"),
+        )
+
+    assert response.status_code == 409
+    assert _snapshot(db_path, ticket_id) == before
+
+
+def test_employee_configuration_endpoint_requires_the_exact_complete_nullable_body(
+    tmp_path: Path,
+    probe_runtime: None,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _create_pristine_ticket(db_path)
+    conn = connect(str(db_path))
+    conn.execute(
+        "INSERT INTO conversation_session_bindings "
+        "(employee_id, entity_kind, entity_id, acp_session_id, backend_key, "
+        "binding_generation, created_at, updated_at) VALUES (?, 'ticket', ?, "
+        "'session-bound', 'probe-backend', 1, 1, 1)",
+        (ticket_id, ticket_id),
+    )
+    conn.close()
+    before = _snapshot(db_path, ticket_id)
+
+    with TestClient(app) as client:
+        bound = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("hermes"),
+        )
+        indirect = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("probe-backend"),
+            headers={"X-Plan-Actor": "worker"},
+        )
+        extra = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json={**_employee_configuration_body("probe-backend"), "extra": True},
+        )
+        unknown = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("missing-backend"),
+        )
+        missing = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json={"employee_backend": "probe-backend"},
+        )
+        wrong_nullable_type = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json={
+                **_employee_configuration_body("probe-backend"),
+                "employee_launch_model": 42,
+            },
+        )
+        detail = client.get(f"/api/tickets/{ticket_id}")
+
+    assert bound.status_code == 409
+    assert indirect.status_code == 400
+    assert indirect.json()["error"]["code"] == "agent_forbidden"
+    assert extra.status_code == 400
+    assert unknown.status_code == 400
+    assert missing.status_code == 400
+    assert wrong_nullable_type.status_code == 400
+    assert detail.status_code == 200
+    assert detail.json()["employee_configuration_editable"] is False
+    assert _snapshot(db_path, ticket_id) == before
+
+
+def test_employee_configuration_writer_and_first_binding_race_in_both_commit_orders(
+    tmp_path: Path,
+    probe_runtime: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def prepare(
+        name: str,
+    ) -> tuple[
+        Path,
+        str,
+        ConversationSessionBinding,
+        EmployeeLaunchConfiguration,
+    ]:
+        db_path = tmp_path / f"{name}.db"
+        conn = connect(str(db_path))
+        create_schema(conn)
+        ticket = tickets_data.create_ticket(
+            conn,
+            title=name,
+            worker_type="probe",
+            actor="human",
+            now=1,
+            title_max_chars=200,
+        )
+        prepared_configuration = tickets_data.employee_launch_configuration(ticket)
+        conn.close()
+        return (
+            db_path,
+            ticket.id,
+            ConversationSessionBinding(
+                employee_id=ticket.id,
+                acp_session_id=f"session-{name}",
+                backend_key="probe-backend",
+                binding_generation=1,
+            ),
+            prepared_configuration,
+        )
+
+    (
+        writer_first_path,
+        writer_first_id,
+        writer_first_candidate,
+        writer_first_prepared,
+    ) = prepare("writer-first")
+    cas_waiting = threading.Event()
+    release_cas = threading.Event()
+    real_binding_connect = binding_repository_module.connect
+
+    def paused_binding_connect(*args, **kwargs):
+        conn = real_binding_connect(*args, **kwargs)
+        paused = False
+
+        def trace(statement: str) -> None:
+            nonlocal paused
+            if statement == "BEGIN IMMEDIATE" and not paused:
+                paused = True
+                cas_waiting.set()
+                assert release_cas.wait(2)
+
+        conn.set_trace_callback(trace)
+        return conn
+
+    writer_first_repository = SqliteConversationBindingRepository(
+        str(writer_first_path),
+        workspace_root=tmp_path,
+        integer_now=lambda: 2,
+        employee_backend_catalog=PROBE_EMPLOYEE_BACKEND_CATALOG,
+        chief_backend_key="hermes",
+    )
+    cas_errors: list[BaseException] = []
+    with monkeypatch.context() as patch:
+        patch.setattr(binding_repository_module, "connect", paused_binding_connect)
+
+        def bind_after_writer() -> None:
+            try:
+                asyncio.run(
+                    writer_first_repository.compare_and_swap_initial(
+                        writer_first_candidate,
+                        writer_first_prepared,
+                    )
+                )
+            except BaseException as error:
+                cas_errors.append(error)
+
+        cas_thread = threading.Thread(target=bind_after_writer)
+        cas_thread.start()
+        assert cas_waiting.wait(2)
+        writer_conn = connect(str(writer_first_path))
+        tickets_data.write_employee_configuration(
+            writer_conn,
+            writer_first_id,
+            expected_employee_configuration=writer_first_prepared,
+            employee_backend="hermes",
+            employee_launch_model=None,
+            employee_launch_reasoning_effort=None,
+            employee_backend_catalog=PROBE_EMPLOYEE_BACKEND_CATALOG,
+            advertised_models=None,
+            reasoning_supported=None,
+            advertised_reasoning_efforts=None,
+            now=2,
+        )
+        writer_conn.close()
+        release_cas.set()
+        cas_thread.join(2)
+    assert not cas_thread.is_alive()
+    assert len(cas_errors) == 1
+    writer_first_check = connect(str(writer_first_path))
+    assert (
+        tuple(
+            writer_first_check.execute(
+                "SELECT employee_backend, employee_launch_model, "
+                "employee_launch_reasoning_effort FROM tickets WHERE id = ?",
+                (writer_first_id,),
+            ).fetchone()
+        )
+        == ("hermes", None, None)
+    )
+    assert (
+        writer_first_check.execute(
+            "SELECT 1 FROM conversation_session_bindings WHERE employee_id = ?",
+            (writer_first_id,),
+        ).fetchone()
+        is None
+    )
+    writer_first_check.close()
+
+    (
+        binding_first_path,
+        binding_first_id,
+        binding_first_candidate,
+        binding_first_prepared,
+    ) = prepare("binding-first")
+    writer_waiting = threading.Event()
+    release_writer = threading.Event()
+    writer_paused = False
+
+    def pause_writer(statement: str) -> None:
+        nonlocal writer_paused
+        if statement == "BEGIN IMMEDIATE" and not writer_paused:
+            writer_paused = True
+            writer_waiting.set()
+            assert release_writer.wait(2)
+
+    writer_errors: list[BaseException] = []
+
+    def write_after_binding() -> None:
+        writer_conn = connect(str(binding_first_path))
+        writer_conn.set_trace_callback(pause_writer)
+        try:
+            tickets_data.write_employee_configuration(
+                writer_conn,
+                binding_first_id,
+                expected_employee_configuration=binding_first_prepared,
+                employee_backend="hermes",
+                employee_launch_model=None,
+                employee_launch_reasoning_effort=None,
+                employee_backend_catalog=PROBE_EMPLOYEE_BACKEND_CATALOG,
+                advertised_models=None,
+                reasoning_supported=None,
+                advertised_reasoning_efforts=None,
+                now=2,
+            )
+        except BaseException as error:
+            writer_errors.append(error)
+        finally:
+            writer_conn.close()
+
+    writer_thread = threading.Thread(target=write_after_binding)
+    writer_thread.start()
+    assert writer_waiting.wait(2)
+    binding_first_repository = SqliteConversationBindingRepository(
+        str(binding_first_path),
+        workspace_root=tmp_path,
+        integer_now=lambda: 2,
+        employee_backend_catalog=PROBE_EMPLOYEE_BACKEND_CATALOG,
+        chief_backend_key="hermes",
+    )
+    assert (
+        asyncio.run(
+            binding_first_repository.compare_and_swap_initial(
+                binding_first_candidate,
+                binding_first_prepared,
+            )
+        )
+        == binding_first_candidate
+    )
+    release_writer.set()
+    writer_thread.join(2)
+    assert not writer_thread.is_alive()
+    assert len(writer_errors) == 1
+    binding_first_check = connect(str(binding_first_path))
+    row = binding_first_check.execute(
+        "SELECT tickets.employee_backend, tickets.employee_launch_model, "
+        "tickets.employee_launch_reasoning_effort, "
+        "conversation_session_bindings.backend_key "
+        "FROM tickets JOIN conversation_session_bindings "
+        "ON conversation_session_bindings.employee_id = tickets.id WHERE tickets.id = ?",
+        (binding_first_id,),
+    ).fetchone()
+    assert tuple(row) == (
+        "probe-backend",
+        binding_first_prepared.employee_launch_model,
+        binding_first_prepared.employee_launch_reasoning_effort,
+        "probe-backend",
+    )
+    binding_first_check.close()
 
 
 def _new_ticket_events(db_path: Path, ticket_id: str, prior_count: int) -> list[Any]:
@@ -529,7 +1151,7 @@ def test_rejected_compound_edits_preserve_existing_errors_and_have_no_effect(
             assert _snapshot(db_path, ticket_id) == before
 
 
-def test_active_worker_and_running_chat_do_not_block_an_ordinary_edit(
+def test_active_worker_and_running_employee_step_do_not_block_an_ordinary_edit(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
@@ -548,18 +1170,7 @@ def test_active_worker_and_running_chat_do_not_block_an_ordinary_edit(
             now=2,
         )
         assert started is not None
-        chat_data.start_turn(
-            conn,
-            ticket_id,
-            origin="human",
-            mode="message",
-            visible_role="human",
-            visible_text="Still editing directly",
-            output_role="assistant",
-            phase="thinking",
-            activity_label=None,
-            now=3,
-        )
+        SqliteEmployeeStepRepository().start(conn, ticket_id, now=3)
     finally:
         conn.close()
 

@@ -20,8 +20,8 @@ _EMPTY_CODING_FIELDS = fields_to_json(TicketFields.empty(CODING_WORKER_TYPE_DEFI
 
 def _ticket(conn, ticket_id: str, stage: str = "needs_success") -> None:
     conn.execute(
-        "INSERT INTO tickets (id, title, worker_type, stage, ceiling, fields, "
-        "created_at, updated_at) VALUES (?, ?, 'coding', ?, 'needs_success', ?, 1, 1)",
+        "INSERT INTO tickets (id, title, worker_type, employee_backend, stage, ceiling, fields, "
+        "created_at, updated_at) VALUES (?, ?, 'coding', 'hermes', ?, 'needs_success', ?, 1, 1)",
         (ticket_id, ticket_id, stage, _EMPTY_CODING_FIELDS),
     )
 

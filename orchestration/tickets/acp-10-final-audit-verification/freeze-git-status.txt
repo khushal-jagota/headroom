@@ -1,0 +1,1469 @@
+ M .claude/worktrees/frontend-shared-components
+ M .gitignore
+ M AGENTS.md
+ M CLAUDE.md
+ M DESIGN.md
+ M DOGFOOD.md
+ M PROGRESS.md
+ M assets/app.css
+ M config.yaml
+ M decisions.md
+ M docs/README.md
+ M docs/chat.md
+ M docs/cli.md
+ M docs/employee-runtime.md
+ M docs/frontend.md
+ M docs/systems.html
+ M docs/systems.md
+ M docs/tickets-and-gates.md
+ M docs/worker-types.md
+ M orchestration/acp-migration/direction.md
+ M pyproject.toml
+ M requirements.txt
+ D src/planner/chat/__init__.py
+ D src/planner/chat/api.py
+ D src/planner/chat/contracts.py
+ D src/planner/chat/data.py
+ D src/planner/chat/logic/__init__.py
+ D src/planner/chat/logic/activity.py
+ D src/planner/chat/service.py
+ M src/planner/cli/main.py
+ D src/planner/core/adapters/__init__.py
+ D src/planner/core/adapters/base.py
+ D src/planner/core/adapters/fakes.py
+ D src/planner/core/adapters/real.py
+ D src/planner/core/adapters/registry.py
+ M src/planner/core/config.py
+ M src/planner/core/contracts.py
+ M src/planner/core/db.py
+ M src/planner/core/legacy_execution_route.py
+ M src/planner/core/loops.py
+ M src/planner/core/server.py
+ M src/planner/core/testmode.py
+ M src/planner/days/api.py
+ M src/planner/days/contracts.py
+ M src/planner/days/data.py
+ M src/planner/files/api.py
+ D src/planner/files/chat_images.py
+ M src/planner/files/contracts.py
+ M src/planner/files/logic/paths.py
+ D src/planner/hermes_backend/__init__.py
+ D src/planner/hermes_backend/composition.py
+ D src/planner/hermes_backend/employee_child_pool.py
+ D src/planner/hermes_backend/employee_child_relay.py
+ D src/planner/hermes_backend/hermes_frame_translation.py
+ D src/planner/hermes_backend/neutral_downstream_session.py
+ D src/planner/hermes_backend/neutral_relay_config.py
+ D src/planner/hermes_backend/neutral_vocabulary.py
+ D src/planner/hermes_backend/pool_step_gateway.py
+ D src/planner/hermes_backend/raw_frame_transport.py
+ D src/planner/hermes_backend/relay_neutral_route.py
+ D src/planner/hermes_backend/relay_route.py
+ D src/planner/hermes_backend/relay_tee.py
+ D src/planner/hermes_backend/scripted_relay_child.py
+ D src/planner/hermes_backend/transcript_mirror_tee.py
+ D src/planner/minds/__init__.py
+ D src/planner/minds/config.py
+ D src/planner/minds/contracts.py
+ D src/planner/minds/employee_child_registry.py
+ D src/planner/minds/fake.py
+ D src/planner/minds/gateway.py
+ D src/planner/minds/runner.py
+ D src/planner/minds/sessions/__init__.py
+ D src/planner/minds/sessions/service.py
+ D src/planner/minds/shared_gateway.py
+ D src/planner/minds/smoke.py
+ M src/planner/runtime/automatic_employee_step_eligibility.py
+ M src/planner/runtime/employee_step_runner.py
+ M src/planner/runtime/step_gateway.py
+ M src/planner/seed/__main__.py
+ M src/planner/seed/importer.py
+ M src/planner/seed/logic/blocks.py
+ M src/planner/seed/logic/deferred.py
+ M src/planner/seed/logic/ideas.py
+ M src/planner/seed/logic/kickoff.py
+ M src/planner/seed/logic/tracking.py
+ M src/planner/seed/logic/workspace.py
+ M src/planner/server_lifecycle/application.py
+ M src/planner/sprints/views.py
+ M src/planner/tickets/actions.py
+ M src/planner/tickets/api.py
+ M src/planner/tickets/contracts.py
+ M src/planner/tickets/data.py
+ D src/planner/tickets/employee_session_history.py
+ M src/planner/tickets/logic/decisions.py
+ M src/planner/tickets/logic/resolution.py
+ M src/planner/tickets/views.py
+ M src/planner/worker_types/__init__.py
+ M src/planner/worker_types/coding.py
+ M src/planner/worker_types/configuration.py
+ M src/planner/worker_types/contracts.py
+ M src/planner/worker_types/exploration.py
+ M src/planner/worker_types/initiative_planning.py
+ M src/planner/worker_types/new_worker.py
+ M src/planner/worker_types/registry.py
+ M tests/e2e/conftest.py
+ D tests/e2e/test_chat_images.py
+ M tests/e2e/test_chief_external_work_cli.py
+ D tests/e2e/test_chief_neutral_pane.py
+ M tests/e2e/test_chief_of_staff.py
+ M tests/e2e/test_cli_verbs.py
+ M tests/e2e/test_flows_a.py
+ M tests/e2e/test_flows_b.py
+ D tests/e2e/test_live_chat_state.py
+ M tests/e2e/test_new_worker_public_flow.py
+ M tests/e2e/test_resource_catalogue.py
+ M tests/e2e/test_stage_ownership_frontend.py
+ M tests/e2e/test_ticket_file_previews.py
+ D tests/e2e/test_ticket_neutral_pane.py
+ M tests/support/probe.py
+ M tests/unit/test_authctx_routes.py
+ M tests/unit/test_automatic_employee_step_discovery_loop.py
+ M tests/unit/test_automatic_employee_step_eligibility.py
+ M tests/unit/test_automatic_employee_step_eligibility_actions.py
+ M tests/unit/test_board_view.py
+ D tests/unit/test_chat_activity.py
+ D tests/unit/test_chat_clarification.py
+ D tests/unit/test_chat_commands.py
+ D tests/unit/test_chat_images.py
+ M tests/unit/test_chat_ingress_contract.py
+ D tests/unit/test_chat_seed.py
+ M tests/unit/test_chief_external_work.py
+ M tests/unit/test_cli_entrypoints.py
+ M tests/unit/test_config.py
+ M tests/unit/test_copy_text_type_driven.py
+ M tests/unit/test_core_loops.py
+ M tests/unit/test_day_api.py
+ M tests/unit/test_days.py
+ M tests/unit/test_db.py
+ D tests/unit/test_employee_child_registry.py
+ D tests/unit/test_employee_session_history.py
+ M tests/unit/test_employee_step_runner.py
+ M tests/unit/test_engine_parameterization.py
+ M tests/unit/test_external_work_generic.py
+ M tests/unit/test_go_no_go_gate.py
+ D tests/unit/test_hermes_backend_catalog_and_denylist.py
+ D tests/unit/test_hermes_backend_chief_composition.py
+ D tests/unit/test_hermes_backend_child_death.py
+ D tests/unit/test_hermes_backend_config_gate.py
+ D tests/unit/test_hermes_backend_history_snapshot.py
+ D tests/unit/test_hermes_backend_neutral_overload.py
+ D tests/unit/test_hermes_backend_neutral_route_gate.py
+ D tests/unit/test_hermes_backend_neutral_vocabulary.py
+ D tests/unit/test_hermes_backend_new_conversation.py
+ D tests/unit/test_hermes_backend_pool.py
+ D tests/unit/test_hermes_backend_relay_ids.py
+ D tests/unit/test_hermes_backend_relay_routing.py
+ D tests/unit/test_hermes_backend_scripted_child.py
+ D tests/unit/test_hermes_backend_session_lifecycle.py
+ D tests/unit/test_hermes_backend_ticket_composition.py
+ D tests/unit/test_hermes_backend_ticket_step_composition.py
+ D tests/unit/test_hermes_backend_transcript_mirror.py
+ D tests/unit/test_hermes_backend_translation_events.py
+ D tests/unit/test_hermes_backend_translation_requests.py
+ D tests/unit/test_hermes_backend_verbatim_order.py
+ D tests/unit/test_human_chat_turn.py
+ M tests/unit/test_initiative_planning_worker_type.py
+ M tests/unit/test_links.py
+ D tests/unit/test_minds.py
+ D tests/unit/test_minds_sessions.py
+ M tests/unit/test_new_worker_type.py
+ D tests/unit/test_pool_step_gateway.py
+ D tests/unit/test_pool_ticket_adoption.py
+ M tests/unit/test_probe_type.py
+ M tests/unit/test_projects.py
+ D tests/unit/test_raw_frame_request_reply.py
+ M tests/unit/test_request_identity.py
+ M tests/unit/test_return_for_revision.py
+ M tests/unit/test_review_ticket_decisions_type_driven.py
+ M tests/unit/test_seed.py
+ M tests/unit/test_server_events.py
+ M tests/unit/test_server_shutdown_process.py
+ M tests/unit/test_server_static_paths.py
+ M tests/unit/test_sprints.py
+ M tests/unit/test_ticket_delete.py
+ M tests/unit/test_ticket_edit_api.py
+ M tests/unit/test_ticket_files.py
+ M tests/unit/test_tickets_engine.py
+ M tests/unit/test_trusted_ingress.py
+ M tests/unit/test_type_driven_ingress.py
+ M tests/unit/test_value_edit_api.py
+ M tests/unit/test_worker_cli_identity.py
+ M tests/unit/test_worker_my_ticket.py
+ M tests/unit/test_worker_type_manifest_endpoint.py
+ M tests/unit/test_worker_type_persistence.py
+ M tests/unit/test_worker_type_registry.py
+ M tests/unit/test_worker_type_stage_contracts.py
+ D web/dist/assets/index-C68rJfrI.css
+ D web/dist/assets/index-DlaZKAOy.js
+ M web/dist/index.html
+ M web/node_modules/.package-lock.json
+ M web/package-lock.json
+ M web/package.json
+ M web/src/App.svelte
+ D web/src/components/ChatComposer.svelte
+ D web/src/components/ChatPanel.svelte
+ D web/src/components/ChiefNeutralPane.svelte
+ M web/src/lib/api.ts
+ D web/src/lib/capabilities.ts
+ D web/src/lib/chatImages.js
+ M web/src/lib/filePreview.ts
+ M web/src/lib/lifecycle.ts
+ D web/src/lib/neutralPane.ts
+ M web/src/lib/resourceCatalogue.ts
+ M web/src/lib/types.ts
+ M web/src/routes/BoardRoute.svelte
+ M web/src/routes/ChiefOfStaffRoute.svelte
+ M web/src/routes/FilePreviewRoute.svelte
+ M web/src/routes/TicketRoute.svelte
+ D web/tests/chat-images.test.mjs
+ M web/tests/file-preview.test.mjs
+ M web/tests/lifecycle.test.mjs
+ D web/tests/neutral-pane.test.mjs
+ M web/tests/resource-catalogue.test.mjs
+ D web/tests/ticket-neutral-pane.test.mjs
+?? agent_backends/package-lock.json
+?? agent_backends/package.json
+?? orchestration/acp-migration/chat-ownership-classification.md
+?? orchestration/acp-migration/chat-ownership-inventory-review.md
+?? orchestration/acp-migration/compaction-primary-source-audit.md
+?? orchestration/acp-migration/plan.md
+?? orchestration/acp-migration/program-review-round-1.md
+?? orchestration/acp-migration/program-review-round-2.md
+?? orchestration/acp-migration/research.md
+?? orchestration/tickets/acp-00-contracts-conformance/contract.md
+?? orchestration/tickets/acp-00-contracts-conformance/focused-test-evidence.md
+?? orchestration/tickets/acp-00-contracts-conformance/implementation-report.md
+?? orchestration/tickets/acp-00-contracts-conformance/implementation-review-correction-check.md
+?? orchestration/tickets/acp-00-contracts-conformance/implementation-review-disposition.md
+?? orchestration/tickets/acp-00-contracts-conformance/implementation-review-round-1.md
+?? orchestration/tickets/acp-00-contracts-conformance/plan-review-disposition.md
+?? orchestration/tickets/acp-00-contracts-conformance/plan-review-round-1.md
+?? orchestration/tickets/acp-00-contracts-conformance/plan.md
+?? orchestration/tickets/acp-00a-terminal-state-wire/contract.md
+?? orchestration/tickets/acp-00a-terminal-state-wire/implementation-report.md
+?? orchestration/tickets/acp-00a-terminal-state-wire/implementation-review-round-1.md
+?? orchestration/tickets/acp-00b-steer-capability-wire/contract.md
+?? orchestration/tickets/acp-00b-steer-capability-wire/implementation-report.md
+?? orchestration/tickets/acp-00b-steer-capability-wire/implementation-review-round-1.md
+?? orchestration/tickets/acp-01-child-runtime-hermes/contract.md
+?? orchestration/tickets/acp-01-child-runtime-hermes/focused-checks.txt
+?? orchestration/tickets/acp-01-child-runtime-hermes/implementation-report.md
+?? orchestration/tickets/acp-01-child-runtime-hermes/implementation-review-correction-check.md
+?? orchestration/tickets/acp-01-child-runtime-hermes/implementation-review-round-1.md
+?? orchestration/tickets/acp-01-child-runtime-hermes/plan-review-correction-check.md
+?? orchestration/tickets/acp-01-child-runtime-hermes/plan-review-round-1.md
+?? orchestration/tickets/acp-01-child-runtime-hermes/plan.md
+?? orchestration/tickets/acp-02-turn-broker-reverse-services/contract.md
+?? orchestration/tickets/acp-02-turn-broker-reverse-services/focused-checks.txt
+?? orchestration/tickets/acp-02-turn-broker-reverse-services/implementation-report.md
+?? orchestration/tickets/acp-02-turn-broker-reverse-services/implementation-review-correction-check.md
+?? orchestration/tickets/acp-02-turn-broker-reverse-services/implementation-review-round-1.md
+?? orchestration/tickets/acp-02-turn-broker-reverse-services/plan-review-correction-check.md
+?? orchestration/tickets/acp-02-turn-broker-reverse-services/plan-review-final-disposition.md
+?? orchestration/tickets/acp-02-turn-broker-reverse-services/plan-review-round-1.md
+?? orchestration/tickets/acp-02-turn-broker-reverse-services/plan.md
+?? orchestration/tickets/acp-03-browser-state-pane/contract.md
+?? orchestration/tickets/acp-03-browser-state-pane/implementation-report.md
+?? orchestration/tickets/acp-03-browser-state-pane/implementation-review-correction-check.md
+?? orchestration/tickets/acp-03-browser-state-pane/implementation-review-round-1.md
+?? orchestration/tickets/acp-03-browser-state-pane/plan-review-round-1.md
+?? orchestration/tickets/acp-03-browser-state-pane/plan.md
+?? orchestration/tickets/acp-04-hermes-vertical-cutover/contract.md
+?? orchestration/tickets/acp-04-hermes-vertical-cutover/focused-checks.txt
+?? orchestration/tickets/acp-04-hermes-vertical-cutover/implementation-plan.md
+?? orchestration/tickets/acp-04-hermes-vertical-cutover/implementation-report.md
+?? orchestration/tickets/acp-04-hermes-vertical-cutover/implementation-review-correction-check.md
+?? orchestration/tickets/acp-04-hermes-vertical-cutover/implementation-review-round-1.md
+?? orchestration/tickets/acp-04-hermes-vertical-cutover/plan-review-round-1.md
+?? orchestration/tickets/acp-05-browser-turn-boundary/contract.md
+?? orchestration/tickets/acp-05-browser-turn-boundary/implementation-plan.md
+?? orchestration/tickets/acp-05-browser-turn-boundary/implementation-report.md
+?? orchestration/tickets/acp-05-browser-turn-boundary/implementation-review.md
+?? orchestration/tickets/acp-05-cancel-classification/contract.md
+?? orchestration/tickets/acp-05-cancel-classification/implementation-plan.md
+?? orchestration/tickets/acp-05-cancel-classification/implementation-report.md
+?? orchestration/tickets/acp-05-cancel-classification/implementation-review.md
+?? orchestration/tickets/acp-05-compaction-capture-deadline/contract.md
+?? orchestration/tickets/acp-05-compaction-capture-deadline/diagnosis.md
+?? orchestration/tickets/acp-05-compaction-capture-deadline/focused-checks.txt
+?? orchestration/tickets/acp-05-compaction-capture-deadline/implementation-report.md
+?? orchestration/tickets/acp-05-compaction-capture-deadline/implementation-review.md
+?? orchestration/tickets/acp-05-compaction-private-load-hang/contract.md
+?? orchestration/tickets/acp-05-compaction-private-load-hang/implementation-ingress-report.md
+?? orchestration/tickets/acp-05-compaction-private-load-hang/implementation-plan.md
+?? orchestration/tickets/acp-05-compaction-private-load-hang/implementation-registry-hub-report.md
+?? orchestration/tickets/acp-05-compaction-private-load-hang/implementation-review-resolution.md
+?? orchestration/tickets/acp-05-compaction-private-load-hang/implementation-review.md
+?? orchestration/tickets/acp-05-compaction-private-load-hang/lifecycle-only-correction-plan.md
+?? orchestration/tickets/acp-05-compaction-private-load-hang/plan-review-resolution.md
+?? orchestration/tickets/acp-05-compaction-private-load-hang/plan-review.md
+?? orchestration/tickets/acp-05-compaction-private-load-hang/reload-replay-correction-implementation-review.md
+?? orchestration/tickets/acp-05-compaction-private-load-hang/reload-replay-correction-plan-review.md
+?? orchestration/tickets/acp-05-compaction-private-load-hang/reload-replay-correction-plan.md
+?? orchestration/tickets/acp-05-compaction-private-load-hang/research.md
+?? orchestration/tickets/acp-05-compaction-private-load-hang/web-compaction-research.md
+?? orchestration/tickets/acp-05-durable-compaction-fork/contract.md
+?? orchestration/tickets/acp-05-durable-compaction-fork/focused-checks.txt
+?? orchestration/tickets/acp-05-durable-compaction-fork/implementation-plan.md
+?? orchestration/tickets/acp-05-durable-compaction-fork/implementation-report.md
+?? orchestration/tickets/acp-05-durable-compaction-fork/implementation-review.md
+?? orchestration/tickets/acp-05-durable-compaction-fork/plan-review.md
+?? orchestration/tickets/acp-05-missing-session-cutover/contract.md
+?? orchestration/tickets/acp-05-permission-diff/contract.md
+?? orchestration/tickets/acp-05-permission-diff/implementation-plan.md
+?? orchestration/tickets/acp-05-permission-diff/implementation-report.md
+?? orchestration/tickets/acp-05-permission-diff/implementation-review.md
+?? orchestration/tickets/acp-05-requested-cancel-recovery/contract.md
+?? orchestration/tickets/acp-05-requested-cancel-recovery/focused-checks.txt
+?? orchestration/tickets/acp-05-requested-cancel-recovery/implementation-plan.md
+?? orchestration/tickets/acp-05-requested-cancel-recovery/implementation-report.md
+?? orchestration/tickets/acp-05-requested-cancel-recovery/implementation-review-corrections.md
+?? orchestration/tickets/acp-05-requested-cancel-recovery/implementation-review.md
+?? orchestration/tickets/acp-05-requested-cancel-recovery/plan-review.md
+?? orchestration/tickets/acp-05-send-now-human-boundary/contract.md
+?? orchestration/tickets/acp-05-send-now-human-boundary/diagnosis.md
+?? orchestration/tickets/acp-05-send-now-human-boundary/focused-checks.txt
+?? orchestration/tickets/acp-05-send-now-human-boundary/implementation-report.md
+?? orchestration/tickets/acp-05-send-now-human-boundary/implementation-review.md
+?? orchestration/tickets/acp-05-websocket-writer-cleanup/contract.md
+?? orchestration/tickets/acp-05-websocket-writer-cleanup/implementation-report.md
+?? orchestration/tickets/acp-05-websocket-writer-cleanup/implementation-review.md
+?? orchestration/tickets/acp-05-worker-context-delivery/contract.md
+?? orchestration/tickets/acp-05-worker-context-delivery/focused-checks.txt
+?? orchestration/tickets/acp-05-worker-context-delivery/implementation-plan.md
+?? orchestration/tickets/acp-05-worker-context-delivery/implementation-report.md
+?? orchestration/tickets/acp-05-worker-context-delivery/plan-review.md
+?? orchestration/tickets/acp-06-legacy-conversation-deletion/contract.md
+?? orchestration/tickets/acp-06-legacy-conversation-deletion/focused-checks.txt
+?? orchestration/tickets/acp-06-legacy-conversation-deletion/implementation-plan.md
+?? orchestration/tickets/acp-06-legacy-conversation-deletion/implementation-report.md
+?? orchestration/tickets/acp-06-legacy-conversation-deletion/implementation-review.md
+?? orchestration/tickets/acp-06-legacy-conversation-deletion/plan-review.md
+?? orchestration/tickets/acp-07-08-backend-activation/contract.md
+?? orchestration/tickets/acp-07-08-backend-activation/focused-checks.txt
+?? orchestration/tickets/acp-07-08-backend-activation/implementation-plan.md
+?? orchestration/tickets/acp-07-08-backend-activation/implementation-report.md
+?? orchestration/tickets/acp-07-08-backend-activation/implementation-review.md
+?? orchestration/tickets/acp-07-codex-backend-definition/activation-preparation.md
+?? orchestration/tickets/acp-07-codex-backend-definition/contract.md
+?? orchestration/tickets/acp-07-codex-backend-definition/focused-checks.txt
+?? orchestration/tickets/acp-07-codex-backend-definition/implementation-plan.md
+?? orchestration/tickets/acp-07-codex-backend-definition/implementation-report.md
+?? orchestration/tickets/acp-07-codex-backend-definition/latest-official-qualification.md
+?? orchestration/tickets/acp-07-codex-backend-definition/plan-review.md
+?? orchestration/tickets/acp-07-codex-backend-definition/runtime-prequalification.md
+?? orchestration/tickets/acp-07-compaction-prompt-failure-reason/contract.md
+?? orchestration/tickets/acp-07-compaction-prompt-failure-reason/focused-checks.txt
+?? orchestration/tickets/acp-07-compaction-prompt-failure-reason/implementation-plan.md
+?? orchestration/tickets/acp-07-compaction-prompt-failure-reason/implementation-report.md
+?? orchestration/tickets/acp-07-in-place-compaction-seam/focused-checks.txt
+?? orchestration/tickets/acp-07-in-place-compaction-seam/implementation-report.md
+?? orchestration/tickets/acp-07-worker-backend-selection/contract.md
+?? orchestration/tickets/acp-07-worker-backend-selection/focused-checks.txt
+?? orchestration/tickets/acp-07-worker-backend-selection/implementation-plan.md
+?? orchestration/tickets/acp-07-worker-backend-selection/implementation-report.md
+?? orchestration/tickets/acp-07-worker-backend-selection/implementation-review.md
+?? orchestration/tickets/acp-07-worker-backend-selection/plan-review.md
+?? orchestration/tickets/acp-08-claude-backend-definition/contract.md
+?? orchestration/tickets/acp-08-claude-backend-definition/focused-checks.txt
+?? orchestration/tickets/acp-08-claude-backend-definition/implementation-plan.md
+?? orchestration/tickets/acp-08-claude-backend-definition/implementation-report.md
+?? orchestration/tickets/acp-08-claude-backend-definition/plan-review.md
+?? orchestration/tickets/acp-08-claude-backend-definition/runtime-qualification.md
+?? orchestration/tickets/acp-10-claude-requested-cancel-isolation/contract.md
+?? orchestration/tickets/acp-10-claude-requested-cancel-isolation/focused-checks.txt
+?? orchestration/tickets/acp-10-claude-requested-cancel-isolation/implementation-report.md
+?? orchestration/tickets/acp-10-final-audit-verification/backend-qualification.md
+?? orchestration/tickets/acp-10-final-audit-verification/computer-use-evidence.md
+?? orchestration/tickets/acp-10-final-audit-verification/contract.md
+?? orchestration/tickets/acp-10-final-audit-verification/freeze-git-status.txt
+?? orchestration/tickets/acp-10-final-audit-verification/freeze-report.md
+?? orchestration/tickets/acp-10-final-audit-verification/implementation-plan.md
+?? orchestration/tickets/acp-10-final-audit-verification/independent-review.md
+?? orchestration/tickets/acp-10-final-audit-verification/legacy-absence-evidence.md
+?? orchestration/tickets/acp-10-final-audit-verification/plan-review.md
+?? orchestration/tickets/acp-10-final-audit-verification/requirement-audit.md
+?? orchestration/tickets/acp-10-final-audit-verification/review-disposition.md
+?? orchestration/tickets/acp-10-final-audit-verification/verified-input-manifest.sha256
+?? src/planner/conversation/__init__.py
+?? src/planner/conversation/backend_catalog.py
+?? src/planner/conversation/backend_contracts.py
+?? src/planner/conversation/claude_backend.py
+?? src/planner/conversation/claude_turn_strategy.py
+?? src/planner/conversation/codex_backend.py
+?? src/planner/conversation/codex_turn_strategy.py
+?? src/planner/conversation/composition.py
+?? src/planner/conversation/configuration.py
+?? src/planner/conversation/contracts.py
+?? src/planner/conversation/employee_registry.py
+?? src/planner/conversation/hermes_backend.py
+?? src/planner/conversation/hermes_backend_configuration.py
+?? src/planner/conversation/hermes_turn_strategy.py
+?? src/planner/conversation/hub.py
+?? src/planner/conversation/ordered_ingress.py
+?? src/planner/conversation/permission_broker.py
+?? src/planner/conversation/reverse_services/__init__.py
+?? src/planner/conversation/reverse_services/filesystem.py
+?? src/planner/conversation/reverse_services/path_confinement.py
+?? src/planner/conversation/reverse_services/terminal.py
+?? src/planner/conversation/runtime_event_publisher.py
+?? src/planner/conversation/runtime_ports.py
+?? src/planner/conversation/sdk_child.py
+?? src/planner/conversation/sqlite_binding_repository.py
+?? src/planner/conversation/turn_broker.py
+?? src/planner/conversation/wire_contracts.py
+?? src/planner/runtime/acp_step_gateway.py
+?? src/planner/runtime/employee_step_repository.py
+?? tests/e2e/test_acp_conversation.py
+?? tests/fixtures/acp/browser-actions-v1.json
+?? tests/fixtures/acp/browser-controller-cases-v1.json
+?? tests/fixtures/acp/browser-envelope-states-v1.json
+?? tests/fixtures/acp/browser-live-replay-v1.json
+?? tests/fixtures/acp/conformance-manifest.json
+?? tests/fixtures/acp/hermes-shaped-replay-v1.json
+?? tests/fixtures/acp/server-envelopes-v1.json
+?? tests/fixtures/acp/terminal_fixture.py
+?? tests/support/acp_browser_conformance.py
+?? tests/support/acp_component_runtime.py
+?? tests/support/acp_conformance.py
+?? tests/support/acp_e2e_server.py
+?? tests/support/acp_fixture_writer.py
+?? tests/support/acp_in_memory_binding_repository.py
+?? tests/support/acp_reference_subject.py
+?? tests/support/acp_runtime_subject.py
+?? tests/support/acp_scripted_agent.py
+?? tests/unit/test_acp_binding_repository.py
+?? tests/unit/test_acp_conformance_harness.py
+?? tests/unit/test_acp_conversation_composition.py
+?? tests/unit/test_acp_conversation_websocket.py
+?? tests/unit/test_acp_employee_child.py
+?? tests/unit/test_acp_employee_registry.py
+?? tests/unit/test_acp_step_gateway.py
+?? tests/unit/test_claude_acp_backend.py
+?? tests/unit/test_codex_backend.py
+?? tests/unit/test_codex_backend_conformance.py
+?? tests/unit/test_codex_turn_strategy.py
+?? tests/unit/test_conversation_contracts.py
+?? tests/unit/test_conversation_hermes_backend_configuration.py
+?? tests/unit/test_conversation_hub.py
+?? tests/unit/test_conversation_permission_broker.py
+?? tests/unit/test_conversation_reverse_filesystem.py
+?? tests/unit/test_conversation_reverse_terminal.py
+?? tests/unit/test_conversation_turn_broker.py
+?? tests/unit/test_employee_step_repository.py
+?? tests/unit/test_hermes_acp_backend.py
+?? tests/unit/test_hermes_acp_turn_strategy.py
+?? tests/unit/test_in_place_compaction_strategy.py
+?? web/dist/assets/index-B15RFj9L.css
+?? web/dist/assets/index-DetcUped.js
+?? web/node_modules/.vite/_svelte_metadata.json
+?? web/node_modules/.vite/deps/_metadata.json
+?? web/node_modules/.vite/deps/chunk-52HP5MQF.js
+?? web/node_modules/.vite/deps/chunk-52HP5MQF.js.map
+?? web/node_modules/.vite/deps/chunk-7RQDXF5S.js
+?? web/node_modules/.vite/deps/chunk-7RQDXF5S.js.map
+?? web/node_modules/.vite/deps/chunk-H2EXKLIA.js
+?? web/node_modules/.vite/deps/chunk-H2EXKLIA.js.map
+?? web/node_modules/.vite/deps/chunk-KEJ7FETO.js
+?? web/node_modules/.vite/deps/chunk-KEJ7FETO.js.map
+?? web/node_modules/.vite/deps/chunk-OHYQYV5R.js
+?? web/node_modules/.vite/deps/chunk-OHYQYV5R.js.map
+?? web/node_modules/.vite/deps/chunk-PY2V7WPU.js
+?? web/node_modules/.vite/deps/chunk-PY2V7WPU.js.map
+?? web/node_modules/.vite/deps/chunk-QDDRZFWN.js
+?? web/node_modules/.vite/deps/chunk-QDDRZFWN.js.map
+?? web/node_modules/.vite/deps/chunk-SLWMEDHC.js
+?? web/node_modules/.vite/deps/chunk-SLWMEDHC.js.map
+?? web/node_modules/.vite/deps/chunk-U7P2NEEE.js
+?? web/node_modules/.vite/deps/chunk-U7P2NEEE.js.map
+?? web/node_modules/.vite/deps/chunk-UGBVNEQM.js
+?? web/node_modules/.vite/deps/chunk-UGBVNEQM.js.map
+?? web/node_modules/.vite/deps/chunk-YERFD2CZ.js
+?? web/node_modules/.vite/deps/chunk-YERFD2CZ.js.map
+?? web/node_modules/.vite/deps/chunk-YVIDCPMV.js
+?? web/node_modules/.vite/deps/chunk-YVIDCPMV.js.map
+?? web/node_modules/.vite/deps/package.json
+?? web/node_modules/.vite/deps/svelte.js
+?? web/node_modules/.vite/deps/svelte.js.map
+?? web/node_modules/.vite/deps/svelte___clsx.js
+?? web/node_modules/.vite/deps/svelte___clsx.js.map
+?? web/node_modules/.vite/deps/svelte_animate.js
+?? web/node_modules/.vite/deps/svelte_animate.js.map
+?? web/node_modules/.vite/deps/svelte_attachments.js
+?? web/node_modules/.vite/deps/svelte_attachments.js.map
+?? web/node_modules/.vite/deps/svelte_easing.js
+?? web/node_modules/.vite/deps/svelte_easing.js.map
+?? web/node_modules/.vite/deps/svelte_events.js
+?? web/node_modules/.vite/deps/svelte_events.js.map
+?? web/node_modules/.vite/deps/svelte_internal.js
+?? web/node_modules/.vite/deps/svelte_internal.js.map
+?? web/node_modules/.vite/deps/svelte_internal_client.js
+?? web/node_modules/.vite/deps/svelte_internal_client.js.map
+?? web/node_modules/.vite/deps/svelte_internal_disclose-version.js
+?? web/node_modules/.vite/deps/svelte_internal_disclose-version.js.map
+?? web/node_modules/.vite/deps/svelte_internal_flags_async.js
+?? web/node_modules/.vite/deps/svelte_internal_flags_async.js.map
+?? web/node_modules/.vite/deps/svelte_internal_flags_legacy.js
+?? web/node_modules/.vite/deps/svelte_internal_flags_legacy.js.map
+?? web/node_modules/.vite/deps/svelte_internal_flags_tracing.js
+?? web/node_modules/.vite/deps/svelte_internal_flags_tracing.js.map
+?? web/node_modules/.vite/deps/svelte_legacy.js
+?? web/node_modules/.vite/deps/svelte_legacy.js.map
+?? web/node_modules/.vite/deps/svelte_motion.js
+?? web/node_modules/.vite/deps/svelte_motion.js.map
+?? web/node_modules/.vite/deps/svelte_reactivity.js
+?? web/node_modules/.vite/deps/svelte_reactivity.js.map
+?? web/node_modules/.vite/deps/svelte_reactivity_window.js
+?? web/node_modules/.vite/deps/svelte_reactivity_window.js.map
+?? web/node_modules/.vite/deps/svelte_store.js
+?? web/node_modules/.vite/deps/svelte_store.js.map
+?? web/node_modules/.vite/deps/svelte_transition.js
+?? web/node_modules/.vite/deps/svelte_transition.js.map
+?? web/node_modules/.vite/deps/zustand_vanilla.js
+?? web/node_modules/.vite/deps/zustand_vanilla.js.map
+?? web/node_modules/@agentclientprotocol/sdk/LICENSE
+?? web/node_modules/@agentclientprotocol/sdk/README.md
+?? web/node_modules/@agentclientprotocol/sdk/dist/acp.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/acp.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/acp.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/acp.test.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/acp.test.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/acp.test.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/connection.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/connection.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/connection.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/connection.test.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/connection.test.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/connection.test.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/cookie-store.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/cookie-store.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/cookie-store.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/cookie-store.test.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/cookie-store.test.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/cookie-store.test.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/examples/agent.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/examples/agent.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/examples/agent.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/examples/client.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/examples/client.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/examples/client.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/examples/http-client.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/examples/http-client.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/examples/http-client.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/examples/http-server.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/examples/http-server.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/examples/http-server.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/examples/ws-client.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/examples/ws-client.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/examples/ws-client.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/http-stream.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/http-stream.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/http-stream.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/http-stream.test.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/http-stream.test.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/http-stream.test.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/jsonrpc.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/jsonrpc.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/jsonrpc.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/jsonrpc.test.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/jsonrpc.test.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/jsonrpc.test.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/line-buffer.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/line-buffer.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/line-buffer.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/line-buffer.test.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/line-buffer.test.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/line-buffer.test.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/node-adapter.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/node-adapter.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/node-adapter.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/node-adapter.test.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/node-adapter.test.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/node-adapter.test.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/protocol.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/protocol.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/protocol.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/protocol.test.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/protocol.test.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/protocol.test.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/schema-deserialize.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/schema-deserialize.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/schema-deserialize.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/schema-deserialize.test.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/schema-deserialize.test.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/schema-deserialize.test.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/schema/guards.gen.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/schema/guards.gen.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/schema/guards.gen.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/schema/index.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/schema/index.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/schema/index.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/schema/types.gen.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/schema/types.gen.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/schema/types.gen.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/schema/zod.gen.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/schema/zod.gen.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/schema/zod.gen.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/server-permission.test.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/server-permission.test.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/server-permission.test.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/server-session-sse.test.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/server-session-sse.test.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/server-session-sse.test.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/server-sse.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/server-sse.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/server-sse.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/server-sse.test.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/server-sse.test.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/server-sse.test.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/server-websocket-upgrade.test.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/server-websocket-upgrade.test.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/server-websocket-upgrade.test.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/server.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/server.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/server.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/server.test.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/server.test.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/server.test.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/sse.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/sse.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/sse.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/sse.test.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/sse.test.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/sse.test.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/stream.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/stream.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/stream.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/stream.test.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/stream.test.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/stream.test.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/test-support/streams.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/test-support/streams.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/test-support/streams.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/test-support/test-agent.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/test-support/test-agent.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/test-support/test-agent.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/test-support/test-http-server.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/test-support/test-http-server.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/test-support/test-http-server.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/ws-server.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/ws-server.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/ws-server.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/ws-stream.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/ws-stream.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/ws-stream.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/ws-stream.test.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/ws-stream.test.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/ws-stream.test.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/ws-utils.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/ws-utils.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/ws-utils.js.map
+?? web/node_modules/@agentclientprotocol/sdk/dist/ws-utils.test.d.ts
+?? web/node_modules/@agentclientprotocol/sdk/dist/ws-utils.test.js
+?? web/node_modules/@agentclientprotocol/sdk/dist/ws-utils.test.js.map
+?? web/node_modules/@agentclientprotocol/sdk/package.json
+?? web/node_modules/@agentclientprotocol/sdk/schema/schema.json
+?? web/node_modules/zod/LICENSE
+?? web/node_modules/zod/README.md
+?? web/node_modules/zod/index.cjs
+?? web/node_modules/zod/index.d.cts
+?? web/node_modules/zod/index.d.ts
+?? web/node_modules/zod/index.js
+?? web/node_modules/zod/locales/index.cjs
+?? web/node_modules/zod/locales/index.d.cts
+?? web/node_modules/zod/locales/index.d.ts
+?? web/node_modules/zod/locales/index.js
+?? web/node_modules/zod/locales/package.json
+?? web/node_modules/zod/mini/index.cjs
+?? web/node_modules/zod/mini/index.d.cts
+?? web/node_modules/zod/mini/index.d.ts
+?? web/node_modules/zod/mini/index.js
+?? web/node_modules/zod/mini/package.json
+?? web/node_modules/zod/package.json
+?? web/node_modules/zod/src/index.ts
+?? web/node_modules/zod/src/locales/index.ts
+?? web/node_modules/zod/src/mini/index.ts
+?? web/node_modules/zod/src/v3/ZodError.ts
+?? web/node_modules/zod/src/v3/benchmarks/datetime.ts
+?? web/node_modules/zod/src/v3/benchmarks/discriminatedUnion.ts
+?? web/node_modules/zod/src/v3/benchmarks/index.ts
+?? web/node_modules/zod/src/v3/benchmarks/ipv4.ts
+?? web/node_modules/zod/src/v3/benchmarks/object.ts
+?? web/node_modules/zod/src/v3/benchmarks/primitives.ts
+?? web/node_modules/zod/src/v3/benchmarks/realworld.ts
+?? web/node_modules/zod/src/v3/benchmarks/string.ts
+?? web/node_modules/zod/src/v3/benchmarks/union.ts
+?? web/node_modules/zod/src/v3/errors.ts
+?? web/node_modules/zod/src/v3/external.ts
+?? web/node_modules/zod/src/v3/helpers/enumUtil.ts
+?? web/node_modules/zod/src/v3/helpers/errorUtil.ts
+?? web/node_modules/zod/src/v3/helpers/parseUtil.ts
+?? web/node_modules/zod/src/v3/helpers/partialUtil.ts
+?? web/node_modules/zod/src/v3/helpers/typeAliases.ts
+?? web/node_modules/zod/src/v3/helpers/util.ts
+?? web/node_modules/zod/src/v3/index.ts
+?? web/node_modules/zod/src/v3/locales/en.ts
+?? web/node_modules/zod/src/v3/standard-schema.ts
+?? web/node_modules/zod/src/v3/tests/Mocker.ts
+?? web/node_modules/zod/src/v3/tests/all-errors.test.ts
+?? web/node_modules/zod/src/v3/tests/anyunknown.test.ts
+?? web/node_modules/zod/src/v3/tests/array.test.ts
+?? web/node_modules/zod/src/v3/tests/async-parsing.test.ts
+?? web/node_modules/zod/src/v3/tests/async-refinements.test.ts
+?? web/node_modules/zod/src/v3/tests/base.test.ts
+?? web/node_modules/zod/src/v3/tests/bigint.test.ts
+?? web/node_modules/zod/src/v3/tests/branded.test.ts
+?? web/node_modules/zod/src/v3/tests/catch.test.ts
+?? web/node_modules/zod/src/v3/tests/coerce.test.ts
+?? web/node_modules/zod/src/v3/tests/complex.test.ts
+?? web/node_modules/zod/src/v3/tests/custom.test.ts
+?? web/node_modules/zod/src/v3/tests/date.test.ts
+?? web/node_modules/zod/src/v3/tests/deepmasking.test.ts
+?? web/node_modules/zod/src/v3/tests/default.test.ts
+?? web/node_modules/zod/src/v3/tests/description.test.ts
+?? web/node_modules/zod/src/v3/tests/discriminated-unions.test.ts
+?? web/node_modules/zod/src/v3/tests/enum.test.ts
+?? web/node_modules/zod/src/v3/tests/error.test.ts
+?? web/node_modules/zod/src/v3/tests/firstparty.test.ts
+?? web/node_modules/zod/src/v3/tests/firstpartyschematypes.test.ts
+?? web/node_modules/zod/src/v3/tests/function.test.ts
+?? web/node_modules/zod/src/v3/tests/generics.test.ts
+?? web/node_modules/zod/src/v3/tests/instanceof.test.ts
+?? web/node_modules/zod/src/v3/tests/intersection.test.ts
+?? web/node_modules/zod/src/v3/tests/language-server.source.ts
+?? web/node_modules/zod/src/v3/tests/language-server.test.ts
+?? web/node_modules/zod/src/v3/tests/literal.test.ts
+?? web/node_modules/zod/src/v3/tests/map.test.ts
+?? web/node_modules/zod/src/v3/tests/masking.test.ts
+?? web/node_modules/zod/src/v3/tests/mocker.test.ts
+?? web/node_modules/zod/src/v3/tests/nan.test.ts
+?? web/node_modules/zod/src/v3/tests/nativeEnum.test.ts
+?? web/node_modules/zod/src/v3/tests/nullable.test.ts
+?? web/node_modules/zod/src/v3/tests/number.test.ts
+?? web/node_modules/zod/src/v3/tests/object-augmentation.test.ts
+?? web/node_modules/zod/src/v3/tests/object-in-es5-env.test.ts
+?? web/node_modules/zod/src/v3/tests/object.test.ts
+?? web/node_modules/zod/src/v3/tests/optional.test.ts
+?? web/node_modules/zod/src/v3/tests/parseUtil.test.ts
+?? web/node_modules/zod/src/v3/tests/parser.test.ts
+?? web/node_modules/zod/src/v3/tests/partials.test.ts
+?? web/node_modules/zod/src/v3/tests/pickomit.test.ts
+?? web/node_modules/zod/src/v3/tests/pipeline.test.ts
+?? web/node_modules/zod/src/v3/tests/preprocess.test.ts
+?? web/node_modules/zod/src/v3/tests/primitive.test.ts
+?? web/node_modules/zod/src/v3/tests/promise.test.ts
+?? web/node_modules/zod/src/v3/tests/readonly.test.ts
+?? web/node_modules/zod/src/v3/tests/record.test.ts
+?? web/node_modules/zod/src/v3/tests/recursive.test.ts
+?? web/node_modules/zod/src/v3/tests/refine.test.ts
+?? web/node_modules/zod/src/v3/tests/safeparse.test.ts
+?? web/node_modules/zod/src/v3/tests/set.test.ts
+?? web/node_modules/zod/src/v3/tests/standard-schema.test.ts
+?? web/node_modules/zod/src/v3/tests/string.test.ts
+?? web/node_modules/zod/src/v3/tests/transformer.test.ts
+?? web/node_modules/zod/src/v3/tests/tuple.test.ts
+?? web/node_modules/zod/src/v3/tests/unions.test.ts
+?? web/node_modules/zod/src/v3/tests/validations.test.ts
+?? web/node_modules/zod/src/v3/tests/void.test.ts
+?? web/node_modules/zod/src/v3/types.ts
+?? web/node_modules/zod/src/v4-mini/index.ts
+?? web/node_modules/zod/src/v4/classic/checks.ts
+?? web/node_modules/zod/src/v4/classic/coerce.ts
+?? web/node_modules/zod/src/v4/classic/compat.ts
+?? web/node_modules/zod/src/v4/classic/errors.ts
+?? web/node_modules/zod/src/v4/classic/external.ts
+?? web/node_modules/zod/src/v4/classic/from-json-schema.ts
+?? web/node_modules/zod/src/v4/classic/index.ts
+?? web/node_modules/zod/src/v4/classic/iso.ts
+?? web/node_modules/zod/src/v4/classic/parse.ts
+?? web/node_modules/zod/src/v4/classic/schemas.ts
+?? web/node_modules/zod/src/v4/classic/tests/anyunknown.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/apply.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/array.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/assignability.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/async-parsing.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/async-refinements.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/base.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/bigint.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/brand.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/catch.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/coalesce.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/codec-examples.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/codec.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/coerce.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/continuability.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/custom.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/date.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/datetime.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/default.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/describe-meta-checks.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/description.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/detached-methods.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/discriminated-unions.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/enum.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/error-utils.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/error.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/file.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/firstparty.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/fix-json-issue.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/from-json-schema.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/function.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/generics.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/global-config.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/hash.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/index.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/instanceof.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/intersection.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/jitless-allows-eval.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/json.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/lazy.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/literal.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/locales_ka.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/locales_ro.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/map.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/nan.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/nested-refine.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/nonoptional.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/nullable.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/number.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/object.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/optional.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/partial.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/pickomit.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/pipe.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/prefault.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/preprocess-types.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/preprocess.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/primitive.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/promise.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/prototypes.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/readonly.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/record.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/recursive-types.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/refine.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/registries.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/set.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/standard-schema.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/string-formats.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/string.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/stringbool.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/template-literal.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/to-json-schema-methods.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/to-json-schema.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/transform.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/tuple.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/union.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/url.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/validations.test.ts
+?? web/node_modules/zod/src/v4/classic/tests/void.test.ts
+?? web/node_modules/zod/src/v4/core/api.ts
+?? web/node_modules/zod/src/v4/core/checks.ts
+?? web/node_modules/zod/src/v4/core/config.ts
+?? web/node_modules/zod/src/v4/core/core.ts
+?? web/node_modules/zod/src/v4/core/doc.ts
+?? web/node_modules/zod/src/v4/core/errors.ts
+?? web/node_modules/zod/src/v4/core/index.ts
+?? web/node_modules/zod/src/v4/core/json-schema-generator.ts
+?? web/node_modules/zod/src/v4/core/json-schema-processors.ts
+?? web/node_modules/zod/src/v4/core/json-schema.ts
+?? web/node_modules/zod/src/v4/core/parse.ts
+?? web/node_modules/zod/src/v4/core/regexes.ts
+?? web/node_modules/zod/src/v4/core/registries.ts
+?? web/node_modules/zod/src/v4/core/schemas.ts
+?? web/node_modules/zod/src/v4/core/standard-schema.ts
+?? web/node_modules/zod/src/v4/core/tests/extend.test.ts
+?? web/node_modules/zod/src/v4/core/tests/index.test.ts
+?? web/node_modules/zod/src/v4/core/tests/locales/be.test.ts
+?? web/node_modules/zod/src/v4/core/tests/locales/el.test.ts
+?? web/node_modules/zod/src/v4/core/tests/locales/en.test.ts
+?? web/node_modules/zod/src/v4/core/tests/locales/es.test.ts
+?? web/node_modules/zod/src/v4/core/tests/locales/fr.test.ts
+?? web/node_modules/zod/src/v4/core/tests/locales/he.test.ts
+?? web/node_modules/zod/src/v4/core/tests/locales/hr.test.ts
+?? web/node_modules/zod/src/v4/core/tests/locales/nl.test.ts
+?? web/node_modules/zod/src/v4/core/tests/locales/ru.test.ts
+?? web/node_modules/zod/src/v4/core/tests/locales/tr.test.ts
+?? web/node_modules/zod/src/v4/core/tests/locales/uz.test.ts
+?? web/node_modules/zod/src/v4/core/tests/record-constructor.test.ts
+?? web/node_modules/zod/src/v4/core/tests/recursive-tuples.test.ts
+?? web/node_modules/zod/src/v4/core/to-json-schema.ts
+?? web/node_modules/zod/src/v4/core/util.ts
+?? web/node_modules/zod/src/v4/core/versions.ts
+?? web/node_modules/zod/src/v4/core/zsf.ts
+?? web/node_modules/zod/src/v4/index.ts
+?? web/node_modules/zod/src/v4/locales/ar.ts
+?? web/node_modules/zod/src/v4/locales/az.ts
+?? web/node_modules/zod/src/v4/locales/be.ts
+?? web/node_modules/zod/src/v4/locales/bg.ts
+?? web/node_modules/zod/src/v4/locales/ca.ts
+?? web/node_modules/zod/src/v4/locales/cs.ts
+?? web/node_modules/zod/src/v4/locales/da.ts
+?? web/node_modules/zod/src/v4/locales/de.ts
+?? web/node_modules/zod/src/v4/locales/el.ts
+?? web/node_modules/zod/src/v4/locales/en.ts
+?? web/node_modules/zod/src/v4/locales/eo.ts
+?? web/node_modules/zod/src/v4/locales/es.ts
+?? web/node_modules/zod/src/v4/locales/fa.ts
+?? web/node_modules/zod/src/v4/locales/fi.ts
+?? web/node_modules/zod/src/v4/locales/fr-CA.ts
+?? web/node_modules/zod/src/v4/locales/fr.ts
+?? web/node_modules/zod/src/v4/locales/he.ts
+?? web/node_modules/zod/src/v4/locales/hr.ts
+?? web/node_modules/zod/src/v4/locales/hu.ts
+?? web/node_modules/zod/src/v4/locales/hy.ts
+?? web/node_modules/zod/src/v4/locales/id.ts
+?? web/node_modules/zod/src/v4/locales/index.ts
+?? web/node_modules/zod/src/v4/locales/is.ts
+?? web/node_modules/zod/src/v4/locales/it.ts
+?? web/node_modules/zod/src/v4/locales/ja.ts
+?? web/node_modules/zod/src/v4/locales/ka.ts
+?? web/node_modules/zod/src/v4/locales/kh.ts
+?? web/node_modules/zod/src/v4/locales/km.ts
+?? web/node_modules/zod/src/v4/locales/ko.ts
+?? web/node_modules/zod/src/v4/locales/lt.ts
+?? web/node_modules/zod/src/v4/locales/mk.ts
+?? web/node_modules/zod/src/v4/locales/ms.ts
+?? web/node_modules/zod/src/v4/locales/nl.ts
+?? web/node_modules/zod/src/v4/locales/no.ts
+?? web/node_modules/zod/src/v4/locales/ota.ts
+?? web/node_modules/zod/src/v4/locales/pl.ts
+?? web/node_modules/zod/src/v4/locales/ps.ts
+?? web/node_modules/zod/src/v4/locales/pt.ts
+?? web/node_modules/zod/src/v4/locales/ro.ts
+?? web/node_modules/zod/src/v4/locales/ru.ts
+?? web/node_modules/zod/src/v4/locales/sl.ts
+?? web/node_modules/zod/src/v4/locales/sv.ts
+?? web/node_modules/zod/src/v4/locales/ta.ts
+?? web/node_modules/zod/src/v4/locales/th.ts
+?? web/node_modules/zod/src/v4/locales/tr.ts
+?? web/node_modules/zod/src/v4/locales/ua.ts
+?? web/node_modules/zod/src/v4/locales/uk.ts
+?? web/node_modules/zod/src/v4/locales/ur.ts
+?? web/node_modules/zod/src/v4/locales/uz.ts
+?? web/node_modules/zod/src/v4/locales/vi.ts
+?? web/node_modules/zod/src/v4/locales/yo.ts
+?? web/node_modules/zod/src/v4/locales/zh-CN.ts
+?? web/node_modules/zod/src/v4/locales/zh-TW.ts
+?? web/node_modules/zod/src/v4/mini/checks.ts
+?? web/node_modules/zod/src/v4/mini/coerce.ts
+?? web/node_modules/zod/src/v4/mini/external.ts
+?? web/node_modules/zod/src/v4/mini/index.ts
+?? web/node_modules/zod/src/v4/mini/iso.ts
+?? web/node_modules/zod/src/v4/mini/parse.ts
+?? web/node_modules/zod/src/v4/mini/schemas.ts
+?? web/node_modules/zod/src/v4/mini/tests/apply.test.ts
+?? web/node_modules/zod/src/v4/mini/tests/assignability.test.ts
+?? web/node_modules/zod/src/v4/mini/tests/brand.test.ts
+?? web/node_modules/zod/src/v4/mini/tests/checks.test.ts
+?? web/node_modules/zod/src/v4/mini/tests/codec.test.ts
+?? web/node_modules/zod/src/v4/mini/tests/computed.test.ts
+?? web/node_modules/zod/src/v4/mini/tests/error.test.ts
+?? web/node_modules/zod/src/v4/mini/tests/functions.test.ts
+?? web/node_modules/zod/src/v4/mini/tests/index.test.ts
+?? web/node_modules/zod/src/v4/mini/tests/number.test.ts
+?? web/node_modules/zod/src/v4/mini/tests/object.test.ts
+?? web/node_modules/zod/src/v4/mini/tests/prototypes.test.ts
+?? web/node_modules/zod/src/v4/mini/tests/recursive-types.test.ts
+?? web/node_modules/zod/src/v4/mini/tests/standard-schema.test.ts
+?? web/node_modules/zod/src/v4/mini/tests/string.test.ts
+?? web/node_modules/zod/v3/ZodError.cjs
+?? web/node_modules/zod/v3/ZodError.d.cts
+?? web/node_modules/zod/v3/ZodError.d.ts
+?? web/node_modules/zod/v3/ZodError.js
+?? web/node_modules/zod/v3/errors.cjs
+?? web/node_modules/zod/v3/errors.d.cts
+?? web/node_modules/zod/v3/errors.d.ts
+?? web/node_modules/zod/v3/errors.js
+?? web/node_modules/zod/v3/external.cjs
+?? web/node_modules/zod/v3/external.d.cts
+?? web/node_modules/zod/v3/external.d.ts
+?? web/node_modules/zod/v3/external.js
+?? web/node_modules/zod/v3/helpers/enumUtil.cjs
+?? web/node_modules/zod/v3/helpers/enumUtil.d.cts
+?? web/node_modules/zod/v3/helpers/enumUtil.d.ts
+?? web/node_modules/zod/v3/helpers/enumUtil.js
+?? web/node_modules/zod/v3/helpers/errorUtil.cjs
+?? web/node_modules/zod/v3/helpers/errorUtil.d.cts
+?? web/node_modules/zod/v3/helpers/errorUtil.d.ts
+?? web/node_modules/zod/v3/helpers/errorUtil.js
+?? web/node_modules/zod/v3/helpers/parseUtil.cjs
+?? web/node_modules/zod/v3/helpers/parseUtil.d.cts
+?? web/node_modules/zod/v3/helpers/parseUtil.d.ts
+?? web/node_modules/zod/v3/helpers/parseUtil.js
+?? web/node_modules/zod/v3/helpers/partialUtil.cjs
+?? web/node_modules/zod/v3/helpers/partialUtil.d.cts
+?? web/node_modules/zod/v3/helpers/partialUtil.d.ts
+?? web/node_modules/zod/v3/helpers/partialUtil.js
+?? web/node_modules/zod/v3/helpers/typeAliases.cjs
+?? web/node_modules/zod/v3/helpers/typeAliases.d.cts
+?? web/node_modules/zod/v3/helpers/typeAliases.d.ts
+?? web/node_modules/zod/v3/helpers/typeAliases.js
+?? web/node_modules/zod/v3/helpers/util.cjs
+?? web/node_modules/zod/v3/helpers/util.d.cts
+?? web/node_modules/zod/v3/helpers/util.d.ts
+?? web/node_modules/zod/v3/helpers/util.js
+?? web/node_modules/zod/v3/index.cjs
+?? web/node_modules/zod/v3/index.d.cts
+?? web/node_modules/zod/v3/index.d.ts
+?? web/node_modules/zod/v3/index.js
+?? web/node_modules/zod/v3/locales/en.cjs
+?? web/node_modules/zod/v3/locales/en.d.cts
+?? web/node_modules/zod/v3/locales/en.d.ts
+?? web/node_modules/zod/v3/locales/en.js
+?? web/node_modules/zod/v3/package.json
+?? web/node_modules/zod/v3/standard-schema.cjs
+?? web/node_modules/zod/v3/standard-schema.d.cts
+?? web/node_modules/zod/v3/standard-schema.d.ts
+?? web/node_modules/zod/v3/standard-schema.js
+?? web/node_modules/zod/v3/types.cjs
+?? web/node_modules/zod/v3/types.d.cts
+?? web/node_modules/zod/v3/types.d.ts
+?? web/node_modules/zod/v3/types.js
+?? web/node_modules/zod/v4-mini/index.cjs
+?? web/node_modules/zod/v4-mini/index.d.cts
+?? web/node_modules/zod/v4-mini/index.d.ts
+?? web/node_modules/zod/v4-mini/index.js
+?? web/node_modules/zod/v4-mini/package.json
+?? web/node_modules/zod/v4/classic/checks.cjs
+?? web/node_modules/zod/v4/classic/checks.d.cts
+?? web/node_modules/zod/v4/classic/checks.d.ts
+?? web/node_modules/zod/v4/classic/checks.js
+?? web/node_modules/zod/v4/classic/coerce.cjs
+?? web/node_modules/zod/v4/classic/coerce.d.cts
+?? web/node_modules/zod/v4/classic/coerce.d.ts
+?? web/node_modules/zod/v4/classic/coerce.js
+?? web/node_modules/zod/v4/classic/compat.cjs
+?? web/node_modules/zod/v4/classic/compat.d.cts
+?? web/node_modules/zod/v4/classic/compat.d.ts
+?? web/node_modules/zod/v4/classic/compat.js
+?? web/node_modules/zod/v4/classic/errors.cjs
+?? web/node_modules/zod/v4/classic/errors.d.cts
+?? web/node_modules/zod/v4/classic/errors.d.ts
+?? web/node_modules/zod/v4/classic/errors.js
+?? web/node_modules/zod/v4/classic/external.cjs
+?? web/node_modules/zod/v4/classic/external.d.cts
+?? web/node_modules/zod/v4/classic/external.d.ts
+?? web/node_modules/zod/v4/classic/external.js
+?? web/node_modules/zod/v4/classic/from-json-schema.cjs
+?? web/node_modules/zod/v4/classic/from-json-schema.d.cts
+?? web/node_modules/zod/v4/classic/from-json-schema.d.ts
+?? web/node_modules/zod/v4/classic/from-json-schema.js
+?? web/node_modules/zod/v4/classic/index.cjs
+?? web/node_modules/zod/v4/classic/index.d.cts
+?? web/node_modules/zod/v4/classic/index.d.ts
+?? web/node_modules/zod/v4/classic/index.js
+?? web/node_modules/zod/v4/classic/iso.cjs
+?? web/node_modules/zod/v4/classic/iso.d.cts
+?? web/node_modules/zod/v4/classic/iso.d.ts
+?? web/node_modules/zod/v4/classic/iso.js
+?? web/node_modules/zod/v4/classic/package.json
+?? web/node_modules/zod/v4/classic/parse.cjs
+?? web/node_modules/zod/v4/classic/parse.d.cts
+?? web/node_modules/zod/v4/classic/parse.d.ts
+?? web/node_modules/zod/v4/classic/parse.js
+?? web/node_modules/zod/v4/classic/schemas.cjs
+?? web/node_modules/zod/v4/classic/schemas.d.cts
+?? web/node_modules/zod/v4/classic/schemas.d.ts
+?? web/node_modules/zod/v4/classic/schemas.js
+?? web/node_modules/zod/v4/core/api.cjs
+?? web/node_modules/zod/v4/core/api.d.cts
+?? web/node_modules/zod/v4/core/api.d.ts
+?? web/node_modules/zod/v4/core/api.js
+?? web/node_modules/zod/v4/core/checks.cjs
+?? web/node_modules/zod/v4/core/checks.d.cts
+?? web/node_modules/zod/v4/core/checks.d.ts
+?? web/node_modules/zod/v4/core/checks.js
+?? web/node_modules/zod/v4/core/core.cjs
+?? web/node_modules/zod/v4/core/core.d.cts
+?? web/node_modules/zod/v4/core/core.d.ts
+?? web/node_modules/zod/v4/core/core.js
+?? web/node_modules/zod/v4/core/doc.cjs
+?? web/node_modules/zod/v4/core/doc.d.cts
+?? web/node_modules/zod/v4/core/doc.d.ts
+?? web/node_modules/zod/v4/core/doc.js
+?? web/node_modules/zod/v4/core/errors.cjs
+?? web/node_modules/zod/v4/core/errors.d.cts
+?? web/node_modules/zod/v4/core/errors.d.ts
+?? web/node_modules/zod/v4/core/errors.js
+?? web/node_modules/zod/v4/core/index.cjs
+?? web/node_modules/zod/v4/core/index.d.cts
+?? web/node_modules/zod/v4/core/index.d.ts
+?? web/node_modules/zod/v4/core/index.js
+?? web/node_modules/zod/v4/core/json-schema-generator.cjs
+?? web/node_modules/zod/v4/core/json-schema-generator.d.cts
+?? web/node_modules/zod/v4/core/json-schema-generator.d.ts
+?? web/node_modules/zod/v4/core/json-schema-generator.js
+?? web/node_modules/zod/v4/core/json-schema-processors.cjs
+?? web/node_modules/zod/v4/core/json-schema-processors.d.cts
+?? web/node_modules/zod/v4/core/json-schema-processors.d.ts
+?? web/node_modules/zod/v4/core/json-schema-processors.js
+?? web/node_modules/zod/v4/core/json-schema.cjs
+?? web/node_modules/zod/v4/core/json-schema.d.cts
+?? web/node_modules/zod/v4/core/json-schema.d.ts
+?? web/node_modules/zod/v4/core/json-schema.js
+?? web/node_modules/zod/v4/core/package.json
+?? web/node_modules/zod/v4/core/parse.cjs
+?? web/node_modules/zod/v4/core/parse.d.cts
+?? web/node_modules/zod/v4/core/parse.d.ts
+?? web/node_modules/zod/v4/core/parse.js
+?? web/node_modules/zod/v4/core/regexes.cjs
+?? web/node_modules/zod/v4/core/regexes.d.cts
+?? web/node_modules/zod/v4/core/regexes.d.ts
+?? web/node_modules/zod/v4/core/regexes.js
+?? web/node_modules/zod/v4/core/registries.cjs
+?? web/node_modules/zod/v4/core/registries.d.cts
+?? web/node_modules/zod/v4/core/registries.d.ts
+?? web/node_modules/zod/v4/core/registries.js
+?? web/node_modules/zod/v4/core/schemas.cjs
+?? web/node_modules/zod/v4/core/schemas.d.cts
+?? web/node_modules/zod/v4/core/schemas.d.ts
+?? web/node_modules/zod/v4/core/schemas.js
+?? web/node_modules/zod/v4/core/standard-schema.cjs
+?? web/node_modules/zod/v4/core/standard-schema.d.cts
+?? web/node_modules/zod/v4/core/standard-schema.d.ts
+?? web/node_modules/zod/v4/core/standard-schema.js
+?? web/node_modules/zod/v4/core/to-json-schema.cjs
+?? web/node_modules/zod/v4/core/to-json-schema.d.cts
+?? web/node_modules/zod/v4/core/to-json-schema.d.ts
+?? web/node_modules/zod/v4/core/to-json-schema.js
+?? web/node_modules/zod/v4/core/util.cjs
+?? web/node_modules/zod/v4/core/util.d.cts
+?? web/node_modules/zod/v4/core/util.d.ts
+?? web/node_modules/zod/v4/core/util.js
+?? web/node_modules/zod/v4/core/versions.cjs
+?? web/node_modules/zod/v4/core/versions.d.cts
+?? web/node_modules/zod/v4/core/versions.d.ts
+?? web/node_modules/zod/v4/core/versions.js
+?? web/node_modules/zod/v4/index.cjs
+?? web/node_modules/zod/v4/index.d.cts
+?? web/node_modules/zod/v4/index.d.ts
+?? web/node_modules/zod/v4/index.js
+?? web/node_modules/zod/v4/locales/ar.cjs
+?? web/node_modules/zod/v4/locales/ar.d.cts
+?? web/node_modules/zod/v4/locales/ar.d.ts
+?? web/node_modules/zod/v4/locales/ar.js
+?? web/node_modules/zod/v4/locales/az.cjs
+?? web/node_modules/zod/v4/locales/az.d.cts
+?? web/node_modules/zod/v4/locales/az.d.ts
+?? web/node_modules/zod/v4/locales/az.js
+?? web/node_modules/zod/v4/locales/be.cjs
+?? web/node_modules/zod/v4/locales/be.d.cts
+?? web/node_modules/zod/v4/locales/be.d.ts
+?? web/node_modules/zod/v4/locales/be.js
+?? web/node_modules/zod/v4/locales/bg.cjs
+?? web/node_modules/zod/v4/locales/bg.d.cts
+?? web/node_modules/zod/v4/locales/bg.d.ts
+?? web/node_modules/zod/v4/locales/bg.js
+?? web/node_modules/zod/v4/locales/ca.cjs
+?? web/node_modules/zod/v4/locales/ca.d.cts
+?? web/node_modules/zod/v4/locales/ca.d.ts
+?? web/node_modules/zod/v4/locales/ca.js
+?? web/node_modules/zod/v4/locales/cs.cjs
+?? web/node_modules/zod/v4/locales/cs.d.cts
+?? web/node_modules/zod/v4/locales/cs.d.ts
+?? web/node_modules/zod/v4/locales/cs.js
+?? web/node_modules/zod/v4/locales/da.cjs
+?? web/node_modules/zod/v4/locales/da.d.cts
+?? web/node_modules/zod/v4/locales/da.d.ts
+?? web/node_modules/zod/v4/locales/da.js
+?? web/node_modules/zod/v4/locales/de.cjs
+?? web/node_modules/zod/v4/locales/de.d.cts
+?? web/node_modules/zod/v4/locales/de.d.ts
+?? web/node_modules/zod/v4/locales/de.js
+?? web/node_modules/zod/v4/locales/el.cjs
+?? web/node_modules/zod/v4/locales/el.d.cts
+?? web/node_modules/zod/v4/locales/el.d.ts
+?? web/node_modules/zod/v4/locales/el.js
+?? web/node_modules/zod/v4/locales/en.cjs
+?? web/node_modules/zod/v4/locales/en.d.cts
+?? web/node_modules/zod/v4/locales/en.d.ts
+?? web/node_modules/zod/v4/locales/en.js
+?? web/node_modules/zod/v4/locales/eo.cjs
+?? web/node_modules/zod/v4/locales/eo.d.cts
+?? web/node_modules/zod/v4/locales/eo.d.ts
+?? web/node_modules/zod/v4/locales/eo.js
+?? web/node_modules/zod/v4/locales/es.cjs
+?? web/node_modules/zod/v4/locales/es.d.cts
+?? web/node_modules/zod/v4/locales/es.d.ts
+?? web/node_modules/zod/v4/locales/es.js
+?? web/node_modules/zod/v4/locales/fa.cjs
+?? web/node_modules/zod/v4/locales/fa.d.cts
+?? web/node_modules/zod/v4/locales/fa.d.ts
+?? web/node_modules/zod/v4/locales/fa.js
+?? web/node_modules/zod/v4/locales/fi.cjs
+?? web/node_modules/zod/v4/locales/fi.d.cts
+?? web/node_modules/zod/v4/locales/fi.d.ts
+?? web/node_modules/zod/v4/locales/fi.js
+?? web/node_modules/zod/v4/locales/fr-CA.cjs
+?? web/node_modules/zod/v4/locales/fr-CA.d.cts
+?? web/node_modules/zod/v4/locales/fr-CA.d.ts
+?? web/node_modules/zod/v4/locales/fr-CA.js
+?? web/node_modules/zod/v4/locales/fr.cjs
+?? web/node_modules/zod/v4/locales/fr.d.cts
+?? web/node_modules/zod/v4/locales/fr.d.ts
+?? web/node_modules/zod/v4/locales/fr.js
+?? web/node_modules/zod/v4/locales/he.cjs
+?? web/node_modules/zod/v4/locales/he.d.cts
+?? web/node_modules/zod/v4/locales/he.d.ts
+?? web/node_modules/zod/v4/locales/he.js
+?? web/node_modules/zod/v4/locales/hr.cjs
+?? web/node_modules/zod/v4/locales/hr.d.cts
+?? web/node_modules/zod/v4/locales/hr.d.ts
+?? web/node_modules/zod/v4/locales/hr.js
+?? web/node_modules/zod/v4/locales/hu.cjs
+?? web/node_modules/zod/v4/locales/hu.d.cts
+?? web/node_modules/zod/v4/locales/hu.d.ts
+?? web/node_modules/zod/v4/locales/hu.js
+?? web/node_modules/zod/v4/locales/hy.cjs
+?? web/node_modules/zod/v4/locales/hy.d.cts
+?? web/node_modules/zod/v4/locales/hy.d.ts
+?? web/node_modules/zod/v4/locales/hy.js
+?? web/node_modules/zod/v4/locales/id.cjs
+?? web/node_modules/zod/v4/locales/id.d.cts
+?? web/node_modules/zod/v4/locales/id.d.ts
+?? web/node_modules/zod/v4/locales/id.js
+?? web/node_modules/zod/v4/locales/index.cjs
+?? web/node_modules/zod/v4/locales/index.d.cts
+?? web/node_modules/zod/v4/locales/index.d.ts
+?? web/node_modules/zod/v4/locales/index.js
+?? web/node_modules/zod/v4/locales/is.cjs
+?? web/node_modules/zod/v4/locales/is.d.cts
+?? web/node_modules/zod/v4/locales/is.d.ts
+?? web/node_modules/zod/v4/locales/is.js
+?? web/node_modules/zod/v4/locales/it.cjs
+?? web/node_modules/zod/v4/locales/it.d.cts
+?? web/node_modules/zod/v4/locales/it.d.ts
+?? web/node_modules/zod/v4/locales/it.js
+?? web/node_modules/zod/v4/locales/ja.cjs
+?? web/node_modules/zod/v4/locales/ja.d.cts
+?? web/node_modules/zod/v4/locales/ja.d.ts
+?? web/node_modules/zod/v4/locales/ja.js
+?? web/node_modules/zod/v4/locales/ka.cjs
+?? web/node_modules/zod/v4/locales/ka.d.cts
+?? web/node_modules/zod/v4/locales/ka.d.ts
+?? web/node_modules/zod/v4/locales/ka.js
+?? web/node_modules/zod/v4/locales/kh.cjs
+?? web/node_modules/zod/v4/locales/kh.d.cts
+?? web/node_modules/zod/v4/locales/kh.d.ts
+?? web/node_modules/zod/v4/locales/kh.js
+?? web/node_modules/zod/v4/locales/km.cjs
+?? web/node_modules/zod/v4/locales/km.d.cts
+?? web/node_modules/zod/v4/locales/km.d.ts
+?? web/node_modules/zod/v4/locales/km.js
+?? web/node_modules/zod/v4/locales/ko.cjs
+?? web/node_modules/zod/v4/locales/ko.d.cts
+?? web/node_modules/zod/v4/locales/ko.d.ts
+?? web/node_modules/zod/v4/locales/ko.js
+?? web/node_modules/zod/v4/locales/lt.cjs
+?? web/node_modules/zod/v4/locales/lt.d.cts
+?? web/node_modules/zod/v4/locales/lt.d.ts
+?? web/node_modules/zod/v4/locales/lt.js
+?? web/node_modules/zod/v4/locales/mk.cjs
+?? web/node_modules/zod/v4/locales/mk.d.cts
+?? web/node_modules/zod/v4/locales/mk.d.ts
+?? web/node_modules/zod/v4/locales/mk.js
+?? web/node_modules/zod/v4/locales/ms.cjs
+?? web/node_modules/zod/v4/locales/ms.d.cts
+?? web/node_modules/zod/v4/locales/ms.d.ts
+?? web/node_modules/zod/v4/locales/ms.js
+?? web/node_modules/zod/v4/locales/nl.cjs
+?? web/node_modules/zod/v4/locales/nl.d.cts
+?? web/node_modules/zod/v4/locales/nl.d.ts
+?? web/node_modules/zod/v4/locales/nl.js
+?? web/node_modules/zod/v4/locales/no.cjs
+?? web/node_modules/zod/v4/locales/no.d.cts
+?? web/node_modules/zod/v4/locales/no.d.ts
+?? web/node_modules/zod/v4/locales/no.js
+?? web/node_modules/zod/v4/locales/ota.cjs
+?? web/node_modules/zod/v4/locales/ota.d.cts
+?? web/node_modules/zod/v4/locales/ota.d.ts
+?? web/node_modules/zod/v4/locales/ota.js
+?? web/node_modules/zod/v4/locales/package.json
+?? web/node_modules/zod/v4/locales/pl.cjs
+?? web/node_modules/zod/v4/locales/pl.d.cts
+?? web/node_modules/zod/v4/locales/pl.d.ts
+?? web/node_modules/zod/v4/locales/pl.js
+?? web/node_modules/zod/v4/locales/ps.cjs
+?? web/node_modules/zod/v4/locales/ps.d.cts
+?? web/node_modules/zod/v4/locales/ps.d.ts
+?? web/node_modules/zod/v4/locales/ps.js
+?? web/node_modules/zod/v4/locales/pt.cjs
+?? web/node_modules/zod/v4/locales/pt.d.cts
+?? web/node_modules/zod/v4/locales/pt.d.ts
+?? web/node_modules/zod/v4/locales/pt.js
+?? web/node_modules/zod/v4/locales/ro.cjs
+?? web/node_modules/zod/v4/locales/ro.d.cts
+?? web/node_modules/zod/v4/locales/ro.d.ts
+?? web/node_modules/zod/v4/locales/ro.js
+?? web/node_modules/zod/v4/locales/ru.cjs
+?? web/node_modules/zod/v4/locales/ru.d.cts
+?? web/node_modules/zod/v4/locales/ru.d.ts
+?? web/node_modules/zod/v4/locales/ru.js
+?? web/node_modules/zod/v4/locales/sl.cjs
+?? web/node_modules/zod/v4/locales/sl.d.cts
+?? web/node_modules/zod/v4/locales/sl.d.ts
+?? web/node_modules/zod/v4/locales/sl.js
+?? web/node_modules/zod/v4/locales/sv.cjs
+?? web/node_modules/zod/v4/locales/sv.d.cts
+?? web/node_modules/zod/v4/locales/sv.d.ts
+?? web/node_modules/zod/v4/locales/sv.js
+?? web/node_modules/zod/v4/locales/ta.cjs
+?? web/node_modules/zod/v4/locales/ta.d.cts
+?? web/node_modules/zod/v4/locales/ta.d.ts
+?? web/node_modules/zod/v4/locales/ta.js
+?? web/node_modules/zod/v4/locales/th.cjs
+?? web/node_modules/zod/v4/locales/th.d.cts
+?? web/node_modules/zod/v4/locales/th.d.ts
+?? web/node_modules/zod/v4/locales/th.js
+?? web/node_modules/zod/v4/locales/tr.cjs
+?? web/node_modules/zod/v4/locales/tr.d.cts
+?? web/node_modules/zod/v4/locales/tr.d.ts
+?? web/node_modules/zod/v4/locales/tr.js
+?? web/node_modules/zod/v4/locales/ua.cjs
+?? web/node_modules/zod/v4/locales/ua.d.cts
+?? web/node_modules/zod/v4/locales/ua.d.ts
+?? web/node_modules/zod/v4/locales/ua.js
+?? web/node_modules/zod/v4/locales/uk.cjs
+?? web/node_modules/zod/v4/locales/uk.d.cts
+?? web/node_modules/zod/v4/locales/uk.d.ts
+?? web/node_modules/zod/v4/locales/uk.js
+?? web/node_modules/zod/v4/locales/ur.cjs
+?? web/node_modules/zod/v4/locales/ur.d.cts
+?? web/node_modules/zod/v4/locales/ur.d.ts
+?? web/node_modules/zod/v4/locales/ur.js
+?? web/node_modules/zod/v4/locales/uz.cjs
+?? web/node_modules/zod/v4/locales/uz.d.cts
+?? web/node_modules/zod/v4/locales/uz.d.ts
+?? web/node_modules/zod/v4/locales/uz.js
+?? web/node_modules/zod/v4/locales/vi.cjs
+?? web/node_modules/zod/v4/locales/vi.d.cts
+?? web/node_modules/zod/v4/locales/vi.d.ts
+?? web/node_modules/zod/v4/locales/vi.js
+?? web/node_modules/zod/v4/locales/yo.cjs
+?? web/node_modules/zod/v4/locales/yo.d.cts
+?? web/node_modules/zod/v4/locales/yo.d.ts
+?? web/node_modules/zod/v4/locales/yo.js
+?? web/node_modules/zod/v4/locales/zh-CN.cjs
+?? web/node_modules/zod/v4/locales/zh-CN.d.cts
+?? web/node_modules/zod/v4/locales/zh-CN.d.ts
+?? web/node_modules/zod/v4/locales/zh-CN.js
+?? web/node_modules/zod/v4/locales/zh-TW.cjs
+?? web/node_modules/zod/v4/locales/zh-TW.d.cts
+?? web/node_modules/zod/v4/locales/zh-TW.d.ts
+?? web/node_modules/zod/v4/locales/zh-TW.js
+?? web/node_modules/zod/v4/mini/checks.cjs
+?? web/node_modules/zod/v4/mini/checks.d.cts
+?? web/node_modules/zod/v4/mini/checks.d.ts
+?? web/node_modules/zod/v4/mini/checks.js
+?? web/node_modules/zod/v4/mini/coerce.cjs
+?? web/node_modules/zod/v4/mini/coerce.d.cts
+?? web/node_modules/zod/v4/mini/coerce.d.ts
+?? web/node_modules/zod/v4/mini/coerce.js
+?? web/node_modules/zod/v4/mini/external.cjs
+?? web/node_modules/zod/v4/mini/external.d.cts
+?? web/node_modules/zod/v4/mini/external.d.ts
+?? web/node_modules/zod/v4/mini/external.js
+?? web/node_modules/zod/v4/mini/index.cjs
+?? web/node_modules/zod/v4/mini/index.d.cts
+?? web/node_modules/zod/v4/mini/index.d.ts
+?? web/node_modules/zod/v4/mini/index.js
+?? web/node_modules/zod/v4/mini/iso.cjs
+?? web/node_modules/zod/v4/mini/iso.d.cts
+?? web/node_modules/zod/v4/mini/iso.d.ts
+?? web/node_modules/zod/v4/mini/iso.js
+?? web/node_modules/zod/v4/mini/package.json
+?? web/node_modules/zod/v4/mini/parse.cjs
+?? web/node_modules/zod/v4/mini/parse.d.cts
+?? web/node_modules/zod/v4/mini/parse.d.ts
+?? web/node_modules/zod/v4/mini/parse.js
+?? web/node_modules/zod/v4/mini/schemas.cjs
+?? web/node_modules/zod/v4/mini/schemas.d.cts
+?? web/node_modules/zod/v4/mini/schemas.d.ts
+?? web/node_modules/zod/v4/mini/schemas.js
+?? web/node_modules/zod/v4/package.json
+?? web/node_modules/zustand/LICENSE
+?? web/node_modules/zustand/README.md
+?? web/node_modules/zustand/esm/index.d.mts
+?? web/node_modules/zustand/esm/index.mjs
+?? web/node_modules/zustand/esm/middleware.d.mts
+?? web/node_modules/zustand/esm/middleware.mjs
+?? web/node_modules/zustand/esm/middleware/combine.d.mts
+?? web/node_modules/zustand/esm/middleware/devtools.d.mts
+?? web/node_modules/zustand/esm/middleware/immer.d.mts
+?? web/node_modules/zustand/esm/middleware/immer.mjs
+?? web/node_modules/zustand/esm/middleware/persist.d.mts
+?? web/node_modules/zustand/esm/middleware/redux.d.mts
+?? web/node_modules/zustand/esm/middleware/ssrSafe.d.mts
+?? web/node_modules/zustand/esm/middleware/subscribeWithSelector.d.mts
+?? web/node_modules/zustand/esm/react.d.mts
+?? web/node_modules/zustand/esm/react.mjs
+?? web/node_modules/zustand/esm/react/shallow.d.mts
+?? web/node_modules/zustand/esm/react/shallow.mjs
+?? web/node_modules/zustand/esm/shallow.d.mts
+?? web/node_modules/zustand/esm/shallow.mjs
+?? web/node_modules/zustand/esm/traditional.d.mts
+?? web/node_modules/zustand/esm/traditional.mjs
+?? web/node_modules/zustand/esm/vanilla.d.mts
+?? web/node_modules/zustand/esm/vanilla.mjs
+?? web/node_modules/zustand/esm/vanilla/shallow.d.mts
+?? web/node_modules/zustand/esm/vanilla/shallow.mjs
+?? web/node_modules/zustand/index.d.ts
+?? web/node_modules/zustand/index.js
+?? web/node_modules/zustand/middleware.d.ts
+?? web/node_modules/zustand/middleware.js
+?? web/node_modules/zustand/middleware/combine.d.ts
+?? web/node_modules/zustand/middleware/devtools.d.ts
+?? web/node_modules/zustand/middleware/immer.d.ts
+?? web/node_modules/zustand/middleware/immer.js
+?? web/node_modules/zustand/middleware/persist.d.ts
+?? web/node_modules/zustand/middleware/redux.d.ts
+?? web/node_modules/zustand/middleware/ssrSafe.d.ts
+?? web/node_modules/zustand/middleware/subscribeWithSelector.d.ts
+?? web/node_modules/zustand/package.json
+?? web/node_modules/zustand/react.d.ts
+?? web/node_modules/zustand/react.js
+?? web/node_modules/zustand/react/shallow.d.ts
+?? web/node_modules/zustand/react/shallow.js
+?? web/node_modules/zustand/shallow.d.ts
+?? web/node_modules/zustand/shallow.js
+?? web/node_modules/zustand/traditional.d.ts
+?? web/node_modules/zustand/traditional.js
+?? web/node_modules/zustand/ts_version_4.5_and_above_is_required.d.ts
+?? web/node_modules/zustand/vanilla.d.ts
+?? web/node_modules/zustand/vanilla.js
+?? web/node_modules/zustand/vanilla/shallow.d.ts
+?? web/node_modules/zustand/vanilla/shallow.js
+?? web/src/components/AcpConversation.svelte
+?? web/src/components/acp/AcpComposer.svelte
+?? web/src/components/acp/AcpConversationPane.svelte
+?? web/src/components/acp/ConversationComposer.svelte
+?? web/src/components/acp/ConversationStatus.svelte
+?? web/src/components/acp/DiffView.svelte
+?? web/src/components/acp/PermissionPrompt.svelte
+?? web/src/components/acp/PlanView.svelte
+?? web/src/components/acp/ThoughtView.svelte
+?? web/src/components/acp/ToolCallCard.svelte
+?? web/src/components/acp/TranscriptView.svelte
+?? web/src/lib/acp/contracts.ts
+?? web/src/lib/acp/conversationController.ts
+?? web/src/lib/acp/conversationState.ts
+?? web/src/lib/acp/filePreview.ts
+?? web/src/lib/acp/lineDiff.ts
+?? web/src/lib/acp/panelsTransport.ts
+?? web/src/lib/acp/pendingConversationImages.js
+?? web/src/lib/acp/productionConversation.ts
+?? web/src/vendor/acp-components-core/LICENSE
+?? web/src/vendor/acp-components-core/UPSTREAM.md
+?? web/src/vendor/acp-components-core/src/store/sessionStore.ts
+?? web/src/vendor/acp-components-core/src/transport/types.ts
+?? web/src/vendor/acp-components-core/src/types/index.ts
+?? web/src/vendor/acp-components-core/src/utils/id.ts
+?? web/tests/acp-browser-components.test.mjs
+?? web/tests/acp-browser-conformance.test.mjs
+?? web/tests/acp-browser-state.test.mjs
+?? web/tests/acp-components.test.mjs
+?? web/tests/acp-contracts.test.mjs
+?? web/tests/acp-images.test.mjs
+?? web/tests/acp-production-mount.test.mjs
+?? web/tests/conversation-controller.test.mjs

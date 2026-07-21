@@ -15,14 +15,13 @@ from planner.days.contracts import Day, DayTicket
 
 def materialize_day(conn: sqlite3.Connection, day_id: str, now_unix: int) -> None:
     """§3.4: create the day row if absent (all overview fields + notes = '',
-    chat_session_key=NULL, created_at=updated_at=now_unix) and append a
+    created_at=updated_at=now_unix) and append a
     day_created event. Idempotent: a present day → no write, no event."""
     if conn.execute("SELECT 1 FROM days WHERE id = ?", (day_id,)).fetchone() is not None:
         return
     conn.execute(
         "INSERT INTO days (id, focus, brief_take, watchout, if_today_lands, notes, "
-        "chat_session_key, created_at, updated_at) "
-        "VALUES (?, '', '', '', '', '', NULL, ?, ?)",
+        "created_at, updated_at) VALUES (?, '', '', '', '', '', ?, ?)",
         (day_id, now_unix, now_unix),
     )
     append_event(conn, day_id, EventKind.day_created, {}, now_unix)
@@ -34,7 +33,7 @@ def read_day(conn: sqlite3.Connection, day_id: str, now_unix: int) -> Day:
     materialize_day(conn, day_id, now_unix)
     row = conn.execute(
         "SELECT id, focus, brief_take, watchout, if_today_lands, notes, "
-        "chat_session_key, created_at, updated_at "
+        "created_at, updated_at "
         "FROM days WHERE id = ?",
         (day_id,),
     ).fetchone()
@@ -46,7 +45,6 @@ def read_day(conn: sqlite3.Connection, day_id: str, now_unix: int) -> Day:
         watchout=row["watchout"],
         if_today_lands=row["if_today_lands"],
         notes=row["notes"],
-        chat_session_key=row["chat_session_key"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

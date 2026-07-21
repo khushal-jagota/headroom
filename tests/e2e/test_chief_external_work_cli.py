@@ -63,6 +63,8 @@ def test_chief_external_work_cli_create_and_reconcile(server, tmp_path: Path) ->
         "Imported through CLI",
         "--worker-type",
         "coding",
+        "--employee-backend",
+        "hermes",
         "--stage",
         "needs_plan",
         "--kickoff-note-file",
@@ -78,6 +80,7 @@ def test_chief_external_work_cli_create_and_reconcile(server, tmp_path: Path) ->
     assert created.returncode == 0, created.stderr
     created_json = json.loads(created.stdout)
     assert created_json["stage"] == "needs_plan"
+    assert created_json["employee_backend"] == "hermes"
 
     reconciled = _run(
         server,
@@ -133,9 +136,7 @@ def test_chief_external_work_cli_carries_new_worker_fields(server, tmp_path: Pat
     assert created.returncode == 0, created.stderr
     created_json = json.loads(created.stdout)
     assert created_json["stage"] == "needs_thinking"
-    assert (
-        created_json["fields"]["understanding"]["value"] == "Bounded worker-design understanding"
-    )
+    assert created_json["fields"]["understanding"]["value"] == "Bounded worker-design understanding"
     assert created_json["fields"]["stages"]["value"] == "needs_thinking, needs_drafting"
     assert created_json["fields"]["thinking"]["value"] is None
 
@@ -156,8 +157,7 @@ def test_chief_external_work_cli_carries_new_worker_fields(server, tmp_path: Pat
     reconciled_json = json.loads(reconciled.stdout)
     assert reconciled_json["stage"] == "needs_drafting"
     assert (
-        reconciled_json["fields"]["understanding"]["value"]
-        == "Bounded worker-design understanding"
+        reconciled_json["fields"]["understanding"]["value"] == "Bounded worker-design understanding"
     )
     assert reconciled_json["fields"]["stages"]["value"] == "needs_thinking, needs_drafting"
     assert reconciled_json["fields"]["thinking"]["value"] == "Worker reasoning contract"
@@ -227,6 +227,7 @@ def test_chief_field_file_rejects_command_fixed_keys_before_read_or_request(
     create_only_fixed_keys = (
         "title",
         "worker_type",
+        "employee_backend",
         "priority",
         "deadline",
         "project",

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ast
-import threading
 from datetime import timedelta
 from pathlib import Path
 from sqlite3 import Connection
@@ -10,10 +9,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from planner.chat import data as chat_data
 from planner.core import clock as planner_clock
 from planner.core import links as core_links
-from planner.core.adapters.registry import build_adapters
 from planner.core.clock import Clock, RealClock, build_clock
 from planner.core.config import load_config
 from planner.core.contracts import LinkKind
@@ -23,6 +20,7 @@ from planner.days import data as days_data
 from planner.runtime.automatic_employee_step_eligibility_wake import (
     LoopAutomaticEmployeeStepEligibilityWake,
 )
+from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
@@ -58,7 +56,6 @@ def _make_app(
     boot.close()
     env = {
         "PLAN_TEST_MODE": "1",
-        "PLAN_GATEWAY_ADAPTER": "fake",
         "PLAN_DB_PATH": str(db_path),
     }
     if fake_now is not None:
@@ -69,7 +66,7 @@ def _make_app(
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    app = create_app(config, clock, build_adapters(config), conn_factory)
+    app = create_app(config, clock, conn_factory)
     eligibility_wake = RecordingEligibilityWake()
     app.state.automatic_employee_step_eligibility_wake = eligibility_wake
     return app, db_path, clock, eligibility_wake
@@ -339,25 +336,13 @@ def test_same_mode_ownership_does_not_reopen_but_real_paired_transition_does(
 
         conn = connect(str(db_path))
         try:
-            turn = chat_data.start_turn(
+            repository = SqliteEmployeeStepRepository()
+            run = repository.start(conn, ticket_id, now=3)
+            repository.settle(
                 conn,
-                ticket_id,
-                origin="worker",
-                mode="worker_step",
-                visible_role="worker",
-                visible_text="automatic opening",
-                output_role="assistant",
-                phase="thinking",
-                activity_label="Thinking",
-                now=3,
-            )
-            chat_data.settle_chat_turn(
-                conn,
-                turn.id,
-                entity_id=ticket_id,
+                run.employee_step_id,
+                ticket_id=ticket_id,
                 status="complete",
-                reply_text="opened",
-                output_role="assistant",
                 error=None,
                 now=4,
             )
@@ -919,26 +904,6 @@ def test_source_state_deactivation_reports_blocked_targets_and_wakes_once(
         conn.close()
 
 
-def test_ticket_by_session_exposes_resolved_blocker_summary(tmp_path: Path) -> None:
-    app, db_path, _clock, _eligibility_wake = _make_app(tmp_path)
-    blocker = _create_direct(db_path, title="Worker blocker")
-    target = _create_direct(db_path, title="Worker target")
-    conn = connect(str(db_path))
-    conn.execute("UPDATE tickets SET employee_session_id = ? WHERE id = ?", ("sess_worker", target))
-    core_links.add_link(conn, blocker, target, LinkKind.blocks, 1)
-    conn.close()
-
-    with TestClient(app) as client:
-        response = client.get("/api/tickets/by-employee-session/sess_worker")
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["id"] == target
-    assert body["blocker_summary"]["blocked"] is True
-    assert body["blocker_summary"]["blocked_by"][0]["ticket_id"] == blocker
-    assert body["blocker_summary"]["blocked_by"][0]["href"] == f"#/ticket/{blocker}"
-
-
 def test_reactivating_source_rejects_active_blocks_cycle_and_does_not_wake(
     tmp_path: Path,
 ) -> None:
@@ -1086,7 +1051,7 @@ def test_successful_excluded_ticket_and_day_writes_do_not_wake(tmp_path: Path) -
     ]
 
 
-def test_successful_excluded_parentage_project_sprint_and_chat_writes_do_not_wake(
+def test_successful_excluded_parentage_project_and_sprint_writes_do_not_wake(
     tmp_path: Path,
 ) -> None:
     app, db_path, _clock, eligibility_wake = _make_app(tmp_path)
@@ -1130,27 +1095,6 @@ def test_successful_excluded_parentage_project_sprint_and_chat_writes_do_not_wak
         unparented = client.delete(f"/api/items/{item_id}/tickets/{ticket_id}")
         assert unparented.status_code == 200, unparented.text
         assert unparented.json()["rollup"]["needs_success"] == 0
-
-        chat = client.post(
-            "/api/chat/day_2099-05-03/turns",
-            json={"text": "hello", "mode": "message"},
-        )
-        assert chat.status_code == 200, chat.text
-        assert chat.json()["status"] == "running"
-        assert chat.json()["mode"] == "message"
-        for _ in range(40):
-            conn = connect(str(db_path))
-            try:
-                row = conn.execute(
-                    "SELECT status FROM chat_turns WHERE id = ?", (chat.json()["id"],)
-                ).fetchone()
-            finally:
-                conn.close()
-            if row is not None and row["status"] != "running":
-                break
-            threading.Event().wait(0.05)
-        else:
-            raise AssertionError("chat turn did not settle")
 
     assert eligibility_wake.calls == 0
 

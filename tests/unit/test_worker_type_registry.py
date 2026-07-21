@@ -8,11 +8,17 @@ from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 
 import pytest
+from tests.support.probe import PROBE_EMPLOYEE_BACKEND_CATALOG, build_probe_registry
 
+from planner.conversation.backend_catalog import build_production_employee_backend_catalog
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
-from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
+from planner.worker_types.configuration import (
+    PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
+    PRODUCTION_WORKER_TYPE_REGISTRY,
+    ConfiguredEmployeeRuntimeDefinitions,
+)
 from planner.worker_types.contracts import (
     FieldDefinition,
     StageDefinition,
@@ -31,7 +37,34 @@ def registry(*definitions: WorkerTypeDefinition) -> WorkerTypeRegistry:
         definitions,
         known_skills=KNOWN_SKILLS,
         known_toolset_profiles=KNOWN_TOOLSETS,
+        employee_backend_catalog=(PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog),
     )
+
+
+def test_production_employee_backend_catalog_is_ordered_hermes_codex_claude() -> None:
+    runtime_definitions = PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS
+    assert runtime_definitions.employee_backend_catalog.registered_backend_keys() == (
+        "hermes",
+        "codex",
+        "claude",
+    )
+    assert (
+        runtime_definitions.worker_type_registry.employee_backend_catalog
+        is runtime_definitions.employee_backend_catalog
+    )
+    assert {
+        runtime_definitions.worker_type_registry.require(worker_type)
+        .worker_profile.default_employee_backend
+        for worker_type in runtime_definitions.worker_type_registry.registered_worker_types()
+    } == {"hermes"}
+
+
+def test_worker_profile_declares_complete_employee_defaults() -> None:
+    for worker_type in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types():
+        profile = PRODUCTION_WORKER_TYPE_REGISTRY.require(worker_type).worker_profile
+        assert profile.default_employee_backend == "hermes"
+        assert profile.default_employee_model is None
+        assert profile.default_employee_reasoning_effort is None
 
 
 def assert_error(
@@ -51,7 +84,7 @@ def assert_error(
     [
         StageDefinition("a", "A", "a", False, StageOwnershipMode.worker),
         FieldDefinition("a", "A"),
-        WorkerProfile("panels-worker", None, None, "default"),
+        WorkerProfile("panels-worker", None, None, "default", "hermes"),
         CODING_WORKER_TYPE_DEFINITION,
     ],
 )
@@ -101,6 +134,9 @@ def test_coding_definition_owns_complete_behavior() -> None:
         if not stage.is_terminal
     )
     assert definition.worker_profile.specialist_skill == "panels-worker-coding"
+    assert definition.worker_profile.default_employee_backend == "hermes"
+    assert definition.worker_profile.default_employee_model is None
+    assert definition.worker_profile.default_employee_reasoning_effort is None
     definition.validate_ticket_position("dropped", "done")
 
 
@@ -312,6 +348,45 @@ def test_duplicate_worker_type_is_rejected() -> None:
     }
 
 
+@pytest.mark.parametrize("default_employee_backend", ["", " ", "missing-backend"])
+def test_worker_profiles_require_non_empty_registered_default_employee_backend(
+    default_employee_backend: str,
+) -> None:
+    definition = replace(
+        CODING_WORKER_TYPE_DEFINITION,
+        worker_profile=replace(
+            CODING_WORKER_TYPE_DEFINITION.worker_profile,
+            default_employee_backend=default_employee_backend,
+        ),
+    )
+    with pytest.raises(PlannerError) as raised:
+        registry(definition)
+    assert raised.value.code is ErrorCode.validation
+    assert raised.value.detail["employee_backend"] == default_employee_backend
+    if default_employee_backend == "missing-backend":
+        assert raised.value.detail["employee_backends"] == ["hermes", "codex", "claude"]
+
+
+def test_probe_default_employee_backend_is_registered_second_catalog_entry() -> None:
+    probe_registry = build_probe_registry()
+    assert PROBE_EMPLOYEE_BACKEND_CATALOG.registered_backend_keys() == (
+        "hermes",
+        "probe-backend",
+    )
+    assert (
+        probe_registry.require("probe").worker_profile.default_employee_backend
+        == PROBE_EMPLOYEE_BACKEND_CATALOG.registered_backend_keys()[1]
+    )
+
+
+def test_configured_runtime_pair_rejects_catalog_registry_authority_divergence() -> None:
+    with pytest.raises(ValueError, match="same authority"):
+        ConfiguredEmployeeRuntimeDefinitions(
+            build_production_employee_backend_catalog(),
+            PRODUCTION_WORKER_TYPE_REGISTRY,
+        )
+
+
 def test_manifests_are_complete_and_json_round_trip() -> None:
     assert PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types() == (
         "coding",
@@ -408,6 +483,9 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
         ],
         "default_ceiling": "needs_kickoff",
         "worker_profile_id": "panels-worker-coding",
+        "default_employee_backend": "hermes",
+        "default_employee_model": None,
+        "default_employee_reasoning_effort": None,
     }
     assert json.loads(json.dumps(coding)) == coding
     assert (
@@ -501,7 +579,11 @@ def test_worker_type_package_has_only_the_locked_modules_and_outbound_imports() 
         "new_worker.py",
         "registry.py",
     }
-    allowed_outbound = {"planner.core.contracts", "planner.tickets.contracts"}
+    allowed_outbound = {
+        "planner.conversation.backend_catalog",
+        "planner.core.contracts",
+        "planner.tickets.contracts",
+    }
     for path in package.glob("*.py"):
         tree = ast.parse(path.read_text(), filename=str(path))
         for node in ast.walk(tree):
@@ -564,7 +646,10 @@ def test_seed_is_definition_driven_without_worker_type_fallbacks() -> None:
     )
     importer_source = seed_paths[2].read_text()
     assert "TicketFields.empty(worker_type_definition.field_ids())" in importer_source
-    assert importer_source.count("configured_worker_type_registry().require(worker_type)") == 1
+    assert (
+        importer_source.count("runtime_definitions.worker_type_registry.require(worker_type)") == 1
+    )
+    assert "runtime_definitions.employee_backend_catalog.require_registered" in importer_source
     assert 'require("coding")' not in importer_source
     assert "coding_worker_type_definition" not in importer_source
     complete_coding_fields = {

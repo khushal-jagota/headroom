@@ -9,20 +9,11 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
-from planner.core.adapters.registry import build_adapters
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets.data import create_ticket
-
-PNG = (
-    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
-    b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00"
-    b"\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0\x00\x00\x03\x01\x01"
-    b"\x00\xc9\xfe\x92\xef\x00\x00\x00\x00IEND\xaeB`\x82"
-)
 
 ALLOWED_LOGIN = "khushal@example.com"
 CANONICAL_ORIGIN = "https://panels.tailnet.ts.net"
@@ -42,7 +33,6 @@ def _make_app(tmp_path: Path, *, hosted: bool = True) -> tuple[object, Path]:
     boot.close()
     env = {
         "PLAN_TEST_MODE": "1",
-        "PLAN_GATEWAY_ADAPTER": "fake",
         "PLAN_DB_PATH": str(db_path),
     }
     if hosted:
@@ -55,12 +45,11 @@ def _make_app(tmp_path: Path, *, hosted: bool = True) -> tuple[object, Path]:
         )
     config = load_config(path=None, env=env)
     clock = build_clock(config)
-    adapters = build_adapters(config)
 
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    return create_app(config, clock, adapters, conn_factory), db_path
+    return create_app(config, clock, conn_factory), db_path
 
 
 def _ticket(db_path: Path) -> str:
@@ -152,16 +141,20 @@ def test_wrong_present_origin_rejected_for_unsafe_http_and_absent_origin_allowed
 
     with TestClient(app) as client:
         wrong = client.post(
-            "/api/messages/chief",
-            json={"text": "hello"},
+            "/api/tickets",
+            json={"title": "Wrong origin", "worker_type": "coding", "kickoff_note": "k"},
             headers={**REMOTE, "Origin": "https://evil.example"},
         )
-        absent = client.post("/api/messages/chief", json={"text": "hello"}, headers=REMOTE)
+        absent = client.post(
+            "/api/tickets",
+            json={"title": "Allowed origin", "worker_type": "coding", "kickoff_note": "k"},
+            headers=REMOTE,
+        )
 
     assert wrong.status_code == 403
     assert wrong.json()["error"]["message"] == "request origin is not allowed"
     assert absent.status_code == 200, absent.text
-    assert absent.json()["entity_id"] == CHIEF_OF_STAFF_ENTITY_ID
+    assert absent.json()["title"] == "Allowed origin"
 
 
 def test_duplicate_origin_is_rejected_before_origin_decision(tmp_path: Path) -> None:
@@ -169,8 +162,8 @@ def test_duplicate_origin_is_rejected_before_origin_decision(tmp_path: Path) -> 
 
     with TestClient(app) as client:
         response = client.post(
-            "/api/messages/chief",
-            json={"text": "hello"},
+            "/api/tickets",
+            json={"title": "Duplicate origin", "worker_type": "coding", "kickoff_note": "k"},
             headers=[
                 ("Tailscale-User-Login", ALLOWED_LOGIN),
                 ("Origin", CANONICAL_ORIGIN),
@@ -203,17 +196,6 @@ def test_static_and_file_surfaces_pass_through_trusted_ingress(tmp_path: Path) -
     ticket_path = db_path.parent / "files" / "tickets" / "t_file123" / "notes.md"
     ticket_path.parent.mkdir(parents=True)
     ticket_path.write_text("# Notes\n", encoding="utf-8")
-    chat_path = (
-        db_path.parent
-        / "files"
-        / "chats"
-        / CHIEF_OF_STAFF_ENTITY_ID
-        / "attachments"
-        / "note.txt"
-    )
-    chat_path.parent.mkdir(parents=True)
-    chat_path.write_text("chat file\n", encoding="utf-8")
-
     with TestClient(app) as client:
         blocked = [
             client.get("/", headers=REMOTE_WRONG),
@@ -221,30 +203,12 @@ def test_static_and_file_surfaces_pass_through_trusted_ingress(tmp_path: Path) -
             client.get("/assets/app.css", headers=REMOTE_WRONG),
             client.get("/static/favicon.ico", headers=REMOTE_WRONG),
             client.get("/files/tickets/t_file123/notes.md", headers=REMOTE_WRONG),
-            client.get(
-                f"/files/chats/{CHIEF_OF_STAFF_ENTITY_ID}/attachments/note.txt",
-                headers=REMOTE_WRONG,
-            ),
-            client.post(
-                f"/api/chat/{CHIEF_OF_STAFF_ENTITY_ID}/images",
-                content=PNG,
-                headers=REMOTE_WRONG,
-            ),
         ]
         allowed_root = client.get("/", headers=REMOTE)
         allowed_app = client.get(_VITE_CSS_ROUTE, headers=REMOTE)
         allowed_asset = client.get("/assets/app.css", headers=REMOTE)
         allowed_static = client.get("/static/favicon.ico", headers=REMOTE)
         allowed_ticket_file = client.get("/files/tickets/t_file123/notes.md", headers=REMOTE)
-        allowed_chat_file = client.get(
-            f"/files/chats/{CHIEF_OF_STAFF_ENTITY_ID}/attachments/note.txt",
-            headers=REMOTE,
-        )
-        allowed_upload = client.post(
-            f"/api/chat/{CHIEF_OF_STAFF_ENTITY_ID}/images",
-            content=PNG,
-            headers={**REMOTE, "X-Filename": "image.png"},
-        )
 
     assert [response.status_code for response in blocked] == [403] * len(blocked)
     assert allowed_root.status_code == 200
@@ -252,8 +216,6 @@ def test_static_and_file_surfaces_pass_through_trusted_ingress(tmp_path: Path) -
     assert allowed_asset.status_code == 200
     assert allowed_static.status_code == 200
     assert allowed_ticket_file.status_code == 200
-    assert allowed_chat_file.status_code == 200
-    assert allowed_upload.status_code == 200, allowed_upload.text
 
 
 def test_events_websocket_trusted_ingress_and_origin_policy(tmp_path: Path) -> None:

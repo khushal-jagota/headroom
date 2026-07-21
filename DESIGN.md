@@ -5,7 +5,7 @@ duration, or type size is written — never hardcode one). This file is the *how
 principles those tokens serve. Warm near-black surfaces, one amber accent that means
 "needs the human", a closed five-size type scale. Restraint over decoration.
 
-Distilled from `tokens.css`, `PRINCIPLES.md`, and the Vylo chat reference (no-divider fades,
+Distilled from `tokens.css`, `PRINCIPLES.md`, and the Vylo conversation reference (no-divider fades,
 bubble-less assistant, recessed composer).
 
 ## Principles
@@ -15,7 +15,7 @@ bubble-less assistant, recessed composer).
    the thread", session ids, hint bars: gone).
 
 2. **Content only.** Strip per-item decoration. No avatars, name labels, timestamps, counts, or
-   action buttons unless they do real work. A chat turn *is* its text; a ticket field *is* its
+   action buttons unless they do real work. A conversation turn *is* its text; a ticket field *is* its
    value.
 
 3. **Fade, don't divide.** Prefer no lines. Let scroll areas dissolve into solid bars (a mask
@@ -24,7 +24,7 @@ bubble-less assistant, recessed composer).
 
 4. **One accent, one meaning.** `--accent-bright` (amber) means *needs the human* — a pending
    approval, a required action. Never decorative. If amber is everywhere it says nothing; that
-   is why it stays out of the chat thread and shows up on the gate.
+   is why it stays out of the conversation thread and shows up on the gate.
 
 5. **Asymmetry carries meaning.** Different things look different. The human's message is a
    contained pill; the agent's is bare prose. The gate is amber; settled state is quiet. Don't
@@ -45,7 +45,7 @@ bubble-less assistant, recessed composer).
 
 9. **The system speaks in serif; the machine stays sans.** Everything the product or its agents
    *say* is set in serif (Newsreader) — ticket titles and prose, recaps, proposals, notes, field
-   values, day and sprint bodies, chat messages, the capture inputs, the empty-state lines.
+   values, day and sprint bodies, conversation messages, the capture inputs, the empty-state lines.
    Everything that is a *control or a fact* stays in the sans UI face — the nav, labels, pills,
    buttons, filters, counts, key hints, status words, dates. The split *is* the hierarchy: on any
    surface the words are the content and the small sans elements are the machinery. No italics
@@ -54,15 +54,16 @@ bubble-less assistant, recessed composer).
 10. **Depth is rationed to the ask.** The one raised approval surface earns a top-light gradient,
     a top highlight, and a long soft shadow, with the solid-amber Approve glowing beneath.
     Nothing else on any page is elevated. Hairlines survive only where a real list needs a seam
-    (the ticket stage spine, the sprint/ideas/backlog rows) and at the chat rail edge; blocks are
+    (the ticket stage spine, the sprint/ideas/backlog rows) and at the conversation rail edge; blocks are
     otherwise separated by space, not lines.
 
 ## Applied so far
 
-- **Ticket chat** (`web/src/components/ChatPanel.svelte`,
-  `web/src/components/ChatComposer.svelte`, chat styles in `assets/app.css`) — one
-  right-aligned user pill (the only bubble), bubble-less **employee** prose, no dividers, a recessed
-  composer with a `/` trigger for the gateway command catalog, thinking dots.
+- **ACP conversation** (`web/src/components/AcpConversation.svelte`,
+  `web/src/components/acp/`, conversation styles in `assets/app.css`) — one right-aligned
+  user pill (the only bubble), bubble-less **employee** prose, compact closed thought and tool
+  details, one persistent status line, explicit permissions, and a recessed composer with ACP
+  commands plus Steer, Send Now, Queue, and Stop when applicable.
 - **The serif redesign, across every screen** (`assets/tokens.css` serif ladder;
   `web/src/routes/*` + the `[data-screen="…"]` blocks in `assets/app.css`) — the serif/sans voice
   split, the amber-only accent, the line diet, and the single depth-bearing ask surface, applied

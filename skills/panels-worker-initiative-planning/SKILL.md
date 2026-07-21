@@ -83,10 +83,10 @@ interface its answer affects. Remove questions that fail the scope test. Do not 
 tree with implementation checklists, answer it prematurely, or use exhaustive detail as
 a substitute for judgment.
 
-The approved field is the initial durable tree. Use a ticket-owned Markdown artifact
-only when the tree becomes large or changeable enough that live editing materially
-improves navigation. An artifact is optional, not a default requirement; when used, link
-it from the field and keep one canonical copy rather than duplicating the tree.
+The approved field is for the user's sense-check. Show only the concise question outline:
+no blocker labels, affected-system notes, rationale, or agent-working detail. Keep a short
+tree inline. When it would become a wall of text, use a ticket-owned HTML artifact with
+progressive disclosure and link it from a brief field summary. Keep one canonical copy.
 
 A good **question tree** is small enough to navigate, complete enough to expose the
 initiative's consequential choices, and ordered so Question Answers can work one useful
@@ -95,10 +95,11 @@ branch at a time.
 ### needs_question_answers — settle the shared approach
 
 This is paired work. Begin from the approved tree and choose a bounded branch or small
-related group. Ground factual questions with available sources and tools. For judgment
-questions, explain the practical options and implications, make a recommendation when
-useful, and let the user settle the consequential choice. Do not dump the whole tree on
-the user as an interview.
+related group. Treat it as one continuous conversation: acknowledge the user's answer,
+briefly orient any branch change, then ask the next bounded question. Ground factual
+questions with available sources and tools. For judgment questions, explain the practical
+options and implications, make a recommendation when useful, and let the user settle the
+consequential choice. Do not dump the whole tree on the user as an interview.
 
 As the conversation proceeds:
 

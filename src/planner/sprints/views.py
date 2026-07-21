@@ -111,7 +111,8 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
     loose-ticket ordering). A light projection — not full ticket_json — since the
     disclosure only lists rows that link to the ticket."""
     rows = conn.execute(
-        "SELECT id, title, stage, priority, ticket_status, fields, worker_type FROM tickets "
+        "SELECT id, title, stage, priority, ticket_status, fields, worker_type, "
+        "employee_backend FROM tickets "
         "WHERE sprint_item_id = ? ORDER BY created_at, id",
         (item_id,),
     ).fetchall()
@@ -135,6 +136,7 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
                     worker_type_definition=worker_type_definition,
                 ),
                 "ticket_status": str(r["ticket_status"]),
+                "employee_backend": str(r["employee_backend"]),
             }
         )
     return result

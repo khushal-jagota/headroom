@@ -17,12 +17,14 @@ import pytest
 from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
-from planner.core.adapters.registry import build_adapters
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
+from planner.worker_types.configuration import (
+    PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
+    PRODUCTION_WORKER_TYPE_REGISTRY,
+)
 
 
 @pytest.fixture
@@ -33,13 +35,13 @@ def app(tmp_path: Path):
     boot.close()
     config = load_config(
         path=None,
-        env={"PLAN_TEST_MODE": "1", "PLAN_GATEWAY_ADAPTER": "fake", "PLAN_DB_PATH": str(db_path)},
+        env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)},
     )
 
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    return create_app(config, build_clock(config), build_adapters(config), conn_factory)
+    return create_app(config, build_clock(config), conn_factory)
 
 
 @pytest.fixture
@@ -55,13 +57,45 @@ def test_production_serves_all_shipped_worker_types(app) -> None:
     with TestClient(app) as client:
         served = client.get("/api/worker-types").json()
     assert served == {
+        "employee_backends": ["hermes", "codex", "claude"],
         "worker_types": [
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding"),
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("new_worker"),
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("exploration"),
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("initiative_planning"),
-        ]
+        ],
     }
+
+
+def test_worker_type_manifest_serves_exact_defaults_and_ordered_employee_backend_catalog(
+    app,
+    probe_installed: None,
+) -> None:
+    with TestClient(app) as client:
+        served = client.get("/api/worker-types").json()
+
+    assert served["employee_backends"] == ["hermes", "probe-backend"]
+    assert [item["default_employee_backend"] for item in served["worker_types"]] == [
+        "hermes",
+        "hermes",
+        "hermes",
+        "hermes",
+        "probe-backend",
+    ]
+    assert [item["default_employee_model"] for item in served["worker_types"]] == [
+        None,
+        None,
+        None,
+        None,
+        "probe-model",
+    ]
+    assert [
+        item["default_employee_reasoning_effort"] for item in served["worker_types"]
+    ] == [None, None, None, None, "probe-high"]
+    assert (
+        PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog.registered_backend_keys()
+        == ("hermes", "codex", "claude")
+    )
 
 
 def test_coding_entry_json_roundtrips(app) -> None:
@@ -81,4 +115,5 @@ def test_installed_probe_appears_after_shipped_worker_types(app, probe_installed
         "initiative_planning",
         "probe",
     ]
+    assert served["employee_backends"] == ["hermes", "probe-backend"]
     assert served["worker_types"][0] == PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")

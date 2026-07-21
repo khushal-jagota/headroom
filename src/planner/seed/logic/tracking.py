@@ -35,9 +35,14 @@ def parse_tracking(text: str, source_file: str) -> tuple[list[ParsedItem], list[
         if heading in TRACKING_ITEM_SECTIONS:
             bullets, orphans = parse_bullets(body)
             if orphans:
-                skipped.append(SkippedSection(
-                    source_file, heading, REASON_PROSE, excerpt_of("\n".join(orphans)),
-                ))
+                skipped.append(
+                    SkippedSection(
+                        source_file,
+                        heading,
+                        REASON_PROSE,
+                        excerpt_of("\n".join(orphans)),
+                    )
+                )
             for bullet in bullets:
                 items.append(_item_from_bullet(bullet, deferred=heading == "Deferred"))
         elif body.strip() != "":

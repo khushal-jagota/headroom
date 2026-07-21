@@ -27,9 +27,13 @@ generic Stage setter.
   data-backed, not enum-backed.
 - **`ticket create / show / list / set / approve / block / unblock / delete`** — manage
   tickets. `ticket create` requires `--worker-type` and can take a `--kickoff-note` /
-  `--kickoff-note-file` intake body for the Kickoff field. `ticket list --stage`
+  `--kickoff-note-file` intake body for the Kickoff field. `--employee-backend` overrides
+  the Worker type's registered default. `ticket set <id> employee-backend <key>` changes
+  that choice only during pristine Kickoff, before a session or binding exists.
+  `ticket list --stage`
   compares the stored Stage directly. `ticket set` names one field (`title`, `kickoff-note`, `priority`, `deadline`,
-  or `project` / `project-id`). Sprint placement is a sprint command, not a ticket setter.
+  `employee-backend`, or `project` / `project-id`). Sprint placement is a sprint command,
+  not a ticket setter.
   `ticket delete` is a permanent direct operation
   and requires `--yes`.
 - **`ticket ownership <id> --stage <stage> --mode worker|user|paired|default`** — set or
@@ -56,7 +60,8 @@ generic Stage setter.
   a complete Kickoff field value through `--kickoff-note-file`, preserving the report and
   reconciliation reasoning, and the
   exact settled field prefix for the target `--stage`. Creation also requires
-  `--worker-type`. Reconciliation refuses pending or active Ticket work; both
+  `--worker-type`; `--employee-backend` may override that type's registered default for the
+  new Ticket. Reconciliation refuses pending or active Ticket work; both
   operations move the ceiling to the imported Stage, preserve an explicit Stop
   (otherwise Continue remains), and apply that Stage's effective ownership.
 - **`serve`** — run the server and background worker runtime in the foreground.
@@ -82,7 +87,8 @@ There is one retained cutover command outside the `panels` command tree:
 python -m planner.seed --source <dir> --worker-type <id>
 ```
 
-`--worker-type` is required. The importer resolves that exact configured Worker type once
+`--worker-type` is required. `--employee-backend` may override the selected type's
+registered default. The importer resolves that exact configured Worker type once
 and uses its Stages and fields to validate every imported Ticket. It never chooses a
 default or infers a Worker type from the Markdown. An incompatible legacy Stage rejects
 and rolls back the import.

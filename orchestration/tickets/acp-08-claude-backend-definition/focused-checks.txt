@@ -1,0 +1,22 @@
+ACP-08 Claude backend provider slice focused checks
+Run from /Users/khushaljagota/.hermes/planning-v2
+
+$ .venv/bin/ruff check src/planner/conversation/claude_backend.py src/planner/conversation/claude_turn_strategy.py tests/unit/test_claude_acp_backend.py
+All checks passed!
+
+$ .venv/bin/mypy --strict src/planner/conversation/claude_backend.py src/planner/conversation/claude_turn_strategy.py tests/unit/test_claude_acp_backend.py
+Success: no issues found in 3 source files
+
+$ .venv/bin/pytest -q tests/unit/test_claude_acp_backend.py tests/unit/test_in_place_compaction_strategy.py
+.................................                                        [100%]
+
+The exact-package test in test_claude_acp_backend.py launches the locked 0.60.0 adapter through
+absolute Node + dist/index.js and performs initialize then close only. It sends no session/new,
+session/load, session/prompt, or model request.
+
+The preflight cancellation regressions cancel during spawn and initialize, assert the inner task is
+done and consumed, assert any created child is closed or force-closed, and keep executability false.
+The deadline regression uses a cancellation-aware hanging initialize plus hanging graceful close and
+asserts the awaited force-close has completed before the preflight returns its timeout error.
+
+No broad test command or canonical ./verify was run in this lane.

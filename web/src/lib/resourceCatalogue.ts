@@ -11,11 +11,8 @@ import {
 import type {
   BacklogResponse,
   BoardResponse,
-  ChatStateResponse,
-  CommandCatalog,
   CurrentSprintResponse,
   DayResponse,
-  GatewayStatus,
   IdeasResponse,
   ProjectsResponse,
   ReviewResponse,
@@ -41,11 +38,8 @@ export type CatalogueResourceIdentity =
   | "projects"
   | "sprints"
   | "sprint:current"
-  | "chat-commands"
   | "worker-types"
-  | `ticket:${string}`
-  | `chat:${string}`
-  | `chat-status:${string}`;
+  | `ticket:${string}`;
 
 export type PlannerEvent = Readonly<{
   id: number;
@@ -80,9 +74,6 @@ export interface ResourceCatalogue {
   sprintSummaries(): ResourceHandle<SprintsResponse>;
   currentSprint(): ResourceHandle<CurrentSprintResponse>;
   ticket(ticketId: string): ResourceHandle<TicketDetail>;
-  panelsChat(entityId: string): ResourceHandle<ChatStateResponse>;
-  chatGatewayStatus(entityId: string): ResourceHandle<GatewayStatus>;
-  chatCommands(): ResourceHandle<CommandCatalog>;
   workerTypeManifests(): ResourceHandle<WorkerTypesResponse>;
 }
 
@@ -90,8 +81,6 @@ type EventFacts = Readonly<{
   event: PlannerEvent;
   prefix: EventEntityPrefix;
   context: ResourceEventContext;
-  ticketChatKind: boolean;
-  panelsChatKind: boolean;
   employeeSessionChanged: boolean;
   projectNameChanged: boolean;
   relatedEntityIds: readonly string[];
@@ -118,18 +107,6 @@ const ENTITY_PREFIXES: readonly EventEntityPrefix[] = [
   "project",
   "agent"
 ];
-
-const TICKET_CHAT_KINDS = new Set([
-  "chat_message_recorded",
-  "chat_turn_started",
-  "chat_turn_updated",
-  "chat_turn_finished"
-]);
-
-const PANELS_CHAT_KINDS = new Set([
-  "chat_session_created",
-  ...TICKET_CHAT_KINDS
-]);
 
 const REVIEW_TICKET_EVENT_KINDS = new Set([
   "stage_changed",
@@ -167,7 +144,7 @@ function staticDefinition<T>(
 }
 
 function parameterizedDefinition<T>(
-  prefix: "ticket" | "chat" | "chat-status",
+  prefix: "ticket",
   path: (id: string) => string,
   options: {
     eventInvalidated: boolean;
@@ -195,12 +172,7 @@ function relatedHasPrefix(facts: EventFacts, prefix: EventEntityPrefix): boolean
 }
 
 function ordinaryTicketEvent(facts: EventFacts): boolean {
-  return (
-    facts.prefix === "t" &&
-    !facts.ticketChatKind &&
-    !facts.employeeSessionChanged &&
-    facts.event.kind !== "chat_session_created"
-  );
+  return facts.prefix === "t" && !facts.employeeSessionChanged;
 }
 
 function projectNameAggregate(facts: EventFacts): boolean {
@@ -248,7 +220,7 @@ const RESOURCE_DEFINITIONS = {
   todayDay: staticDefinition<DayResponse>("day:today", "/api/day/today", {
     eventInvalidated: true,
     affectedByEvent: (facts) =>
-      (eventEntityId(facts, "day") && facts.currentDayEvent && !facts.panelsChatKind) ||
+      (eventEntityId(facts, "day") && facts.currentDayEvent) ||
       projectNameAggregate(facts)
         ? ["day:today"]
         : []
@@ -314,30 +286,6 @@ const RESOURCE_DEFINITIONS = {
       }
     }
   ),
-  panelsChat: parameterizedDefinition<ChatStateResponse>(
-    "chat",
-    (entityId) => `/api/chat/${encodeURIComponent(entityId)}/state`,
-    {
-      eventInvalidated: true,
-      refreshCachedOnOpen: true,
-      affectedByEvent: (facts) => {
-        if ((facts.prefix === "day" || facts.prefix === "agent") && facts.panelsChatKind) {
-          return [`chat:${facts.event.entity_id}`];
-        }
-        return facts.prefix === "t" && facts.ticketChatKind
-          ? [`chat:${facts.event.entity_id}`]
-          : [];
-      }
-    }
-  ),
-  chatGatewayStatus: parameterizedDefinition<GatewayStatus>(
-    "chat-status",
-    (entityId) => `/api/chat/${encodeURIComponent(entityId)}/status`,
-    { eventInvalidated: false }
-  ),
-  chatCommands: staticDefinition<CommandCatalog>("chat-commands", "/api/chat/commands", {
-    eventInvalidated: false
-  }),
   workerTypeManifests: staticDefinition<WorkerTypesResponse>(
     "worker-types",
     "/api/worker-types",
@@ -378,15 +326,6 @@ export const resourceCatalogue: ResourceCatalogue = {
     const id = requireId(ticketId, "ticketId");
     return openResource(RESOURCE_DEFINITIONS.ticket, id);
   },
-  panelsChat: (entityId) => {
-    const id = requireId(entityId, "entityId");
-    return openResource(RESOURCE_DEFINITIONS.panelsChat, id);
-  },
-  chatGatewayStatus: (entityId) => {
-    const id = requireId(entityId, "entityId");
-    return openResource(RESOURCE_DEFINITIONS.chatGatewayStatus, id);
-  },
-  chatCommands: () => openResource(RESOURCE_DEFINITIONS.chatCommands),
   workerTypeManifests: () => openResource(RESOURCE_DEFINITIONS.workerTypeManifests)
 };
 
@@ -461,8 +400,6 @@ function factsForEvent(
     event,
     prefix,
     context: resolvedContext,
-    ticketChatKind: prefix === "t" && TICKET_CHAT_KINDS.has(event.kind),
-    panelsChatKind: PANELS_CHAT_KINDS.has(event.kind),
     employeeSessionChanged: prefix === "t" && event.kind === "employee_session_changed",
     projectNameChanged: isProjectNameChange(event, prefix),
     relatedEntityIds: relatedEntityIds(event),
@@ -541,14 +478,14 @@ function mutationEffectPlan(effect: ResourceMutationEffect): MutationEffectPlan 
         refreshReview: false
       };
     case "ticketChanged":
-      return { identities: ticketEffectIdentities(effect.ticketId, false, false), refreshReview: false };
+      return { identities: ticketEffectIdentities(effect.ticketId, false), refreshReview: false };
     case "ticketTitleChanged":
     case "ticketReviewStateChanged":
-      return { identities: ticketEffectIdentities(effect.ticketId, true, false), refreshReview: false };
+      return { identities: ticketEffectIdentities(effect.ticketId, true), refreshReview: false };
     case "reviewTicketAccepted":
-      return { identities: ticketEffectIdentities(effect.ticketId, false, false), refreshReview: true };
+      return { identities: ticketEffectIdentities(effect.ticketId, false), refreshReview: true };
     case "reviewTicketReturnedForRevision":
-      return { identities: ticketEffectIdentities(effect.ticketId, false, true), refreshReview: true };
+      return { identities: ticketEffectIdentities(effect.ticketId, false), refreshReview: true };
     case "todayDayChanged":
       return { identities: [RESOURCE_DEFINITIONS.todayDay.identity()], refreshReview: false };
     case "currentSprintChanged":
@@ -565,13 +502,11 @@ function mutationEffectPlan(effect: ResourceMutationEffect): MutationEffectPlan 
 
 function ticketEffectIdentities(
   ticketId: string,
-  includeReview: boolean,
-  includeChat: boolean
+  includeReview: boolean
 ): CatalogueResourceIdentity[] {
   const id = requireId(ticketId, "ticketId");
   return [
     RESOURCE_DEFINITIONS.ticket.identity(id),
-    ...(includeChat ? [RESOURCE_DEFINITIONS.panelsChat.identity(id)] : []),
     RESOURCE_DEFINITIONS.board.identity(),
     RESOURCE_DEFINITIONS.currentSprint.identity(),
     ...(includeReview ? [RESOURCE_DEFINITIONS.review.identity()] : [])

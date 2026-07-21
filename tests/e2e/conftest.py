@@ -2,13 +2,11 @@
 tests/unit.
 
 Each test gets a real ``panels serve`` subprocess on an OS-assigned port, backed by a
-fresh temp SQLite DB in ``PLAN_TEST_MODE`` with the boundaries faked (echo gateway by
-default; ``server_factory(gateway="offline")`` boots a second instance for the offline
-notice). Browser contexts come from pytest-playwright's session ``browser``; the
-``open_page`` / ``cli`` / ``api`` helpers drive the surfaces. Every Playwright wait
-carries an explicit ``timeout``; the only sleep is the Automatic Employee-step discovery
-poll's 0.1s interval,
-which polls a condition inside a boot budget.
+fresh temp SQLite DB in ``PLAN_TEST_MODE``. Browser contexts come from
+pytest-playwright's session ``browser``; the ``open_page`` / ``cli`` / ``api`` helpers
+drive the surfaces. Every Playwright wait carries an explicit ``timeout``; the only sleep
+is the Automatic Employee-step discovery poll's 0.1s interval, which polls a condition
+inside a boot budget.
 """
 
 from __future__ import annotations
@@ -33,7 +31,6 @@ PLAN_BIN = Path(sys.executable).parent / "panels"
 FAKE_NOW = "2026-07-04T12:00:00"
 WAIT_MS = 10_000          # every Playwright wait
 BOOT_BUDGET_S = 15.0      # server readiness budget
-
 
 @dataclass(frozen=True)
 class ServerHandle:
@@ -70,12 +67,9 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
     counter = 0
 
     def make(
-        gateway: str | None = None,
         fake_now: str | None = None,
         trusted_ingress_env: Mapping[str, str] | Callable[[str], Mapping[str, str]] | None = None,
-        run_startup_recovery: bool = False,
         seed_db: Callable[[Path], None] | None = None,
-        relay_chief: bool = False,
     ) -> ServerHandle:
         nonlocal counter
         srvdir = tmp_path / f"srv{counter}"
@@ -88,25 +82,6 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
         base = f"http://127.0.0.1:{port}"
         db_path = srvdir / "planning.db"
         log_path = srvdir / "server.log"
-        if relay_chief and seed_db is None:
-            # The flag-on Chief neutral pane resumes a durable session on attach; seed the
-            # Chief's chat_session_key with the scripted child's well-known seeded key so
-            # composition adopts it and the "history on load" scenario renders prior messages.
-            def seed_db(target: Path) -> None:
-                from planner.chat.service import CHIEF_OF_STAFF_ENTITY_ID
-                from planner.core.db import connect
-                from planner.hermes_backend.scripted_relay_child import (
-                    SEEDED_CHIEF_SESSION_KEY,
-                )
-
-                with connect(str(target)) as conn:
-                    conn.execute(
-                        "INSERT OR REPLACE INTO agent_chat_sessions "
-                        "(id, chat_session_key, created_at, updated_at) VALUES (?, ?, 1, 1)",
-                        (CHIEF_OF_STAFF_ENTITY_ID, SEEDED_CHIEF_SESSION_KEY),
-                    )
-                    conn.commit()
-
         if seed_db is not None:
             from planner.core.db import connect, create_schema
 
@@ -128,14 +103,6 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
                 "PLAN_UI_DEBOUNCE_MS": "50",
             }
         )
-        if run_startup_recovery:
-            env["PLAN_RUN_STARTUP_RECOVERY_IN_TEST_MODE"] = "1"
-        if relay_chief:
-            # Flag ON: the test-mode compose path builds the pool+relay against the scripted
-            # child (test_mode is already on). No second flag (F16a).
-            env["PLAN_RELAY_BACKEND_ENABLED"] = "1"
-        if gateway is not None:
-            env["PLAN_GATEWAY_ADAPTER"] = gateway
         if trusted_ingress_env is not None:
             env.update(
                 trusted_ingress_env(base) if callable(trusted_ingress_env) else trusted_ingress_env
@@ -208,15 +175,8 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
 
 @pytest.fixture
 def server(server_factory: Callable[..., ServerHandle]) -> ServerHandle:
-    """The default echo-gateway instance every test uses."""
+    """The default Panels server instance every test uses."""
     return server_factory()
-
-
-@pytest.fixture
-def relay_chief_server(server_factory: Callable[..., ServerHandle]) -> ServerHandle:
-    """A flag-ON instance: the Chief neutral pane over the relay + the scripted child, with a
-    seeded durable Chief session (test_mode is already on; no second flag — F16a)."""
-    return server_factory(relay_chief=True)
 
 
 @pytest.fixture

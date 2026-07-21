@@ -19,7 +19,7 @@ class EventSpec:
 @dataclass(frozen=True)
 class Decision:
     events: tuple[EventSpec, ...]
-    new_fields: TicketFields | None = None    # replacement fields object; None = untouched
-    new_stage: str | None = None              # Stage id; None = no transition
-    new_ceiling: str | None = None            # ceiling id; None = scope untouched
-    new_at_cap: AtCap | None = None           # None = scope untouched
+    new_fields: TicketFields | None = None  # replacement fields object; None = untouched
+    new_stage: str | None = None  # Stage id; None = no transition
+    new_ceiling: str | None = None  # ceiling id; None = scope untouched
+    new_at_cap: AtCap | None = None  # None = scope untouched

@@ -31,7 +31,7 @@ from planner.seed.logic.tracking import parse_tracking
 from planner.seed.logic.workspace import parse_workspace
 from planner.tickets.contracts import FieldSlot, TicketFields
 from planner.tickets.logic import fields_codec
-from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.configuration import configured_employee_runtime_definitions
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 
@@ -40,11 +40,18 @@ def seed_from_source(
     source_dir: str | Path,
     *,
     worker_type: str,
+    employee_backend: str | None = None,
     now: int,
 ) -> MigrationReport:
     """now is unix seconds from the caller's clock (the app clock in the server,
     a fixed instant in tests) — the importer never reads wall time itself (§13)."""
-    worker_type_definition = configured_worker_type_registry().require(worker_type)
+    runtime_definitions = configured_employee_runtime_definitions()
+    worker_type_definition = runtime_definitions.worker_type_registry.require(worker_type)
+    selected_employee_backend = runtime_definitions.employee_backend_catalog.require_registered(
+        employee_backend
+        if employee_backend is not None
+        else worker_type_definition.worker_profile.default_employee_backend
+    )
     root = Path(source_dir)
     if not root.exists():
         raise PlannerError(ErrorCode.validation, f"seed source directory not found: {root}")
@@ -128,6 +135,7 @@ def seed_from_source(
             report,
             now,
             worker_type_definition,
+            selected_employee_backend,
         )
         _import_items(conn, deferred_items, None, items_by_title, report, now, deferred=True)
         _import_ideas(conn, ideas, report, now)
@@ -253,6 +261,7 @@ def _import_tickets(
     report: MigrationReport,
     now: int,
     worker_type_definition: WorkerTypeDefinition,
+    employee_backend: str,
 ) -> None:
     for ticket in tickets:
         if ticket.worker_type != worker_type_definition.worker_type:
@@ -289,14 +298,16 @@ def _import_tickets(
         worker_type_definition.validate_ticket_position(ticket.stage, ticket.stage)
         conn.execute(
             "INSERT INTO tickets ("
-            "id, title, worker_type, stage, priority, deadline, project_id, sprint_item_id, "
+            "id, title, worker_type, employee_backend, stage, priority, deadline, "
+            "project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, "
             "employee_session_id, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ticket_id,
                 ticket.title,
                 ticket.worker_type,
+                employee_backend,
                 ticket.stage,
                 ticket.priority.value,
                 None,
@@ -322,6 +333,7 @@ def _import_tickets(
                 "stage": ticket.stage,
                 "alias": ticket.alias,
                 "source": "seed",
+                "employee_backend": employee_backend,
             },
             now,
         )

@@ -67,14 +67,10 @@ class EventKind(StrEnum):
     ticket_status_changed = "ticket_status_changed"  # {ticket_status, optional error}
     employee_session_changed = "employee_session_changed"  # {employee_session_id}
 
-    # --- supplemental: links, chat ---
+    # --- supplemental: links and Employee execution ---
     link_added = "link_added"                        # {from_id, to_id, kind}
     link_removed = "link_removed"
-    chat_session_created = "chat_session_created"    # {session_key}
-    chat_message_recorded = "chat_message_recorded"  # {message_id, turn_id, role}
-    chat_turn_started = "chat_turn_started"          # {turn_id, origin, mode, phase}
-    chat_turn_updated = "chat_turn_updated"          # {turn_id, phase/activity/session}
-    chat_turn_finished = "chat_turn_finished"        # {turn_id, status, optional error}
+    employee_step_started = "employee_step_started"  # {employee_step_id}
 
 
 @dataclass(frozen=True)

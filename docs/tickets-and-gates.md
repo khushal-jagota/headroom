@@ -35,6 +35,15 @@ part of the Kickoff proposal. A new ordinary ticket parks a Kickoff field propos
 for review before any worker turn can start. Approving Kickoff settles the Kickoff
 field, then the ticket enters the worker stages.
 
+The Ticket also stores the Worker, Model, and Reasoning requested for its first Employee
+session. Creation copies the Worker type's three starting values once. The Kickoff
+section shows the editable controls beside approval only while Kickoff is pristine and
+no session or conversation binding exists. Hermes has no Reasoning control; Codex and
+Claude Code show the Reasoning values supported by the selected model. Advancing Kickoff
+or making the first Employee demand freezes the complete setup and removes the controls.
+The stored model and reasoning then remain historical launch choices, not a display of
+the session's current settings.
+
 After Kickoff, a ticket fills its blanks in order: a **success condition** (what
 does done mean?), an **approach** (how, roughly?), a **plan** (concretely, step by
 step), then
@@ -58,18 +67,22 @@ _Code paths:_ `src/planner/tickets/` (the Ticket Stage and its fields).
 
 ### The durable Employee conversation
 
-A Ticket stores one `employee_session_id`. Human Ticket Chat and automatic or
-revision Employee steps all deliver through that durable Hermes conversation. Panels
-resumes the stored id after a restart instead of replaying input or inventing a new
-conversation.
+`conversation_session_bindings` owns one durable ACP session for the Ticket's
+employee and the exact stored `employee_backend` used to open it. The Ticket mirrors that
+session id in `employee_session_id`. Human prompts, Automatic Employee steps, and revision
+guidance all reach that same backend and session, and Panels resumes it after a restart
+instead of replaying the original prompt.
 
-Panels Chat is separate durable product state: the messages and live turn intended
-for the human to see. Its rows are never worker context and a row alone is not proof
-that Hermes received anything. The explicit direct-only
-`GET /api/tickets/{ticket_id}/employee-session-history` route instead returns the
-authoritative Hermes history. That history may include internal context, revision
-guidance, system or tool content, or other real material absent from Panels Chat; it
-is never silently merged into the visible transcript.
+Before that first binding is written, Panels applies any explicit launch Model and then
+any explicit Reasoning choice to the new session. The binding is accepted only if the
+Ticket still owns the same complete setup. Once bound, loading and recovery trust the
+ACP session's own configuration. New Conversation also starts without reapplying the
+historical Kickoff model or reasoning.
+
+The ACP backend's typed replay is the conversation transcript. Panels does not keep a
+second message or active-turn table, and there is no separate Employee-history HTTP
+route. Pending worker context reaches the employee only when `AcpStepGateway` includes
+it in the real ACP prompt and ACP admits that prompt.
 
 ### Work completed outside Panels
 
@@ -78,7 +91,7 @@ one already populated through the explicit `panels chief` external-work commands
 is not a worker proposal and not a general Stage bypass. The operation requires a
 complete Kickoff field value, an exact settled-field prefix for the target Stage, and a Chief
 request. It refuses backward moves, pending proposals, active ticket control, and
-running chat turns. It moves the ceiling to the imported Stage but preserves the Ticket's
+running Employee steps. It moves the ceiling to the imported Stage but preserves the Ticket's
 at-cap choice: an explicit **Stop** remains Stop; otherwise **Continue** remains. The
 target Stage's effective ownership then determines whether the Ticket rests for the
 worker, the user, or paired work.
@@ -110,12 +123,12 @@ current Stage's override wins; without one, its default applies. Terminal Ticket
 current owner.
 
 - **Worker-owned** Stages rest ready for automatic eligibility. The other runtime,
-  blocker, Chat, proposal, and scope conditions must still allow a run.
+  blocker, proposal, and scope conditions must still allow a run.
 - **User-owned** Stages rest in **user takeover** and are never dispatched
   automatically. The user does the work, then the Chief records it through external-work
   reconciliation; there is no direct self-settle path.
 - **Paired** Stages get one automatic Employee opening turn when the Stage becomes
-  eligible, then rest in **paired work**. Ordinary Ticket Chat continues the durable
+  eligible, then rest in **paired work**. Human conversation continues the durable
   Employee conversation. A turn without a proposal leaves paired work unchanged; a real
   proposal always parks for approval, regardless of scope.
 
@@ -184,12 +197,11 @@ already covered. One shared source of the allowed stages feeds both the header r
 and the approval screen, so the two can never disagree.
 
 The Review screen can also send a ticket back instead of accepting it, whatever field
-is currently gated. The human writes short guidance in the review card. Panels sends
-that guidance directly to the Ticket's existing `employee_session_id` as the user
-message that starts a worker turn. It is not copied into ticket chat and no later
-generic worker prompt is sent. The ticket's stage never changes: a pending gated
-proposal is cleared, settled values remain, and the ticket leaves Review while its
-control status is **agent running step**. The gated field can therefore be revised
+is currently gated. The human writes short guidance in the review card. Panels
+reserves a revision Employee step and sends that guidance as the real next ACP prompt
+in the Ticket's existing durable session. The ticket's stage never changes: a pending
+gated proposal is cleared, settled values remain, and the ticket leaves Review while
+its control status is **agent running step**. The gated field can therefore be revised
 while the ticket remains at its current stage; it returns to Review when the worker
 submits the revision.
 
@@ -202,9 +214,10 @@ _Code paths:_ `web/src/routes/TicketRoute.svelte` (the scope row),
 Dropping a ticket keeps its record. Permanent deletion is different: it is a
 direct-only capability for a ticket created by mistake. The ticket UI intentionally
 has no delete control; deletion remains a manual API or CLI operation, and the CLI
-requires `--yes`. The operation is blocked while ticket activity is still running.
+requires `--yes`. The operation is blocked while an Employee step is still running.
 One transaction removes the ticket from days, sprint views, links, Review, Workspace,
-and Panels chat. Other tickets and day ordering stay intact.
+pending worker context, its durable conversation binding, and terminal Employee-step
+rows. Other tickets and day ordering stay intact.
 
 Blocker links are removed in the same transaction. Surviving Ticket and Sprint-item
 endpoints get `link_removed` events, and the delete response lists those affected
@@ -213,8 +226,8 @@ endpoint ids so clients can refresh them.
 The deletion also replaces that ticket's old event history with one small deletion
 record containing its identity, the direct actor, and the time. This is the only
 exception to normal append-only event history. The separate stored Employee session is
-outside Panels' record and is not erased; once the ticket row is gone, Panels no
-longer has a route that resolves or resumes it.
+outside Panels' record and is not erased, but Panels removes the binding that could
+resolve or resume it.
 
 After the whole deletion transaction commits, the Ticket action calls the Automatic
 Employee-step eligibility wake once. It does not wake once per removed day or link.
@@ -249,10 +262,9 @@ _Code paths:_ `src/planner/core/events.py`.
 
 ## Deferred
 
-- **Ideas → tickets** happens only through the day chat capturing new work, never by
-  promoting an existing idea. No promote path exists. Trigger: a product decision
-  that ideas should convert in place.
+- **Ideas → tickets** has no in-place promotion path. Trigger: a product decision
+  that an existing idea should convert directly into a Ticket.
 
 ---
 
-_Last verified: 2026-07-14._
+_Last verified: 2026-07-21._

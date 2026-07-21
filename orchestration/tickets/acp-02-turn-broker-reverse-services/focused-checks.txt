@@ -1,0 +1,143 @@
+# ACP-02 focused checks
+
+Settled final focused gate for ACP-02. Each command below ran from the repository root.
+
+## Scoped Ruff
+
+$ .venv/bin/ruff check src/planner/conversation tests/unit/test_conversation_contracts.py tests/unit/test_acp_conformance_harness.py tests/unit/test_acp_employee_child.py tests/unit/test_acp_employee_registry.py tests/unit/test_hermes_acp_backend.py tests/unit/test_conversation_turn_broker.py tests/unit/test_conversation_permission_broker.py tests/unit/test_conversation_reverse_filesystem.py tests/unit/test_conversation_reverse_terminal.py tests/unit/test_hermes_acp_turn_strategy.py tests/support/acp_*.py
+exit_code: 0
+
+All checks passed!
+
+## Strict Mypy
+
+$ .venv/bin/mypy src/planner/conversation
+exit_code: 0
+
+Success: no issues found in 18 source files
+
+## ACP-00/00a/01/02 Python acceptance
+
+$ .venv/bin/pytest tests/unit/test_conversation_contracts.py tests/unit/test_acp_conformance_harness.py tests/unit/test_acp_employee_child.py tests/unit/test_acp_employee_registry.py tests/unit/test_hermes_acp_backend.py tests/unit/test_conversation_turn_broker.py tests/unit/test_conversation_permission_broker.py tests/unit/test_conversation_reverse_filesystem.py tests/unit/test_conversation_reverse_terminal.py tests/unit/test_hermes_acp_turn_strategy.py
+exit_code: 0
+
+........................................................................ [ 34%]
+........................................................................ [ 69%]
+...............................................................          [100%]
+207 passed in 8.20s
+
+## ACP TypeScript contracts
+
+$ node web/tests/acp-contracts.test.mjs
+exit_code: 0
+
+acp-contracts.test.mjs: all assertions passed
+
+## Svelte diagnostics
+
+$ npm --prefix web run check
+exit_code: 0
+
+
+> check
+> svelte-check --tsconfig ./tsconfig.json
+
+Loading svelte-check in workspace: /Users/khushaljagota/.hermes/planning-v2/web
+Getting Svelte diagnostics...
+
+svelte-check found 0 errors and 0 warnings
+
+## Full web tests
+
+$ npm --prefix web test
+exit_code: 0
+
+
+> test
+> node tests/resource-catalogue.test.mjs && node tests/resource-cache.test.mjs && node tests/ws-connection.test.mjs && node tests/neutral-pane.test.mjs && node tests/ticket-neutral-pane.test.mjs && node tests/file-preview.test.mjs && node tests/lifecycle.test.mjs && node tests/managed-markdown.test.mjs && node tests/markdown-renderer.test.mjs && node tests/chat-images.test.mjs && node tests/acp-contracts.test.mjs
+
+resource-catalogue.test.mjs: all assertions passed
+resource-cache.test.mjs: all assertions passed
+[planner] ws open since=0
+[planner] flush 1
+[planner] ws open since=1
+ws-connection.test.mjs: all assertions passed
+neutral-pane.test.mjs: all assertions passed
+ticket-neutral-pane.test.mjs: all assertions passed
+lifecycle.test.mjs: all assertions passed
+acp-contracts.test.mjs: all assertions passed
+
+## Scoped diff check
+
+$ git diff --check -- src/planner/conversation tests/unit/test_conversation_turn_broker.py tests/unit/test_conversation_permission_broker.py tests/unit/test_conversation_reverse_filesystem.py tests/unit/test_conversation_reverse_terminal.py tests/unit/test_hermes_acp_turn_strategy.py tests/support orchestration/tickets/acp-02-turn-broker-reverse-services
+exit_code: 0
+
+(no output)
+
+# ACP-03 standalone browser integration addendum
+
+These suites are required integration evidence but are not currently invoked by `npm --prefix web test`.
+
+## ACP browser state
+
+$ node web/tests/acp-browser-state.test.mjs
+exit_code: 0
+
+acp-browser-state.test.mjs: all assertions passed
+
+## ACP browser conformance
+
+$ node web/tests/acp-browser-conformance.test.mjs
+exit_code: 0
+
+acp-browser-conformance.test.mjs: all assertions passed
+
+## ACP browser components
+
+$ node web/tests/acp-browser-components.test.mjs
+exit_code: 0
+
+acp-browser-components.test.mjs: all assertions passed
+
+# ACP-02 implementation-review round-one correction addendum
+
+This bounded correction gate addresses findings 1–5 from `implementation-review-round-1.md`.
+
+## Round-one deterministic correction reproductions
+
+$ .venv/bin/pytest -q tests/unit/test_conversation_turn_broker.py::test_accepted_generation_n_delivery_never_redirects_to_concurrent_n_plus_one tests/unit/test_conversation_turn_broker.py::test_late_generation_callbacks_after_actor_exit_settle_without_hanging tests/unit/test_conversation_turn_broker.py::test_shutdown_has_one_hard_deadline_when_actor_publication_is_held tests/unit/test_conversation_turn_broker.py::test_broker_capture_adopts_exact_replacement_handle_before_fifo_advances tests/unit/test_conversation_permission_broker.py::test_active_cancel_outcome_publication_failure_resolves_callback_and_starts_no_queue tests/unit/test_conversation_permission_broker.py::test_activity_failure_after_visible_selection_cannot_revoke_agent_response tests/unit/test_conversation_permission_broker.py::test_shutdown_deadline_disposes_cancellation_resistant_permission_publication tests/unit/test_conversation_reverse_terminal.py::test_publisher_failure_wakes_waiters_and_concurrent_shutdown_is_bounded tests/unit/test_conversation_reverse_terminal.py::test_release_deadline_removes_handle_when_publisher_suppresses_cancellation tests/unit/test_conversation_reverse_terminal.py::test_shutdown_deadline_detaches_cancellation_resistant_reader_and_watcher
+exit_code: 0
+
+...........                                                              [100%]
+
+## Round-one scoped Ruff
+
+$ .venv/bin/ruff check src/planner/conversation tests/unit/test_conversation_contracts.py tests/unit/test_acp_conformance_harness.py tests/unit/test_acp_employee_child.py tests/unit/test_acp_employee_registry.py tests/unit/test_hermes_acp_backend.py tests/unit/test_conversation_turn_broker.py tests/unit/test_conversation_permission_broker.py tests/unit/test_conversation_reverse_filesystem.py tests/unit/test_conversation_reverse_terminal.py tests/unit/test_hermes_acp_turn_strategy.py tests/support/acp_*.py
+exit_code: 0
+
+All checks passed!
+
+## Round-one strict Mypy
+
+$ .venv/bin/mypy src/planner/conversation
+exit_code: 0
+
+Success: no issues found in 18 source files
+
+## Round-one full affected ACP Python acceptance
+
+$ .venv/bin/pytest tests/unit/test_conversation_contracts.py tests/unit/test_acp_conformance_harness.py tests/unit/test_acp_employee_child.py tests/unit/test_acp_employee_registry.py tests/unit/test_hermes_acp_backend.py tests/unit/test_conversation_turn_broker.py tests/unit/test_conversation_permission_broker.py tests/unit/test_conversation_reverse_filesystem.py tests/unit/test_conversation_reverse_terminal.py tests/unit/test_hermes_acp_turn_strategy.py
+exit_code: 0
+
+........................................................................ [ 33%]
+........................................................................ [ 67%]
+......................................................................   [100%]
+214 passed in 8.05s
+
+## Round-one scoped diff check
+
+$ git diff --check -- src/planner/conversation tests/unit/test_conversation_turn_broker.py tests/unit/test_conversation_permission_broker.py tests/unit/test_conversation_reverse_filesystem.py tests/unit/test_conversation_reverse_terminal.py tests/unit/test_hermes_acp_turn_strategy.py tests/support orchestration/tickets/acp-02-turn-broker-reverse-services
+exit_code: 0
+
+(no output)
+
