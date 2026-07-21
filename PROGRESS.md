@@ -4,6 +4,41 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-21): isolated runtime integration closeout
+
+Ticket `t_2r1u7f39` is cherry-picked onto the current ACP-era main worktree at `28c439e`.
+The integration keeps the current typed ACP conversation and documentation architecture.
+Only stale environment seams are being adapted: deleted `planner.minds` smoke/config modules
+now use the official ACP stack, and removed chat-managed-file storage now uses the current
+database-backed managed-file layout.
+
+Current hypothesis:
+
+- The environment implementation is otherwise isolated and should need only compatibility
+  repairs at those two seams. The opt-in Hermes smoke must still launch distinct real sessions
+  from separate nonproduction Hermes homes.
+
+What just passed:
+
+- Added a focused RED/GREEN unit test for the official ACP Hermes smoke child. The smoke path now
+  passes only parsed credential-file key names into an opt-in Hermes definition extension; the
+  child revalidates those names, retains their values, and still overrides HOME/HERMES settings
+  while scrubbing ambient PLAN/PYTHONPATH/session pollution. Production Hermes inheritance is
+  unchanged.
+- The requested environment unit suite passes with `PYTHONPATH=src`, Ruff passes across `src` and
+  `tests`, strict mypy passes across 144 source files, and `git diff --check` is clean. The
+  environment e2e is intentionally deferred to parent verification after merge because this
+  isolated worktree cannot use the main editable `panels` binary.
+
+Next step:
+
+- Commit the settled integration repair. The parent agent owns the later full `./verify`.
+
+Blockers:
+
+- The process-level environment E2E cannot bind Unix control sockets in this sandbox; the parent
+  environment can rerun it where socket binding is permitted.
+
 ## Current work cycle (2026-07-21): proper GFM rendering closeout
 
 Ticket `t_vznnv05w` is integrated on `main`. Every shared Markdown surface now uses the
