@@ -38,6 +38,32 @@ def _replace_inline_edit_text(page, selector: str, text: str) -> None:
     page.locator("[data-worker-name]").click()
 
 
+def _replace_inline_edit_markdown(page, selector: str, source: str) -> None:
+    page.locator(selector).click()
+    page.locator(selector).evaluate(
+        r"""(node, source) => {
+          const lines = source.split("\n");
+          const block = document.createElement("div");
+          block.className = "markdown-block";
+          const heading = document.createElement("h1");
+          heading.textContent = lines.shift().replace(/^# /, "");
+          block.appendChild(heading);
+          while (lines[0] === "") lines.shift();
+          const paragraph = document.createElement("p");
+          paragraph.textContent = lines.join("\n");
+          block.appendChild(paragraph);
+          node.replaceChildren(block);
+          node.dispatchEvent(new InputEvent("input", {
+            bubbles: true,
+            inputType: "insertText",
+            data: source
+          }));
+        }""",
+        source,
+    )
+    page.locator("[data-worker-name]").click()
+
+
 def _editable_text(page, selector: str) -> str:
     return page.locator(selector).evaluate("(node) => node.textContent")
 
@@ -269,8 +295,8 @@ def test_worker_skill_edit_candidate_save_failure_retention_and_session_stabilit
 
     page.route("**/api/workers/coding/skill", fail_skill)
 
-    attempted_body = "# Saved body\n\nSession unchanged\nexact source"
-    _replace_inline_edit_text(page, BODY_EDIT, attempted_body)
+    attempted_body = "# Saved body\n\nSession unchanged exact source"
+    _replace_inline_edit_markdown(page, BODY_EDIT, attempted_body)
     page.locator("[data-skill-body] .error-line", has_text="skill save failed").wait_for(
         state="visible", timeout=WAIT_MS
     )

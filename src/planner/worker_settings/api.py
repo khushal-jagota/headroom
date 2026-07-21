@@ -212,7 +212,7 @@ async def patch_worker_skill(
         patch["description"] = body_str(raw, "description")
     else:
         patch["markdown_body"] = body_str(raw, "markdown_body")
-    registry = configured_worker_type_registry()
+    registry = configured_employee_runtime_definitions().worker_type_registry
     now = clock.now_unix()
     settings = service.patch_specialist_skill(
         _database_parent(config),
