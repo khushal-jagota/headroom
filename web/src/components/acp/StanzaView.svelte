@@ -26,17 +26,6 @@
   let persisted = $derived(stanza.thoughtPartIndex !== null);
   let open = $derived(persisted ? stanza.thoughtExpanded : localOpen);
 
-  // A failing stanza arrives open — once, so the user can still collapse it.
-  let failureOpened = $state(false);
-  $effect(() => {
-    if (!stanza.hasFailure || failureOpened) return;
-    failureOpened = true;
-    if (persisted && stanza.thoughtPartIndex !== null) {
-      onThoughtExpanded(stanza.messageId, stanza.thoughtPartIndex, true);
-    } else {
-      localOpen = true;
-    }
-  });
   let regionId = $derived(`acp-stanza-${stanza.key}`);
 
   let preview = $derived.by(() => {

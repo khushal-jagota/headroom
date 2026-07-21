@@ -1066,6 +1066,13 @@ button.list-row:hover .list-row-title {
   color: var(--text-muted);
 }
 
+/* Wide step output (code wells, markdown pre) must scroll inside its own box,
+   never widen the stanza: cap every grid level's items so a long line cannot
+   push the track — and its sibling rows — past the pane. */
+.acp-stanza > *,
+.acp-stanza-body > *,
+.acp-steps > * { min-width: 0; }
+
 /* Steps: kind glyph, title, edit counts, right-aligned status mark. */
 .acp-steps { display: grid; gap: var(--space-1); }
 .acp-step {
