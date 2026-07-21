@@ -13,9 +13,7 @@
     recapVisibleFor
   } from "../lib/lifecycle";
   import type { StageOwnershipMode, TicketDetail } from "../lib/types";
-  import ChatPanel from "../components/ChatPanel.svelte";
-  import ChiefNeutralPane from "../components/ChiefNeutralPane.svelte";
-  import { relayChief, retryRelayChiefMeta } from "../lib/capabilities";
+  import AcpConversation from "../components/AcpConversation.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import EnumPill from "../components/EnumPill.svelte";
@@ -35,16 +33,6 @@
   const currentSprint = resourceCatalogue.currentSprint();
   const manifest = resourceCatalogue.workerTypeManifests();
 
-  // The legacy gateway-status resource is only meaningful on the legacy (disabled) chat path;
-  // the neutral pane has its own connection meaning. Open it lazily so the neutral branch never
-  // subscribes it (flag-on must NEVER touch /api/chat/{ticket}/status — S2B-ROUTE-001).
-  let chatStatus: ReturnType<typeof resourceCatalogue.chatGatewayStatus> | null = null;
-
-  function legacyChatStatus(): ReturnType<typeof resourceCatalogue.chatGatewayStatus> {
-    if (chatStatus === null) chatStatus = resourceCatalogue.chatGatewayStatus(stableId);
-    return chatStatus;
-  }
-
   // Derive the per-Worker-type lifecycle from the RESOURCE (ticket.data?.worker_type), not
   // the markup-local {@const detail} which is only bound inside {#if ticket.data}
   // (Codex F2). Null while the manifest is still loading OR when the Worker type is absent
@@ -57,6 +45,20 @@
         manifest.data &&
         !manifest.data.worker_types.some((item) => item.worker_type === ticket.data?.worker_type)
     )
+  );
+  let pristineKickoff = $derived(
+    Boolean(
+      ticket.data &&
+        ticket.data.stage === "needs_kickoff" &&
+        ["awaiting_approval", "empty"].includes(ticket.data.ticket_status || "empty") &&
+        ticket.data.employee_session_id === null
+    )
+  );
+  let employeeBackendOptions = $derived(
+    (manifest.data?.employee_backends || []).map((backend) => ({
+      value: backend,
+      label: labelize(backend)
+    }))
   );
 
   const emptyTicketFieldText = "Not written yet.";
@@ -127,6 +129,14 @@
     return mutateJsonWithResourceEffect(
       `/api/tickets/${stableId}/value/${field}`,
       { method: "PUT", body: { body } },
+      { kind: "ticketChanged", ticketId: stableId }
+    );
+  }
+
+  function saveEmployeeBackend(employeeBackend: string): Promise<unknown> {
+    return mutateJsonWithResourceEffect(
+      `/api/tickets/${stableId}/employee-backend`,
+      { method: "PUT", body: { employee_backend: employeeBackend } },
       { kind: "ticketChanged", ticketId: stableId }
     );
   }
@@ -207,6 +217,11 @@
     return STATUS_DISPLAY[status] || status.replace(/_/g, " ");
   }
 
+  function conversationEmployeeLabel(detail: TicketDetail): string {
+    const workerLabel = lc?.workerTypeLabel ?? labelize(detail.worker_type);
+    return /worker$/i.test(workerLabel) ? workerLabel : `${workerLabel} worker`;
+  }
+
   function hasBlockerRows(detail: TicketDetail): boolean {
     const summary = detail.blocker_summary;
     return Boolean(summary && (summary.blocked_by.length > 0 || summary.blocks.length > 0));
@@ -216,7 +231,6 @@
     ticket.dispose();
     sprints.dispose();
     projects.dispose();
-    chatStatus?.dispose();
     currentSprint.dispose();
     manifest.dispose();
   });
@@ -285,6 +299,29 @@
             <Pill keyLabel="worker type" data-worker-type={detail.worker_type}>
               {lc?.workerTypeLabel ?? labelize(detail.worker_type)}
             </Pill>
+            {#if pristineKickoff}
+              <span
+                data-ticket-employee-backend={detail.employee_backend}
+                data-ticket-employee-backend-editable="true"
+              >
+                <EnumPill
+                  keyLabel="worker"
+                  value={detail.employee_backend}
+                  options={employeeBackendOptions}
+                  onChange={(employeeBackend) => {
+                    if (employeeBackend !== detail.employee_backend) {
+                      void saveEmployeeBackend(employeeBackend);
+                    }
+                  }}
+                />
+              </span>
+            {:else}
+              <Pill
+                keyLabel="worker"
+                data-ticket-employee-backend={detail.employee_backend}
+                data-ticket-employee-backend-editable="false"
+              >{labelize(detail.employee_backend)}</Pill>
+            {/if}
             <Pill keyLabel="due">
               {detail.deadline || ""}
               <input
@@ -423,28 +460,11 @@
         </div>
       </main>
       <aside class="chat-rail" data-chat>
-        {#if $relayChief === "enabled"}
-          {@const workerLabel = lc?.workerTypeLabel ?? labelize(detail.worker_type)}
-          <ChiefNeutralPane
-            entityId={stableId}
-            label={/worker$/i.test(workerLabel) ? workerLabel : `${workerLabel} worker`}
-          />
-        {:else if $relayChief === "disabled"}
-          {@const status = legacyChatStatus()}
-          <ChatPanel
-            entityId={stableId}
-            available={status.data?.available ?? true}
-          />
-        {:else if $relayChief === "error"}
-          <div class="chief-chat-placeholder" data-ticket-meta-error>
-            <p>Could not load chat.</p>
-            <button type="button" data-ticket-meta-retry onclick={() => void retryRelayChiefMeta()}>
-              Retry
-            </button>
-          </div>
-        {:else}
-          <div class="chief-chat-placeholder" data-ticket-meta-loading></div>
-        {/if}
+        <AcpConversation
+          employeeId={stableId}
+          employeeLabel={conversationEmployeeLabel(detail)}
+          deferInitialAttach={pristineKickoff}
+        />
       </aside>
     </div>
     {/if}

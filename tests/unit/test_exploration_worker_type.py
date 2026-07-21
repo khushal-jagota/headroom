@@ -104,6 +104,7 @@ EXPLORATION_MANIFEST = {
     ],
     "default_ceiling": "needs_kickoff",
     "worker_profile_id": "panels-worker-exploration",
+    "default_employee_backend": "hermes",
 }
 
 

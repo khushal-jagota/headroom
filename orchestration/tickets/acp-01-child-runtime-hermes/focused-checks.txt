@@ -1,0 +1,88 @@
+ACP-01 focused checks
+Date: 2026-07-19
+
+$ .venv/bin/ruff check src/planner/conversation tests/unit/test_acp_employee_child.py tests/unit/test_acp_employee_registry.py tests/unit/test_hermes_acp_backend.py tests/support/acp_*.py
+All checks passed!
+
+$ .venv/bin/mypy src/planner/conversation
+Success: no issues found in 9 source files
+
+$ .venv/bin/pytest tests/unit/test_acp_employee_child.py tests/unit/test_acp_employee_registry.py tests/unit/test_hermes_acp_backend.py tests/unit/test_acp_conformance_harness.py
+............................................                             [100%]
+44 passed in 2.97s
+
+$ node web/tests/acp-contracts.test.mjs
+acp-contracts.test.mjs: all assertions passed
+
+$ npm --prefix web run check
+
+> check
+> svelte-check --tsconfig ./tsconfig.json
+
+Loading svelte-check in workspace: /Users/khushaljagota/.hermes/planning-v2/web
+Getting Svelte diagnostics...
+
+svelte-check found 0 errors and 0 warnings
+
+$ .venv/bin/pytest -q tests/unit/test_acp_employee_child.py tests/unit/test_acp_employee_registry.py tests/unit/test_hermes_acp_backend.py tests/unit/test_acp_conformance_harness.py tests/unit/test_conversation_contracts.py
+........................................................................ [ 63%]
+.......................................F.                                [100%]
+
+Deferred concurrent-scope failure:
+test_vendor_provenance_hashes_license_and_closed_import_graph expected the ACP-00 frozen
+sessionStore.ts hash 6d89afc95fbc2758d00293feb6da2c234781403e49abb3dc1d54a87aa34d902f,
+while ACP-03's in-progress donor correction currently has
+bc6f745bdab898243aa5566e3333a968ba1c52b95156ff4b57a0a6e912203aaa.
+ACP-01 did not edit or revert the donor file or its provenance assertion.
+
+$ npm --prefix web test
+The resource, websocket, neutral-pane, ticket-pane, file-preview, and lifecycle tests passed before
+the run reached a deferred ACP-03 integration mismatch in managed-markdown.test.mjs. That test still
+expects managedMarkdown.ts to be the only managed renderer caller, while ACP-03's in-progress
+ToolCallCard.svelte and TranscriptView.svelte now also call it. ACP-01 did not edit those files.
+
+$ git diff --check -- <ACP-01 scoped paths>
+Exit 0; no output.
+
+The implementation sub-agent did not run ./verify.
+
+ACP-01 round-one correction checks
+Date: 2026-07-19
+
+$ .venv/bin/ruff check src/planner/conversation tests/unit/test_acp_employee_child.py tests/unit/test_acp_employee_registry.py tests/unit/test_hermes_acp_backend.py tests/support/acp_conformance.py tests/support/acp_fixture_writer.py tests/support/acp_in_memory_binding_repository.py tests/support/acp_reference_subject.py tests/support/acp_runtime_subject.py tests/support/acp_scripted_agent.py
+All checks passed!
+
+The reviewed plan's broader tests/support/acp_*.py glob currently also selects ACP-03's concurrently
+edited tests/support/acp_component_runtime.py. That file has two E501 findings at lines 87 and 133.
+It is outside ACP-01 ownership and was not edited or reformatted in this correction pass.
+
+$ .venv/bin/mypy src/planner/conversation
+Success: no issues found in 9 source files
+
+$ .venv/bin/pytest tests/unit/test_acp_employee_child.py tests/unit/test_acp_employee_registry.py tests/unit/test_hermes_acp_backend.py tests/unit/test_acp_conformance_harness.py
+......................................................................   [100%]
+70 passed in 4.03s
+
+$ node web/tests/acp-contracts.test.mjs
+acp-contracts.test.mjs: all assertions passed
+
+$ npm --prefix web run check
+
+> check
+> svelte-check --tsconfig ./tsconfig.json
+
+Loading svelte-check in workspace: /Users/khushaljagota/.hermes/planning-v2/web
+Getting Svelte diagnostics...
+
+svelte-check found 0 errors and 0 warnings
+
+$ npm --prefix web test
+The resource, websocket, neutral-pane, ticket-pane, file-preview, and lifecycle tests passed before
+the same deferred ACP-03 managed-markdown caller-inventory mismatch recorded above. ACP-03's
+ToolCallCard.svelte and TranscriptView.svelte now use managedMarkdown.ts, while its concurrent test
+still expects managedMarkdown.ts to be the only caller. ACP-01 changed none of those files.
+
+$ git diff --check -- <ACP-01 scoped paths>
+Exit 0; no output.
+
+The correction sub-agent did not run ./verify.

@@ -7,10 +7,6 @@ port: 8767                         # server port; bind host is fixed at 127.0.0.
 boundary_hour: 5                   # planning-day boundary, local hour (R1)
 tick_seconds: 60                   # dispatcher tick interval (§7.1)
 dispatch_enabled: true             # automatic Employee-step discovery/dispatch startup switch (§7.1)
-relay_backend_enabled: false       # relay path (child pool + neutral panes); flip to true to enable
-hermes_bin: hermes                 # Hermes executable (employee home is separate)
-hermes_profile: default            # hermes profile (R3)
-worker_skill: panels-worker        # employee role skill used by EmployeeStepRunner
 ws_poll_ms: 300                    # server-side event-tail poll interval (§9)
 ws_heartbeat_ms: 15000             # quiet event-WS heartbeat cadence (§9)
 ui_debounce_ms: 250                # UI refetch debounce, served via /api/meta (§9)
@@ -19,4 +15,3 @@ logs_dir: data/logs                # per-run log files (§7.4)
 events_read_limit: 500             # max events returned per WS tail batch (§9)
 db_busy_timeout_ms: 5000           # SQLite busy timeout on connect
 shutdown_grace_seconds: 30         # one monotonic budget for runtime/gateway shutdown
-gateway_adapter: auto              # auto | real | fake | offline (§9.4)

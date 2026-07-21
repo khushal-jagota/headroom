@@ -642,6 +642,7 @@ def test_decide_drop_and_jump_bookends_pure_str_stage() -> None:
             id="t_x",
             title="T",
             worker_type="probe",
+            employee_backend="hermes",
             stage=stage,
             priority=Priority.P3,
             deadline=None,

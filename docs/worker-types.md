@@ -31,7 +31,7 @@ Each Worker type is one immutable `WorkerTypeDefinition`. The definition contain
   non-terminal Stage (`worker`, `user`, or `paired`);
 - the separate `dropped` terminal Stage;
 - the ordered fields carried by its Tickets;
-- the worker profile, including the specialist skill;
+- the worker profile, including the specialist skill and default Employee backend;
 - whether work completed outside Panels may be reconciled as a settled field prefix.
 
 The definition also answers the workflow questions that used to be spread across Ticket
@@ -66,7 +66,8 @@ types and behavior. `src/planner/worker_types/coding.py`,
 shared structural rules: kickoff comes first, `done` is the one linear terminal,
 `dropped` sits outside the line, every non-terminal Stage gates one declared field, every
 field is gated once, every non-terminal Stage declares a valid default ownership mode,
-terminal Stages declare none, and worker skills and toolsets are known.
+terminal Stages declare none, worker skills and toolsets are known, and the default
+Employee backend is registered in the same application composition.
 
 A malformed definition therefore stops application composition instead of failing only
 when a Ticket happens to reach the bad part of its workflow.
@@ -119,10 +120,15 @@ definitions, and the production registry built from them. The shipped tuple curr
 contains `coding`, `new_worker`, `exploration`, and `initiative_planning`; its order is
 also the manifest order.
 
-Tests use the explicit configuration test seam to install a registry containing the
-additional `probe` definition, then restore the production registry. Production code and
-test code therefore exercise the same boundaries and definition behavior without making
-test-only Worker types part of the shipped catalog.
+The same composition owns the ordered production Employee-backend catalog. Its exact
+keys are `hermes`, `codex`, and `claude`; Gemini is not registered. Every shipped Worker
+type currently defaults to `hermes`, but that default is part of the Worker-type
+definition rather than a global fallback.
+
+Tests build an explicit Employee-backend catalog and Worker-type registry as one exact
+configuration value. This can include the additional `probe` Worker type and fake backend
+definitions without changing production configuration. The registry retains the same
+catalog instance it was validated against, so the two authorities cannot drift.
 
 No registry position means “default.” Order is composition and presentation order only.
 
@@ -144,19 +150,42 @@ There is no `/api/seed` route or `panels seed` command.
 
 ## The served manifest and frontend
 
-`GET /api/worker-types` lists the configured registry and calls its `manifest` method for
-each definition. Every entry contains the Worker type label, Stages, gates, advance map,
-fields, ceiling range, default ceiling, and specialist skill id. Every Stage also carries
-its default ownership mode; terminal Stages carry none. The Ticket response supplies the
-current Stage's default and effective ownership, so clients do not reconstruct the rule.
+`GET /api/worker-types` lists the configured Employee backends in stable catalog order,
+then calls the Worker-type registry's `manifest` method for each definition. Every
+Worker-type entry contains the label, Stages, gates, advance map, fields, ceiling range,
+default ceiling, specialist skill id, and default Employee backend. Every Stage also
+carries its default ownership mode; terminal Stages carry none. The Ticket response
+supplies the current Stage's default and effective ownership, so clients do not
+reconstruct the rule.
 
 The frontend derives one lifecycle per Worker type from this served manifest. It renders a
 Ticket against the entry matching the Ticket's stored `worker_type`. Coding, `new_worker`,
 `exploration`, and `initiative_planning` Tickets therefore show their own Stage spines
 without frontend type tables.
 
+During pristine Kickoff, the Ticket header renders the catalog as a worker selector with
+the Worker type's stored default already selected. Choosing another entry writes that
+Ticket's override. Once a session or binding exists, or the Ticket moves beyond Kickoff,
+the header shows the frozen backend instead of an editable selector.
+
 _Code paths:_ `src/planner/core/server.py` serves the registry manifest;
 `web/src/lib/lifecycle.ts` derives the frontend lifecycle.
+
+## The Ticket chooses the Employee backend
+
+Each Worker type supplies the backend initially selected for a new Ticket. The creation
+boundary stores that registered key as `employee_backend`; callers may instead provide an
+explicit registered key. This is a per-Ticket choice, not a second kind of Worker type.
+
+The choice may change only while the Ticket is still at pristine Kickoff, has no Employee
+session, and has no durable conversation binding. The first Employee demand or any move
+past Kickoff freezes it. Human conversation and Automatic Employee work then resolve the
+same stored key and durable ACP session. A missing, unknown, or contradictory backend
+fails at the boundary instead of falling back to another registration.
+
+_Code paths:_ `src/planner/conversation/backend_catalog.py` owns the ordered backend
+catalog; `src/planner/worker_types/configuration.py` composes it with the Worker-type
+registry; `src/planner/tickets/data.py` stores and freezes the Ticket choice.
 
 ## How a worker finds its specialist
 
@@ -165,22 +194,13 @@ but it does not contain the substance of every Worker type.
 
 The worker runs `panels worker my-ticket`. That response includes the Ticket's stored
 Worker type and the specialist skill named by its `WorkerTypeDefinition`. The worker loads
-that skill with `skill_view` and follows its Stage-specific guidance:
+that skill with `skill_view` and follows its Stage-specific guidance.
 
-Panels opens or resumes the Ticket's correct durable Employee conversation. Inside the shared
-Hermes gateway, worker lookup treats the current live window as authoritative and follows it back
-to that durable session. Older single-session surfaces without a live-window identity still use
-the durable Employee session directly.
-
-A restart investigation proved a separate Hermes problem: its local terminal shell snapshot could
-restore another conversation's `HERMES_SESSION_*` values after the current conversation identity
-had been injected. Hermes now restores every current-turn identity value over that snapshot before
-the command runs and before the next snapshot is written. A supported restart resumed the original
-durable conversation and worker lookup resolved the correct Ticket. Panels still defends its own
-boundary: one durable Employee session may belong to only one Ticket. A
-second Ticket cannot claim an owned session, even during a forced fresh human binding. An already
-ambiguous idempotent binding, an ambiguous compare-and-swap winner, and any read that finds duplicate
-owners fail with all owner Ticket ids instead of choosing one.
+Panels opens or resumes the Ticket's durable ACP conversation. The conversation binding
+owns the Employee-to-session relationship and records the Ticket's selected backend. The
+Ticket mirrors its session id, and one ACP session cannot belong to two Employees. Human
+and Automatic Employee prompts use that same backend and binding. Restart resumes it
+rather than reconstructing identity from terminal state.
 
 - `panels-worker-coding` guides coding Tickets.
 - `panels-worker-new-worker` guides `new_worker` Tickets.
@@ -189,8 +209,8 @@ owners fail with all owner Ticket ids instead of choosing one.
 
 For `new_worker`, the visible lifecycle after universal Kickoff is
 Understanding, Stages, Thinking, Drafting, Closeout, Done. Understanding is paired:
-Panels dispatches one automatic opening turn into the durable Employee session, ordinary
-Ticket Chat continues that same session, and an Understanding proposal waits for approval
+Panels dispatches one automatic opening turn into the durable Employee session, human
+conversation continues that same session, and an Understanding proposal waits for approval
 before the Ticket advances to Stages.
 
 Startup provisions the listed skill directories into the planner Hermes home. A new
@@ -199,7 +219,7 @@ planner skill list.
 
 _Code paths:_ `skills/panels-worker/SKILL.md`, the specialist skills under `skills/`,
 `src/planner/tickets/api.py`, `src/planner/cli/main.py`, and
-`src/planner/minds/config.py`.
+`src/planner/conversation/hermes_backend_configuration.py`.
 
 ## Adding a Worker type
 
@@ -215,7 +235,8 @@ One new Worker type needs one definition and one production registration path:
    skills catalog and add the definition to `_PRODUCTION_WORKER_TYPE_DEFINITIONS`. Do not
    register it anywhere else.
 4. Add the skill directory name to `PLANNER_SKILL_NAMES` in
-   `src/planner/minds/config.py`, so startup provisions it into the worker's Hermes home.
+   `src/planner/conversation/hermes_backend_configuration.py`, so startup provisions it
+   into the worker's Hermes home.
 5. Announce the Worker type at both agent front doors: add the specialist to
    `panels-worker` and describe the new type in `panels-chief-of-staff`.
 6. Restart Panels. Composition validates the complete registry and startup provisions the
@@ -244,4 +265,4 @@ prefix, and reconciliation support before changing state.
 
 ---
 
-_Last verified: 2026-07-18._
+_Last verified: 2026-07-20._

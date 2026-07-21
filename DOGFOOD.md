@@ -58,6 +58,9 @@ Status: **PASS — wrapper shim path, single run** (2026-07-05, tree `3dc243b072
 
 ### Setup
 
+The command below is a historical 2026-07-05 record. `PLAN_HERMES_BIN` belonged to the retired
+pre-ACP dispatcher and is not a current Panels configuration key or supported runtime path.
+
 Two-phase start so the dispatcher could not claim mid-shaping. Phase 1 — shaping (dispatch off, long tick): `PLAN_DB_PATH=data/dogfood-c5.db PLAN_PORT=8800 PLAN_DISPATCH_ENABLED=0 PLAN_TICK_SECONDS=3600 .venv/bin/plan serve` (shaping log: `data/logs/level-c5-shaping.log`), seed `--demo` (same `db_not_empty` bootstrap-row wrinkle as Level B, cleared the same way), then shaping via the grant route (human actions, no `X-Plan-*` headers):
 
 - Target `t_cj6dp2e3` "Draft the onboarding email success criteria." (state `needs_success`) granted ceiling `in_progress`, at_cap `propose`.

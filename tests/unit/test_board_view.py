@@ -50,6 +50,7 @@ _PRE_EXISTING_CARD_KEYS = [
 
 _ENRICHMENT_CARD_KEYS = [
     "worker_type",
+    "employee_backend",
     "stage",
     "stage_label",
     "gating_field",
@@ -148,6 +149,7 @@ def test_board_coding_card_keys_superset_and_columns_unchanged(tmp_db: Connectio
 
     # The coding enrichment values for a fresh needs_kickoff card.
     assert card["worker_type"] == "coding"
+    assert card["employee_backend"] == "hermes"
     assert card["stage"] == "needs_kickoff"
     assert card["stage_label"] == "Kickoff"
     assert card["gating_field"] == "kickoff"

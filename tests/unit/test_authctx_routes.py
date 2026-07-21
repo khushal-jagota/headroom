@@ -14,7 +14,6 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from planner.core.adapters.registry import build_adapters
 from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -35,17 +34,15 @@ def _make_app(tmp_path: Path) -> tuple[object, Path]:
         path=None,
         env={
             "PLAN_TEST_MODE": "1",
-            "PLAN_GATEWAY_ADAPTER": "fake",
             "PLAN_DB_PATH": str(db_path),
         },
     )
     clock = build_clock(config)
-    adapters = build_adapters(config)
 
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    return create_app(config, clock, adapters, conn_factory), db_path
+    return create_app(config, clock, conn_factory), db_path
 
 
 def _ticket(db_path: Path) -> str:
@@ -461,25 +458,3 @@ def test_patch_day_agent_is_forbidden_unattributed_succeeds(tmp_path: Path) -> N
         unattributed = client.patch("/api/day/2026-07-05", json={"focus": "Direct focus"})
     assert unattributed.status_code == 200
     assert unattributed.json()["focus"] == "Direct focus"
-
-
-# --- POST /chat/{id}/turns: direct-only -----------------------------------------
-
-
-def test_chat_turn_agent_is_forbidden_unattributed_succeeds(tmp_path: Path) -> None:
-    app, _db_path = _make_app(tmp_path)
-    entity = "day_2026-07-05"  # a chattable day entity (materializes on read)
-    with TestClient(app) as client:
-        agent = client.post(
-            f"/api/chat/{entity}/turns",
-            json={"text": "hi", "mode": "message"},
-            headers=_AGENT,
-        )
-        assert agent.status_code == 400
-        assert agent.json()["error"]["code"] == "agent_forbidden"
-        unattributed = client.post(
-            f"/api/chat/{entity}/turns", json={"text": "hi", "mode": "message"}
-        )
-    assert unattributed.status_code == 200
-    assert unattributed.json()["status"] == "running"
-    assert unattributed.json()["mode"] == "message"

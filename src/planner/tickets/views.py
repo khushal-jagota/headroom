@@ -61,6 +61,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "id": ticket.id,
         "title": ticket.title,
         "worker_type": ticket.worker_type,
+        "employee_backend": ticket.employee_backend,
         "stage": str(ticket.stage),
         "priority": ticket.priority.value,
         "deadline": ticket.deadline,
@@ -211,6 +212,7 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"{ticket.title}\n"
         f"stage: {str(ticket.stage)}\n"
         f"priority: {ticket.priority.value}\n"
+        f"employee_backend: {ticket.employee_backend}\n"
         "owner: "
         f"{ticket.effective_stage_ownership_mode.value if ticket.effective_stage_ownership_mode is not None else '(none)'}\n"  # noqa: E501
         f"\n"
@@ -231,6 +233,7 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
         "tickets.project_id, ticket_projects.name AS project_name, tickets.sprint_item_id, "
         "sprint_items.project_id AS parent_project_id, "
         "parent_projects.name AS parent_project_name, tickets.fields, tickets.worker_type, "
+        "tickets.employee_backend, "
         "tickets.ticket_status, "
         "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
@@ -289,6 +292,7 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
             ),
             "ticket_status": str(row["ticket_status"]),
             "worker_type": worker_type,
+            "employee_backend": str(row["employee_backend"]),
             "stage": stage,
             "stage_label": worker_type_definition.stage_definition(stage).label,
             "gating_field": gating_field_id,

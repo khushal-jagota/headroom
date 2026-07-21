@@ -18,10 +18,6 @@ def _ticket_files_dir(server, ticket_id: str) -> Path:
     return server.db_path.parent / "files" / "tickets" / ticket_id
 
 
-def _chat_files_dir(server, entity_id: str) -> Path:
-    return server.db_path.parent / "files" / "chats" / entity_id
-
-
 def _write_ticket_files(server, ticket_id: str) -> None:
     root = _ticket_files_dir(server, ticket_id)
     (root / "notes").mkdir(parents=True)
@@ -88,14 +84,6 @@ def _write_managed_html_reference_files(server, ticket_id: str) -> None:
         "</body>"
         "</html>",
         encoding="utf-8",
-    )
-
-
-def _write_chat_markdown_file(server, entity_id: str) -> None:
-    root = _chat_files_dir(server, entity_id)
-    root.mkdir(parents=True)
-    (root / "chat-note.md").write_text(
-        "# Chat Notes\n\nRendered from chat files.", encoding="utf-8"
     )
 
 
@@ -262,7 +250,6 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
         + f"\n\n[Image](/files/tickets/{ticket_id}/images/pic.png)",
         encoding="utf-8",
     )
-    _write_chat_markdown_file(server, ticket_id)
     fields = {
         "success": {
             "value": (
@@ -332,13 +319,6 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     _assert_full_page_markdown_document(page, "Other Notes")
     assert page.evaluate("window.__previewHashNavigationMarker") == "kept"
     page.close()
-
-    chat_page = context.new_page()
-    chat_page.goto(
-        f"{server.base}/#/preview?source=chat&entity={ticket_id}&path=chat-note.md"
-    )
-    _assert_full_page_markdown_document(chat_page, "Chat Notes")
-    chat_page.close()
 
     ticket_page.evaluate("window.__htmlPopupNavigationMarker = 'kept'")
     embedded_preview = ticket_page.locator('[data-file-preview-kind="html"]').first
@@ -592,7 +572,7 @@ def test_markdown_file_preview_has_component_owned_max_height(
     assert long_metrics["overflowY"] == "auto"
 
 
-def test_read_only_ticket_and_chat_surfaces_share_file_preview(
+def test_read_only_ticket_surfaces_share_file_preview(
     server, context_factory, open_page, cli
 ) -> None:
     ticket_id = cli(
@@ -618,23 +598,11 @@ def test_read_only_ticket_and_chat_surfaces_share_file_preview(
         "closeout": {"value": body, "proposal": None, "user_note": None},
     }
     _set_fields(server, ticket_id, fields)
-    with sqlite3.connect(server.db_path) as conn:
-        for index, role in enumerate(("human", "assistant", "system", "worker"), start=1):
-            conn.execute(
-                "INSERT INTO chat_messages (entity_id, turn_id, role, text, created_at) "
-                "VALUES (?, NULL, ?, ?, ?)",
-                (ticket_id, role, f"{role}: {body}", index),
-            )
-
     page = open_page(
         context_factory(),
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        # settled=True: this test seeds chat rows and inspects at-rest previews across
-        # fields + chat; those seeded rows make the since=0 catch-up flush non-trivial,
-        # so draining it before resolving/measuring previews stops a re-render from
-        # detaching the nodes this test reads. No assertion depends on the un-settled state.
         settled=True,
     )
 
@@ -707,12 +675,6 @@ def test_read_only_ticket_and_chat_surfaces_share_file_preview(
     page.wait_for_selector(
         '[data-field="closeout"] [data-file-preview-kind="html"]', timeout=WAIT_MS
     )
-    for who in ("you", "planner", "system", "worker"):
-        page.wait_for_selector(
-            f'[data-chat-msg="{who}"] [data-file-preview-kind="markdown"]', timeout=WAIT_MS
-        )
-
-
 def test_normal_editable_ticket_field_renders_file_previews_at_rest(
     server, context_factory, open_page, cli
 ) -> None:

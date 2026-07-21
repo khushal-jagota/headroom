@@ -46,9 +46,14 @@ def parse_workspace(
         if heading == "Tickets":
             bullets, orphans = parse_bullets(body)
             if orphans:
-                skipped.append(SkippedSection(
-                    source_file, heading, REASON_PROSE, excerpt_of("\n".join(orphans)),
-                ))
+                skipped.append(
+                    SkippedSection(
+                        source_file,
+                        heading,
+                        REASON_PROSE,
+                        excerpt_of("\n".join(orphans)),
+                    )
+                )
             for bullet in bullets:
                 ticket, skip = _ticket_from_bullet(
                     bullet,

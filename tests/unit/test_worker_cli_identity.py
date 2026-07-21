@@ -1,15 +1,4 @@
-"""S3 §6 / §9.4 — `panels worker my-ticket` identity resolution.
-
-The CLI reads `PLAN_TICKET_ID` (the child's spawn env, set by Panels flag-on) FIRST and
-resolves the ticket through the by-ticket-id worker-self route. When `PLAN_TICKET_ID` is
-absent it FALLS BACK to the existing Hermes-env resolution (the flag-off legacy shared-child
-path, Collision #1 (a) — the transitional fallback the owner authorized). When neither
-identity is present it fails validation.
-
-Plus the server-side by-ticket-id worker-self route: it resolves the ticket by id and applies
-the ownership validation the plain detail read lacks — an ambiguously-owned durable session is
-rejected. Fakes only; no real Hermes.
-"""
+"""`panels worker my-ticket` uses only the explicit ACP child Ticket identity."""
 
 from __future__ import annotations
 
@@ -24,7 +13,6 @@ from fastapi.testclient import TestClient
 
 from planner.cli import http as cli_http
 from planner.cli.main import main as cli_main
-from planner.core.adapters.registry import build_adapters
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -40,7 +28,6 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     boot.close()
     env = {
         "PLAN_TEST_MODE": "1",
-        "PLAN_GATEWAY_ADAPTER": "fake",
         "PLAN_DB_PATH": str(db_path),
     }
     config = load_config(path=None, env=env)
@@ -49,7 +36,7 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     def conn_factory():
         return connect(str(db_path))
 
-    app = create_app(config, clock, build_adapters(config), conn_factory)
+    app = create_app(config, clock, conn_factory)
     return app, db_path
 
 
@@ -135,7 +122,7 @@ def test_worker_self_route_missing_ticket_is_not_found(tmp_path: Path) -> None:
     assert response.status_code == 404, response.text
 
 
-# --- CLI: PLAN_TICKET_ID first, Hermes-env fallback --------------------------
+# --- CLI: PLAN_TICKET_ID only ------------------------------------------------
 
 
 class _RecordingSend:
@@ -162,8 +149,6 @@ _DETAIL_BODY = {
 @pytest.fixture
 def clear_identity_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv("PLAN_TICKET_ID", raising=False)
-    monkeypatch.delenv("HERMES_UI_SESSION_ID", raising=False)
-    monkeypatch.delenv("HERMES_SESSION_KEY", raising=False)
     yield
 
 
@@ -171,8 +156,6 @@ def test_worker_my_ticket_resolves_from_plan_ticket_id(
     monkeypatch: pytest.MonkeyPatch, clear_identity_env: None
 ) -> None:
     monkeypatch.setenv("PLAN_TICKET_ID", "t_abc")
-    # Even if a stale Hermes env is also present, PLAN_TICKET_ID wins.
-    monkeypatch.setenv("HERMES_UI_SESSION_ID", "stale_live")
     recorder = _RecordingSend(_DETAIL_BODY)
     monkeypatch.setattr(cli_http, "send", recorder)
 
@@ -180,34 +163,6 @@ def test_worker_my_ticket_resolves_from_plan_ticket_id(
 
     assert result.exit_code == 0, result.output
     assert recorder.paths == ["/api/tickets/t_abc/worker-self"]
-
-
-def test_worker_my_ticket_falls_back_to_hermes_env_when_no_plan_ticket_id(
-    monkeypatch: pytest.MonkeyPatch, clear_identity_env: None
-) -> None:
-    # No PLAN_TICKET_ID (legacy shared child, flag-off) but the per-turn Hermes live-session
-    # env is present -> the CLI falls back to the by-live-session route (Collision #1 (a)).
-    monkeypatch.setenv("HERMES_UI_SESSION_ID", "live_xyz")
-    recorder = _RecordingSend(_DETAIL_BODY)
-    monkeypatch.setattr(cli_http, "send", recorder)
-
-    result = CliRunner().invoke(cli_main, ["worker", "my-ticket", "--json"])
-
-    assert result.exit_code == 0, result.output
-    assert recorder.paths == ["/api/tickets/by-live-session/live_xyz"]
-
-
-def test_worker_my_ticket_falls_back_to_employee_session_env(
-    monkeypatch: pytest.MonkeyPatch, clear_identity_env: None
-) -> None:
-    monkeypatch.setenv("HERMES_SESSION_KEY", "sess_key")
-    recorder = _RecordingSend(_DETAIL_BODY)
-    monkeypatch.setattr(cli_http, "send", recorder)
-
-    result = CliRunner().invoke(cli_main, ["worker", "my-ticket", "--json"])
-
-    assert result.exit_code == 0, result.output
-    assert recorder.paths == ["/api/tickets/by-employee-session/sess_key"]
 
 
 def test_worker_my_ticket_no_identity_fails_validation(

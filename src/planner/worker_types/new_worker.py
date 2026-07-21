@@ -42,6 +42,7 @@ NEW_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         model=None,
         reasoning_effort=None,
         toolset_profile="default",
+        default_employee_backend="hermes",
     ),
     supports_prefix_reconciliation=True,
 )

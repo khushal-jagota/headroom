@@ -449,7 +449,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     after_b = _snap_board(page_b, mid)
     expected_b = {
         "title": E31_TITLE,
-        "stage": "Implementation",
+        "stage": "IMPLEMENTATION",
         "nested": 1,
         "marks": 1,
         "marker": "pending-proposal",

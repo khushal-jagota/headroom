@@ -33,7 +33,10 @@ from planner.tickets.contracts import (
     AtCap,
 )
 from planner.tickets.logic import fields_codec
-from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
+from planner.worker_types.configuration import (
+    PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
+    PRODUCTION_WORKER_TYPE_REGISTRY,
+)
 from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
 from planner.worker_types.registry import WorkerTypeRegistry
 
@@ -68,6 +71,7 @@ def test_registry_validates_new_worker() -> None:
         (NEW_WORKER_TYPE_DEFINITION,),
         known_skills=_KNOWN_SKILLS,
         known_toolset_profiles=_KNOWN_TOOLSET_PROFILES,
+        employee_backend_catalog=(PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog),
     )
 
 
@@ -171,6 +175,7 @@ NEW_WORKER_MANIFEST = {
     ],
     "default_ceiling": "needs_kickoff",
     "worker_profile_id": "panels-worker-new-worker",
+    "default_employee_backend": "hermes",
 }
 
 
@@ -241,7 +246,9 @@ def _worker_session_exists(conn: Connection, tid: str) -> bool:
     row = conn.execute("SELECT employee_session_id FROM tickets WHERE id = ?", (tid,)).fetchone()
     if row["employee_session_id"] is not None:
         return True
-    turns = conn.execute("SELECT 1 FROM chat_turns WHERE entity_id = ? LIMIT 1", (tid,)).fetchone()
+    turns = conn.execute(
+        "SELECT 1 FROM employee_step_runs WHERE ticket_id = ? LIMIT 1", (tid,)
+    ).fetchone()
     return turns is not None
 
 

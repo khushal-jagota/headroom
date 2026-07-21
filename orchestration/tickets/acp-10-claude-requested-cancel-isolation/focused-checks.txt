@@ -1,0 +1,27 @@
+ACP-10 Claude requested-cancel isolation focused checks
+Date: 2026-07-21
+
+Red proof
+
+$ .venv/bin/pytest -q tests/unit/test_hermes_acp_backend.py -k definition_is_exact
+F                                                                        [100%]
+AttributeError: 'BackendTurnCapabilities' object has no attribute 'requires_fresh_child_after_requested_cancel'
+
+Final focused gate
+
+$ .venv/bin/pytest -q tests/unit/test_conversation_turn_broker.py tests/unit/test_conversation_hub.py -k 'requested_cancel or stop_prompt_exception or send_now_prompt_exception or terminal_cancel or queued_cancel_and_user_cancel'
+..................                                                       [100%]
+
+$ .venv/bin/pytest -q tests/unit/test_claude_acp_backend.py::test_claude_definition_freezes_locked_runtime_and_truthful_capabilities tests/unit/test_codex_backend.py::test_codex_definition_is_locked_confined_and_permission_only tests/unit/test_hermes_acp_backend.py::test_hermes_definition_is_exact_and_strategy_is_injected
+...                                                                      [100%]
+
+$ .venv/bin/ruff check src/planner/conversation/backend_contracts.py src/planner/conversation/claude_backend.py src/planner/conversation/turn_broker.py tests/unit/test_claude_acp_backend.py tests/unit/test_codex_backend.py tests/unit/test_hermes_acp_backend.py tests/unit/test_conversation_turn_broker.py
+All checks passed!
+
+$ .venv/bin/mypy --strict src/planner/conversation/backend_contracts.py src/planner/conversation/claude_backend.py src/planner/conversation/turn_broker.py
+Success: no issues found in 3 source files
+
+$ git diff --check -- src/planner/conversation/backend_contracts.py src/planner/conversation/claude_backend.py src/planner/conversation/turn_broker.py tests/unit/test_claude_acp_backend.py tests/unit/test_codex_backend.py tests/unit/test_hermes_acp_backend.py tests/unit/test_conversation_turn_broker.py
+(no output; exit 0)
+
+Canonical ./verify, live server, and browser checks were not run. ACP-10 owns those final gates.

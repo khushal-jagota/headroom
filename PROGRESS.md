@@ -4,6 +4,1249 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-19): ACP migration — architecture and contract freeze
+
+Owner direction: ACP replaces both non-ACP conversation paths and becomes the single system. P2 of
+the shared-registry program is superseded and will not be implemented; P1's employee-keyed child
+ownership remains reusable. The Hermes checkout is strictly read-only, so this repository will stop
+depending on its local patches but will not physically revert them.
+
+Reference study is COMPLETE. Source pins and protocol findings are recorded in
+`orchestration/acp-migration/research.md`. Hands-on computer-use study covered Zed 1.11.3 with a real
+Codex ACP session (typed/collapsed thought, compact tool rows, inline diff, streamed terminal,
+mid-turn queue + Send Now interruption, permission outcomes, command palette, visible compacting)
+and local acp-ui 0.1.16 against `hermes acp`. Owner design ruling: acp-ui is behavior-only and is not
+a visual donor; Zed supplies the legibility bar, while Panels' existing tokens and restrained,
+cardless spatial language remain the design source.
+
+Architecture/ticket graph is frozen at `orchestration/acp-migration/plan.md`: server-side official
+ACP SDK; typed updates through one thin websocket envelope; ordered per-session ingress; durable
+employee/session binding; first-party turn broker (Steer / Send Now / Queue), compaction normalizer,
+and transient permission broker; Svelte typed transcript; Hermes-first vertical cutover; dogfood;
+legacy deletion; then functional Codex and Claude Code worker backends with a Worker-type default and
+per-Ticket Kickoff selection. Gemini was explicitly removed from delivery by the owner on 2026-07-20.
+
+Independent Codex program review is COMPLETE. Round 1 found five blockers: exact step-runner
+settlement/CAS obligations, the complete registration matrix, command provenance, permission shape,
+and mandatory ownership classification before legacy deletion. Every finding was accepted and
+amended into the plan. Round 2 found no unresolved blockers and returned `READY`; full outputs and
+dispositions are in `program-review-round-1.md` and `program-review-round-2.md`.
+
+Next: cut/freeze ACP-00 contracts and conformance harness → sub-agent implementation plan → independent
+plan review → sub-agent implementation → independent diff review. No product code has changed in this
+cycle and `./verify` has not been run (correctly: there is no settled implementation to claim).
+
+Owner review-process override: ticket plan/diff reviews may be performed by independent sub-agents;
+the Codex CLI is no longer required per ticket. The same author/reviewer separation, written findings,
+dispositions, and two-round maximum remain, with one focused round the normal case and another only
+for a concrete unresolved or load-bearing correction. Contract inspection also corrected two overstatements before
+ACP-00 freeze: ACP permission options have `kind` but no separate `scope`, and Queue/Send Now are
+common Panels broker behavior rather than backend capabilities (only native Steer is backend-specific).
+
+ACP-00 is now CUT and plan-reviewed. The contract lives at
+`orchestration/tickets/acp-00-contracts-conformance/contract.md`; its implementation plan received one
+focused sub-agent review. The review's sole blocker (the harness must prove the official client-side
+stdio path, not reserve it for ACP-01) and its type-ownership proof gap were both accepted and amended.
+They are bounded test-mechanics corrections, so a second plan-review round would add ceremony rather
+than confidence. Next: dispatch ACP-00 implementation, run focused tests, independently review the
+allowed-file diff once, then integrate and run the canonical verification gate.
+
+ACP-00 implementation, focused review, and integration are COMPLETE. The slice adds exact Python/TypeScript pins,
+the four-file byte-identical typed-state donor with provenance/license, frozen conversation/backend/
+wire contracts, Python-emitted browser fixtures, and a real official-SDK scripted conformance harness.
+The settled focused sequence passes ruff, strict mypy, 66 Python tests, the direct TypeScript contract
+test, Svelte check, and the full web test script. The implementation review found three substantive
+proof defects; all were corrected, and its narrow correction check marked every finding resolved and
+returned `READY`.
+
+The first canonical `./verify` was contaminated by the owner's live, uncommitted
+`relay_backend_enabled: true`: 64 unit and 35 e2e legacy-chat tests failed while every static/frontend
+gate passed. A controlled public-seam rerun proved the same representative unit and browser failures
+become `2 passed` at the checked-in relay-off default. The clean canonical run then passed Ruff, Mypy
+across 145 source/typing files, 1,119 unit tests, compile/CSS, Svelte diagnostics, frontend build/tests,
+and 135 e2e tests (`VERIFY: PASS`). The live relay-on value was restored immediately; no product or test
+code was changed to manufacture the result.
+
+Next: cut ACP-01 (generic child runtime + Hermes definition), plan it against the frozen ACP-00
+contracts, and use one focused independent plan review before implementation.
+
+ACP-01 is now CUT at `orchestration/tickets/acp-01-child-runtime-hermes/contract.md`. It freezes an
+uncomposed official-SDK child/factory, bounded ordered ingress, an async employee-keyed ACP registry,
+an injected durable-binding CAS seam, and the pinned Hermes definition. Child generation is process
+ownership; binding generation changes only with ACP session identity. Attach/load includes an
+observed-frame-to-typed-consumer barrier rather than a timer, and ingress overflow retires the child
+instead of dropping updates. A fresh sub-agent is writing only the implementation plan; source work
+has not started.
+
+The disjoint ACP-03 frontend ticket is also CUT at
+`orchestration/tickets/acp-03-browser-state-pane/contract.md` and is being planned in parallel. Its
+visual thesis is deliberately narrow: the existing cardless Panels transcript, compact closed
+thought/tool disclosures, one persistent status line, and permission as the only prominent blocking
+inset. It freezes one fixture-driven transport/controller/reducer, fail-closed sequence/generation
+handling, donor corrections with provenance, and the minimal Svelte inventory; no route, legacy pane,
+shared token, or app layout changes are allowed.
+
+Contract cutting exposed one real ACP-00 omission: ACP session updates embed only a terminal ID,
+while accumulated output/exit state belongs to the client's reverse terminal service. ACP-00a is now
+CUT at `orchestration/tickets/acp-00a-terminal-state-wire/contract.md` to add one typed
+`terminal_state` envelope wrapping the exact SDK output response before ACP-02/03 implementation.
+This is not a parallel transcript vocabulary and terminal output remains tool state, never assistant
+text.
+
+ACP-00a implementation is COMPLETE. Its exact Python/TypeScript SDK wrapper, eleventh union variant,
+exports, canonical fixture, and focused checks are green. The one independent review found no
+production defect and one missing common-envelope mutation proof; the orchestrator added the seven
+identity/generation/sequence cases and the corrected suite passed 64 tests plus Ruff and the
+TypeScript contract test. No second broad review was used.
+
+ACP-03 planning then exposed a second small wire omission: unsupported Steer cannot be disabled
+without a machine-readable capability. ACP-00b is CUT at
+`orchestration/tickets/acp-00b-steer-capability-wire/contract.md` to add required `supportsSteer` to
+the existing connection payload. This avoids backend/command/text inference and adds no event family.
+
+ACP-00b implementation is COMPLETE. Required strict `supportsSteer` now crosses every connection
+state; reset/ready and closed/error fixtures, invalid type/missing/extra proofs, Python/TypeScript
+contracts, and focused gates are green. Its independent review returned READY with no findings.
+
+ACP-02 is now CUT at
+`orchestration/tickets/acp-02-turn-broker-reverse-services/contract.md`. It freezes the active-turn
+state machine, server-owned FIFO/Send Now/declared Steer, reject-all queue recovery on child death,
+compaction capture isolation, exact attached-browser permission ownership, confined filesystem, and
+scoped bounded terminals. Planning begins only after ACP-01's lifecycle plan is frozen; source work
+waits for ACP-01 and ACP-00a integration. The concrete implementation plan is now complete and in
+one focused independent plan review. That review returned NOT READY with eight load-bearing gaps:
+cancel timeout ordering, closing-cause successor policy, exact-generation runtime leases, permission
+source/late-open ownership, multiple automatic compactions, private-capture isolation/provenance,
+race-safe write confinement, and terminal kill/end-to-end cleanup bounds. The plan now resolves each
+one explicitly, including a fresh child-generation replacement for private capture so unrelated live
+updates cannot be swallowed. The narrow check resolved six and identified two remaining integration
+edges: intentional generation-N retirement callback classification and assistant/merged Hermes
+summary placement. The plan now has exact planned-retirement tokens and all four pinned replay
+placements. The two-round cap is exhausted, so the orchestrator recorded the final finding-by-
+finding disposition as READY; ACP-02 source still waits for corrected ACP-01 integration.
+
+ACP-01's one focused plan review returned NOT READY with two real blockers and three bounded high
+findings. The orchestrator accepted them: the observer will reserve/fingerprint ordered slots and
+emit the frozen rejection for SDK-router-invalid replay; a per-employee publication/update gate will
+quiesce admitted N sinks before N+1 is visible; the direct ACP-00 reference subject will receive the
+same deterministic load barrier; generic cwd comes from the backend resolver; and the factory fails
+closed when the SDK would inject an undeclared default environment name. The contract and plan were
+corrected finding-by-finding before implementation dispatch.
+
+ACP-03's one focused plan review returned NOT READY with one blocker, two high findings, and one
+bounded contract correction. All four are accepted and amended: ordinary Hermes mode/config/session
+updates are typed non-transcript metadata; `AcpComposer` receives the exact connection
+`supportsSteer` value; gap/browser errors clear only after a contiguous replacement-epoch ready
+event while protocol rejection persists; and Svelte receives a recursively readonly/frozen public
+projection rather than the donor's mutable maps/arrays. The reviewer explicitly found the remaining
+reducer, terminal, component, and visual plan sound and said these dispositions do not justify a
+second broad plan review. ACP-03 is ready for implementation in its disjoint frontend/fixture scope.
+
+ACP-01 and ACP-03 implementations are in progress in disjoint scopes. Orchestrator spot-checking of
+ACP-01 found three lifecycle failures before review: injected durable reads under the global lock,
+shutdown waiting on an unfulfilled observer reservation, and a downstream sink exception that could
+strand the load barrier. The implementer accepted all three and is adding explicit concurrency and
+failure proofs. ACP-03 has the pure reducer/controller/transport, conformance adapter, and restrained
+component inventory under construction; it has not touched routes or shared visual assets.
+
+ACP-01 implementation is now ready for independent review. Its focused Ruff and strict Mypy gates
+pass, its exact ACP-01 plus ACP-00 conformance set is 44/44, the ACP TypeScript contract and Svelte
+checks pass, and scoped diff-check is clean. The corrected tests cover all three orchestrator-found
+lifecycle failures. Two broader frontend assertions are deliberately deferred while ACP-03 owns the
+concurrent donor provenance/hash and managed-markdown caller inventory; ACP-01 did not touch or
+revert that work.
+
+ACP-03 implementation is now also ready for independent review. It adds the unmounted typed
+transport/controller/reducer, corrected donor helpers and provenance hash, canonical browser
+fixtures/conformance adapter, and all nine restrained Svelte components without touching routes,
+shared CSS/tokens, package files, or the legacy pane. Its focused contract/state/conformance/
+component tests, Svelte diagnostics, and production build pass. ACP-01's one implementation review
+is running; ACP-03's one review follows as soon as a reviewer slot is free.
+
+ACP-01's independent implementation review returned NOT READY despite its green focused suite. It
+found strict-wire reservation and unsafe-discriminator failures, forced-close/load wakeup and
+accepted-prefix overflow gaps, new-conversation persistence-failure teardown, a non-hard shutdown
+deadline, incompatible backend demand coalescing, and missing named lifecycle proofs. The original
+implementation author is correcting exactly those findings in the existing ticket scope; no broad
+second review is planned, only a narrow correction check after the focused suite expands.
+
+ACP-01 correction and independent narrow review are now COMPLETE. All seven findings are resolved:
+raw reservation is transactional and display-safe, every terminal ingress path wakes response/load
+waiters, overflow drains the complete accepted prefix, failed conversation replacement tears down its
+child, registry shutdown obeys one hard deadline, incompatible employee/backend demands are never
+coalesced, and the named lifecycle/race proofs are present. The settled focused suite is 70/70 with
+scoped Ruff, strict Mypy, ACP TypeScript contracts, Svelte diagnostics, and diff check green. The
+reviewer returned `READY`; ACP-02 may now implement against this exact runtime boundary.
+
+The orchestrator's required load-bearing spot-check found the reviewed mechanics present in source:
+observer reservations append complete valid/rejected slots before ordinal advance; overflow stops new
+acceptance while typed callbacks can finish the reserved prefix; retirement publishes a terminal
+cause before cancellation; conversation replacement retires a session-created child on persistence
+or publication failure; and shutdown shares one absolute deadline across graceful and force-close
+work. No additional ACP-01 correction was needed. ACP-02 implementation is now active in its reviewed
+allowed-file scope.
+
+ACP-03's independent implementation review likewise returned NOT READY with eight bounded production
+and proof gaps: missing Panels-owned payload invariants, higher-generation reset entity drift,
+human-echo fallback ordering, conformance bypassing transport/controller admission, source-only
+component checks plus missing new-error alert behavior, permission-send retry lockout, a disposal
+publication, and receipt recency based on record insertion order. Thought isolation, metadata,
+tool/plan/terminal folding, immutable projection, recovery, Steer flow, donor provenance, line diff,
+and the restrained visual boundary were confirmed sound. The original author is correcting exactly
+the eight findings and replacing source-only acceptance with runtime component interaction proof.
+
+ACP-03 correction and independent narrow review are now COMPLETE. All eight findings are resolved at
+their production boundaries, including strict transport invariants, entity-stable generation reset,
+missing-ID human turn boundaries, complete fake-socket-to-reducer conformance, retryable permission
+sends, silent disposal, and explicit receipt recency. The component proof now mounts the real pane in
+Chromium, exercises all nine contracted components and controls, and verifies the new-error alert
+without duplicating the one persistent status line. Fixture/contracts/state/conformance/component
+tests, Ruff on the Python harness, Svelte diagnostics, the full web test command, and production build
+are green. The reviewer returned `READY`; the pane remains deliberately unmounted until ACP-04.
+
+The orchestrator's ACP-03 spot-check found the reviewed boundaries present in source: transport
+receipt/activity/permission cross-fields fail closed; employee/entity/session/generation admission is
+checked before reduction; a non-optimistic human echo clears the missing-ID agent group and advances
+the turn exactly once; thought remains a distinct collapsed part; protocol failure remains visible;
+and the pane exposes one persistent status line. No ACP-03 correction beyond ACP-04's explicitly
+contracted same-binding restart reset is needed.
+
+ACP-04 is now CUT at `orchestration/tickets/acp-04-hermes-vertical-cutover/contract.md` while ACP-02
+implementation runs. It freezes one production conversation hub/websocket, an explicit durable ACP
+binding table mirrored atomically to the existing Ticket/Chief session fields, typed reset/load/ready
+and active-turn replay behavior for multiple browsers, the synchronous `AcpStepGateway` bridge that
+preserves EmployeeStepRunner's caller-thread session claim, and the three exact Svelte mount points.
+It also closes a restart integration edge: a same-binding reset greater than the retained cursor may
+rebase the stream, after which ready and ordinary events are contiguous again. Planning waits for
+ACP-02's actual settled internal API so the planner does not invent an adapter against a draft.
+
+ACP-02 implementation has completed TDD phases 1–5: ordinary FIFO/Send Now/ID rejection,
+response-consumption and private-capture ingress, Hermes native steer/provenance with all four pinned
+summary placements, permission attachment/first-settlement/tombstones, and descriptor-backed
+filesystem confinement. Its current new focused subsets are 24/24 and the ACP-01 child compatibility
+set remains 30/30. Scoped real-subprocess terminals are now in progress; the implementer reports no
+contract blocker. SDK reverse bridging, production conformance probes, and the final focused sweep
+remain before independent review.
+
+The orchestrator's first ACP-02 load-bearing spot-check identified two integration gaps before the
+ticket may report: the registry still returned the raw backend strategy instead of the defined
+exact-generation proxy and the capture path did not visibly hand the replacement N+1 handle back to
+the broker; additionally, a publisher exception on a public actor command settled only that caller
+instead of failing the generation. The shutdown close path's broad exception suppression also needs
+an exact audit. These findings are with the active implementer for correction and deterministic
+generation/publisher/deadline proofs, not a separate review round.
+
+The exact-generation strategy proxy and capture replacement handoff are now present in the active
+ACP-02 source, and focused permission/terminal coverage has expanded. A second orchestrator
+spot-check found that the standalone permission and terminal services were not yet composed through
+the turn actor: cancel, death, new conversation, and shutdown therefore could not own late permission
+tombstones or terminal cleanup as the reviewed plan requires. Terminal publisher failure could also
+strand release waiters, and pending cleanup tasks were cancelled without being awaited. The same
+implementer is closing those integration and hard-deadline paths before reporting; ACP-02 remains in
+implementation and no independent diff review or canonical `./verify` has started.
+
+That ACP-02 lifecycle correction is now behaviorally green. The broker owns source-aware permission
+admission and terminal cleanup across cancellation timeout, child death, compaction N→N+1, new
+conversation, and shutdown; permission/terminal publication failures stop delivery; official-SDK
+permission, filesystem, and terminal bridges are exercised; and the production ACP-02 subject passes
+ACP-00 probes 5/7/8 with the matching mutations failing. The five named suites pass 66/66. The
+implementer is resolving only scoped Ruff/Mypy findings, then will run the complete reviewed focused
+gate and write `implementation-report.md`/`focused-checks.txt`. Independent diff review has not yet
+started, and the canonical `./verify` remains correctly deferred.
+
+The first complete ACP-02 acceptance-8 run then reached 206 passing Python tests and one unrelated
+ACP-00 provenance assertion failure: that older test still required the byte-for-byte upstream
+`sessionStore.ts` hash after ACP-03's reviewed local reducer corrections. The orchestrator made the
+small integration repair in `tests/unit/test_conversation_contracts.py`: it now asserts the complete
+original upstream hash table and, separately, the documented ACP-03 local hash/correction section.
+The exact test passes. The ACP-02 implementer is rerunning the entire focused sequence from its first
+command so the final evidence is uncontaminated by the repair.
+
+ACP-02 implementation and final focused evidence are now COMPLETE pending independent diff review.
+The settled gate passes scoped Ruff; strict Mypy over 18 conversation files; 207 combined ACP
+Python tests (68 owned by ACP-02); the ACP TypeScript contract; Svelte diagnostics with zero errors
+or warnings; the package web suite; the three standalone ACP browser state/conformance/component
+suites; and scoped diff check. `implementation-report.md` and `focused-checks.txt` retain the exact
+commands and output. A fresh independent sub-agent is reviewing only concrete contract/race
+violations, including late callbacks after actor closure and cancellation-resistant hard deadlines.
+No canonical `./verify` has run, correctly, and ACP-04 planning still waits for this review verdict.
+
+ACP-02's independent implementation review returned `NOT READY` with four reproduced ownership
+failures despite the green focused suite: a paused generation-N acceptance could resume on a
+concurrently installed N+1 handle; late child/permission/terminal callbacks could enqueue after the
+actor runner exited and hang; cancellation-resistant cleanup could exceed the one absolute shutdown
+deadline; and permission activity publication failure could contradict an already-visible selected
+outcome or self-cancel the settlement path and strand the ACP callback. One bounded lifecycle/activity
+typing weakness was also accepted. The original implementer has one correction pass for exactly
+these findings; the same independent reviewer will then perform only a narrow finding-by-finding
+check. ACP-04 remains intentionally undispatched until that check is READY.
+
+That bounded ACP-02 correction pass is now COMPLETE. Runtime adoption is serialized through the
+actor and retains each submitted complete handle; only the broker-owned capture handoff rebinds
+queued intent from N to its returned N+1. Command admission closes atomically with actor-runner exit
+and drains every admitted callback. Deadline expiry force-detaches cancellation-resistant broker,
+permission, and terminal work without a second wait. Permission outcome publication is the response
+commit point, so later activity failure is generation-fatal but cannot revoke the selected ACP
+response or self-await its settlement task. Lifecycle/activity state is frozen to the contract
+types. The named correction set passes 11 tests; the complete affected ACP set passes 214 tests with
+scoped Ruff, strict Mypy, and diff check green. The same reviewer is now checking only these five
+findings; ACP-04 planning remains the immediate next step after a READY verdict. Canonical `./verify`
+is still deferred to the serial integration gate.
+
+ACP-02 is now SETTLED. The same independent reviewer checked only the five round-one findings and
+returned `READY`: exact generation-N delivery and controlled N→N+1 FIFO capture are distinct and
+correct; closed actors cannot strand late callbacks; cancellation-resistant ownership is detached
+at the one absolute deadline; permission response commit precedes fallible activity restoration;
+and lifecycle/activity types retain the frozen contract vocabulary. The reviewer independently
+reran the named correction set (11/11). The full affected evidence remains 214 passing ACP Python
+tests plus scoped Ruff, strict Mypy, and clean diff check. The orchestrator spot-check agrees with
+the finding-by-finding review. ACP-04 Hermes vertical-cutover planning is now active against the
+settled ACP-02 API; no canonical `./verify` runs until the program's frozen final gate.
+
+The ACP-04 planning audit has identified three concrete adapter seams that the plan must close
+without changing frozen wire values: registry ingress must retain employee/child source identity
+because a rejected update has no session ID (and a valid same-session update can still belong to a
+stale child generation); the turn broker needs one exact prompt-epoch completion handle so the
+synchronous step gateway does not infer success from an idle activity event; and Ticket/active-step
+session validation must occur at the permission broker's selection boundary so a stale worker
+permission cannot win between a hub-side DB check and settlement. These are internal extensions of
+the settled single owners, not reasons to add another registry, broker, or transcript state machine.
+The source-aware ingress adapter must also preserve notifications emitted during `session/new`
+before a first or replacement binding is publishable: a bounded exact-child pre-binding capture
+holds them until the binding transaction commits and the reset epoch exists, then flushes them in
+order. It may not drop them, guess their owner from session text, or block the SDK's response barrier
+in a cycle.
+
+ACP-04's concrete implementation plan is now COMPLETE at
+`orchestration/tickets/acp-04-hermes-vertical-cutover/implementation-plan.md`. It maps the migration,
+repository, internal owner adapters, hub/WebSocket, synchronous step gateway, one production
+composition, three restrained mounts, and scripted vertical proof across eight phases; it reports no
+frozen-contract blocker. One fresh sub-agent is performing the single focused plan review. The
+orchestrator has already flagged four bounded corrections for that review: source identity must cover
+valid as well as rejected ingress; the frozen attach action has no session-ID cursor; random UUIDs
+belong to client-message IDs rather than a browser ID; and the plan must construct the existing
+`RunResult` status shape exactly. No product source has changed for ACP-04 yet.
+
+ACP-04's single focused plan review returned `NOT READY` with six bounded corrections and explicitly
+approved the restrained three-mount UI boundary. The plan must route both valid and rejected ingress
+through one immutable-source, bounded-enqueue sequencer without holding a transition lock across an
+owner call that publishes back; initialize a reset epoch when a worker is the first demand; capture
+worker permission provenance at admission; use the frozen attach/CAS/RunResult/strict-recovery
+shapes; derive the real sibling `hermes` CLI rather than treating Python as the ACP command; shut
+owners down while their publisher still drains; and preserve persistent protocol rejection across a
+same-binding reset. The original plan author is amending exactly these findings. This is the one
+review round; after orchestrator disposition, implementation starts without another broad review.
+
+ACP-04 planning is now `READY`. The amended plan accepts all six findings and the orchestrator's
+finding-by-finding spot-check confirms the required mechanics: immutable-source valid/rejected
+ingress enters one bounded sequencer and owner calls close through barriers outside its drain;
+worker-first demand establishes the reset/load/snapshot/ready epoch before prompt delivery; tracked
+failure settles before collector teardown and any queued successor; permission origin is copied at
+admission and worker selection validates exact durable binding/Ticket/turn state under the settling
+transaction; every frozen/current type is used exactly; the sibling `hermes` CLI is the child
+command; and publisher/writers stop last under one deadline. Persistent protocol rejection survives
+same-binding reset and the check ledger names the real suites. Per the owner-requested review model,
+there is no second broad plan review. ACP-04 implementation may start in the reviewed allowed scope.
+
+ACP-04 implementation is now ACTIVE in the main worktree. Phase 1 has added the schema-24 durable
+binding table, atomic Ticket/Chief mirror repository, migration/backfill tests, and the source-aware
+registry plus tracked-turn/permission internal seams. The orchestrator caught and corrected two
+early Phase-1 issues before review: valid non-Hermes bindings must survive restart for the later
+backend tickets, and the new Ticket fixtures must use the complete current row shape. The extracted
+Chief writer also retains its existing public event semantics. Phase 3's typed hub is under
+construction. Current spot-checks have sent three load-bearing requirements back to the implementer:
+an existing binding must load only once through the ready barrier; asynchronous sequencer failures
+must retire the exact source rather than disappear; and protocol rejection/capture observation must
+close through the reviewed barrier ordering before worker settlement or a queued successor. The
+new binding tests pass; the hub tests are still work in progress, and neither independent diff review
+nor canonical `./verify` has started.
+
+ACP-04 Phases 1–5 are now behaviorally green. The settled current slice passes 71 binding/hub/
+registry/broker/permission cases and 14 parameterized WebSocket/gateway cases with scoped Ruff and
+strict Mypy. The hub corrections now prove one existing-binding load, reset→captured ingress→ready,
+same-binding restart floor, generation-fatal sequencer publication failure, rejection settlement
+before a queued successor, and active slow/replay-unavailable socket closure. The strict WebSocket
+accepts only text and attach-first serial actions and treats an ordinary disconnect quietly. The
+synchronous gateway rejects a missing required binding before spawn/load/reset, runs the existing
+session callback on its caller thread before prompt, and validates worker permission against the
+exact binding, Ticket, running worker turn, record, and prompt epoch. The implementer must still add
+the remainder of the named gateway outcome/interrupt/timeout matrix before final reporting; the
+current implementation now advances to the one production composition and legacy-startup cutover.
+
+ACP-04 Phases 6–7 are now green in their owned scope. Production composes one conversation owner,
+derives the lexical sibling `hermes` executable from the configured venv Python without resolving
+the Python symlink first, injects only `AcpStepGateway` into the Employee runtime, exposes the one
+conversation state handle, closes browser admission before runner stop, and shuts the hub publisher
+last under the same absolute deadline. The composition/WebSocket/hub slice passes 15 tests with
+scoped Ruff and strict Mypy. The three existing Chief/Ticket mounts now unconditionally instantiate
+one non-visual ACP wrapper using current-origin `/api/conversation`, 500 ms reconnect, and
+`crypto.randomUUID()` only for client message IDs. Same-binding reconnect reset, persistent protocol
+rejection, explicit replay-unavailable recovery, and all mounts pass Svelte diagnostics plus the ACP
+state/conformance/component/contract/production-mount suites. No shared CSS, tokens, app layout, or
+generated dist changed. Phase 8's actual official-SDK vertical proof and the remaining named gateway
+outcome/interrupt matrix are the only implementation work before the focused ACP-04 report/review.
+
+Owner pace clarification: the measured change is substantial (about 13,175 production additions and
+15,763 test/support/fixture lines before ACP-04 Phase 8), so the established process should continue
+rather than be artificially compressed. The owner's standing bounded-review judgment still applies:
+one focused review is normal and another occurs only for a concrete unresolved correction. ACP-04 is
+about 80–85% complete; its remaining pre-dogfood work is the five named gateway outcome/race proofs,
+one official-SDK vertical e2e file, focused checks/report, and one implementation review. ACP-05 starts
+immediately after `READY`, without an intermediate canonical `./verify`. The active implementer reports
+no blocker and is completing the gateway matrix before the Phase-8 vertical proof.
+
+The gateway matrix is now green and the first compact official-SDK vertical test passes, but the one
+implementation review correctly returned `NOT READY`. Its four concrete findings are: Phase 8 does
+not yet prove all eight frozen e2e cases or the uvicorn/Vite boundary; captured old-session ingress can
+be flushed into a replacement binding and kill the live child; active replay accepts a buffer equal to
+browser capacity and then evicts the subscriber when global `ready` needs one more slot; and server
+startup failure after composition but before the lifespan cleanup scope can leak the composition. The
+original implementer is correcting exactly these findings. No second broad review is planned; the
+same reviewer/finding ledger will receive a bounded correction disposition.
+
+ACP-04 implementation and its bounded correction are now COMPLETE. The final proof-only blocker is
+closed in the official-child e2e file itself: the two-browser generation-2 flow injects stale
+old-session ingress and keeps the replacement live; the automatic runner is interrupted through the
+exact synchronous gateway; protocol rejection and capture failure prove collector/queued-successor
+ordering; and active replay proves both independent slow-consumer eviction and byte-overflow
+fail-closed behavior. The settled focused gate passes Ruff, strict Mypy across 24 source files, 164
+Python tests, all five ACP web suites, Svelte with zero diagnostics, and scoped diff check. The
+implementation report and exact output ledger are current. No canonical `./verify` or production
+frontend build was run; root now performs the promised source/evidence spot-check before ACP-05.
+
+Root spot-check is COMPLETE: the corrected hub filters stale ACP session notifications before envelope
+publication (including captured flush), active replay reserves the ready slot, startup-loop failure
+closes the composition, the synchronous gateway targets the exact durable active turn, and the Phase-8
+assertions hit the named two-browser, worker-first, rejection/capture, permission, slow/overflow, and
+DB-context boundaries. Root independently reran `tests/e2e/test_acp_conversation.py`: 9 passed. The
+full reviewer output and correction disposition are now persisted in the ACP-04 ticket directory.
+ACP-04 is `READY`; ACP-05 real Hermes dogfood and computer-use validation is next.
+
+ACP-05 is now running against the production-served Panels Workspace at `127.0.0.1:8767`; the
+discarded Vite `5189` page was an unstyled dev build and is not evidence. Root rebuilt the current
+frontend, gracefully replaced the orphaned live application process with `panels serve`, hard
+reloaded the real two-column Workspace, and confirmed ACP reset/ready in the existing Panels visual
+language. The first real Chief prompt exposed a focused cutover defect before any broader UX claim:
+the backfilled binding names a Hermes `planner-chat` session, while the read-only Hermes ACP adapter
+restores only source `acp`. Its `session/load` therefore returned JSON null; Panels incorrectly
+published the binding ready, rendered human echo + `started`, and received no agent answer. A second
+raw ACP attach proved reset -> ready with zero replay, and the Hermes state DB proves the source
+mismatch. The correction ticket is cut at
+`orchestration/tickets/acp-05-missing-session-cutover/contract.md`: null load is a positive
+not-found transition to one CAS-persisted successor ACP session with visible status; raised load
+still fails closed. Next: one sub-agent implementation, focused gates, one independent review, then
+resume the full real-UI ACP-05 matrix on `8767`.
+
+Owner then made the intended cutover boundary explicit: legacy `planner-chat` sessions do not need
+runtime compatibility. The missing-session correction ticket is CANCELLED without implementation.
+Using Computer Use on the real `127.0.0.1:8767/#/workspace`, root clicked the existing **New
+conversation** control for Chief of Staff. Panels durably replaced generation 1 with Hermes ACP
+session `2af393b0-6c8f-4eb1-99fc-c3783541c781` at generation 2; the next UI prompt received the exact
+agent response `ACP dogfood ready.` in the existing dark split-pane interface. ACP-05 therefore
+continues on this clean binding. Once dogfood passes, ACP-06 will deliberately cut the remaining
+legacy bindings over to fresh ACP sessions while removing the old transport, instead of retaining a
+permanent legacy-session recovery branch.
+
+The first deeper real-UI queue check exposed a browser-only grouping defect: Hermes live agent chunks
+without message IDs were merged across two settled prompts because the optimistic queued human echo
+can precede the first prompt's final chunk. ACP-05's focused correction now closes only the active
+missing-ID group on terminal activity or an interrupted Send Now receipt. Its state/component/Svelte/
+temporary-build checks passed, and one independent implementation review returned `READY` with no
+findings. The existing persistent delivery acknowledgement was reviewed and remains intentional.
+
+The real-app Queue cancellation behavior is now independently green. Computer Use started a
+20-second terminal turn, queued a second exact-response prompt, and clicked its visible **Cancel**
+control while the first turn remained active. The queue item immediately settled as
+`interrupted · Queued prompt cancelled`; the first turn later returned `LONG QUEUE TURN DONE.`, the
+queue was empty, and the cancelled response never ran. The earlier short-turn attempt was only a
+missed human click after its stale accessibility element expired, not a product failure.
+
+Real **Stop** then exposed a separate broker classification defect: successful cancellation followed
+by the cancelled prompt await raising was incorrectly surfaced as `Employee connection failed` and
+closed the otherwise-live child. The focused correction at
+`orchestration/tickets/acp-05-cancel-classification/` is now SETTLED: requested user/Send Now/new-
+conversation/shutdown cancellation owns the later prompt exception only after exact cancel and
+permission-cancel delivery succeed. Stop reuses the same child and a later prompt succeeds; Send Now
+starts one successor; an ordinary exception still fails the generation. Broker 30/30, hub/gateway
+10/10, official-child cancellation 3/3, Ruff, and Mypy passed. One independent review returned
+`READY` with no findings.
+
+The actual production-served Stop retest now confirms the classification half: the active prompt is
+shown as `interrupted · Prompt interrupted`, activity returns to idle, the websocket remains
+connected, and no false employee-failure status appears. Immediate reuse uncovered one narrower
+Hermes integration race that the scripted child did not model. The follow-up prompt is accepted by
+Panels, but the Hermes ACP adapter still considers the cancelled request running, emits its own
+`Queued for the next turn. (1 queued)` message, and never drains that private queue. Upstream source
+inspection explains the boundary: Hermes has an internal `state.is_running`/`queued_prompts` layer,
+while ACP cancel is notification-only and the failed prompt RPC can unwind on the client before the
+server-side prompt finalizer clears `is_running`. The current hypothesis is that an exception after
+successful requested cancellation must recover to a freshly loaded child generation before Panels
+publishes reusable idle; merely reclassifying it as interruption is not enough for the real Hermes
+backend. Do not add a timing sleep or depend on Hermes's private queue. This becomes one bounded
+post-compaction correction because its broker/runtime rekey surface overlaps the active durable-fork
+implementation. The owner-approved one-time clean-session path remains available for continued
+dogfood in the meantime.
+
+The matching real **Send Now** retest confirms the same recovery ticket must cover successors, not
+only later ordinary prompts. Panels correctly publishes the old receipt as interrupted and accepts
+exactly one replacement, but the old Hermes terminal continues to completion and the old and new
+agent text arrive concatenated (`OLD TURN SHOULD NOT COMPLETE.SEND NOW REPLACEMENT READY.`). Starting
+the successor on the same child is therefore not safe after this requested-cancel exception. The
+correction must quiesce/filter the old source, load a fresh generation on the same durable binding,
+then start the one frozen successor; late old-generation ingress cannot enter the replacement turn.
+
+Real Hermes **Steer** is independently green on a fresh binding: the active terminal turn accepted
+one steer message, rendered Hermes's typed acknowledgement, ignored the original requested final
+answer, and settled with the exact steered response `STEERED READY.` while keeping the connection
+idle/usable. This path does not use ACP cancellation and is outside the recovery defect.
+
+Real browser image attachment is also green through the complete production path. Computer Use chose
+the owner-provided original Panels screenshot in the native file picker; the composer showed one
+pending image, the transcript rendered the image block, Hermes vision received it, and returned the
+requested exact five-word description: `Dark workspace dashboard displaying tasks.`
+
+The real child-death, respawn, and deliberate-new-conversation boundaries are green. Root terminated
+the exact active Chief Hermes ACP subprocess while idle. The UI immediately published the visible
+`Employee connection failed` state without minting a session or changing binding generation 5. A
+replacement subprocess reattached and replayed that exact durable session; an ordinary prompt then
+returned `RESPAWN READY.`. A subsequent explicit **New conversation** cleared the transcript and
+atomically advanced the live binding to generation 6 with fresh ACP session
+`2dc5f884-fd9c-43ab-9c6b-ba6f90d21c26`. This proves crash/reconnect and deliberate replacement are
+distinct transitions in the production-served UI.
+
+The real Ticket chat mount is green as well. Computer Use selected
+`t_12sap6vx` (rolling backup/operator restore), used the existing **New conversation** control to
+replace its legacy binding with a fresh Hermes ACP session, and sent through the mounted Coding-worker
+pane. The typed transcript settled idle with the exact response `TICKET CHAT READY.` while preserving
+the Ticket editor and stage layout.
+
+The real Automatic Employee-step route is now green end to end. Root created disposable Ticket
+`t_b7sdhtzn`, accepted its constrained Kickoff, and added it to today's Ticket membership; no manual
+worker-run command was issued. The discovery loop claimed it into `agent_running_step`, the actual
+Ticket pane showed the active ACP worker turn with typed skill/tool activity, and the shared
+`AcpStepGateway` settled it to `awaiting_approval`. The visible Success proposal is exactly
+`ACP automatic step ready.` with recap `ACP automatic step Success is ready for approval.`. The
+disposable row remains temporarily as dogfood evidence and will be removed during cutover cleanup.
+
+The real edit/diff prompt created `data/acp-dogfood-diff.txt`, opened the expected blocking permission,
+applied the approved beta→gamma patch, replayed terminal/patch/read as completed after hard reload,
+and returned `DIFF READY.` The dogfood also found one disjoint frontend omission: Hermes supplied the
+exact old/new `diff` block inside the permission request's `toolCall`, but `PermissionPrompt.svelte`
+rendered only its title/options/status, so the approval showed no change. The bounded ticket at
+`orchestration/tickets/acp-05-permission-diff/contract.md` reuses the existing `DiffView` for only
+those supplied blocks and leaves no-diff permissions unchanged. A frontend sub-agent is implementing
+it while the backend compaction ticket continues; scopes do not overlap. The implementation and
+focused gates are now green. Its one review found that the first no-diff proof compared two
+post-change states and missed an empty Svelte-loop anchor. The correction added an exact pre-change
+serialized-DOM fixture, reproduced the anchor red, and moved conditional `DiffView` mounting out of
+the template so a no-diff permission emits no new node. Component tests, Svelte diagnostics, and the
+production build pass; the original reviewer confirmed that exact correction and returned `READY`.
+The permission-diff ticket is settled pending production-served Computer Use validation after the
+next bundle restart.
+
+Explicit real Hermes `/compact` also found a durable-capture defect. The live child compressed its
+in-memory history, but upstream Hermes did not persist that history before Panels retired the child;
+fresh load replayed 17 old rows, found no structural summary, and visibly failed capture. Hermes stays
+strictly read-only. The replacement contract is frozen at
+`orchestration/tickets/acp-05-durable-compaction-fork/contract.md`: call advertised official ACP
+`session/fork` on the exact compacted child, privately load/normalize that durable fork, CAS the
+binding to generation N+1, transition all browsers reset/replay/ready, and retarget queued intent
+before settlement. The planning sub-agent found no contract blocker but continued analysis after two
+explicit stop-and-write requests, so root changed approach and completed the concrete seven-phase
+plan from the settled findings. The one focused review approved every named seam and found one real
+deadline blocker: the plan asserted a bound without assigning a creator or carrying it across the
+whole multi-owner transition. The amendment now makes the broker actor create one absolute deadline
+before hub begin and passes it unchanged through fork/load/normalize/CAS/recovery/rekey/hub settlement;
+expiry releases every gate/waiter once and fails whichever generation cannot be proven. The review's
+narrow check returned `READY`. Implementation is complete on the fresh-ACP-session cutover path: the
+official child retains and invokes `session/fork`; the registry privately loads and normalizes that
+same-child fork before its one N→N+1 durable CAS; the broker/hub admission barrier atomically rekeys
+the actor, resets every browser, replays N+1, and retargets queued intent. Recoverable pre-CAS failure
+restores N, while a post-CAS publication deadline invalidates the exact replacement runtime.
+
+Focused Ruff and strict Mypy pass; 122 affected unit tests and all 12 official-SDK conversation e2e
+tests pass, including explicit refresh/child-death/process-restart durability, automatic queue
+succession, missing fork capability, and a held hub-commit deadline. The browser state/component
+suites, Svelte diagnostics (0 errors/0 warnings), and a temporary production Vite build also pass
+after the disjoint permission-diff owner settled its overlapping frontend correction. The
+implementation report and exact focused output are written; root owns the one independent
+durable-fork implementation review, whose result and corrections are recorded below. No canonical
+`./verify` has run; ACP-10 still owns the one final gate.
+
+That focused implementation review returned `NOT READY` with two deterministic P1 ownership gaps
+despite the green suite. Both corrections are now complete. Hub commit and recoverable abort stage
+their selected stream but keep admission closed until the broker publishes the normalized boundary,
+settles the tracked turn, publishes idle, advances FIFO, and calls the bounded completion seam. An
+explicit generation-fatal registry disposition now reaches the broker when exact runtime restoration
+or adoption is impossible before a replacement transition exists; the actor, tracked turn, queued
+intent, and hub transition fail without abort, idle, or FIFO advance. Deterministic hub, broker, and
+real-registry regressions pass. The narrow correction check then found one remaining exception-
+precedence path: an initial normalization error could hide a generation-fatal abort when exact N
+restoration failed. `GenerationBoundBackendTurnStrategy` now lets that fatal abort disposition win,
+and an integrated registry/broker regression proves actor, tracked turn, successor, FIFO, and hub
+failure with no abort or idle. The full affected unit gate is green at 122 tests; correction-scoped
+Ruff and strict Mypy are clean. The previously settled 12 official-SDK e2e tests remain unchanged.
+The final narrow correction review returned `READY`. The still-running live server has the prior
+loaded bundle/process code; it will be gracefully replaced only after requested-cancel recovery is
+also settled, so the next production restart validates both corrections together.
+
+The final Hermes behavior ticket is now frozen at
+`orchestration/tickets/acp-05-requested-cancel-recovery/contract.md`. It applies only when user Stop
+or Send Now has successfully delivered exact ACP and permission cancellation but the prompt RPC then
+unwinds exceptionally. The broker freezes successors/FIFO; Panels retires and filters the exact
+indeterminate child, privately reloads the unchanged durable binding through a fresh child generation,
+transitions browsers with same-binding reset/replay/ready, and only then publishes reusable idle or
+starts one retargeted successor. Normal cancelled responses, Steer, ordinary failures, durable binding
+generation, public wire vocabulary, and visual design do not change. Source implementation waits for
+the durable-fork review because the tickets share registry/broker/hub files.
+
+Its first focused implementation-plan review found two P1 ordering gaps. The plan had installed old-
+source suppression only after the exceptional prompt unwind, leaving a real interval for late text to
+render, and it had not routed exact old-child death through the recovery owner. The amended contract
+and plan now install one bounded exact-source quarantine before ACP cancel is sent; normal terminal
+cancellation flushes held updates in order on generation N, while exceptional unwind reuses the token
+and discards them. Matching planned-retirement death never enters ordinary death even on close error;
+an unexpected quarantined-old death fails the hub transition and actor once. The official-SDK fixture
+must audit a unique post-cancel send attempt, not merely assert that its text is absent. The reviewer is
+checking only those two corrections before implementation dispatch. That narrow check confirmed both
+resolved and returned `READY`; the overlapping durable-fork correction is now settled and source
+implementation is active.
+
+Requested-cancel implementation checkpoints 1–8 are now COMPLETE and ready for one independent diff
+review. Stop and Send Now install exact-source quarantine before cancel; normal cancelled responses
+resume generation N, while exceptional unwind replaces N with a privately loaded fresh child on the
+unchanged durable session/binding before reset/replay/ready releases successor or FIFO intent. Close
+paths retire the exact exceptional lease without entering recovery. Expiry, stale lease, planned-close
+error, private-load/commit failure, unexpected old-child death, two-browser ordering, composition, and
+the official-SDK late-send race all have focused proof. Ruff, strict Mypy, the complete named affected
+Python unit/e2e gate, all four ACP browser suites, and Svelte diagnostics are green; exact output and
+the implementation report are in the ticket directory. ACP-02's short cancellation-settlement timeout
+remains the fail-fast path, while one longer actor deadline owns actual recovery. Canonical `./verify`
+was not run; ACP-10 still owns it. Next: one independent implementation review, bounded correction only
+for concrete findings, then integration/dogfood.
+
+That one independent review returned `NOT READY` with two connected fail-closed defects and one proof
+gap. The requested-cancel timeout path created a second budget and could leave indeterminate generation
+N reusable if retirement resisted; exceptional New Conversation/shutdown retirement failure could be
+swallowed before the close owner reused that same old record. Those corrections are now COMPLETE.
+Timeout retirement reuses the actor's original absolute deadline, including employee-gate acquisition
+and planned-death settlement; inability to prove exact retirement invalidates the record and detaches
+child shutdown. Exceptional New Conversation/shutdown retirement error or timeout now invalidates the
+exact lease and propagates to the close owner, so replacement cannot proceed on N. The expanded matrix
+proves admitted-ingress quiescence, fresh initialize/death, durable-binding drift, hard deadlines,
+reverse cleanup, invalid replacement, hub commit, and unexpected old-child death. The official-SDK
+test now requires reset/ready/queue before successor start, one exact successor answer, and empty real
+worker collectors on both quarantined old generations. Final focused Ruff, strict Mypy, 119 affected
+Python tests, all four ACP browser suites, and Svelte diagnostics pass. Evidence and finding-by-finding
+dispositions are in the ticket directory. No second broad review round or canonical `./verify` ran.
+The requested narrow finding check returned `READY`; no reviewed item remains unresolved.
+
+Owner clarification for ACP-07/08 is now explicit in the program and `decisions.md`: “backend
+definition” means a functional Panels worker backend. Codex and Claude must each be assignable through
+one supported runtime seam and complete both a real Ticket conversation and an actual Automatic
+Employee step. A definition file or test-only swap is insufficient; no backend-specific UI is added
+unless a generic selector proves necessary.
+
+The owner then selected that generic seam: each Worker type declares a default employee backend; new
+Tickets copy it as the already-selected Kickoff choice; Kickoff may override it before approval; and
+the accepted Ticket value drives both chat and Automatic Employee work. Codex and Claude Code must each
+prove a real disposable Ticket through that path. Gemini is removed from the delivery scope entirely;
+ACP-09 now has no work.
+
+The generic selection ticket is now cut at
+`orchestration/tickets/acp-07-worker-backend-selection/contract.md`. It freezes an explicit
+`default_employee_backend` on each Worker type and stored `employee_backend` on each Ticket, one
+registered-definition catalog, a compact preselected Kickoff control editable only before any worker
+status/session/binding exists, and exact reuse by both human Ticket chat and automatic steps. Existing
+rows migrate explicitly to Hermes; the binding repository fails closed on selection/binding mismatch.
+A disjoint sub-agent is writing its exact implementation plan while ACP-05 cancellation recovery owns
+the shared conversation-runtime source. Separately, a read-only ACP-06 legacy-chat ownership inventory
+is running now; deletion and the authoritative classification still wait for Hermes dogfood to pass.
+
+Source tracing found and corrected one contract-level mismatch before the selection plan was written:
+fresh Ticket creation already enters `awaiting_approval` with its Kickoff proposal, so an `empty`-only
+writer could never serve the visible Kickoff selector. The exact pristine boundary is now
+`needs_kickoff` plus either `awaiting_approval` or `empty`, with no employee session and no ACP binding;
+all later states remain frozen. Existing Ticket status semantics do not change.
+
+The ACP-07 implementation plan's one focused review then found two real pre-source defects. First,
+`TicketRoute` currently attaches on observation, so merely opening the fresh Ticket would create the
+binding and make its Kickoff selector unusable. The corrected plan keeps the same rail/composer but
+defers transport attach only while Kickoff is pristine; first prompt is retained and delivered exactly
+once after ready, while Kickoff advance enables ordinary attach. Second, the app catalog and the
+module-configured Worker registry could diverge. One immutable configured pair now supplies both to
+every app, Ticket, binding, discovery, and automatic-work consumer, with atomic test install/restore.
+The review's remaining migration/writer/CAS/restraint/integration boundaries were sound; the corrected
+plan is `READY` after ACP-06 and needs no second broad plan review.
+
+The ACP-06 read-only inventory is provisionally complete at
+`orchestration/acp-migration/chat-ownership-inventory-working.md`. It classifies the legacy chat,
+gateway, relay, file, schema, event, API, frontend, and test surfaces for deletion/rehome. One hidden
+legacy responsibility was found before deletion: `SharedGateway` prepares `pending_worker_context`
+into the actual Automatic Employee prompt and acknowledges it after admission, while `AcpStepGateway`
+did not. The bounded ACP-05 worker-context ticket is plan-reviewed and ready once the cancellation
+correction releases its overlapping composition/e2e files. It changes only gateway delivery/ack;
+eligibility, claim, prompt construction, worker lifecycle, and settlement remain unchanged.
+
+The ACP-06 inventory's one independent review found six concrete ownership gaps: pending context was
+misnamed as settlement, the non-chat Employee-step record was not frozen, legacy session-identity
+fallbacks and the Ticket mirror were incomplete, the Chief cutover still had an unresolved choice,
+and shared CSS/test-runner plus mixed-test/docs cleanup were absent. All six are now corrected in the
+authoritative conditional `orchestration/acp-migration/chat-ownership-classification.md`. It freezes
+`runtime/employee_step_repository.py`/`employee_step_runs`, distinct worker-context delivery ownership,
+`PLAN_TICKET_ID` worker-self identity, one global old-session reset, exact frontend/test/doc cleanup,
+and no compatibility fallbacks. The review disposition is `READY AS A CONDITIONAL CLASSIFICATION`;
+ACP-05 Computer Use remains the deletion-authorization gate.
+
+With requested-cancel recovery settled, the plan-reviewed ACP-05 worker-context delivery ticket is
+now implementing in its five exact gateway/composition/test files. This is the final pre-restart
+source slice: caller-thread prepare, exact ACP model text, post-admission off-loop acknowledgement,
+failure retention, and the real automatic-step prompt proof. It does not change discovery, claiming,
+runner lifecycle, proposal/status settlement, or worker-context schema/producers.
+
+That final pre-restart slice is now COMPLETE and `READY`. `AcpStepGateway` owns exact
+guard→prepare→schedule ordering, submits only `PreparedWorkerPrompt.model_text`, and acknowledges
+non-empty exact receipts off-loop only after tracked admission; every pre-admission failure retains
+them, while acknowledgement failure is logged without altering the admitted result. Production and
+test composition inject `SqliteWorkerContextService`. One focused review found no behavioral defect;
+its naming correction landed and optional structural churn was declined. Post-review Ruff, strict
+Mypy, and 49 focused unit/composition/worker-context/official-SDK e2e tests pass. The next action is
+the production bundle build and real `8767` restart for the remaining Hermes Computer Use matrix.
+
+Browser reload also reproduced asyncio's destroyed-pending-task warning. Root traced it to external
+writer cancellation interrupting `asyncio.wait` before the writer cleaned up its per-iteration
+`Queue.get()` and `Event.wait()`. The tiny direct repair now owns both waits through `finally`; its
+red/green regression, full hub/websocket 14/14, Ruff, and strict Mypy passed. A separate independent
+review returned `READY` with no findings. No protocol, UI, or lifecycle design changed.
+
+The rebuilt production bundle is now running at the real `127.0.0.1:8767` Panels surface with the
+original visual design intact. Real Hermes Computer Use re-proved permission delivery end to end: the
+pending edit card visibly rendered the exact ACP diff block and both choices, a prompt approval changed
+`data/acp-dogfood-diff.txt` from `gamma` to `delta`, and Hermes replied exactly
+`PERMISSION DIFF READY`. Hermes supplies its patch envelope as the diff block's `newText` for the patch
+tool, so Panels correctly shows that literal backend payload; this is not a second Panels diff parser.
+
+Real Stop recovery also passed after the fresh restart. A `sleep 20` tool turn was stopped, replay
+showed the tool failed plus `Operation interrupted.`, the old unique completion marker never appeared,
+and one immediate follow-up replied exactly `STOP RECOVERY READY.` The durable Chief binding remains
+the same Hermes session `2dc5f884-fd9c-43ab-9c6b-ba6f90d21c26` at binding generation 6, proving the
+fresh-child recovery did not manufacture a conversation or binding.
+
+The Send Now presentation-boundary correction is implemented and focused-green at
+`orchestration/tickets/acp-05-send-now-human-boundary/`. Requested-cancel recovery now mirrors the
+existing compaction publication order: reset, durable replay, ready, retained FIFO human echoes, the
+optional Send Now successor echo, then the FIFO-only queue snapshot. The successor begins only after
+that atomic commit. The exact production-shaped browser regression projects old agent, retained FIFO
+user, successor user, and successor agent messages separately even when both agent chunks omit IDs.
+Ruff, strict Mypy, 74 focused Python tests, four ACP browser suites, and Svelte diagnostics pass. One
+focused implementation review and real Hermes Send Now retest remain before this half is settled.
+
+One remaining diagnosed production failure still keeps ACP-05's Computer Use gate closed. Explicit
+`/compact` visibly entered `compacting` and Hermes returned
+`Context compressed: 30 -> 13 messages ~25,137 -> ~32,873 tokens`, but Panels then published
+`Context failed · explicit` with `Conversation runtime generation failed during compaction`; the durable
+binding remained generation 6. ACP-06 deletion remains unauthorized until compaction is corrected and
+the Send Now plus hard-reload/server-restart compaction Computer Use proofs pass.
+
+The compaction deadline correction and its focused-review P1 are now implementation-complete and
+focused-green pending owner spot-check and real Hermes retest. Compaction has a dedicated five-minute
+emergency deadlock breaker while shutdown remains 10 seconds; a compaction taking a couple of minutes
+is normal and is not itself a failure signal. The actor still creates one absolute
+deadline; exact phase, configured budget, and stayed-N/committed-N+1/unresolved durable-binding
+disposition now reach the visible failed boundary and server log. Expiry invalidates an uncertain
+child without creating a second recovery budget. Immediate backend/protocol failures now retain their
+exact phase, exception type/message, and both primary plus required restore/abort causes where
+applicable; no generic capture or generation text replaces a concrete error. CAS settlement is not
+followed by a false stale abort. A narrow internal timer-won exception now separates actual Panels
+deadline expiry from a backend/protocol/persistence operation's own immediate `TimeoutError`; only the
+former receives five-minute budget wording, while the latter exposes its phase and concrete cause.
+A deterministic clock advances 16 seconds across fork, private replay, CAS,
+and browser commit—past the old shutdown budget—and still commits N→N+1 under the same five-minute
+deadline. Scoped Ruff and strict Mypy pass, and all 134 named registry/broker/hub/composition/
+Hermes-strategy/official-SDK e2e tests pass. Canonical `./verify` and `web/dist` rebuild were not run.
+
+The final narrow correction review is now `READY`: only Panels' typed timer-won signal becomes the
+five-minute breaker expiry; a backend-raised `TimeoutError` and every other concrete backend/protocol/
+persistence failure surface immediately with exact phase, type, message, and required recovery cause.
+The production server remains healthy on the real `127.0.0.1:8767` Panels surface, but Computer Use
+cannot yet run the Send Now/compaction/reload/restart proof because the Mac is still locked. This is an
+external interaction gate, not an ACP failure; no additional timeout mechanism is being added.
+
+Backend qualification planning continued only where it did not depend on that interaction. The Codex
+plan's focused source review is `READY` as a qualification-gated plan, but the locally available
+`@agentclientprotocol/codex-acp@1.1.4` is not eligible for production registration: it lacks the Panels
+capture-required ACP fork behavior, compaction-summary replay, and typed stored-plan replay, and the
+installed Codex CLI exposes app-server rather than an ACP command. Claude's first review rejected a
+false reverse-terminal blocker and requested three bounded plan corrections. Those corrections are
+now incorporated and the post-amendment plan is `READY`: Claude truthfully declares
+filesystem/terminal false and permission true, runs one initialize-only pre-advertisement capability
+preflight, and owns one exact-generation compaction observation state machine. Neither backend plan
+authorizes source work before the ACP-05/ACP-06 gates.
+
+The latest-official Codex qualification is now authoritative for 2026-07-20. Both npm `latest` and
+the official repository release remain `@agentclientprotocol/codex-acp@1.1.4`; exact tarball/source
+inspection reconfirms no ACP fork handler, no inspectable compaction summary, and stored-plan replay
+flattened to assistant text. Load ordering and ordinary permission/cancel source look compatible but
+cannot overcome those hard contract failures. `codex` therefore stays absent from registration and
+selection; no private session parser or second transport is authorized.
+
+ACP-10 is now cut and independently plan-reviewed `READY` at
+`orchestration/tickets/acp-10-final-audit-verification/`. It requires a requirement-by-requirement
+ledger, real Chrome Computer Use only on `127.0.0.1:8767`, exact backend qualification truth, complete
+legacy-absence and live-doc evidence, one focused settled-tree review, and one frozen no-writer
+canonical `./verify` with retained full log, input manifest, exit status, and SHA-256 digest. It adds
+no feature or compatibility work.
+
+The Mac was unlocked and the goal resumed directly at real Panels. `/new` established fresh Chief
+Hermes session `735aea7e-f76d-49bf-a4b9-0576846a5489` at binding generation 10. Real Send Now passed:
+the `sleep 60` tool failed, the old turn showed `Operation interrupted.`, the separate successor user
+message was accepted, Hermes answered exactly `SEND NOW RECOVERY READY.`, the forbidden old marker
+never appeared, and the durable binding stayed byte-identical.
+
+Explicit `/compact` then exposed the real remaining defect rather than a 60-second false timeout.
+Hermes completed `Context compressed: 8 -> 7 messages ~20,399 -> ~30,696 tokens`; after the full
+300-second emergency breaker Panels failed exactly during `private fork load`, retained generation 10,
+invalidated the uncertain child, and reported that exact-original restore also exhausted the same
+deadline. The persisted seven-message candidate is
+`7667eb9a-63fc-4ff4-a15c-3dc4ea9e9d76`; loading a candidate in a fresh child succeeds in about 1.6s.
+
+A deterministic no-model 2.5-second reproduction now isolates the fault: after a previously loaded
+source, Hermes returns `session/fork`, then emits candidate `available_commands_update`, and only then
+Panels sends `session/load`. `capture_load_session` has already opened its private epoch, whose request
+id is still unset, so ordered ingress raises `AcpSessionUpdateCallbackMismatch: private ACP capture
+received an update before its load request` and closes the connection. Waiting for prior load metadata
+does not help; the update is a post-fork candidate update. Fresh-child candidate load and a fresh
+fork-without-prior-source-load control both pass. Two read-only web/source research lanes are checking
+whether Panels' same-child fork/load capture is architecturally wrong or should route that candidate
+update by exact session id. ACP-06 remains gated until the corrected sequence passes real compaction,
+hard reload, and server restart.
+
+Both primary-source research lanes are now complete at
+`orchestration/tickets/acp-05-compaction-private-load-hang/`. They prove two independent Panels defects,
+not a Hermes hang: the private epoch incorrectly treats a valid pre-load-observer candidate update as
+fatal, and the registry holds its publication/update gate across ACP I/O so an older public FIFO slot can
+self-deadlock the private barrier. Raw official-SDK and exact-child controls complete fork/load/restore in
+under three seconds. ACP guarantees load replay before the load response but gives no quiet barrier
+around the still-draft fork operation; Hermes intentionally schedules candidate metadata after its fork
+response.
+
+The correction contract is now frozen and the obsolete durable-fork contract is explicitly marked
+superseded where it claimed same-child load/publication. Private capture becomes exact-session-aware;
+lifecycle exclusion separates from the short publication gate; the source child forks, a fresh
+unpublished child loads and validates the fork as a cross-process durability proof, durable CAS publishes
+that child as a new runtime generation, and exact-source pre-publication updates drain in wire order into
+the N+1 browser transition. The 300-second emergency breaker remains unchanged. An implementation plan
+is now complete at `orchestration/tickets/acp-05-compaction-private-load-hang/implementation-plan.md`.
+Two planning subagents were stopped after they continued inspecting without producing the bounded
+deliverable; root finalized the plan directly from the completed research and live code audit rather
+than waiting further. The one focused plan review found one concrete blocker: the hub's general
+pre-binding capture drops non-current sources while N is ready, so it could not own candidate updates or
+clear them on loser paths. The blocker is accepted and resolved in the contract/plan with a dedicated,
+aggregate-bounded compaction-transition FIFO that retains exact source/session identity, admits both
+legal candidate origins, publishes only winning N+1 entries once between replay and ready, and clears on
+every failure/loser/expiry/shutdown path. The other reviewed invariants were ready; no second review
+round is needed. No product source or tests have changed for this correction yet. ACP-06 remains
+hard-gated on the real compact/reload/restart proof.
+
+Implementation is now dispatched in two non-overlapping shared-worktree lanes. The ingress lane owns
+exact-session private routing plus the official-SDK post-fork ordering fixture/test. The registry/hub
+lane owns the lifecycle/publication lock split, fresh unpublished candidate child, CAS/source retirement,
+generation-fatal pre-CAS failure semantics, and transition-owned notification FIFO. Both start with the
+named deterministic red tests and run only focused checks; canonical `./verify`, generated distribution,
+server restart, and Computer Use remain root-owned after integration.
+
+Both correction lanes are implementation-complete and root has spot-checked the load-bearing path. A
+private response epoch carries the exact expected session ID; matching updates route privately even
+before the outgoing load observer, valid other-session traffic remains ordinary, and request ID only
+freezes the response's already-observed prefix. Compaction now keeps lifecycle mutation separate from
+short publication quiescence: the source child only forks, a reserved fresh unpublished child privately
+loads the fork as the cross-process durability proof, repository CAS/resolve happens outside the
+publication gate, and an exact N+1 child generation/identity is published before the source retires. The
+hub's aggregate-bounded transition FIFO owns both legal candidate origins and drains them once between
+private replay and ready while exact ordinary N remains before reset; every failure and settlement path
+clears it.
+
+Focused evidence is green: the ingress/SDK lane passes 39 tests, the registry/hub lane passes 115 owned
+tests, the ACP e2e suite passes 14 tests, and scoped Ruff plus strict Mypy pass. The one independent
+implementation review found two P1 failure-path gaps and both are now resolved in one bounded correction:
+missing fork capability and every post-validation preparation failure retire exact source N, while all
+compaction publication-gate waits use the original deadline and fail-closed settlement never re-waits on
+a blocked gate. Five held-gate regressions cover initial validation, final preparation, normal candidate
+publication, external-winner publication, and after-deadline abort. The corrected registry suite passes
+52 tests with scoped Ruff and strict Mypy clean. No second review round is needed; root spot-check agrees
+with the written resolution.
+
+No canonical `./verify` has been run. Root is now restarting the real `127.0.0.1:8767` server for the
+Computer Use proof of explicit compaction N -> N+1, expandable summary, hard reload, server restart with
+the same durable binding, and a later prompt. ACP-06 remains gated only on that live proof and is already
+fully planned and independently plan-reviewed `READY` for two disjoint runtime/schema and frontend lanes.
+
+Real Panels then proved the corrected backend transition: explicit `/compact` committed Chief binding
+generation 10 -> 11 and the expandable typed completion appeared. Hard reload and server restart exposed
+one narrower publication defect: the live transition showed both Hermes's raw summary message and the
+typed boundary, while reload reconstructed only the raw summary. Direct post-restart websocket attach
+proved the generation-11 binding and all seven Hermes messages were durable, so this is replay
+normalization rather than compaction, persistence, or reconnect failure.
+
+The ACP-05 replay correction is now contract- and plan-settled. Boundary ID/trigger provenance (never
+summary text) is stored atomically with the successor binding as a no-version-bump amendment to the
+still-unlanded v24 schema. One hub batch helper is the sole classifier for every controlled load; the
+Hermes strategy reuses its existing pinned summary parser and replaces the raw item at its exact replay
+position with the persisted typed boundary or boundaries. The broker does not publish a second successful
+completion. A later compaction stores only that capture's boundaries because the newer summary has
+compacted the earlier transcript; replaying an older ID with the newer summary would be false. The one
+focused plan review's v24/v25 and single-classifier blockers were accepted; its historical-provenance
+append request was refuted on that semantic ground. Two disjoint TDD lanes are now implementing durable
+provenance and replay behavior. ACP-06 remains gated on the corrected real compact/reload/restart/later-
+prompt proof, and canonical `./verify` remains deferred.
+
+Both replay-correction implementation lanes are now complete and root-spot-checked. The v24 binding row
+owns strict ordered boundary provenance and an exact atomic compaction CAS; ordinary replacement clears
+it, a loser returns the durable winner without overwrite, and ACP-06's terminal v25 migration is already
+contracted to preserve/create the column before its one-time row deletion. Hermes classifies each complete
+replay batch once through one exact private-context marker recognizer. One marker is suppressed in place;
+a valid marker-free replay remains ordinary and receives the durable completion boundary after it. The hub
+uses that one batch helper for ordinary attach/restart, compaction transition, and requested-cancel recovery,
+while the broker suppresses a duplicate successful boundary.
+
+The last stale e2e exposed one real lifecycle edge rather than a compaction regression: after an exact
+source was retired for missing `session/fork`, the broker published terminal `activity:failed` but the hub
+still considered its detached browser stream ready. Terminal failed activity now publishes exactly one
+connection error and marks that stream not ready; repeated failure cannot duplicate the error. The corrected
+e2e proves the failed boundary, unchanged durable generation 1, fresh-child reload of that same binding,
+and a later usable prompt. Final focused evidence is 26 persistence tests, 146 behavior units, and all 14
+ACP e2e tests passing, with scoped Ruff, strict Mypy, and diff-check clean. The one independent combined
+implementation review found three bounded gaps: ordinary-sqlite transaction nesting, three stale v23
+assertions, and the missing second-compaction proof. All three are corrected; the database/binding set is
+87/87 and the ACP e2e set is 14/14. No second broad review was used.
+
+Real Panels on a clean Chief generation then exposed one narrower owner-visible failure. Hermes reported
+a successful `Context compressed: 2 -> 2 messages`, but Panels emitted `Context failed` because the fresh
+fork replay contained the two retained ordinary messages and no displayable summary marker. Durable Hermes
+state and source inspection make this deterministic: short history is a legitimate no-op compression, and
+Hermes still reports success. The exact live-shaped unit regression is red 3/3 on the old behavior.
+
+The owner has simplified and superseded the product contract: compaction is an opaque lifecycle. Panels
+shows started, finished, or exact failure and never exposes or offers backend context. Backend success plus
+durable session continuity is authoritative; summary presence is irrelevant. One recognized private marker
+is suppressed if present, while marker-free replay stays intact and receives the content-free completion
+boundary after it. The Hermes fork remains only because current same-ID persistence can lose the in-memory
+compacted history, not for summary extraction and not as a generic backend requirement. The frozen bounded
+plan is `lifecycle-only-correction-plan.md`; disjoint Python/public-contract and browser lanes are now
+complete. Public `ContextCompaction` has no summary field; the browser row is plain and non-interactive.
+The backend aggregate passes 308 focused tests, the exact strategy file 27, and the marker-free official-
+child e2e; Ruff and strict Mypy are clean. All five integrated browser suites pass against the regenerated
+fixtures, with zero Svelte diagnostics and a clean production build.
+
+Actual Panels completed the gate. Explicit Chief compaction visibly entered `Context compacting`, durably
+advanced binding generation 12 -> 13, then hard reload and a full server restart reconstructed the original
+two messages followed by exactly one plain `Context compacted · explicit` boundary and no private context.
+The same replacement session then answered `Reply exactly ACP REPLAY CONTINUES 20260720.` with the exact
+response. ACP-05 is COMPLETE and authorizes ACP-06's already-plan-reviewed legacy deletion. Canonical
+`./verify` remains correctly deferred to ACP-10; next is dispatching ACP-06's disjoint runtime/schema and
+frontend deletion lanes.
+
+ACP-06 is now active in those two disjoint lanes. The frontend deletion lane is complete: the ACP
+composer directly owns commands and ordered inline image blocks; the legacy Chat/neutral UI, APIs,
+resources, types, chat-file preview, tests, and classified CSS are gone. All 13 web test groups pass,
+Svelte reports zero diagnostics, a temporary production build passes, and closure scans are clean.
+The runtime/schema lane has added the exact eight-field `employee_step_runs` owner, cut automatic-work
+correctness away from transcript state, rehomed the live conversation configuration/contracts, and
+proved a fresh v0 -> v25 schema with clean foreign keys. It is completing the old-v24 atomic migration,
+rollback proof, remaining Python caller closure, and focused Ruff/Mypy/pytest gates.
+
+A parallel primary-source audit is complete at
+`orchestration/acp-migration/compaction-primary-source-audit.md`. Stable ACP has no compaction method or
+summary contract. Codex exposes asynchronous namespaced lifecycle metadata on the same thread; Claude's
+ACP adapter exposes exact start/completed/failed controls on the same session; neither requires fork or
+client-visible context. The Codex/Claude contracts and plans now use content-free lifecycle completion,
+exact failures, and one honest 300-second Panels emergency breaker. Hermes's fork/rebind remains only its
+proven persistence workaround. Codex 1.1.4's sole remaining qualification question is typed live/load
+plan parity, not compaction. The owner-required functional-worker outcome makes that exact stored-plan
+replay difference a tested upstream presentation limitation rather than a registration blocker: Codex
+1.1.4 may proceed to real runtime qualification after ACP-06 and the selector, without a prose parser
+or private-state shim.
+
+The no-model Codex runtime prequalification is complete at
+`orchestration/tickets/acp-07-codex-backend-definition/runtime-prequalification.md`: a disposable
+locked install resolves adapter 1.1.4, ACP SDK 1.2.1, Codex 0.144.6 and Node 22.22.3; exact initialize
+passes; unauthenticated list/new/load fails closed at `-32000 Authentication required`; and pinned
+fixtures/source prove same-thread tagged compaction lifecycle. A final shell status command in that
+research lane accidentally executed `./verify` through backtick command substitution. It ran against
+the intentionally unfinished concurrent ACP-06 tree and failed on half-converted Python imports/Ruff;
+frontend gates passed. The output is not evidence and does not replace ACP-10's one settled canonical
+run. Observed generated side effects are the current `web/dist` build plus gitignored verify XML; root
+will replace the bundle at planned integration and did not revert concurrent work.
+
+Both ACP-06 implementation lanes are now COMPLETE and integrated in the shared tree. Runtime/schema
+replaces legacy Chat correctness with the exact eight-field `employee_step_runs` repository, performs
+the one-transaction v25 convert/reset/drop/rollback cutover, routes eligibility/recovery/Ticket guards
+through that sole owner, preserves actual ACP worker-context delivery, and removes the old Chat,
+Minds, relay, adapter, session-history, day-chat, and managed-chat-file owners. The frontend directly
+uses the ACP pane/composer and inline image blocks and removes every legacy Chat/neutral API, resource,
+type, preview, component, and classified CSS path. The settled lane evidence is the complete unit
+suite passing, current e2e 99/99 passing, Ruff clean across product/unit/e2e, strict Mypy clean across
+122 source files, all 13 web test groups passing, zero Svelte diagnostics, a clean temporary build,
+and closure scans clean except the intentional legacy vocabulary inside the v25 migration. Root's
+load-bearing migration/ownership spot-check found no defect; one direct glue correction changed the
+restart prompt from Hermes-specific wording to the generic existing employee conversation. Live docs
+are updating against this settled tree, followed by one combined focused review and real-app cutover
+spot-check. Canonical `./verify` remains reserved for ACP-10 despite the separately recorded accidental
+unfinished-tree invocation.
+
+ACP-06 is COMPLETE. Its single integrated review found four concrete P1s: controlled shutdown made
+the still-running Ticket's Employee-step non-resumable; the v25 fixture and rollback proof omitted
+several destructive-input shapes; v25 accepted only “JSON array” rather than the binding repository's
+exact compaction-boundary provenance shape; and the ACP composer cleared text and images when prompt
+admission returned `ok: false`. All four were corrected in the same bounded round. The backend gate
+passed 24 focused tests plus Ruff and strict Mypy; the frontend component/image/mount gates, Svelte
+diagnostics, production build, diff check, and legacy-bundle scan passed. The written review verdict
+is `READY`, with no unresolved P0/P1 and no second broad review.
+
+The authorized live cutover also passed. The old `127.0.0.1:8767` server was stopped and the real
+`data/planning.db` migrated atomically from v24 to v25. It preserved 451 terminal worker-step records
+(410 complete, 14 errored, 27 interrupted), removed every legacy Chat table and the Day chat column,
+cleared old bindings/session mirrors, left no running Ticket/Employee-step, and passed foreign-key
+inspection. Actual Computer Use against the restarted Panels app showed the intended restrained
+Panels layout, not the Vite fallback. A fresh generation-1 Chief session answered the exact prompt
+`ACP06 LIVE CUTOVER READY 20260720.`, retained both sides after hard reload, and a real Ticket pane
+created a fresh generation-1 ACP binding whose Ticket session mirror matched exactly. The live server
+remains running. Canonical `./verify` remains reserved for ACP-10.
+
+Next: implement the generic Worker-type default and per-Ticket Kickoff backend selector, then register
+and dogfood functional Codex and Claude Code worker backends against that seam. Gemini remains out.
+
+The generic selector implementation is now active with no contract blocker. In parallel, both backend
+runtime qualifications are COMPLETE without model prompts or global auth/config mutation. Codex remains
+READY on adapter 1.1.4, ACP SDK 1.2.1, locked Codex 0.144.6 and its matching native package. Claude's
+current official adapter is 0.60.0 rather than the planned 0.59.0; the contract/plan now pin ACP SDK
+1.2.1, Claude Agent SDK 0.3.215, and embedded Claude Code 2.1.215. Exact initialize and no-prompt
+new/load behavior pass, including visible pre-session auth/resource failures. One combined exact
+`agent_backends` manifest installs cleanly with a single deduplicated ACP SDK 1.2.1 and Zod 4.4.3.
+The manifest/lock is integration-owned and will change serially after the selector lands; the two
+backend definition lanes may then implement disjoint modules/tests in parallel before serial catalog
+registration and real authenticated dogfood.
+
+The generic Worker-backend selector is now COMPLETE. Schema v26 stores a required backend on every
+Ticket, each Worker type supplies its registered default, and pristine Kickoff exposes the restrained
+preselected Worker pill without creating a session merely by observation. First human demand or
+Kickoff advance attaches once and freezes the choice. Binding CAS, permission settlement, Ticket chat,
+and Automatic Employee work all use that same stored backend and durable session. The settled gates
+pass Ruff, strict Mypy across 44 source files, 356 focused Python tests, three real-route selector/
+runtime e2e tests, two CLI e2e tests, all focused frontend gates, zero Svelte diagnostics, and a
+temporary production build. The single independent implementation review returned `READY` with no
+findings; one apparent duplicate rollback was conclusively a duplicated read-output boundary and no
+fake correction was made. Canonical `./verify` remains reserved for ACP-10.
+
+Next: root creates the one exact combined `agent_backends` manifest/lock serially, then Codex and
+Claude implement disjoint backend modules/tests in parallel. Production catalog registration and real
+authenticated Ticket/Automatic-Employee dogfood remain serial integration steps.
+
+That serial package gate is now complete. `agent_backends/package.json` and its generated lock install
+with `npm ci` on Node 22.22.3: Claude ACP 0.60.0 and Codex ACP 1.1.4 deduplicate to ACP SDK 1.2.1 and
+Zod 4.4.3, with Codex 0.144.6. The two provider-specific module/test lanes are active in disjoint
+files; a read-only lane is mapping the smallest later catalog/preflight integration. No provider is
+registered or served yet, and no model prompt or canonical verification has run.
+
+The generic same-session compaction seam is now COMPLETE. After exact runtime-lease acquisition,
+Codex or Claude may expose one optional in-place capture hook; the generation-bound wrapper owns the
+existing absolute 300-second breaker, distinguishes its own timer from a concrete backend
+`TimeoutError`, accepts only terminal content-free lifecycle results, propagates cancellation, and
+never enters Hermes fork/private-load/CAS/rebind. Nine new deterministic proofs plus all 27 unchanged
+Hermes strategy tests pass with Ruff and strict Mypy. Root also mechanically updated the five stale
+selector-era registry test fixtures to the paired catalog/materialization constructor; both complete
+affected files pass 61 tests and Ruff.
+
+The shared provider activation contract and implementation plan are frozen under
+`orchestration/tickets/acp-07-08-backend-activation/`. Its read-only mapping found no additional
+runtime rewrite: the existing N-backend registry, binding, permission, Ticket chat, and Automatic
+Employee paths already fit. One serial integration lane now owns only build-context repository root,
+optional ordered startup preflights, production lifespan ordering/failure cleanup, and the exact
+`hermes, codex, claude` catalog. Claude's provider-local slice is green on 14 focused tests and is
+waiting only for that shared preflight field; Codex resumed against the settled in-place hook. No
+provider is registered or served yet, and live v25 remains untouched.
+
+Codex, Claude, and shared activation source are now COMPLETE before independent review. The sole
+production catalog is ordered `hermes, codex, claude`; Chief and all shipped Worker defaults remain
+Hermes. Codex is lazy and its exact locked `--version` probe sends no session/model work. Claude is
+the sole startup preflight and now proves cancellation-safe spawn/initialize/close/force-close under
+one absolute deadline before application admission. Provider gates pass 27 Codex and 33 Claude/
+generic tests with Ruff and strict Mypy; shared catalog/composition/lifespan acceptance passes 37,
+and its pre-correction combined provider gate passed 51. No authenticated model prompt has run.
+
+Pinned Codex source exposed one final bounded broker edge before review: `/compact` rejection is an
+ACP prompt exception, not a tagged failed tool update. The provider strategy now exposes a concrete
+display-safe `TypeName: message` only for exact-session `/compact` or an active exact-binding automatic
+compaction and has removed the invented failed-tag shape. The completed generic broker seam consults
+that optional reason only for an uncancelled prompt exception with a pending compaction boundary,
+using the provider strategy frozen into the exact acquired runtime lease; invalid or absent reasons
+fall back to the existing generic failure and ordinary prompt failures remain private. The focused
+broker/provider/compaction set passes 100 tests.
+
+Root's settled current-tree integration gate passes 193 focused tests across provider activation,
+catalog/lifespan, Worker selection, Codex, Claude, the generic in-place seam, the turn and permission
+brokers, and the unchanged Hermes provider/strategy; scoped Ruff, strict Mypy, and diff check are all
+green. The one independent combined implementation review returned `READY` with no P0/P1 finding;
+it specifically confirmed the exact locked definitions, lazy Codex and initialize-only Claude
+startup behavior, cancellation/cleanup, same-session provider compaction, exact prompt-failure
+privacy, sole ordered catalog, pre-admission lifecycle, and shared human/Automatic-Employee binding.
+
+The real schema-v26 activation and authenticated backend dogfood are now COMPLETE. Startup migrated
+the live DB cleanly and admitted the application only after Claude's initialize-only preflight. In
+the actual production-served Panels UI, fresh Codex Ticket `t_nkq3108b` and Claude Ticket
+`t_1xbdpkq0` each proved first human demand, a real backend reply, naturally discovered Automatic
+Employee work, a worker-authored Success proposal, and a later human reply through one unchanged
+generation-1 ACP binding. The stored Automatic Employee run session IDs exactly equal their Ticket
+conversation session IDs. Typed thought/tool activity stayed distinct in the transcript; Codex also
+surfaced real permission choices. Both backends compacted on the same session with visible,
+content-free lifecycle, and hard refresh preserved the typed transcript.
+
+Dogfood found one exact Claude replay defect after successful compaction: pinned
+`claude-agent-acp` 0.60.0 drops `isCompactSummary` while translating its private generated summary
+into an ordinary user chunk during `session/load`. Panels therefore exposed that private summary and
+its transcript path after refresh. A red regression captured the exact pinned template; the minimal
+provider-local replay classifier now replaces only that synthetic chunk with a terminal content-free
+`ContextCompaction`, leaving ordinary user replay untouched. The complete Claude strategy suite is
+25/25, scoped Ruff and strict Mypy pass, and live refresh now shows only `Context compacted` with no
+summary, path, or instructions.
+
+A full server restart then proved both durable bindings continue rather than cut over: Claude replied
+exactly `CLAUDE RESTART OK`, and Codex replied exactly `CODEX RESTART OK` through Safari. The durable
+bindings remain Claude `e2562875-0b3f-482e-8f75-52e0d0e46731` and Codex
+`019f81a8-7041-7bb3-b7da-4445912fc3d0`, both generation 1, matching their completed Employee-step
+runs. Backend feature work and dogfood are complete.
+
+ACP-10's entry audit found that the older Hermes human-Ticket and Automatic-Employee observations
+were on different Tickets and that schema 25 had intentionally reset the pre-cutover run's binding.
+Rather than infer continuity, root closed the literal experiential gap on fresh Hermes Ticket
+`t_x2f5up6e`. Opening pristine Kickoff created no binding; the first UI prompt created session
+`f5b57fd7-7873-4285-9f6c-0e6d0ee219d4` generation 1 and returned `HERMES HUMAN OK`; natural
+discovery then completed `run_1wcjzguy` on that exact session with typed worker activity and a Success
+proposal; the later human prompt returned `HERMES AFTER AUTO OK`. Binding, Ticket mirror, and run
+session are byte-identical. All three production backends now have the same current live continuity
+proof.
+
+The final provider-specific UI matrix then closed Hermes permission rejection and Codex permission
+rejection, Queue, Send Now, disabled Steer, and live-plan/recovery presentation. Claude proved disabled
+Steer and FIFO Queue. Its first Send Now probe exposed one real defect: although the old turn was
+visibly interrupted and the successor completed exactly once, the pinned Claude adapter later emitted
+the forbidden old final answer from provider-side background work. ACP updates carry no prompt epoch,
+so `acp-10-claude-requested-cancel-isolation` added one provider capability that routes every terminal
+Claude requested cancellation through the existing same-binding fresh-child recovery; Hermes and
+Codex keep their normal terminal-response reuse path. Focused broker/hub tests passed 18/18, provider
+definition tests passed 3/3, and Ruff plus strict Mypy passed. Root spot-checked the exact boundary.
+
+The live retest then replaced Claude child PID `2477` with PID `7324` while retaining Ticket
+`t_1xbdpkq0`, ACP session `e2562875-0b3f-482e-8f75-52e0d0e46731`, and binding generation 1. The
+successor returned exactly `CLAUDE ISOLATION RETEST SUCCESSOR OK 20260721`, and the forbidden old
+completion remained absent beyond the previously observed late-output interval. Claude's native
+`ExitPlanMode` path also produced the real `Ready to code?` ACP permission card with all five provider
+choices; selecting `Yes, and use "auto" mode` settled it once and completed the read-only probe. The
+Hermes, Codex, and Claude experiential matrix is now complete.
+
+The one ACP-10 settled-tree independent review then inspected the exact owner brief, proof artifacts,
+current docs, and all named load-bearing seams. Its verdict is `READY` with zero unresolved P0/P1
+findings. Root accepts that report in full; there is no correction to make and no second broad review.
+
+The no-writer freeze is now established. All sub-agents are complete; production server PID `2412`
+and its ACP child shut down cleanly; port 8767 is empty; no workspace test/build/server/backend process
+remains; and `git diff --check` passes. `freeze-git-status.txt` and the sorted
+`verified-input-manifest.sha256` retain the exact pre-run worktree and verification-input state.
+
+Frozen snapshot attempt 1 ran once from `2026-07-21T00:09:19Z` to `00:12:12Z` and is retained as a
+failure, not a completion claim. Ruff found four formatting violations; unit reported 14 failed and
+1,005 passed, all caused by old test imports/SQL layout or fixtures/assertions that omit the new
+`employee_backend` Ticket/Worker-manifest field. Mypy, build, all 13 frontend scripts, and 103 e2e
+tests passed. The 958-line, 43,424-byte log has SHA-256
+`daa64377bf6ba1c89be8f33b80b7c82ca49dfb602cce246fea228813a55441bf`; the 1,154-entry frozen input
+manifest remained byte-for-byte unchanged. No immediate full rerun is authorized.
+
+Next: reopen only the exact formatting/test-fixture failures, run focused checks, refresh the affected
+audit/review evidence, establish a fresh no-writer snapshot, and only then make the next full-gate
+decision.
+
+The bounded correction is now settled. Two disjoint sub-agents handled Ruff formatting and
+Worker-manifest fixtures while root made the two-line direct-`Ticket` fixture repair. Root inspected
+the combined diff: it changes no production behavior and weakens no assertion. Ruff passes on all 11
+implicated files; the 10-file unit gate passes 76/76 with two existing warnings; and `git diff
+--check` passes. `focused-checks-and-disposition.md` marks the correction ready for a fresh no-writer
+snapshot without another broad review.
+
+Next: preserve the failed attempt under an attempt-specific log name, establish a fresh exact
+status/input manifest with zero writers, and then run the one clean canonical gate for that new
+snapshot. The failed snapshot remains part of the final verification report.
+
+The failed log is now preserved byte-identically as `data/verify/acp-10-final-attempt-1.log`. A fresh
+corrected freeze began at `2026-07-21T00:17:42Z`: all implementers are complete, no workspace writer
+or port-8767 server exists, exact Ruff and `git diff --check` pass, and the final status/input snapshots
+are `freeze-git-status-attempt-2.txt` and `verified-input-manifest-attempt-2.sha256`.
+
+The final corrected frozen snapshot then passed its one clean canonical gate from
+`2026-07-21T00:18:51Z` to `00:21:43Z`. Ruff, Mypy, build, and frontend are green; unit is 1,019/1,019;
+e2e is 103/103; exit status is 0; and the final line is `VERIFY: PASS`. The 157-line, 9,051-byte log is
+`data/verify/acp-10-final.log` with SHA-256
+`d66e7bfd939d9622ac8673b6cba00937f1124c0b3a95d0d6a37bcda4513a8963`. The final 1,162-entry input
+manifest remained byte-for-byte unchanged at SHA-256
+`d7265946efa9bac6a5cee8130ba020dd4827dba8b25a1963491e58f6cd67c611`.
+
+Safari then loaded the unchanged verified build at the real `8767` Ticket route. It showed Panels'
+restrained dark Ticket/proposal layout, `Connected`, the narrow Claude conversation rail, durable
+typed replay/content-free compaction, and an idle Worker. The final frame is recorded in
+`verification-report.md`; temporary server PID `58655` shut down cleanly afterward.
+
+ACP-10 is complete: zero unproved requirements, zero unresolved review findings, exact production
+catalog `hermes, codex, claude`, PASS backend qualification and real Computer Use matrix, PASS legacy
+absence/current docs, one retained failed snapshot, and one clean final frozen-tree verification.
+
+## Current work cycle (2026-07-19): Workspace left-panel information hierarchy exploration
+
+The owner selected the three-level image direction, refined in
+`orchestration/workspace-redesign/project-worker-stage-hover-gutters.png`: project → worker →
+non-empty stage → ticket, with stage absent from ticket rows. All labels stay flush. Chevrons are
+hidden at rest and reveal only at a hovered grouping header’s right edge. A generous, thicker divider
+ends worker blocks; thinner dividers separate stage groups. No product code changed; awaiting owner
+review before a contract-scoped implementation ticket is cut.
+
+Interactive fake-data version added at `orchestration/workspace-redesign/interactive-three-level-grouping.html`.
+Project, worker, and stage headers collapse independently; ticket selection changes locally; running
+tickets animate. This is a standalone design mockup, not production UI.
+
+Latest owner refinement: each worker type is now a transparent bordered card with its title and
+non-empty stages inside. Project headings grew further; worker and stage headings also grew. The
+old thick worker divider is removed because the card edge now defines the worker boundary.
+
+Card borders are now lower-contrast. Worker-type names use uppercase at their existing scale; stage
+names are normal-cased headers, larger than the tickets they head.
+
+Stage headers were enlarged again to 21px after owner feedback that they still read too much like
+ticket text. Their original muted color is preserved.
+
+Owner approved moving the mockup into production on branch
+`codex/workspace-three-level-grouping`. The contract-scoped implementation ticket is cut at
+`orchestration/tickets/workspace-three-level-grouping/contract.md`; scope is the existing Workspace
+route, shared CSS, and focused board e2e coverage. The board and manifest APIs remain unchanged.
+
+The first implementation pass is complete and focused checks pass. Independent diff review found four
+corrections before integration: reconcile one stale paired-work row assertion, restore Hide done route
+persistence coverage, use keyboard-only `:focus-visible` for chevrons, and match the approved 40px/44px
+project hierarchy. These findings are accepted; full `./verify` waits for their correction.
+
+All four review corrections passed focused checks and the second review returned CLEAR. The canonical
+`./verify` then exposed one further Workspace-specific stale E31 reload assertion for the removed
+pending-proposal row mark; that integration repair now snapshots the Implementation group nesting and
+title-only non-running row instead. The same verify run also failed broadly in unrelated in-progress
+ACP/shared-registry work already present in the owner worktree (64 unit failures, unresolved ACP
+frontend packages/types, and 36 chat/ACP e2e failures), so the repository-wide gate is not green.
+The repaired E31 reload test passes in isolation; the five hierarchy/ownership focused tests also pass.
+
+Owner correction after the first commit: structural stage grouping replaces repeated worker/stage text,
+not the existing per-ticket condition circle. The production row now restores the full waiting, running,
+approval-needed, paired, errored, and completed StageMark states while retaining title-only row text.
+
+Latest owner typography correction: worker types return to normal-case 20px section headers; stage names
+become compact 11px uppercase labels. The production CSS, interactive mockup, contract, and focused visual
+assertions move together.
+
 ## Current work cycle (2026-07-19): shared employee-child registry — port legacy to per-child
 
 Owner decision (2026-07-19): port the legacy (flag-off) path to one-child-per-employee — the

@@ -48,6 +48,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Worker type to use for every imported Ticket.",
     )
     parser.add_argument(
+        "--employee-backend",
+        default=None,
+        help="Registered employee backend override for every imported Ticket.",
+    )
+    parser.add_argument(
         "--db-path", default=None, help="Target SQLite path (defaults to the configured db_path)."
     )
     parser.add_argument("--json", action="store_true", help="Emit the report as JSON.")
@@ -63,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
             conn,
             args.source,
             worker_type=args.worker_type,
+            employee_backend=args.employee_backend,
             now=now,
         )
     finally:

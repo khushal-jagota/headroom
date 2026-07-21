@@ -18,7 +18,6 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import asdict
 from enum import StrEnum
 from typing import Annotated, Any, cast
 
@@ -45,7 +44,6 @@ from planner.runtime.automatic_employee_step_eligibility_wake import (
 from planner.runtime.contracts import EmployeeRevisionRunner
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
-from planner.tickets import employee_session_history
 from planner.tickets import views as tickets_views
 from planner.tickets.contracts import (
     NO_FURTHER,
@@ -54,6 +52,7 @@ from planner.tickets.contracts import (
     AtCap,
     CreateTicketBody,
     CreateTicketFromExternalWorkBody,
+    EmployeeBackendBody,
     LinkBody,
     NoteBody,
     ProposeBody,
@@ -68,7 +67,10 @@ from planner.tickets.contracts import (
     TicketEdit,
     ValueEditBody,
 )
-from planner.worker_types.configuration import configured_worker_type_registry
+from planner.worker_types.configuration import (
+    configured_employee_runtime_definitions,
+    configured_worker_type_registry,
+)
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 router = APIRouter()
@@ -211,7 +213,7 @@ def _validate_field(worker_type_definition: WorkerTypeDefinition, field: str) ->
 
 
 def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
-    return CreateTicketBody(
+    body = CreateTicketBody(
         worker_type=_require_create_worker_type(raw),
         title=body_str(raw, "title"),
         kickoff_note=body_str(raw, "kickoff_note"),
@@ -222,6 +224,9 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         sprint_id=body_opt_str(raw, "sprint_id"),
         sprint_item_id=body_opt_str(raw, "sprint_item_id"),
     )
+    if "employee_backend" in raw:
+        body["employee_backend"] = body_str(raw, "employee_backend")
+    return body
 
 
 # The fixed external-work keys, allowed for every type. The field-value keys are
@@ -232,6 +237,7 @@ _EXTERNAL_FIXED_CREATE_KEYS = _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(
     {
         "title",
         "worker_type",
+        "employee_backend",
         "priority",
         "deadline",
         "project",
@@ -315,6 +321,8 @@ def _marshal_external_create(
         body["sprint_id"] = body_opt_str(raw, "sprint_id")
     if "sprint_item_id" in raw:
         body["sprint_item_id"] = body_opt_str(raw, "sprint_item_id")
+    if "employee_backend" in raw:
+        body["employee_backend"] = body_str(raw, "employee_backend")
     return body
 
 
@@ -413,6 +421,7 @@ async def create_ticket(
         sprint_id=body["sprint_id"],
         sprint_item_id=body["sprint_item_id"],
         worker_type=body["worker_type"],
+        employee_backend=body.get("employee_backend"),
         automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -457,6 +466,7 @@ async def create_ticket_from_external_work(
         sprint_id=body.get("sprint_id"),
         sprint_item_id=body.get("sprint_item_id"),
         worker_type=worker_type,
+        employee_backend=body.get("employee_backend"),
         automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -522,59 +532,6 @@ async def list_tickets(
     }
 
 
-@router.get("/tickets/by-employee-session/{employee_session_id}")
-async def get_my_ticket(
-    employee_session_id: str,
-    conn: DbConn,
-    clk: Clk,
-) -> JsonDict:
-    """A worker agent's own Ticket, resolved from its Employee session id."""
-    ticket = tickets_data.read_ticket_by_employee_session_id(conn, employee_session_id)
-    detail = tickets_views.ticket_detail(conn, ticket.id, clk.now_unix())
-    detail["worker"] = (
-        configured_worker_type_registry()
-        .require(ticket.worker_type)
-        .worker_profile.specialist_skill
-    )
-    return detail
-
-
-@router.get("/tickets/by-live-session/{live_session_id}")
-async def get_my_ticket_by_live_session(
-    live_session_id: str,
-    request: Request,
-    conn: DbConn,
-    clk: Clk,
-) -> JsonDict:
-    """Resolve a worker Ticket from the current Hermes gateway live-session id."""
-    gateway = request.app.state.adapters.gateway
-    stored_session_keys = gateway.stored_session_keys_for_live_session_id(live_session_id)
-    tickets_by_id = {
-        ticket.id: ticket
-        for ticket in tickets_data.read_tickets_by_employee_session_ids(conn, stored_session_keys)
-    }
-    if not tickets_by_id:
-        raise PlannerError(
-            ErrorCode.not_found,
-            "no ticket owns this live Hermes session",
-            {"live_session_id": live_session_id},
-        )
-    if len(tickets_by_id) != 1:
-        raise PlannerError(
-            ErrorCode.validation,
-            "live Hermes session is bound to multiple tickets",
-            {"live_session_id": live_session_id, "ticket_ids": sorted(tickets_by_id)},
-        )
-    ticket = next(iter(tickets_by_id.values()))
-    detail = tickets_views.ticket_detail(conn, ticket.id, clk.now_unix())
-    detail["worker"] = (
-        configured_worker_type_registry()
-        .require(ticket.worker_type)
-        .worker_profile.specialist_skill
-    )
-    return detail
-
-
 @router.get("/tickets/{ticket_id}/worker-self")
 async def get_worker_self_ticket(
     ticket_id: str,
@@ -590,9 +547,7 @@ async def get_worker_self_ticket(
     (`ticket_detail` + the worker specialist skill) the by-session route returns."""
     ticket = tickets_data.read_ticket(conn, ticket_id)
     if ticket.employee_session_id is not None:
-        owner = tickets_data.read_ticket_by_employee_session_id(
-            conn, ticket.employee_session_id
-        )
+        owner = tickets_data.read_ticket_by_employee_session_id(conn, ticket.employee_session_id)
         if owner.id != ticket.id:
             raise PlannerError(
                 ErrorCode.validation,
@@ -612,42 +567,36 @@ async def get_worker_self_ticket(
     return detail
 
 
-@router.get("/tickets/{ticket_id}/employee-session-history")
-async def get_employee_session_history(
-    ticket_id: str,
-    request: Request,
-    conn: DbConn,
-    ctx: Ctx,
-    cfg: Cfg,
-    clk: Clk,
-) -> JsonDict:
-    require_direct_write(ctx)
-    # Flag-on, a ticket employee is pool-owned: the installed adapter is the EntityRoutingGateway
-    # whose default is the LEGACY worker gateway, and its history read spawns a legacy child that
-    # `session.resume`s + binds the ticket's durable session — a SECOND owner of the pool-owned
-    # session the composition-input assertion cannot see (Codex Finding 3, the crossover
-    # `D-child-per-employee` forbids). Reject the legacy-gateway history read for a pool-owned
-    # ticket flag-on; the neutral pane renders history from the durable session via attach, so
-    # this inspection endpoint has no flag-on consumer (no web caller). Legacy path unchanged.
-    if cfg.relay_backend_enabled and ticket_id.startswith("t_"):
-        raise PlannerError(
-            ErrorCode.validation,
-            "ticket employee is pool-owned; the legacy session-history read is unavailable "
-            "(the neutral pane renders history from the durable session)",
-            {"ticket_id": ticket_id},
-        )
-    result = employee_session_history.read_employee_session_history(
-        conn,
-        request.app.state.adapters.gateway,
-        ticket_id,
-        clk.now_unix(),
-    )
-    return asdict(result)
-
-
 @router.get("/tickets/{ticket_id}")
 async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk) -> JsonDict:
     return tickets_views.ticket_detail(conn, ticket_id, clk.now_unix())
+
+
+@router.put("/tickets/{ticket_id}/employee-backend")
+async def put_ticket_employee_backend(
+    ticket_id: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+) -> JsonDict:
+    require_direct_write(ctx)
+    if set(raw) != {"employee_backend"}:
+        raise PlannerError(
+            ErrorCode.validation,
+            "employee backend update requires exactly employee_backend",
+            {},
+        )
+    body = EmployeeBackendBody(employee_backend=body_str(raw, "employee_backend"))
+    definitions = configured_employee_runtime_definitions()
+    ticket = tickets_data.write_employee_backend(
+        conn,
+        ticket_id,
+        employee_backend=body["employee_backend"],
+        employee_backend_catalog=definitions.employee_backend_catalog,
+        now=clk.now_unix(),
+    )
+    return tickets_views.ticket_json(ticket, clk.now_unix())
 
 
 @router.delete("/tickets/{ticket_id}")

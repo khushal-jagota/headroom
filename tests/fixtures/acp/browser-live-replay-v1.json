@@ -1,0 +1,644 @@
+{
+  "live": [
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "detail": "Conversation replay starting",
+        "resetBindingGeneration": 1,
+        "state": "reset",
+        "supportsSteer": true
+      },
+      "sequence": 1,
+      "type": "connection",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "content": {
+            "text": "Inspect the browser subject.",
+            "type": "text"
+          },
+          "sessionUpdate": "user_message_chunk"
+        }
+      },
+      "sequence": 2,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "content": {
+            "text": "This thought remains typed.",
+            "type": "text"
+          },
+          "sessionUpdate": "agent_thought_chunk"
+        }
+      },
+      "sequence": 3,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "content": {
+            "text": "The answer remains public.",
+            "type": "text"
+          },
+          "sessionUpdate": "agent_message_chunk"
+        }
+      },
+      "sequence": 4,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "content": [
+            {
+              "newText": "after\n",
+              "oldText": "before\n",
+              "path": "/workspace/fixture.txt",
+              "type": "diff"
+            },
+            {
+              "terminalId": "terminal-browser",
+              "type": "terminal"
+            }
+          ],
+          "kind": "edit",
+          "rawInput": {
+            "path": "/workspace/fixture.txt"
+          },
+          "sessionUpdate": "tool_call",
+          "status": "in_progress",
+          "title": "Edit fixture",
+          "toolCallId": "tool-1"
+        }
+      },
+      "sequence": 5,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "rawOutput": {
+            "changed": true
+          },
+          "sessionUpdate": "tool_call_update",
+          "status": "completed",
+          "toolCallId": "tool-1"
+        }
+      },
+      "sequence": 6,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "entries": [
+            {
+              "content": "First snapshot",
+              "priority": "high",
+              "status": "in_progress"
+            }
+          ],
+          "sessionUpdate": "plan"
+        }
+      },
+      "sequence": 7,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "entries": [
+            {
+              "content": "Replacement snapshot",
+              "priority": "low",
+              "status": "completed"
+            }
+          ],
+          "sessionUpdate": "plan"
+        }
+      },
+      "sequence": 8,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "currentModeId": "focus",
+          "sessionUpdate": "current_mode_update"
+        }
+      },
+      "sequence": 9,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "configOptions": [
+            {
+              "currentValue": "one",
+              "id": "model",
+              "name": "Model",
+              "options": [
+                {
+                  "name": "One",
+                  "value": "one"
+                }
+              ],
+              "type": "select"
+            }
+          ],
+          "sessionUpdate": "config_option_update"
+        }
+      },
+      "sequence": 10,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "sessionUpdate": "session_info_update",
+          "title": "Hermes fixture"
+        }
+      },
+      "sequence": 11,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "availableCommands": [
+            {
+              "description": "Compact this conversation",
+              "name": "compact"
+            }
+          ],
+          "sessionUpdate": "available_commands_update"
+        }
+      },
+      "sequence": 12,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "cost": {
+            "amount": 0.04,
+            "currency": "USD"
+          },
+          "sessionUpdate": "usage_update",
+          "size": 2000,
+          "used": 240
+        }
+      },
+      "sequence": 13,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "lifecycle": "active",
+        "terminalId": "terminal-browser",
+        "terminalOutput": {
+          "output": "fixture output\n",
+          "truncated": false
+        }
+      },
+      "sequence": 14,
+      "type": "terminal_state",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "detail": "Conversation ready",
+        "state": "ready",
+        "supportsSteer": true
+      },
+      "sequence": 15,
+      "type": "connection",
+      "wireVersion": 1
+    }
+  ],
+  "replay": [
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "detail": "Conversation replay starting",
+        "resetBindingGeneration": 1,
+        "state": "reset",
+        "supportsSteer": true
+      },
+      "sequence": 1,
+      "type": "connection",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "content": {
+            "text": "Inspect the browser subject.",
+            "type": "text"
+          },
+          "sessionUpdate": "user_message_chunk"
+        }
+      },
+      "sequence": 2,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "content": {
+            "text": "This thought remains typed.",
+            "type": "text"
+          },
+          "sessionUpdate": "agent_thought_chunk"
+        }
+      },
+      "sequence": 3,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "content": {
+            "text": "The answer remains public.",
+            "type": "text"
+          },
+          "sessionUpdate": "agent_message_chunk"
+        }
+      },
+      "sequence": 4,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "content": [
+            {
+              "newText": "after\n",
+              "oldText": "before\n",
+              "path": "/workspace/fixture.txt",
+              "type": "diff"
+            },
+            {
+              "terminalId": "terminal-browser",
+              "type": "terminal"
+            }
+          ],
+          "kind": "edit",
+          "rawInput": {
+            "path": "/workspace/fixture.txt"
+          },
+          "sessionUpdate": "tool_call",
+          "status": "in_progress",
+          "title": "Edit fixture",
+          "toolCallId": "tool-1"
+        }
+      },
+      "sequence": 5,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "rawOutput": {
+            "changed": true
+          },
+          "sessionUpdate": "tool_call_update",
+          "status": "completed",
+          "toolCallId": "tool-1"
+        }
+      },
+      "sequence": 6,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "entries": [
+            {
+              "content": "First snapshot",
+              "priority": "high",
+              "status": "in_progress"
+            }
+          ],
+          "sessionUpdate": "plan"
+        }
+      },
+      "sequence": 7,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "entries": [
+            {
+              "content": "Replacement snapshot",
+              "priority": "low",
+              "status": "completed"
+            }
+          ],
+          "sessionUpdate": "plan"
+        }
+      },
+      "sequence": 8,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "currentModeId": "focus",
+          "sessionUpdate": "current_mode_update"
+        }
+      },
+      "sequence": 9,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "configOptions": [
+            {
+              "currentValue": "one",
+              "id": "model",
+              "name": "Model",
+              "options": [
+                {
+                  "name": "One",
+                  "value": "one"
+                }
+              ],
+              "type": "select"
+            }
+          ],
+          "sessionUpdate": "config_option_update"
+        }
+      },
+      "sequence": 10,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "sessionUpdate": "session_info_update",
+          "title": "Hermes fixture"
+        }
+      },
+      "sequence": 11,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "availableCommands": [
+            {
+              "description": "Compact this conversation",
+              "name": "compact"
+            }
+          ],
+          "sessionUpdate": "available_commands_update"
+        }
+      },
+      "sequence": 12,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "sessionId": "session-browser",
+        "update": {
+          "cost": {
+            "amount": 0.04,
+            "currency": "USD"
+          },
+          "sessionUpdate": "usage_update",
+          "size": 2000,
+          "used": 240
+        }
+      },
+      "sequence": 13,
+      "type": "acp_session_update",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "lifecycle": "active",
+        "terminalId": "terminal-browser",
+        "terminalOutput": {
+          "output": "fixture output\n",
+          "truncated": false
+        }
+      },
+      "sequence": 14,
+      "type": "terminal_state",
+      "wireVersion": 1
+    },
+    {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "detail": "Conversation ready",
+        "state": "ready",
+        "supportsSteer": true
+      },
+      "sequence": 15,
+      "type": "connection",
+      "wireVersion": 1
+    }
+  ]
+}

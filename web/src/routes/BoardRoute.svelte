@@ -1,13 +1,11 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { relayChief, retryRelayChiefMeta } from "../lib/capabilities";
   import { resourceCatalogue } from "../lib/resourceCatalogue";
   import { labelize } from "../lib/ui";
   import type { FieldStageVisualState } from "../lib/ui";
   import type { WorkerTypesResponse } from "../lib/lifecycle";
   import Button from "../components/Button.svelte";
-  import ChatPanel from "../components/ChatPanel.svelte";
-  import ChiefNeutralPane from "../components/ChiefNeutralPane.svelte";
+  import AcpConversation from "../components/AcpConversation.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import StageMark from "../components/StageMark.svelte";
@@ -18,17 +16,6 @@
   const chiefOfStaffEntityId = "agent_panels_chief_of_staff";
   const noProjectKey = "__no_project__";
   const board = resourceCatalogue.board();
-  // The legacy gateway-status resource is meaningful only on the legacy (disabled) path — a
-  // Chief-addressed status call falls through EntityRoutingGateway to the worker gateway. Create
-  // it lazily so the neutral/unknown/error branches never subscribe it (mirrors ChiefOfStaffRoute).
-  let chiefChatStatus: ReturnType<typeof resourceCatalogue.chatGatewayStatus> | null = null;
-
-  function legacyChiefChatStatus(): ReturnType<typeof resourceCatalogue.chatGatewayStatus> {
-    if (chiefChatStatus === null) {
-      chiefChatStatus = resourceCatalogue.chatGatewayStatus(chiefOfStaffEntityId);
-    }
-    return chiefChatStatus;
-  }
   const manifest = resourceCatalogue.workerTypeManifests();
   let columns = $derived(board.data?.columns || []);
   let allCards = $derived(columns.flatMap((column) => column.cards));
@@ -211,7 +198,6 @@
 
   onDestroy(() => {
     board.dispose();
-    chiefChatStatus?.dispose();
     manifest.dispose();
   });
 </script>
@@ -332,29 +318,10 @@
         >
           {#if rightPaneMode === "chief"}
             <div class="board-workspace-desk-inner">
-              {#if $relayChief === "enabled"}
-                <ChiefNeutralPane entityId={chiefOfStaffEntityId} label="Chief of Staff" />
-              {:else if $relayChief === "disabled"}
-                {@const status = legacyChiefChatStatus()}
-                <ChatPanel
-                  entityId={chiefOfStaffEntityId}
-                  available={status.data?.available ?? true}
-                  label="Chief of Staff"
-                />
-              {:else if $relayChief === "error"}
-                <div class="chief-chat-placeholder" data-chief-meta-error>
-                  <p>Could not load Chief of Staff.</p>
-                  <button
-                    type="button"
-                    data-chief-meta-retry
-                    onclick={() => void retryRelayChiefMeta()}
-                  >
-                    Retry
-                  </button>
-                </div>
-              {:else}
-                <div class="chief-chat-placeholder" data-chief-meta-loading></div>
-              {/if}
+              <AcpConversation
+                employeeId={chiefOfStaffEntityId}
+                employeeLabel="Chief of Staff"
+              />
             </div>
           {:else if selectedCard}
             {#key selectedCard.id}

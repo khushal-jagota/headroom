@@ -97,6 +97,7 @@ class ScopePair:  # required on every direct accept/edit-accept
 
 class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     worker_type: Required[str]  # required registry type id (no ingress default)
+    employee_backend: str
     title: str  # default ""
     kickoff_note: str  # default ""; proposed intake context / user guidance
     priority: str | None  # Priority value; default P3
@@ -124,6 +125,7 @@ class ReconcileTicketFromExternalWorkBody(TypedDict):
 class CreateTicketFromExternalWorkBody(ReconcileTicketFromExternalWorkBody):
     title: str
     worker_type: str
+    employee_backend: NotRequired[str]
     priority: NotRequired[str | None]
     deadline: NotRequired[str | None]
     project: NotRequired[str | None]
@@ -173,6 +175,10 @@ class StageBody(TypedDict, total=False):  # POST /tickets/{id}/stage
     to_stage: str  # Stage id; required (default "" is rejected)
 
 
+class EmployeeBackendBody(TypedDict):
+    employee_backend: str
+
+
 class LinkBody(TypedDict, total=False):  # POST /links (ticket-anchored, homed here)
     from_id: str  # required (default "" fails endpoint checks)
     to_id: str  # required (default "" fails endpoint checks)
@@ -184,6 +190,7 @@ class Ticket:  # §3.3 — column names match exactly
     id: str
     title: str  # <= TITLE_MAX_CHARS (200), every write path
     worker_type: str  # immutable registry id selected at creation
+    employee_backend: str  # immutable after the first employee demand
     stage: str  # directly stored Stage id
     priority: Priority  # default P3
     deadline: str | None  # ISO date

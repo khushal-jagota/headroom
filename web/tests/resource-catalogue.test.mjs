@@ -29,9 +29,6 @@ const expectedMethods = [
   "sprintSummaries",
   "currentSprint",
   "ticket",
-  "panelsChat",
-  "chatGatewayStatus",
-  "chatCommands",
   "workerTypeManifests"
 ];
 const expectedPublicDeclarations = [
@@ -55,6 +52,10 @@ for (const declaration of expectedPublicDeclarations) {
 assert.match(ownerSource, /const RESOURCE_DEFINITIONS\s*=/);
 assert.match(ownerSource, /const OPENED_PARAMETERIZED_IDENTITIES\s*=\s*new Set/);
 assert.doesNotMatch(ownerSource, /\?\?\s*["']coding["']|\|\|\s*["']coding["']/);
+assert.doesNotMatch(
+  ownerSource,
+  /panelsChat|chatGatewayStatus|chatCommands|chat-commands|TICKET_CHAT_KINDS|PANELS_CHAT_KINDS|\/api\/chat/
+);
 
 const productionUrls = await productionFiles(srcRoot, [".ts", ".svelte"]);
 const production = new Map(
@@ -134,7 +135,7 @@ globalThis.__catalogueCache = {
   },
   peek: (key) => dataByIdentity.get(key),
   invalidateMany: (identities, reason) => invalidations.push({ identities: [...identities], reason }),
-  subscribedResourceKeys: () => ["board", "ticket:t_a/b", "chat-commands", "not-a-catalogue-resource"],
+  subscribedResourceKeys: () => ["board", "ticket:t_a/b", "not-a-catalogue-resource"],
   refresh: (key) => {
     refreshes.push(key);
     return nextReviewRefresh || Promise.resolve(dataByIdentity.get(key));
@@ -183,9 +184,6 @@ const opens = [
   [() => resourceCatalogue.sprintSummaries(), "sprints", "/api/sprints"],
   [() => resourceCatalogue.currentSprint(), "sprint:current", "/api/sprint/current"],
   [() => resourceCatalogue.ticket("t_a/b"), "ticket:t_a/b", "/api/tickets/t_a%2Fb"],
-  [() => resourceCatalogue.panelsChat("t_a/b"), "chat:t_a/b", "/api/chat/t_a%2Fb/state"],
-  [() => resourceCatalogue.chatGatewayStatus("agent_a/b"), "chat-status:agent_a/b", "/api/chat/agent_a%2Fb/status"],
-  [() => resourceCatalogue.chatCommands(), "chat-commands", "/api/chat/commands"],
   [() => resourceCatalogue.workerTypeManifests(), "worker-types", "/api/worker-types"]
 ];
 for (const [open, identity, path] of opens) {
@@ -196,24 +194,12 @@ for (const [open, identity, path] of opens) {
   assert.ok(fetches.at(-1).options.signal instanceof AbortSignal);
 }
 assert.throws(() => resourceCatalogue.ticket(""), /non-empty string/);
-assert.throws(() => resourceCatalogue.panelsChat(null), /non-empty string/);
 assert.equal(resourceCatalogue.ticket(" t_exact ").key, "ticket: t_exact ");
 assert.equal(opened.at(-1).key, "ticket: t_exact ");
 await opened.at(-1).fetcher(new AbortController().signal);
 assert.equal(fetches.at(-1).path, "/api/tickets/%20t_exact%20");
 dataByIdentity.set("ticket:t_a/b", { id: "t_a/b" });
 dataByIdentity.set("ticket: t_exact ", { id: " t_exact " });
-
-dataByIdentity.set("chat:t_cached", { messages: [] });
-staleByIdentity.set("chat:t_cached", false);
-const cachedChatRefreshCount = refreshes.length;
-resourceCatalogue.panelsChat("t_cached");
-assert.deepEqual(refreshes.slice(cachedChatRefreshCount), ["chat:t_cached"]);
-dataByIdentity.delete("chat:t_new");
-staleByIdentity.set("chat:t_new", true);
-const newChatRefreshCount = refreshes.length;
-resourceCatalogue.panelsChat("t_new");
-assert.equal(refreshes.length, newChatRefreshCount);
 
 const effectCases = [
   [{ kind: "ideaCreated" }, ["ideas"], []],
@@ -222,7 +208,7 @@ const effectCases = [
   [{ kind: "ticketTitleChanged", ticketId: "t_effect" }, ["ticket:t_effect", "board", "sprint:current", "review"], []],
   [{ kind: "ticketReviewStateChanged", ticketId: "t_effect" }, ["ticket:t_effect", "board", "sprint:current", "review"], []],
   [{ kind: "reviewTicketAccepted", ticketId: "t_effect" }, ["ticket:t_effect", "board", "sprint:current"], ["review"]],
-  [{ kind: "reviewTicketReturnedForRevision", ticketId: "t_effect" }, ["ticket:t_effect", "chat:t_effect", "board", "sprint:current"], ["review"]],
+  [{ kind: "reviewTicketReturnedForRevision", ticketId: "t_effect" }, ["ticket:t_effect", "board", "sprint:current"], ["review"]],
   [{ kind: "todayDayChanged" }, ["day:today"], []],
   [{ kind: "currentSprintChanged" }, ["sprint:current", "sprints"], []]
 ];
@@ -298,26 +284,16 @@ exact(keysForEvent(event("agent_demo")), []);
 assert.throws(() => keysForEvent(event("bad")), /unknown entity_id prefix/);
 assert.throws(() => keysForEvent(event("x_demo")), /unknown entity_id prefix/);
 
-for (const kind of [
-  "chat_message_recorded",
-  "chat_turn_started",
-  "chat_turn_updated",
-  "chat_turn_finished"
-]) {
-  exact(keysForEvent(event("t_chat", kind)), ["chat:t_chat"]);
-}
-exact(keysForEvent(event("t_chat", "employee_session_changed")), ["ticket:t_chat"]);
-exact(keysForEvent(event("t_chat", "chat_session_created")), []);
-for (const kind of [
-  "chat_session_created",
-  "chat_message_recorded",
-  "chat_turn_started",
-  "chat_turn_updated",
-  "chat_turn_finished"
-]) {
-  exact(keysForEvent(event("agent_chat", kind)), ["chat:agent_chat"]);
-  exact(keysForEvent(event("day_chat", kind), { todayDayId: "day_chat" }), ["chat:day_chat"]);
-}
+exact(keysForEvent(event("t_employee", "employee_step_started")), [
+  "ticket:t_employee",
+  "board",
+  "sprint:current"
+]);
+exact(keysForEvent(event("t_employee", "employee_session_changed")), ["ticket:t_employee"]);
+exact(
+  keysForEvent(event("t_backend", "ticket_updated", { field: "employee_backend" })),
+  ["ticket:t_backend", "board", "sprint:current"]
+);
 
 const reviewKinds = [
   "stage_changed",
@@ -423,7 +399,7 @@ const projectNameKeys = keysForEvent(
 );
 exact(projectNameKeys, [...projectNameBase, "ticket:t_project_match", "ticket:t_project_unresolved"]);
 assert.ok(!projectNameKeys.includes("ticket:t_raw_only"));
-assert.ok(!projectNameKeys.some((key) => key === "review" || key.startsWith("chat:")));
+assert.ok(!projectNameKeys.some((key) => key === "review"));
 exact(keysForEvent(event("project_alpha", "project_updated", { fields: ["summary"] })), ["projects"]);
 
 for (const identity of projectNameKeys) {
@@ -448,15 +424,13 @@ for (const keys of [
 refreshes.length = 0;
 const invalidationCountBeforeReconciliation = invalidations.length;
 await reconcileSubscribedCatalogueResources();
-assert.deepEqual(refreshes, ["board", "ticket:t_a/b", "chat-commands"]);
+assert.deepEqual(refreshes, ["board", "ticket:t_a/b"]);
 assert.equal(invalidations.length, invalidationCountBeforeReconciliation);
 
 const backendKinds = JSON.parse(process.env.PLANNER_EVENT_KINDS || "[]");
 for (const kind of backendKinds) {
   let sample = event("t_backend", kind);
-  if (kind === "chat_session_created") {
-    sample = event("day_backend", kind);
-  } else if (kind.startsWith("day_")) {
+  if (kind.startsWith("day_")) {
     sample = event("day_today", kind, kind === "day_ticket_added" || kind === "day_ticket_removed" ? { ticket_id: "t_backend" } : {});
   } else if (["sprint_created", "sprint_updated"].includes(kind)) {
     sample = event("sp_backend", kind);

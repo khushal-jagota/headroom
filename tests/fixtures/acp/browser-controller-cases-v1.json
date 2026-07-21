@@ -1,0 +1,243 @@
+{
+  "rawInvalid": {
+    "duplicate": {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "detail": "Idle",
+        "sequence": 2,
+        "state": "idle"
+      },
+      "sequence": 2,
+      "type": "activity",
+      "wireVersion": 1
+    },
+    "forwardGap": {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "detail": "Idle",
+        "sequence": 4,
+        "state": "idle"
+      },
+      "sequence": 4,
+      "type": "activity",
+      "wireVersion": 1
+    },
+    "higherGenerationNonReset": {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 2,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "detail": "Idle",
+        "sequence": 2,
+        "state": "idle"
+      },
+      "sequence": 2,
+      "type": "activity",
+      "wireVersion": 1
+    },
+    "higherGenerationWrongEntityReset": {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 2,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-wrong",
+      "entityKind": "ticket",
+      "payload": {
+        "detail": "New conversation",
+        "resetBindingGeneration": 2,
+        "state": "reset",
+        "supportsSteer": false
+      },
+      "sequence": 1,
+      "type": "connection",
+      "wireVersion": 1
+    },
+    "invalidEnvelope": {
+      "type": "activity",
+      "wireVersion": 1
+    },
+    "lower": {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "detail": "Idle",
+        "sequence": 1,
+        "state": "idle"
+      },
+      "sequence": 1,
+      "type": "activity",
+      "wireVersion": 1
+    },
+    "staleGeneration": {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "detail": "Idle",
+        "sequence": 2,
+        "state": "idle"
+      },
+      "sequence": 2,
+      "type": "activity",
+      "wireVersion": 1
+    },
+    "wrongIdentity": {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-wrong",
+      "entityKind": "ticket",
+      "payload": {
+        "detail": "Idle",
+        "sequence": 2,
+        "state": "idle"
+      },
+      "sequence": 2,
+      "type": "activity",
+      "wireVersion": 1
+    }
+  },
+  "valid": {
+    "exactNext": {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "detail": "Idle",
+        "sequence": 2,
+        "state": "idle"
+      },
+      "sequence": 2,
+      "type": "activity",
+      "wireVersion": 1
+    },
+    "higherGenerationReset": {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 2,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "detail": "New conversation",
+        "resetBindingGeneration": 2,
+        "state": "reset",
+        "supportsSteer": false
+      },
+      "sequence": 1,
+      "type": "connection",
+      "wireVersion": 1
+    },
+    "humanEchoGrouping": [
+      {
+        "acpSessionId": "session-browser",
+        "bindingGeneration": 1,
+        "employeeId": "employee-browser",
+        "entityId": "ticket-browser",
+        "entityKind": "ticket",
+        "payload": {
+          "detail": "Conversation reset",
+          "resetBindingGeneration": 1,
+          "state": "reset",
+          "supportsSteer": true
+        },
+        "sequence": 1,
+        "type": "connection",
+        "wireVersion": 1
+      },
+      {
+        "acpSessionId": "session-browser",
+        "bindingGeneration": 1,
+        "employeeId": "employee-browser",
+        "entityId": "ticket-browser",
+        "entityKind": "ticket",
+        "payload": {
+          "sessionId": "session-browser",
+          "update": {
+            "content": {
+              "text": "before",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        },
+        "sequence": 2,
+        "type": "acp_session_update",
+        "wireVersion": 1
+      },
+      {
+        "acpSessionId": "session-browser",
+        "bindingGeneration": 1,
+        "employeeId": "employee-browser",
+        "entityId": "ticket-browser",
+        "entityKind": "ticket",
+        "payload": {
+          "clientMessageId": "server-human",
+          "prompt": {
+            "prompt": [
+              {
+                "text": "human echo",
+                "type": "text"
+              }
+            ],
+            "sessionId": "session-browser"
+          }
+        },
+        "sequence": 3,
+        "type": "human_echo",
+        "wireVersion": 1
+      },
+      {
+        "acpSessionId": "session-browser",
+        "bindingGeneration": 1,
+        "employeeId": "employee-browser",
+        "entityId": "ticket-browser",
+        "entityKind": "ticket",
+        "payload": {
+          "sessionId": "session-browser",
+          "update": {
+            "content": {
+              "text": "after",
+              "type": "text"
+            },
+            "sessionUpdate": "agent_message_chunk"
+          }
+        },
+        "sequence": 4,
+        "type": "acp_session_update",
+        "wireVersion": 1
+      }
+    ],
+    "reset": {
+      "acpSessionId": "session-browser",
+      "bindingGeneration": 1,
+      "employeeId": "employee-browser",
+      "entityId": "ticket-browser",
+      "entityKind": "ticket",
+      "payload": {
+        "detail": "Conversation reset",
+        "resetBindingGeneration": 1,
+        "state": "reset",
+        "supportsSteer": true
+      },
+      "sequence": 1,
+      "type": "connection",
+      "wireVersion": 1
+    }
+  }
+}

@@ -15,7 +15,6 @@ from tests.support.probe import (
     uninstall_probe_registry,
 )
 
-from planner.core.adapters.registry import build_adapters
 from planner.core.clock import TestClock as PlannerTestClock
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -258,14 +257,12 @@ def test_review_http_contract_and_old_route_absence(tmp_path: Path) -> None:
         path=None,
         env={
             "PLAN_TEST_MODE": "1",
-            "PLAN_GATEWAY_ADAPTER": "fake",
             "PLAN_DB_PATH": str(db_path),
         },
     )
     app = create_app(
         config,
         build_clock(config),
-        build_adapters(config),
         lambda: connect(str(db_path)),
     )
 

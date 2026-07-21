@@ -1,0 +1,43 @@
+[
+  {
+    "employeeId": "employee-acp-00",
+    "lastSeenBindingGeneration": 3,
+    "lastSeenSequence": 17,
+    "type": "attach"
+  },
+  {
+    "clientMessageId": "client-message-2",
+    "deliveryChoice": "normal",
+    "employeeId": "employee-acp-00",
+    "prompt": {
+      "prompt": [
+        {
+          "text": "Please inspect the typed transcript.",
+          "type": "text"
+        },
+        {
+          "data": "aW1hZ2U=",
+          "mimeType": "image/png",
+          "type": "image"
+        }
+      ],
+      "sessionId": "session-acp-00"
+    },
+    "type": "prompt"
+  },
+  {
+    "employeeId": "employee-acp-00",
+    "queuedClientMessageId": "client-message-1",
+    "type": "cancel"
+  },
+  {
+    "employeeId": "employee-acp-00",
+    "type": "new_conversation"
+  },
+  {
+    "employeeId": "employee-acp-00",
+    "optionId": "allow-once",
+    "requestId": "permission-1",
+    "type": "permission_response"
+  }
+]

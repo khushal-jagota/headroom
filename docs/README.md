@@ -42,7 +42,7 @@ its old event lines are replaced by one minimal deletion audit.
 **The full-system view**
 
 - **Systems** (`systems.md`) — the cold-start map: the record, ticket gate,
-  runtime, Hermes gateway, chat, UI, CLI, and the main boundary problems.
+  runtime, ACP conversation, UI, CLI, and the main boundaries.
 - **Systems artifact** (`systems.html`) — the same map as a designed, collapsible
   reading artifact.
 
@@ -52,14 +52,15 @@ its old event lines are replaced by one minimal deletion audit.
   it moves through, and the resolution engine, scope, and approval gate that govern
   every advance. The correctness heart of the system.
 - **Worker types** (`worker-types.md`) — the registry that declares each workflow: one
-  Worker type's Stages, gates, fields, and its worker (a specialist skill). Three ship —
-  `coding`, `new_worker`, and `exploration`; the engine and the workers both read the
-  Worker type instead of branching.
+  Worker type's Stages, gates, fields, specialist skill, and default Employee backend.
+  A new Ticket may override that backend during pristine Kickoff; the engine and the
+  workers both read the stored choices instead of branching.
 - **The employee runtime** (`employee-runtime.md`) — the single AI worker that
   carries each worker-owned ticket Stage forward, and the loop that fires it, watches
   it, and feeds proposals back through the gate.
-- **Chat** (`chat.md`) — talking to a ticket's worker or the Chief of Staff, with
-  server-owned live turn state and the slash menu of commands and skills.
+- **Conversation** (`chat.md`) — the typed ACP pane shared by Ticket workers and the
+  Chief of Staff, including the `hermes`, `codex`, and `claude` backends, live work,
+  commands, permissions, and compaction state.
 
 **The surfaces you plan on**
 
@@ -85,5 +86,5 @@ its old event lines are replaced by one minimal deletion audit.
 
 ---
 
-_Last verified: 2026-07-15 · Covers the system landscape; each doc carries its own
+_Last verified: 2026-07-20 · Covers the system landscape; each doc carries its own
 code paths._

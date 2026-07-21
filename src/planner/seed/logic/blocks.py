@@ -30,9 +30,9 @@ _DATE_PREFIXES = ("Date range:", "Date:")
 
 @dataclass
 class Bullet:
-    text: str                                              # after "- ", trailing ws stripped
-    children: list[Bullet] = field(default_factory=list)   # one indent level deeper
-    extra_lines: list[str] = field(default_factory=list)   # non-bullet continuation lines
+    text: str  # after "- ", trailing ws stripped
+    children: list[Bullet] = field(default_factory=list)  # one indent level deeper
+    extra_lines: list[str] = field(default_factory=list)  # non-bullet continuation lines
 
 
 def split_sections(text: str) -> tuple[str, list[tuple[str, str]]]:

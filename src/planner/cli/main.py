@@ -41,6 +41,7 @@ _TICKET_SET_FIELDS = {
     "deadline": "deadline",
     "project": "project",
     "project-id": "project_id",
+    "employee-backend": "employee_backend",
 }
 
 _SPRINT_FIELDS = {
@@ -476,6 +477,7 @@ def ticket() -> None:
 @ticket.command("create")
 @click.option("--title", required=True, help="Ticket title.")
 @click.option("--worker-type", "worker_type", required=True, help="Worker type id (e.g. coding).")
+@click.option("--employee-backend", default=None, help="Registered employee backend override.")
 @click.option("--priority", type=click.Choice(_PRIORITIES), default=None, help="Priority label.")
 @click.option("--deadline", default=None, help="Due date in YYYY-MM-DD form.")
 @click.option("--project", default=None, help="Project name.")
@@ -492,6 +494,7 @@ def ticket() -> None:
 def ticket_create(
     title: str,
     worker_type: str,
+    employee_backend: str | None,
     priority: str | None,
     deadline: str | None,
     project: str | None,
@@ -503,6 +506,8 @@ def ticket_create(
     as_json: bool,
 ) -> None:
     body: dict[str, Any] = {"title": title, "worker_type": worker_type}
+    if employee_backend is not None:
+        body["employee_backend"] = employee_backend
     if kickoff_note is not None and kickoff_note_file is not None:
         http.fail_validation("kickoff note accepts only one note option", as_json)
     if kickoff_note_file is not None:
@@ -602,7 +607,7 @@ def ticket_set(
 ) -> None:
     api_field = _TICKET_SET_FIELDS[field]
     new_value = read_value_or_file(value, body_file, clear, as_json, field)
-    if field in {"title", "priority"} and new_value is None:
+    if field in {"title", "priority", "employee-backend"} and new_value is None:
         http.fail_validation(f"{field} cannot be cleared", as_json)
     if field == "priority" and new_value not in _PRIORITIES:
         http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
@@ -614,6 +619,14 @@ def ticket_set(
             f"/api/tickets/{ticket_id}/value/kickoff",
             as_json=as_json,
             json_body={"body": new_value},
+            request_actor="ordinary",
+        )
+    elif field == "employee-backend":
+        data = http.send(
+            "PUT",
+            f"/api/tickets/{ticket_id}/employee-backend",
+            as_json=as_json,
+            json_body={"employee_backend": new_value},
             request_actor="ordinary",
         )
     else:
@@ -1095,6 +1108,7 @@ _EXTERNAL_WORK_CREATE_FIXED_KEYS = _EXTERNAL_WORK_RECONCILE_FIXED_KEYS | frozens
     {
         "title",
         "worker_type",
+        "employee_backend",
         "priority",
         "deadline",
         "project",
@@ -1221,6 +1235,7 @@ def chief_reconcile_ticket_from_external_work(
 @chief.command("create-ticket-from-external-work")
 @click.option("--title", required=True, help="Ticket title.")
 @click.option("--worker-type", "worker_type", required=True, help="Worker type id (e.g. coding).")
+@click.option("--employee-backend", default=None, help="Registered employee backend override.")
 @click.option("--stage", required=True, help="Target worker stage (validated per type).")
 @click.option(
     "--kickoff-note-file", required=True, help="Complete resulting ticket note file, or -."
@@ -1249,6 +1264,7 @@ def chief_reconcile_ticket_from_external_work(
 def chief_create_ticket_from_external_work(
     title: str,
     worker_type: str,
+    employee_backend: str | None,
     stage: str,
     kickoff_note_file: str,
     recap_file: str | None,
@@ -1281,6 +1297,8 @@ def chief_create_ticket_from_external_work(
     )
     body["title"] = title
     body["worker_type"] = worker_type
+    if employee_backend is not None:
+        body["employee_backend"] = employee_backend
     if priority is not None:
         body["priority"] = priority
     if deadline is not None:
@@ -1313,30 +1331,16 @@ def worker() -> None:
 @worker.command("my-ticket")
 @json_option
 def worker_my_ticket(as_json: bool) -> None:
-    # PLAN_TICKET_ID is the pool child's spawn env (flag-on) — resolve by ticket id directly.
     ticket_id = os.environ.get(_TICKET_ID_ENV, "").strip()
-    if ticket_id:
-        path = f"/api/tickets/{ticket_id}/worker-self"
-    else:
-        # TRANSITIONAL fallback (Collision #1 (a)): the flag-off legacy shared worker child
-        # carries no per-ticket PLAN_TICKET_ID; its identity rides the per-turn Hermes session
-        # env. This fallback is scoped to die with the legacy worker path (S4 deletion).
-        live_session_id = os.environ.get("HERMES_UI_SESSION_ID", "").strip()
-        employee_session_id = os.environ.get("HERMES_SESSION_KEY", "").strip()
-        if not live_session_id and not employee_session_id:
-            http.fail_validation(
-                "no ticket worker identity in env "
-                "(no PLAN_TICKET_ID and no Hermes session); not running as a ticket worker",
-                as_json,
-            )
-        path = (
-            f"/api/tickets/by-live-session/{live_session_id}"
-            if live_session_id
-            else f"/api/tickets/by-employee-session/{employee_session_id}"
+    if not ticket_id:
+        http.fail_validation(
+            "no ticket worker identity in env (PLAN_TICKET_ID is missing); "
+            "not running as a ticket worker",
+            as_json,
         )
     data = http.send(
         "GET",
-        path,
+        f"/api/tickets/{ticket_id}/worker-self",
         as_json=as_json,
     )
     http.emit(

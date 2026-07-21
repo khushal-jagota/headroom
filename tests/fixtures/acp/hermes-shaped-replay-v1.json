@@ -1,0 +1,14 @@
+[
+  {"sessionId":"hermes-session-fixture","update":{"content":{"text":"Investigate the issue","type":"text"},"messageId":"turn-1","sessionUpdate":"user_message_chunk"}},
+  {"sessionId":"hermes-session-fixture","update":{"content":{"text":"private typed reasoning","type":"text"},"messageId":"turn-1","sessionUpdate":"agent_thought_chunk"}},
+  {"sessionId":"hermes-session-fixture","update":{"content":{"text":"I will inspect it.","type":"text"},"messageId":"turn-1","sessionUpdate":"agent_message_chunk"}},
+  {"sessionId":"hermes-session-fixture","update":{"content":{"text":"missing id thought","type":"text"},"sessionUpdate":"agent_thought_chunk"}},
+  {"sessionId":"hermes-session-fixture","update":{"content":{"text":"missing id answer","type":"text"},"sessionUpdate":"agent_message_chunk"}},
+  {"sessionId":"hermes-session-fixture","update":{"toolCallId":"tool-hermes-1","title":"Read contract","kind":"read","status":"in_progress","content":[{"content":{"text":"opening","type":"text"},"type":"content"}],"sessionUpdate":"tool_call"}},
+  {"sessionId":"hermes-session-fixture","update":{"toolCallId":"tool-hermes-1","status":"completed","title":"Read contract","sessionUpdate":"tool_call_update"}},
+  {"sessionId":"hermes-session-fixture","update":{"entries":[{"content":"First snapshot","priority":"high","status":"pending"}],"sessionUpdate":"plan"}},
+  {"sessionId":"hermes-session-fixture","update":{"entries":[{"content":"Replacement snapshot","priority":"high","status":"completed"}],"sessionUpdate":"plan"}},
+  {"sessionId":"hermes-session-fixture","update":{"availableCommands":[{"name":"compact","description":"Compact context"},{"name":"steer","description":"Steer active turn"}],"sessionUpdate":"available_commands_update"}},
+  {"sessionId":"hermes-session-fixture","update":{"used":1200,"size":32000,"sessionUpdate":"usage_update"}},
+  {"sessionId":"hermes-session-fixture","update":{"title":"Hermes fixture","_meta":{"hermes":{"sessionProvenance":{"reason":"compression","state":"compacted"}}},"sessionUpdate":"session_info_update"}}
+]

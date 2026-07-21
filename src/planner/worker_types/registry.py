@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from types import MappingProxyType
 
+from planner.conversation.backend_catalog import EmployeeBackendCatalog
 from planner.core.contracts import ErrorCode, JsonDict, PlannerError
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.contracts import (
@@ -20,6 +21,7 @@ def _validate_definition(
     *,
     known_skills: frozenset[str],
     known_toolset_profiles: frozenset[str],
+    employee_backend_catalog: EmployeeBackendCatalog,
 ) -> None:
     worker_type = definition.worker_type
 
@@ -118,9 +120,8 @@ def _validate_definition(
                 "terminal stage may not declare default ownership",
                 {"worker_type": worker_type, "stage": stage.id},
             )
-        if (
-            stage.default_ownership_mode is not None
-            and not isinstance(stage.default_ownership_mode, StageOwnershipMode)
+        if stage.default_ownership_mode is not None and not isinstance(
+            stage.default_ownership_mode, StageOwnershipMode
         ):
             raise fail(
                 "stage default ownership must be a known mode",
@@ -190,6 +191,8 @@ def _validate_definition(
             },
         )
 
+    employee_backend_catalog.require_registered(definition.worker_profile.default_employee_backend)
+
     if type(definition.supports_prefix_reconciliation) is not bool:
         raise fail(
             "supports_prefix_reconciliation must be a bool",
@@ -198,7 +201,7 @@ def _validate_definition(
 
 
 class WorkerTypeRegistry:
-    __slots__ = ("_definitions",)
+    __slots__ = ("_definitions", "_employee_backend_catalog")
 
     def __init__(
         self,
@@ -206,6 +209,7 @@ class WorkerTypeRegistry:
         *,
         known_skills: frozenset[str],
         known_toolset_profiles: frozenset[str],
+        employee_backend_catalog: EmployeeBackendCatalog,
     ) -> None:
         table: dict[str, WorkerTypeDefinition] = {}
         for definition in definitions:
@@ -219,9 +223,15 @@ class WorkerTypeRegistry:
                 definition,
                 known_skills=known_skills,
                 known_toolset_profiles=known_toolset_profiles,
+                employee_backend_catalog=employee_backend_catalog,
             )
             table[definition.worker_type] = definition
         self._definitions = MappingProxyType(dict(table))
+        self._employee_backend_catalog = employee_backend_catalog
+
+    @property
+    def employee_backend_catalog(self) -> EmployeeBackendCatalog:
+        return self._employee_backend_catalog
 
     def registered_worker_types(self) -> tuple[str, ...]:
         return tuple(self._definitions)
@@ -277,4 +287,5 @@ class WorkerTypeRegistry:
             "ceiling_range": list(definition.ceiling_range()),
             "default_ceiling": definition.default_ceiling(),
             "worker_profile_id": definition.worker_profile.specialist_skill,
+            "default_employee_backend": (definition.worker_profile.default_employee_backend),
         }

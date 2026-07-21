@@ -1,0 +1,400 @@
+[
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "detail": "Conversation reset",
+      "resetBindingGeneration": 1,
+      "state": "reset",
+      "supportsSteer": false
+    },
+    "sequence": 1,
+    "type": "connection",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "sessionId": "session-browser",
+      "update": {
+        "content": {
+          "text": "Typed thought",
+          "type": "text"
+        },
+        "messageId": "agent-1",
+        "sessionUpdate": "agent_thought_chunk"
+      }
+    },
+    "sequence": 2,
+    "type": "acp_session_update",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "detail": "Working",
+      "sequence": 3,
+      "state": "working"
+    },
+    "sequence": 3,
+    "type": "activity",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "choice": "send_now",
+      "clientMessageId": "client-browser",
+      "state": "accepted"
+    },
+    "sequence": 4,
+    "type": "delivery_receipt",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "choice": "queue",
+      "clientMessageId": "client-browser",
+      "queuePosition": 1,
+      "state": "queued"
+    },
+    "sequence": 5,
+    "type": "delivery_receipt",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "choice": "send_now",
+      "clientMessageId": "client-browser",
+      "state": "started"
+    },
+    "sequence": 6,
+    "type": "delivery_receipt",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "choice": "send_now",
+      "clientMessageId": "client-browser",
+      "state": "interrupted"
+    },
+    "sequence": 7,
+    "type": "delivery_receipt",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "choice": "send_now",
+      "clientMessageId": "client-browser",
+      "reason": "Agent rejected prompt",
+      "state": "rejected"
+    },
+    "sequence": 8,
+    "type": "delivery_receipt",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "items": [
+        {
+          "clientMessageId": "queue-1",
+          "enqueueSequence": 1,
+          "enqueuedAt": 1752960000,
+          "prompt": {
+            "prompt": [
+              {
+                "text": "Queued prompt",
+                "type": "text"
+              }
+            ],
+            "sessionId": "session-browser"
+          }
+        },
+        {
+          "clientMessageId": "queue-2",
+          "enqueueSequence": 2,
+          "enqueuedAt": 1752960001,
+          "prompt": {
+            "prompt": [
+              {
+                "text": "Queued prompt",
+                "type": "text"
+              }
+            ],
+            "sessionId": "session-browser"
+          }
+        }
+      ]
+    },
+    "sequence": 9,
+    "type": "queue_snapshot",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "items": []
+    },
+    "sequence": 10,
+    "type": "queue_snapshot",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "boundaryId": "explicit-boundary",
+      "state": "compacting",
+      "trigger": "explicit"
+    },
+    "sequence": 11,
+    "type": "context_compaction",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "boundaryId": "explicit-boundary",
+      "state": "compacted",
+      "trigger": "explicit"
+    },
+    "sequence": 12,
+    "type": "context_compaction",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "boundaryId": "automatic-boundary",
+      "state": "compacting",
+      "trigger": "automatic"
+    },
+    "sequence": 13,
+    "type": "context_compaction",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "boundaryId": "automatic-boundary",
+      "reason": "Summary capture failed",
+      "state": "failed",
+      "trigger": "automatic"
+    },
+    "sequence": 14,
+    "type": "context_compaction",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "clientMessageId": "client-browser",
+      "prompt": {
+        "prompt": [
+          {
+            "text": "Queued prompt",
+            "type": "text"
+          }
+        ],
+        "sessionId": "session-browser"
+      }
+    },
+    "sequence": 15,
+    "type": "human_echo",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "backendKey": "scripted",
+      "deadlineAt": 1752960300,
+      "employeeId": "employee-browser",
+      "lifecycle": "pending",
+      "openedSequence": 16,
+      "request": {
+        "options": [
+          {
+            "kind": "allow_once",
+            "name": "Allow once",
+            "optionId": "allow-once"
+          },
+          {
+            "kind": "allow_always",
+            "name": "Allow always",
+            "optionId": "allow-always"
+          },
+          {
+            "kind": "reject_once",
+            "name": "Reject",
+            "optionId": "reject-once"
+          }
+        ],
+        "sessionId": "session-browser",
+        "toolCall": {
+          "title": "Run command",
+          "toolCallId": "tool-permission"
+        }
+      },
+      "requestId": "permission-browser"
+    },
+    "sequence": 16,
+    "type": "permission_request",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "requestId": "permission-browser",
+      "response": {
+        "outcome": {
+          "optionId": "allow-once",
+          "outcome": "selected"
+        }
+      },
+      "settledSequence": 17
+    },
+    "sequence": 17,
+    "type": "permission_outcome",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "lifecycle": "active",
+      "terminalId": "terminal-browser",
+      "terminalOutput": {
+        "output": "partial output\n",
+        "truncated": true
+      }
+    },
+    "sequence": 18,
+    "type": "terminal_state",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "lifecycle": "released",
+      "terminalId": "terminal-browser",
+      "terminalOutput": {
+        "exitStatus": {
+          "signal": "TERM"
+        },
+        "output": "complete output\n",
+        "truncated": false
+      }
+    },
+    "sequence": 19,
+    "type": "terminal_state",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "reason": "Unknown update",
+      "rejectedSessionUpdate": "future_update",
+      "status": "Agent sent an unsupported update"
+    },
+    "sequence": 20,
+    "type": "protocol_update_rejected",
+    "wireVersion": 1
+  },
+  {
+    "acpSessionId": "session-browser",
+    "bindingGeneration": 1,
+    "employeeId": "employee-browser",
+    "entityId": "ticket-browser",
+    "entityKind": "ticket",
+    "payload": {
+      "detail": "Conversation ready",
+      "state": "ready",
+      "supportsSteer": false
+    },
+    "sequence": 21,
+    "type": "connection",
+    "wireVersion": 1
+  }
+]

@@ -1,0 +1,46 @@
+ACP-07 exact compaction prompt failure reason — focused checks
+=============================================================
+
+TDD red proof
+-------------
+
+$ .venv/bin/pytest -q tests/unit/test_conversation_turn_broker.py -k 'prompt_failure_reason or prompt_exception'
+....FFFFFFFF...                                                          [100%]
+
+The two exact Codex cases still received `Employee connection failed`, and the six
+fallback-hook cases proved the hook was not yet consulted.
+
+Scoped static gates
+-------------------
+
+$ .venv/bin/ruff check src/planner/conversation/turn_broker.py tests/unit/test_conversation_turn_broker.py
+All checks passed!
+
+$ .venv/bin/mypy --strict src/planner/conversation/turn_broker.py
+Success: no issues found in 1 source file
+
+Focused broker/provider/strategy matrix
+---------------------------------------
+
+$ .venv/bin/pytest -q \
+    tests/unit/test_conversation_turn_broker.py \
+    tests/unit/test_codex_turn_strategy.py \
+    tests/unit/test_in_place_compaction_strategy.py \
+    tests/unit/test_hermes_acp_turn_strategy.py
+........................................................................ [ 72%]
+............................                                             [100%]
+
+$ .venv/bin/pytest --collect-only \
+    tests/unit/test_conversation_turn_broker.py \
+    tests/unit/test_codex_turn_strategy.py \
+    tests/unit/test_in_place_compaction_strategy.py \
+    tests/unit/test_hermes_acp_turn_strategy.py
+100 tests collected in 0.03s
+
+Diff check
+----------
+
+$ git diff --check
+PASS — no output.
+
+Canonical `./verify` intentionally not run; ACP-10 owns the one final settled-tree gate.

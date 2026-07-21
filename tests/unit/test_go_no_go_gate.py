@@ -28,7 +28,6 @@ import pytest
 from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
-from planner.core.adapters.registry import build_adapters
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -84,6 +83,7 @@ PROBE_MANIFEST = {
     "ceiling_range": ["needs_kickoff", "needs_alpha", "needs_beta", "done"],
     "default_ceiling": "needs_kickoff",
     "worker_profile_id": "probe-worker",
+    "default_employee_backend": "probe-backend",
 }
 
 # The gating accept event order the engine emits for a direct gating accept with an
@@ -113,7 +113,6 @@ def app_db(tmp_path: Path):
         path=None,
         env={
             "PLAN_TEST_MODE": "1",
-            "PLAN_GATEWAY_ADAPTER": "fake",
             "PLAN_DB_PATH": str(db_path),
         },
     )
@@ -121,7 +120,7 @@ def app_db(tmp_path: Path):
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    app = create_app(config, build_clock(config), build_adapters(config), conn_factory)
+    app = create_app(config, build_clock(config), conn_factory)
     return app, db_path
 
 
@@ -226,7 +225,7 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
         ).fetchone()
         assert row["employee_session_id"] is None
         turns = conn.execute(
-            "SELECT count(*) AS n FROM chat_turns WHERE entity_id = ?", (tid,)
+            "SELECT count(*) AS n FROM employee_step_runs WHERE ticket_id = ?", (tid,)
         ).fetchone()
         assert turns["n"] == 0
     finally:

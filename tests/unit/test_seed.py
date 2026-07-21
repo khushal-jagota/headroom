@@ -15,8 +15,10 @@ from sqlite3 import Connection
 from types import SimpleNamespace
 
 import pytest
+from tests.support.probe import PROBE_EMPLOYEE_BACKEND_CATALOG
 
 from planner.core.contracts import ErrorCode, Priority
+from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.seed import __main__ as seed_main
 from planner.seed.contracts import MigrationReport, SkippedSection
@@ -28,8 +30,11 @@ from planner.seed.logic.workspace import match_item_title, parse_workspace
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
-    install_worker_type_registry_for_test,
-    restore_production_worker_type_registry_for_test,
+    PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
+    ConfiguredEmployeeRuntimeDefinitions,
+    build_employee_runtime_definitions,
+    install_employee_runtime_definitions_for_test,
+    restore_employee_runtime_definitions_for_test,
 )
 from planner.worker_types.contracts import FieldDefinition, StageDefinition
 from planner.worker_types.registry import WorkerTypeRegistry
@@ -200,8 +205,7 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
 
     # (6) the historical Chat ID is preserved byte-for-byte as the Employee session id.
     assert (
-        tickets["ticket-20260611-export-format"]["employee_session_id"]
-        == "20260611_090000_abc123"
+        tickets["ticket-20260611-export-format"]["employee_session_id"] == "20260611_090000_abc123"
     )
     for alias in (
         "ticket-20260611-onboarding-survey",
@@ -465,27 +469,89 @@ def test_standalone_seed_requires_and_forwards_exact_worker_type(
         source: str,
         *,
         worker_type: str,
+        employee_backend: str | None,
         now: int,
     ) -> MigrationReport:
         observed.update(
             conn=conn,
             source=source,
             worker_type=worker_type,
+            employee_backend=employee_backend,
             now=now,
         )
         return MigrationReport()
 
     monkeypatch.setattr(seed_main, "seed_from_source", fake_seed)
-    assert (
-        seed_main.main(
-            ["--source", str(FIXTURE), "--worker-type", "seed_probe", "--json"]
-        )
-        == 0
-    )
+    assert seed_main.main(["--source", str(FIXTURE), "--worker-type", "seed_probe", "--json"]) == 0
     assert observed["worker_type"] == "seed_probe"
+    assert observed["employee_backend"] is None
     assert observed["source"] == str(FIXTURE)
     assert observed["now"] == _FIXED_NOW
     assert observed["closed"] is True
+
+
+def test_seed_backend_default_override_and_unknown_roll_back(
+    tmp_path: Path,
+) -> None:
+    probe_default_coding = replace(
+        CODING_WORKER_TYPE_DEFINITION,
+        worker_profile=replace(
+            CODING_WORKER_TYPE_DEFINITION.worker_profile,
+            default_employee_backend="probe-backend",
+        ),
+    )
+    definitions = build_employee_runtime_definitions(
+        PROBE_EMPLOYEE_BACKEND_CATALOG,
+        worker_type_definitions=(probe_default_coding,),
+    )
+    previous = install_employee_runtime_definitions_for_test(definitions)
+    connections: list[Connection] = []
+    try:
+        for name in ("default", "override", "rejected"):
+            conn = connect(str(tmp_path / f"seed-{name}.db"))
+            create_schema(conn)
+            connections.append(conn)
+        default_conn, override_conn, rejected_conn = connections
+        seed_from_source(default_conn, FIXTURE, worker_type="coding", now=_FIXED_NOW)
+        seed_from_source(
+            override_conn,
+            FIXTURE,
+            worker_type="coding",
+            employee_backend="hermes",
+            now=_FIXED_NOW,
+        )
+        with pytest.raises(PlannerError) as raised:
+            seed_from_source(
+                rejected_conn,
+                FIXTURE,
+                worker_type="coding",
+                employee_backend="missing-backend",
+                now=_FIXED_NOW,
+            )
+
+        assert {
+            str(row["employee_backend"])
+            for row in default_conn.execute("SELECT employee_backend FROM tickets")
+        } == {"probe-backend"}
+        assert {
+            str(row["employee_backend"])
+            for row in override_conn.execute("SELECT employee_backend FROM tickets")
+        } == {"hermes"}
+        assert {
+            json.loads(str(row["payload"]))["employee_backend"]
+            for row in default_conn.execute(
+                "SELECT payload FROM events WHERE kind = 'ticket_created'"
+            )
+        } == {"probe-backend"}
+        assert raised.value.code is ErrorCode.validation
+        assert tuple(
+            rejected_conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in ("sprints", "sprint_items", "tickets", "ideas", "events")
+        ) == (0, 0, 0, 0, 0)
+    finally:
+        for conn in connections:
+            conn.close()
+        restore_employee_runtime_definitions_for_test(previous)
 
 
 def test_unknown_seed_worker_type_fails_before_any_import_write(tmp_db: Connection) -> None:
@@ -529,12 +595,18 @@ def test_seed_fields_follow_the_explicit_registered_definition(tmp_db: Connectio
         (definition,),
         known_skills=frozenset({"panels-worker-coding"}),
         known_toolset_profiles=frozenset({"default"}),
+        employee_backend_catalog=PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog,
     )
-    install_worker_type_registry_for_test(registry)
+    previous_definitions = install_employee_runtime_definitions_for_test(
+        ConfiguredEmployeeRuntimeDefinitions(
+            PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog,
+            registry,
+        )
+    )
     try:
         seed_from_source(tmp_db, FIXTURE, worker_type="seed_probe", now=_FIXED_NOW)
     finally:
-        restore_production_worker_type_registry_for_test()
+        restore_employee_runtime_definitions_for_test(previous_definitions)
 
     rows = {
         row["alias"]: row
@@ -575,8 +647,14 @@ def test_incompatible_explicit_worker_type_rolls_back_the_whole_import(
         (incompatible_definition,),
         known_skills=frozenset({"panels-worker-coding"}),
         known_toolset_profiles=frozenset({"default"}),
+        employee_backend_catalog=PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog,
     )
-    install_worker_type_registry_for_test(registry)
+    previous_definitions = install_employee_runtime_definitions_for_test(
+        ConfiguredEmployeeRuntimeDefinitions(
+            PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog,
+            registry,
+        )
+    )
     try:
         with pytest.raises(PlannerError) as raised:
             seed_from_source(
@@ -586,7 +664,7 @@ def test_incompatible_explicit_worker_type_rolls_back_the_whole_import(
                 now=_FIXED_NOW,
             )
     finally:
-        restore_production_worker_type_registry_for_test()
+        restore_employee_runtime_definitions_for_test(previous_definitions)
     assert raised.value.code is ErrorCode.validation
     assert raised.value.message == "stage outside the linear order"
     for table in ("sprints", "sprint_items", "tickets", "ideas", "events"):

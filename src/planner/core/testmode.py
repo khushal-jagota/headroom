@@ -99,9 +99,8 @@ def build_test_router(config: Config, clock: Clock) -> APIRouter:
     @router.post("/test/run-step/{ticket_id}")
     async def run_step(ticket_id: str, request: Request) -> JsonDict:
         """Dispatch ONE real automatic Employee step for `ticket_id` through the composed
-        runner (S3 Collision #B (a)). Relay test mode composes the REAL EmployeeStepRunner over
-        the PoolStepGateway (server.py), so this drives a genuine dispatch against the scripted
-        child — the discovery loop is not needed. Test-gated: the router is mounted only when
+        ACP EmployeeStepRunner and scripted ACP backend. The discovery loop is not needed.
+        Test-gated: the router is mounted only when
         config.test_mode, so /api/test/* is a plain 404 otherwise."""
         runner = getattr(request.app.state, "employee_step_runner", None)
         if runner is None or not hasattr(runner, "try_run_automatic_step"):

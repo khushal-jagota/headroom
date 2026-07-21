@@ -30,6 +30,7 @@ class WorkerProfile:
     model: str | None
     reasoning_effort: str | None
     toolset_profile: str
+    default_employee_backend: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,3 +177,4 @@ class WorkerTypeManifest(TypedDict):
     ceiling_range: list[str]
     default_ceiling: str
     worker_profile_id: str
+    default_employee_backend: str

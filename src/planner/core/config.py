@@ -30,10 +30,6 @@ class Config:
     boundary_hour: int
     tick_seconds: int
     dispatch_enabled: bool
-    relay_backend_enabled: bool
-    hermes_bin: str
-    hermes_profile: str
-    worker_skill: str
     # other tunables named across SPEC
     ws_poll_ms: int
     ws_heartbeat_ms: int
@@ -43,8 +39,6 @@ class Config:
     events_read_limit: int
     db_busy_timeout_ms: int
     shutdown_grace_seconds: int
-    # adapter selection (registry §9.4)
-    gateway_adapter: str
     # optional hosted trusted-ingress boundary
     trusted_ingress_provider: str | None
     trusted_ingress_allowed_login: str | None
@@ -52,7 +46,6 @@ class Config:
     # test mode — ENV ONLY, never in config.yaml
     test_mode: bool
     fake_now: str | None
-    run_startup_recovery_in_test_mode: bool
 
 
 def _parse_bool(raw: object, key: str) -> bool:
@@ -203,11 +196,6 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
     fake_now: str | None = env.get("PLAN_FAKE_NOW") or None
     if not test_mode:
         fake_now = None  # §13/item 21: PLAN_FAKE_NOW is ignored when test mode is off
-    run_startup_recovery_in_test_mode = test_mode and _parse_bool(
-        env.get("PLAN_RUN_STARTUP_RECOVERY_IN_TEST_MODE", "0"),
-        "run_startup_recovery_in_test_mode",
-    )
-
     trusted_ingress_provider = _optional_str_value(
         cfg, env, "trusted_ingress_provider", "PLAN_TRUSTED_INGRESS_PROVIDER"
     )
@@ -237,12 +225,6 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         boundary_hour=_int_value(cfg, env, "boundary_hour", "PLAN_BOUNDARY_HOUR", 5),
         tick_seconds=_int_value(cfg, env, "tick_seconds", "PLAN_TICK_SECONDS", 60),
         dispatch_enabled=_bool_value(cfg, env, "dispatch_enabled", "PLAN_DISPATCH_ENABLED", True),
-        relay_backend_enabled=_bool_value(
-            cfg, env, "relay_backend_enabled", "PLAN_RELAY_BACKEND_ENABLED", False
-        ),
-        hermes_bin=_str_value(cfg, env, "hermes_bin", "PLAN_HERMES_BIN", "hermes"),
-        hermes_profile=_str_value(cfg, env, "hermes_profile", "PLAN_HERMES_PROFILE", "default"),
-        worker_skill=_str_value(cfg, env, "worker_skill", "PLAN_WORKER_SKILL", "panels-worker"),
         ws_poll_ms=_int_value(cfg, env, "ws_poll_ms", "PLAN_WS_POLL_MS", 300),
         ws_heartbeat_ms=_int_value(
             cfg, env, "ws_heartbeat_ms", "PLAN_WS_HEARTBEAT_MS", 15000
@@ -259,11 +241,9 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         shutdown_grace_seconds=_int_value(
             cfg, env, "shutdown_grace_seconds", "PLAN_SHUTDOWN_GRACE_SECONDS", 30
         ),
-        gateway_adapter=_str_value(cfg, env, "gateway_adapter", "PLAN_GATEWAY_ADAPTER", "auto"),
         trusted_ingress_provider=trusted_ingress_provider,
         trusted_ingress_allowed_login=trusted_ingress_allowed_login,
         trusted_ingress_canonical_origin=trusted_ingress_canonical_origin,
         test_mode=test_mode,
         fake_now=fake_now,
-        run_startup_recovery_in_test_mode=run_startup_recovery_in_test_mode,
     )

@@ -1,0 +1,52 @@
+ACP-07 Codex backend definition focused evidence
+================================================
+
+Scoped static gates
+-------------------
+
+$ .venv/bin/ruff check \
+    src/planner/conversation/codex_backend.py \
+    src/planner/conversation/codex_turn_strategy.py \
+    tests/unit/test_codex_backend.py \
+    tests/unit/test_codex_turn_strategy.py \
+    tests/unit/test_codex_backend_conformance.py
+All checks passed!
+
+$ .venv/bin/mypy --strict \
+    src/planner/conversation/codex_backend.py \
+    src/planner/conversation/codex_turn_strategy.py
+Success: no issues found in 2 source files
+
+Focused provider and generic in-place matrix
+--------------------------------------------
+
+$ .venv/bin/pytest -q \
+    tests/unit/test_codex_backend.py \
+    tests/unit/test_codex_turn_strategy.py \
+    tests/unit/test_codex_backend_conformance.py \
+    tests/unit/test_in_place_compaction_strategy.py
+...........................                                              [100%]
+27 passed
+
+Locked runtime observation
+--------------------------
+
+$ node --version
+v22.22.3
+
+$ npm --version
+10.9.8
+
+$ node agent_backends/node_modules/@agentclientprotocol/codex-acp/dist/index.js --version
+@agentclientprotocol/codex-acp 1.1.4
+
+$ npm --prefix agent_backends ls --depth=0 --json
+PASS — exact root adapters are @agentclientprotocol/codex-acp 1.1.4 and
+@agentclientprotocol/claude-agent-acp 0.60.0.
+
+Scope and safety
+----------------
+
+No model prompt, session creation, authentication mutation, browser launch, npx invocation,
+ambient Codex invocation, or Hermes-checkout write occurred. Canonical ./verify intentionally not
+run; ACP-10 owns the one final frozen-tree gate.

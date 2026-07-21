@@ -141,6 +141,192 @@ def _insert_ticket(conn, **cols):
     )
 
 
+def _replace_tickets_with_v25_shape(conn: sqlite3.Connection) -> None:
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute("DROP TABLE tickets")
+    conn.execute(
+        db_module._V26_TICKETS_TABLE_SQL.replace("tickets_new", "tickets").replace(
+            "  employee_backend     TEXT NOT NULL,\n", ""
+        )
+    )
+    conn.execute("PRAGMA user_version=25")
+    conn.execute("PRAGMA foreign_keys=ON")
+
+
+def _insert_v25_ticket(conn: sqlite3.Connection, ticket_id: str = "t_v25_backend") -> None:
+    conn.execute(
+        "INSERT INTO tickets ("
+        "id, title, worker_type, stage, priority, deadline, project_id, sprint_item_id, "
+        "sprint_id, recap, ceiling, at_cap, ticket_status, stage_ownership_overrides, "
+        "employee_session_id, alias, fields, created_at, updated_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            ticket_id,
+            "V25 backend bytes",
+            "coding",
+            "needs_plan",
+            "P1",
+            "2026-08-01",
+            "project_vylo",
+            None,
+            None,
+            "Exact recap",
+            "needs_closeout",
+            "stop",
+            "user_takeover",
+            '{"needs_plan":"user"}',
+            "session-v25",
+            "v25-alias",
+            _EMPTY_CODING_FIELDS,
+            101,
+            202,
+        ),
+    )
+
+
+def test_fresh_v26_ticket_employee_backend_is_not_null_and_has_no_default(tmp_path) -> None:
+    conn = connect(str(tmp_path / "fresh-v26-backend.db"))
+    create_schema(conn)
+    column = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(tickets)")}[
+        "employee_backend"
+    ]
+    assert column["notnull"] == 1
+    assert column["dflt_value"] is None
+
+    insert_without_backend = (
+        "INSERT INTO tickets (id, title, worker_type, ceiling, fields, created_at, updated_at) "
+        "VALUES (?, 'Missing backend', 'coding', 'needs_kickoff', '{}', 1, 1)"
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="employee_backend"):
+        conn.execute(insert_without_backend, ("t_missing_backend",))
+    with pytest.raises(sqlite3.IntegrityError, match="employee_backend"):
+        conn.execute(
+            "INSERT INTO tickets "
+            "(id, title, worker_type, employee_backend, ceiling, fields, created_at, updated_at) "
+            "VALUES ('t_null_backend', 'Null backend', 'coding', NULL, "
+            "'needs_kickoff', '{}', 1, 1)"
+        )
+    conn.close()
+
+
+def test_v25_to_v26_assigns_exact_hermes_and_preserves_ticket_bytes(tmp_path) -> None:
+    conn = connect(str(tmp_path / "v25-to-v26-backend.db"))
+    create_schema(conn)
+    _replace_tickets_with_v25_shape(conn)
+    _insert_v25_ticket(conn)
+    before = dict(conn.execute("SELECT * FROM tickets").fetchone())
+
+    create_schema(conn)
+
+    after = dict(conn.execute("SELECT * FROM tickets").fetchone())
+    assert after.pop("employee_backend") == "hermes"
+    assert after == before
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 26
+    conn.close()
+
+
+def test_v26_migration_rejects_non_hermes_existing_binding_without_replacing_ticket_table(
+    tmp_path,
+) -> None:
+    conn = connect(str(tmp_path / "v25-contradictory-binding.db"))
+    create_schema(conn)
+    _replace_tickets_with_v25_shape(conn)
+    _insert_v25_ticket(conn)
+    conn.execute(
+        "INSERT INTO conversation_session_bindings "
+        "(employee_id, entity_kind, entity_id, acp_session_id, backend_key, "
+        "binding_generation, created_at, updated_at) VALUES "
+        "('t_v25_backend', 'ticket', 't_v25_backend', 'session-v25', "
+        "'probe-backend', 1, 1, 1)"
+    )
+    sql_before = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tickets'"
+    ).fetchone()[0]
+    row_before = tuple(conn.execute("SELECT * FROM tickets").fetchone())
+
+    with pytest.raises(RuntimeError, match="non-Hermes existing binding"):
+        create_schema(conn)
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 25
+    assert (
+        conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tickets'"
+        ).fetchone()[0]
+        == sql_before
+    )
+    assert tuple(conn.execute("SELECT * FROM tickets").fetchone()) == row_before
+    assert (
+        conn.execute("SELECT backend_key FROM conversation_session_bindings").fetchone()[0]
+        == "probe-backend"
+    )
+    assert (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tickets_new'"
+        ).fetchone()
+        is None
+    )
+    conn.close()
+
+
+def test_v26_reopen_preserves_non_hermes_selection_and_is_idempotent(tmp_path) -> None:
+    conn = connect(str(tmp_path / "v26-reopen-backend.db"))
+    create_schema(conn)
+    conn.execute(
+        "INSERT INTO tickets "
+        "(id, title, worker_type, employee_backend, ceiling, fields, created_at, updated_at) "
+        "VALUES ('t_v26_probe', 'Probe backend', 'coding', 'probe-backend', "
+        "'needs_kickoff', '{}', 1, 2)"
+    )
+    sql_before = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tickets'"
+    ).fetchone()[0]
+    row_before = tuple(conn.execute("SELECT * FROM tickets").fetchone())
+
+    create_schema(conn)
+    create_schema(conn)
+
+    assert (
+        conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tickets'"
+        ).fetchone()[0]
+        == sql_before
+    )
+    assert tuple(conn.execute("SELECT * FROM tickets").fetchone()) == row_before
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 26
+    conn.close()
+
+
+def test_corrupt_v26_missing_employee_backend_fails_without_rewrite(tmp_path) -> None:
+    conn = connect(str(tmp_path / "corrupt-v26-backend.db"))
+    create_schema(conn)
+    _replace_tickets_with_v25_shape(conn)
+    _insert_v25_ticket(conn)
+    conn.execute("PRAGMA user_version=26")
+    sql_before = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tickets'"
+    ).fetchone()[0]
+    row_before = tuple(conn.execute("SELECT * FROM tickets").fetchone())
+
+    with pytest.raises(RuntimeError, match="v26 Ticket schema"):
+        create_schema(conn)
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 26
+    assert (
+        conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tickets'"
+        ).fetchone()[0]
+        == sql_before
+    )
+    assert tuple(conn.execute("SELECT * FROM tickets").fetchone()) == row_before
+    assert (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tickets_new'"
+        ).fetchone()
+        is None
+    )
+    conn.close()
+
+
 def test_connect_applies_busy_timeout_to_initial_connect_and_pragma(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -179,8 +365,9 @@ def test_fresh_schema_drops_enumerating_stage_and_ceiling_checks(tmp_path):
     assert "stage IN ('needs_kickoff'" not in tickets_sql
     assert "ceiling IN ('needs_success'" not in tickets_sql
     conn.execute(
-        "INSERT INTO tickets (id, title, worker_type, ceiling, fields, created_at, updated_at) "
-        "VALUES (?, ?, 'coding', 'needs_success', ?, 1, 1)",
+        "INSERT INTO tickets (id, title, worker_type, employee_backend, ceiling, fields, "
+        "created_at, updated_at) "
+        "VALUES (?, ?, 'coding', 'hermes', 'needs_success', ?, 1, 1)",
         ("t_fresh", "Fresh", _EMPTY_CODING_FIELDS),
     )
     # No enumerating CHECK, so these DB-level writes now succeed (registry gates them).
@@ -195,8 +382,9 @@ def test_fresh_v20_schema_rejects_ticket_fields_omission(tmp_path):
 
     with pytest.raises(sqlite3.IntegrityError, match="tickets.fields"):
         conn.execute(
-            "INSERT INTO tickets (id, title, worker_type, ceiling, created_at, updated_at) "
-            "VALUES ('t_omits_fields', 'Missing fields', 'coding', 'needs_success', 1, 1)"
+            "INSERT INTO tickets (id, title, worker_type, employee_backend, ceiling, "
+            "created_at, updated_at) "
+            "VALUES ('t_omits_fields', 'Missing fields', 'coding', 'hermes', 'needs_success', 1, 1)"
         )
 
     conn.close()
@@ -212,8 +400,9 @@ def test_fresh_schema_has_no_ticket_execution_route(tmp_path):
     columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(tickets)")}
     assert "execution_route" not in columns
     conn.execute(
-        "INSERT INTO tickets (id, title, worker_type, ceiling, fields, created_at, updated_at) "
-        "VALUES ('t_assignment', 'A', 'coding', 'needs_success', ?, 1, 1)",
+        "INSERT INTO tickets (id, title, worker_type, employee_backend, ceiling, fields, "
+        "created_at, updated_at) "
+        "VALUES ('t_assignment', 'A', 'coding', 'hermes', 'needs_success', ?, 1, 1)",
         (_EMPTY_CODING_FIELDS,),
     )
     assert conn.execute("SELECT id FROM tickets WHERE id = 't_assignment'").fetchone()[0] == (
@@ -244,94 +433,6 @@ def test_fresh_schema_links_are_blocks_only_without_belongs_to_index(tmp_path):
         if str(row["origin"]) != "pk"
     }
     assert indexes == {"idx_links_to"}
-    conn.close()
-
-
-def test_fresh_schema_has_chat_turn_recovery_column_and_index(tmp_path):
-    conn = connect(str(tmp_path / "fresh-chat-recovery.db"))
-    create_schema(conn)
-
-    columns = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(chat_turns)")}
-    assert "recovery_of_turn_id" in columns
-    foreign_keys = conn.execute("PRAGMA foreign_key_list(chat_turns)").fetchall()
-    assert ("chat_turns", "recovery_of_turn_id", "id") in [
-        (row["table"], row["from"], row["to"]) for row in foreign_keys
-    ]
-    indexes = {
-        str(row["name"])
-        for row in conn.execute("PRAGMA index_list(chat_turns)")
-        if str(row["origin"]) != "pk"
-    }
-    assert "idx_chat_turns_one_recovery" in indexes
-    conn.close()
-
-
-def test_create_schema_migrates_v20_chat_turn_recovery_column_and_index(tmp_path):
-    conn = connect(str(tmp_path / "v20-chat-recovery.db"))
-    conn.executescript(_V20_CHAT_TURNS_DDL)
-    conn.execute(
-        "INSERT INTO chat_turns ("
-        "id, entity_id, origin, mode, status, phase, activity_label, output_role, "
-        "output_text, session_key, error, started_at, updated_at, completed_at"
-        ") VALUES ('run_original', 't_existing', 'human', 'message', 'errored', "
-        "'settled', NULL, 'assistant', 'partial', 'session-1', 'offline', 1, 2, 2)"
-    )
-    conn.execute("PRAGMA user_version=20")
-
-    create_schema(conn)
-    create_schema(conn)
-
-    columns = [str(row["name"]) for row in conn.execute("PRAGMA table_info(chat_turns)")]
-    assert columns.count("recovery_of_turn_id") == 1
-    preserved = conn.execute(
-        "SELECT output_text, session_key, recovery_of_turn_id FROM chat_turns "
-        "WHERE id = 'run_original'"
-    ).fetchone()
-    assert dict(preserved) == {
-        "output_text": "partial",
-        "session_key": "session-1",
-        "recovery_of_turn_id": None,
-    }
-    foreign_keys = conn.execute("PRAGMA foreign_key_list(chat_turns)").fetchall()
-    assert ("chat_turns", "recovery_of_turn_id", "id") in [
-        (row["table"], row["from"], row["to"]) for row in foreign_keys
-    ]
-    indexes = {
-        str(row["name"])
-        for row in conn.execute("PRAGMA index_list(chat_turns)")
-        if str(row["origin"]) != "pk"
-    }
-    assert "idx_chat_turns_one_recovery" in indexes
-    conn.execute(
-        "INSERT INTO chat_turns ("
-        "id, entity_id, origin, mode, status, phase, activity_label, output_role, "
-        "output_text, session_key, recovery_of_turn_id, error, started_at, updated_at, "
-        "completed_at"
-        ") VALUES ('run_recovery', 't_existing', 'human', 'message', 'complete', "
-        "'settled', NULL, 'assistant', 'done', 'session-1', 'run_original', NULL, 3, 4, 4)"
-    )
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute(
-            "INSERT INTO chat_turns ("
-            "id, entity_id, origin, mode, status, phase, activity_label, output_role, "
-            "output_text, session_key, recovery_of_turn_id, error, started_at, updated_at, "
-            "completed_at"
-            ") VALUES ('run_duplicate_recovery', 't_existing', 'human', 'message', "
-            "'complete', 'settled', NULL, 'assistant', 'done again', 'session-1', "
-            "'run_original', NULL, 5, 6, 6)"
-        )
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute(
-            "INSERT INTO chat_turns ("
-            "id, entity_id, origin, mode, status, phase, activity_label, output_role, "
-            "output_text, session_key, recovery_of_turn_id, error, started_at, updated_at, "
-            "completed_at"
-            ") VALUES ('run_bad_recovery', 't_existing', 'human', 'message', "
-            "'complete', 'settled', NULL, 'assistant', 'bad', 'session-1', "
-            "'run_missing', NULL, 7, 8, 8)"
-        )
-    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     conn.close()
 
 
@@ -492,7 +593,7 @@ def test_create_schema_removes_execution_route_after_lifecycle_migration_idempot
     columns = [str(row["name"]) for row in conn.execute("PRAGMA table_info(tickets)")]
     assert "implementer" not in columns
     assert "execution_route" not in columns
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 23
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     conn.close()
 
 
@@ -534,7 +635,7 @@ def test_v22_migration_maps_legacy_human_owner_and_drops_agent_routes(tmp_path):
             "SELECT id, ticket_status, stage_ownership_overrides FROM tickets ORDER BY id"
         )
     }
-    assert rows["t_khushal_coding"]["ticket_status"] == "agent_running_step"
+    assert rows["t_khushal_coding"]["ticket_status"] == "empty"
 
     assert json.loads(rows["t_khushal_coding"]["stage_ownership_overrides"]) == {
         "needs_implementation": "user"
@@ -558,14 +659,16 @@ def test_v22_migration_drops_execution_route_and_preserves_ticket_state(tmp_path
     conn.execute("ALTER TABLE tickets ADD COLUMN execution_route TEXT")
     conn.execute(
         "INSERT INTO tickets ("
-        "id, title, worker_type, stage, priority, deadline, project_id, sprint_item_id, "
+        "id, title, worker_type, employee_backend, stage, priority, deadline, "
+        "project_id, sprint_item_id, "
         "sprint_id, recap, ceiling, at_cap, ticket_status, execution_route, "
         "stage_ownership_overrides, employee_session_id, alias, fields, created_at, updated_at"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             "t_v21",
             "Legacy route",
             "coding",
+            "hermes",
             "needs_plan",
             "P1",
             None,
@@ -615,25 +718,6 @@ def test_v22_migration_drops_execution_route_and_preserves_ticket_state(tmp_path
             ("t_v21", "ticket_updated", '{"execution_route":', 6),
         ],
     )
-    conn.execute(
-        "INSERT INTO chat_turns ("
-        "id, entity_id, origin, mode, status, phase, output_role, output_text, "
-        "started_at, updated_at, completed_at"
-        ") VALUES (?, ?, 'worker', 'worker_step', 'complete', 'settled', "
-        "'assistant', '', 5, 5, 5)",
-        ("turn_legacy_route", "t_v21"),
-    )
-    conn.execute(
-        "INSERT INTO chat_messages (entity_id, turn_id, role, text, created_at) "
-        "VALUES (?, ?, 'worker', ?, 5)",
-        (
-            "t_v21",
-            "turn_legacy_route",
-            "Work ticket t_v21 — Legacy route. It is at Stage 'needs_success'; "
-            "take the next step and propose the 'success' field for approval. "
-            "Execution route: hermes_codex. Stage owner: worker.",
-        ),
-    )
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA user_version=21")
 
@@ -645,14 +729,6 @@ def test_v22_migration_drops_execution_route_and_preserves_ticket_state(tmp_path
             "ticket_updated",
             json.dumps({"field": "execution_route", "from": "hermes_codex", "to": "panels_worker"}),
             6,
-        ),
-    )
-    conn.execute(
-        "UPDATE chat_messages SET text = ? WHERE turn_id = 'turn_legacy_route'",
-        (
-            "Work ticket t_v21 — Legacy route. It is at Stage 'needs_success'; "
-            "take the next step and propose the 'success' field for approval. "
-            "Execution route: panels_worker. Stage owner: worker.",
         ),
     )
     conn.execute("PRAGMA user_version=22")
@@ -673,7 +749,7 @@ def test_v22_migration_drops_execution_route_and_preserves_ticket_state(tmp_path
         "stop",
         "user_takeover",
         json.dumps({"needs_plan": "user"}),
-        "employee-session",
+        None,
         "legacy-alias",
         _EMPTY_CODING_FIELDS,
         1,
@@ -689,13 +765,8 @@ def test_v22_migration_drops_execution_route_and_preserves_ticket_state(tmp_path
         json.dumps({"field": "title", "from": "Old", "to": "Legacy route"}),
         '{"execution_route":',
     ]
-    legacy_prompt = conn.execute(
-        "SELECT text FROM chat_messages WHERE turn_id = 'turn_legacy_route'"
-    ).fetchone()["text"]
-    assert "execution route" not in legacy_prompt.lower()
-    assert legacy_prompt.endswith("Stage owner: worker.")
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 23
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     conn.close()
 
 
@@ -1031,15 +1102,17 @@ def test_create_schema_adds_missing_new_worker_understanding_slot_idempotently(t
     coding_fields = _EMPTY_CODING_FIELDS + "\n"
     conn.executemany(
         "INSERT INTO tickets ("
-        "id, title, worker_type, stage, priority, deadline, project_id, sprint_item_id, "
+        "id, title, worker_type, employee_backend, stage, priority, deadline, "
+        "project_id, sprint_item_id, "
         "sprint_id, recap, ceiling, at_cap, ticket_status, stage_ownership_overrides, "
         "employee_session_id, alias, fields, created_at, updated_at"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 "t_kickoff",
                 "Kickoff legacy",
                 "new_worker",
+                "hermes",
                 "needs_kickoff",
                 "P1",
                 "2026-08-01",
@@ -1061,6 +1134,7 @@ def test_create_schema_adds_missing_new_worker_understanding_slot_idempotently(t
                 "t_later",
                 "Later legacy",
                 "new_worker",
+                "hermes",
                 "needs_stages",
                 "P2",
                 None,
@@ -1082,6 +1156,7 @@ def test_create_schema_adds_missing_new_worker_understanding_slot_idempotently(t
                 "t_done",
                 "Already migrated",
                 "new_worker",
+                "hermes",
                 "done",
                 "P3",
                 None,
@@ -1103,6 +1178,7 @@ def test_create_schema_adds_missing_new_worker_understanding_slot_idempotently(t
                 "t_coding",
                 "Coding unchanged",
                 "coding",
+                "hermes",
                 "needs_success",
                 "P3",
                 None,
@@ -1819,7 +1895,7 @@ def test_create_schema_upgrades_old_ticket_status_column(tmp_path):
         "t_null": "empty",
         "t_parented": "empty",
         "t_unknown": "empty",
-        "t_working": "agent_running_step",
+        "t_working": "empty",
     }
     assert dict(conn.execute("SELECT id, project_id FROM sprint_items ORDER BY id").fetchall()) == {
         "si_custom": "project_alpha_one",
@@ -2206,7 +2282,7 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(tm
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     create_schema(conn)
-    assert SCHEMA_VERSION == 23
+    assert SCHEMA_VERSION == 26
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     info = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(tickets)")}
@@ -2579,8 +2655,8 @@ def test_create_schema_backfills_historical_new_worker_coding_fields_for_audit(t
         "worker_type": "new_worker",
         "stage": "needs_stages",
         "ceiling": "needs_stages",
-        "ticket_status": "agent_running_step",
-        "employee_session_id": "employee-legacy",
+        "ticket_status": "empty",
+        "employee_session_id": None,
     }
     fields = json.loads(row["fields"])
     assert list(fields) == [
@@ -2839,6 +2915,444 @@ def test_event_rewrite_failure_rolls_back_table_rows_and_events(tmp_path, bad_pa
     )
 
 
+def _create_pre_provenance_v24_binding_table(conn: sqlite3.Connection) -> None:
+    conn.execute("DROP TABLE conversation_session_bindings")
+    conn.execute(
+        """
+        CREATE TABLE conversation_session_bindings (
+          employee_id        TEXT PRIMARY KEY,
+          entity_kind        TEXT NOT NULL CHECK (entity_kind IN ('ticket','agent')),
+          entity_id          TEXT NOT NULL,
+          acp_session_id     TEXT NOT NULL UNIQUE,
+          backend_key        TEXT NOT NULL,
+          binding_generation INTEGER NOT NULL CHECK (binding_generation > 0),
+          created_at         INTEGER NOT NULL,
+          updated_at         INTEGER NOT NULL,
+          UNIQUE (entity_kind, entity_id),
+          CHECK (employee_id = entity_id)
+        )
+        """
+    )
+
+
+def _insert_v24_binding_fixture(
+    conn: sqlite3.Connection,
+    *,
+    compaction_boundaries_json: str | None = None,
+) -> None:
+    conn.execute(
+        "INSERT INTO tickets "
+        "(id, title, worker_type, employee_backend, stage, ceiling, fields, employee_session_id, "
+        "created_at, updated_at) VALUES "
+        "('t_v24', 'V24', 'coding', 'hermes', 'needs_kickoff', 'needs_kickoff', '{}', "
+        "'session-v24', 101, 202)"
+    )
+    columns = (
+        "employee_id, entity_kind, entity_id, acp_session_id, backend_key, "
+        "binding_generation, created_at, updated_at"
+    )
+    values: tuple[object, ...] = (
+        "t_v24",
+        "ticket",
+        "t_v24",
+        "session-v24",
+        "hermes",
+        7,
+        111,
+        222,
+    )
+    placeholders = "?, ?, ?, ?, ?, ?, ?, ?"
+    if compaction_boundaries_json is not None:
+        columns += ", compaction_boundaries_json"
+        placeholders += ", ?"
+        values += (compaction_boundaries_json,)
+    conn.execute(
+        f"INSERT INTO conversation_session_bindings ({columns}) VALUES ({placeholders})",
+        values,
+    )
+    conn.execute("PRAGMA user_version=24")
+
+
+def test_pre_column_v24_binding_schema_reopens_with_empty_provenance(
+    tmp_path,
+) -> None:
+    conn = connect(str(tmp_path / "pre-provenance-v24.db"))
+    create_schema(conn)
+    _create_pre_provenance_v24_binding_table(conn)
+    _insert_v24_binding_fixture(conn)
+
+    create_schema(conn)
+    assert conn.execute("SELECT 1 FROM conversation_session_bindings").fetchone() is None
+    assert (
+        conn.execute("SELECT employee_session_id FROM tickets WHERE id = 't_v24'").fetchone()[0]
+        is None
+    )
+    create_schema(conn)
+    assert conn.execute("SELECT 1 FROM conversation_session_bindings").fetchone() is None
+    column = {
+        str(row["name"]): row
+        for row in conn.execute("PRAGMA table_info(conversation_session_bindings)")
+    }["compaction_boundaries_json"]
+    assert column["notnull"] == 1
+    assert column["dflt_value"] == "'[]'"
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 26
+    conn.close()
+
+
+def test_amended_v24_binding_schema_reopens_without_rewriting_provenance(
+    tmp_path,
+) -> None:
+    conn = connect(str(tmp_path / "amended-v24.db"))
+    create_schema(conn)
+    if "compaction_boundaries_json" not in {
+        str(row["name"]) for row in conn.execute("PRAGMA table_info(conversation_session_bindings)")
+    }:
+        conn.execute(
+            "ALTER TABLE conversation_session_bindings ADD COLUMN "
+            "compaction_boundaries_json TEXT NOT NULL DEFAULT '[]'"
+        )
+    provenance = (
+        '[{"boundary_id":"boundary-explicit","trigger":"explicit"},'
+        '{"boundary_id":"boundary-automatic","trigger":"automatic"}]'
+    )
+    _insert_v24_binding_fixture(
+        conn,
+        compaction_boundaries_json=provenance,
+    )
+
+    create_schema(conn)
+    assert conn.execute("SELECT 1 FROM conversation_session_bindings").fetchone() is None
+    assert (
+        conn.execute("SELECT employee_session_id FROM tickets WHERE id = 't_v24'").fetchone()[0]
+        is None
+    )
+    create_schema(conn)
+    assert conn.execute("SELECT 1 FROM conversation_session_bindings").fetchone() is None
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 26
+    conn.close()
+
+
+def _install_v24_conversation_fixture(
+    conn: sqlite3.Connection,
+    *,
+    with_provenance_column: bool = True,
+) -> tuple[str, str]:
+    conn.execute("DROP INDEX IF EXISTS idx_employee_step_runs_one_running")
+    conn.execute("DROP TABLE IF EXISTS employee_step_runs")
+    conn.execute("ALTER TABLE days ADD COLUMN chat_session_key TEXT")
+    if not with_provenance_column:
+        _create_pre_provenance_v24_binding_table(conn)
+    conn.executescript(
+        """
+        CREATE TABLE agent_chat_sessions (
+          id TEXT PRIMARY KEY, chat_session_key TEXT, created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE chat_turns (
+          id TEXT PRIMARY KEY, entity_id TEXT NOT NULL, origin TEXT NOT NULL,
+          mode TEXT NOT NULL, status TEXT NOT NULL, phase TEXT NOT NULL,
+          activity_label TEXT, output_role TEXT NOT NULL, output_text TEXT NOT NULL,
+          session_key TEXT, recovery_of_turn_id TEXT, error TEXT,
+          pending_clarification_request_id TEXT,
+          pending_clarification_question TEXT,
+          pending_clarification_choices TEXT,
+          started_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at INTEGER
+        );
+        CREATE TABLE chat_messages (
+          id INTEGER PRIMARY KEY, entity_id TEXT NOT NULL, turn_id TEXT, role TEXT,
+          text TEXT, created_at INTEGER NOT NULL
+        );
+        CREATE TABLE chat_turn_activity_entries (
+          id INTEGER PRIMARY KEY, turn_id TEXT NOT NULL, action_identity TEXT,
+          category TEXT NOT NULL, label TEXT NOT NULL, lifecycle_state TEXT NOT NULL,
+          started_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at INTEGER
+        );
+        """
+    )
+    ticket_id = "t_v25_worker"
+    orphan_ticket_id = "t_v25_orphan"
+    conn.executemany(
+        "INSERT INTO tickets "
+        "(id, title, worker_type, employee_backend, stage, ceiling, ticket_status, "
+        "employee_session_id, "
+        "fields, created_at, updated_at) VALUES (?, ?, 'coding', 'hermes', 'needs_kickoff', "
+        "'needs_kickoff', 'agent_running_step', ?, ?, 1, 9)",
+        (
+            (ticket_id, "Legacy worker", "session-v24", _EMPTY_CODING_FIELDS),
+            (orphan_ticket_id, "Legacy orphan", "orphan-session", _EMPTY_CODING_FIELDS),
+        ),
+    )
+    conn.execute(
+        "INSERT INTO days (id, focus, notes, created_at, updated_at, chat_session_key) "
+        "VALUES ('day_v24', 'Legacy day', '', 1, 2, 'day-session-v24')"
+    )
+    conn.execute(
+        "INSERT INTO agent_chat_sessions VALUES "
+        "('agent_panels_chief_of_staff', 'chief-session-v24', 1, 2),"
+        "('day_v24', 'day-agent-session-v24', 1, 2)"
+    )
+    conn.execute(
+        "INSERT INTO chat_turns "
+        "(id, entity_id, origin, mode, status, phase, activity_label, output_role, "
+        "output_text, session_key, recovery_of_turn_id, error, "
+        "pending_clarification_request_id, pending_clarification_question, "
+        "pending_clarification_choices, started_at, updated_at, completed_at) VALUES "
+        "('run_done', ?, 'worker', 'worker_step', 'complete', 'settled', NULL, "
+        "'assistant', 'done output', 'session-v24', NULL, NULL, NULL, NULL, NULL, 2, 3, 3),"
+        "('run_errored', ?, 'worker', 'worker_step', 'errored', 'settled', NULL, "
+        "'assistant', 'error output', 'session-v24', NULL, 'legacy boom', "
+        "NULL, NULL, NULL, 4, 5, 5),"
+        "('run_running', ?, 'worker', 'worker_step', 'running', 'doing', 'Inspecting', "
+        "'assistant', 'partial output', 'session-v24', NULL, NULL, 'clarify-worker', "
+        "'Worker question', '[\"A\",\"B\"]', 6, 7, NULL),"
+        "('run_human', ?, 'human', 'message', 'running', 'thinking', NULL, 'assistant', "
+        "'', 'session-v24', NULL, NULL, 'clarify-human', 'Human question', "
+        '\'["yes","no"]\', 8, 9, NULL)',
+        (ticket_id, ticket_id, ticket_id, orphan_ticket_id),
+    )
+    conn.execute(
+        "INSERT INTO chat_messages "
+        "(id, entity_id, turn_id, role, text, created_at) VALUES "
+        "(1, ?, 'run_human', 'human', 'legacy human prompt', 8),"
+        "(2, ?, 'run_running', 'assistant', 'legacy partial reply', 9)",
+        (orphan_ticket_id, ticket_id),
+    )
+    conn.execute(
+        "INSERT INTO chat_turn_activity_entries "
+        "(id, turn_id, action_identity, category, label, lifecycle_state, "
+        "started_at, updated_at, completed_at) VALUES "
+        "(1, 'run_running', 'tool-1', 'tool', 'Inspecting files', 'running', 6, 7, NULL),"
+        "(2, 'run_human', NULL, 'thinking', 'Thinking', 'complete', 8, 9, 9)"
+    )
+    conn.executemany(
+        "INSERT INTO events (entity_id, kind, payload, created_at) VALUES (?, ?, ?, ?)",
+        [
+            (ticket_id, "chat_turn_started", '{"turn_id":"run_done"}', 2),
+            (ticket_id, "chat_turn_started", '{"turn_id":"run_errored"}', 4),
+            (ticket_id, "chat_turn_started", '{"turn_id":"run_running"}', 6),
+            (orphan_ticket_id, "chat_turn_started", '{"turn_id":"run_human"}', 8),
+            (ticket_id, "chat_turn_started", '{"turn_id":"missing_turn"}', 9),
+            (ticket_id, "chat_session_created", "{}", 10),
+            (ticket_id, "chat_message_recorded", "{}", 11),
+            (ticket_id, "chat_turn_updated", '{"turn_id":"run_running"}', 12),
+            (ticket_id, "chat_turn_finished", '{"turn_id":"run_done"}', 13),
+            (ticket_id, "ticket_updated", '{"field":"title"}', 14),
+        ],
+    )
+    binding_columns = (
+        "employee_id, entity_kind, entity_id, acp_session_id, backend_key, "
+        "binding_generation, created_at, updated_at"
+    )
+    binding_values: list[tuple[object, ...]] = [
+        (ticket_id, "ticket", ticket_id, "session-v24", "hermes", 2, 1, 2),
+        (
+            "agent_panels_chief_of_staff",
+            "agent",
+            "agent_panels_chief_of_staff",
+            "chief-session-v24",
+            "hermes",
+            3,
+            1,
+            2,
+        ),
+    ]
+    placeholders = "?, ?, ?, ?, ?, ?, ?, ?"
+    if with_provenance_column:
+        binding_columns += ", compaction_boundaries_json"
+        placeholders += ", ?"
+        binding_values = [
+            (*values, '[{"boundary_id":"b1","trigger":"explicit"}]') for values in binding_values
+        ]
+    conn.executemany(
+        f"INSERT INTO conversation_session_bindings ({binding_columns}) VALUES ({placeholders})",
+        binding_values,
+    )
+    conn.execute("PRAGMA user_version=24")
+    return ticket_id, orphan_ticket_id
+
+
+def test_v25_cutover_converts_worker_correctness_and_deletes_conversation_state(
+    tmp_path,
+) -> None:
+    conn = connect(str(tmp_path / "v25-cutover.db"))
+    create_schema(conn)
+    ticket_id, orphan_ticket_id = _install_v24_conversation_fixture(conn)
+
+    create_schema(conn)
+
+    assert [
+        tuple(row)
+        for row in conn.execute(
+            "SELECT employee_step_id, status, employee_session_id, error, "
+            "started_at, updated_at, completed_at "
+            "FROM employee_step_runs ORDER BY started_at"
+        )
+    ] == [
+        ("run_done", "complete", "session-v24", None, 2, 3, 3),
+        ("run_errored", "errored", "session-v24", "legacy boom", 4, 5, 5),
+        ("run_running", "interrupted", "session-v24", None, 6, 7, 7),
+    ]
+    assert [
+        tuple(row)
+        for row in conn.execute(
+            "SELECT id, ticket_status, employee_session_id FROM tickets "
+            "WHERE id IN (?, ?) ORDER BY id",
+            (ticket_id, orphan_ticket_id),
+        )
+    ] == [
+        (orphan_ticket_id, "empty", None),
+        (ticket_id, "empty", None),
+    ]
+    assert conn.execute("SELECT 1 FROM conversation_session_bindings").fetchone() is None
+    assert [
+        tuple(row)
+        for row in conn.execute(
+            "SELECT kind, payload FROM events WHERE kind = 'employee_step_started' ORDER BY id"
+        )
+    ] == [
+        ("employee_step_started", '{"employee_step_id":"run_done"}'),
+        ("employee_step_started", '{"employee_step_id":"run_errored"}'),
+        ("employee_step_started", '{"employee_step_id":"run_running"}'),
+    ]
+    assert tuple(
+        conn.execute(
+            "SELECT kind, payload, created_at FROM events WHERE kind = 'ticket_updated'"
+        ).fetchone()
+    ) == ("ticket_updated", '{"field":"title"}', 14)
+    assert conn.execute("SELECT 1 FROM events WHERE kind LIKE 'chat_%'").fetchone() is None
+    for table in (
+        "chat_turns",
+        "chat_messages",
+        "chat_turn_activity_entries",
+        "agent_chat_sessions",
+    ):
+        assert not db_module._table_exists(conn, table)
+    assert "chat_session_key" not in db_module._table_columns(conn, "days")
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 26
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    create_schema(conn)
+    assert conn.execute("SELECT COUNT(*) FROM employee_step_runs").fetchone()[0] == 3
+
+
+def _v25_legacy_snapshot(conn: sqlite3.Connection) -> dict[str, object]:
+    return {
+        "user_version": int(conn.execute("PRAGMA user_version").fetchone()[0]),
+        "binding_sql": str(
+            conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'conversation_session_bindings'"
+            ).fetchone()[0]
+        ),
+        "tickets": [tuple(row) for row in conn.execute("SELECT * FROM tickets ORDER BY id")],
+        "days": [tuple(row) for row in conn.execute("SELECT * FROM days ORDER BY id")],
+        "turns": [tuple(row) for row in conn.execute("SELECT * FROM chat_turns ORDER BY id")],
+        "messages": [tuple(row) for row in conn.execute("SELECT * FROM chat_messages ORDER BY id")],
+        "activity": [
+            tuple(row)
+            for row in conn.execute("SELECT * FROM chat_turn_activity_entries ORDER BY id")
+        ],
+        "agent_sessions": [
+            tuple(row) for row in conn.execute("SELECT * FROM agent_chat_sessions ORDER BY id")
+        ],
+        "events": [tuple(row) for row in conn.execute("SELECT * FROM events ORDER BY id")],
+        "bindings": [
+            tuple(row)
+            for row in conn.execute("SELECT * FROM conversation_session_bindings ORDER BY 1")
+        ],
+    }
+
+
+def _assert_v25_legacy_snapshot(conn: sqlite3.Connection, expected: dict[str, object]) -> None:
+    assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == expected["user_version"]
+    assert (
+        str(
+            conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'conversation_session_bindings'"
+            ).fetchone()[0]
+        )
+        == expected["binding_sql"]
+    )
+    assert [tuple(row) for row in conn.execute("SELECT * FROM tickets ORDER BY id")] == expected[
+        "tickets"
+    ]
+    assert [tuple(row) for row in conn.execute("SELECT * FROM days ORDER BY id")] == expected[
+        "days"
+    ]
+    assert [tuple(row) for row in conn.execute("SELECT * FROM chat_turns ORDER BY id")] == expected[
+        "turns"
+    ]
+    assert [
+        tuple(row) for row in conn.execute("SELECT * FROM chat_messages ORDER BY id")
+    ] == expected["messages"]
+    assert [
+        tuple(row) for row in conn.execute("SELECT * FROM chat_turn_activity_entries ORDER BY id")
+    ] == expected["activity"]
+    assert [
+        tuple(row) for row in conn.execute("SELECT * FROM agent_chat_sessions ORDER BY id")
+    ] == expected["agent_sessions"]
+    assert [tuple(row) for row in conn.execute("SELECT * FROM events ORDER BY id")] == expected[
+        "events"
+    ]
+    assert [
+        tuple(row) for row in conn.execute("SELECT * FROM conversation_session_bindings ORDER BY 1")
+    ] == expected["bindings"]
+    assert (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name IN "
+            "('employee_step_runs', 'idx_employee_step_runs_one_running')"
+        ).fetchone()
+        is None
+    )
+
+
+@pytest.mark.parametrize("with_provenance_column", (False, True))
+def test_v25_cutover_failure_rolls_back_every_destructive_change(
+    tmp_path, monkeypatch, with_provenance_column: bool
+) -> None:
+    conn = connect(str(tmp_path / "v25-rollback.db"))
+    create_schema(conn)
+    _install_v24_conversation_fixture(conn, with_provenance_column=with_provenance_column)
+    before = _v25_legacy_snapshot(conn)
+
+    def fail(_conn: sqlite3.Connection) -> None:
+        raise RuntimeError("forced v25 failure")
+
+    monkeypatch.setattr(db_module, "_v25_cutover_after_destructive_work", fail)
+    with pytest.raises(RuntimeError, match="forced v25 failure"):
+        create_schema(conn)
+
+    _assert_v25_legacy_snapshot(conn, before)
+
+
+@pytest.mark.parametrize(
+    "invalid_provenance",
+    (
+        '[{"boundary_id":"missing-trigger"}]',
+        '[{"boundary_id":"bad-trigger","trigger":"eventual"}]',
+        '[{"boundary_id":"duplicate","trigger":"explicit"},'
+        '{"boundary_id":"duplicate","trigger":"automatic"}]',
+    ),
+)
+def test_v25_cutover_rejects_noncanonical_compaction_provenance_without_mutation(
+    tmp_path, invalid_provenance: str
+) -> None:
+    conn = connect(str(tmp_path / "v25-invalid-provenance.db"))
+    create_schema(conn)
+    _install_v24_conversation_fixture(conn)
+    conn.execute(
+        "UPDATE conversation_session_bindings SET compaction_boundaries_json = ? "
+        "WHERE employee_id = 't_v25_worker'",
+        (invalid_provenance,),
+    )
+    before = _v25_legacy_snapshot(conn)
+
+    with pytest.raises(RuntimeError, match="compaction provenance"):
+        create_schema(conn)
+
+    _assert_v25_legacy_snapshot(conn, before)
+
+
 def test_create_schema_reaches_only_consolidated_ticket_rebuild_after_lock(tmp_path):
     conn = connect(str(tmp_path / "trace.db"))
     conn.execute("PRAGMA foreign_keys=OFF")
@@ -2860,7 +3374,9 @@ def test_create_schema_reaches_only_consolidated_ticket_rebuild_after_lock(tmp_p
     create_schema(conn)
 
     begin_index = statements.index("BEGIN IMMEDIATE")
-    assert statements.count("BEGIN IMMEDIATE") == 2
+    # The two historical Ticket rebuilds, v25 cutover, and terminal v26 backend
+    # rebuild are the only write locks.
+    assert statements.count("BEGIN IMMEDIATE") == 4
     ticket_snapshot_index = next(
         index
         for index, statement in enumerate(statements)

@@ -1,0 +1,78 @@
+ACP-06 focused evidence
+=======================
+
+Settled implementation-lane gates
+---------------------------------
+
+.venv/bin/pytest -q tests/unit
+PASS — complete retained unit suite (implementation-lane report)
+
+.venv/bin/pytest -q tests/e2e
+PASS — 99 passed (implementation-lane report)
+
+.venv/bin/ruff check src/planner tests/unit tests/e2e
+All checks passed! (implementation-lane report)
+
+.venv/bin/mypy --strict src/planner tests/typing
+Success: no issues found in 122 source files (implementation-lane report)
+
+npm --prefix web test
+PASS — all 13 test groups (frontend-lane report)
+
+npm --prefix web run check
+PASS — 0 errors and 0 warnings (frontend-lane report)
+
+npm --prefix web run build
+PASS (frontend-lane report)
+
+Integrated-review backend correction gate
+-----------------------------------------
+
+.venv/bin/pytest -q tests/unit/test_employee_step_runner.py tests/unit/test_employee_step_repository.py tests/unit/test_server_shutdown_process.py tests/unit/test_acp_binding_repository.py tests/unit/test_db.py -k 'employee_step or shutdown_interrupts_exact_bound or compaction or v25_cutover or pre_column_v24 or amended_v24'
+24 passed
+
+Scoped Ruff on:
+  src/planner/runtime/employee_step_runner.py
+  src/planner/conversation/contracts.py
+  src/planner/conversation/sqlite_binding_repository.py
+  src/planner/core/db.py
+  tests/unit/test_employee_step_runner.py
+  tests/unit/test_server_shutdown_process.py
+  tests/unit/test_db.py
+All checks passed!
+
+.venv/bin/mypy --strict src/planner/runtime/employee_step_runner.py src/planner/conversation/contracts.py src/planner/conversation/sqlite_binding_repository.py src/planner/core/db.py
+Success: no issues found in 4 source files
+
+Scoped git diff --check
+PASS
+
+Integrated-review frontend correction gate
+------------------------------------------
+
+acp-browser-components.test.mjs
+PASS
+
+acp-images.test.mjs
+PASS
+
+acp-production-mount.test.mjs
+PASS
+
+npm --prefix web run check
+PASS — 0 errors and 0 warnings
+
+npm --prefix web run build
+PASS
+
+git diff --check
+PASS
+
+Generated-bundle legacy route/component scan
+PASS — no legacy Chat route, neutral pane, or legacy component token
+
+Canonical ./verify
+------------------
+
+NOT RUN. ACP-10 owns the one final frozen-tree verification run. The earlier accidental
+unfinished-tree invocation from the parallel research shell is explicitly not evidence.

@@ -7,6 +7,7 @@ import sqlite3
 
 from planner.core import links as core_links
 from planner.core.contracts import EventKind
+from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.tickets.contracts import AtCap, StageOwnershipMode, Ticket, TicketStatus
 from planner.tickets.logic import machine
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -58,24 +59,17 @@ def _has_worker_step_started_in_event_range(
     after_event_id: int | None = None,
 ) -> bool:
     clauses = ["entity_id = ?", "kind = ?"]
-    params: list[object] = [ticket_id, EventKind.chat_turn_started.value]
+    params: list[object] = [ticket_id, EventKind.employee_step_started.value]
     if after_event_id is not None:
         clauses.append("id > ?")
         params.append(after_event_id)
 
     where_clause = " AND ".join(clauses)
-    rows = conn.execute(
+    row = conn.execute(
         f"SELECT id, payload FROM events WHERE {where_clause} ORDER BY id",
         tuple(params),
-    ).fetchall()
-    for row in rows:
-        payload = json.loads(str(row["payload"]))
-        if (
-            payload.get("origin") == "worker"
-            and payload.get("mode") == "worker_step"
-        ):
-            return True
-    return False
+    ).fetchone()
+    return row is not None
 
 
 def _paired_status_allows_automatic_opening(
@@ -113,11 +107,7 @@ def is_eligible_for_automatic_employee_step(
     ).fetchone()
     if membership is None:
         return False
-    active_chat_turn = conn.execute(
-        "SELECT 1 FROM chat_turns WHERE entity_id = ? AND status = 'running'",
-        (ticket.id,),
-    ).fetchone()
-    if active_chat_turn is not None:
+    if SqliteEmployeeStepRepository().running_exists(conn, ticket.id):
         return False
     if worker_type_definition.is_terminal(ticket.stage):
         return False

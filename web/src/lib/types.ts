@@ -5,87 +5,6 @@ export type AnyRecord = Record<string, any>;
 // imported directly from lifecycle.ts at call sites.
 export type { WorkerTypesResponse } from "./lifecycle";
 
-export type GatewayStatus = {
-  available: boolean;
-};
-
-export type ChatStateMessage = {
-  id: number;
-  role: "human" | "assistant" | "system" | "worker" | string;
-  text: string;
-  created_at: number;
-  turn_id?: string | null;
-};
-
-export type ChatActivityEntry = {
-  id: number;
-  action_identity?: string | null;
-  category: "thinking" | "tool" | "command" | string;
-  label: string;
-  lifecycle_state: "running" | "complete" | string;
-  started_at: number;
-  updated_at: number;
-  completed_at?: number | null;
-};
-
-export type ChatPendingClarification = {
-  request_id: string;
-  question: string;
-  choices: string[];
-};
-
-export type ChatTurn = {
-  id: string;
-  entity_id: string;
-  origin: "human" | "worker" | "system" | string;
-  mode: "message" | "command" | "worker_step" | string;
-  status: "running" | "complete" | "errored" | "interrupted" | string;
-  phase: "queued" | "thinking" | "doing" | "responding" | "settled" | string;
-  activity_label?: string | null;
-  activity_entries: ChatActivityEntry[];
-  output_role: "assistant" | "system" | string;
-  output_text: string;
-  can_pause: boolean;
-  error?: string | null;
-  started_at: number;
-  updated_at: number;
-  completed_at?: number | null;
-  pending_clarification?: ChatPendingClarification | null;
-};
-
-export type ChatTurnOutcome = {
-  turn_id: string;
-  origin: "human" | "worker" | "system" | string;
-  status: "errored" | "interrupted";
-  output_role: "assistant" | "system" | string;
-  output_text: string;
-  error?: string | null;
-  can_continue: boolean;
-  completed_at: number;
-};
-
-export type ChatStateResponse = {
-  messages: ChatStateMessage[];
-  outcomes: ChatTurnOutcome[];
-  active_turn: ChatTurn | null;
-};
-
-export type ChatImageUploadResponse = {
-  reference: string;
-  markdown: string;
-};
-
-export type StartChatTurnBody = {
-  text: string;
-  mode: "message" | "command";
-  image_references?: string[];
-};
-
-export type AnswerChatClarificationBody = {
-  request_id: string;
-  answer: string;
-};
-
 export type SprintSummary = {
   id: string;
   name: string;
@@ -145,6 +64,7 @@ export type TicketDetail = {
   id: string;
   title: string;
   worker_type: string;
+  employee_backend: string;
   stage: string;
   ceiling: string;
   at_cap: string;
@@ -216,11 +136,4 @@ export type BacklogResponse = {
 
 export type IdeasResponse = {
   ideas: AnyRecord[];
-};
-
-export type CommandCatalog = {
-  categories: Array<{ name: string; pairs: Array<[string, string]> }>;
-  skills: Array<[string, string]>;
-  canon: Record<string, string>;
-  sub: Record<string, string[]>;
 };

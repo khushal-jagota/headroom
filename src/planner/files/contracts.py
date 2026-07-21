@@ -11,11 +11,3 @@ class TicketFile:
     ticket_id: str
     relative_path: str
     absolute_path: Path
-
-
-@dataclass(frozen=True)
-class ChatFile:
-    entity_id: str
-    relative_path: str
-    absolute_path: Path
-

@@ -8,9 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from planner.chat import data as chat_data
 from planner.core import links as core_links
-from planner.core.adapters.registry import build_adapters
 from planner.core.clock import TestClock as PlannerTestClock
 from planner.core.clock import build_clock
 from planner.core.config import Config, load_config
@@ -20,6 +18,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
 from planner.days import data as days_data
 from planner.runtime import automatic_employee_step_eligibility
+from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import NO_FURTHER, TITLE_MAX_CHARS, AtCap
 
@@ -85,24 +84,14 @@ def test_delete_ticket_removes_full_footprint_and_keeps_one_minimal_audit(
     core_links.add_link(tmp_db, blocked_item.id, "si_delete_parent", LinkKind.blocks, now)
     core_links.add_link(tmp_db, target.id, "si_delete_parent", LinkKind.blocks, now)
 
-    turn = chat_data.start_turn(
+    repository = SqliteEmployeeStepRepository()
+    run = repository.start(tmp_db, target.id, now=now)
+    repository.settle(
         tmp_db,
-        target.id,
-        origin="human",
-        mode="message",
-        visible_role="human",
-        visible_text="mistaken chat",
-        output_role="assistant",
-        phase="thinking",
-        activity_label="Thinking",
-        now=now,
-    )
-    chat_data.finish_turn(
-        tmp_db,
-        turn.id,
-        entity_id=target.id,
-        reply_text="old reply",
-        output_role="assistant",
+        run.employee_step_id,
+        ticket_id=target.id,
+        status="complete",
+        error=None,
         now=now,
     )
 
@@ -130,14 +119,9 @@ def test_delete_ticket_removes_full_footprint_and_keeps_one_minimal_audit(
         ).fetchone()
         is None
     )
-    assert (
-        tmp_db.execute("SELECT 1 FROM chat_messages WHERE entity_id = ?", (target.id,)).fetchone()
-        is None
-    )
-    assert (
-        tmp_db.execute("SELECT 1 FROM chat_turns WHERE entity_id = ?", (target.id,)).fetchone()
-        is None
-    )
+    assert tmp_db.execute(
+        "SELECT 1 FROM employee_step_runs WHERE ticket_id = ?", (target.id,)
+    ).fetchone() is None
 
     target_events = tmp_db.execute(
         "SELECT kind, payload, created_at FROM events WHERE entity_id = ? ORDER BY id",
@@ -205,19 +189,8 @@ def test_delete_ticket_rejects_agent_and_each_active_worker_invariant(
     assert controlled_exc.value.code is ErrorCode.already_running
     assert tickets_data.read_ticket(tmp_db, controlled.id).id == controlled.id
 
-    turn_target = _create(tmp_db, cfg, fake_clock, "Human chat running")
-    chat_data.start_turn(
-        tmp_db,
-        turn_target.id,
-        origin="human",
-        mode="message",
-        visible_role="human",
-        visible_text="still chatting",
-        output_role="assistant",
-        phase="thinking",
-        activity_label="Thinking",
-        now=now,
-    )
+    turn_target = _create(tmp_db, cfg, fake_clock, "Employee step running")
+    SqliteEmployeeStepRepository().start(tmp_db, turn_target.id, now=now)
     with pytest.raises(PlannerError) as turn_exc:
         tickets_data.delete_ticket(tmp_db, turn_target.id, actor="human", now=now)
     assert turn_exc.value.code is ErrorCode.already_running
@@ -233,17 +206,15 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
         path=None,
         env={
             "PLAN_TEST_MODE": "1",
-            "PLAN_GATEWAY_ADAPTER": "fake",
             "PLAN_DB_PATH": str(db_path),
         },
     )
     clock = build_clock(config)
-    adapters = build_adapters(config)
 
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    return create_app(config, clock, adapters, conn_factory), db_path
+    return create_app(config, clock, conn_factory), db_path
 
 
 class _EligibilityWakeSpy:

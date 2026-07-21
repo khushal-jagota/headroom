@@ -21,6 +21,38 @@ exists. They are kept intact here until then so nothing is dropped before it has
 
 ---
 
+# Workspace
+
+## D-workspace-three-level-grouping — Derive hierarchy from the existing board and manifest
+
+The production Workspace left rail groups each ticket as project → worker type → its current stage.
+Only populated groups render. Project names, worker labels, stage labels/order, ticket running state,
+and activity ordering already exist in the board response and worker-type manifest, so this is a
+client-side derivation and visual hierarchy change with no new backend field. Ticket rows keep only
+their title and the existing running mark because worker and stage are carried by structure. Plan and
+implementation review are collapsed to one frontend ticket because the API contracts are unchanged
+and the change is confined to one route, its CSS, and focused e2e assertions.
+
+Independent review widened the test-only boundary to the pre-existing paired-work Workspace assertion:
+that assertion encoded the superseded ticket-level stage/marker presentation and must now prove the
+same paired ticket is under its stage group with no non-running row mark. The production boundary is
+unchanged. The review also restored the approved prototype's exact 40px project title and 44px project
+separation instead of weakening that owner-chosen hierarchy to the nearest existing type/space tokens.
+
+The canonical gate found one additional cross-suite E31 reload snapshot that asserted the superseded
+pending-proposal dot. This is an integration-only test repair: reload still proves the same ticket title
+and canonical stage survive, but now does so through the Implementation group nesting and absence of a
+non-running row mark. No production scope was widened.
+
+Owner correction supersedes the earlier "running mark only" interpretation. Stage grouping removes the
+duplicated stage label from each row, but the existing condition circle remains because it communicates
+whether the ticket is waiting, running, needs approval, is paired, errored, or complete. A ticket row is
+therefore title plus one condition mark, with no worker/stage byline.
+
+The final nested hierarchy uses normal-case worker-type headers and compact uppercase stage labels. Worker
+identity should read as the content heading inside its card; stage is repeated navigational metadata and
+therefore uses the smaller tag treatment.
+
 # Tickets, gates, and the resolution engine
 
 ## D-lifecycle-gates — Kickoff plus five worker stages are ordinary gated fields
@@ -1823,4 +1855,946 @@ column disambiguates. Find the old number here to reach its current slug (or its
 | D102–D114 (closeout) | Per-ticket closeout/integration bookkeeping | Dropped (git carries commits + integration facts) |
 | D4–D9, D13–D28 (original) | CLI location, test-mode clock, seed tensions, audit rounds, verify-run notes, ticket-redesign inventories | Dropped (original-build process exhaust; git carries it) |
 | D58–D64 (segments) | Review/ticket UI segment cleanups | Folded into [D-shared-component-set] / [D-workspace-route] |
+# Workspace left-panel exploration (2026-07-19)
 
+- Owner direction: project header → worker header → tickets, ordered from earliest to latest stage
+  inside every project/worker block. Ticket rows show only title, stage, and the running signal.
+  This is design research until the owner approves the rendered hierarchy for implementation.
+- Current visual comparison: (A) project → worker → tickets, using project size/space instead of a
+  project divider and a divider only after each worker group; stage remains on ticket rows. (B)
+  project → worker → non-empty stage → tickets; stage is absent from ticket rows because it is now
+  the group header. All labels remain flush to one left edge — hierarchy is typographic, not inset.
+  Every level is collapsible. Awaiting owner choice between the two nesting depths.
+- Owner selected B. At rest chevrons are hidden; hovering a grouping header reveals its chevron at
+  the right edge. Worker group boundaries use a larger gutter and a thicker divider; stage groups
+  use thin internal dividers. This is a mockup decision awaiting implementation approval.
+- The selected direction now has an interactive standalone fake-data mockup. Collapse is supported
+  independently at project, worker, and stage levels; ticket selection is local-only mockup behavior.
+- Worker type is the card boundary: each worker is a transparent, bordered card, not a filled surface.
+  Project remains a large typographic heading outside cards; its worker and stage headings have a
+  larger scale than the previous compact design.
+- Cards use subtle low-contrast borders. Worker names are uppercase; stage names are normal-cased,
+  larger headers than their ticket titles.
+- Stage headers use 21px but retain their original muted contrast so they read as a grouping level,
+  not ticket metadata.
+
+---
+
+# ACP migration (2026-07-19)
+
+## D-acp-single-conversation-path — ACP replaces relay and legacy after proof
+
+ACP is the destination rather than a third coexistence mode. The unfinished shared-registry P2 is
+cancelled: it would spend implementation effort improving a path this program must delete. P1's
+employee-keyed ownership primitive remains an input. ACP cuts over the live Chief, Ticket, and step
+paths directly; the dead legacy code stays physically present only until the Hermes ACP path passes
+computer-use proof, then is removed in one classified deletion ticket. This supersedes
+`D-hermes-relay-architecture` as the end state.
+
+## D-acp-server-client-browser-envelope — ACP ends at the Panels server
+
+The Panels server is the ACP Client and uses the official Python SDK over stdio. The browser is a
+thin viewer/controller over one Panels websocket. That wire preserves ACP `SessionUpdate` types and
+adds only routing, sequence, connection/activity, delivery receipt/queue, compaction, permission,
+and optimistic-human-echo events. It does not introduce a neutral translation vocabulary. This
+resolves `D-transcript-ownership-open`: the agent's typed `session/load` replay is the conversation
+source; the browser holds live view state; canonical product data remains server-owned separately.
+
+## D-acp-ordered-ingress — One consumer serializes each employee/session update stream
+
+The ACP SDK may invoke client callbacks concurrently even though frames arrive in order. Each
+callback therefore validates and enqueues only; one employee/session consumer applies the reducer
+and broadcasts in sequence. Browser refresh resets a stream generation and forwards typed load
+replay before readiness. Unknown or partial typed replay becomes a visible error, never assistant
+text. This is the load-bearing fix for refresh-time reasoning spill.
+
+## D-acp-explicit-turn-delivery — Panels owns Steer, Send Now, and Queue semantics
+
+`D-native-turn-concurrency` is superseded by the owner brief. Queue is a server-owned FIFO delivered
+only after the active ACP prompt settles. Send Now cancels and settles the active prompt, emits an
+interruption boundary, then starts the new prompt. Steer is exposed only when a backend declares a
+real steering strategy (Hermes maps to its native command); unsupported backends do not silently
+reinterpret it. Every action has a visible receipt and queue snapshot. A Panels transcript/database
+row is never treated as delivery to the worker. Queue and Send Now are therefore common broker
+capabilities, not backend flags; agent-advertised `/queue` and `/steer` slash commands remain catalog
+entries and do not define the separate composer controls.
+
+## D-acp-compaction-normalizer — Compaction is a visible Panels event
+
+ACP v1 has no compaction update, so each backend definition may supply a narrow observation strategy
+that produces generic `compacting`, `compacted`, or `failed` events with an inspectable summary. For
+Hermes, an explicit `/compact` enters compacting before the prompt and performs a controlled typed
+load capture afterward; automatic compression is detected from session provenance and uses the same
+capture. The capture is not rebroadcast as duplicate history. The generic turn broker never checks
+backend names. This intentionally supersedes the compaction part of `D-only-free-hermes-features`.
+
+## D-acp-permissions-are-transient — ACP permission is not a ticket proposal
+
+An ACP reverse permission call is transient conversation state tied to one tool call and one exact
+agent-supplied option. Panels reuses the gate system's clear approval language, not its canonical
+ticket writer or `ApprovalBlock` state machine. The request preserves the agent's exact ordered ACP
+options and has a five-minute configured deadline. It is broadcast to every browser attached to the
+owning employee; the first valid response from a still-attached browser wins. One tab closing does
+not settle the request while another can answer, no attached browser rejects immediately, and the
+last attached browser leaving cancels it. Timeout, cancellation, child death, new conversation, and
+shutdown cancel or deny the outstanding request exactly once.
+
+## D-acp-commands-come-from-the-session — The palette mirrors typed ACP updates only
+
+The slash palette is per-session state from ACP `available_commands_update`. It does not call the
+legacy commands API, inspect private skills methods, or hard-code a backend catalog. Stop and New
+conversation remain explicit Panels lifecycle controls outside that catalog. Compact, steer, and
+queue are shown only when the live session/backend advertises the corresponding operation; visible
+delivery controls are driven by typed capability state, not by recognizing command strings.
+
+## D-acp-browser-types-are-pinned-source — Vendor only the framework-free donor core
+
+The server pins `agent-client-protocol==0.11.0`. The browser vendors only the framework-free
+`acp-components/core` types/reducer source at exact revision
+`525a9d83c5ace577ac0417bf82bf983da4042663`, alongside its upstream license and provenance. Panels
+does not install the stale npm package, adopt its React UI, or fork the ACP unions into an
+independently drifting vocabulary. acp-ui remains a behavior reference, never a visual donor.
+
+## D-acp-program-review — Freeze after two independent review rounds
+
+The first read-only Codex review found five program blockers; all were accepted and resolved in the
+plan: step-runner CAS/settlement/recovery, all ten conformance probes, typed command provenance,
+exact permission state, and a mandatory independently reviewed legacy-chat ownership inventory.
+The second review reported no unresolved blockers and `READY`. ACP-00 may now freeze contracts; later
+implementation agents may not change their shapes without returning an explicit correction to the
+orchestrator.
+
+## D-acp-ticket-reviews-use-subagents — Independent reviewers need not be the Codex CLI
+
+Live owner direction after the program review allows independent sub-agents to review ticket plans
+and implementation diffs. Each review still runs as isolated work by an agent other than the author,
+records its full findings and dispositions, and keeps the two-round cap. The already-completed
+program-level Codex CLI review stands; future ticket reviews use sub-agents unless the owner changes
+direction again.
+
+Review depth is risk-based, not ritual: one focused plan review and one focused implementation review
+is the default. A second round happens only when the first leaves a concrete blocker unresolved or a
+material correction changes the load-bearing design. Trivial mechanical follow-ups are dispositioned
+and checked by the orchestrator without commissioning another broad review.
+
+ACP-00 exercised that rule: one implementation review found real wire-validation and conformance-
+evidence blockers. The implementation was corrected, then the same reviewer performed only a narrow
+finding-by-finding check and returned `READY`. This is the intended exception to the one-round
+default, not a precedent for automatic second broad reviews.
+
+## D-acp-reference-design-boundary — Zed legibility, Panels presentation, acp-ui behavior only
+
+The owner explicitly rejected acp-ui as a visual target. Zed is the observed affordance bar for
+collapsed thinking, compact tools/diffs, persistent status, queue/interruption, compaction, commands,
+and permission clarity. Panels keeps its Svelte stack, existing tokens, restrained cardless layout,
+markdown/images/previews, and right-rail geometry. The component port adopts state and interaction
+logic without widening this migration into a product redesign.
+
+## D-acp-backends-are-definitions — Register only conformant agent binaries
+
+Generic ACP runtime and UI code contain no backend-name conditionals. A backend definition supplies
+argv, explicit environment, reverse-service needs, and only the strategies ACP does not standardize.
+Hermes proves the path first, then Codex and Claude pass the shared conformance suite. Gemini 0.51.0
+is gated because inspected `session/load` can respond before replay completes; Panels will surface
+that failure and withhold registration rather than invent a quiet-period heuristic.
+
+## D-acp-hermes-readonly — Remove dependency on patches, never mutate the checkout
+
+The implementer brief's strict boundary wins: no writes and no git commands in
+`~/.hermes/hermes-agent`. Panels will make the local legacy patches irrelevant by deleting the
+non-ACP paths, but physically reverting those patches is an external/manual action outside this
+repository's authorized migration.
+
+## D-acp-verify-at-checked-in-relay-default — Live runtime toggles do not redefine the test baseline
+
+The owner's uncommitted `relay_backend_enabled: true` is an operational setting for the live relay
+path; the file itself records that the repository default remains false for tests. Because existing
+unit helpers and e2e server processes read the working-copy YAML, a normal `./verify` under that live
+toggle rejects or reroutes the legacy-chat cases by design. ACP ticket integration therefore verifies
+with that one value temporarily at its checked-in false default, then restores the exact live true
+value immediately. Both the contaminated run and the clean run are recorded. This preserves owner
+runtime state without weakening, skipping, or rewriting tests.
+
+## D-acp-child-generation-is-not-binding-generation — Process recovery preserves conversation identity
+
+ACP-01 separates the in-memory child generation from the durable binding generation. Every process
+spawn advances child generation and guards callbacks/death, but a crash followed by `session/load`
+keeps the same ACP session ID and binding generation. Binding generation starts at one and advances
+only when a deliberately new ACP session or backend is persisted. This prevents a routine child
+restart from looking like a new conversation while still making late callbacks harmless.
+
+## D-acp-load-means-replay-consumed — The load response alone is not readiness
+
+The official SDK may schedule notification callbacks concurrently, so ACP-01 cannot announce load
+readiness merely because `session/load` returned. The production child uses the SDK stream observer
+only to count/order update frames before the response, then waits until those updates reach the typed
+enqueue callback and pass through the one ordered consumer. It does not decode raw payloads, add a
+quiet-period heuristic, or create a second transport. This closes the refresh race without weakening
+ACP type ownership.
+
+## D-acp-browser-gaps-fail-closed — The transcript never guesses across missing wire state
+
+The ACP browser controller admits exact next-sequence events for the attached identity. Duplicate,
+stale, wrong-identity, and out-of-order envelopes cannot change transcript state; a forward gap sets
+a persistent visible connection error and reconnects from the last admitted generation/sequence.
+Binding generation advances only through a matching reset envelope. Unknown or partial updates stay
+protocol errors rather than assistant text. This gives refresh/reconnect a deterministic recovery
+path without silently inventing a transcript.
+
+## D-acp-terminal-state-is-a-panels-envelope — Reverse terminal output stays typed tool state
+
+ACP `ToolCallContent::Terminal` carries only a terminal ID. The accumulated output, truncation, and
+exit status are returned to the agent through client-owned reverse terminal calls, so forwarding ACP
+session updates alone cannot make terminal tools legible. ACP-00 is explicitly corrected before
+ACP-02/03 implementation: an eleventh `terminal_state` envelope wraps the terminal ID, an
+`active | released` lifecycle, and the exact SDK `TerminalOutputResponse`. The terminal owner emits
+and replays bounded snapshots. Panels does not copy the SDK exit-status union, add browser terminal
+JSON-RPC, or flatten terminal output into assistant text.
+
+## D-acp-child-death-rejects-the-turn-queue — A reloaded process never inherits stale queued intent
+
+If an ACP child dies, the turn broker interrupts the active prompt and rejects every queued prompt in
+FIFO order, then publishes an empty queue. It does not auto-resume those messages after loading the
+durable session into a new process. This sacrifices automatic recovery of pending human intent to
+make duplicate execution impossible when the exact point of agent failure is unknown; the visible
+receipts let the user resubmit deliberately.
+
+## D-acp-reverse-services-are-session-confined — Agent callbacks do not inherit ambient authority
+
+Filesystem and terminal reverse calls accept only the exact employee binding/session and declared
+workspace roots. Filesystem paths resolve through symlinks before I/O. Terminals use argv execution,
+an injected base environment rather than ambient server variables, bounded UTF-8-safe output, and
+employee/session-scoped handles. Services are advertised only when completely composed. This keeps a
+binary swap from silently widening file, environment, or process authority.
+
+## D-acp-00a-review-disposition — Close the proof gap without another broad round
+
+ACP-00a's independent implementation review confirmed the production wire and found only that the
+terminal-specific test mutated sequence but not every inherited common envelope field. The
+orchestrator added the complete parameterized identity/generation/sequence proof and reran the
+focused checks. Because the finding required no production or design change, a second broad review
+would add no useful evidence.
+
+## D-acp-steer-capability-is-connection-state — The browser never guesses delivery support
+
+ACP-03 planning exposed that the browser wire could show a rejected Steer receipt but could not make
+unsupported Steer unavailable in advance. ACP-00b adds one required `supportsSteer` boolean to the
+existing connection payload, sourced later from the selected backend definition. It does not add a
+capability event or dictionary. Queue and Send Now remain common broker behavior, and neither backend
+name, connection detail, nor an advertised `/steer` slash command is accepted as capability evidence.
+
+## D-acp-observer-reserves-typed-ingress — Invalid replay cannot disappear inside the SDK router
+
+The pinned SDK observes raw frames before routing, but validates notifications before the typed client
+callback and suppresses a notification validation exception. A count-only load barrier can therefore
+wait forever on a malformed replay frame. ACP-01 explicitly narrows the observer exception: for each
+raw `session/update` it reserves an ordered bounded slot and runs the exact SDK model validation only
+to record a canonical matching fingerprint or fill the slot with the frozen protocol-rejection
+payload. Valid content still enters only through the SDK typed callback. The consumer processes slots
+in wire order, so a partial/future update becomes visible and load completion remains deterministic
+without a quiet-period heuristic or a hand-written protocol parser.
+
+## D-acp-generation-publication-quiesces-old-sinks — A visible child generation has no older writer
+
+A generation check before an awaited sink is insufficient: an old callback can pass, suspend, and
+commit after a replacement is published. Each employee therefore has a publication/update gate.
+Admitted sink calls hold it through their awaited mutation; publishing N+1 waits for admitted N work
+to leave and advances under the same gate. The short global registry lock is never held across the
+sink. This makes the generation boundary a real writer boundary rather than a preflight check.
+
+## D-acp-browser-metadata-is-nontranscript-state — Stable session metadata is ordinary typed state
+
+The pinned ACP union's `current_mode_update`, `config_option_update`, and `session_info_update` are
+normal session updates, and Hermes emits them during ordinary use. ACP-03 stores them as typed
+non-transcript state. They never create assistant prose, an unsupported-content row, or a protocol
+error. Genuinely unknown or partial protocol values still fail closed; unstable plan-delta variants
+may remain visibly unsupported until their own contract exists.
+
+## D-acp-browser-recovery-is-proven-by-ready — Only a contiguous replacement epoch clears gaps
+
+A browser-side gap or invalid-envelope error remains visible through reconnect and replay. It clears
+only when a `connection: ready` envelope is admitted at the exact next sequence on the replacement
+socket epoch. A late ready from the failed epoch and a replay that opens another gap cannot clear it.
+`protocol_update_rejected` is persistent agent-protocol state and is never cleared by browser
+recovery.
+
+## D-acp-browser-snapshot-is-an-immutable-projection — Svelte cannot mutate reducer ownership
+
+Copy-on-write reducer transitions are insufficient if consumers receive donor arrays or its mutable
+tool map. ACP-03 keeps mutable donor compatibility internal and publishes a cached recursively
+readonly/frozen projection, including a frozen keyed record for pending tools. A compile-time
+boundary proof and a runtime cast-and-mutate test protect both the current controller state and later
+snapshots.
+
+## D-acp-03-plan-review-disposition — Four bounded corrections need no second broad review
+
+ACP-03's independent plan review found ordinary metadata misclassified as an error, one missing
+composer capability prop, an absent recovery transition, and an incompletely immutable public
+snapshot. The contract and plan now state each correction explicitly and add focused proof. The same
+review confirmed the transcript reducer, sequence rules, terminal state, Svelte inventory, and
+restrained Panels visual direction were sound and explicitly recommended no second broad round after
+the dispositions. Implementation may proceed with one independent diff review as the normal gate.
+
+## D-acp-ingress-retirement-is-explicit — Child shutdown cannot wait on a callback that cannot arrive
+
+An observer-reserved valid update can remain unfulfilled if the SDK child is closing or canceled
+before its typed callback runs. Ordered ingress therefore retires explicitly: it stops acceptance,
+drains the already-fulfilled head prefix, marks an unfulfillable reservation fatal, wakes load
+waiters, and terminates. Forced/error cancellation never performs an unbounded drain. A downstream
+sink exception uses the same generation-fatal path instead of leaving a dead consumer task and a
+pending load barrier. This preserves accepted-prefix evidence while making shutdown bounded.
+
+## D-acp-cancellation-cause-freezes-successor — Closing paths cannot accidentally advance the FIFO
+
+The turn actor records a cancellation cause and its successor policy before any permission or ACP
+cancel await. User cancel may advance one queued item; Send Now starts only its accepted submission;
+new conversation, shutdown, child failure, and timeout reject the entire FIFO and start nothing.
+Cancel timeout starts before the owned cancel-send task, so a blocked transport send cannot prevent
+the reject-all disposition.
+
+## D-acp-capture-replaces-the-child-generation — Private replay requires a traffic-isolated source
+
+ACP notifications do not identify which `session/load` caused them, so diverting a time window on a
+live child cannot distinguish replay from an unrelated delayed update. Compaction capture therefore
+quiesces and retires exact generation N after prompt settlement, then privately loads the unchanged
+durable binding on fresh generation N+1 whose only operation is that load. N updates remain ordinary
+until retirement; N+1 replay is private through the response-consumption barrier; later N+1 updates
+become ordinary before publication. This is generation isolation, not a quiet-period heuristic.
+
+## D-acp-permission-open-is-a-turn-actor-command — Terminal causes win over late reverse callbacks
+
+Each child permission callback carries captured employee/record/generation identity into the turn
+actor. Permission open serializes with cancel, death, new conversation, and shutdown. Those terminal
+causes tombstone the epoch before settlement, so a callback arriving later returns ACP cancelled
+without publishing. The broker-owned future is shielded from SDK handler-task cancellation; only the
+permission owner settles it.
+
+## D-acp-filesystem-io-is-descriptor-backed — Confinement applies to the object actually opened
+
+Resolving a path and reopening its string leaves a symlink-swap race. Reverse filesystem I/O resolves
+safe internal symlinks to a canonical in-root target, traverses that canonical relative path from an
+opened root descriptor with no-follow semantics, and reads/writes only the final verified descriptor.
+Dangling final symlinks are distinguished from missing names; new writes use exclusive no-follow
+creation. Path replacement can fail or select the original confined target, but cannot escape.
+
+## D-acp-planned-retirement-is-not-child-death — Capture replacement suppresses only its exact close
+
+Before compaction capture closes generation N, the registry installs a token containing employee,
+binding generation, child generation, record identity, and capture transaction. Only a matching
+intentional-close callback consumes it and settles the private retirement future; a non-null error or
+mismatched token still enters unexpected-child-death cleanup. This prevents a successful capture
+transition from failing its own actor without masking real death.
+
+## D-acp-hermes-summary-is-structural-not-private-provenance — Replay supports all pinned placements
+
+ACP replay omits Hermes' `_compressed_summary` metadata. The strategy therefore recognizes the exact
+pinned standalone or merged summary structure across both user and assistant chunks, and requires
+exactly one candidate while a typed broker boundary is being finalized. Standalone user/assistant and
+merged user/assistant tail forms are valid; zero or multiple candidates fail visibly. Text syntax is
+not misrepresented as private provenance.
+
+## D-acp-01-correction-check-closes-the-runtime-ticket — Seven findings resolved without reopening settled scope
+
+ACP-01's original author corrected only the seven independent-review findings, expanded the named
+lifecycle evidence, and reran the ticket's focused gates. A different reviewer checked those seven
+findings one by one and returned `READY`; it did not reopen areas already confirmed sound. This is the
+owner-requested bounded review model, so ACP-01 is the settled runtime prerequisite for ACP-02 and
+does not receive another broad review.
+
+## D-acp-03-correction-check-closes-the-unmounted-pane — Runtime component proof replaces source-only evidence
+
+ACP-03's original author corrected only the eight findings from its independent implementation
+review. The final proof now drives the real websocket transport/controller/reducer subject and mounts
+the actual Svelte pane in Chromium, including its accessibility live regions and every contracted
+control. A different reviewer checked those eight findings one by one and returned `READY` without
+reopening the already-sound restrained visual scope. ACP-03 is settled and ACP-04 alone owns route
+mounting and production composition.
+
+## D-acp-binding-row-mirrors-product-session-fields — Durable ACP identity is complete and worker checks stay valid
+
+ACP needs backend key and binding generation in addition to session ID, so ACP-04 adds one complete
+`conversation_session_bindings` row per employee. The current Ticket `employee_session_id` and Chief
+agent session key remain atomic mirrors until ACP-06 classifies their retained product uses. A single
+transaction updates both through the canonical product writer; mismatch fails closed. This avoids
+encoding metadata into an opaque ACP session ID while preserving EmployeeStepRunner's established
+session-ownership checks. The current Chief writer owns its own transaction, so ACP-04 may extract
+one in-transaction helper in `chat/data.py` and make the existing public writer delegate to it; this
+is the only way to join the binding-row and mirror write atomically without creating a second writer.
+
+## D-acp-active-attach-uses-the-typed-reset-buffer — Refresh must not issue load during a live prompt
+
+An idle attach performs the canonical reset + `session/load` + ready sequence. A new browser attaching
+while a prompt is active receives the complete typed buffer from the current reset epoch instead,
+because issuing `session/load` concurrently with the active prompt is not a proven ACP operation. The
+buffer is bounded and never silently partial: an unavailable buffer yields a visible retry until the
+next idle load. Existing attached browsers continue receiving every live typed event.
+
+## D-acp-same-binding-reset-rebases-a-restarted-stream — Process restart cannot reuse a stale sequence base
+
+Binding generation deliberately survives child and server restart, while an in-memory envelope
+sequence does not. ACP-04 therefore lets an exact same-entity/session/binding reset with a sequence
+greater than the browser cursor establish a replacement base even if it is non-contiguous. The server
+raises that reset above the browser-provided sequence floor; ready and all later ordinary events must
+again be contiguous. This preserves durable session identity without a database write per streamed
+token or a false binding-generation increment.
+
+## D-acp-step-callback-runs-on-the-runner-thread — SQLite ownership survives the async bridge
+
+`EmployeeStepRunner`'s `on_session_key` callback closes over its caller-thread SQLite connection. The
+event-loop-owned ACP hub cannot invoke it directly. `AcpStepGateway` uses one explicit caller-thread
+handshake around `run_coroutine_threadsafe`: the candidate session is handed back, the runner thread
+executes and acknowledges its existing CAS/turn attachment, and only then may the broker invoke the
+ACP prompt. Lost claims therefore deliver nothing and no SQLite connection crosses threads.
+
+## D-acp-reverse-state-retires-with-its-child-generation — Capture cannot carry N's authority into N+1
+
+Permission requests and live terminals are owned by the exact employee, binding, record identity,
+prompt epoch, and child generation that created them. The turn actor therefore uses one generation
+cleanup path for child failure, cancel timeout, compaction capture, new conversation, and shutdown.
+Compaction settles generation N's reverse state before it retires N and publishes N+1; a terminal or
+permission callback from N cannot survive as authority in the replacement generation.
+
+## D-acp-runtime-publication-failure-stops-delivery — Missing visible state is a runtime failure
+
+A failed activity, receipt, permission, compaction, or terminal publication is not downgraded to an
+ordinary rejection while the employee continues. The owning generation closes admission, cancels
+owned work, settles reverse state, and starts no queued successor. This keeps the browser's typed
+state and actual agent execution from diverging after a publisher failure.
+
+## D-acp-delivery-captures-the-submitted-record — Accepted N work never rereads the actor's current handle
+
+Same-binding child refresh may publish N+1 while an older actor command is suspended in event
+publication. Runtime adoption is therefore an actor command, and every delivery retains the exact
+submitted runtime handle through acceptance and lease acquisition. If that record is no longer live,
+the delivery fails stale; it is never redirected to whichever generation is current when the await
+resumes.
+
+## D-acp-permission-outcome-commits-before-activity — Visible selection cannot be revoked by status failure
+
+Publishing the permission outcome commits the exact ACP response. Restoring conversation activity is
+a later visible transition: its failure is generation-fatal, but it cannot rewrite a selected result
+to cancelled after the browser already saw the selection. Publication-failure notification must also
+be non-reentrant with actor-owned settlement so the failure path cannot cancel and await itself.
+
+## D-acp-deadline-has-no-cancellation-grace — Cleanup reports at the caller's absolute boundary
+
+The configured shutdown deadline is the complete budget, including forced cancellation and result
+collection. After it expires, cleanup may synchronously detach ownership and kill processes, but it
+does not await a task that suppresses cancellation. Unfinished employees or terminal IDs are reported
+immediately; late task completion is consumed without extending shutdown's wall-clock contract.
+
+## D-acp-02-correction-check-closes-the-broker-ticket — Five load-bearing findings are settled once
+
+The original ACP-02 author corrected exactly the independent review's runtime-redirection,
+closed-runner admission, hard-deadline cleanup, permission-commit ordering, and frozen-type findings.
+The same reviewer then performed one narrow finding-by-finding check, independently reran the 11
+named regressions, and returned `READY` without reopening areas already confirmed sound. Together
+with the 214-test affected acceptance gate and the orchestrator's source spot-check, this closes
+ACP-02 under the owner's bounded-review rule. ACP-04 may plan against these APIs without another
+broad review or an intermediate canonical `./verify`.
+
+## D-acp-04-uses-one-reentrant-safe-sequencer — Owner calls and their publications cannot share a held lock
+
+ACP-04 admits every valid or rejected child update with immutable employee/generation/record source
+identity into one bounded per-employee FIFO. Its drain alone mutates browser stream state. Attach,
+load, prompt, cancel, permission, and replacement calls execute outside that drain and close through
+explicit markers/watermarks, so an owner can publish back before returning without waiting on its
+own held transition lock. Pre-binding capture is a state inside the same admission order, not a
+second replay channel.
+
+## D-acp-worker-first-demand-owns-a-stream-epoch — A browser is not required to make worker output replayable
+
+Before an automatic Employee prompt, the ACP step gateway requires the hub to establish the exact
+binding's reset/load/snapshot/ready epoch even when no browser is attached. The worker collector and
+permission provenance are then installed before prompt emission. A browser joining mid-step can
+therefore receive the same complete typed reset buffer as any other active attach, and exact-epoch
+rejection or capture failure settles the worker result before its collector is removed or a queued
+successor begins.
+
+## D-acp-permission-origin-is-admission-state — Stale worker permission cannot become an ordinary browser request
+
+Permission admission copies immutable worker/browser origin together with exact runtime, prompt,
+binding, and session identity into the pending record. Settlement never reclassifies from the later
+active map. A worker-origin option can win only while one synchronous `BEGIN IMMEDIATE` guard proves
+the durable binding, Ticket mirror and running status, exact active worker epoch, and worker-turn
+session before that same pending record becomes settling.
+
+## D-acp-remainder-keeps-the-established-bar — The measured runtime justifies its proof surface
+
+After measuring about 13,175 production additions and 15,763 test/support/fixture lines before the
+ACP-04 vertical e2e, the owner clarified that the migration is substantial enough to continue the
+established process rather than artificially compress it. The bounded-review rule remains: one focused
+review is normal and another occurs only for a concrete unresolved correction. ACP-04 completes all
+named gateway and official-SDK vertical proofs before dogfood; later backend definitions reuse the
+shared conformance harness, and Gemini remains a bounded registration gate rather than receiving
+timing heuristics.
+
+## D-acp-04-final-correction-is-proof-only — Close the retained finding at the real boundary
+
+The bounded correction check left no production defect open; it required three exact scenarios to
+move from unit evidence into Phase 8. They now run through the production composition and official
+ACP child in `tests/e2e/test_acp_conversation.py`: stale source after two-browser replacement,
+gateway interrupt plus rejection/capture queue ordering, and active slow-consumer/reset-overflow
+behavior. The orchestrator will spot-check those named assertions instead of opening another broad
+review round, matching the owner's one-round-by-default direction.
+
+## D-acp-null-load-is-a-cutover-transition — Backend not-found is not transport failure
+
+Real Hermes dogfood disproved the ACP-04 backfill assumption: legacy `planner-chat` session IDs are
+valid Hermes history but are not loadable by Hermes's ACP-only session manager. Panels will keep
+load exceptions fail-closed, but treat a successful JSON-null `session/load` as the backend's exact
+not-found result. It creates one new session on the initialized child, CAS-publishes the exact next
+binding generation, and visibly tells the user that the previous conversation was unavailable.
+Panels does not mutate Hermes's read-only checkout or couple itself to Hermes's private state DB
+schema. Controlled compaction load remains identity-preserving and therefore fails on null.
+
+## D-acp-cutover-does-not-carry-legacy-session-compatibility — Start clean once, then delete the bridge
+
+This owner decision supersedes `D-acp-null-load-is-a-cutover-transition` before that correction was
+implemented. The null load observed in real dogfood came only from asking the new Hermes ACP adapter
+to restore a legacy `planner-chat` session. Panels will not gain permanent remint-on-null machinery
+for that one-time state. ACP-05 uses the existing **New conversation** action to create a clean ACP
+binding and proves the product there. After proof, ACP-06 deliberately replaces all remaining legacy
+bindings with fresh ACP sessions as part of deleting the legacy transport. The old Hermes history is
+not a runtime compatibility contract.
+
+## D-acp-missing-message-ids-close-on-terminal-settlement — The broker owns fallback turn boundaries
+
+Hermes ACP may omit message IDs from live agent chunks, and Panels intentionally publishes a queued
+human echo before that prompt is delivered. A user-role boundary can therefore arrive before the
+predecessor's final chunk and cannot reliably split responses. The browser closes only its active
+missing-ID agent group on terminal activity (`idle`, `interrupted`, or `failed`) and on an interrupted
+delivery receipt for Send Now. The focused correction passed one independent review with no findings;
+the persistent latest delivery receipt remains intentional.
+
+## D-acp-compaction-persists-through-official-fork — Capture compacted memory before changing children
+
+Real Hermes dogfood proved that `/compact` can update only the live agent's memory while leaving its
+old durable session unchanged. Panels will use the agent-advertised official ACP `session/fork` method
+on the exact leased child, privately load and normalize that fork, then CAS the durable binding to the
+fork at generation N+1. This preserves the backend's own typed history and summary without modifying
+the read-only Hermes checkout or inventing a private persistence adapter. The normal winner keeps the
+same child generation; browser reset/replay/ready and queued-intent retargeting complete before the
+compaction is called successful. Missing fork capability or invalid capture stays visibly failed.
+
+## D-acp-requested-cancel-exception-is-interruption — Successful cancellation owns prompt unwind
+
+After exact ACP cancel delivery and permission cancellation succeed, an exception from the cancelled
+prompt await is part of the already-requested user, Send Now, New conversation, or shutdown
+interruption. It is not a second independent child failure. The broker captures the cause before
+reading the completed prompt task and continues through the existing cause-specific settlement.
+No-cause/child-failure exceptions and failed/late cancellation remain fail-closed. Focused Stop,
+Send Now, and control regressions plus one independent review settled this classification.
+
+## D-acp-websocket-writer-owns-iteration-waits — Reload cleanup is local task ownership
+
+Each websocket writer iteration owns its queue and closure waits until both are finished. A `finally`
+block cancels unfinished waits and gathers both on delivery, subscription closure, send failure, or
+external writer cancellation. This preserves disconnect and close semantics while preventing browser
+reloads from abandoning asyncio tasks. The orchestrator made this tiny direct dogfood repair, recorded
+its red/green proof, and one independent review returned `READY`.
+
+## D-acp-capture-has-one-actor-owned-deadline — A binding transition cannot strand the product
+
+The broker actor creates one absolute compaction-transition deadline before hub admission closes and
+passes that exact value through fork, private load, normalization, CAS/recovery, actor rekey, and hub
+commit/abort. No owner creates a fresh budget or shields work past it. Expiry releases the registry
+reservation and every hub waiter exactly once; pre-CAS exact-N restoration fits only in the remaining
+budget, while unprovable restoration or any post-CAS incomplete transition is generation-fatal. This
+accepted the sole focused plan-review blocker; the narrow check returned `READY`.
+
+Generation-fatal after the durable CAS means the exact replacement runtime record is invalidated and
+its child is closed without rolling the durable N+1 binding back to N. A later fresh demand may load
+that durable successor into a new child generation; the incomplete child/browser epoch is never
+treated as reusable.
+
+## D-acp-compaction-admission-closes-after-owner-settlement — Commit and abort stage; the broker releases
+
+Hub commit owns N+1 reset/replay/ready/queued publication and recoverable abort selects the unchanged
+N stream, but neither operation releases blocked attach/action work. The broker is the only normal
+completion owner: after it publishes the normalized boundary, settles the tracked turn, publishes
+idle, and advances FIFO, it calls the hub's bounded completion seam with the exact settled runtime.
+Any registry outcome that has invalidated or cannot prove the exact runtime is explicitly
+generation-fatal instead: the hub transition, actor, tracked turn, and queued intent fail, and no false
+idle or successor is published.
+
+## D-acp-backend-definition-means-functional-worker — Codex and Claude must run real Ticket work
+
+“Thin backend definition” describes the backend-specific implementation delta, not a reduced product
+role. Codex and Claude each must be operably assignable as the backend for a Panels employee and must
+prove a real Ticket conversation plus one actual Automatic Employee step through the shared
+`EmployeeStepRunner`, with the same durable session, tools, permission, status, and typed transcript
+system used by Hermes. A definition module, conformance-only fixture, or test-only composition swap is
+not completion. One supported configuration/binding assignment seam is required; this decision does
+not add a backend-specific UI or mandate a polished visual selector.
+
+## D-ticket-kickoff-selects-employee-backend — Worker-type default, Ticket override, then freeze
+
+Each Worker type declares the default ACP employee backend its new Tickets typically use. Ticket
+creation copies that exact default into a stored generic `employee_backend` value, and Kickoff shows
+it already selected while allowing an override from the currently registered Hermes, Codex, and
+Claude Code definitions. Kickoff approval freezes the choice; the same value owns the Ticket's
+durable binding, human Ticket chat, and every Automatic Employee step. This is distinct from the
+Worker profile's optional model name: Claude Code and Codex are agent backends, not model IDs. The
+control remains a small generic selector in the existing Kickoff experience, not a backend-specific
+redesign. Existing post-Kickoff Tickets retain Hermes during the one-time cutover unless explicitly
+created for backend dogfood.
+
+## D-acp-gemini-out-of-scope — This migration delivers Hermes, Codex, and Claude Code only
+
+The owner explicitly removed Gemini from the delivery scope. ACP-09 performs no implementation,
+registration, conformance gate, dogfood, configuration, or product documentation. Historical source
+research may remain as research evidence, but it is not a product commitment.
+
+## D-codex-acp-1-1-4-remains-unregistered — A definition is exposed only after real qualification
+
+The locally available official `@agentclientprotocol/codex-acp@1.1.4` does not meet Panels' frozen
+worker contract: it has no ACP fork handler for the controlled capture transaction, exposes no
+inspectable compaction summary, and replays stored plans as assistant text rather than the live typed
+plan form. The installed Codex CLI exposes app-server but no ACP command, and wiring that provider
+protocol directly would create a second transport. Codex therefore remains a qualification-gated
+backend plan, not a selectable definition, until a later exact official ACP pin passes the real
+wrapper gate. This is not permission to weaken the shared capture or typed-replay contract.
+
+## D-claude-acp-declares-only-real-reverse-services — Internal tools need not be client reverse calls
+
+`@agentclientprotocol/claude-agent-acp@0.59.0` is a viable functional-worker candidate with
+`filesystem=False`, `terminal=False`, and `permission=True`. Claude Code's internal Bash execution
+still crosses as visible typed tool output; the adapter's absence of standard filesystem/terminal
+reverse requests is not generic ACP non-conformance and is not a dispatch blocker. Production
+registration remains gated on one initialize-only pre-advertisement capability probe and the full
+human Chat plus Automatic Employee dogfood. Claude-specific compaction status text is control input
+to one exact-binding-generation state machine; Panels' typed compaction boundary remains the only
+visible compaction lane.
+
+## D-ticket-backend-remains-editable-through-unaccepted-kickoff — Fresh approval is still pristine
+
+Ordinary Ticket creation immediately stores `needs_kickoff`, creates the Kickoff proposal, and sets
+`ticket_status` to `awaiting_approval`. Requiring `ticket_status == empty` would therefore render the
+owner-requested preselected Kickoff backend control read-only from its first frame. The canonical
+writer instead accepts either `awaiting_approval` or `empty` only while the Ticket remains at
+`needs_kickoff` with no employee session and no ACP binding. Any other status, an advanced stage, or
+the first session/binding freezes the value. This preserves existing Ticket status semantics and
+places the choice at the actual product boundary: before Kickoff is accepted or employee work starts.
+
+## D-acp-cancel-detection-timeout-is-not-the-recovery-deadline — Fail fast, then recover once
+
+ACP-02's short cancellation-settlement timeout remains the detector for an ACP cancel or permission
+cancellation that does not finish. Winning that timeout fails the quarantine and generation and never
+enters same-session recovery. The longer requested-cancel deadline is installed before cancel only so
+the exact-source quarantine has a hard bound; it becomes the sole recovery transaction deadline after
+cancel and permission cancellation succeeded and the prompt then unwound exceptionally. Registry
+retirement, fresh child load, hub replacement, and final settlement neither create nor extend another
+recovery budget. Equating the two timeouts would either weaken ACP-02's fail-fast contract or leave no
+real budget for the replacement it is meant to protect.
+
+The requested-cancel timeout itself does not mint a cleanup budget. It reuses the deadline stored on
+the active actor from quarantine begin through exact retirement. Registry retirement bounds employee-
+gate acquisition, child close, and planned-death settlement by that same timestamp; any error,
+cancellation, or expiry removes the exact record and detaches best-effort child close before returning.
+Exceptional New Conversation and shutdown use their caller deadline in the same way, and retirement
+failure is returned to the close owner rather than allowing a new session to select the old child.
+
+## D-acp-requested-cancel-recovery-replaces-the-process-not-the-session — Same binding, fresh child
+
+Once exact Stop or Send Now cancellation and permission settlement succeed, an exceptional prompt
+unwind makes that child process indeterminate but does not invalidate the user's durable conversation.
+Panels quarantines the old source before cancel, retires that exact lease, privately loads the same ACP
+session into a fresh child generation, and releases browser/successor/FIFO admission only after one
+same-binding reset/replay/ready commit. Binding generation and ACP session ID stay exact; child
+generation, child object, and record identity must all change. A normal cancelled response instead
+flushes quarantined ingress and continues on generation N. New conversation and shutdown keep their
+separate close ownership and never turn exceptional unwind into same-session recovery.
+
+## D-acp-step-gateway-delivers-pending-worker-context — Preserve automatic-work prompt parity
+
+Eligibility, Ticket claiming, worker prompt construction, proposal/status settlement, and the
+`EmployeeStepRunner` remain unchanged by ACP. The old `SharedGateway` happened to own one additional
+automatic-work obligation: prepare pending worker context into the actual model prompt and acknowledge
+its receipts only after prompt admission. That obligation moves to `AcpStepGateway` before the legacy
+gateway is deleted. It is transport delivery parity, not a second context store or a redesigned
+automatic-work path.
+
+## D-pristine-ticket-observation-does-not-bind — Selection precedes employee demand
+
+Opening a fresh Kickoff Ticket is observation, not employee demand. Its existing conversation rail
+renders without attaching, so the preselected worker backend can actually be changed before a session
+exists. The first explicit prompt retains the submitted content, attaches, and sends it once after
+ready; advancing Kickoff restores ordinary eager attach. Chief, Board, and started Tickets remain
+eager. This is a small controller admission boundary, not an unbound server session or a UI redesign.
+
+## D-employee-backend-and-worker-registry-are-one-configured-pair — One authority reaches automatic work
+
+The registered ACP backend catalog and the Worker-type registry validated against it are one immutable
+configured pair. Production constructs the pair once; app composition, startup audit, manifests,
+Ticket writers, bindings, discovery, and `EmployeeStepRunner` read that exact authority. Tests replace
+and restore the pair atomically. This prevents a backend appearing selectable in the app while the
+module-configured registry used by automatic work still sees a different catalog.
+
+## D-send-now-recovery-replays-its-captured-human-boundary — Reset must not erase the successor
+
+Requested-cancel recovery resets the browser after the successor's original optimistic/human echo was
+published, so that pre-reset echo cannot serve as the settled transcript boundary. For Send Now only,
+the recovery commit re-emits the already-captured successor client message and prompt through the
+existing typed `human_echo` seam after reset/replay/ready/queue and before successor start. This keeps
+the old agent interruption, successor user prompt, and successor answer distinct without a browser
+heuristic or new wire event. The correction is small and its root cause has a deterministic red/green
+harness, so the separate ticket-planning and plan-review stages are collapsed; implementation still
+receives one focused post-diff review before dogfood.
+
+## D-compaction-has-an-emergency-deadlock-breaker-and-exact-failure — A shutdown timeout is not UX
+
+Compaction keeps a hard deadline only so an unresponsive ACP backend cannot hold the employee gate and
+all dependent admission forever. It no longer borrows the 10-second service-shutdown budget: one named
+five-minute compaction-capture budget covers the complete official fork/load/CAS/browser transaction;
+compaction taking a couple of minutes is normal, and this limit exists only as an extreme deadlock
+breaker. Expiry diagnostics distinguish a binding that stayed on N, committed N+1, or could not be
+resolved before the one budget expired and must be read authoritatively on fresh attach. Panels never
+prints a false disposition and never extends the transaction with a hidden second budget.
+Concrete backend, protocol, persistence, or publication errors do not wait for that breaker and are
+not replaced by generic text: the failed boundary and server log retain the exact phase, exception
+type, and underlying message immediately. A backend-raised `TimeoutError` is still a backend error;
+only Panels' own wait timer winning means the five-minute budget expired.
+Expiry still retires an uncertain child and preserves the authoritative durable binding, but Panels
+must surface the exact failed phase, configured elapsed budget, and binding disposition instead of the
+generic `Conversation runtime generation failed during compaction`. A later fresh attach is ordinary
+recovery from the known durable binding, not a hidden compaction retry or a second transaction budget.
+
+## D-acp-compaction-handoff-is-session-aware-and-cross-process — Responses are not quiet barriers
+
+ACP session notifications are asynchronous and session-labelled. Panels must route private capture by
+the notification's exact session ID and use the request ID only to close the corresponding response
+barrier; a valid update between lifecycle requests is not a callback mismatch. The employee lifecycle
+reservation is distinct from the short publication/update gate, so no ACP or repository I/O may wait
+while ordinary ordered ingress is blocked from that gate.
+
+Hermes compaction still uses official `session/fork`, but the source child never privately reloads its
+own fork. A fresh unpublished child loads and validates the fork, proving it is visible across processes
+rather than merely present in Hermes' in-memory SessionManager. Durable CAS then publishes that fresh
+child as the N+1 runtime and retires the source. Exact-source updates received before publication are
+quarantined and drained in wire order during the browser reset/replay/ready transition. This supersedes
+the earlier same-child and unchanged-child-generation compaction clauses; it does not change the
+five-minute emergency breaker or authorize Hermes changes.
+
+## D-acp-compaction-replay-persists-provenance-not-summary — Reload reproduces one typed boundary
+
+Hermes's compacted summary marker is worker context, not an assistant transcript message. Every
+controlled load therefore passes its complete raw replay through the selected backend strategy exactly
+once at the hub: Hermes reuses its pinned structural summary parser and replaces the one summary item at
+that exact position with Panels `context_compaction` events. The browser never parses backend text, and
+the successful broker path does not publish a second completion after the hub commit.
+
+The summary text remains owned by Hermes and is never copied into SQLite. Panels persists only the
+ordered broker boundary IDs and `explicit | automatic` triggers atomically with the successor binding,
+because neither value can be reconstructed faithfully from the replay after restart. This is a
+no-version-bump amendment to the still-unlanded v24 binding schema; ACP-06's direct v25 cutover also owns
+the pre-column upgrade case. A binding contains only the boundaries settled by its own capture. A later
+compaction replaces that tuple because its new summary has compacted the earlier transcript; appending
+old IDs would falsely attach the newest summary to older boundaries and recreate duplicate UI.
+
+## D-observed-small-ui-fixes-use-spot-check-and-dogfood — Review effort follows change risk
+
+When a defect has already been observed in the real UI and its correction is small, root source
+spot-checking plus the deterministic regression and real Panels dogfood are sufficient. It does not
+receive another full independent review merely because it followed an earlier ticket review. Larger
+combined changes still receive their one normal focused review; concrete findings are corrected, but
+there is no automatic second broad round. This owner ruling keeps review proportional without weakening
+the live product gate.
+
+## D-compaction-is-an-opaque-lifecycle — Start, finish, or exact failure; never context
+
+The owner never needs or wants to read compaction context. Panels therefore exposes only one stable
+typed lifecycle boundary: compacting when work starts, compacted when the backend/session transition
+finishes, or failed with the exact reason. Backend summary/context text is private worker state and is
+absent from Python, wire, browser, persistence, and UI contracts. There is no disclosure control.
+
+Hermes's synchronous `/compact` command legitimately succeeds without a summary marker when a short
+conversation is retained unchanged; the observed clean dogfood case was `2 -> 2`. Successful controlled
+backend completion and durable session continuity are authoritative. Replay classification suppresses
+one recognized private marker when supplied; a marker-free replay stays intact and receives the durable
+completion boundary after its ordinary items. Malformed/multiple marker-like private content and real
+protocol rejection still fail closed rather than risk leaking worker context.
+
+This supersedes `D-acp-compaction-replay-persists-provenance-not-summary` only where that decision made
+parsing/presence of a summary the completion gate or supplied summary text to the UI. Boundary
+ID/trigger provenance remains because it is the small durable fact needed to reproduce lifecycle after
+reload. The Hermes fork stays only because its current same-ID persistence can lose the in-memory
+compacted history; it is a Hermes durability adapter, not a summary extractor and not a requirement for
+other ACP backends. Compaction support is an optional backend capability, not a general worker-
+registration gate.
+
+## D-acp06-one-way-deletion-is-authorized — The conditional gates are now evidence, not blockers
+
+ACP-06 may begin. The five named worker-context delivery proofs are green in the settled 49-test
+gateway/composition/official-SDK slice. Actual Panels then completed the full ACP-05 gate, including
+Hermes permission, Stop, Send Now, Ticket and automatic work, visible compaction start, durable Chief
+generation 12 -> 13, content-free completion after hard reload and server restart, and a later prompt in
+the same replacement session. The ownership classification's four closure corrections are accepted.
+
+The authorization is exactly the reviewed one-way cutover: no compatibility mode, old-session import,
+legacy fallback, Gemini work, or Hermes source change. Runtime/schema and frontend may implement in
+parallel because their product files are disjoint; root integrates them serially, builds once, performs
+one focused implementation review, and reserves canonical `./verify` for ACP-10.
+
+## D-compaction-contract-follows-backend-lifecycle-signals — Fork and summary are not conformance
+
+The primary-source audit in `orchestration/acp-migration/compaction-primary-source-audit.md` confirms
+that stable ACP v1 defines neither a compaction method nor a summary contract. Commands are ordinary
+prompts and session updates may arrive asynchronously until the prompt's terminal response. Panels
+therefore normalizes each backend's actual start/completion/failure signals into the same content-free
+lifecycle and keeps consuming the ordered stream while the command is active.
+
+Codex supplies namespaced `contextCompaction` start/completion metadata on the same thread. Claude's
+ACP adapter supplies exact `Compacting...`, `Compacting completed.`, or `Compacting failed: <reason>`
+signals on the same session. Neither needs or supplies client-readable compacted context. A
+300-second emergency breaker reports only that Panels stopped waiting; it does not fabricate a backend
+failure. Hermes alone retains its post-compaction fork/rebind because current Hermes same-ID persistence
+can otherwise lose the in-memory compacted history. That workaround is not a worker-registration
+capability and cannot gate Codex or Claude.
+
+## D-codex-stored-plan-prose-is-a-pinned-presentation-limit — Functionality wins without a shim
+
+The official Codex ACP 1.1.4 adapter preserves the durable thread and typed user, assistant,
+reasoning, tool, diff, and terminal replay, but represents one stored plan as ordinary assistant prose
+while the same live plan was typed. That is a reload-presentation defect in the upstream adapter, not
+a failure of worker identity, prompt delivery, permissions, cancellation, or Automatic Employee work.
+It does not justify keeping Codex unavailable.
+
+Panels will pin and assert the exact upstream behavior, then require the real common runtime and
+human/automatic continuity probes before registration. It will not parse the `Plan:` prose, read Codex
+private files, or add a backend-specific transcript repair. Other backends retain their typed replay
+requirements; this is one named qualification fact for the exact Codex pin, not a global weakening.
+
+## D-acp06-live-cutover-follows-one-ready-review — Correct then migrate once
+
+ACP-06 used one integrated implementation review. Its four concrete P1 findings were corrected in
+the same bounded round and checked narrowly; a second broad review would not add useful evidence.
+Only after the written verdict became READY did the live schema-24 database migrate once to v25.
+The approved cutover deleted old bindings and legacy Chat state, preserved only Employee-step
+correctness history, and required fresh generation-1 Chief and Ticket ACP sessions. Actual Computer
+Use against `127.0.0.1:8767` then proved the restrained Panels UI, exact Chief reply, hard-reload
+replay, and a matching Ticket binding/session mirror.
+
+The next activation stage is parallel only where ownership is disjoint: the generic selector may
+implement while Codex and Claude perform read-only, no-model package/runtime qualification. Backend
+product source and the shared production registration tuple still wait for the selector's settled
+catalog seam, so parallel preparation cannot invent or race that authority.
+
+ACP-07's exact test allowlist omitted two retained constructor callers in
+`tests/e2e/test_new_worker_public_flow.py` and `tests/support/acp_runtime_subject.py`. The ticket must
+remove the now-forbidden separately configured definition/factory fields, and retaining compatibility
+constructors would contradict the paired-authority contract. The implementer may therefore make only
+the mechanical pair/catalog construction edits in those files with no behavior or assertion change;
+this is caller closure, not product scope.
+
+The same closure rule covers two frontend files omitted from the exact list:
+`web/src/lib/acp/productionConversation.ts` must propagate the reviewed deferred-first-attach option,
+and `web/tests/acp-production-mount.test.mjs` must keep its exact wrapper proof current with that
+signature. Both are necessary consequences of the named controller/component boundary; neither may
+change eager behavior or widen the UI. Removing the retired registry-only public exports from
+`src/planner/worker_types/__init__.py` is likewise part of deleting the forbidden compatibility seam.
+
+## D-acp07-selector-settles-before-backend-activation — One authority, then parallel definitions
+
+The generic selector is the settled authority before provider activation. One immutable configured
+pair owns the ordered Employee-backend catalog and the Worker-type registry validated against that
+exact catalog object. Ticket creation, the pristine-Kickoff writer, binding CAS, human conversation,
+and Automatic Employee work all consume it; provider definitions do not add another allowlist or UI.
+
+The shared Node dependency directory is canonically `agent_backends/`. Root creates its combined exact
+Codex-and-Claude manifest and lock once. After that, provider-specific definition/strategy modules and
+focused tests may implement in parallel in disjoint files, while the shared production catalog tuple,
+generic composition seams, docs, and real dogfood are integrated serially. This preserves useful
+parallelism without letting two backend tickets race the same package lock or registration authority.
+
+## D-acp07-provider-compaction-is-in-place — Preserve the backend's real session lifecycle
+
+Hermes keeps its fork/private-load/CAS/rebind capture only because its persisted same-session state was
+proven insufficient. Codex and Claude expose compaction lifecycle on their existing ACP session, so a
+generation-bound strategy may instead implement one optional `capture_compaction_in_place` hook after
+the exact runtime lease is acquired. The generic wrapper owns the actor's existing absolute deadline
+and cancellation; a Panels timer expiry is the exact nonfatal `backend observation` phase with the
+durable binding stayed, while a backend-raised timeout remains that backend's concrete failure.
+
+An in-place terminal result creates no capture transition, binding generation, reset/replay, actor
+rekey, or queued-message retarget. This is intentionally the smallest provider-neutral seam and keeps
+all Hermes behavior unchanged. Startup validation is orthogonal: materialized backend registrations
+may carry one optional ordered async preflight, awaited before app state, loops, or routes become
+available. Claude uses it for one initialize-only transient child; Codex and ordinary worker children
+remain lazy.
+
+## D-acp-claude-private-summary-is-provider-replay-metadata — Suppress the exact synthetic chunk
+
+Pinned `claude-agent-acp` 0.60.0 reads Claude Code's `isCompactSummary` JSONL row but drops that
+marker when it replays the row as an ordinary ACP `user_message_chunk`. The message is not a human
+turn: it is Claude's private generated compaction context and includes implementation detail such as
+the source transcript path. Showing it violates Panels' content-free compaction contract.
+
+Panels handles this only in `ClaudeAcpTurnStrategy.classify_replay`. An exact match for the pinned
+Claude summary template is replaced by one terminal content-free `ContextCompaction`; ordinary and
+nearby user messages remain untouched. The generic ACP browser wire and transcript reducer do not
+learn Claude's private format, and the adapter is not forked. This keeps the workaround narrow,
+testable against the exact installed provider, and removable when the upstream adapter preserves a
+typed compaction boundary.
+
+## D-claude-requested-cancel-requires-fresh-child — Trust the exact-generation boundary
+
+Real Claude Send Now dogfood proved that a terminal `session/prompt` response is not sufficient
+evidence that the pinned adapter has stopped emitting the cancelled turn: the old final answer arrived
+after the successor completed. ACP updates have no prompt identity, so Panels cannot distinguish that
+late text from valid successor output by inspecting the message.
+
+Claude therefore declares one backend capability requiring the already-built requested-cancel
+fresh-child recovery after every Stop or Send Now, including a normal terminal cancel response. The
+generic broker reads the capability; it does not branch on the backend name. Hermes and Codex retain
+their current terminal-response reuse path. There is no grace timer, output parser, public wire change,
+or provider fork; the old exact source stays quarantined until it is retired and the same durable ACP
+session is privately loaded into a fresh child generation.
+
+## D-acp10-final-review-is-one-bounded-settled-tree-pass — Close findings, not ceremony
+
+ACP-10 receives one independent review after the provider matrix, evidence, qualification, legacy
+proof, docs, and the Claude requested-cancel correction have all settled. The reviewer must inspect
+the named load-bearing seams and report concrete P0/P1 requirement violations or evidence
+contradictions, not refactoring or polish suggestions. The resulting review is `READY` with zero
+unresolved findings and is accepted in full. No second broad round is useful or required; the tree
+may advance directly to the no-writer freeze and sole canonical verification.
+
+## D-acp10-failed-frozen-snapshot-reopens-only-the-failed-gates — Retain, correct, re-audit
+
+ACP-10's first frozen verification attempt is a real failed snapshot and remains retained with exit 1,
+`VERIFY: FAIL`, its full log/digest, and an unchanged input manifest. It is not hidden, retried, or
+called canonical success. The failures are bounded: four Ruff sites and 14 stale test fixtures or
+manifest assertions that do not carry the already-delivered `employee_backend` contract.
+
+The tree therefore leaves the freeze only for those exact corrections. Each disjoint test group may
+receive a sub-agent and focused checks; product behavior, ACP evidence, provider dogfood, and the
+settled-tree review remain valid unless a correction crosses their boundary. After focused evidence
+and root disposition, a fresh no-writer snapshot is required before deciding on another full gate.
+
+## D-acp10-fresh-snapshot-may-receive-one-clean-canonical-gate — Failure remains evidence
+
+The bounded post-failure correction is complete: exact implicated Ruff is clean, the exact 10-file
+unit slice passes 76/76, root found no behavior or assertion weakening, and the failed snapshot's
+input manifest stayed unchanged during its run. The failed log is preserved under an attempt-specific
+name and remains a first-class result in `verification-report.md`.
+
+ACP-10 may now establish a new no-writer snapshot and run one clean canonical gate for that changed
+tree. This is not an immediate retry on the failed snapshot: diagnosis, contract-scoped parallel
+correction, focused proof, root disposition, and a new freeze intervene. Completion still requires
+exactly one passing full run on the final frozen inputs; the earlier failure is neither erased nor
+counted as success.
+
+## D-acp10-closes-on-the-clean-final-snapshot — Preserve the failed attempt and ship the proved tree
+
+The final corrected no-writer snapshot passed every canonical gate: Ruff, strict Mypy, build,
+frontend, 1,019 unit tests, and 103 e2e tests, with exit 0 and `VERIFY: PASS`. Its 1,162-entry input
+manifest remained byte-for-byte unchanged. The earlier failed snapshot remains retained with its own
+log, digest, failure counts, and unchanged manifest; it is not erased or presented as success.
+
+Final Safari Computer Use against the unchanged verified build loaded the real Panels Ticket route as
+`Connected`, with the restrained editor/proposal surface, narrow Claude rail, durable typed replay,
+content-free compaction, and idle Worker. The registered functional-worker tuple remains exactly
+`hermes, codex, claude`; Gemini remains absent. The independent review has zero unresolved findings,
+the legacy/docs/backend/Computer Use artifacts all pass, the requirement ledger has zero unproved
+rows, and ACP-10 plus the full ACP migration are complete.

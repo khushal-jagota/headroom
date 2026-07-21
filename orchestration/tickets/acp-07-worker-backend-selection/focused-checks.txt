@@ -1,0 +1,115 @@
+ACP-07 focused evidence
+=======================
+
+Settled scoped static gates
+---------------------------
+
+.venv/bin/ruff check <ACP-07 source and focused Python test files listed in implementation-plan.md,
+plus the bounded surviving caller-closure files>
+All checks passed!
+
+.venv/bin/mypy --strict \
+  src/planner/conversation/backend_catalog.py \
+  src/planner/conversation/composition.py \
+  src/planner/conversation/employee_registry.py \
+  src/planner/conversation/sqlite_binding_repository.py \
+  src/planner/runtime/acp_step_gateway.py \
+  src/planner/core/db.py src/planner/core/server.py \
+  src/planner/worker_types src/planner/tickets \
+  src/planner/sprints/views.py src/planner/cli/main.py src/planner/seed
+Success: no issues found in 44 source files
+
+Settled focused Python matrix
+-----------------------------
+
+.venv/bin/pytest -q \
+  tests/unit/test_worker_type_registry.py \
+  tests/unit/test_worker_type_manifest_endpoint.py \
+  tests/unit/test_engine_parameterization.py \
+  tests/unit/test_external_work_generic.py \
+  tests/unit/test_probe_type.py \
+  tests/unit/test_new_worker_type.py \
+  tests/unit/test_db.py \
+  tests/unit/test_tickets_engine.py \
+  tests/unit/test_ticket_edit_api.py \
+  tests/unit/test_chief_external_work.py \
+  tests/unit/test_seed.py \
+  tests/unit/test_copy_text_type_driven.py \
+  tests/unit/test_board_view.py \
+  tests/unit/test_sprint_views_type_driven.py \
+  tests/unit/test_acp_binding_repository.py \
+  tests/unit/test_acp_employee_registry.py \
+  tests/unit/test_acp_conversation_composition.py \
+  tests/unit/test_acp_step_gateway.py \
+  tests/unit/test_frontend_event_mapping.py \
+  tests/unit/test_worker_type_persistence.py
+PASS — 356 tests
+
+The matrix includes these named load-bearing proofs:
+
+- fresh schema, v25 -> v26 exact migration, contradictory-binding abort, legitimate v26 non-Hermes
+  reopen, and corrupt-v26 fail-loud/no-rewrite;
+- non-empty registered Worker defaults, second-entry probe default, and exact catalog/registry pair
+  identity;
+- every ordinary/external/seed creation default, override, rejection, event, read, and wake boundary;
+- pristine writer statuses, exact event/no-op/freeze rules, and the deterministic two-order
+  writer-versus-binding race;
+- selected backend resolution, CAS, replacement, availability, mismatch failure, and permission
+  settlement guard.
+
+Settled real browser/runtime and CLI gates
+------------------------------------------
+
+.venv/bin/pytest -q tests/e2e/test_acp_conversation.py \
+  -k 'ticket_route_worker_selector or ticket_route_kickoff_advance or fake_non_hermes_human'
+PASS — 3 tests
+
+The selector case proves served order/preselection, observation without a session or binding, exactly
+one `PUT /api/tickets/{id}/employee-backend`, persistence, first-prompt attach, and freeze. The Kickoff
+case proves one eager generation-1 attach. The fake non-Hermes case chooses the registered override at
+creation before Kickoff acceptance and proves human plus Automatic Employee delivery share its exact
+backend and session.
+
+.venv/bin/pytest -q \
+  tests/e2e/test_cli_verbs.py::test_ticket_cli_forwards_employee_backend_create_and_set \
+  tests/e2e/test_chief_external_work_cli.py::test_chief_external_work_cli_create_and_reconcile
+PASS — 2 tests
+
+Frontend lane settled gates
+---------------------------
+
+node web/tests/lifecycle.test.mjs
+PASS
+
+node web/tests/resource-catalogue.test.mjs
+PASS
+
+node web/tests/conversation-controller.test.mjs
+PASS
+
+node web/tests/acp-components.test.mjs
+PASS
+
+node web/tests/acp-production-mount.test.mjs
+PASS
+
+npm --prefix web run check
+PASS — 0 errors and 0 warnings
+
+Production build with a temporary output directory
+PASS
+
+Final absence scans
+-------------------
+
+rg -n 'install_worker_type_registry_for_test|restore_production_worker_type_registry_for_test' src tests
+PASS — no matches
+
+rg -n 'codex|claude' \
+  src/planner/conversation/backend_catalog.py src/planner/worker_types src/planner/tickets
+PASS — no backend definitions or backend-specific product branches in ACP-07 scope
+
+Canonical ./verify
+------------------
+
+NOT RUN. ACP-10 owns the one final frozen-tree verification run.

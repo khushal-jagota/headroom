@@ -127,7 +127,7 @@ def test_workspace_stage_mark_renders_paired_work_on_desktop_and_mobile(
         assert page.get_attribute(card, "data-ticket-status") == "paired_work"
         success_stage = '[data-worker-type="coding"] [data-stage-key="needs_success"]'
         assert page.inner_text(f"{success_stage} > summary .board-workspace-stage-label") == (
-            "Success"
+            "SUCCESS"
         )
         assert page.locator(f"{success_stage} {card}").count() == 1
         assert page.inner_text(f"{card} .list-row-title") == "Paired workspace ticket"

@@ -33,9 +33,10 @@ def _mk_ticket(
     """Insert the minimal NOT-NULL columns of a ticket; other columns use their
     schema defaults."""
     conn.execute(
-        "INSERT INTO tickets (id, title, worker_type, stage, priority, deadline, project_id, "
+        "INSERT INTO tickets (id, title, worker_type, employee_backend, stage, "
+        "priority, deadline, project_id, "
         "ceiling, fields, created_at, updated_at) "
-        "VALUES (?, ?, 'coding', ?, ?, ?, 'project_vylo', 'needs_success', ?, 0, 0)",
+        "VALUES (?, ?, 'coding', 'hermes', ?, ?, ?, 'project_vylo', 'needs_success', ?, 0, 0)",
         (ticket_id, title, stage, priority, deadline, _EMPTY_CODING_FIELDS),
     )
 

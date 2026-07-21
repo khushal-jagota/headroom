@@ -6,20 +6,20 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 ## Stack and system map
 - Python ≥ 3.12 backend in `src/planner/`, with FastAPI wiring in `src/planner/core/server.py` and SQLite schema/migrations in `src/planner/core/db.py`.
-- Domain code is grouped by system: `tickets/`, `sprints/`, `days/`, `projects/`, and `chat/`. Contracts live in each domain's `contracts.py`; framework-free rules live in `logic/`; HTTP routes live in `api.py`.
+- Domain code is grouped by system: `tickets/`, `sprints/`, `days/`, and `projects/`. Contracts live in each domain's `contracts.py`; framework-free rules live in `logic/`; HTTP routes live in `api.py`.
 - `panels` is the CLI entry point (`planner.cli.main:main`); `python -m planner` delegates to it. Important command groups are `serve`, `project`, `day`, `ticket`, `sprint`, `sprint item`, `worker`, and `chief`.
-- Runtime work is split between `runtime/automatic_employee_step_discovery_loop.py` and `runtime/employee_step_runner.py`: the optional `AutomaticEmployeeStepDiscoveryLoop` checks today's Ticket membership against the complete Automatic Employee-step eligibility decision; the always-composed `EmployeeStepRunner` owns one Ticket step through the shared Hermes gateway.
+- Runtime work is split between `runtime/automatic_employee_step_discovery_loop.py` and `runtime/employee_step_runner.py`: the optional `AutomaticEmployeeStepDiscoveryLoop` checks today's Ticket membership against the complete Automatic Employee-step eligibility decision; the always-composed `EmployeeStepRunner` owns one Ticket step through `AcpStepGateway`.
 - `runtime/automatic_employee_step_eligibility_wake.py` is only a payload-free, best-effort same-process wake. Eligibility-affecting domain actions own `commit -> wake`; SQLite and the periodic discovery timer remain canonical. The polling-lock owner uses `LoopAutomaticEmployeeStepEligibilityWake`; a process without the lock uses `NoOpAutomaticEmployeeStepEligibilityWake`.
-- Gateway and chat code lives in `minds/` and `chat/`. The shared gateway owns Hermes session transport; chat owns human sends, streaming, command catalog, and history.
+- ACP conversation code lives in `conversation/`. One production composition owns the typed browser WebSocket, durable session bindings, backend children, human and Automatic Employee delivery, turn choices, permissions, and replay. The production backend catalog is exactly `hermes`, `codex`, and `claude`.
 - Frontend is Svelte/Vite in `web/`; FastAPI serves the built `web/dist` app at `/` and Vite chunks under `/_app/`. Shared design/runtime assets remain in `assets/`: `tokens.css`, `app.css`, and `markdown.js`.
 - Local agent role skills live in `skills/`, especially `panels` and `panels-worker`; startup exposes those same source directories to the planner Hermes home as symlinks under `data/hermes-home/skills/`.
 - `docs/` is the live plain-language system documentation. `orchestration/*-redesign/` holds current design intent and mockups; `orchestration/tickets/` holds ticket plans, dispatches, and reviews.
 - `data/` is gitignored runtime state: SQLite DBs, WAL/SHM files, logs, locks, Hermes home state, smoke artifacts, and verify output.
 
-## Worker chat boundary
-- **Do not append to Panels chat and expect the worker to see it.** `chat_messages` and `chat_turns` are Panels' product-visible transcript/active-turn state for the UI. They are not the worker's Hermes conversation.
-- To change what a worker sees, deliver the text through the Hermes gateway/session path as a real user message or as part of the actual worker prompt. A Panels-visible chat row can mirror or audit that delivery, but it is not delivery by itself.
-- If a design depends on the worker reading human guidance, prove the guidance reaches the Hermes worker session. Do not treat a DB chat row, event-log row, or UI transcript line as model context.
+## Worker conversation boundary
+- **A replay row, event, correctness record, or browser update is not model context.** `employee_step_runs` owns execution correctness only; ACP typed replay owns the visible conversation.
+- To change what a worker sees, deliver the text as a real prompt through the worker's durable ACP session. Pending worker context must be included in that prompt and acknowledged only after ACP admits it.
+- If a design depends on the worker reading human guidance, prove the guidance reaches the actual ACP prompt/session. Do not treat a database row, event-log row, or UI transcript line as delivery.
 
 ## Naming and restraint
 - **Name things for exactly what they are.** Descriptive beats concise — an extra word that removes ambiguity costs nothing and prevents confusion later. A name should be self-evident: the ticket's status is `ticket_status`, an employee's session id is `employee_session_id`. When names are right it is obvious where a new thing belongs — a new ticket status obviously goes in the status — so you extend a clear structure instead of guessing or fitting around.
@@ -33,16 +33,16 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 ## Verification
 - `./verify` is the only source of truth for completeness. Run it after changes land — not mid-work, not to re-confirm a result nothing has changed since. One clean run is the claim; show its full output and cite it. Don't re-run just to quote it.
 - Browser behavior is asserted through the Playwright e2e suite inside `./verify` — never eyeballed.
-- The Codex CLI is the independent reviewer. Use it wherever a second pair of eyes beats self-review: auditing completed work against the design intent (the relevant mockup/plan), reviewing intricate logic (the resolution engine, dispatch eligibility, planning-date math), checking a diff before integration. Invoke it via the **`/codex-cli`** skill (the direct `codex exec` wrapper — model `gpt-5.5`, `--sandbox read-only` for reviews, reasoning-effort `high`, stdin closed with `< /dev/null` so it never hangs), pointing it at specific files plus the relevant design doc or backend contract, asking for concrete violations. Surface its full output, then address or refute each point in writing before moving on.
+- Independent reviews may use a fresh sub-agent; the Codex CLI is not required. Use one focused review wherever a second pair of eyes materially improves confidence: completed work against its contract/design, intricate correctness logic, or a combined diff before integration. A second round is only for a concrete unresolved finding. Surface the review output and address or refute each point in writing.
 
 ## Operating model: plan and orchestrate
 - You are primarily a **planner and orchestrator of sub-agents**. Your own outputs are: the plan, contract-scoped tickets, dispatches, independent reviews, serial integrations, verification runs, and the memory files. Implementation substance is produced by sub-agents working tickets.
 - Write code directly only when a change is too small to be worth a ticket — glue, integration repairs, one-line fixes — and note it in PROGRESS.md. If you catch yourself implementing a stage's substance inline, stop and cut tickets. Route, don't execute.
 - A ticket is contract-scoped: it names the contract/type files it implements against, the acceptance tests it must turn green, and nothing else. Sub-agents do not invent shapes, do not modify contracts, and do not touch files outside their ticket.
-- Per-ticket pipeline — each step isolated work: (1) you decompose and write the ticket; (2) a sub-agent plans the ticket's implementation; (3) Codex reviews that plan against the contracts and the relevant design doc (mockup/plan); (4) a sub-agent implements to the reviewed plan; (5) Codex reviews the implementation diff; (6) you integrate serially and run full `./verify`. Steps 2–5 can be collapsed only for trivial tickets, noted in decisions.md.
+- Per-ticket pipeline — each step isolated work: (1) you decompose and write the ticket; (2) a sub-agent plans the ticket's implementation; (3) an independent reviewer checks that plan against the contracts and relevant design doc; (4) a sub-agent implements to the reviewed plan; (5) an independent reviewer checks the implementation diff; (6) you integrate serially. Steps 2–5 can be collapsed for trivial tickets, noted in decisions.md. A multi-ticket program may explicitly reserve one full `./verify` for its final settled tree; individual tickets then use their named focused gates.
 - Parallelisation is your call: decide from file overlap which tickets may share the main worktree and which need isolated git worktrees; never let two agents write the same files concurrently.
 - Spot-check the load-bearing code yourself even when reviews pass: the resolution engine, dispatcher claim/reclaim, planning-date math, and the migration parser.
-- A ticket is done when its named tests pass through `./verify` and its Codex reviews report no violations.
+- A ticket is done when its named gates pass and its independent review reports no unresolved violations. When the program reserves a final canonical `./verify`, that final gate—not repeated per-ticket runs—makes the repository-wide completeness claim.
 
 ## Conduct
 - Keep `./verify` green; never advance over failing tests.

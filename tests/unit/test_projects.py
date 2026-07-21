@@ -6,7 +6,6 @@ from sqlite3 import Connection
 
 from fastapi.testclient import TestClient
 
-from planner.core.adapters.registry import build_adapters
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -24,17 +23,15 @@ def _make_app(tmp_path: Path) -> tuple[object, Path]:
         path=None,
         env={
             "PLAN_TEST_MODE": "1",
-            "PLAN_GATEWAY_ADAPTER": "fake",
             "PLAN_DB_PATH": str(db_path),
         },
     )
     clock = build_clock(config)
-    adapters = build_adapters(config)
 
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    return create_app(config, clock, adapters, conn_factory), db_path
+    return create_app(config, clock, conn_factory), db_path
 
 
 def test_project_list_create_duplicate_and_agent_rejection(tmp_path: Path) -> None:

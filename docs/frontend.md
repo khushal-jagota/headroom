@@ -25,7 +25,7 @@ One screen per part of the system:
   off **Hide done** to reveal them, and that choice stays in place when they visit
   another screen and return.
 
-  The right side opens on the Chief of Staff chat. Selecting a ticket switches it to
+  The right side opens on the Chief of Staff conversation. Selecting a ticket switches it to
   the same complete ticket screen used by a direct ticket link while leaving the
   Workspace rail in place, and records the selection at `#/workspace/<ticket-id>`.
   That address can be loaded, refreshed, shared, or revisited with browser history;
@@ -35,8 +35,13 @@ One screen per part of the system:
   leash written as one sentence, the recap, then the spine of stages — which stages that
   spine shows is the Ticket's Worker type's, derived from the served manifest (see below and
   `worker-types.md`); the kickoff user note sits first in that spine, collapsed. The one raised ask surface, live status markers, the
-  employee chat in serif alongside, and a copy button that produces a plain-text block
-  for pasting anywhere. Its project picker is backed by the shared `projects` resource.
+  employee conversation in serif alongside, and a copy button that produces a plain-text block
+  for pasting anywhere. During pristine Kickoff, the facts line also shows a restrained
+  **Worker** pill whose choices come only from the served Employee-backend catalog. Changing
+  it writes the stored Ticket choice but does not create a session. The first prompt attaches
+  through that choice; accepting Kickoff may eagerly attach. Once Kickoff advances or Employee
+  demand exists, the pill becomes read-only. Its project picker is backed by the shared
+  `projects` resource.
 - **Sprint** — one tracking page that scrolls (name, a meta line, the bet, then the
   work grouped by project with loose tickets as the same group), plus a separate
   documents page for the kickoff/mid/review record (see `sprints.md`).
@@ -71,13 +76,12 @@ share.
   only. The catalogue keeps its own private process-lifetime list of opened
   parameterized resources to make this check; the cache remains generic.
 
-  Panels Chat has a narrower rule. The four message and turn events for a Ticket
-  refresh only `chat:<id>`. Ticket `employee_session_changed` refreshes only the
-  matching `ticket:<id>`; it never refreshes Chat, Board, Review, current Sprint, or
-  any other projection. Day and top-level-agent `chat_session_created` and Chat events
-  refresh only their matching Chat. Day Chat events do not refresh the Day projection.
-  Employee session history is an explicit ordinary Ticket read, not a cached Panels
-  Chat resource.
+  Conversation state is intentionally outside the Resource Catalogue. Each ACP pane
+  owns one typed `/api/conversation` WebSocket controller. Its session replay,
+  generation, sequence, queue, permissions, terminal state, and delivery receipts are
+  conversation state rather than cached REST resources. Ticket
+  `employee_session_changed` still refreshes only the matching `ticket:<id>` so the
+  Ticket mirror stays current without refetching unrelated product projections.
 
   The event WebSocket is also the browser's connection-health owner. The shell starts
   at Reconnecting and changes to Connected only after a valid event frame or heartbeat
@@ -90,9 +94,10 @@ share.
   refreshes the currently subscribed resources once, in addition to normal cursor
   catch-up and keyed invalidation for missed events.
 
-  An empty Panels Chat stays empty. `ChatState` reads only durable Panels messages,
-  terminal outcomes, and the live turn; it never retries with or merges Hermes
-  history. The browser has no Employee-history pane or transcript-merging control.
+  The browser does not merge a second Panels transcript with backend history. ACP
+  load/replay is the one conversation projection, and reconnect uses the same strict
+  employee/session/generation boundary as live delivery. A pristine-Kickoff Ticket defers
+  the pane's initial attach so merely opening the page cannot freeze its backend choice.
 - **The markdown renderer is hardened.** Written text (briefs, notes, ideas) renders
   through a markdown pass built so a crafted link that a browser would quietly treat
   as runnable code is impossible to express.
@@ -102,7 +107,7 @@ share.
   or active use. Touch and forced-colors modes keep the platform's visible scrollbar
   behavior.
 - **Ticket files are linked, not stored in fields.** Canonical notes, fields,
-  proposals, results, and chat stay as database text. Standalone files for a ticket
+  proposals, and results stay as database text. Standalone files for a ticket
   live beside the database under `files/tickets/<ticket_id>/`, so the default local
   path is `data/files/tickets/<ticket_id>/...`. The browser reads them through
   `/files/tickets/<ticket_id>/<relative-path>`. The server sends `nosniff`; only
@@ -127,11 +132,10 @@ share.
   bounds as embedded Markdown without repeating the file title, metadata, or open
   action. Images, video, and audio render inline; unknown files stay as download cards;
   ordinary external links stay external-link cards with deterministic host
-  text. Full preview targets use either
-  `#/preview?source=ticket&ticket=<id>&path=<path>` or
-  `#/preview?source=chat&entity=<id>&path=<path>`. Managed chat files under
-  `/files/chats/<entity-id>/...` use the same component, resolver, and document route
-  rather than a chat-only renderer.
+  text. Full managed preview targets use
+  `#/preview?source=ticket&ticket=<id>&path=<path>`. ACP message and tool links also use
+  the shared generic/Ticket preview adapter. Conversation images are inline ACP
+  content, not managed files.
 - **Editable Markdown stays one surface.** Ticket notes, recaps, passed fields,
   approval drafts, and future Markdown surfaces remain directly editable with their
   existing focus, blur/save, keyboard, paste, and Escape behavior. Links stay mounted
@@ -173,8 +177,11 @@ hand-rolling the same shapes per screen. Each does one job:
 - **InlineEdit** — product editing and save behavior for Markdown and plain text.
 - **MarkdownBlock** — the read-only product wrapper for managed Markdown.
 - **FilePreview** — the one file preview card/inline renderer (see the file-preview rule).
-- **ChatPanel / ChatComposer** — the ticket and Chief-of-Staff chat rail and its input,
-  including ordered pending image previews for picker, paste, and drop intake.
+- **AcpConversation / AcpConversationPane** — the sole Ticket and Chief-of-Staff
+  conversation surface: typed replay, connection/activity status, transcript,
+  permissions, and the compact work controls.
+- **ConversationComposer** — ACP commands, draft text, and ordered pending image
+  previews for picker, paste, and drop intake. Images become inline ACP blocks.
 - **EnumPill** — a pill whose value is chosen from a menu (project, sprint, scope).
 - **SegmentedControl** — a small set of toggle options (backlog project/priority).
 - **ScopePairPicker** — the "approve until … then …" scope control.
@@ -198,7 +205,9 @@ _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 (one route per screen), `web/src/components/` (shared pieces),
 `web/src/lib/resourceCatalogue.ts` (cached reads, event dependencies, and mutation effects),
 `web/src/lib/resources.svelte.ts` (the generic cache engine), `web/src/lib/ws.ts`
-(the WebSocket doorbell), and the remaining `web/src/lib/` helpers (API, Managed Markdown,
+(the event doorbell), `web/src/lib/acp/` and `web/src/components/acp/` (the typed
+conversation controller, state, transport, transcript, and composer), and the
+remaining `web/src/lib/` helpers (API, Managed Markdown,
 `labelize`, dates), `assets/tokens.css`
 (design tokens), `assets/app.css` (shared styling), `assets/markdown.js` (the
 hardened renderer), `web/dist/` (built app served by FastAPI).
@@ -207,7 +216,7 @@ hardened renderer), `web/dist/` (built app served by FastAPI).
 
 - Every backend doc owns the behaviour its screen projects — **Tickets & the gates**
   (`tickets-and-gates.md`), **Days** (`days.md`), **Sprints** (`sprints.md`),
-  **Backlog & Ideas** (`backlog-and-ideas.md`), **Chat** (`chat.md`).
+  **Backlog & Ideas** (`backlog-and-ideas.md`), **Conversation** (`chat.md`).
 - **Worker types** (`worker-types.md`) — the served manifest the Ticket screen turns
   into a per-Worker-type lifecycle to render each Ticket's Stages and Worker type pill.
 - **Projects** (`projects.md`) — the shared project selector resource.
@@ -221,4 +230,4 @@ hardened renderer), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-14 (Resource Catalogue ownership, Managed Markdown ownership, per-type ticket rendering, and shared scrollbar behavior verified)._
+_Last verified: 2026-07-20 (single ACP conversation pane, Resource Catalogue, and shared file previews)._
