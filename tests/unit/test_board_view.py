@@ -14,6 +14,7 @@ from tests.support.probe import (
 
 from planner.core.contracts import Priority
 from planner.days.data import add_day_ticket
+from planner.projects.data import create_project
 from planner.sprints.data import create_item
 from planner.tickets.contracts import AtCap
 from planner.tickets.conversation_projection import TicketConversationProjection
@@ -109,6 +110,7 @@ def test_board_view_only_returns_tickets_on_requested_day(tmp_db: Connection) ->
 def test_board_view_groups_parented_ticket_by_parent_item_project(
     tmp_db: Connection, fake_clock
 ) -> None:
+    standalone_project = create_project(tmp_db, name="Client Work", now=0)
     item = create_item(
         tmp_db,
         title="Parent item",
@@ -116,7 +118,7 @@ def test_board_view_groups_parented_ticket_by_parent_item_project(
         clock=fake_clock,
     )
     parented = _ticket(tmp_db, "Parented ticket", 1, sprint_item_id=item.id)
-    standalone = _ticket(tmp_db, "Standalone ticket", 2, project_id="project_learning")
+    standalone = _ticket(tmp_db, "Standalone ticket", 2, project_id=standalone_project.id)
     unprojected = _ticket(tmp_db, "Unprojected ticket", 3)
     for ticket_id in (parented, standalone, unprojected):
         add_day_ticket(tmp_db, "day_2026-07-04", ticket_id, 10)
@@ -128,8 +130,8 @@ def test_board_view_groups_parented_ticket_by_parent_item_project(
     assert cards["Parented ticket"]["project"] is None
     assert cards["Parented ticket"]["group_project_id"] == "project_vylo"
     assert cards["Parented ticket"]["group_project"] == "Vylo"
-    assert cards["Standalone ticket"]["group_project_id"] == "project_learning"
-    assert cards["Standalone ticket"]["group_project"] == "Learning"
+    assert cards["Standalone ticket"]["group_project_id"] == "project_client_work"
+    assert cards["Standalone ticket"]["group_project"] == "Client Work"
     assert cards["Unprojected ticket"]["group_project_id"] is None
     assert cards["Unprojected ticket"]["group_project"] is None
 

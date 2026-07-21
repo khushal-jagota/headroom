@@ -1,9 +1,12 @@
 # Projects
 
 Projects are a small catalog, not a fixed enum. Each project has a stable ID and a
-display name. The default rows are `project_vylo`, `project_tribe`,
-`project_learning`, and `project_other`, but new rows can be added without changing
-code.
+display name. The live default rows are `project_vylo`, `project_tribe`, and
+`project_other`, but new rows can be added without changing code.
+
+`Learning` remains recognized when importing the legacy markdown format. If an
+import names it and the project is missing, the importer creates it as part of the
+same transaction. It is not recreated when a fresh database is initialized.
 
 Each project also has one free-text summary. That summary is the project context
 for humans and agents: what the project is, what matters about it, and any repo or
@@ -43,4 +46,4 @@ _Code paths:_ `src/planner/projects/`, `src/planner/core/db.py`,
 
 ---
 
-_Last verified: 2026-07-09._
+_Last verified: 2026-07-21._

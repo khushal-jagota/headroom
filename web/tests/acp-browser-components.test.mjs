@@ -314,6 +314,17 @@ const controller: ConversationController = {
     supportsSteer,
   },
 } as ConversationSnapshot);
+(window as any).__setConversationPlan = (statuses: Array<"pending" | "in_progress" | "completed">) => emit({
+  ...current,
+  session: {
+    ...current.session,
+    plan: statuses.map((status, index) => ({
+      content: "Runtime task " + (index + 1),
+      priority: "high",
+      status,
+    })),
+  },
+} as ConversationSnapshot);
 (window as any).__raiseConnectionError = () => emit({
   ...current,
   recoverableConnectionError: "Runtime connection failed",

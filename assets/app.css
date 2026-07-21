@@ -422,9 +422,19 @@ textarea {
 
 .markdown h1,
 .markdown h2,
-.markdown h3 {
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
   color: var(--text-strong);
   margin: var(--space-4) 0 var(--space-2);
+}
+
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  font-size: var(--type-sm);
+  font-weight: 600;
 }
 
 .markdown code {
@@ -451,6 +461,57 @@ textarea {
 .markdown ol {
   margin: 0 0 var(--space-3);
   padding-left: var(--space-5);
+}
+
+.markdown li > ul,
+.markdown li > ol {
+  margin-top: var(--space-1);
+  margin-bottom: var(--space-1);
+}
+
+.markdown blockquote {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--surface-overlay);
+  color: var(--text-muted);
+}
+
+.markdown hr {
+  border: 0;
+  border-top: var(--border-hairline) solid var(--surface-overlay);
+  margin: var(--space-4) 0;
+}
+
+.markdown table {
+  width: 100%;
+  margin: 0 0 var(--space-3);
+  border-collapse: collapse;
+  font-size: var(--type-sm);
+}
+
+.markdown th,
+.markdown td {
+  padding: var(--space-2);
+  border: var(--border-hairline) solid var(--surface-overlay);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown th {
+  color: var(--text-strong);
+  font-weight: 600;
+  background: var(--surface-sunken);
+}
+
+.markdown img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+}
+
+.markdown input[type="checkbox"] {
+  margin-right: var(--space-2);
+  vertical-align: middle;
 }
 
 .markdown a {

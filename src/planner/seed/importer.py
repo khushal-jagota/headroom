@@ -14,7 +14,9 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.projects import data as projects_data
+from planner.projects.contracts import Project
 from planner.seed.contracts import (
+    PROJECT_NAMES,
     MigrationReport,
     ParsedIdea,
     ParsedItem,
@@ -213,10 +215,7 @@ def _import_items(
             items_by_title[item.title] = cast(str, row["id"])
             continue
         item_id = new_id(ID_PREFIXES["sprint_item"])
-        project = projects_data.resolve_project(
-            conn, project_id=None, project_name=item.project, required=True
-        )
-        assert project is not None
+        project = _resolve_or_materialize_legacy_project(conn, item.project, now)
         item_is_deferred = deferred or item.deferred
         item_sprint_id = None if item_is_deferred else sprint_id
         conn.execute(
@@ -352,8 +351,10 @@ def _import_ideas(
             report.duplicates_skipped += 1
             continue
         idea_id = new_id(ID_PREFIXES["idea"])
-        project = projects_data.resolve_project(
-            conn, project_id=None, project_name=idea.project, required=False
+        project = (
+            _resolve_or_materialize_legacy_project(conn, idea.project, now)
+            if idea.project is not None
+            else None
         )
         conn.execute(
             "INSERT INTO ideas (id, title, body, project_id, created_at, updated_at) "
@@ -375,3 +376,31 @@ def _import_ideas(
             now,
         )
         report.ideas += 1
+
+
+def _resolve_or_materialize_legacy_project(
+    conn: sqlite3.Connection, project_name: str, now: int
+) -> Project:
+    """Resolve recognized v1 vocabulary, recreating a missing row in this transaction."""
+
+    row = conn.execute(
+        "SELECT id FROM projects WHERE name = ? COLLATE NOCASE", (project_name,)
+    ).fetchone()
+    if row is not None:
+        return projects_data.read_project(conn, str(row["id"]))
+    if project_name not in PROJECT_NAMES:
+        raise PlannerError(
+            ErrorCode.validation, "invalid legacy project", {"project": project_name}
+        )
+
+    base_id = projects_data.project_id_for_name(project_name)
+    project_id = base_id
+    suffix = 2
+    while conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is not None:
+        project_id = f"{base_id}_{suffix}"
+        suffix += 1
+    conn.execute(
+        "INSERT INTO projects (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        (project_id, project_name, now, now),
+    )
+    return projects_data.read_project(conn, project_id)

@@ -100,6 +100,17 @@ def main() -> None:
         assert task_pill.locator(".acp-spin").count() == 0
         assert "Ship runtime proof" in page.locator(".task-pop").text_content()
 
+        # Completed work must not linger in a later active turn. A mixed plan
+        # remains visible while any task is active; once every task completes,
+        # the pill disappears and stays absent across an idle -> active cycle.
+        page.evaluate("window.__setConversationPlan(['completed', 'in_progress'])")
+        assert task_pill.get_attribute("aria-label") == "1 of 2 tasks complete"
+        page.evaluate("window.__setConversationPlan(['completed', 'completed'])")
+        assert task_pill.count() == 0
+        page.evaluate("window.__setConversationDeliveryState(true, false, false)")
+        page.evaluate("window.__setConversationDeliveryState(true, false, true)")
+        assert task_pill.count() == 0
+
         # Compaction seams are centred flat dividers with lowercase mono labels;
         # no token counts, no summary, no disclosure button.
         compaction = page.locator("[data-acp-compaction='compaction-runtime']")

@@ -11,9 +11,4 @@ interface PlannerDebug {
 
 interface Window {
   __plannerDebug: PlannerDebug;
-  Planner?: {
-    markdown?: {
-      render(text: string): HTMLElement;
-    };
-  };
 }

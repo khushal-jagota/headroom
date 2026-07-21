@@ -268,16 +268,17 @@ def test_workspace_groups_populated_project_worker_and_stage_sections_in_contrac
         "--project-id",
         "project_vylo",
     )["id"]
-    learning = cli(
+    research_project = cli(server, "project", "create", "--name", "Research")
+    research = cli(
         server,
         "ticket",
         "create",
         "--worker-type",
         "coding",
         "--title",
-        "Learning ticket",
+        "Research ticket",
         "--project-id",
-        "project_learning",
+        research_project["id"],
     )["id"]
     no_project = cli(
         server,
@@ -295,7 +296,7 @@ def test_workspace_groups_populated_project_worker_and_stage_sections_in_contrac
         done,
         new_worker_stages,
         new_worker_thinking,
-        learning,
+        research,
         no_project,
     ):
         _add_today(api, server, ticket_id)
@@ -321,7 +322,7 @@ def test_workspace_groups_populated_project_worker_and_stage_sections_in_contrac
         "[data-project-section] > summary .board-workspace-project-label",
         "els => els.map(el => el.textContent.trim())",
     )
-    assert project_labels == ["Learning", "Vylo", "No project"]
+    assert project_labels == ["Research", "Vylo", "No project"]
     project_geometry = page.eval_on_selector_all(
         "[data-project-section]",
         "els => els.map(el => ({marginTop: getComputedStyle(el).marginTop, "

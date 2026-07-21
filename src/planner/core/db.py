@@ -15,7 +15,7 @@ from planner.core.legacy_execution_route import (
 )
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 28
+SCHEMA_VERSION: Final = 29
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -243,9 +243,13 @@ def create_schema(conn: sqlite3.Connection) -> None:
         if conn.in_transaction:
             conn.commit()
         _migrate_to_v28(conn)
-    elif not _ticket_conversation_projection_table_is_v28(conn):
+    if incoming_version < 29:
+        if conn.in_transaction:
+            conn.commit()
+        _migrate_to_v29(conn)
+    elif not _ticket_conversation_projection_table_is_v29(conn):
         raise RuntimeError(
-            "v28 schema is missing the valid Ticket conversation projection table"
+            "v29 schema is missing the valid Ticket conversation projection table"
         )
     _create_indexes(conn)
 
@@ -491,9 +495,7 @@ def _migrate_to_v27(conn: sqlite3.Connection) -> None:
         if "employee_launch_model" not in columns:
             conn.execute("ALTER TABLE tickets ADD COLUMN employee_launch_model TEXT")
         if "employee_launch_reasoning_effort" not in columns:
-            conn.execute(
-                "ALTER TABLE tickets ADD COLUMN employee_launch_reasoning_effort TEXT"
-            )
+            conn.execute("ALTER TABLE tickets ADD COLUMN employee_launch_reasoning_effort TEXT")
         if not _tickets_table_is_v27(conn):
             raise RuntimeError(
                 "Ticket v27 migration could not establish nullable launch configuration"
@@ -512,10 +514,32 @@ def _migrate_to_v27(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_to_v28(conn: sqlite3.Connection) -> None:
+    """Retire the Learning default project without losing its Ideas."""
+
+    if conn.in_transaction:
+        raise RuntimeError("Project v28 migration requires an autocommit connection")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("UPDATE ideas SET project_id = NULL WHERE project_id = 'project_learning'")
+        conn.execute("DELETE FROM projects WHERE id = 'project_learning'")
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(
+                f"foreign key check failed after Project v28 migration: {violations!r}"
+            )
+        conn.execute("PRAGMA user_version=28")
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+
+
+def _migrate_to_v29(conn: sqlite3.Connection) -> None:
     """Add the durable factual ACP projection used by Ticket Workspace cards."""
 
     if conn.in_transaction:
-        raise RuntimeError("Ticket v28 migration requires an autocommit connection")
+        raise RuntimeError("Ticket v29 migration requires an autocommit connection")
     conn.execute("BEGIN IMMEDIATE")
     try:
         conn.execute(
@@ -529,16 +553,16 @@ def _migrate_to_v28(conn: sqlite3.Connection) -> None:
             "updated_at INTEGER NOT NULL"
             ")"
         )
-        if not _ticket_conversation_projection_table_is_v28(conn):
+        if not _ticket_conversation_projection_table_is_v29(conn):
             raise RuntimeError(
-                "Ticket v28 migration could not establish the conversation projection table"
+                "Ticket v29 migration could not establish the conversation projection table"
             )
         violations = conn.execute("PRAGMA foreign_key_check").fetchall()
         if violations:
             raise RuntimeError(
-                f"foreign key check failed after Ticket v28 migration: {violations!r}"
+                f"foreign key check failed after Ticket v29 migration: {violations!r}"
             )
-        conn.execute("PRAGMA user_version=28")
+        conn.execute("PRAGMA user_version=29")
         conn.execute("COMMIT")
     except BaseException:
         if conn.in_transaction:
@@ -546,7 +570,7 @@ def _migrate_to_v28(conn: sqlite3.Connection) -> None:
         raise
 
 
-def _ticket_conversation_projection_table_is_v28(conn: sqlite3.Connection) -> bool:
+def _ticket_conversation_projection_table_is_v29(conn: sqlite3.Connection) -> bool:
     columns = tuple(
         (
             str(row[1]),
