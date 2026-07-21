@@ -15,7 +15,7 @@ from planner.core.legacy_execution_route import (
 )
 from planner.projects import data as projects_data
 
-SCHEMA_VERSION: Final = 27
+SCHEMA_VERSION: Final = 28
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -231,6 +231,10 @@ def create_schema(conn: sqlite3.Connection) -> None:
             "v27 Ticket schema is missing the nullable Employee launch configuration columns "
             "without defaults"
         )
+    if incoming_version < 28:
+        if conn.in_transaction:
+            conn.commit()
+        _migrate_to_v28(conn)
     _create_indexes(conn)
 
 
@@ -475,9 +479,7 @@ def _migrate_to_v27(conn: sqlite3.Connection) -> None:
         if "employee_launch_model" not in columns:
             conn.execute("ALTER TABLE tickets ADD COLUMN employee_launch_model TEXT")
         if "employee_launch_reasoning_effort" not in columns:
-            conn.execute(
-                "ALTER TABLE tickets ADD COLUMN employee_launch_reasoning_effort TEXT"
-            )
+            conn.execute("ALTER TABLE tickets ADD COLUMN employee_launch_reasoning_effort TEXT")
         if not _tickets_table_is_v27(conn):
             raise RuntimeError(
                 "Ticket v27 migration could not establish nullable launch configuration"
@@ -488,6 +490,28 @@ def _migrate_to_v27(conn: sqlite3.Connection) -> None:
                 f"foreign key check failed after Ticket v27 migration: {violations!r}"
             )
         conn.execute("PRAGMA user_version=27")
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+
+
+def _migrate_to_v28(conn: sqlite3.Connection) -> None:
+    """Retire the Learning default project without losing its Ideas."""
+
+    if conn.in_transaction:
+        raise RuntimeError("Project v28 migration requires an autocommit connection")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("UPDATE ideas SET project_id = NULL WHERE project_id = 'project_learning'")
+        conn.execute("DELETE FROM projects WHERE id = 'project_learning'")
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(
+                f"foreign key check failed after Project v28 migration: {violations!r}"
+            )
+        conn.execute("PRAGMA user_version=28")
         conn.execute("COMMIT")
     except BaseException:
         if conn.in_transaction:

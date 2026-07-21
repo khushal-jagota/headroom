@@ -21,6 +21,7 @@ from planner.core.contracts import ErrorCode, Priority
 from planner.core.db import connect, create_schema
 from planner.core.errors import PlannerError
 from planner.seed import __main__ as seed_main
+from planner.seed import importer as seed_importer
 from planner.seed.contracts import MigrationReport, SkippedSection
 from planner.seed.importer import seed_from_source
 from planner.seed.logic.fieldmap import resolve_priority
@@ -104,6 +105,9 @@ _EXPECTED_SKIPS = [
 def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     tmp_db: Connection,
 ) -> None:
+    # Learning is legacy import vocabulary, not a live default project. The
+    # explicit importer must recreate a recognized missing project atomically.
+    tmp_db.execute("DELETE FROM projects WHERE id = 'project_learning'")
     report = seed_from_source(tmp_db, FIXTURE, worker_type="coding", now=_FIXED_NOW)
 
     # (1) report counts.
@@ -124,11 +128,11 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert _count(tmp_db, "ideas") == 3
     assert _count(tmp_db, "links") == 0
     assert _count(tmp_db, "events") == 17
-    default_projects = _rows_by(tmp_db, "SELECT id, name FROM projects", "id")
-    assert default_projects["project_vylo"]["name"] == "Vylo"
-    assert default_projects["project_tribe"]["name"] == "Tribe"
-    assert default_projects["project_learning"]["name"] == "Learning"
-    assert default_projects["project_other"]["name"] == "Other"
+    imported_projects = _rows_by(tmp_db, "SELECT id, name FROM projects", "id")
+    assert imported_projects["project_vylo"]["name"] == "Vylo"
+    assert imported_projects["project_tribe"]["name"] == "Tribe"
+    assert imported_projects["project_learning"]["name"] == "Learning"
+    assert imported_projects["project_other"]["name"] == "Other"
 
     # (3) sprint row spot-check.
     sprint = tmp_db.execute(
@@ -344,6 +348,23 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert _count(tmp_db, "ideas") == 3
     assert _count(tmp_db, "links") == 0
     assert _count(tmp_db, "events") == 17
+
+
+def test_legacy_project_materialization_rolls_back_with_failed_import(
+    tmp_db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tmp_db.execute("DELETE FROM projects WHERE id = 'project_learning'")
+
+    def fail_after_items(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("stop after project materialization")
+
+    monkeypatch.setattr(seed_importer, "_import_tickets", fail_after_items)
+    with pytest.raises(RuntimeError, match="stop after project materialization"):
+        seed_from_source(tmp_db, FIXTURE, worker_type="coding", now=_FIXED_NOW)
+
+    assert tmp_db.execute("SELECT 1 FROM projects WHERE id = 'project_learning'").fetchone() is None
+    for table in ("sprints", "sprint_items", "tickets", "ideas", "events"):
+        assert _count(tmp_db, table) == 0
 
 
 def test_match_item_title_ambiguity() -> None:

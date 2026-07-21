@@ -15,7 +15,6 @@ from planner.projects.contracts import Project
 DEFAULT_PROJECTS: tuple[tuple[str, str], ...] = (
     ("project_vylo", "Vylo"),
     ("project_tribe", "Tribe"),
-    ("project_learning", "Learning"),
     ("project_other", "Other"),
 )
 
@@ -64,16 +63,14 @@ def project_id_for_name(name: str) -> str:
 def seed_default_projects(conn: sqlite3.Connection) -> None:
     for project_id, name in DEFAULT_PROJECTS:
         conn.execute(
-            "INSERT OR IGNORE INTO projects (id, name, created_at, updated_at) "
-            "VALUES (?, ?, 0, 0)",
+            "INSERT OR IGNORE INTO projects (id, name, created_at, updated_at) VALUES (?, ?, 0, 0)",
             (project_id, name),
         )
 
 
 def list_projects(conn: sqlite3.Connection) -> list[Project]:
     rows = conn.execute(
-        "SELECT id, name, summary, created_at, updated_at "
-        "FROM projects ORDER BY lower(name), id"
+        "SELECT id, name, summary, created_at, updated_at FROM projects ORDER BY lower(name), id"
     ).fetchall()
     return [_row_to_project(row) for row in rows]
 
@@ -120,21 +117,20 @@ def resolve_project(
     return project
 
 
-def create_project(
-    conn: sqlite3.Connection, *, name: str, summary: str = "", now: int
-) -> Project:
+def create_project(conn: sqlite3.Connection, *, name: str, summary: str = "", now: int) -> Project:
     clean_name = name.strip()
     clean_summary = summary.strip()
     if not clean_name:
         raise PlannerError(ErrorCode.validation, "project name is required", {})
 
     with _tx(conn):
-        if conn.execute(
-            "SELECT 1 FROM projects WHERE name = ? COLLATE NOCASE", (clean_name,)
-        ).fetchone() is not None:
-            raise PlannerError(
-                ErrorCode.validation, "project already exists", {"name": clean_name}
-            )
+        if (
+            conn.execute(
+                "SELECT 1 FROM projects WHERE name = ? COLLATE NOCASE", (clean_name,)
+            ).fetchone()
+            is not None
+        ):
+            raise PlannerError(ErrorCode.validation, "project already exists", {"name": clean_name})
 
         base_id = project_id_for_name(clean_name)
         project_id = base_id
@@ -174,9 +170,7 @@ def update_project(
         raise PlannerError(ErrorCode.validation, "no project fields to update", {})
 
     with _tx(conn):
-        if conn.execute(
-            "SELECT 1 FROM projects WHERE id = ?", (project_id,)
-        ).fetchone() is None:
+        if conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None:
             raise PlannerError(
                 ErrorCode.validation, "invalid project_id", {"project_id": project_id}
             )
@@ -190,9 +184,7 @@ def update_project(
                 )
         assignments = ", ".join(f"{field} = ?" for field in updates)
         params = [*updates.values(), now, project_id]
-        conn.execute(
-            f"UPDATE projects SET {assignments}, updated_at = ? WHERE id = ?", params
-        )
+        conn.execute(f"UPDATE projects SET {assignments}, updated_at = ? WHERE id = ?", params)
         append_event(
             conn,
             project_id,

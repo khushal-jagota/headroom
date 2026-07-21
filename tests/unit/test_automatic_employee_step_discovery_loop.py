@@ -25,6 +25,7 @@ from planner.core.contracts import LinkKind
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.days import data as days_data
+from planner.projects import data as projects_data
 from planner.runtime import automatic_employee_step_eligibility
 from planner.runtime.automatic_employee_step_discovery_loop import (
     AutomaticEmployeeStepDiscoveryLoop,
@@ -123,6 +124,14 @@ def _new_item(db: str, project_id: str) -> str:
             project_id=project_id,
             clock=TestClock(FIXED_NOW),
         ).id
+    finally:
+        conn.close()
+
+
+def _new_project(db: str, name: str) -> str:
+    conn = connect(db)
+    try:
+        return projects_data.create_project(conn, name=name, now=0).id
     finally:
         conn.close()
 
@@ -535,9 +544,10 @@ def test_closeout_lane_uses_the_parent_sprint_item_project(tmp_path: Path) -> No
 
 def test_different_project_or_worker_type_closeout_lanes_are_independent(tmp_path: Path) -> None:
     db = _db(tmp_path)
+    client_work_project_id = _new_project(db, "Client Work")
     ticket_ids = {
         _new_ticket(db, project_id="project_vylo"),
-        _new_ticket(db, project_id="project_learning"),
+        _new_ticket(db, project_id=client_work_project_id),
         _new_ticket(db, worker_type="exploration", project_id="project_vylo"),
     }
     for ticket_id in ticket_ids:
@@ -577,6 +587,7 @@ def test_closeout_claim_rechecks_lane_occupancy_inside_the_write_transaction(
 
     conn = connect(db)
     try:
+
         def claim(ticket_id: str) -> Ticket | None:
             return tickets_data.claim_automatic_employee_step(
                 conn,
@@ -1141,7 +1152,7 @@ def test_discovery_source_orders_membership_sql_without_copying_eligibility() ->
     normalized = " ".join(source.split()).lower()
     expected_sql = (
         "select t.id from tickets t join day_tickets dt on dt.ticket_id = t.id "
-        "where dt.day_id = ? \" \"order by t.updated_at, t.id"
+        'where dt.day_id = ? " "order by t.updated_at, t.id'
     )
     assert expected_sql in normalized
     candidate = normalized.split("_candidate_sql", 1)[1].split(")", 1)[0]
