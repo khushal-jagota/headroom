@@ -972,7 +972,7 @@ Output:
 All checks passed!
 ```
 
-The process-level e2e started staging and two previews concurrently through `panels environment run --test-mode`, waited for HTTP readiness, mutated each database and managed-file tree independently, observed distinct ports/control sockets/locks/Hermes homes, created isolated fake Hermes session state, terminated all three process groups, and removed only the temporary instances.
+The process-level e2e started staging and two previews concurrently through `panels environment run --test-mode`, waited for HTTP readiness, mutated each database and managed-file tree independently, observed distinct ports/control sockets/locks and skill-only Hermes homes without session/auth/config state, terminated all three process groups, and removed only the temporary instances.
 
 ## Independent review correction RED
 

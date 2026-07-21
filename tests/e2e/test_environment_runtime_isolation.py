@@ -5,7 +5,6 @@ import json
 import os
 import shutil
 import signal
-import sqlite3
 import subprocess
 import time
 from dataclasses import dataclass
@@ -98,19 +97,13 @@ def test_environment_run_isolates_concurrent_test_mode_instances(tmp_path: Path)
             assert Path(manifest["db_path"]).is_file()
             assert Path(manifest["managed_files_root"]).is_dir()
             assert Path(manifest["logs_dir"]).is_dir()
-            assert Path(manifest["hermes_home"]).is_dir()
+            _assert_skill_only_hermes_home(Path(manifest["hermes_home"]))
             assert Path(manifest["dispatcher_lock_path"]).parent.is_dir()
             assert Path(manifest["server_control_socket_path"]).exists()
             assert _port_listens(int(manifest["port"]))
 
         created = []
         for runtime in processes:
-            chat = httpx.post(
-                f"{runtime.instance.base}/api/messages/chief",
-                json={"text": f"hello from {runtime.instance.instance_id or 'staging'}"},
-                timeout=5.0,
-            )
-            assert chat.status_code < 300, chat.text
             response = httpx.post(
                 f"{runtime.instance.base}/api/projects",
                 json={
@@ -146,8 +139,6 @@ def test_environment_run_isolates_concurrent_test_mode_instances(tmp_path: Path)
             assert marker.read_text(encoding="utf-8") == (
                 runtime.instance.instance_id or "staging"
             )
-        fake_session_identities = {_fake_session_identity(runtime) for runtime in processes}
-        assert len(fake_session_identities) == len(processes)
 
     finally:
         for runtime in processes:
@@ -292,22 +283,13 @@ def _assert_manifest_paths_are_distinct(instances: list[RuntimeInstance]) -> Non
         assert len(set(values)) == len(values), key
 
 
-def _fake_session_identity(runtime: RuntimeProcess) -> tuple[str, str, str]:
-    db_path = Path(runtime.instance.manifest["db_path"])
-    with sqlite3.connect(db_path) as conn:
-        row = conn.execute(
-            "SELECT chat_session_key FROM agent_chat_sessions WHERE id = ?",
-            ("agent_panels_chief_of_staff",),
-        ).fetchone()
-    assert row is not None
-    session_key = str(row[0])
-    assert session_key.startswith("fake-sess-")
-    assert str(runtime.instance.manifest["hermes_home"]) not in session_key
-    return (
-        session_key,
-        str(runtime.instance.manifest["db_path"]),
-        str(runtime.instance.manifest["hermes_home"]),
-    )
+def _assert_skill_only_hermes_home(hermes_home: Path) -> None:
+    assert {path.name for path in hermes_home.iterdir()} == {"skills"}
+    assert not (hermes_home / "auth.json").exists()
+    assert not (hermes_home / "config.json").exists()
+    assert not (hermes_home / "sessions").exists()
+    for skill_link in (hermes_home / "skills").iterdir():
+        assert skill_link.is_symlink()
 
 
 def _remove_instance(instance: RuntimeInstance, environment_root: Path) -> None:

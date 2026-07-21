@@ -279,7 +279,7 @@ def test_run_hidden_test_mode_injects_fake_runtime_from_the_seam(tmp_path: Path)
     assert result.exit_code == 0, result.output
     run_env = exec_calls[0][2]
     assert run_env["PLAN_TEST_MODE"] == "1"
-    assert run_env["PLAN_GATEWAY_ADAPTER"] == "fake"
+    assert "PLAN_GATEWAY_ADAPTER" not in run_env
     assert run_env["PLAN_FAKE_NOW"] == "2026-07-04T12:00:00+00:00"
 
 

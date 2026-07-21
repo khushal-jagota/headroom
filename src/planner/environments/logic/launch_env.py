@@ -48,7 +48,6 @@ def build_test_environment_run_env(
         {
             "PLAN_TEST_MODE": "1",
             "PLAN_FAKE_NOW": _TEST_FAKE_NOW,
-            "PLAN_GATEWAY_ADAPTER": "fake",
             **_TEST_TIMING_ENV,
         }
     )

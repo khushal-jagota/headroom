@@ -4,6 +4,28 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-21): canonical-verify integration repairs
+
+On current `main`, the environment closeout repairs remove the retired test-mode
+`PLAN_GATEWAY_ADAPTER` assignment and adapt the process-level runtime-isolation e2e to the
+current ACP-era system. That e2e now proves independent project/database and managed-file
+mutations, plus distinct skill-only Hermes homes with no copied session, auth, or config state;
+real unrelated durable sessions remain covered by the official ACP smoke instead.
+
+What just passed:
+
+- Focused Ruff passed for the changed environment, ingress-closure, and process-e2e files.
+- `test_chat_ingress_contract.py` passed: deleted chat routes and legacy tables remain absent.
+- All `test_environment_*.py` unit tests passed.
+- Strict mypy passed across 144 source files, and `git diff --check` passed.
+
+The requested process-level e2e passed after the current-ACP adaptation:
+`pytest tests/e2e/test_environment_runtime_isolation.py -q`.
+
+Next step:
+
+- Commit these scoped repairs, then run one canonical `./verify`.
+
 ## Current work cycle (2026-07-21): isolated runtime review corrections
 
 Starting point is commit `78b2b5a`. This closeout fixes three independent review findings
