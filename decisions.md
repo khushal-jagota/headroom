@@ -1954,6 +1954,18 @@ column disambiguates. Find the old number here to reach its current slug (or its
 
 ---
 
+# ACP conversation presentation (2026-07-21)
+
+## D-acp-task-strip-active-only — A stored plan is visible only while work remains
+
+The ACP plan snapshot remains durable conversation state, but its task pill represents current work.
+The pill therefore requires both an active turn and at least one `pending` or `in_progress` entry; an
+all-completed snapshot stays stored but does not resurface in a later turn. This keeps the correction
+at the rendering boundary instead of mutating protocol state or adding backend cleanup. The mounted
+browser regression proves both sides with a mixed plan and an all-completed plan across an idle-to-active
+cycle. The production change is one derived predicate with direct browser proof, so the trivial ticket's
+implementation and review work are collapsed without a separate reviewer.
+
 # ACP migration (2026-07-19)
 
 ## D-acp-single-conversation-path — ACP replaces relay and legacy after proof

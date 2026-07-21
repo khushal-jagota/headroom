@@ -4,6 +4,17 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-21): Hide completed chat task lists closeout
+
+Ticket `t_3udvypru` is integrating `ticket/t_3udvypru-hide-completed-task-lists` with current
+`main` at `83f2fbb`. The task strip keeps its existing active-turn gate but additionally requires
+at least one pending or in-progress task, so a stored all-completed plan cannot reappear during a
+later turn. The current merge preserves newer environment and GFM work and rebuilds the combined
+frontend bundle from merged source. The prospective merged tree passes the mounted-browser regression
+and canonical `./verify`: Ruff, strict Mypy across 146 source files, 1,234 unit tests, build/frontend
+checks with zero Svelte diagnostics, and 109 e2e tests; final `VERIFY: PASS`. Next: advance `main` and
+rerun the canonical gate there. No blockers.
+
 ## Current work cycle (2026-07-21): canonical-verify integration repairs
 
 On current `main`, the environment closeout repairs remove the retired test-mode
