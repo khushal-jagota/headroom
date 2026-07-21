@@ -21,6 +21,8 @@ from fastapi import WebSocket
 from pydantic import ValidationError
 from starlette.websockets import WebSocketDisconnect
 
+from planner.tickets.conversation_projection import TicketConversationProjection
+
 from .configuration import (
     ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES,
     ACP_NEW_CONVERSATION_TIMEOUT_SECONDS,
@@ -55,6 +57,7 @@ from .sqlite_binding_repository import SqliteConversationBindingRepository
 from .turn_broker import (
     ConversationTurnAttachState,
     ConversationTurnBroker,
+    ConversationTurnBrokerError,
     PromptIngressBarrierResult,
     TrackedTurnHandle,
 )
@@ -268,6 +271,7 @@ class ConversationHub:
         new_conversation_timeout_seconds: float = ACP_NEW_CONVERSATION_TIMEOUT_SECONDS,
         connection_id_factory: Callable[[], str] | None = None,
         worker_client_message_id_factory: Callable[[], str] | None = None,
+        ticket_conversation_projection: TicketConversationProjection | None = None,
     ) -> None:
         if (
             min(
@@ -290,11 +294,13 @@ class ConversationHub:
         self._worker_client_message_id_factory = (
             worker_client_message_id_factory or self._next_worker_message_id
         )
+        self._ticket_conversation_projection = ticket_conversation_projection
         self._registry: AcpEmployeeRegistry | None = None
         self._broker: ConversationTurnBroker | None = None
         self._permission_broker: ConversationPermissionBroker | None = None
         self._terminal_service: Any | None = None
         self._sequencers: dict[str, _EmployeeSequencer] = {}
+        self._ticket_projection_locks: dict[str, asyncio.Lock] = {}
         self._streams: dict[str, _StreamState] = {}
         self._subscriptions: dict[str, BrowserSubscription] = {}
         self._source_capture: dict[
@@ -594,15 +600,37 @@ class ConversationHub:
             stream = self._streams[employee_id]
         else:
             binding = stream.binding
+        return await self._new_conversation_from_stream(stream, binding)
+
+    async def _new_conversation_from_stream(
+        self,
+        stream: _StreamState,
+        binding: ConversationSessionBinding,
+    ) -> ConversationSessionBinding:
         handle = await self._require_registry().resolve_runtime_handle(
-            employee_id, binding.binding_generation
+            stream.employee.employee_id, binding.binding_generation
         )
-        await self._enqueue_and_wait(employee_id, lambda: self._open_capture(stream))
+        await self._enqueue_and_wait(
+            stream.employee.employee_id, lambda: self._open_capture(stream)
+        )
         deadline = asyncio.get_running_loop().time() + self._new_conversation_timeout_seconds
         await self._require_broker().prepare_new_conversation(handle, deadline)
         record = await self._require_registry().new_conversation(stream.employee)
         record = await self._require_registry().attach(record.employee)
-        await self._establish_stream(record, sequence_floor=0, force_new_binding=True)
+        async def establish_and_reset() -> None:
+            established = await self._establish_stream(
+                record, sequence_floor=0, force_new_binding=True
+            )
+            if not established:
+                raise ConversationTurnBrokerError(REPLAY_UNAVAILABLE_CLOSE_REASON)
+            await self._reset_ticket_conversation_projection(record.employee)
+
+        projection_lock = self._ticket_projection_lock(record.employee)
+        if projection_lock is None:
+            await establish_and_reset()
+        else:
+            async with projection_lock:
+                await establish_and_reset()
         return record.binding
 
     def prompt_started(self, handle: ConversationRuntimeHandle, prompt_epoch: int) -> None:
@@ -761,7 +789,12 @@ class ConversationHub:
                 )
             self._publish_queue_snapshot_now(stream, queued_prompts)
 
-        await self._enqueue_and_wait(employee_id, commit)
+        projection_lock = self._ticket_projection_lock(token.original_handle.employee)
+        if projection_lock is None:
+            await self._enqueue_and_wait(employee_id, commit)
+        else:
+            async with projection_lock:
+                await self._enqueue_and_wait(employee_id, commit)
 
     async def complete_compaction_transition(
         self,
@@ -1007,7 +1040,12 @@ class ConversationHub:
                 employee_id, state
             )
 
-        await self._enqueue_and_wait(employee_id, commit)
+        projection_lock = self._ticket_projection_lock(token.original_handle.employee)
+        if projection_lock is None:
+            await self._enqueue_and_wait(employee_id, commit)
+        else:
+            async with projection_lock:
+                await self._enqueue_and_wait(employee_id, commit)
 
     async def fail_requested_cancel_recovery_transition(
         self, token: RequestedCancelRecoveryTransitionToken, reason: str
@@ -1058,10 +1096,20 @@ class ConversationHub:
                 stream.ready = False
             return activity
 
-        return cast(
-            ConversationActivity,
-            await self._enqueue_and_wait(employee.employee_id, publish),
-        )
+        async def publish_and_record() -> ConversationActivity:
+            if projection_lock is not None:
+                self._require_stream(employee, binding)
+                await self._record_ticket_activity(employee, state)
+            return cast(
+                ConversationActivity,
+                await self._enqueue_and_wait(employee.employee_id, publish),
+            )
+
+        projection_lock = self._ticket_projection_lock(employee)
+        if projection_lock is None:
+            return await publish_and_record()
+        async with projection_lock:
+            return await publish_and_record()
 
     async def publish_delivery_receipt(
         self,
@@ -1069,15 +1117,30 @@ class ConversationHub:
         binding: ConversationSessionBinding,
         receipt: TurnDeliveryReceipt,
     ) -> None:
-        await self._publish(
-            employee,
-            binding,
-            lambda sequence: DeliveryReceiptEnvelope(
-                **self._base(employee, binding, sequence),
-                type="delivery_receipt",
-                payload=receipt,
-            ),
+        async def publish_and_record() -> None:
+            if projection_lock is not None:
+                self._require_stream(employee, binding)
+                await self._record_ticket_activity(employee, "thinking")
+            await self._publish(
+                employee,
+                binding,
+                lambda sequence: DeliveryReceiptEnvelope(
+                    **self._base(employee, binding, sequence),
+                    type="delivery_receipt",
+                    payload=receipt,
+                ),
+            )
+
+        projection_lock = (
+            self._ticket_projection_lock(employee)
+            if receipt.state == "accepted"
+            else None
         )
+        if projection_lock is None:
+            await publish_and_record()
+            return
+        async with projection_lock:
+            await publish_and_record()
 
     async def publish_programmatic_prompt(
         self,
@@ -1136,27 +1199,42 @@ class ConversationHub:
         request: RequestPermissionRequest,
         deadline_at: int,
     ) -> ConversationPermissionRequest:
-        return cast(
-            ConversationPermissionRequest,
-            await self._publish(
-                employee,
-                binding,
-                lambda sequence: PermissionRequestEnvelope(
-                    **self._base(employee, binding, sequence),
-                    type="permission_request",
-                    payload=ConversationPermissionRequest(
-                        request_id=request_id,
-                        employee_id=employee.employee_id,
-                        backend_key=backend_key,
-                        request=request,
-                        lifecycle="pending",
-                        deadline_at=deadline_at,
-                        opened_sequence=sequence,
+        async def publish_and_record() -> ConversationPermissionRequest:
+            if projection_lock is not None:
+                self._require_stream(employee, binding)
+                await self._record_ticket_permission(employee, True)
+            try:
+                payload = cast(
+                    ConversationPermissionRequest,
+                    await self._publish(
+                        employee,
+                        binding,
+                        lambda sequence: PermissionRequestEnvelope(
+                            **self._base(employee, binding, sequence),
+                            type="permission_request",
+                            payload=ConversationPermissionRequest(
+                                request_id=request_id,
+                                employee_id=employee.employee_id,
+                                backend_key=backend_key,
+                                request=request,
+                                lifecycle="pending",
+                                deadline_at=deadline_at,
+                                opened_sequence=sequence,
+                            ),
+                        ),
+                        return_payload=True,
                     ),
-                ),
-                return_payload=True,
-            ),
-        )
+                )
+            except BaseException:
+                await self._record_ticket_permission(employee, False)
+                raise
+            return payload
+
+        projection_lock = self._ticket_projection_lock(employee)
+        if projection_lock is None:
+            return await publish_and_record()
+        async with projection_lock:
+            return await publish_and_record()
 
     async def publish_permission_outcome(
         self,
@@ -1166,24 +1244,78 @@ class ConversationHub:
         response: RequestPermissionResponse,
         cancellation_reason: str | None,
     ) -> ConversationPermissionOutcome:
-        return cast(
-            ConversationPermissionOutcome,
-            await self._publish(
-                employee,
-                binding,
-                lambda sequence: PermissionOutcomeEnvelope(
-                    **self._base(employee, binding, sequence),
-                    type="permission_outcome",
-                    payload=ConversationPermissionOutcome(
-                        request_id=request_id,
-                        response=response,
-                        cancellation_reason=cancellation_reason,
-                        settled_sequence=sequence,
+        async def publish_and_record() -> ConversationPermissionOutcome:
+            if projection_lock is not None:
+                self._require_stream(employee, binding)
+                await self._record_ticket_permission(employee, False)
+            payload = cast(
+                ConversationPermissionOutcome,
+                await self._publish(
+                    employee,
+                    binding,
+                    lambda sequence: PermissionOutcomeEnvelope(
+                        **self._base(employee, binding, sequence),
+                        type="permission_outcome",
+                        payload=ConversationPermissionOutcome(
+                            request_id=request_id,
+                            response=response,
+                            cancellation_reason=cancellation_reason,
+                            settled_sequence=sequence,
+                        ),
                     ),
+                    return_payload=True,
                 ),
-                return_payload=True,
-            ),
+            )
+            return payload
+
+        projection_lock = self._ticket_projection_lock(employee)
+        if projection_lock is None:
+            return await publish_and_record()
+        async with projection_lock:
+            return await publish_and_record()
+
+    async def _record_ticket_activity(
+        self, employee: ConversationEmployee, state: ConversationActivityState
+    ) -> None:
+        projection = self._ticket_conversation_projection
+        if projection is None or employee.entity_kind != "ticket":
+            return
+        await asyncio.to_thread(
+            projection.record_activity, employee.entity_id, state
         )
+
+    async def _record_ticket_permission(
+        self, employee: ConversationEmployee, pending: bool
+    ) -> None:
+        projection = self._ticket_conversation_projection
+        if projection is None or employee.entity_kind != "ticket":
+            return
+        await asyncio.to_thread(
+            projection.record_permission, employee.entity_id, pending
+        )
+
+    async def _reset_ticket_conversation_projection(
+        self, employee: ConversationEmployee
+    ) -> None:
+        projection = self._ticket_conversation_projection
+        if projection is None or employee.entity_kind != "ticket":
+            return
+        await asyncio.to_thread(projection.reset, employee.entity_id)
+
+    def _ticket_projection_lock(
+        self, employee: ConversationEmployee
+    ) -> asyncio.Lock | None:
+        if (
+            self._ticket_conversation_projection is None
+            or employee.entity_kind != "ticket"
+            or employee.employee_id not in self._streams
+        ):
+            return None
+        lock = self._ticket_projection_locks.get(employee.employee_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._ticket_projection_locks[employee.employee_id] = lock
+        return lock
 
     async def publish_terminal_state(
         self,
@@ -1343,7 +1475,7 @@ class ConversationHub:
         sequence_floor: int,
         force_new_binding: bool = False,
         initial_subscription: BrowserSubscription | None = None,
-    ) -> None:
+    ) -> bool:
         source = ConversationIngressSource(
             employee=record.employee,
             child_generation=record.child_generation,
@@ -1355,7 +1487,7 @@ class ConversationHub:
         compacted_boundaries = await self.repository.resolve_compaction_boundaries(
             record.binding
         )
-        await self._enqueue_and_wait(
+        return bool(await self._enqueue_and_wait(
             record.employee.employee_id,
             lambda: self._bind_stream(
                 source,
@@ -1366,7 +1498,7 @@ class ConversationHub:
                 force_new_binding=force_new_binding,
                 initial_subscription=initial_subscription,
             ),
-        )
+        ))
 
     def _bind_stream(
         self,
@@ -1380,7 +1512,7 @@ class ConversationHub:
         sequence_floor: int,
         force_new_binding: bool,
         initial_subscription: BrowserSubscription | None = None,
-    ) -> None:
+    ) -> bool:
         employee_id = source.employee.employee_id
         previous = self._streams.get(employee_id)
         same_binding = (
@@ -1417,7 +1549,7 @@ class ConversationHub:
             )
             self._publish_connection_now(stream, "ready", "Ready")
 
-        self._commit_detached_stream_candidate(
+        return self._commit_detached_stream_candidate(
             stream,
             browsers,
             build_replay,

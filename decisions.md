@@ -48,7 +48,52 @@ a fresh child against the same isolated home before printing `stored=`, so authe
 model refusal cannot masquerade as success and persistence is proven. Smoke sessions are
 unrelated durable sessions belonging to those homes, not temporary sessions to delete.
 
+## D-ticket-projection-v29-after-main-v28 — Keep migration numbers forward-only
+
+`main` already consumes schema version 28 for retiring the Learning default project. The Ticket
+conversation projection therefore uses the next forward version, v29, with its own shape validation,
+dispatch, and migration tests. The existing v25 through v28 migrations keep their established behavior.
+
 # Workspace
+
+## D-ticket-projection-cutover-lock-and-permission-compensation — Serialize replacement publication with Ticket facts
+
+Compaction and requested-cancel recovery acquire the existing per-Ticket projection lock only around their final
+sequencer enqueue and stream cutover. Preparation, broker settlement, backend I/O, and replay construction stay
+outside that lock. This gives an old-binding projection publication one indivisible validation/write/envelope
+window against replacement, while Chief and other non-Ticket streams remain unchanged. A permission-request
+projection fact is cleared with `record_permission(False)` if its envelope publication raises; that compensation
+does not clear the separate response-attention fact.
+
+## D-workspace-dot-is-one-derived-ticket-result — Keep ACP facts durable and the visual decision centralized
+
+Workspace owns one pure classifier per Ticket. It accepts factual Ticket status/proposal facts and a minimal
+durable ACP projection (latest activity, completed response awaiting the user, and pending permission), then
+returns exactly `exceptional`, `active`, `needs_attention`, or `quiet` with fixed precedence. ACP and Ticket
+writers do not choose visual states, and the Svelte Workspace route maps only that result to the existing
+StageMark vocabulary. The projection uses ordinary `t_*` event IDs so the existing resource catalogue
+invalidates `ticket:<id>`, Board, and current Sprint without a client canonical store or per-row conversation
+subscription. SQLite writes run in short `to_thread` transactions; a new conversation clears stale facts.
+
+The accepted semantics require admitted prompts to become active before the later ACP activity envelope, and
+permission waiting must remain attention even while the durable Ticket status says `agent_running_step`. A
+completed idle turn remains attention until the next admitted prompt or explicit reset. Initial absence of ACP
+facts falls back to Ticket facts, preserving quiet initial load and truthful status-only behavior.
+
+The projection treats connecting and loading as active activity facts without changing the response fact. An
+idle fact creates response attention only when the previous fact was thinking, working, or compacting; a new
+admitted turn clears that response fact. Permission is cleared only by the published permission outcome. Hub
+Ticket publications synchronously validate the exact current employee and binding while holding the existing
+per-Ticket projection lock, await the SQLite projection write through `asyncio.to_thread`, and only then enqueue
+the ACP envelope as the final awaited operation. This applies to activity, accepted delivery receipts, permission
+requests, and permission outcomes; non-Ticket paths remain direct. A stale publication queued behind New
+Conversation therefore fails validation before writing, while a publication that wins the lock writes first and is
+then cleared by the successful replacement reset.
+
+The implementation-review P2 about restoring done/paired/takeover field marks is refuted by the approved
+ticket: the single Workspace dot is deliberately the derived Ticket result, not a field-stage status mark.
+Field-stage marks elsewhere, grouping, navigation, and interactions remain unchanged, so no Workspace status
+mapping is restored.
 
 ## D-workspace-three-level-grouping — Derive hierarchy from the existing board and manifest
 
@@ -1969,6 +2014,18 @@ column disambiguates. Find the old number here to reach its current slug (or its
   not ticket metadata.
 
 ---
+
+# ACP conversation presentation (2026-07-21)
+
+## D-acp-task-strip-active-only — A stored plan is visible only while work remains
+
+The ACP plan snapshot remains durable conversation state, but its task pill represents current work.
+The pill therefore requires both an active turn and at least one `pending` or `in_progress` entry; an
+all-completed snapshot stays stored but does not resurface in a later turn. This keeps the correction
+at the rendering boundary instead of mutating protocol state or adding backend cleanup. The mounted
+browser regression proves both sides with a mixed plan and an all-completed plan across an idle-to-active
+cycle. The production change is one derived predicate with direct browser proof, so the trivial ticket's
+implementation and review work are collapsed without a separate reviewer.
 
 # ACP migration (2026-07-19)
 

@@ -14,8 +14,11 @@ from planner.tickets.contracts import (
     FieldSlot,
     Ticket,
     TicketStatus,
+    WorkspaceActivityState,
+    WorkspaceDotFacts,
 )
 from planner.tickets.logic import fields_codec, machine
+from planner.tickets.logic.workspace_dot import workspace_dot_state
 from planner.worker_types.configuration import configured_worker_type_registry
 
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
@@ -240,10 +243,15 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
         "parent_projects.name AS parent_project_name, tickets.fields, tickets.worker_type, "
         "tickets.employee_backend, "
         "tickets.ticket_status, "
+        "ticket_conversation_projections.latest_activity_state, "
+        "ticket_conversation_projections.has_completed_response_awaiting_user, "
+        "ticket_conversation_projections.has_pending_permission, "
         "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
         "LEFT JOIN projects AS parent_projects ON parent_projects.id = sprint_items.project_id "
+        "LEFT JOIN ticket_conversation_projections "
+        "ON ticket_conversation_projections.ticket_id = tickets.id "
         "WHERE tickets.stage != 'dropped' "
         "AND tickets.id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?)",
         (day_id,),
@@ -304,6 +312,25 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
             "gating_field_label": gating_field_label,
             "is_done": stage == worker_type_definition.completed_stage(),
             "is_dropped": stage == worker_type_definition.dropped_stage.id,
+            "workspace_dot_state": workspace_dot_state(
+                WorkspaceDotFacts(
+                    ticket_status=TicketStatus(str(row["ticket_status"])),
+                    has_pending_proposal=machine.has_pending_gating_proposal(
+                        stage,
+                        fields,
+                        worker_type_definition=worker_type_definition,
+                    ),
+                    latest_activity_state=(
+                        WorkspaceActivityState(str(row["latest_activity_state"]))
+                        if row["latest_activity_state"] is not None
+                        else None
+                    ),
+                    has_completed_response_awaiting_user=bool(
+                        row["has_completed_response_awaiting_user"] or 0
+                    ),
+                    has_pending_permission=bool(row["has_pending_permission"] or 0),
+                )
+            ).value,
         }
         sort_key = (
             _prio_rank(priority),

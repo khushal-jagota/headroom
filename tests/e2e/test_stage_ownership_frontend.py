@@ -133,7 +133,7 @@ def test_workspace_stage_mark_renders_paired_work_on_desktop_and_mobile(
         assert page.inner_text(f"{card} .list-row-title") == "Paired workspace ticket"
         assert page.locator(f"{card} > *").count() == 2
         paired_mark = page.locator(
-            f'{card} .board-workspace-stage-mark[data-stage-state="current-paired-work"]'
+            f'{card} .board-workspace-stage-mark[data-stage-state="current-awaiting-approval"]'
         )
         assert paired_mark.count() == 1
-        assert paired_mark.get_attribute("data-marker") == "paired-work"
+        assert paired_mark.get_attribute("data-marker") is None
