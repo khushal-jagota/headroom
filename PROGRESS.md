@@ -41,11 +41,15 @@ all frontend checks, and all 120 E2E tests; final `VERIFY: PASS`. Staging remain
 accepted base. Next: operator stop, final quiesced backup/import, separated-live start and health
 checks, staging advance/push/PR, and Ticket-worktree cleanup.
 
-The worker-owned Closeout turn has been automatically redispatched more than three times while the
-operator-owned server continues to answer on port 8767. No migration or integration action has been
-repeated. This is a hard operator checkpoint, not a code failure: continuation begins only after the
-operator presses Ctrl-C in the existing `panels serve` terminal, waits for its shell prompt, and
-confirms the old server is stopped. The worker must not stop, signal, replace, or launch that server.
+The worker-owned Closeout turn was automatically redispatched more than three times while the
+operator-owned server continued to answer on port 8767. No migration or integration action was
+repeated. The original checkpoint deadlocked because stopping the foreground server also stops the
+Employee turn, so the operator could not confirm the stop before receiving the import/start command.
+The durable implementation report now gives one complete stop -> atomic import -> normalized final
+backup -> inspect -> separated-live run sequence. The verified Ticket launcher invokes the detached
+accepted-main checkout's own interpreter. After Panels reconnects, continue with health/state/session
+proof before advancing staging or cleaning anything up. The worker must not stop, signal, replace,
+or launch the operator-owned server.
 
 ## Current work cycle (2026-07-22): Pause stale Codex thread for `t_b5ja4rqu`
 
