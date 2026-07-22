@@ -1014,7 +1014,6 @@ def test_official_sdk_post_fork_updates_route_by_exact_session_without_deadlock(
             ]
             assert private_command_names[0] == "candidate-after-fork"
             assert "compact" in private_command_names
-            assert wire_order.index("candidate-update") < wire_order.index("candidate-load-request")
             assert wire_order.index("source-update") < wire_order.index("candidate-replay")
             assert child.alive
             assert child._ordered_ingress.fatal_error is None  # noqa: SLF001

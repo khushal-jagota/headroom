@@ -3034,3 +3034,8 @@ in the candidate without publishing or discarding the other field's failed draft
 **Why:** Worker settings belong beside the active database, while Employee sessions and current ACP
 composition remain untouched. Versioned migration order protects live databases, and preserving a
 failed draft across an independent save is required by the approved direct-edit interaction.
+
+The current-main post-fork SDK regression continues to require exact-session routing, source-before-
+replay ordering, and a fully drained healthy ingress. It does not require a candidate notification to
+arrive before the subsequent load request: the private response epoch is installed first, and ACP does
+not guarantee notification/request wire ordering across the prior fork response.

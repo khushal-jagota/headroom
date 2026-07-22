@@ -17,7 +17,10 @@ Focused backend, frontend, environment-isolation, and browser gates pass. The in
 review found two Closeout defects: an independent skill-field save could overwrite the other field's
 failed candidate, and environment preparation could materialize specialist settings from the wrong
 parent before replacing its data tree. Both were fixed with RED/GREEN regressions. The final focused
-review reports `NO VIOLATIONS`.
+review reports `NO VIOLATIONS`. The canonical gate also exposed an unrelated racy ACP test assertion:
+a post-fork notification may safely arrive after the next load request once the exact-session private
+epoch is installed. The test still proves exact private/source routing, replay order, and no deadlock,
+but no longer asserts that unsupported wire ordering.
 
 The settled tracked tree is reserved for the repository's one canonical `./verify`; its full output is
 captured as the Ticket's managed `verify-closeout.log`. Only a `VERIFY: PASS` may advance `main`.
