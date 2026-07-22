@@ -6,7 +6,7 @@ bottom; the blow-by-blow is git's.
 
 ## Current work cycle (2026-07-22): backend-only Ticket errors (`t_2y1s72x4`)
 
-Implementation is complete in the dedicated uncommitted worktree. Ticket schema v31
+Implementation is complete on the dedicated ticket branch. Ticket schema v31
 owns the exact `backend_error`; tracked ACP results distinguish confirmed backend Worker
 failures from conversation failures; and the runner writes Ticket `errored` only for the
 former. Every non-error status writer clears the reason atomically. Legacy v30 errors are
@@ -25,7 +25,7 @@ Ticket; that assertion now proves the Ticket returns to `empty`, keeps its sessi
 
 The settled tree passes the canonical `./verify`: Ruff, strict mypy, the unit suite, build
 checks, frontend checks, and all 116 E2E tests. No recovery control or timeout policy changed.
-The ticket branch is ready to commit; closeout and main integration have not begun.
+The ticket branch is committed and awaiting a corrected Implementation proposal; closeout and main integration have not begun.
 
 ## Current work cycle (2026-07-22): Clear Worker-message attention on Ticket open (`t_m024gke4`)
 
