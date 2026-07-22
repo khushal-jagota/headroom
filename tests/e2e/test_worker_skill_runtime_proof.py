@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -142,4 +143,7 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_acp(
         finally:
             await child.close()
 
-    asyncio.run(exercise())
+    # Playwright's session fixture may already own an event loop when the complete E2E
+    # suite reaches this synchronous test. Keep the ACP proof isolated from that loop.
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(asyncio.run, exercise()).result()

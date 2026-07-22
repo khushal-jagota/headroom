@@ -32,8 +32,12 @@ The settled combined tree passes all 115 focused unit/E2E tests, including the r
 Worker prompt/session proof, plus Ruff over every changed Python file, strict Mypy over the 13
 changed source modules, and diff checks. Fresh independent re-review explicitly dispositioned all
 prior corrective findings and reports no unresolved Implementation blocker. The canonical
-`./verify`, branch integration, final quiesced backup/import, live start, health checks, push/PR,
-and Ticket-worktree cleanup remain Closeout work after Implementation approval.
+Closeout gate first passed Ruff, strict Mypy, 1,330 unit tests, and every frontend gate, then exposed
+that the ACP proof's internal `asyncio.run()` collided with Playwright's already-running event loop
+only in the full E2E suite. The proof now runs its real ACP child on an isolated thread; the exact
+browser-then-ACP regression, Ruff, and diff checks pass. One canonical rerun on this settled tree,
+branch integration, final quiesced backup/import, live start, health checks, push/PR, and
+Ticket-worktree cleanup remain Closeout work.
 
 ## Current work cycle (2026-07-22): Pause stale Codex thread for `t_b5ja4rqu`
 
