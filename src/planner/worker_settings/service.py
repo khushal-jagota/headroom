@@ -671,19 +671,35 @@ def patch_specialist_skill(
     root = managed_worker_settings_root(configured_database_parent)
     with _worker_settings_lock(root, worker_type):
         current = _read_settings_with_recovery(root, definition)
-        payload: dict[str, Any] = {
+        canonical_payload: dict[str, Any] = {
             "description": current.specialist_skill.description,
             "markdown_body": current.specialist_skill.markdown_body,
         }
-        payload.update(patch)
-        return save_specialist_skill(
-            configured_database_parent,
-            registry,
-            worker_type,
-            payload,
-            after_publish=after_publish,
-            runtime_skills_root=runtime_skills_root,
+        canonical_payload.update(patch)
+        candidate = current.candidate_specialist_skill or current.specialist_skill
+        candidate_payload: dict[str, Any] = {
+            "description": candidate.description,
+            "markdown_body": candidate.markdown_body,
+        }
+        candidate_payload.update(patch)
+        candidate_rendered = _render_skill_from_existing_frontmatter(
+            candidate.source_text,
+            expected_skill_name=definition.worker_profile.specialist_skill,
+            description=candidate_payload["description"],
+            markdown_body=candidate_payload["markdown_body"],
         )
+        try:
+            save_specialist_skill(
+                configured_database_parent,
+                registry,
+                worker_type,
+                canonical_payload,
+                after_publish=after_publish,
+                runtime_skills_root=runtime_skills_root,
+            )
+        finally:
+            _atomic_replace_text(_candidate_skill_path(root, worker_type), candidate_rendered)
+        return _read_settings_with_recovery(root, definition)
 
 
 def materialize_specialist_skill(

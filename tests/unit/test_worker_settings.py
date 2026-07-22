@@ -383,6 +383,47 @@ def test_skill_patch_preserves_concurrent_other_field_values(tmp_path: Path) -> 
     assert saved.specialist_skill.markdown_body == "\n# Body winner\n\nSecond field\n"
 
 
+def test_independent_skill_patch_preserves_failed_other_field_candidate(tmp_path: Path) -> None:
+    registry = configured_worker_type_registry()
+    worker_settings_service.save_specialist_skill(
+        tmp_path,
+        registry,
+        "coding",
+        {
+            "description": "Original description",
+            "markdown_body": "# Original\n\nBody\n",
+        },
+    )
+
+    def fail_publish() -> None:
+        raise RuntimeError("forced publish failure")
+
+    with pytest.raises(RuntimeError, match="forced publish failure"):
+        worker_settings_service.patch_specialist_skill(
+            tmp_path,
+            registry,
+            "coding",
+            {"markdown_body": "# Failed body\n\nKeep for retry\n"},
+            after_publish=fail_publish,
+        )
+
+    saved = worker_settings_service.patch_specialist_skill(
+        tmp_path,
+        registry,
+        "coding",
+        {"description": "Description winner"},
+    )
+
+    assert saved.specialist_skill.description == "Description winner"
+    assert saved.specialist_skill.markdown_body == "\n# Original\n\nBody\n"
+    assert saved.candidate_specialist_skill is not None
+    assert saved.candidate_specialist_skill.description == "Description winner"
+    assert (
+        saved.candidate_specialist_skill.markdown_body
+        == "\n# Failed body\n\nKeep for retry\n"
+    )
+
+
 def test_corrupt_current_files_restore_exact_prior_good_revision(tmp_path: Path) -> None:
     registry = configured_worker_type_registry()
     worker_settings_service.save_specialist_skill(

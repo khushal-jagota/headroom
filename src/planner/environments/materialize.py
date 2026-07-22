@@ -114,6 +114,7 @@ def prepare_environment_instance(
             _replace_data_tree_from_fixture(instance.db_path, now=effective_now)
         else:
             instance.managed_files_root.mkdir(parents=True, exist_ok=True)
+        _materialize_instance_skills(instance)
         _write_manifest(manifest)
         return manifest
 
@@ -157,6 +158,7 @@ def reset_environment_instance(
         with _stopped_port_lifecycle_lease(current):
             _prepare_common_layout(instance)
             _replace_data_tree_from_fixture(instance.db_path, now=now)
+            _materialize_instance_skills(instance)
             manifest = _manifest_from_instance(instance, prepared_at=now)
             _write_manifest(manifest)
             return manifest
@@ -331,7 +333,13 @@ def _prepare_common_layout(instance) -> None:  # type: ignore[no-untyped-def]
     instance.logs_dir.mkdir(parents=True, exist_ok=True)
     instance.dispatcher_lock_path.parent.mkdir(parents=True, exist_ok=True)
     instance.server_control_socket_path.parent.mkdir(parents=True, exist_ok=True)
-    provision_planner_home_skills(instance.hermes_home)
+
+
+def _materialize_instance_skills(instance) -> None:  # type: ignore[no-untyped-def]
+    provision_planner_home_skills(
+        instance.hermes_home,
+        configured_database_parent=instance.db_path.parent,
+    )
 
 
 def _manifest_from_instance(instance, *, prepared_at: int | None) -> EnvironmentManifest:  # type: ignore[no-untyped-def]

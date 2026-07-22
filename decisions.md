@@ -3018,3 +3018,19 @@ with later live updates behind it. The production live queue remains slow-client
 raised from 128 to 1,024 envelopes for operational headroom. Replay integrity failures and genuine
 live slow-client evictions close through one idempotent permission-detach owner and are logged with
 identity, generation, counts, and limits but no conversation content.
+
+## D-compact-workers-current-main-closeout — preserve current ACP and schema history
+**Context:** The approved compact Workers commits predated the current conversation composition,
+environment isolation, managed-Markdown pipeline, and main's schema v28/v29 migrations. Main also
+advanced again during Closeout.
+
+**Decision:** Replay the approved behavior onto current main rather than restoring retired `minds`
+or gateway-adapter code. Keep main's v28/v29 migrations and add captured ownership defaults as v30.
+Use the configured runtime registry everywhere, materialize managed specialist skills from each
+instance database parent after its canonical data tree is settled, and keep failed description/body
+candidates independent from canonical publication. A successful save of one field updates that field
+in the candidate without publishing or discarding the other field's failed draft.
+
+**Why:** Worker settings belong beside the active database, while Employee sessions and current ACP
+composition remain untouched. Versioned migration order protects live databases, and preserving a
+failed draft across an independent save is required by the approved direct-edit interaction.
