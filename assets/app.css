@@ -682,7 +682,7 @@ textarea {
 
 /* --- Markdown ------------------------------------------------------------ */
 
-.markdown {
+.chat-thread .markdown {
   min-width: 0;
   max-width: 100%;
   overflow-wrap: anywhere;
@@ -736,11 +736,14 @@ textarea {
 }
 
 .markdown pre {
-  max-width: 100%;
   background: var(--surface-sunken);
   padding: var(--space-3);
   border-radius: var(--radius-md);
   overflow-x: auto;
+}
+
+.chat-thread .markdown pre {
+  max-width: 100%;
 }
 
 .markdown pre code {
@@ -775,21 +778,28 @@ textarea {
 
 .markdown table {
   width: 100%;
-  max-width: 100%;
-  table-layout: fixed;
   margin: 0 0 var(--space-3);
   border-collapse: collapse;
   font-size: var(--type-sm);
 }
 
+.chat-thread .markdown table {
+  max-width: 100%;
+  table-layout: fixed;
+}
+
 .markdown th,
 .markdown td {
-  min-width: 0;
-  overflow-wrap: anywhere;
   padding: var(--space-2);
   border: var(--border-hairline) solid var(--surface-overlay);
   text-align: left;
   vertical-align: top;
+}
+
+.chat-thread .markdown th,
+.chat-thread .markdown td {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .markdown th {
@@ -811,6 +821,9 @@ textarea {
 
 .markdown a {
   color: var(--accent-bright);
+}
+
+.chat-thread .markdown a {
   overflow-wrap: anywhere;
 }
 
