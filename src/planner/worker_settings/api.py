@@ -97,7 +97,13 @@ def _chief_json(settings: ManagedChiefSettings) -> JsonDict:
 
 
 def _detail_json(detail: WorkerManagementDetail) -> JsonDict:
-    return {"manifest": detail.manifest, "settings": _settings_json(detail.settings)}
+    return {
+        "manifest": detail.manifest,
+        "settings": _settings_json(detail.settings),
+        "employee_backends": list(
+            configured_employee_runtime_definitions().employee_backend_catalog.registered_backend_keys()
+        ),
+    }
 
 
 def _append_worker_settings_changed(
@@ -127,6 +133,7 @@ def _worker_settings_changed_callback(
 @router.get("/workers")
 async def list_workers(config: Cfg) -> JsonDict:
     registry = configured_employee_runtime_definitions().worker_type_registry
+    definitions = configured_employee_runtime_definitions()
     return {
         "workers": [
             _summary_json(summary)
@@ -135,6 +142,7 @@ async def list_workers(config: Cfg) -> JsonDict:
         "chief_of_staff": _chief_json(
             service.read_chief_settings(_database_parent(config), registry)
         ),
+        "employee_backends": list(definitions.employee_backend_catalog.registered_backend_keys()),
     }
 
 

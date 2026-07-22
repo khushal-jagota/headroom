@@ -3238,3 +3238,11 @@ not guarantee notification/request wire ordering across the prior fork response.
   extension fields are not inferred.
 - Canonical replay accounting measures the stored materialized entries. Subscriber-local sequence
   normalization is validated separately and never mutates that canonical byte count.
+# 2026-07-22 — t_f0f8pp6y Workers-page launch controls
+
+- Reuse the existing employee-configuration catalog for backend-driven model and reasoning
+  choices, and add only the registered backend keys to the Worker-management payload. Keep the
+  control shared between Worker details and Chief of Staff so both save through the existing
+  validated launch-default endpoints and resource invalidation path.
+- Follow the approved success/approach fields and omit permission controls; the live owner decision
+  for the related launch-default work made full access a launch invariant rather than a setting.

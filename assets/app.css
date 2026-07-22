@@ -446,6 +446,64 @@ textarea {
   white-space: nowrap;
 }
 
+.worker-launch-defaults {
+  display: grid;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+  padding: var(--space-3);
+  background: var(--surface-sunken);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.worker-launch-defaults-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.worker-launch-defaults-head h2 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--type-sm);
+}
+
+.worker-launch-defaults-note,
+.worker-launch-defaults-state {
+  color: var(--text-faint);
+  font-size: var(--type-xs);
+}
+
+.worker-launch-defaults-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.worker-launch-defaults-controls label {
+  display: grid;
+  min-width: 10rem;
+  gap: var(--space-1);
+}
+
+.worker-launch-defaults-controls label > span {
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.worker-launch-defaults-controls select {
+  max-width: 18rem;
+  background: var(--surface-default);
+  color: var(--text-strong);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+}
+
 .workers-back {
   display: inline-block;
   margin-bottom: var(--space-4);
@@ -598,7 +656,8 @@ textarea {
 
   .workers-head,
   .workers-back,
-  .worker-skill {
+  .worker-skill,
+  .worker-launch-defaults {
     padding-left: var(--space-3);
     padding-right: var(--space-3);
   }

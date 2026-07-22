@@ -1,5 +1,17 @@
 # PROGRESS
 
+## Current work cycle (2026-07-22): Workers-page launch-default controls (`t_f0f8pp6y`)
+
+The existing managed Worker/Chief launch-default authority is now exposed on the Workers page.
+The page shows backend-driven Backend, Model, and Reasoning controls for each Worker detail and
+Chief of Staff, saves through the existing validated endpoints, and labels the values as applying
+to future launches. Registered backend keys are served by the management API; no permission field
+was added. Ruff, Mypy, unit tests, Svelte check, production build, frontend tests, and the focused
+Workers-page E2E suite pass. The canonical `./verify` reached the E2E gate but reported seven
+unrelated existing flow/sprint assertion failures. Scoped changes are committed on main as
+`4b8cf4aa`; no deploy or restart. Closeout proposal is next. Three unrelated nested worktree
+modifications remain untouched.
+
 ## Current work cycle (2026-07-22): Empty Panels conversations and lazy ACP binding
 
 The reconnecting failure was structural: Panels persisted an ACP session as soon as **New** was

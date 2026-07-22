@@ -58,22 +58,33 @@ export type WorkerManagementSummary = {
   label: string;
   specialist_skill_name: string;
   stage_ownership_defaults: Record<string, StageOwnershipMode>;
+  launch_defaults: EmployeeConfigurationSnapshot;
 };
 
 export type WorkersResponse = {
   workers: WorkerManagementSummary[];
+  chief_of_staff: ChiefManagementSettings;
+  employee_backends: string[];
+};
+
+export type ChiefManagementSettings = {
+  employee_id: string;
+  label: string;
+  launch_defaults: EmployeeConfigurationSnapshot;
 };
 
 export type WorkerManagementSettings = {
   worker_type: string;
   stage_ownership_defaults: Record<string, StageOwnershipMode>;
   specialist_skill: ManagedSkill;
+  launch_defaults: EmployeeConfigurationSnapshot;
   candidate_specialist_skill?: ManagedSkill;
 };
 
 export type WorkerManagementDetail = {
   manifest: WorkerTypeManifest;
   settings: WorkerManagementSettings;
+  employee_backends: string[];
 };
 
 

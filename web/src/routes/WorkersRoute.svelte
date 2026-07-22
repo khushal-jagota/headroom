@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, untrack } from "svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
+  import ManagedLaunchDefaults from "../components/ManagedLaunchDefaults.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import {
     mutateJsonWithResourceEffect,
@@ -80,6 +81,27 @@
     }
   }
 
+  function saveWorkerLaunchDefaults(
+    settings: WorkerManagementSettings,
+    next: WorkerManagementSettings["launch_defaults"]
+  ): Promise<WorkerManagementSettings> {
+    return mutateJsonWithResourceEffect<WorkerManagementSettings>(
+      `/api/workers/${encodeURIComponent(settings.worker_type)}/launch-defaults`,
+      { method: "PUT", body: next },
+      { kind: "workerSettingsChanged", workerType: settings.worker_type }
+    );
+  }
+
+  function saveChiefLaunchDefaults(
+    next: WorkerManagementSettings["launch_defaults"]
+  ): Promise<WorkerManagementSettings["launch_defaults"]> {
+    return mutateJsonWithResourceEffect<{ launch_defaults: WorkerManagementSettings["launch_defaults"] }>(
+      "/api/workers/chief-of-staff/launch-defaults",
+      { method: "PUT", body: next },
+      { kind: "workerSettingsChanged", workerType: "chief_of_staff" }
+    ).then((response) => response.launch_defaults);
+  }
+
   function stageOwnerValue(settings: WorkerManagementSettings, stage: string): StageOwnershipMode {
     return selectedOwners[stage] ?? settings.stage_ownership_defaults[stage] ?? "worker";
   }
@@ -136,6 +158,12 @@
       </header>
       <ResourceState error={workers?.error || manifests?.error} loading={workers?.loading || manifests?.loading} hasData={Boolean(workers?.data && manifests?.data)} loadingText="Loading workers...">
         {#if workers?.data}
+          <ManagedLaunchDefaults
+            label="Chief of Staff"
+            employeeBackends={workers.data.employee_backends}
+            value={workers.data.chief_of_staff.launch_defaults}
+            onSave={saveChiefLaunchDefaults}
+          />
           <div class="workers-list" data-workers-list>
             {#each workers.data.workers as item}
               <a
@@ -173,6 +201,13 @@
                 <span data-worker-stage-count>{manifest?.stages.length || 0} Stages</span>
               </div>
             </header>
+
+            <ManagedLaunchDefaults
+              label={manifest?.label || labelize(detail.settings.worker_type)}
+              employeeBackends={detail.employee_backends}
+              value={detail.settings.launch_defaults}
+              onSave={(next) => saveWorkerLaunchDefaults(detail.settings, next).then((saved) => saved.launch_defaults)}
+            />
 
             {#if manifest}
               <div class="worker-stage-table-shell">
