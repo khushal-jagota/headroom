@@ -20,6 +20,7 @@ try {
   await writeFile(hostPath, `
 <script lang="ts">
   import EmployeeConfigurationSetup from "../src/components/EmployeeConfigurationSetup.svelte";
+  import ManagedLaunchDefaults from "../src/components/ManagedLaunchDefaults.svelte";
   import type {
     EmployeeConfigurationSnapshot,
     TicketDetail
@@ -96,6 +97,27 @@ try {
   };
   (window as any).__saveCalls = () => saveCalls;
   (window as any).__freeze = () => (editable = false);
+
+  let showLaunchDefaults = $state(false);
+  let launchDefaults = $state<EmployeeConfigurationSnapshot>({
+    employee_backend: "codex",
+    employee_launch_model: null,
+    employee_launch_reasoning_effort: null
+  });
+  const launchDefaultsSaveCalls: EmployeeConfigurationSnapshot[] = [];
+
+  async function onLaunchDefaultsSave(
+    next: EmployeeConfigurationSnapshot
+  ): Promise<EmployeeConfigurationSnapshot> {
+    launchDefaultsSaveCalls.push(structuredClone(next));
+    launchDefaults = { ...next };
+    return launchDefaults;
+  }
+
+  (window as any).__showLaunchDefaults = () => (showLaunchDefaults = true);
+  (window as any).__launchDefaultsSaveCalls = () => launchDefaultsSaveCalls;
+  (window as any).__setLaunchDefaults = (next: EmployeeConfigurationSnapshot) =>
+    (launchDefaults = next);
 </script>
 
 {#if editable}
@@ -106,6 +128,15 @@ try {
     employeeLaunchModel={saved.employee_launch_model}
     employeeLaunchReasoningEffort={saved.employee_launch_reasoning_effort}
     {onSave}
+  />
+{/if}
+
+{#if showLaunchDefaults}
+  <ManagedLaunchDefaults
+    label="Coding"
+    employeeBackends={["hermes", "codex"]}
+    value={launchDefaults}
+    onSave={onLaunchDefaultsSave}
   />
 {/if}
 `, "utf8");
@@ -230,7 +261,7 @@ with sync_playwright() as playwright:
     page.evaluate("window.__fail(3)")
     page.locator("[data-employee-configuration-error]").wait_for()
     assert setup.get_attribute("data-employee-configuration-backend") == "codex"
-    assert page.locator("[data-employee-configuration-saved-model]").inner_text().endswith("backend default")
+    assert page.locator("[data-employee-configuration-saved-model]").inner_text() == "model"
     page.locator("[data-employee-configuration-retry]").click()
     page.wait_for_function("window.__requests().length === 5")
     page.evaluate("payload => window.__respond(4, payload)", catalog(
@@ -268,10 +299,122 @@ with sync_playwright() as playwright:
         "employee_launch_reasoning_effort": "high",
     }
 
+    # No dropdown offers a "default" entry: only the catalog's real options.
+    option_labels = page.locator("[data-employee-configuration-setup] option").evaluate_all(
+        "options => options.map(option => option.textContent)"
+    )
+    assert all("default" not in label for label in option_labels)
+    model_option_values = model.locator("option").evaluate_all(
+        "options => options.map(option => option.value)"
+    )
+    assert model_option_values == ["codex-native", "codex-deep"]
+
+    # Choosing the option equal to the native value stores null ("not pinned").
+    model.select_option("codex-native")
+    page.wait_for_function("window.__saveCalls().length === 6 && window.__requests().length === 8")
+    assert page.evaluate("window.__saveCalls()[5]") == {
+        "employee_backend": "codex",
+        "employee_launch_model": None,
+        "employee_launch_reasoning_effort": "high",
+    }
+    page.evaluate("payload => window.__respond(7, payload)", catalog(
+        "codex", None, "codex-native",
+        [("codex-native", "Codex native"), ("codex-deep", "Codex deep")],
+        True, (("low", "Low"), ("high", "High"))
+    ))
+    model.wait_for()
+    # Not pinned: the control displays and sits on the backend's concrete native value.
+    assert setup.get_attribute("data-employee-configuration-model") == ""
+    assert model.input_value() == "codex-native"
+    control_text = page.locator("[data-employee-configuration-model-control]").inner_text()
+    assert "Codex native" in control_text
+    assert "default" not in page.locator("[data-employee-configuration-setup]").inner_text()
+
     page.evaluate("window.__freeze()")
     page.wait_for_function("document.querySelector('[data-employee-configuration-setup]') === null")
     assert page.locator("text=codex-deep").count() == 0
     assert page.locator("text=high").count() == 0
+
+    # ManagedLaunchDefaults follows the same rules: catalog options only, the
+    # native value as the resting point, native selection stored as null.
+    page.evaluate("window.__showLaunchDefaults()")
+    page.locator("[data-launch-defaults]").wait_for()
+    page.wait_for_function("window.__requests().length === 9")
+    page.evaluate("payload => window.__respond(8, payload)", catalog(
+        "codex", None, "codex-native",
+        [("codex-native", "Codex native"), ("codex-deep", "Codex deep")],
+        True, (("low", "Low"), ("high", "High"))
+    ))
+    defaults_model = page.locator('select[aria-label="Coding model"]')
+    defaults_reasoning = page.locator('select[aria-label="Coding reasoning"]')
+    defaults_model.wait_for()
+    # Exactly the catalog's options: no synthetic empty-valued entry, no "default".
+    assert defaults_model.locator("option").evaluate_all(
+        "options => options.map(option => [option.value, option.textContent])"
+    ) == [["codex-native", "Codex native"], ["codex-deep", "Codex deep"]]
+    assert defaults_reasoning.locator("option").evaluate_all(
+        "options => options.map(option => [option.value, option.textContent])"
+    ) == [["low", "Low"], ["high", "High"]]
+    assert "default" not in page.locator(
+        "[data-launch-defaults] .worker-launch-defaults-controls"
+    ).inner_text().lower()
+    # Not pinned: the selects sit on the concrete native values.
+    assert defaults_model.input_value() == "codex-native"
+    assert defaults_reasoning.input_value() == "low"
+
+    # Selecting a non-native option pins it.
+    defaults_model.select_option("codex-deep")
+    page.wait_for_function(
+        "window.__launchDefaultsSaveCalls().length === 1 && window.__requests().length === 10"
+    )
+    assert page.evaluate("window.__launchDefaultsSaveCalls()[0]") == {
+        "employee_backend": "codex",
+        "employee_launch_model": "codex-deep",
+        "employee_launch_reasoning_effort": None,
+    }
+    page.evaluate("payload => window.__respond(9, payload)", catalog(
+        "codex", "codex-deep", "codex-native",
+        [("codex-native", "Codex native"), ("codex-deep", "Codex deep")],
+        True, (("low", "Low"), ("high", "High"))
+    ))
+    defaults_model.wait_for()
+    assert defaults_model.input_value() == "codex-deep"
+
+    # Selecting the option equal to the native value stores null.
+    defaults_model.select_option("codex-native")
+    page.wait_for_function(
+        "window.__launchDefaultsSaveCalls().length === 2 && window.__requests().length === 11"
+    )
+    assert page.evaluate("window.__launchDefaultsSaveCalls()[1]") == {
+        "employee_backend": "codex",
+        "employee_launch_model": None,
+        "employee_launch_reasoning_effort": None,
+    }
+    page.evaluate("payload => window.__respond(10, payload)", catalog(
+        "codex", None, "codex-native",
+        [("codex-native", "Codex native"), ("codex-deep", "Codex deep")],
+        True, (("low", "Low"), ("high", "High"))
+    ))
+    defaults_model.wait_for()
+    assert defaults_model.input_value() == "codex-native"
+    # Re-selecting the native reasoning while not pinned saves nothing.
+    defaults_reasoning.select_option("low")
+    assert page.evaluate("window.__launchDefaultsSaveCalls().length") == 2
+
+    # No native value and nothing pinned: the control shows nothing.
+    page.evaluate(
+        'window.__setLaunchDefaults({ employee_backend: "hermes",'
+        ' employee_launch_model: null, employee_launch_reasoning_effort: null })'
+    )
+    page.wait_for_function("window.__requests().length === 12")
+    page.evaluate("payload => window.__respond(11, payload)", catalog(
+        "hermes", None, None, [("hermes-a", "Hermes A")]
+    ))
+    defaults_model.wait_for()
+    assert defaults_model.locator("option").evaluate_all(
+        "options => options.map(option => option.value)"
+    ) == ["hermes-a"]
+    assert defaults_model.input_value() == ""
     browser.close()
 
 print("employee configuration component assertions passed")

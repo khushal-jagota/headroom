@@ -127,6 +127,45 @@ def test_workers_index_detail_and_mobile_layout(server, context_factory, open_pa
     assert overflow <= 0
 
 
+def test_worker_selection_persists_from_kickoff_card_context_row(
+    server, context_factory, open_page, cli, api
+) -> None:
+    ticket = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Worker choice in card",
+        "--kickoff-note",
+        "Choose the worker",
+    )["id"]
+    ready = f'section[data-screen="ticket"][data-ticket-id="{ticket}"]'
+    page = open_page(context_factory(), server, f"#/ticket/{ticket}", ready, settled=True)
+
+    # The worker pills live inside the Kickoff approval card's context row.
+    row = '[data-approval-block][data-field="kickoff"] [data-approval-context-row]'
+    selector = f"{row} [data-employee-configuration-worker] select"
+    page.wait_for_selector(selector, timeout=WAIT_MS)
+    current = page.get_attribute(
+        f"{row} [data-employee-configuration-setup]", "data-employee-configuration-backend"
+    )
+    target = "codex" if current != "codex" else "claude"
+    with page.expect_response(
+        lambda response: response.request.method == "PUT"
+        and response.url.endswith(f"/api/tickets/{ticket}/employee-configuration")
+        and response.status < 300
+    ):
+        page.select_option(selector, target)
+    page.wait_for_selector(
+        f"{row} [data-employee-configuration-setup]"
+        f'[data-employee-configuration-backend="{target}"]',
+        timeout=WAIT_MS,
+    )
+    assert api.get(server, f"/api/tickets/{ticket}")["employee_backend"] == target
+
+
 def test_worker_stage_default_save_refreshes_without_socket_and_ticket_defaults_hold(
     server, context_factory, cli, api
 ) -> None:

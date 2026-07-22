@@ -24,7 +24,8 @@
     requireScope = false,
     onApprove,
     onNoteSave,
-    actions
+    actions,
+    contextRow
   }: {
     mode: "gating-pending" | "proposal" | "readonly";
     field?: string;
@@ -39,6 +40,7 @@
     onApprove?: (payload: Record<string, unknown>) => Promise<unknown>;
     onNoteSave?: (raw: string) => Promise<unknown>;
     actions?: Snippet;
+    contextRow?: Snippet;
   } = $props();
 
   let draft = $state("");
@@ -155,6 +157,9 @@
             onSave={saveDraft}
           />
         </div>
+        {#if contextRow}
+          <div class="approval-context-row" data-approval-context-row>{@render contextRow()}</div>
+        {/if}
         {@render actionGroup(false)}
       {:else}
         <Disclosure title={contentTitle} variant="content" defaultOpen={true} data-content-section="proposal">
@@ -170,6 +175,9 @@
             />
           </div>
         </Disclosure>
+        {#if contextRow}
+          <div class="approval-context-row" data-approval-context-row>{@render contextRow()}</div>
+        {/if}
       {/if}
     </div>
 
