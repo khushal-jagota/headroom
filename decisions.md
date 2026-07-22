@@ -3104,6 +3104,14 @@ not guarantee notification/request wire ordering across the prior fork response.
 - Rebase the isolated implementation branch onto current main before its final gate. Main advanced
   during interrupted Employee turns; syncing the feature branch avoids testing a mixed historical
   baseline and does not integrate this Ticket into main before Closeout.
+- At Closeout, merge current main into the feature branch and preserve both independently verified
+  conversation extensions: launch environment overrides/full-access modes and atomic replay
+  materialization. Align the newly landed Hermes-only replay fixture explicitly rather than
+  weakening production backend validation.
+- Treat process-scoped ports and supervisor-socket-aware readiness as a test-only integration repair.
+  Interrupted verification left a supervisor lease on the test's former fixed port, allowing an
+  orphan application child to impersonate readiness. Do not signal that process or the operator's
+  server; prevent cross-run collisions instead.
 
 # 2026-07-22 — t_m024gke4 implementation routing
 

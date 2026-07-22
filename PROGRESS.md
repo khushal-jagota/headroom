@@ -151,9 +151,16 @@ the Chief settings lock before `BEGIN IMMEDIATE`, and recovery parses the restor
 The isolated branch was then rebased onto current main so the implementation gate included the
 already-landed blocker and Codex-ingress work without integrating this Ticket into main.
 
-The final canonical `./verify` passed Ruff, strict Mypy across 153 source files, 1,317 unit tests,
-compile/CSS checks, zero Svelte diagnostics, the production build and frontend tests, and all 116
-Playwright tests; final `VERIFY: PASS`. Next: propose Implementation. No blocker.
+Implementation was approved. Closeout merged current main `9945d0f` into the feature branch and
+preserved both launch-default and newer atomic-replay behavior across two additive conflicts. One
+new replay fixture was aligned to its intentional Hermes-only test catalog. An interrupted verify
+also exposed fixed-port cross-run contamination in the environment-isolation E2E; readiness now
+requires its supervisor socket and temporary ports are process-scoped.
+
+The final prospective-tree `./verify` at `1484187` passed Ruff, strict Mypy across 154 source files,
+1,357 unit tests, compile/CSS checks, zero Svelte diagnostics, the production build and frontend
+tests, and all 117 E2E tests; final `VERIFY: PASS`. No deploy or restart is part of this Ticket.
+Next: fast-forward main and propose Closeout. No blocker.
 
 ## Current work cycle (2026-07-22): Clear Worker-message attention on Ticket open (`t_m024gke4`)
 
