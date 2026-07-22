@@ -51,12 +51,12 @@ an ordinary reconnect to a ready stream uses its materialized snapshot without a
 source/barrier cleanup covers retry, child death, and shutdown; diagnostics remain content-free; and
 the existing finite browser and external-operation protections remain in force.
 
-Focused evidence is green: 68 registry and 51 hub tests; selected cold-load, active/idle reconnect,
-replacement, real-WebSocket, and slow-browser focused tests pass. Ready reconnect now uses a
-subscriber-local reset-complete-history-one-terminal-ready snapshot without canonical mutation, and
-malformed or noncontiguous snapshots fail closed. All review findings are resolved with a final
-result of `PASS`. Implementation was approved. Closeout is integrating current main and will verify
-the prospective merged tree before advancing main.
+Current main base `d5f4d0e` was merged into feature branch `ticket/t_k431pv7q-acp-replay` at
+`282319d`. The prospective merged tree's canonical `./verify` passed Ruff, strict Mypy over 153
+source files, 1,346 unit tests, compile/CSS checks, zero Svelte diagnostics, frontend build/tests,
+and 117 e2e tests, ending with `VERIFY: PASS`. Main fast-forwarded from `d5f4d0e` to `282319d`.
+The four pre-existing dirty nested-worktree paths and their exact subproject diffs were preserved.
+No restart or deploy. Next propose Closeout.
 
 ## Current work cycle (2026-07-22): Coherent blocked-Ticket intake and workspace (`t_np7fjas6`)
 
