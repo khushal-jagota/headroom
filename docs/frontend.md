@@ -21,9 +21,10 @@ One screen per part of the system:
 - **Workspace** — today's tickets in a left rail backed by the board resource. The
   rail groups tickets by project, then orders rows by Worker type, that type's Stage,
   and recent activity. It shows one current-stage/status dot per ticket and includes
-  every Ticket status. Done tickets are hidden in a fresh session; the human can turn
-  off **Hide done** to reveal them, and that choice stays in place when they visit
-  another screen and return.
+  every Ticket status. Done tickets sit under their own **Done** stage section, which
+  is collapsed by default and can be opened to browse like any other section; when a
+  group has no done tickets, no Done section appears. **Chief of Staff** sits first in
+  the rail at the same visual weight as the project headers.
 
   The right side opens on the Chief of Staff conversation. Selecting a ticket switches it to
   the same complete ticket screen used by a direct ticket link while leaving the
