@@ -589,6 +589,26 @@ server processes locally. Checked-in systemd/account assets are render/install i
 Linux ownership exists: VPS enforcement remains false until an operator installs and verifies the
 accounts, permissions, credentials, units, and ingress on the target host.
 
+## D-staging-dynamic-live-fixed-adoption — Persist state, not a staging port
+
+This supersedes the prepared-instance shape in `D-isolated-runtime-environments`; its credential,
+repository-root, and Linux-account boundaries still apply to the two remaining roles.
+
+- Keep prepared runtime environments to the two host roles that persist beyond one Ticket: live and
+  staging. Ticket worktree servers remain temporary worktree processes, so the prepared preview
+  registry, commands, smoke, and Linux assets have no role and are removed.
+- Live owns a known fixed ingress port. Staging owns persistent fake database, managed-file, Worker
+  settings, and Hermes state, but selects an OS-bound loopback listener only when active work starts
+  it. Carry that listener through the supervisor and application child so discovery and bind are one
+  operation and controlled restart retains the same listener.
+- Use the existing lifecycle lease as the stopped proof for reset, removal, and live import. A live
+  import stages SQLite backup output, managed files, Worker settings, and Hermes home before swapping
+  them together; the same command is the restore path.
+- Adopt the current host from accepted `main` through a local staging branch and persistent checkout,
+  an isolated Ticket worktree, and a detached prepared-live checkout. Actual server stop, final
+  quiesced backup, import, start, health checks, branch advance, and cleanup remain the explicit
+  operator-owned Closeout checkpoint after Implementation approval.
+
 ## D-automatic-employee-step-eligibility — One complete automatic-start decision
 
 **Automatic Employee-step eligibility** is the whole answer to whether Planner may automatically start a

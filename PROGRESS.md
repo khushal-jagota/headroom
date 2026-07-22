@@ -1,5 +1,32 @@
 # PROGRESS
 
+## Current work cycle (2026-07-22): Adopt persistent staging and separated live operation (`t_b5ja4rqu`)
+
+The accepted `main` revision `279cb972` now anchors a local `staging` branch, a persistent staging
+checkout, an isolated Ticket worktree, and a detached live checkout. Each checkout has its own
+Python and Node dependencies, and the private `khushal-jagota/panels` origin is configured without
+an initial push. A SQLite-consistent pre-adoption database backup plus managed files, Worker
+settings, Hermes home, config, and logs lives under
+`/Users/khushaljagota/.hermes/backups/planning-v2/t_b5ja4rqu-pre-adoption-20260722-1430`.
+
+Prepared runtime environments are now exactly live and staging. Live retains fixed port 8767 and
+has a stopped-only, staged `import-live` path for SQLite/WAL, managed files, Worker settings, and
+Hermes state. Staging keeps a resettable fake database and durable Hermes/files state but no stored
+runtime port; each launch carries an OS-bound dynamic listener through the supervisor into Uvicorn.
+The prepared preview commands, contracts, registry allocation, Hermes smoke, Linux unit, env input,
+docs, and tests are removed. The coding-worker skill has only the universal lifecycle sentence;
+repository-specific setup, server use, integration, and cleanup guidance lives in `AGENTS.md` and
+`CLAUDE.md`.
+
+The persistent runtime root is prepared at
+`/Users/khushaljagota/.hermes/runtime/panels-environments`. Staging inspection reports the dynamic
+policy with no port; prepared live observes the current port-8767 lease and therefore refuses import
+until the operator stops the untouched current server. Combined focused unit/E2E tests, Ruff, strict
+Mypy on the changed source, diff checks, and preview-surface checks pass. Independent implementation
+review is in progress. The canonical `./verify`, branch integration, final quiesced backup/import,
+live start, health checks, push/PR, and Ticket-worktree cleanup remain Closeout work after
+Implementation approval.
+
 ## Current work cycle (2026-07-22): Pause stale Codex thread for `t_b5ja4rqu`
 
 The Ticket `Adopt staging and separated live operation on the current host` had a missing
