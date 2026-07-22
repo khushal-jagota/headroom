@@ -1214,6 +1214,7 @@ def test_cold_attach_batches_durable_history_larger_than_ingress_capacity(
         ticket = tickets_data.create_ticket(
             conn,
             worker_type="coding",
+            employee_backend="hermes",
             title="ACP cold replay batch",
             actor="test",
             now=clock.now_unix(),
