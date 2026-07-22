@@ -14,8 +14,9 @@ The focused provider/registry suite, Ruff, strict Mypy, and diff checks pass. In
 and standards reviews both reported `NO VIOLATIONS`. The one canonical `./verify` passed: Ruff,
 Mypy, 1,383 unit tests, compile/CSS checks, Svelte checks and build, frontend contract tests, and
 119 Playwright end-to-end tests. The scoped commit excludes the concurrent canonical-skill-source
-work. Live activation is blocked because `panels restart` cannot connect to the expected supervisor
-socket; the existing orphaned application process must be restarted by its owning operator.
+work. The orphaned application process was stopped after explicit owner approval and replaced by
+the normal `panels serve` supervisor. Its application child is healthy on port 8767, the control
+socket exists again, and new ACP children now use the full-access reload invariant.
 
 ## Current work cycle (2026-07-22): Workers-page launch-default controls (`t_f0f8pp6y`)
 
