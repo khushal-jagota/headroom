@@ -25,6 +25,7 @@ from acp.schema import (
 from planner.conversation.backend_contracts import (
     AgentBackendDefinition,
     BackendTurnCapabilities,
+    ConversationIngressReplayBatch,
     ReverseServiceCapabilities,
 )
 from planner.conversation.contracts import (
@@ -480,6 +481,375 @@ def test_publish_allocates_and_serializes_sequence_once(tmp_path: Path) -> None:
             ("activity", 3),
         ]
         assert envelopes[2]["payload"]["sequence"] == 3
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_replay_batch_larger_than_ingress_capacity_finishes_before_racing_live_update(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        hub = ConversationHub(repository, ingress_capacity=2)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        source = ConversationIngressSource(
+            record.employee, handle.child_generation, handle.record_identity
+        )
+        replay = tuple(
+            SessionNotification(
+                session_id=record.binding.acp_session_id,
+                update=AgentMessageChunk(
+                    session_update="agent_message_chunk",
+                    message_id=f"replay-{index}",
+                    content=TextContentBlock(type="text", text=f"replay-{index}"),
+                ),
+            )
+            for index in range(3)
+        )
+        live = SessionNotification(
+            session_id=record.binding.acp_session_id,
+            update=AgentMessageChunk(
+                session_update="agent_message_chunk",
+                message_id="live",
+                content=TextContentBlock(type="text", text="live-after-load"),
+            ),
+        )
+
+        await hub.registry_conversation_ingress(
+            source, ConversationIngressReplayBatch(items=replay)
+        )
+        await hub.registry_conversation_ingress(source, live)
+        browser = await hub.attach_browser("t_hub", connection_id="browser-a")
+
+        envelopes = [
+            json.loads(browser.queue.get_nowait())
+            for _ in range(browser.queue.qsize())
+        ]
+        updates = [item for item in envelopes if item["type"] == "acp_session_update"]
+        assert [item["payload"]["update"]["content"]["text"] for item in updates] == [
+            "replay-0",
+            "replay-1",
+            "replay-2",
+            "live-after-load",
+        ]
+        assert [item["sequence"] for item in updates] == [2, 3, 4, 5]
+        assert [(item["type"], item["payload"].get("state")) for item in envelopes] == [
+            ("connection", "reset"),
+            ("acp_session_update", None),
+            ("acp_session_update", None),
+            ("acp_session_update", None),
+            ("acp_session_update", None),
+            ("connection", "ready"),
+        ]
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_retried_pre_binding_replay_batch_replaces_cancelled_attach_snapshot(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        hub = ConversationHub(repository, ingress_capacity=1)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        source = ConversationIngressSource(
+            record.employee, handle.child_generation, handle.record_identity
+        )
+        first = SessionNotification(
+            session_id=record.binding.acp_session_id,
+            update=AgentMessageChunk(
+                session_update="agent_message_chunk",
+                message_id="cancelled-attach",
+                content=TextContentBlock(type="text", text="obsolete snapshot"),
+            ),
+        )
+        replacement = SessionNotification(
+            session_id=record.binding.acp_session_id,
+            update=AgentMessageChunk(
+                session_update="agent_message_chunk",
+                message_id="retried-attach",
+                content=TextContentBlock(type="text", text="replacement snapshot"),
+            ),
+        )
+        pre_replacement_live = SessionNotification(
+            session_id=record.binding.acp_session_id,
+            update=AgentMessageChunk(
+                session_update="agent_message_chunk",
+                message_id="before-retried-attach",
+                content=TextContentBlock(type="text", text="obsolete captured live"),
+            ),
+        )
+        post_replacement_live = SessionNotification(
+            session_id=record.binding.acp_session_id,
+            update=AgentMessageChunk(
+                session_update="agent_message_chunk",
+                message_id="after-retried-attach",
+                content=TextContentBlock(type="text", text="live after replacement"),
+            ),
+        )
+
+        await hub.registry_conversation_ingress(
+            source, ConversationIngressReplayBatch(items=(first,))
+        )
+        await hub.registry_conversation_ingress(source, pre_replacement_live)
+        await hub.registry_conversation_ingress(
+            source, ConversationIngressReplayBatch(items=(replacement,))
+        )
+        await hub.registry_conversation_ingress(source, post_replacement_live)
+        browser = await hub.attach_browser("t_hub", connection_id="browser-a")
+
+        envelopes = [
+            json.loads(browser.queue.get_nowait()) for _ in range(browser.queue.qsize())
+        ]
+        updates = [item for item in envelopes if item["type"] == "acp_session_update"]
+        assert [item["payload"]["update"]["content"]["text"] for item in updates] == [
+            "replacement snapshot",
+            "live after replacement",
+        ]
+        assert handle.child.alive is True
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_unbound_source_death_clears_only_its_replay_and_live_captures(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        source = ConversationIngressSource(
+            record.employee, handle.child_generation, handle.record_identity
+        )
+        other_source = ConversationIngressSource(
+            record.employee, handle.child_generation + 1, object()
+        )
+        live = SessionNotification(
+            session_id=record.binding.acp_session_id,
+            update=AgentMessageChunk(
+                session_update="agent_message_chunk",
+                message_id="captured-live",
+                content=TextContentBlock(type="text", text="captured live"),
+            ),
+        )
+
+        for candidate in (source, other_source):
+            await hub.registry_conversation_ingress(
+                candidate, ConversationIngressReplayBatch(items=())
+            )
+            await hub.registry_conversation_ingress(candidate, live)
+
+        await hub.registry_child_died(source, RuntimeError("attach source died"))
+
+        source_key = hub._source_key(source)  # noqa: SLF001
+        other_key = hub._source_key(other_source)  # noqa: SLF001
+        assert source_key not in hub._source_load_replay  # noqa: SLF001
+        assert source_key not in hub._source_capture  # noqa: SLF001
+        assert hub._source_load_replay == {other_key: ()}  # noqa: SLF001
+        assert tuple(hub._source_capture[other_key]) == (live,)  # noqa: SLF001
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_registry_ingress_saturation_backpressures_and_preserves_order(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        hub = ConversationHub(repository, ingress_capacity=3)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        drain_started = asyncio.Event()
+        release_drain = asyncio.Event()
+        original_drain = hub._drain  # noqa: SLF001
+
+        async def blocked_drain(
+            employee_id: str, queue: asyncio.Queue[Any]
+        ) -> None:
+            drain_started.set()
+            await release_drain.wait()
+            await original_drain(employee_id, queue)
+
+        hub._drain = blocked_drain  # type: ignore[method-assign]  # noqa: SLF001
+        attach = asyncio.create_task(hub.attach_browser("t_hub", connection_id="browser-a"))
+        await asyncio.wait_for(drain_started.wait(), timeout=1)
+
+        source = ConversationIngressSource(
+            record.employee, handle.child_generation, handle.record_identity
+        )
+
+        def notification(text: str) -> SessionNotification:
+            return SessionNotification(
+                session_id=record.binding.acp_session_id,
+                update=AgentMessageChunk(
+                    session_update="agent_message_chunk",
+                    message_id=text,
+                    content=TextContentBlock(type="text", text=text),
+                ),
+            )
+
+        await hub.registry_conversation_ingress(source, notification("one"))
+        await hub.registry_conversation_ingress(source, notification("two"))
+        assert hub._sequencers["t_hub"].queue.qsize() == 3  # noqa: SLF001
+
+        third = asyncio.create_task(
+            hub.registry_conversation_ingress(source, notification("three"))
+        )
+        await asyncio.sleep(0)
+        assert not third.done()
+
+        release_drain.set()
+        browser = await asyncio.wait_for(attach, timeout=1)
+        await asyncio.wait_for(third, timeout=1)
+        await hub._enqueue_and_wait("t_hub", lambda: None)  # noqa: SLF001
+
+        envelopes = [
+            json.loads(browser.queue.get_nowait())
+            for _ in range(browser.queue.qsize())
+        ]
+        assert [
+            item["payload"]["update"]["content"]["text"]
+            for item in envelopes
+            if item["type"] == "acp_session_update"
+        ] == [
+            "one",
+            "two",
+            "three",
+        ]
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_enqueue_and_wait_saturation_backpressures_and_preserves_order(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        hub = ConversationHub(repository, ingress_capacity=2)
+        drain_started = asyncio.Event()
+        release_drain = asyncio.Event()
+        original_drain = hub._drain  # noqa: SLF001
+
+        async def blocked_drain(
+            employee_id: str, queue: asyncio.Queue[Any]
+        ) -> None:
+            drain_started.set()
+            await release_drain.wait()
+            await original_drain(employee_id, queue)
+
+        hub._drain = blocked_drain  # type: ignore[method-assign]  # noqa: SLF001
+        completed: list[str] = []
+
+        first = asyncio.create_task(
+            hub._enqueue_and_wait(  # noqa: SLF001
+                "t_hub", lambda: completed.append("one")
+            )
+        )
+        await asyncio.wait_for(drain_started.wait(), timeout=1)
+        second = asyncio.create_task(
+            hub._enqueue_and_wait(  # noqa: SLF001
+                "t_hub", lambda: completed.append("two")
+            )
+        )
+        await asyncio.sleep(0)
+        third = asyncio.create_task(
+            hub._enqueue_and_wait(  # noqa: SLF001
+                "t_hub", lambda: completed.append("three")
+            )
+        )
+        await asyncio.sleep(0)
+        assert not third.done()
+
+        release_drain.set()
+        await asyncio.wait_for(asyncio.gather(first, second, third), timeout=1)
+        await hub._enqueue_and_wait(  # noqa: SLF001
+            "t_hub", lambda: completed.append("usable")
+        )
+        assert completed == ["one", "two", "three", "usable"]
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_replay_ingress_failure_logs_one_safe_structured_record(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        source = ConversationIngressSource(
+            record.employee, handle.child_generation, handle.record_identity
+        )
+        payload = SessionNotification(
+            session_id=record.binding.acp_session_id,
+            update=AgentMessageChunk(
+                session_update="agent_message_chunk",
+                message_id="private-message-id",
+                content=TextContentBlock(type="text", text="private conversation content"),
+            ),
+        )
+
+        def fail_replay(
+            _source: ConversationIngressSource,
+            _batch: ConversationIngressReplayBatch,
+        ) -> None:
+            raise ValueError("private conversation content")
+
+        hub._ingest_replay_batch = fail_replay  # type: ignore[method-assign]  # noqa: SLF001
+        await hub.registry_conversation_ingress(
+            source,
+            ConversationIngressReplayBatch(items=(payload, payload)),
+        )
+        await asyncio.wait_for(handle.child.closed.wait(), timeout=1)
+
+        records = [
+            json.loads(record.message)
+            for record in caplog.records
+            if "conversation_ingress_operation_failed" in record.message
+        ]
+        assert records == [
+            {
+                "event": "conversation_ingress_operation_failed",
+                "phase": "sequencer_drain",
+                "employee_id": "t_hub",
+                "child_generation": 1,
+                "transition_kind": "replay",
+                "transition_count": 2,
+                "exception_type": "ValueError",
+            }
+        ]
+        assert "private conversation content" not in caplog.text
+        assert "private-message-id" not in caplog.text
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
@@ -1987,6 +2357,52 @@ def test_idle_refresh_bootstrap_survives_one_live_update_before_writer_starts(
             "ready",
         ]
         assert envelopes[-1]["payload"]["detail"] == "after refresh"
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_idle_same_binding_attach_uses_ready_stream_snapshot_without_session_load(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        registry = _Registry(record, handle)
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=registry,
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        browser_a = await hub.attach_browser("t_hub", connection_id="browser-a")
+        await asyncio.wait_for(browser_a.queue.get(), timeout=1)
+        await asyncio.wait_for(browser_a.queue.get(), timeout=1)
+        attach_calls = registry.attach_calls
+
+        browser_b = await hub.attach_browser("t_hub", connection_id="browser-b")
+        assert registry.attach_calls == attach_calls
+        await hub.publish_activity(record.employee, record.binding, "thinking", "live")
+        envelopes = [
+            json.loads(await asyncio.wait_for(browser_b.queue.get(), timeout=1))
+            for _ in range(3)
+        ]
+        assert [item["sequence"] for item in envelopes] == [1, 2, 3]
+        assert [item["payload"].get("state") for item in envelopes[:2]] == [
+            "reset",
+            "ready",
+        ]
+        assert envelopes[-1]["payload"]["detail"] == "live"
+
+        stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
+        stream.reset_buffer_available = False
+        stream.reset_buffer = []
+        unavailable = await hub.attach_browser(
+            "t_hub", connection_id="browser-unavailable"
+        )
+        assert unavailable.close_reason == REPLAY_UNAVAILABLE_CLOSE_REASON
+        assert unavailable.queue.empty()
+        assert registry.attach_calls == attach_calls
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())

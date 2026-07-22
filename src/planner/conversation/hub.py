@@ -23,6 +23,10 @@ from starlette.websockets import WebSocketDisconnect
 
 from planner.tickets.conversation_projection import TicketConversationProjection
 
+from .backend_contracts import (
+    ConversationIngressReplayBatch,
+    ConversationIngressTransition,
+)
 from .configuration import (
     ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES,
     ACP_NEW_CONVERSATION_TIMEOUT_SECONDS,
@@ -306,6 +310,10 @@ class ConversationHub:
         self._source_capture: dict[
             tuple[str, int, int], deque[SessionNotification | ProtocolUpdateRejectedPayload]
         ] = {}
+        self._source_load_replay: dict[
+            tuple[str, int, int],
+            tuple[SessionNotification | ProtocolUpdateRejectedPayload, ...],
+        ] = {}
         self._prompt_ingress: dict[tuple[str, int, int, int, int], _PromptIngressState] = {}
         self._compaction_transitions: dict[str, _CompactionTransitionState] = {}
         self._requested_cancel_recovery_transitions: dict[
@@ -343,14 +351,23 @@ class ConversationHub:
     async def registry_conversation_ingress(
         self,
         source: ConversationIngressSource,
-        payload: object,
+        payload: ConversationIngressTransition,
     ) -> None:
-        if not isinstance(payload, (SessionNotification, ProtocolUpdateRejectedPayload)):
+        if isinstance(payload, ConversationIngressReplayBatch):
+            if not all(
+                isinstance(item, (SessionNotification, ProtocolUpdateRejectedPayload))
+                for item in payload.items
+            ):
+                raise TypeError("replay batch must contain typed ACP updates or rejections")
+            operation = lambda: self._ingest_replay_batch(source, payload)
+        elif isinstance(payload, (SessionNotification, ProtocolUpdateRejectedPayload)):
+            operation = lambda: self._ingest_source(source, payload)
+        else:
             raise TypeError("registry ingress must be a typed ACP update or rejection")
-        self._admit_nowait(
+        await self._admit(
             source.employee.employee_id,
-            lambda: self._ingest_source(source, payload),
-            on_failure=lambda error: self._schedule_source_failure(source, error),
+            operation,
+            on_failure=lambda error: self._handle_ingress_failure(source, payload, error),
         )
 
     async def registry_child_died(
@@ -361,6 +378,9 @@ class ConversationHub:
         employee_id = source.employee.employee_id
 
         def classify() -> int | None:
+            source_key = self._source_key(source)
+            self._source_load_replay.pop(source_key, None)
+            self._source_capture.pop(source_key, None)
             stream = self._streams.get(employee_id)
             transition = self._requested_cancel_recovery_transitions.get(
                 employee_id
@@ -372,7 +392,7 @@ class ConversationHub:
                     original.child_generation,
                     id(original.record_identity),
                 )
-                if self._source_key(source) == original_key:
+                if source_key == original_key:
                     binding_generation = original.binding.binding_generation
                     self._fail_requested_cancel_recovery_transition_state(
                         employee_id,
@@ -380,7 +400,7 @@ class ConversationHub:
                         "Employee connection failed",
                     )
                     return binding_generation
-            if stream is None or stream.source_key != self._source_key(source):
+            if stream is None or stream.source_key != source_key:
                 return None
             self._publish_child_death(source)
             return stream.binding.binding_generation
@@ -499,22 +519,14 @@ class ConversationHub:
                 employee_id, binding.binding_generation
             )
             attach_state = await self._require_broker().attach_state(handle)
-            if attach_state.phase in {"running", "cancelling", "capture-finalizing"}:
-                await self._enqueue_and_wait(
-                    employee_id,
-                    lambda: self._attach_active_subscription(stream, subscription, attach_state),
-                )
-                if subscription.close_reason is not None:
-                    await self._detach_subscription_permission(subscription)
-                return subscription
-
-            await self._enqueue_and_wait(employee_id, lambda: self._open_capture(stream))
-            record = await self._require_registry().attach(employee)
-            await self._establish_stream(
-                record,
-                sequence_floor=stream.sequence,
-                initial_subscription=subscription,
+            await self._enqueue_and_wait(
+                employee_id,
+                lambda: self._attach_subscription_from_ready_stream(
+                    stream, subscription, attach_state
+                ),
             )
+            if subscription.close_reason is not None:
+                await self._detach_subscription_permission(subscription)
             return subscription
         except BaseException:
             await self._detach_subscription_permission(subscription)
@@ -1540,11 +1552,12 @@ class ConversationHub:
             self._publish_connection_now(stream, "reset", "Conversation loaded")
             if persistent is not None:
                 self._publish_rejection_now(stream, persistent)
-            captured = self._source_capture.pop(stream.source_key, deque())
+            load_replay = self._source_load_replay.pop(stream.source_key, ())
+            captured_live = self._source_capture.pop(stream.source_key, deque())
             self._publish_replay_batch_now(
                 stream,
                 runtime_handle,
-                tuple(captured),
+                load_replay + tuple(captured_live),
                 compacted_boundaries,
             )
             self._publish_connection_now(stream, "ready", "Ready")
@@ -1631,19 +1644,19 @@ class ConversationHub:
         stream.source_key = (stream.employee.employee_id, -1, -1)
         stream.runtime_handle = None
 
-    def _attach_active_subscription(
+    def _attach_subscription_from_ready_stream(
         self,
         stream: _StreamState,
         subscription: BrowserSubscription,
         attach_state: ConversationTurnAttachState,
     ) -> None:
-        del attach_state
         if not stream.reset_buffer_available:
             self._close_browser_subscription(
                 stream, subscription, REPLAY_UNAVAILABLE_CLOSE_REASON, "replay"
             )
             return
-        self._publish_connection_now(stream, "ready", "Ready")
+        if attach_state.phase in {"running", "cancelling", "capture-finalizing"}:
+            self._publish_connection_now(stream, "ready", "Ready")
         queue = cast(_BrowserOutboundQueue, subscription.queue)
         queue.set_initial_bootstrap(tuple(stream.reset_buffer))
         stream.browsers[subscription.connection_id] = subscription
@@ -1734,6 +1747,22 @@ class ConversationHub:
             captured.append(payload)
             return
         self._publish_source_payload(stream, payload)
+
+    def _ingest_replay_batch(
+        self,
+        source: ConversationIngressSource,
+        batch: ConversationIngressReplayBatch,
+    ) -> None:
+        source_key = self._source_key(source)
+        stream = self._streams.get(source.employee.employee_id)
+        if stream is None or stream.source_key != source_key:
+            if stream is not None and stream.ready:
+                return
+            self._source_capture.pop(source_key, None)
+            self._source_load_replay[source_key] = batch.items
+            return
+        for payload in batch.items:
+            self._ingest_source(source, payload)
 
     def _publish_source_payload(
         self,
@@ -2128,10 +2157,7 @@ class ConversationHub:
     async def _enqueue_and_wait(self, employee_id: str, operation: Callable[[], Any]) -> Any:
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         sequencer = self._sequencer(employee_id)
-        try:
-            sequencer.queue.put_nowait(_SequencedOperation(operation, future))
-        except asyncio.QueueFull:
-            raise RuntimeError("conversation ingress sequencer is full") from None
+        await sequencer.queue.put(_SequencedOperation(operation, future))
         try:
             return await asyncio.shield(future)
         except asyncio.CancelledError:
@@ -2145,7 +2171,7 @@ class ConversationHub:
         with contextlib.suppress(BaseException):
             future.result()
 
-    def _admit_nowait(
+    async def _admit(
         self,
         employee_id: str,
         operation: Callable[[], Any],
@@ -2153,10 +2179,7 @@ class ConversationHub:
         on_failure: Callable[[Exception], None] | None = None,
     ) -> None:
         sequencer = self._sequencer(employee_id)
-        try:
-            sequencer.queue.put_nowait(_SequencedOperation(operation, None, on_failure))
-        except asyncio.QueueFull:
-            raise RuntimeError("conversation ingress sequencer is full") from None
+        await sequencer.queue.put(_SequencedOperation(operation, None, on_failure))
 
     def _sequencer(self, employee_id: str) -> _EmployeeSequencer:
         sequencer = self._sequencers.get(employee_id)
@@ -2260,6 +2283,34 @@ class ConversationHub:
             ),
         )
         task.add_done_callback(lambda completed: self._consume_background(completed, error))
+
+    def _handle_ingress_failure(
+        self,
+        source: ConversationIngressSource,
+        payload: ConversationIngressTransition,
+        error: Exception,
+    ) -> None:
+        if isinstance(payload, ConversationIngressReplayBatch):
+            transition_kind = "replay"
+            transition_count = len(payload.items)
+        else:
+            transition_kind = "ingress"
+            transition_count = 1
+        _LOGGER.error(
+            json.dumps(
+                {
+                    "event": "conversation_ingress_operation_failed",
+                    "phase": "sequencer_drain",
+                    "employee_id": source.employee.employee_id,
+                    "child_generation": source.child_generation,
+                    "transition_kind": transition_kind,
+                    "transition_count": transition_count,
+                    "exception_type": type(error).__name__,
+                },
+                separators=(",", ":"),
+            )
+        )
+        self._schedule_source_failure(source, error)
 
     @staticmethod
     def _tracked_key(handle: TrackedTurnHandle) -> tuple[str, int, int, int]:

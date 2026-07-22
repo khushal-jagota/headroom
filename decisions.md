@@ -54,6 +54,19 @@ unrelated durable sessions belonging to those homes, not temporary sessions to d
 conversation projection therefore uses the next forward version, v29, with its own shape validation,
 dispatch, and migration tests. The existing v25 through v28 migrations keep their established behavior.
 
+# Conversation
+
+## D-acp-session-load-atomic-replay — Admit a complete private load as one replay transition
+
+A private complete session load is captured and admitted as one sequenced replay transition. A
+per-generation publication barrier orders live callbacks that race the load without holding the gate
+across external I/O, and temporary sequencer pressure backpressures rather than dropping or failing
+admitted updates. Once a ready stream exists, ordinary browser reconnect uses its materialized Panels
+snapshot instead of issuing another `session/load`.
+
+Exact source and barrier cleanup covers retry, child death, and shutdown. Logs remain content-free,
+and the existing finite browser and external-operation protections remain in force.
+
 # Workspace
 
 ## D-ticket-projection-cutover-lock-and-permission-compensation — Serialize replacement publication with Ticket facts

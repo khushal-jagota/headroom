@@ -4,6 +4,21 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-22): Atomic ACP session-load replay (t_k431pv7q)
+
+Implementation is complete on the branch. A first or cold attach privately captures the complete
+durable ACP session load and publishes it as one sequenced, atomic replay transition before racing
+live callbacks. A per-generation publication barrier preserves that order without holding the gate
+across external I/O; temporary sequencer pressure backpressures instead of dropping or failing; and
+an ordinary reconnect to a ready stream uses its materialized snapshot without another load. Exact
+source/barrier cleanup covers retry, child death, and shutdown; diagnostics remain content-free; and
+the existing finite browser and external-operation protections remain in force.
+
+Focused evidence is green: 68 registry and 38 hub unit tests, strict Mypy, and selected real-WebSocket
+and cold-load tests previously passed. All independent-review findings were resolved, and the final
+review result was `PASS`. Next step: run one canonical `./verify`, then propose the implementation.
+Canonical verification has not run yet.
+
 ## Current work cycle (2026-07-21): Ticket Workspace dot projection (`t_xb76vw05`)
 
 The one pure `workspace_dot_state` classifier is implemented with exceptional > active > needs_attention

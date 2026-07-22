@@ -17,8 +17,12 @@ browser never connects to an agent process directly.
 The server answers with typed ACP state. The browser renders human and agent messages,
 thought disclosures, tool calls, plans, terminal output, permissions, delivery
 receipts, connection state, and compaction boundaries. It does not parse a second
-Panels transcript format. Reloading or reconnecting attaches to the durable ACP
-binding and rebuilds the pane from the backend's replay.
+Panels transcript format. A first or cold attach privately loads the durable ACP
+session, then admits its complete history as one atomic ordered replay cut before
+later live updates. Temporary pressure in the per-employee sequencer waits for
+capacity instead of dropping or failing an admitted update. Once a ready stream
+exists, ordinary browser reconnects rebuild from the materialized Panels snapshot
+and do not issue `session/load`.
 
 Replay is integrity-checked and held as a subscriber-local bootstrap. It does not
 occupy the bounded queue used for live browser updates. A connected browser crossing

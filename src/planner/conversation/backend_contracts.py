@@ -41,6 +41,18 @@ type ConversationReplayItem = (
 
 
 @dataclass(frozen=True, slots=True)
+class ConversationIngressReplayBatch:
+    """One raw load replay submitted to the conversation ingress sequencer."""
+
+    items: tuple[SessionNotification | ProtocolUpdateRejectedPayload, ...]
+
+
+type ConversationIngressTransition = (
+    SessionNotification | ProtocolUpdateRejectedPayload | ConversationIngressReplayBatch
+)
+
+
+@dataclass(frozen=True, slots=True)
 class BackendTurnCapabilities:
     supports_steer: bool
     observes_compaction: bool

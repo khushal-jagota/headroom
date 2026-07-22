@@ -45,7 +45,9 @@ from tests.support.acp_runtime_subject import ProductionAcp01ConformanceSubject
 from planner.conversation import (
     AcpEmployeeBindingError,
     AcpEmployeeRegistry,
+    AcpEmployeeRegistryClosed,
     AcpEmployeeRegistryShutdownError,
+    AcpEmployeeStaleGeneration,
     AgentBackendDefinition,
     BackendTurnCapabilities,
     ConversationCompactionCaptureDeadlineExpired,
@@ -63,6 +65,7 @@ from planner.conversation import (
     StableAcpEmployeeSessionConfigurationAdapter,
     static_employee_backend_registration,
 )
+from planner.conversation.backend_contracts import ConversationIngressReplayBatch
 
 
 class _TurnStrategy:
@@ -129,6 +132,7 @@ class _FakeChild:
         self.initialize_requests: list[InitializeRequest] = []
         self.fork_requests: list[ForkSessionRequest] = []
         self.private_load_requests: list[LoadSessionRequest] = []
+        self.load_replay_by_session: dict[str, tuple[SessionNotification, ...]] = {}
         self.private_replay_by_session: dict[str, tuple[SessionNotification, ...]] = {}
         self.fail_private_load_session_ids: set[str] = set()
         self.private_load_errors_by_session: dict[str, BaseException] = {}
@@ -260,6 +264,8 @@ class _FakeChild:
         if self.fail_load:
             raise RuntimeError("scripted load failure")
         self.current_session_id = request.session_id
+        for notification in self.load_replay_by_session.get(request.session_id, ()):
+            await self.update_ingress(notification)
         return LoadSessionResponse()
 
     async def fork_session(self, request: ForkSessionRequest) -> ForkSessionResponse:
@@ -291,7 +297,11 @@ class _FakeChild:
             raise scripted_error
         if request.session_id in self.fail_private_load_session_ids:
             raise RuntimeError("scripted private load failure")
-        for notification in self.private_replay_by_session.get(request.session_id, ()):
+        replay = self.private_replay_by_session.get(
+            request.session_id,
+            self.load_replay_by_session.get(request.session_id, ()),
+        )
+        for notification in replay:
             await private_ingress(notification)
         return LoadSessionResponse()
 
@@ -333,6 +343,7 @@ class _FakeFactory:
         self.private_load_gate: asyncio.Event | None = None
         self.fail_load = False
         self.close_error: BaseException | None = None
+        self.load_replay_by_session: dict[str, tuple[SessionNotification, ...]] = {}
         self.private_replay_by_session: dict[str, tuple[SessionNotification, ...]] = {}
         self.fail_private_load_session_ids: set[str] = set()
         self.private_load_errors_by_session: dict[str, BaseException] = {}
@@ -362,6 +373,7 @@ class _FakeFactory:
             close_error=self.close_error,
             operation_observer=self.operation_observer,
         )
+        child.load_replay_by_session.update(self.load_replay_by_session)
         child.private_replay_by_session.update(self.private_replay_by_session)
         child.fail_private_load_session_ids.update(self.fail_private_load_session_ids)
         child.private_load_errors_by_session.update(self.private_load_errors_by_session)
@@ -379,10 +391,11 @@ class _CancellationResistantCloseChild(_FakeChild):
 
     async def close(self) -> None:
         self.close_started.set()
-        try:
-            await self.close_release.wait()
-        except asyncio.CancelledError:
-            await self.close_release.wait()
+        while not self.close_release.is_set():
+            try:
+                await self.close_release.wait()
+            except asyncio.CancelledError:
+                continue
         await super().close()
 
     async def force_close(self) -> None:
@@ -406,6 +419,7 @@ class _CancellationResistantCloseFactory(_FakeFactory):
             update_ingress=update_ingress,
             death_callback=death_callback,
         )
+        child.private_load_gate = self.private_load_gate
         self.children.append(child)
         return child
 
@@ -457,6 +471,7 @@ def _registry(
     configuration_adapters: dict[str, Any] | None = None,
     compare_and_swap_initial: Any | None = None,
     resolve_employee: Any | None = None,
+    source_aware_ingress: Any | None = None,
 ) -> AcpEmployeeRegistry:
     async def discard(
         payload: SessionNotification | ProtocolUpdateRejectedPayload,
@@ -515,7 +530,463 @@ def _registry(
         conversation_ingress=ingress or discard,
         permission_callback=_permission,
         conversation_child_death_callback=child_death,
+        source_aware_conversation_ingress=source_aware_ingress,
     )
+
+
+def test_attach_submits_captured_replay_to_source_aware_hub_as_one_batch() -> None:
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        factory = _FakeFactory(definition)
+        repository = InMemoryAcpBindingRepository()
+        binding = ConversationSessionBinding(
+            employee_id="employee-a",
+            acp_session_id="historical-session",
+            backend_key="alpha",
+            binding_generation=1,
+        )
+        await repository.seed(binding)
+        received: list[tuple[object, object]] = []
+
+        async def source_aware_ingress(source: object, transition: object) -> None:
+            received.append((source, transition))
+
+        registry = _registry(
+            {"alpha": definition},
+            {"alpha": factory},
+            repository,
+            source_aware_ingress=source_aware_ingress,
+        )
+        record = await registry.get_or_spawn(_employee())
+        received.clear()
+        replay = tuple(
+            SessionNotification(
+                session_id=binding.acp_session_id,
+                update=AgentThoughtChunk(
+                    session_update="agent_thought_chunk",
+                    content=TextContentBlock(type="text", text=f"replay-{index}"),
+                ),
+            )
+            for index in range(3)
+        )
+        factory.children[0].private_replay_by_session[binding.acp_session_id] = replay
+
+        await registry.attach(_employee())
+
+        assert len(received) == 1
+        source, transition = received[0]
+        assert isinstance(transition, ConversationIngressReplayBatch)
+        assert transition.items == replay
+        assert source.child_generation == record.child_generation  # type: ignore[attr-defined]
+        assert source.record_identity is record.record_identity  # type: ignore[attr-defined]
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_attach_blocks_live_ingress_after_load_response_before_replay_admission() -> None:
+    class BlockSecondAcquireGate:
+        def __init__(self) -> None:
+            self._lock = asyncio.Lock()
+            self.acquire_count = 0
+            self.second_acquire_started = asyncio.Event()
+            self.release_second_acquire = asyncio.Event()
+
+        async def acquire(self) -> bool:
+            self.acquire_count += 1
+            if self.acquire_count == 2:
+                self.second_acquire_started.set()
+                await self.release_second_acquire.wait()
+            return await self._lock.acquire()
+
+        def release(self) -> None:
+            self._lock.release()
+
+        async def __aenter__(self) -> None:
+            await self.acquire()
+
+        async def __aexit__(self, *_args: object) -> None:
+            self.release()
+
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        factory = _FakeFactory(definition)
+        repository = InMemoryAcpBindingRepository()
+        admitted: list[object] = []
+
+        async def source_aware_ingress(_source: object, transition: object) -> None:
+            admitted.append(transition)
+
+        registry = _registry(
+            {"alpha": definition},
+            {"alpha": factory},
+            repository,
+            source_aware_ingress=source_aware_ingress,
+        )
+        record = await registry.get_or_spawn(_employee())
+        replay = SessionNotification(
+            session_id=record.binding.acp_session_id,
+            update=AgentThoughtChunk(
+                session_update="agent_thought_chunk",
+                content=TextContentBlock(type="text", text="attach replay"),
+            ),
+        )
+        live = SessionNotification(
+            session_id=record.binding.acp_session_id,
+            update=AgentThoughtChunk(
+                session_update="agent_thought_chunk",
+                content=TextContentBlock(type="text", text="post-load live"),
+            ),
+        )
+        factory.children[0].private_replay_by_session[record.binding.acp_session_id] = (replay,)
+        gate = BlockSecondAcquireGate()
+        registry._publication_update_gates[record.employee.employee_id] = gate  # type: ignore[assignment]  # noqa: SLF001
+
+        attach = asyncio.create_task(registry.attach(_employee()))
+        await gate.second_acquire_started.wait()
+        live_publication = asyncio.create_task(factory.children[0].update_ingress(live))
+        try:
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            assert admitted == []
+            assert not live_publication.done()
+        finally:
+            gate.release_second_acquire.set()
+            await asyncio.gather(attach, live_publication, return_exceptions=True)
+
+        assert admitted == [ConversationIngressReplayBatch(items=(replay,)), live]
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_existing_durable_binding_initialization_publishes_then_submits_one_replay_batch() -> None:
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        factory = _FakeFactory(definition)
+        repository = InMemoryAcpBindingRepository()
+        binding = ConversationSessionBinding(
+            employee_id="employee-a",
+            acp_session_id="historical-session",
+            backend_key="alpha",
+            binding_generation=1,
+        )
+        replay = tuple(
+            SessionNotification(
+                session_id=binding.acp_session_id,
+                update=AgentThoughtChunk(
+                    session_update="agent_thought_chunk",
+                    content=TextContentBlock(type="text", text=f"cold-replay-{index}"),
+                ),
+            )
+            for index in range(3)
+        )
+        await repository.seed(binding)
+        factory.load_replay_by_session[binding.acp_session_id] = replay
+        received: list[tuple[object, object]] = []
+
+        async def source_aware_ingress(source: object, transition: object) -> None:
+            received.append((source, transition))
+
+        registry = _registry(
+            {"alpha": definition},
+            {"alpha": factory},
+            repository,
+            source_aware_ingress=source_aware_ingress,
+        )
+
+        record = await registry.get_or_spawn(_employee())
+
+        assert len(received) == 1
+        source, transition = received[0]
+        assert isinstance(transition, ConversationIngressReplayBatch)
+        assert transition.items == replay
+        assert source.employee == record.employee  # type: ignore[attr-defined]
+        assert source.child_generation == record.child_generation  # type: ignore[attr-defined]
+        assert source.record_identity is record.record_identity  # type: ignore[attr-defined]
+        assert factory.children[0].load_requests == []
+        assert [request.session_id for request in factory.children[0].private_load_requests] == [
+            binding.acp_session_id
+        ]
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_existing_durable_binding_initialization_submits_empty_replay_batch() -> None:
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        factory = _FakeFactory(definition)
+        repository = InMemoryAcpBindingRepository()
+        binding = ConversationSessionBinding(
+            employee_id="employee-a",
+            acp_session_id="empty-historical-session",
+            backend_key="alpha",
+            binding_generation=1,
+        )
+        await repository.seed(binding)
+        received: list[object] = []
+
+        async def source_aware_ingress(_source: object, transition: object) -> None:
+            received.append(transition)
+
+        registry = _registry(
+            {"alpha": definition},
+            {"alpha": factory},
+            repository,
+            source_aware_ingress=source_aware_ingress,
+        )
+
+        await registry.get_or_spawn(_employee())
+
+        assert received == [ConversationIngressReplayBatch(items=())]
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_cold_load_blocks_live_ingress_after_capture_before_publish_acquires_gate() -> None:
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        factory = _FakeFactory(definition)
+        repository = InMemoryAcpBindingRepository()
+        binding = ConversationSessionBinding(
+            employee_id="employee-a",
+            acp_session_id="historical-session",
+            backend_key="alpha",
+            binding_generation=1,
+        )
+        replay = SessionNotification(
+            session_id=binding.acp_session_id,
+            update=AgentThoughtChunk(
+                session_update="agent_thought_chunk",
+                content=TextContentBlock(type="text", text="cold replay"),
+            ),
+        )
+        live = SessionNotification(
+            session_id=binding.acp_session_id,
+            update=AgentThoughtChunk(
+                session_update="agent_thought_chunk",
+                content=TextContentBlock(type="text", text="post-capture live"),
+            ),
+        )
+        await repository.seed(binding)
+        factory.private_replay_by_session[binding.acp_session_id] = (replay,)
+        publish_called = asyncio.Event()
+        release_publish = asyncio.Event()
+        admitted: list[object] = []
+
+        async def source_aware_ingress(_source: object, transition: object) -> None:
+            admitted.append(transition)
+
+        registry = _registry(
+            {"alpha": definition},
+            {"alpha": factory},
+            repository,
+            source_aware_ingress=source_aware_ingress,
+        )
+        original_publish = registry._publish  # noqa: SLF001
+
+        async def blocked_publish(*args: object, **kwargs: object) -> object:
+            publish_called.set()
+            await release_publish.wait()
+            return await original_publish(*args, **kwargs)  # type: ignore[arg-type]
+
+        registry._publish = blocked_publish  # type: ignore[method-assign]  # noqa: SLF001
+        initialization = asyncio.create_task(registry.get_or_spawn(_employee()))
+        await publish_called.wait()
+        live_publication = asyncio.create_task(factory.children[0].update_ingress(live))
+        try:
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            assert admitted == []
+            assert not live_publication.done()
+        finally:
+            release_publish.set()
+            await asyncio.gather(initialization, live_publication, return_exceptions=True)
+
+        assert admitted == [ConversationIngressReplayBatch(items=(replay,)), live]
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_cold_load_replay_is_admitted_before_racing_live_update() -> None:
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        factory = _FakeFactory(definition)
+        repository = InMemoryAcpBindingRepository()
+        binding = ConversationSessionBinding(
+            employee_id="employee-a",
+            acp_session_id="historical-session",
+            backend_key="alpha",
+            binding_generation=1,
+        )
+        replay = SessionNotification(
+            session_id=binding.acp_session_id,
+            update=AgentThoughtChunk(
+                session_update="agent_thought_chunk",
+                content=TextContentBlock(type="text", text="cold replay"),
+            ),
+        )
+        live = SessionNotification(
+            session_id=binding.acp_session_id,
+            update=AgentThoughtChunk(
+                session_update="agent_thought_chunk",
+                content=TextContentBlock(type="text", text="racing live update"),
+            ),
+        )
+        await repository.seed(binding)
+        factory.private_replay_by_session[binding.acp_session_id] = (replay,)
+        replay_admission_started = asyncio.Event()
+        release_replay_admission = asyncio.Event()
+        admitted: list[object] = []
+
+        async def source_aware_ingress(_source: object, transition: object) -> None:
+            admitted.append(transition)
+            if isinstance(transition, ConversationIngressReplayBatch):
+                replay_admission_started.set()
+                await release_replay_admission.wait()
+
+        registry = _registry(
+            {"alpha": definition},
+            {"alpha": factory},
+            repository,
+            source_aware_ingress=source_aware_ingress,
+        )
+        publication = asyncio.create_task(registry.get_or_spawn(_employee()))
+        await replay_admission_started.wait()
+        live_publication = asyncio.create_task(factory.children[0].update_ingress(live))
+        try:
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            assert admitted == [ConversationIngressReplayBatch(items=(replay,))]
+            assert not live_publication.done()
+        finally:
+            release_replay_admission.set()
+            await asyncio.gather(publication, live_publication, return_exceptions=True)
+
+        record = publication.result()
+        assert admitted == [ConversationIngressReplayBatch(items=(replay,)), live]
+        assert record.child is factory.children[0]
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_replay_admission_failure_restores_previous_record_and_allows_recovery() -> None:
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        factory = _FakeFactory(definition)
+        repository = InMemoryAcpBindingRepository()
+        admission_attempts = 0
+
+        async def source_aware_ingress(_source: object, transition: object) -> None:
+            nonlocal admission_attempts
+            assert isinstance(transition, ConversationIngressReplayBatch)
+            admission_attempts += 1
+            if admission_attempts == 1:
+                raise RuntimeError("replay admission failed")
+
+        registry = _registry(
+            {"alpha": definition},
+            {"alpha": factory},
+            repository,
+            source_aware_ingress=source_aware_ingress,
+        )
+        original = await registry.get_or_spawn(_employee())
+        replay = SessionNotification(
+            session_id=original.binding.acp_session_id,
+            update=AgentThoughtChunk(
+                session_update="agent_thought_chunk",
+                content=TextContentBlock(type="text", text="captured replay"),
+            ),
+        )
+        factory.private_replay_by_session[original.binding.acp_session_id] = (replay,)
+        replacement_employee = _employee().model_copy(
+            update={"workspace_roots": (Path("/work/replacement"),)}
+        )
+
+        with pytest.raises(RuntimeError, match="replay admission failed"):
+            await registry.get_or_spawn(replacement_employee)
+
+        restored = await registry.resolve_runtime_handle("employee-a", 1)
+        assert restored.child is original.child
+        assert original.child.alive is True
+        assert factory.children[1].alive is False
+        with pytest.raises(ConversationRuntimeUnavailable):
+            await registry.resolve_runtime_handle_for_generation("employee-a", 2)
+
+        recovered = await registry.get_or_spawn(replacement_employee)
+        assert recovered.child_generation == 3
+        assert recovered.child is factory.children[2]
+        assert original.child.alive is False
+        assert admission_attempts == 2
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_adopted_existing_binding_publishes_then_submits_one_replay_batch() -> None:
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        factory = _FakeFactory(definition)
+        repository = InMemoryAcpBindingRepository()
+        winner = ConversationSessionBinding(
+            employee_id="employee-a",
+            acp_session_id="winning-session",
+            backend_key="alpha",
+            binding_generation=1,
+        )
+        replay = tuple(
+            SessionNotification(
+                session_id=winner.acp_session_id,
+                update=AgentThoughtChunk(
+                    session_update="agent_thought_chunk",
+                    content=TextContentBlock(type="text", text=f"winner-replay-{index}"),
+                ),
+            )
+            for index in range(3)
+        )
+        factory.load_replay_by_session[winner.acp_session_id] = replay
+        received: list[tuple[object, object]] = []
+
+        async def compare_and_swap(
+            _expected: ConversationSessionBinding | None,
+            _candidate: ConversationSessionBinding,
+        ) -> ConversationSessionBinding:
+            await repository.seed(winner)
+            return winner
+
+        async def source_aware_ingress(source: object, transition: object) -> None:
+            received.append((source, transition))
+
+        registry = _registry(
+            {"alpha": definition},
+            {"alpha": factory},
+            repository,
+            compare_and_swap=compare_and_swap,
+            resolve_employee=lambda _employee_id: asyncio.sleep(0, result=_employee()),
+            source_aware_ingress=source_aware_ingress,
+        )
+
+        record = await registry.get_or_spawn(_employee())
+
+        assert len(factory.children) == 2
+        assert len(received) == 1
+        source, transition = received[0]
+        assert isinstance(transition, ConversationIngressReplayBatch)
+        assert transition.items == replay
+        assert source.employee == record.employee  # type: ignore[attr-defined]
+        assert source.child_generation == record.child_generation  # type: ignore[attr-defined]
+        assert source.record_identity is record.record_identity  # type: ignore[attr-defined]
+        assert factory.children[1].load_requests == []
+        assert [request.session_id for request in factory.children[1].private_load_requests] == [
+            winner.acp_session_id
+        ]
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
 
 
 def test_concurrent_first_demand_coalesces_and_persists_generation_one() -> None:
@@ -664,10 +1135,10 @@ def test_bound_load_replacement_compaction_and_new_conversation_do_not_reapply_k
         loaded = await registry.get_or_spawn(historical_employee)
         attached = await registry.attach(historical_employee)
         assert loaded.binding == attached.binding
-        assert factory.children[0].load_requests[0].session_id == "alpha-existing"
-        assert factory.children[0].private_load_requests[0].session_id == (
-            "alpha-existing"
-        )
+        assert factory.children[0].load_requests == []
+        assert [
+            request.session_id for request in factory.children[0].private_load_requests
+        ] == ["alpha-existing", "alpha-existing"]
 
         handle = await registry.resolve_runtime_handle("employee-a", 1)
         deadline = asyncio.get_running_loop().time() + 2
@@ -761,7 +1232,7 @@ def test_first_binding_loser_re_resolves_bound_winner_without_reconfiguration() 
         assert operations[-3:] == [
             "resolve-bound-employee",
             "initialize",
-            "load_session",
+            "capture_load_session",
         ]
         assert record.binding == winner
         assert record.employee.employee_launch_model is None
@@ -1368,7 +1839,10 @@ def test_compaction_initial_publication_gate_expiry_retires_exact_source() -> No
         recovered = await registry.attach(_employee())
         assert recovered.binding == original.binding
         assert recovered.child_generation == 2
-        assert factory.children[1].load_requests[0].session_id == (original.binding.acp_session_id)
+        assert factory.children[1].load_requests == []
+        assert factory.children[1].private_load_requests[0].session_id == (
+            original.binding.acp_session_id
+        )
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
@@ -1508,7 +1982,8 @@ def test_compaction_publication_cancellation_fails_closed_without_gate_rewait() 
         recovered = await registry.attach(_employee())
         assert recovered.binding == prepared.candidate_binding
         assert recovered.child_generation == 3
-        assert factory.children[2].load_requests[0].session_id == (
+        assert factory.children[2].load_requests == []
+        assert factory.children[2].private_load_requests[0].session_id == (
             prepared.candidate_binding.acp_session_id
         )
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
@@ -1595,7 +2070,6 @@ def test_lifecycle_external_io_never_holds_publication_update_gate() -> None:
         assert {
             "initialize",
             "new_session",
-            "load_session",
             "capture_load_session",
             "fork_session",
             "close",
@@ -1637,7 +2111,10 @@ def test_compaction_abort_invalidates_source_and_candidate_then_fresh_attaches_n
         attached = await asyncio.wait_for(registry.attach(_employee()), timeout=1)
         assert attached.binding == original.binding
         assert attached.child_generation == candidate_child.generation + 1
-        assert factory.children[2].load_requests[0].session_id == (original.binding.acp_session_id)
+        assert factory.children[2].load_requests == []
+        assert factory.children[2].private_load_requests[0].session_id == (
+            original.binding.acp_session_id
+        )
         await asyncio.sleep(0)
         assert source_child.alive is False
         assert candidate_child.alive is False
@@ -1727,7 +2204,10 @@ def test_compaction_cas_exception_with_original_durable_invalidates_source() -> 
         attached = await asyncio.wait_for(registry.attach(_employee()), timeout=1)
         assert attached.binding == original.binding
         assert attached.child_generation == original.child_generation + 2
-        assert factory.children[2].load_requests[0].session_id == (original.binding.acp_session_id)
+        assert factory.children[2].load_requests == []
+        assert factory.children[2].private_load_requests[0].session_id == (
+            original.binding.acp_session_id
+        )
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
@@ -1783,6 +2263,7 @@ def test_compaction_cas_expiry_reports_unresolved_binding_without_second_budget(
         assert await repository.resolve("employee-a") == original.binding
         with pytest.raises(ConversationRuntimeUnavailable):
             await registry.resolve_runtime_handle("employee-a", 1)
+        factory.private_load_gate = None
         recovered = await asyncio.wait_for(registry.get_or_spawn(_employee()), timeout=1)
         assert recovered.binding == original.binding
         assert recovered.child_generation == original.child_generation + 2
@@ -1984,7 +2465,10 @@ def test_external_winner_publication_gate_expiry_fails_closed() -> None:
         recovered = await registry.attach(_employee())
         assert recovered.binding == external_winner
         assert recovered.child_generation == 4
-        assert factory.children[3].load_requests[0].session_id == (external_winner.acp_session_id)
+        assert factory.children[3].load_requests == []
+        assert factory.children[3].private_load_requests[0].session_id == (
+            external_winner.acp_session_id
+        )
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
@@ -2135,7 +2619,10 @@ def test_compaction_prepare_failure_releases_lifecycle_mutation_gate(
         replacement = await asyncio.wait_for(registry.attach(_employee()), timeout=1)
         assert replacement.binding == original.binding
         assert replacement.child_generation == original.child_generation + 1
-        assert factory.children[1].load_requests[0].session_id == (original.binding.acp_session_id)
+        assert factory.children[1].load_requests == []
+        assert factory.children[1].private_load_requests[0].session_id == (
+            original.binding.acp_session_id
+        )
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
@@ -2269,10 +2756,14 @@ def test_compaction_private_fork_load_expiry_names_phase_and_preserves_binding()
         assert await repository.resolve("employee-a") == original.binding
         with pytest.raises(ConversationRuntimeUnavailable):
             await registry.resolve_runtime_handle("employee-a", 1)
+        factory.private_load_gate = None
         recovered = await asyncio.wait_for(registry.get_or_spawn(_employee()), timeout=1)
         assert recovered.binding == original.binding
         assert recovered.child_generation == original.child_generation + 2
-        assert factory.children[2].load_requests[0].session_id == (original.binding.acp_session_id)
+        assert factory.children[2].load_requests == []
+        assert factory.children[2].private_load_requests[0].session_id == (
+            original.binding.acp_session_id
+        )
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
@@ -2339,7 +2830,10 @@ def test_attach_and_new_conversation_wait_for_compaction_reservation() -> None:
         attached = await asyncio.wait_for(attach_task, timeout=1)
         assert attached.binding == original.binding
         assert attached.child_generation == 3
-        assert factory.children[2].load_requests[0].session_id == (original.binding.acp_session_id)
+        assert factory.children[2].load_requests == []
+        assert factory.children[2].private_load_requests[0].session_id == (
+            original.binding.acp_session_id
+        )
 
         handle = await registry.resolve_runtime_handle("employee-a", 1)
         second_deadline = asyncio.get_running_loop().time() + 1
@@ -2399,14 +2893,16 @@ def test_crash_respawns_and_loads_same_durable_binding_without_drift() -> None:
         )
         first = await registry.attach(_employee())
         assert first.binding == binding
-        assert factory.children[0].load_requests[0].session_id == "durable-session"
+        assert factory.children[0].load_requests == []
+        assert factory.children[0].private_load_requests[0].session_id == "durable-session"
         await factory.children[0].crash()
         assert deaths[0][0:2] == ("employee-a", first.child_generation)
         assert isinstance(deaths[0][2], RuntimeError)
         second = await registry.get_or_spawn(_employee())
         assert second.binding == binding
         assert second.child_generation == first.child_generation + 1
-        assert factory.children[1].load_requests[0].session_id == "durable-session"
+        assert factory.children[1].load_requests == []
+        assert factory.children[1].private_load_requests[0].session_id == "durable-session"
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
@@ -2572,7 +3068,7 @@ def test_failed_load_never_remints_and_next_demand_loads_same_binding_fresh() ->
     async def exercise() -> None:
         definition = _definition("alpha")
         factory = _FakeFactory(definition)
-        factory.fail_load = True
+        factory.fail_private_load_session_ids.add("durable-load")
         repository = InMemoryAcpBindingRepository()
         durable = ConversationSessionBinding(
             employee_id="employee-a",
@@ -2582,16 +3078,17 @@ def test_failed_load_never_remints_and_next_demand_loads_same_binding_fresh() ->
         )
         await repository.seed(durable)
         registry = _registry({"alpha": definition}, {"alpha": factory}, repository)
-        with pytest.raises(RuntimeError, match="scripted load failure"):
+        with pytest.raises(RuntimeError, match="scripted private load failure"):
             await registry.get_or_spawn(_employee())
         assert factory.children[0].alive is False
         assert factory.children[0].new_requests == []
         assert await repository.resolve("employee-a") == durable
-        factory.fail_load = False
+        factory.fail_private_load_session_ids.clear()
         recovered = await registry.get_or_spawn(_employee())
         assert recovered.binding == durable
         assert recovered.child_generation == 2
-        assert factory.children[1].load_requests[0].session_id == "durable-load"
+        assert factory.children[1].load_requests == []
+        assert factory.children[1].private_load_requests[0].session_id == "durable-load"
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
@@ -2625,7 +3122,10 @@ def test_new_conversation_cas_exception_retires_child_and_recovers_old_binding()
         recovered = await registry.get_or_spawn(_employee())
         assert recovered.child_generation == original.child_generation + 1
         assert recovered.binding == original.binding
-        assert factory.children[1].load_requests[0].session_id == original.binding.acp_session_id
+        assert factory.children[1].load_requests == []
+        assert factory.children[1].private_load_requests[0].session_id == (
+            original.binding.acp_session_id
+        )
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
@@ -2704,7 +3204,10 @@ def test_new_conversation_post_cas_reread_failure_retires_persisted_candidate_ch
         assert persisted_candidate.binding_generation == 2
         recovered = await registry.get_or_spawn(_employee())
         assert recovered.binding == persisted_candidate
-        assert factory.children[1].load_requests[0].session_id == persisted_candidate.acp_session_id
+        assert factory.children[1].load_requests == []
+        assert factory.children[1].private_load_requests[0].session_id == (
+            persisted_candidate.acp_session_id
+        )
         assert resolve_calls >= 3
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
 
@@ -2832,6 +3335,143 @@ def test_shutdown_settles_prepared_compaction_source_candidate_and_reservation()
     asyncio.run(exercise())
 
 
+def test_exact_child_death_releases_hung_load_barrier_and_wakes_ordinary_callback() -> None:
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        factory = _FakeFactory(definition)
+        factory.private_load_gate = asyncio.Event()
+        repository = InMemoryAcpBindingRepository()
+        await repository.seed(
+            ConversationSessionBinding(
+                employee_id="employee-a",
+                acp_session_id="hung-load",
+                backend_key="alpha",
+                binding_generation=1,
+            )
+        )
+        registry = _registry({"alpha": definition}, {"alpha": factory}, repository)
+        demand = asyncio.create_task(registry.get_or_spawn(_employee()))
+        while not factory.children:
+            await asyncio.sleep(0)
+        child = factory.children[0]
+        await child.private_load_started.wait()
+        ordinary_callback = asyncio.create_task(child.update_ingress(object()))
+        await asyncio.sleep(0)
+
+        await child.crash(RuntimeError("load child died"))
+
+        with pytest.raises(AcpEmployeeStaleGeneration):
+            await asyncio.wait_for(ordinary_callback, timeout=0.1)
+        assert registry._replay_publication_barriers == {}  # noqa: SLF001
+        factory.private_load_gate.set()
+        with contextlib.suppress(BaseException):
+            await demand
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_exact_child_death_settles_generation_before_delayed_barrier_install() -> None:
+    class DelayFirstAcquireGate:
+        def __init__(self) -> None:
+            self._lock = asyncio.Lock()
+            self.acquire_count = 0
+            self.first_acquire_started = asyncio.Event()
+            self.release_first_acquire = asyncio.Event()
+
+        async def acquire(self) -> bool:
+            self.acquire_count += 1
+            if self.acquire_count == 1:
+                self.first_acquire_started.set()
+                await self.release_first_acquire.wait()
+            return await self._lock.acquire()
+
+        def release(self) -> None:
+            self._lock.release()
+
+        async def __aenter__(self) -> None:
+            await self.acquire()
+
+        async def __aexit__(self, *_args: object) -> None:
+            self.release()
+
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        factory = _FakeFactory(definition)
+        repository = InMemoryAcpBindingRepository()
+        registry = _registry({"alpha": definition}, {"alpha": factory}, repository)
+        record = await registry.get_or_spawn(_employee())
+        gate = DelayFirstAcquireGate()
+        registry._publication_update_gates[record.employee.employee_id] = gate  # type: ignore[assignment]  # noqa: SLF001
+
+        install = asyncio.create_task(
+            registry._install_replay_publication_barrier(  # noqa: SLF001
+                record.employee.employee_id, record.child_generation
+            )
+        )
+        await gate.first_acquire_started.wait()
+
+        await record.child.crash(RuntimeError("child died before barrier installation"))
+        gate.release_first_acquire.set()
+
+        with pytest.raises(AcpEmployeeStaleGeneration):
+            await install
+        assert registry._replay_publication_barriers == {}  # noqa: SLF001
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_shutdown_settles_before_delayed_barrier_install() -> None:
+    class DelayFirstAcquireGate:
+        def __init__(self) -> None:
+            self._lock = asyncio.Lock()
+            self.acquire_count = 0
+            self.first_acquire_started = asyncio.Event()
+            self.release_first_acquire = asyncio.Event()
+
+        async def acquire(self) -> bool:
+            self.acquire_count += 1
+            if self.acquire_count == 1:
+                self.first_acquire_started.set()
+                await self.release_first_acquire.wait()
+            return await self._lock.acquire()
+
+        def release(self) -> None:
+            self._lock.release()
+
+        async def __aenter__(self) -> None:
+            await self.acquire()
+
+        async def __aexit__(self, *_args: object) -> None:
+            self.release()
+
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        factory = _FakeFactory(definition)
+        repository = InMemoryAcpBindingRepository()
+        registry = _registry({"alpha": definition}, {"alpha": factory}, repository)
+        record = await registry.get_or_spawn(_employee())
+        gate = DelayFirstAcquireGate()
+        registry._publication_update_gates[record.employee.employee_id] = gate  # type: ignore[assignment]  # noqa: SLF001
+
+        install = asyncio.create_task(
+            registry._install_replay_publication_barrier(  # noqa: SLF001
+                record.employee.employee_id, record.child_generation
+            )
+        )
+        await gate.first_acquire_started.wait()
+
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+        gate.release_first_acquire.set()
+
+        with pytest.raises(AcpEmployeeRegistryClosed):
+            await install
+        assert registry._replay_publication_barriers == {}  # noqa: SLF001
+
+    asyncio.run(exercise())
+
+
 @pytest.mark.parametrize("stage", ["factory", "initialize", "load"])
 def test_shutdown_cancels_partial_factory_initialize_and_load(stage: str) -> None:
     async def exercise() -> None:
@@ -2844,7 +3484,7 @@ def test_shutdown_cancels_partial_factory_initialize_and_load(stage: str) -> Non
         elif stage == "initialize":
             factory.initialize_gate = gate
         else:
-            factory.load_gate = gate
+            factory.private_load_gate = gate
             await repository.seed(
                 ConversationSessionBinding(
                     employee_id="employee-a",
@@ -2865,13 +3505,68 @@ def test_shutdown_cancels_partial_factory_initialize_and_load(stage: str) -> Non
             started = (
                 factory.children[0].initialize_started
                 if stage == "initialize"
-                else factory.children[0].load_started
+                else factory.children[0].private_load_started
             )
             await started.wait()
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
         assert demand.cancelled()
         if factory.children:
             assert factory.children[0].alive is False
+
+    asyncio.run(exercise())
+
+
+def test_shutdown_releases_all_load_barriers_before_deadline_limited_cleanup() -> None:
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        factory = _CancellationResistantCloseFactory(definition)
+        factory.private_load_gate = asyncio.Event()
+        repository = InMemoryAcpBindingRepository()
+        for employee_id in ("employee-a", "employee-b"):
+            await repository.seed(
+                ConversationSessionBinding(
+                    employee_id=employee_id,
+                    acp_session_id=f"hung-load-{employee_id}",
+                    backend_key="alpha",
+                    binding_generation=1,
+                )
+            )
+        registry = _registry({"alpha": definition}, {"alpha": factory}, repository)
+        demands = [
+            asyncio.create_task(registry.get_or_spawn(_employee(employee_id)))
+            for employee_id in ("employee-a", "employee-b")
+        ]
+        while len(factory.children) < 2:
+            await asyncio.sleep(0)
+        await asyncio.gather(*(child.private_load_started.wait() for child in factory.children))
+        ordinary_callbacks = [
+            asyncio.create_task(child.update_ingress(object())) for child in factory.children
+        ]
+        await asyncio.sleep(0)
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 0.04
+        try:
+            with pytest.raises(AcpEmployeeRegistryShutdownError):
+                await registry.shutdown(deadline)
+
+            assert loop.time() < deadline + 0.04
+            for ordinary_callback in ordinary_callbacks:
+                with pytest.raises(AcpEmployeeStaleGeneration):
+                    await asyncio.wait_for(ordinary_callback, timeout=0.1)
+            assert registry._replay_publication_barriers == {}  # noqa: SLF001
+            assert any(not demand.done() for demand in demands)
+        finally:
+            for child in factory.children:
+                assert isinstance(child, _CancellationResistantCloseChild)
+                child.close_release.set()
+            factory.private_load_gate.set()
+            for demand in demands:
+                with contextlib.suppress(BaseException):
+                    await asyncio.wait_for(demand, timeout=1)
+            for ordinary_callback in ordinary_callbacks:
+                with contextlib.suppress(BaseException):
+                    await ordinary_callback
 
     asyncio.run(exercise())
 

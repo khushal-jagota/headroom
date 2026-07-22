@@ -29,6 +29,8 @@ from .backend_contracts import (
     AcpConversationIngress,
     AcpEmployeeChild,
     AgentBackendDefinition,
+    ConversationIngressReplayBatch,
+    ConversationIngressTransition,
     PermissionRequestCallback,
 )
 from .configuration import (
@@ -98,7 +100,9 @@ class ConversationIngressSource:
     record_identity: object
 
 
-SourceAwareConversationIngress = Callable[[ConversationIngressSource, object], Awaitable[None]]
+SourceAwareConversationIngress = Callable[
+    [ConversationIngressSource, ConversationIngressTransition], Awaitable[None]
+]
 SourceAwareChildDeathCallback = Callable[
     [ConversationIngressSource, BaseException | None], Awaitable[None]
 ]
@@ -214,6 +218,7 @@ class AcpEmployeeRegistry:
         self._lock = asyncio.Lock()
         self._lifecycle_mutation_gates: dict[str, asyncio.Lock] = {}
         self._publication_update_gates: dict[str, asyncio.Lock] = {}
+        self._replay_publication_barriers: dict[tuple[str, int], asyncio.Event] = {}
         self._records: dict[str, AcpEmployeeRecord] = {}
         self._initialization_tasks: dict[str, asyncio.Task[AcpEmployeeRecord]] = {}
         self._attach_tasks: dict[str, asyncio.Task[AcpEmployeeRecord]] = {}
@@ -300,6 +305,7 @@ class AcpEmployeeRegistry:
 
         lifecycle_gate = await self._lifecycle_mutation_gate(employee.employee_id)
         publication_gate = await self._publication_update_gate(employee.employee_id)
+        replay_publication_barrier: asyncio.Event | None = None
         async with lifecycle_gate:
             async with publication_gate:
                 async with self._lock:
@@ -308,18 +314,40 @@ class AcpEmployeeRegistry:
                         raise AcpEmployeeStaleGeneration(
                             "attach started on a stale child generation"
                         )
-            request = self._load_request(record.employee, record.binding.acp_session_id)
-            await record.child.capture_load_session(
-                request, cast(AcpConversationIngress, private_ingress)
-            )
-            async with publication_gate:
-                async with self._lock:
-                    current = self._records.get(employee.employee_id)
-                    if current is not record or not record.child.alive:
-                        raise AcpEmployeeStaleGeneration(
-                            "attach completed on a stale child generation"
+                    replay_publication_barrier = (
+                        self._install_replay_publication_barrier_locked(
+                            employee.employee_id, record.child_generation
                         )
-        await self._publish_captured_replay(record, tuple(captured))
+                    )
+            request = self._load_request(record.employee, record.binding.acp_session_id)
+            try:
+                await record.child.capture_load_session(
+                    request, cast(AcpConversationIngress, private_ingress)
+                )
+                async with publication_gate:
+                    try:
+                        async with self._lock:
+                            current = self._records.get(employee.employee_id)
+                            if current is not record or not record.child.alive:
+                                raise AcpEmployeeStaleGeneration(
+                                    "attach completed on a stale child generation"
+                                )
+                        await self._publish_captured_replay(record, tuple(captured))
+                    finally:
+                        async with self._lock:
+                            self._release_replay_publication_barrier_locked(
+                                employee.employee_id,
+                                record.child_generation,
+                                replay_publication_barrier,
+                            )
+                        replay_publication_barrier = None
+            finally:
+                if replay_publication_barrier is not None:
+                    await self._release_replay_publication_barrier(
+                        employee.employee_id,
+                        record.child_generation,
+                        replay_publication_barrier,
+                    )
         return record
 
     async def _publish_captured_replay(
@@ -332,17 +360,36 @@ class AcpEmployeeRegistry:
             child_generation=record.child_generation,
             record_identity=record.record_identity,
         )
+        async with self._lock:
+            current = self._records.get(record.employee.employee_id)
+            if current is not record or not record.child.alive:
+                raise AcpEmployeeStaleGeneration(
+                    "attach replay belongs to a stale child generation"
+                )
+        if self._source_aware_conversation_ingress is not None:
+            await self._source_aware_conversation_ingress(
+                source, ConversationIngressReplayBatch(items=replay)
+            )
+            return
         for item in replay:
-            async with self._lock:
-                current = self._records.get(record.employee.employee_id)
-                if current is not record or not record.child.alive:
-                    raise AcpEmployeeStaleGeneration(
-                        "attach replay belongs to a stale child generation"
-                    )
-            if self._source_aware_conversation_ingress is not None:
-                await self._source_aware_conversation_ingress(source, item)
-            else:
-                await self._conversation_ingress(item)
+            await self._conversation_ingress(item)
+
+    async def _capture_load_replay(
+        self,
+        child: AcpEmployeeChild,
+        request: LoadSessionRequest,
+    ) -> tuple[SessionNotification | ProtocolUpdateRejectedPayload, ...]:
+        captured: list[SessionNotification | ProtocolUpdateRejectedPayload] = []
+
+        async def private_ingress(
+            item: SessionNotification | ProtocolUpdateRejectedPayload,
+        ) -> None:
+            captured.append(item)
+
+        await child.capture_load_session(
+            request, cast(AcpConversationIngress, private_ingress)
+        )
+        return tuple(captured)
 
     async def new_conversation(self, employee: ConversationEmployee) -> AcpEmployeeRecord:
         async with self._lock:
@@ -466,9 +513,13 @@ class AcpEmployeeRegistry:
             )
 
         child: AcpEmployeeChild | None = None
+        replay_publication_barrier: asyncio.Event | None = None
         try:
             definition = self._definition_for(employee.backend_key)
             child = await self._spawn_initialized_child(employee, generation, definition)
+            captured_replay: (
+                tuple[SessionNotification | ProtocolUpdateRejectedPayload, ...] | None
+            ) = None
             if binding is None:
                 response = await child.new_session(self._new_request(employee))
                 launch_configuration = self._launch_configuration(employee)
@@ -494,7 +545,12 @@ class AcpEmployeeRegistry:
                         candidate, launch_configuration
                     )
             elif binding.backend_key == employee.backend_key:
-                await child.load_session(self._load_request(employee, binding.acp_session_id))
+                replay_publication_barrier = await self._install_replay_publication_barrier(
+                    employee.employee_id, generation
+                )
+                captured_replay = await self._capture_load_replay(
+                    child, self._load_request(employee, binding.acp_session_id)
+                )
                 winner = binding
                 candidate = binding
             else:
@@ -515,11 +571,26 @@ class AcpEmployeeRegistry:
             bound_employee = await self._resolve_bound_employee(
                 employee, winner, require_repository_resolution=False
             )
-            return await self._publish(bound_employee, winner, generation, child)
+            return await self._publish(
+                bound_employee,
+                winner,
+                generation,
+                child,
+                captured_replay=captured_replay,
+                replay_publication_barrier=replay_publication_barrier,
+            )
         except BaseException:
-            if child is not None:
-                await child.close()
-            await self._discard_generation(employee.employee_id, generation)
+            try:
+                if child is not None:
+                    await child.close()
+            finally:
+                try:
+                    await self._discard_generation(employee.employee_id, generation)
+                finally:
+                    if replay_publication_barrier is not None:
+                        await self._release_replay_publication_barrier(
+                            employee.employee_id, generation, replay_publication_barrier
+                        )
             raise
 
     async def _adopt_winner(
@@ -533,15 +604,38 @@ class AcpEmployeeRegistry:
             self._require_open_locked()
             generation = self._allocate_generation_locked(requested_employee.employee_id)
         child: AcpEmployeeChild | None = None
+        replay_publication_barrier: asyncio.Event | None = None
         try:
             definition = self._definition_for(winner.backend_key)
             child = await self._spawn_initialized_child(adopted_employee, generation, definition)
-            await child.load_session(self._load_request(adopted_employee, winner.acp_session_id))
-            return await self._publish(adopted_employee, winner, generation, child)
+            replay_publication_barrier = await self._install_replay_publication_barrier(
+                adopted_employee.employee_id, generation
+            )
+            captured_replay = await self._capture_load_replay(
+                child, self._load_request(adopted_employee, winner.acp_session_id)
+            )
+            return await self._publish(
+                adopted_employee,
+                winner,
+                generation,
+                child,
+                captured_replay=captured_replay,
+                replay_publication_barrier=replay_publication_barrier,
+            )
         except BaseException:
-            if child is not None:
-                await child.close()
-            await self._discard_generation(requested_employee.employee_id, generation)
+            try:
+                if child is not None:
+                    await child.close()
+            finally:
+                try:
+                    await self._discard_generation(requested_employee.employee_id, generation)
+                finally:
+                    if replay_publication_barrier is not None:
+                        await self._release_replay_publication_barrier(
+                            requested_employee.employee_id,
+                            generation,
+                            replay_publication_barrier,
+                        )
             raise
 
     async def _spawn_initialized_child(
@@ -554,38 +648,51 @@ class AcpEmployeeRegistry:
 
         async def guarded_ingress(payload: object) -> None:
             publication_gate = await self._publication_update_gate(employee.employee_id)
-            async with publication_gate:
+            barrier_key = (employee.employee_id, generation)
+            while True:
                 async with self._lock:
-                    allowed = self._accepted_callback_generations.get(employee.employee_id, set())
-                    if generation not in allowed or self._closing:
-                        raise AcpEmployeeStaleGeneration(
-                            f"stale ACP update for generation {generation}"
-                        )
-                    record_identity = self._record_identity_by_generation.get(
-                        (employee.employee_id, generation)
+                    replay_publication_barrier = self._replay_publication_barriers.get(
+                        barrier_key
                     )
-                    if record_identity is None:
-                        raise AcpEmployeeStaleGeneration(
-                            f"missing ACP source identity for generation {generation}"
+                if replay_publication_barrier is not None:
+                    await replay_publication_barrier.wait()
+                async with publication_gate:
+                    async with self._lock:
+                        active_barrier = self._replay_publication_barriers.get(barrier_key)
+                        if active_barrier is not None:
+                            continue
+                        allowed = self._accepted_callback_generations.get(
+                            employee.employee_id, set()
                         )
-                    source = ConversationIngressSource(
-                        employee=employee,
-                        child_generation=generation,
-                        record_identity=record_identity,
-                    )
-                if self._source_aware_conversation_ingress is not None:
-                    await self._source_aware_conversation_ingress(source, payload)
-                else:
-                    await self._conversation_ingress(payload)  # type: ignore[arg-type]
+                        if generation not in allowed or self._closing:
+                            raise AcpEmployeeStaleGeneration(
+                                f"stale ACP update for generation {generation}"
+                            )
+                        record_identity = self._record_identity_by_generation.get(barrier_key)
+                        if record_identity is None:
+                            raise AcpEmployeeStaleGeneration(
+                                f"missing ACP source identity for generation {generation}"
+                            )
+                        source = ConversationIngressSource(
+                            employee=employee,
+                            child_generation=generation,
+                            record_identity=record_identity,
+                        )
+                    if self._source_aware_conversation_ingress is not None:
+                        await self._source_aware_conversation_ingress(
+                            source, cast(ConversationIngressTransition, payload)
+                        )
+                    else:
+                        await self._conversation_ingress(payload)  # type: ignore[arg-type]
+                    return
 
         async def guarded_death(error: BaseException | None) -> None:
             planned: _PlannedRetirement | None = None
             record_identity: object | None
 
             def settle_identity_locked() -> tuple[object | None, _PlannedRetirement | None]:
-                identity = self._record_identity_by_generation.get(
-                    (employee.employee_id, generation)
-                )
+                barrier_key = (employee.employee_id, generation)
+                identity = self._record_identity_by_generation.get(barrier_key)
                 planned_key = (employee.employee_id, generation, id(identity))
                 candidate = self._planned_retirements.get(planned_key)
                 owned = (
@@ -603,7 +710,12 @@ class AcpEmployeeRegistry:
                     and current.record_identity is identity
                 ):
                     self._records.pop(employee.employee_id, None)
-                self._record_identity_by_generation.pop((employee.employee_id, generation), None)
+                self._record_identity_by_generation.pop(barrier_key, None)
+                replay_publication_barrier = self._replay_publication_barriers.pop(
+                    barrier_key, None
+                )
+                if replay_publication_barrier is not None:
+                    replay_publication_barrier.set()
                 return identity, owned
 
             # A planned retirement or unpublished recovery candidate is owned by
@@ -686,6 +798,11 @@ class AcpEmployeeRegistry:
         binding: ConversationSessionBinding,
         generation: int,
         child: AcpEmployeeChild,
+        *,
+        captured_replay: (
+            tuple[SessionNotification | ProtocolUpdateRejectedPayload, ...] | None
+        ) = None,
+        replay_publication_barrier: asyncio.Event | None = None,
     ) -> AcpEmployeeRecord:
         persisted = await self._resolve_binding(employee.employee_id)
         if persisted != binding:
@@ -704,6 +821,10 @@ class AcpEmployeeRegistry:
                 if not child.alive:
                     raise AcpEmployeeStaleGeneration("candidate child is not alive")
                 previous = self._records.get(employee.employee_id)
+                accepted_before_publication = set(
+                    self._accepted_callback_generations.get(employee.employee_id, set())
+                )
+                accepted_before_publication.discard(generation)
                 record = AcpEmployeeRecord(
                     employee=employee,
                     binding=binding,
@@ -715,6 +836,28 @@ class AcpEmployeeRegistry:
                 )
                 self._records[employee.employee_id] = record
                 self._accepted_callback_generations[employee.employee_id] = {generation}
+            try:
+                if captured_replay is not None:
+                    await self._publish_captured_replay(record, captured_replay)
+            except BaseException:
+                async with self._lock:
+                    if self._records.get(employee.employee_id) is record:
+                        if previous is None:
+                            self._records.pop(employee.employee_id, None)
+                        else:
+                            self._records[employee.employee_id] = previous
+                    self._accepted_callback_generations[employee.employee_id] = (
+                        accepted_before_publication
+                    )
+                raise
+            finally:
+                if replay_publication_barrier is not None:
+                    async with self._lock:
+                        self._release_replay_publication_barrier_locked(
+                            employee.employee_id,
+                            generation,
+                            replay_publication_barrier,
+                        )
         if previous is not None and previous.child is not child:
             await previous.child.close()
         return record
@@ -726,6 +869,10 @@ class AcpEmployeeRegistry:
                 return
             self._closing = True
             self._accepted_callback_generations.clear()
+            replay_publication_barriers = tuple(self._replay_publication_barriers.values())
+            self._replay_publication_barriers.clear()
+            for replay_publication_barrier in replay_publication_barriers:
+                replay_publication_barrier.set()
             task_employee_ids: dict[asyncio.Task[Any], str] = {}
             for employee_id, initialization_task in self._initialization_tasks.items():
                 task_employee_ids[initialization_task] = employee_id
@@ -840,6 +987,59 @@ class AcpEmployeeRegistry:
     async def _publication_update_gate(self, employee_id: str) -> asyncio.Lock:
         async with self._lock:
             return self._publication_update_gates.setdefault(employee_id, asyncio.Lock())
+
+    async def _install_replay_publication_barrier(
+        self, employee_id: str, generation: int
+    ) -> asyncio.Event:
+        publication_gate = await self._publication_update_gate(employee_id)
+        async with publication_gate:
+            async with self._lock:
+                return self._install_replay_publication_barrier_locked(
+                    employee_id, generation
+                )
+
+    def _install_replay_publication_barrier_locked(
+        self, employee_id: str, generation: int
+    ) -> asyncio.Event:
+        key = (employee_id, generation)
+        self._require_open_locked()
+        if generation not in self._accepted_callback_generations.get(employee_id, set()):
+            raise AcpEmployeeStaleGeneration(
+                f"stale ACP load replay generation {generation}"
+            )
+        if self._record_identity_by_generation.get(key) is None:
+            raise AcpEmployeeStaleGeneration(
+                f"missing ACP source identity for generation {generation}"
+            )
+        if key in self._replay_publication_barriers:
+            raise RuntimeError("ACP load replay publication is already active")
+        barrier = asyncio.Event()
+        self._replay_publication_barriers[key] = barrier
+        return barrier
+
+    async def _release_replay_publication_barrier(
+        self,
+        employee_id: str,
+        generation: int,
+        barrier: asyncio.Event,
+    ) -> None:
+        publication_gate = await self._publication_update_gate(employee_id)
+        async with publication_gate:
+            async with self._lock:
+                self._release_replay_publication_barrier_locked(
+                    employee_id, generation, barrier
+                )
+
+    def _release_replay_publication_barrier_locked(
+        self,
+        employee_id: str,
+        generation: int,
+        barrier: asyncio.Event,
+    ) -> None:
+        key = (employee_id, generation)
+        if self._replay_publication_barriers.get(key) is barrier:
+            self._replay_publication_barriers.pop(key, None)
+        barrier.set()
 
     def _allocate_generation_locked(self, employee_id: str) -> int:
         generation = self._next_generation_by_employee.get(employee_id, 0) + 1
