@@ -14,10 +14,12 @@ an ordinary reconnect to a ready stream uses its materialized snapshot without a
 source/barrier cleanup covers retry, child death, and shutdown; diagnostics remain content-free; and
 the existing finite browser and external-operation protections remain in force.
 
-Focused evidence is green: 68 registry and 38 hub unit tests, strict Mypy, and selected real-WebSocket
-and cold-load tests previously passed. All independent-review findings were resolved, and the final
-review result was `PASS`. Next step: run one canonical `./verify`, then propose the implementation.
-Canonical verification has not run yet.
+Focused evidence is green: 68 registry and 51 hub tests; selected cold-load, active/idle reconnect,
+replacement, real-WebSocket, and slow-browser focused tests pass. Ready reconnect now uses a
+subscriber-local reset-complete-history-one-terminal-ready snapshot without canonical mutation, and
+malformed or noncontiguous snapshots fail closed. All review findings are resolved with a final
+result of `PASS`. Canonical `./verify` remains next; earlier attempts were invalid because of a copied
+venv entrypoint mismatch, then exposed an ordering gap that is now fixed.
 
 ## Current work cycle (2026-07-21): Ticket Workspace dot projection (`t_xb76vw05`)
 

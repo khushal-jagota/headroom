@@ -59,7 +59,6 @@ from .runtime_ports import (
 )
 from .sqlite_binding_repository import SqliteConversationBindingRepository
 from .turn_broker import (
-    ConversationTurnAttachState,
     ConversationTurnBroker,
     ConversationTurnBrokerError,
     PromptIngressBarrierResult,
@@ -515,14 +514,10 @@ class ConversationHub:
                 )
                 return subscription
 
-            handle = await self._require_registry().resolve_runtime_handle(
-                employee_id, binding.binding_generation
-            )
-            attach_state = await self._require_broker().attach_state(handle)
             await self._enqueue_and_wait(
                 employee_id,
                 lambda: self._attach_subscription_from_ready_stream(
-                    stream, subscription, attach_state
+                    stream, subscription
                 ),
             )
             if subscription.close_reason is not None:
@@ -1648,18 +1643,124 @@ class ConversationHub:
         self,
         stream: _StreamState,
         subscription: BrowserSubscription,
-        attach_state: ConversationTurnAttachState,
     ) -> None:
         if not stream.reset_buffer_available:
             self._close_browser_subscription(
                 stream, subscription, REPLAY_UNAVAILABLE_CLOSE_REASON, "replay"
             )
             return
-        if attach_state.phase in {"running", "cancelling", "capture-finalizing"}:
-            self._publish_connection_now(stream, "ready", "Ready")
         queue = cast(_BrowserOutboundQueue, subscription.queue)
-        queue.set_initial_bootstrap(tuple(stream.reset_buffer))
+        bootstrap = self._subscriber_snapshot_bootstrap(stream)
+        if bootstrap is None:
+            self._close_browser_subscription(
+                stream, subscription, REPLAY_UNAVAILABLE_CLOSE_REASON, "replay"
+            )
+            return
+        queue.set_initial_bootstrap(bootstrap)
         stream.browsers[subscription.connection_id] = subscription
+
+    def _subscriber_snapshot_bootstrap(
+        self,
+        stream: _StreamState,
+    ) -> tuple[str, ...] | None:
+        snapshot = tuple(stream.reset_buffer)
+        if not snapshot:
+            return None
+        try:
+            decoded = tuple(
+                SERVER_ENVELOPE_ADAPTER.validate_json(
+                    serialized,
+                    strict=True,
+                    by_alias=True,
+                    by_name=False,
+                )
+                for serialized in snapshot
+            )
+        except (ValidationError, ValueError, TypeError):
+            return None
+        reset_envelopes = tuple(
+            envelope
+            for envelope in decoded
+            if envelope.type == "connection" and envelope.payload.state == "reset"
+        )
+        if (
+            len(reset_envelopes) != 1
+            or decoded[0] is not reset_envelopes[0]
+            or tuple(envelope.sequence for envelope in decoded)
+            != tuple(
+                range(
+                    stream.sequence - len(decoded) + 1,
+                    stream.sequence + 1,
+                )
+            )
+        ):
+            return None
+        ready_envelopes = tuple(
+            envelope
+            for envelope in decoded
+            if envelope.type == "connection" and envelope.payload.state == "ready"
+        )
+        if not ready_envelopes:
+            return None
+        snapshot_bytes = sum(len(serialized.encode("utf-8")) for serialized in snapshot)
+        if (
+            len(ready_envelopes) == 1
+            and decoded[-1] is ready_envelopes[0]
+            and snapshot_bytes <= self._reset_buffer_byte_limit
+        ):
+            return snapshot
+
+        ready = ready_envelopes[-1]
+        bootstrap = [
+            envelope
+            for envelope in decoded
+            if not (
+                envelope.type == "connection" and envelope.payload.state == "ready"
+            )
+        ]
+        bootstrap.append(ready)
+        first_sequence = stream.sequence - len(bootstrap) + 1
+        try:
+            normalized = tuple(
+                SERVER_ENVELOPE_ADAPTER.validate_python(
+                    self._resequence_server_envelope(
+                        envelope, first_sequence + offset
+                    ).model_dump(by_alias=True, exclude_none=True),
+                    strict=True,
+                    by_alias=True,
+                    by_name=False,
+                ).model_dump_json(by_alias=True, exclude_none=True)
+                for offset, envelope in enumerate(bootstrap)
+            )
+        except (ValidationError, ValueError, TypeError):
+            return None
+        if (
+            sum(len(serialized.encode("utf-8")) for serialized in normalized)
+            > self._reset_buffer_byte_limit
+        ):
+            return None
+        return normalized
+
+    @staticmethod
+    def _resequence_server_envelope(
+        envelope: ServerEnvelope,
+        sequence: int,
+    ) -> ServerEnvelope:
+        payload = envelope.payload
+        if isinstance(envelope, ActivityEnvelope):
+            payload = envelope.payload.model_copy(update={"sequence": sequence})
+        elif isinstance(envelope, PermissionRequestEnvelope):
+            payload = envelope.payload.model_copy(
+                update={"opened_sequence": sequence}
+            )
+        elif isinstance(envelope, PermissionOutcomeEnvelope):
+            payload = envelope.payload.model_copy(
+                update={"settled_sequence": sequence}
+            )
+        return cast(
+            ServerEnvelope,
+            envelope.model_copy(update={"sequence": sequence, "payload": payload}),
+        )
 
     def _ingest_source(
         self,

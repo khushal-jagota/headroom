@@ -1880,7 +1880,7 @@ def test_browser_and_worker_share_one_real_sdk_session(
                     "lastSeenSequence": last_sequence,
                 }
             )
-            replay = _receive_until(refreshed, _is_ready)
+            replay = _receive_until(refreshed, _is_ready, limit=128)
             assert any(
                 item["type"] == "acp_session_update"
                 and item["payload"]["update"]["sessionUpdate"] == "agent_thought_chunk"
@@ -1889,8 +1889,7 @@ def test_browser_and_worker_share_one_real_sdk_session(
 
             with client.websocket_connect("/api/conversation") as second_browser:
                 second_browser.send_json({"type": "attach", "employeeId": ticket.id})
-                _receive_until(second_browser, _is_ready)
-                _receive_until(refreshed, _is_ready)
+                _receive_until(second_browser, _is_ready, limit=128)
                 old_handle = client.portal.call(
                     app.state.conversation.registry.resolve_runtime_handle,
                     ticket.id,
@@ -2451,15 +2450,7 @@ def test_automatic_worker_starts_stream_before_midturn_browser_attach(
 
             with client.websocket_connect("/api/conversation") as websocket:
                 websocket.send_json({"type": "attach", "employeeId": ticket.id})
-                ready_count = 0
-
-                def complete_active_replay(envelope: dict[str, Any]) -> bool:
-                    nonlocal ready_count
-                    if _is_ready(envelope):
-                        ready_count += 1
-                    return ready_count == 2
-
-                replay = _receive_until(websocket, complete_active_replay)
+                replay = _receive_until(websocket, _is_ready)
                 assert (
                     sum(
                         item["type"] == "connection" and item["payload"]["state"] == "reset"
@@ -2467,6 +2458,8 @@ def test_automatic_worker_starts_stream_before_midturn_browser_attach(
                     )
                     == 1
                 )
+                assert sum(_is_ready(item) for item in replay) == 1
+                assert _is_ready(replay[-1])
                 worker_user_updates = [
                     item
                     for item in replay
@@ -2880,7 +2873,7 @@ def test_real_websocket_replay_larger_than_live_queue_reaches_ready_then_deliver
             )
             assert attach_state.phase == "running"
             replay_ready_sequence = client.portal.call(
-                lambda: app.state.conversation.hub._streams[ticket.id].sequence + 1
+                lambda: app.state.conversation.hub._streams[ticket.id].sequence
             )
             with client.websocket_connect("/api/conversation") as replay:
                 replay.send_json({"type": "attach", "employeeId": ticket.id})

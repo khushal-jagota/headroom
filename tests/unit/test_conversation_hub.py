@@ -1700,7 +1700,7 @@ def test_compaction_transition_orders_both_candidate_origins_once_before_ready(
         await hub._enqueue_and_wait("t_hub", lambda: None)  # noqa: SLF001
         for subscription in (first, second):
             ordinary = json.loads(subscription.queue.get_nowait())
-            assert ordinary["sequence"] == 4
+            assert ordinary["sequence"] == 3
             assert ordinary["payload"]["update"]["content"]["text"] == "ordinary N"
 
         await repository.compare_and_swap(handle.binding, replacement_binding)
@@ -1937,7 +1937,7 @@ def test_requested_cancel_recovery_rebinds_two_browsers_same_binding_with_ordere
                 "human_echo",
                 "queue_snapshot",
             ]
-            assert [item["sequence"] for item in envelopes] == list(range(4, 12))
+            assert [item["sequence"] for item in envelopes] == list(range(3, 11))
             assert [
                 envelopes[0]["payload"]["state"],
                 envelopes[4]["payload"]["state"],
@@ -1958,9 +1958,8 @@ def test_requested_cancel_recovery_rebinds_two_browsers_same_binding_with_ordere
                 for item in envelopes[7]["payload"]["items"]
             )
 
-        # Attaching the waiter publishes its ordinary ready state to all browsers.
-        assert json.loads(first.queue.get_nowait())["payload"]["state"] == "ready"
-        assert json.loads(second.queue.get_nowait())["payload"]["state"] == "ready"
+        assert first.queue.empty()
+        assert second.queue.empty()
 
         await hub.registry_conversation_ingress(source, late)
         await hub._enqueue_and_wait("t_hub", lambda: None)  # noqa: SLF001
@@ -2342,16 +2341,19 @@ def test_idle_refresh_bootstrap_survives_one_live_update_before_writer_starts(
         existing = await hub.attach_browser("t_hub", connection_id="browser-existing")
         await asyncio.wait_for(existing.queue.get(), timeout=1)
         await asyncio.wait_for(existing.queue.get(), timeout=1)
+        stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
+        snapshot_before_attach = tuple(stream.reset_buffer)
 
         refreshing = await hub.attach_browser("t_hub", connection_id="browser-refreshing")
         await hub.publish_activity(record.employee, record.binding, "thinking", "after refresh")
 
         assert not refreshing.closed.is_set()
         assert refreshing.queue.live_qsize() == 1  # type: ignore[union-attr]
-        envelopes = [
-            json.loads(await asyncio.wait_for(refreshing.queue.get(), timeout=1))
-            for _ in range(3)
+        serialized = [
+            await asyncio.wait_for(refreshing.queue.get(), timeout=1) for _ in range(3)
         ]
+        envelopes = [json.loads(item) for item in serialized]
+        assert tuple(serialized[:2]) == snapshot_before_attach
         assert [item["payload"].get("state") for item in envelopes[:2]] == [
             "reset",
             "ready",
@@ -2378,23 +2380,47 @@ def test_idle_same_binding_attach_uses_ready_stream_snapshot_without_session_loa
         browser_a = await hub.attach_browser("t_hub", connection_id="browser-a")
         await asyncio.wait_for(browser_a.queue.get(), timeout=1)
         await asyncio.wait_for(browser_a.queue.get(), timeout=1)
+        await hub.publish_activity(
+            record.employee, record.binding, "thinking", "historical"
+        )
+        historical_for_a = json.loads(
+            await asyncio.wait_for(browser_a.queue.get(), timeout=1)
+        )
+        assert historical_for_a["sequence"] == 3
         attach_calls = registry.attach_calls
+        stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
+        sequence_before_attach = stream.sequence
+        reset_buffer_before_attach = tuple(stream.reset_buffer)
 
         browser_b = await hub.attach_browser("t_hub", connection_id="browser-b")
         assert registry.attach_calls == attach_calls
+        assert stream.sequence == sequence_before_attach
+        assert tuple(stream.reset_buffer) == reset_buffer_before_attach
+        assert browser_a.queue.empty()
         await hub.publish_activity(record.employee, record.binding, "thinking", "live")
-        envelopes = [
+        browser_b_envelopes = [
             json.loads(await asyncio.wait_for(browser_b.queue.get(), timeout=1))
-            for _ in range(3)
+            for _ in range(4)
         ]
-        assert [item["sequence"] for item in envelopes] == [1, 2, 3]
-        assert [item["payload"].get("state") for item in envelopes[:2]] == [
+        assert [item["sequence"] for item in browser_b_envelopes] == [1, 2, 3, 4]
+        assert [item["type"] for item in browser_b_envelopes] == [
+            "connection",
+            "activity",
+            "connection",
+            "activity",
+        ]
+        assert [
+            item["payload"].get("state") for item in browser_b_envelopes[:3]
+        ] == [
             "reset",
+            "thinking",
             "ready",
         ]
-        assert envelopes[-1]["payload"]["detail"] == "live"
+        assert browser_b_envelopes[-1]["payload"]["detail"] == "live"
+        live_for_a = json.loads(await asyncio.wait_for(browser_a.queue.get(), timeout=1))
+        assert live_for_a["sequence"] == 4
+        assert live_for_a["payload"]["detail"] == "live"
 
-        stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
         stream.reset_buffer_available = False
         stream.reset_buffer = []
         unavailable = await hub.attach_browser(
@@ -2403,6 +2429,455 @@ def test_idle_same_binding_attach_uses_ready_stream_snapshot_without_session_loa
         assert unavailable.close_reason == REPLAY_UNAVAILABLE_CLOSE_REASON
         assert unavailable.queue.empty()
         assert registry.attach_calls == attach_calls
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_same_binding_attach_fails_closed_for_empty_snapshot(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        existing = await hub.attach_browser("t_hub", connection_id="browser-existing")
+        await asyncio.wait_for(existing.queue.get(), timeout=1)
+        await asyncio.wait_for(existing.queue.get(), timeout=1)
+        stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
+        stream.reset_buffer = []
+        stream.reset_buffer_bytes = 0
+
+        malformed = await hub.attach_browser(
+            "t_hub", connection_id="browser-empty-snapshot"
+        )
+
+        assert malformed.close_reason == REPLAY_UNAVAILABLE_CLOSE_REASON
+        assert malformed.closed.is_set()
+        assert malformed.queue.empty()
+        assert malformed.connection_id not in stream.browsers
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_same_binding_attach_fails_closed_for_snapshot_without_ready(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        existing = await hub.attach_browser("t_hub", connection_id="browser-existing")
+        await asyncio.wait_for(existing.queue.get(), timeout=1)
+        await asyncio.wait_for(existing.queue.get(), timeout=1)
+        stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
+        stream.reset_buffer = stream.reset_buffer[:1]
+        stream.reset_buffer_bytes = sum(
+            len(item.encode("utf-8")) for item in stream.reset_buffer
+        )
+
+        malformed = await hub.attach_browser(
+            "t_hub", connection_id="browser-no-ready"
+        )
+
+        assert malformed.close_reason == REPLAY_UNAVAILABLE_CLOSE_REASON
+        assert malformed.closed.is_set()
+        assert malformed.queue.empty()
+        assert malformed.connection_id not in stream.browsers
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_same_binding_attach_fails_closed_for_snapshot_without_reset(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        existing = await hub.attach_browser("t_hub", connection_id="browser-existing")
+        await asyncio.wait_for(existing.queue.get(), timeout=1)
+        await asyncio.wait_for(existing.queue.get(), timeout=1)
+        stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
+        stream.reset_buffer = stream.reset_buffer[-1:]
+        stream.reset_buffer_bytes = sum(
+            len(item.encode("utf-8")) for item in stream.reset_buffer
+        )
+
+        malformed = await hub.attach_browser(
+            "t_hub", connection_id="browser-no-reset"
+        )
+
+        assert malformed.close_reason == REPLAY_UNAVAILABLE_CLOSE_REASON
+        assert malformed.closed.is_set()
+        assert malformed.queue.empty()
+        assert malformed.connection_id not in stream.browsers
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_same_binding_attach_fails_closed_for_malformed_envelope(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        existing = await hub.attach_browser("t_hub", connection_id="browser-existing")
+        await asyncio.wait_for(existing.queue.get(), timeout=1)
+        await asyncio.wait_for(existing.queue.get(), timeout=1)
+        stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
+        malformed_reset = json.loads(stream.reset_buffer[0])
+        malformed_reset["unexpected"] = True
+        stream.reset_buffer[0] = json.dumps(malformed_reset, separators=(",", ":"))
+        stream.reset_buffer_bytes = sum(
+            len(item.encode("utf-8")) for item in stream.reset_buffer
+        )
+
+        malformed = await hub.attach_browser(
+            "t_hub", connection_id="browser-malformed-envelope"
+        )
+
+        assert malformed.close_reason == REPLAY_UNAVAILABLE_CLOSE_REASON
+        assert malformed.closed.is_set()
+        assert malformed.queue.empty()
+        assert malformed.connection_id not in stream.browsers
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_same_binding_attach_fails_closed_when_normalized_snapshot_exceeds_limit(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        existing = await hub.attach_browser("t_hub", connection_id="browser-existing")
+        await asyncio.wait_for(existing.queue.get(), timeout=1)
+        await asyncio.wait_for(existing.queue.get(), timeout=1)
+        await hub.publish_activity(
+            record.employee, record.binding, "thinking", "historical"
+        )
+        await asyncio.wait_for(existing.queue.get(), timeout=1)
+        stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
+        snapshot_before_attach = tuple(stream.reset_buffer)
+        raw_snapshot_bytes = sum(
+            len(item.encode("utf-8")) for item in snapshot_before_attach
+        )
+        stream.sequence = 1_000
+        hub._reset_buffer_byte_limit = raw_snapshot_bytes  # noqa: SLF001
+
+        unavailable = await hub.attach_browser(
+            "t_hub", connection_id="browser-normalized-overflow"
+        )
+
+        assert unavailable.close_reason == REPLAY_UNAVAILABLE_CLOSE_REASON
+        assert unavailable.closed.is_set()
+        assert unavailable.queue.empty()
+        assert unavailable.connection_id not in stream.browsers
+        assert stream.sequence == 1_000
+        assert tuple(stream.reset_buffer) == snapshot_before_attach
+        assert existing.queue.empty()
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_same_binding_attach_collapses_multiple_ready_markers_to_latest(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        existing = await hub.attach_browser("t_hub", connection_id="browser-existing")
+        await asyncio.wait_for(existing.queue.get(), timeout=1)
+        first_ready_serialized = await asyncio.wait_for(existing.queue.get(), timeout=1)
+        await hub.publish_activity(
+            record.employee, record.binding, "thinking", "historical"
+        )
+        await asyncio.wait_for(existing.queue.get(), timeout=1)
+        stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
+        latest_ready = json.loads(first_ready_serialized)
+        latest_ready["sequence"] = 4
+        latest_ready["payload"]["detail"] = "Latest ready"
+        stream.reset_buffer.append(json.dumps(latest_ready, separators=(",", ":")))
+        stream.reset_buffer_bytes = sum(
+            len(item.encode("utf-8")) for item in stream.reset_buffer
+        )
+        stream.sequence = 4
+
+        reconnect = await hub.attach_browser(
+            "t_hub", connection_id="browser-multiple-ready"
+        )
+        await hub.publish_activity(record.employee, record.binding, "thinking", "live")
+        envelopes = [
+            json.loads(await asyncio.wait_for(reconnect.queue.get(), timeout=1))
+            for _ in range(4)
+        ]
+
+        assert [item["sequence"] for item in envelopes] == [2, 3, 4, 5]
+        ready = [
+            item
+            for item in envelopes
+            if item["type"] == "connection" and item["payload"]["state"] == "ready"
+        ]
+        assert len(ready) == 1
+        assert ready[0]["payload"]["detail"] == "Latest ready"
+        assert envelopes[-2] == ready[0]
+        assert envelopes[-1]["payload"]["detail"] == "live"
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_same_binding_attach_fails_closed_for_history_before_reset(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        existing = await hub.attach_browser("t_hub", connection_id="browser-existing")
+        reset_serialized = await asyncio.wait_for(existing.queue.get(), timeout=1)
+        ready_serialized = await asyncio.wait_for(existing.queue.get(), timeout=1)
+        await hub.publish_activity(
+            record.employee, record.binding, "thinking", "historical"
+        )
+        activity = json.loads(await asyncio.wait_for(existing.queue.get(), timeout=1))
+        reset = json.loads(reset_serialized)
+        ready = json.loads(ready_serialized)
+        activity["sequence"] = 1
+        activity["payload"]["sequence"] = 1
+        reset["sequence"] = 2
+        ready["sequence"] = 3
+        stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
+        stream.reset_buffer = [
+            json.dumps(item, separators=(",", ":"))
+            for item in (activity, reset, ready)
+        ]
+        stream.reset_buffer_bytes = sum(
+            len(item.encode("utf-8")) for item in stream.reset_buffer
+        )
+
+        unavailable = await hub.attach_browser(
+            "t_hub", connection_id="browser-history-before-reset"
+        )
+
+        assert unavailable.close_reason == REPLAY_UNAVAILABLE_CLOSE_REASON
+        assert unavailable.closed.is_set()
+        assert unavailable.queue.empty()
+        assert unavailable.connection_id not in stream.browsers
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_same_binding_attach_fails_closed_for_repeated_reset(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        existing = await hub.attach_browser("t_hub", connection_id="browser-existing")
+        first_reset = json.loads(
+            await asyncio.wait_for(existing.queue.get(), timeout=1)
+        )
+        ready = json.loads(await asyncio.wait_for(existing.queue.get(), timeout=1))
+        repeated_reset = dict(first_reset)
+        repeated_reset["sequence"] = 2
+        ready["sequence"] = 3
+        stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
+        stream.sequence = 3
+        stream.reset_buffer = [
+            json.dumps(item, separators=(",", ":"))
+            for item in (first_reset, repeated_reset, ready)
+        ]
+        stream.reset_buffer_bytes = sum(
+            len(item.encode("utf-8")) for item in stream.reset_buffer
+        )
+
+        unavailable = await hub.attach_browser(
+            "t_hub", connection_id="browser-repeated-reset"
+        )
+
+        assert unavailable.close_reason == REPLAY_UNAVAILABLE_CLOSE_REASON
+        assert unavailable.closed.is_set()
+        assert unavailable.queue.empty()
+        assert unavailable.connection_id not in stream.browsers
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    ("ready_sequence", "current_sequence"),
+    ((3, 3), (2, 3)),
+    ids=("sequence-gap", "does-not-end-at-current"),
+)
+def test_same_binding_attach_fails_closed_for_noncontiguous_or_stale_snapshot(
+    tmp_path: Path,
+    ready_sequence: int,
+    current_sequence: int,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        existing = await hub.attach_browser("t_hub", connection_id="browser-existing")
+        await asyncio.wait_for(existing.queue.get(), timeout=1)
+        ready = json.loads(await asyncio.wait_for(existing.queue.get(), timeout=1))
+        stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
+        ready["sequence"] = ready_sequence
+        stream.reset_buffer[-1] = json.dumps(ready, separators=(",", ":"))
+        stream.reset_buffer_bytes = sum(
+            len(item.encode("utf-8")) for item in stream.reset_buffer
+        )
+        stream.sequence = current_sequence
+
+        unavailable = await hub.attach_browser(
+            "t_hub", connection_id=f"browser-invalid-sequences-{ready_sequence}"
+        )
+
+        assert unavailable.close_reason == REPLAY_UNAVAILABLE_CLOSE_REASON
+        assert unavailable.closed.is_set()
+        assert unavailable.queue.empty()
+        assert unavailable.connection_id not in stream.browsers
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    ("envelope_type", "nested_sequence_key"),
+    (
+        ("activity", "sequence"),
+        ("permission_request", "openedSequence"),
+        ("permission_outcome", "settledSequence"),
+    ),
+)
+def test_same_binding_attach_fails_closed_for_nested_sequence_mismatch(
+    tmp_path: Path,
+    envelope_type: str,
+    nested_sequence_key: str,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        existing = await hub.attach_browser("t_hub", connection_id="browser-existing")
+        await asyncio.wait_for(existing.queue.get(), timeout=1)
+        ready_serialized = await asyncio.wait_for(existing.queue.get(), timeout=1)
+        if envelope_type == "activity":
+            await hub.publish_activity(
+                record.employee, record.binding, "thinking", "historical"
+            )
+        elif envelope_type == "permission_request":
+            await hub.publish_permission_request(
+                record.employee,
+                record.binding,
+                "permission-integrity",
+                record.employee.backend_key,
+                RequestPermissionRequest(
+                    session_id=record.binding.acp_session_id,
+                    tool_call=ToolCallUpdate(
+                        session_update="tool_call",
+                        tool_call_id="tool-integrity",
+                        title="Write file",
+                        kind="edit",
+                        status="pending",
+                    ),
+                    options=[
+                        PermissionOption(
+                            option_id="once", name="Allow once", kind="allow_once"
+                        )
+                    ],
+                ),
+                20,
+            )
+        else:
+            await hub.publish_permission_outcome(
+                record.employee,
+                record.binding,
+                "permission-integrity",
+                RequestPermissionResponse(
+                    outcome=DeniedOutcome(outcome="cancelled")
+                ),
+                "test",
+            )
+        published = json.loads(await asyncio.wait_for(existing.queue.get(), timeout=1))
+        assert published["type"] == envelope_type
+        published["payload"][nested_sequence_key] = published["sequence"] + 1
+        ready = json.loads(ready_serialized)
+        ready["sequence"] = published["sequence"] + 1
+        stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
+        stream.sequence = ready["sequence"]
+        stream.reset_buffer[-1] = json.dumps(published, separators=(",", ":"))
+        stream.reset_buffer.append(json.dumps(ready, separators=(",", ":")))
+        stream.reset_buffer_bytes = sum(
+            len(item.encode("utf-8")) for item in stream.reset_buffer
+        )
+
+        unavailable = await hub.attach_browser(
+            "t_hub", connection_id=f"browser-nested-mismatch-{envelope_type}"
+        )
+
+        assert unavailable.close_reason == REPLAY_UNAVAILABLE_CLOSE_REASON
+        assert unavailable.closed.is_set()
+        assert unavailable.queue.empty()
+        assert unavailable.connection_id not in stream.browsers
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
@@ -2553,6 +3028,9 @@ def test_active_turn_attach_orders_replay_larger_than_live_queue_before_ready_an
         await hub.publish_activity(record.employee, record.binding, "thinking", "replayed")
         await asyncio.wait_for(original.queue.get(), timeout=1)
         broker.phase = "running"
+        stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
+        sequence_before_attach = stream.sequence
+        reset_buffer_before_attach = tuple(stream.reset_buffer)
 
         active = await hub.attach_browser(
             "t_hub",
@@ -2561,16 +3039,28 @@ def test_active_turn_attach_orders_replay_larger_than_live_queue_before_ready_an
             last_seen_sequence=3,
         )
         assert active.close_reason is None
+        assert stream.sequence == sequence_before_attach
+        assert tuple(stream.reset_buffer) == reset_buffer_before_attach
+        assert original.queue.empty()
         await hub.publish_activity(record.employee, record.binding, "thinking", "live")
         envelopes = [
             json.loads(await asyncio.wait_for(active.queue.get(), timeout=1))
-            for _ in range(5)
+            for _ in range(4)
         ]
-        assert [item["sequence"] for item in envelopes] == [1, 2, 3, 4, 5]
-        assert [item["payload"].get("detail") for item in envelopes[-2:]] == [
-            "Ready",
-            "live",
+        assert [item["sequence"] for item in envelopes] == [1, 2, 3, 4]
+        ready_indexes = [
+            index
+            for index, item in enumerate(envelopes)
+            if item["type"] == "connection" and item["payload"]["state"] == "ready"
         ]
+        assert ready_indexes == [2]
+        assert envelopes[1]["payload"]["detail"] == "replayed"
+        assert envelopes[-1]["payload"]["detail"] == "live"
+        original_live = json.loads(
+            await asyncio.wait_for(original.queue.get(), timeout=1)
+        )
+        assert original_live["sequence"] == sequence_before_attach + 1
+        assert original_live["payload"]["detail"] == "live"
         assert active.closed.is_set() is False
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
@@ -2596,8 +3086,8 @@ def test_slow_live_browser_is_evicted_without_blocking_healthy_browser_and_logs_
         await asyncio.wait_for(healthy.queue.get(), timeout=1)
         broker.phase = "running"
         slow = await hub.attach_browser("t_hub", connection_id="browser-slow")
-        assert slow.queue.qsize() == 3
-        await asyncio.wait_for(healthy.queue.get(), timeout=1)
+        assert slow.queue.qsize() == 2
+        assert healthy.queue.empty()
 
         delivered = None
         for index in range(4):

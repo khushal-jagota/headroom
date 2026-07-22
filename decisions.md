@@ -67,6 +67,15 @@ snapshot instead of issuing another `session/load`.
 Exact source and barrier cleanup covers retry, child death, and shutdown. Logs remain content-free,
 and the existing finite browser and external-operation protections remain in force.
 
+## D-ready-reconnect-subscriber-snapshot — Rebuild ready reconnect replay without canonical mutation
+
+Reconnect copies the complete materialized reset epoch and collapses ready markers to one terminal
+ready. The contiguous range ends at the unchanged current sequence, with no mutation of canonical
+state, existing browsers, or the backend; the next live event remains current sequence plus one.
+
+Snapshots are strictly typed, contain exactly one reset as the first event, are contiguous and end at
+the current sequence, and remain within the byte bound. Invalid snapshots fail as replay unavailable.
+
 # Workspace
 
 ## D-ticket-projection-cutover-lock-and-permission-compensation — Serialize replacement publication with Ticket facts
