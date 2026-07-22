@@ -133,6 +133,9 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         ceiling=str(row["ceiling"]),
         at_cap=AtCap(row["at_cap"]),
         ticket_status=TicketStatus(row["ticket_status"]),
+        backend_error=(
+            str(row["backend_error"]) if row["backend_error"] is not None else None
+        ),
         stage_ownership_overrides=overrides,
         default_stage_ownership_mode=default_ownership,
         effective_stage_ownership_mode=effective_ownership,
@@ -304,10 +307,13 @@ def _write_ticket_status(
     *,
     error: str | None = None,
 ) -> None:
+    backend_error = error if ticket_status is TicketStatus.errored else None
+    if ticket_status is TicketStatus.errored and not backend_error:
+        raise ValueError("errored Ticket status requires a concrete backend error")
     row = conn.execute("SELECT sprint_item_id FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
     conn.execute(
-        "UPDATE tickets SET ticket_status = ?, updated_at = ? WHERE id = ?",
-        (ticket_status.value, now, ticket_id),
+        "UPDATE tickets SET ticket_status = ?, backend_error = ?, updated_at = ? WHERE id = ?",
+        (ticket_status.value, backend_error, now, ticket_id),
     )
     payload: dict[str, object] = {"ticket_status": ticket_status.value}
     if error is not None:

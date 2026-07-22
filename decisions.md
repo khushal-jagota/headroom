@@ -56,6 +56,24 @@ dispatch, and migration tests. The existing v25 through v28 migrations keep thei
 
 # Workspace
 
+## D-ticket-error-requires-explicit-backend-provenance — Correctness failures are not Ticket failures
+
+`employee_step_runs` remains the broad execution-correctness record, so it may settle
+`errored` for conversation, publication, replay, projection, or other gateway failures.
+The Ticket becomes `errored` only when the tracked ACP result explicitly identifies a
+backend Worker failure; the exact current reason lives on the Ticket as `backend_error`.
+Every non-error status write clears that reason atomically, and Workspace derives its
+exceptional state only from that field. This preserves existing interruption and
+infrastructure behavior without inventing recovery controls or changing timeout policy.
+
+Schema v31 clears every legacy errored Ticket back to its effective current-Stage resting
+control status, using the current-Stage ownership override when present and otherwise the
+ownership default captured by v30. The v30 run rows had no provenance, so even a
+concrete-looking stored message cannot prove that the backend Worker caused it; guessing
+from text or old status would violate the confirmation boundary. This bounded self-review
+correction collapses ticket decomposition and plan review into one strict TDD slice because
+it changes one migration mapping at the already-established database migration seam.
+
 ## D-ticket-projection-cutover-lock-and-permission-compensation — Serialize replacement publication with Ticket facts
 
 Compaction and requested-cancel recovery acquire the existing per-Ticket projection lock only around their final

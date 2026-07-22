@@ -78,6 +78,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "ceiling": str(ticket.ceiling),
         "at_cap": ticket.at_cap.value,
         "ticket_status": ticket.ticket_status.value,
+        "backend_error": ticket.backend_error,
         "stage_ownership_overrides": {
             stage: mode.value for stage, mode in ticket.stage_ownership_overrides.items()
         },
@@ -243,6 +244,7 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
         "parent_projects.name AS parent_project_name, tickets.fields, tickets.worker_type, "
         "tickets.employee_backend, "
         "tickets.ticket_status, "
+        "tickets.backend_error, "
         "ticket_conversation_projections.latest_activity_state, "
         "ticket_conversation_projections.has_completed_response_awaiting_user, "
         "ticket_conversation_projections.has_pending_permission, "
@@ -304,6 +306,9 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
                 worker_type_definition=worker_type_definition,
             ),
             "ticket_status": str(row["ticket_status"]),
+            "backend_error": (
+                str(row["backend_error"]) if row["backend_error"] is not None else None
+            ),
             "worker_type": worker_type,
             "employee_backend": str(row["employee_backend"]),
             "stage": stage,
@@ -315,6 +320,11 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
             "workspace_dot_state": workspace_dot_state(
                 WorkspaceDotFacts(
                     ticket_status=TicketStatus(str(row["ticket_status"])),
+                    backend_error=(
+                        str(row["backend_error"])
+                        if row["backend_error"] is not None
+                        else None
+                    ),
                     has_pending_proposal=machine.has_pending_gating_proposal(
                         stage,
                         fields,

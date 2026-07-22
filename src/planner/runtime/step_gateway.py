@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 EmployeeStepRunStatus = Literal["complete", "interrupted", "errored"]
+EmployeeStepFailureProvenance = Literal["backend", "conversation"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,6 +15,7 @@ class EmployeeStepRunResult:
     status: EmployeeStepRunStatus
     employee_session_id: str | None
     error: str | None
+    failure_provenance: EmployeeStepFailureProvenance | None = None
 
 
 class EmployeeStepGatewayBusy(RuntimeError):

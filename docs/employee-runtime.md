@@ -108,15 +108,27 @@ _Code paths:_ `src/planner/runtime/acp_step_gateway.py`,
 
 ## Settlement and restart
 
-The gateway returns only terminal status, employee session id, and error. The runner
-does not receive transcript text. It settles the exact running record once and then
-applies the existing Ticket outcome:
+The gateway returns terminal status, employee session id, error, and whether a failure
+was confirmed by the backend Worker or arose in Panels' conversation machinery. The
+runner does not receive transcript text. It settles the exact running record once and
+then applies the Ticket outcome:
 
 - a completed worker turn lets proposals and the resolution engine determine the
   next resting status;
-- an interrupted turn leaves an interrupted correctness record;
-- an errored turn records the error and makes that failure visible in Ticket state;
+- an interrupted turn leaves an interrupted correctness record and releases the Ticket;
+- every errored turn records its error in the correctness row, but only a failure
+  explicitly confirmed by the backend Worker makes the Ticket `errored` and stores its
+  exact text as `backend_error`;
+- cancellation uncertainty or timeout, restart recovery, session busy, permissions,
+  browser publication, replay, projection, and unclassified gateway failures keep their
+  existing non-error Ticket behavior;
 - takeover or a lost claim cannot be undone by a late worker completion.
+
+Every non-error Ticket status transition clears `backend_error` in the same write. The
+v31 migration also clears old errored Ticket states back to each current Stage's existing
+resting control status. It uses the current-Stage ownership override when present and
+otherwise the ownership default captured by v30, because the older correctness rows did
+not record provenance and cannot confirm that their failures came from the backend.
 
 On startup, a stranded running row is not treated as a new prompt. Recovery requires
 the same Ticket session binding, interrupts the old correctness row, creates one
@@ -179,7 +191,8 @@ startup behavior changes the Ticket's durable backend choice or session identity
 ## Deferred
 
 - **Retry after a settled error.** Startup recovers a stranded running step, but an
-  already errored Ticket still needs a deliberate retry policy.
+  already errored Ticket still needs a deliberate retry policy. This is intentionally
+  outside the current failure-classification behavior.
 - **In-server rollover scheduling.** Panels provisions the rollover role skill; thin
   scheduled prompts remain outside the deterministic runtime.
 

@@ -4,6 +4,29 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-22): backend-only Ticket errors (`t_2y1s72x4`)
+
+Implementation is complete in the dedicated uncommitted worktree. Ticket schema v31
+owns the exact `backend_error`; tracked ACP results distinguish confirmed backend Worker
+failures from conversation failures; and the runner writes Ticket `errored` only for the
+former. Every non-error status writer clears the reason atomically. Legacy v30 errors are
+cleared back to their effective current-Stage resting control status because their
+correctness rows did not preserve provenance. The migration uses a current-Stage ownership
+override before v30's captured default, so user- and paired-owned work does not become
+worker-dispatchable. Workspace exceptional treatment reads only this canonical fact, while
+the Ticket page shows the exact reason.
+
+Strict-TDD corrections cover migration ownership, restart/revision/session/collision
+recovery, and preservation of concrete prompt and child-process backend reasons. The final
+independent review reported both blocking findings resolved. The canonical `./verify` then
+found one stale E2E assertion that still expected an intentional interrupt to error its
+Ticket; that assertion now proves the Ticket returns to `empty`, keeps its session id, clears
+`backend_error`, and retains the interrupted correctness row.
+
+The settled tree passes the canonical `./verify`: Ruff, strict mypy, the unit suite, build
+checks, frontend checks, and all 116 E2E tests. No recovery control or timeout policy changed.
+The ticket branch is ready to commit; closeout and main integration have not begun.
+
 ## Current work cycle (2026-07-22): Clear Worker-message attention on Ticket open (`t_m024gke4`)
 
 The approved implementation plan adds one idempotent Ticket-open acknowledgement that clears only

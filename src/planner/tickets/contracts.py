@@ -62,6 +62,7 @@ class WorkspaceDotFacts:
     """Factual Ticket and ACP inputs for the one Workspace-dot classifier."""
 
     ticket_status: TicketStatus
+    backend_error: str | None = None
     has_pending_proposal: bool = False
     latest_activity_state: WorkspaceActivityState | None = None
     has_completed_response_awaiting_user: bool = False
@@ -239,6 +240,7 @@ class Ticket:  # §3.3 — column names match exactly
     ceiling: str  # ceiling id; a member of the type's ceiling_range
     at_cap: AtCap  # default propose (R2)
     ticket_status: TicketStatus  # durable state-of-control; transition functions write it
+    backend_error: str | None  # concrete confirmed backend Worker failure, else NULL
     stage_ownership_overrides: Mapping[str, StageOwnershipMode]
     default_stage_ownership_mode: StageOwnershipMode | None
     effective_stage_ownership_mode: StageOwnershipMode | None

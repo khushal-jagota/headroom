@@ -51,6 +51,7 @@ _PRE_EXISTING_CARD_KEYS = [
 ]
 
 _ENRICHMENT_CARD_KEYS = [
+    "backend_error",
     "worker_type",
     "employee_backend",
     "stage",
@@ -221,3 +222,30 @@ def test_board_card_uses_the_canonical_workspace_dot_result(tmp_db: Connection) 
     board = board_view(tmp_db, 20, day_id="day_2026-07-04")
     card = next(card for column in board["columns"] for card in column["cards"])
     assert card["workspace_dot_state"] == "active"
+
+
+def test_board_exception_comes_only_from_canonical_ticket_backend_error(
+    tmp_db: Connection,
+) -> None:
+    ticket_id = _ticket(tmp_db, "Backend failure", 1)
+    add_day_ticket(tmp_db, "day_2026-07-04", ticket_id, 10)
+    tmp_db.execute(
+        "UPDATE tickets SET ticket_status = 'errored', backend_error = 'Provider exploded' "
+        "WHERE id = ?",
+        (ticket_id,),
+    )
+    db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    TicketConversationProjection(db_path, now=lambda: 2).record_activity(ticket_id, "interrupted")
+
+    board = board_view(tmp_db, 20, day_id="day_2026-07-04")
+    card = next(card for column in board["columns"] for card in column["cards"])
+    assert card["backend_error"] == "Provider exploded"
+    assert card["workspace_dot_state"] == "exceptional"
+
+    tmp_db.execute(
+        "UPDATE tickets SET ticket_status = 'empty', backend_error = NULL WHERE id = ?",
+        (ticket_id,),
+    )
+    board = board_view(tmp_db, 21, day_id="day_2026-07-04")
+    card = next(card for column in board["columns"] for card in column["cards"])
+    assert card["workspace_dot_state"] == "needs_attention"

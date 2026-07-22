@@ -80,6 +80,21 @@ type _CancellationCause = Literal[
 ]
 
 type TrackedTurnStatus = Literal["complete", "interrupted", "errored"]
+type TrackedTurnFailureProvenance = Literal["backend", "conversation"]
+
+
+def _backend_failure_reason(
+    error: BaseException | None, provider_reason: object = None
+) -> str:
+    if (
+        isinstance(provider_reason, str)
+        and provider_reason
+        and provider_reason == provider_reason.strip()
+    ):
+        return provider_reason
+    if error is not None and (exception_reason := str(error).strip()):
+        return exception_reason
+    return "Employee connection failed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +102,7 @@ class TrackedTurnResult:
     status: TrackedTurnStatus
     response: PromptResponse | None = None
     error: str | None = None
+    failure_provenance: TrackedTurnFailureProvenance | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -554,7 +570,10 @@ class _Actor:
             response = task.result()
         except asyncio.CancelledError:
             if cancellation_cause is None:
-                await self._fail_generation("Employee prompt was cancelled unexpectedly")
+                await self._fail_generation(
+                    "Employee prompt was cancelled unexpectedly",
+                    failure_provenance="backend",
+                )
                 return
             prompt_raised = True
         except Exception as error:
@@ -564,7 +583,7 @@ class _Actor:
                 "new_conversation",
                 "shutdown",
             }:
-                failure_reason = "Employee connection failed"
+                provider_reason: object = None
                 if cancellation_cause is None and self.boundaries:
                     strategy = active.lease.handle.definition.turn_strategy
                     prompt_failure_reason = getattr(
@@ -579,14 +598,10 @@ class _Actor:
                             )
                         except Exception:
                             pass
-                        else:
-                            if (
-                                isinstance(provider_reason, str)
-                                and provider_reason
-                                and provider_reason == provider_reason.strip()
-                            ):
-                                failure_reason = provider_reason
-                await self._fail_generation(failure_reason)
+                await self._fail_generation(
+                    _backend_failure_reason(error, provider_reason),
+                    failure_provenance="backend",
+                )
                 return
             prompt_raised = True
 
@@ -620,6 +635,7 @@ class _Actor:
                 await self._fail_generation(
                     admitted.rejection_reason,
                     active.requested_cancel_deadline or active.close_deadline,
+                    failure_provenance="backend",
                 )
                 return
 
@@ -685,6 +701,9 @@ class _Actor:
                     "errored" if cause == "child_failure" else "interrupted",
                     response=response,
                     error="Employee connection failed" if cause == "child_failure" else None,
+                    failure_provenance=(
+                        "backend" if cause == "child_failure" else None
+                    ),
                 ),
             )
             return
@@ -1560,7 +1579,11 @@ class _Actor:
         self._settle_tracked(
             active.tracked_handle,
             active.tracked_terminal_hook,
-            TrackedTurnResult("errored", error="Prompt cancellation timed out"),
+            TrackedTurnResult(
+                "errored",
+                error="Prompt cancellation timed out",
+                failure_provenance="conversation",
+            ),
         )
         if active.successor is not None:
             await self.receipt(
@@ -1598,7 +1621,11 @@ class _Actor:
         await self.activity("failed", "Employee connection failed")
 
     async def _fail_generation(
-        self, reason: str, deadline: float | None = None
+        self,
+        reason: str,
+        deadline: float | None = None,
+        *,
+        failure_provenance: TrackedTurnFailureProvenance = "conversation",
     ) -> None:
         if self.lifecycle == "failed":
             return
@@ -1619,7 +1646,11 @@ class _Actor:
             self._settle_tracked(
                 active.tracked_handle,
                 active.tracked_terminal_hook,
-                TrackedTurnResult("errored", error=reason),
+                TrackedTurnResult(
+                    "errored",
+                    error=reason,
+                    failure_provenance=failure_provenance,
+                ),
             )
             if active.successor is not None:
                 await self.receipt(
@@ -1636,7 +1667,11 @@ class _Actor:
         self._settle_tracked(
             self.capture_tracked_handle,
             self.capture_tracked_terminal_hook,
-            TrackedTurnResult("errored", error=reason),
+            TrackedTurnResult(
+                "errored",
+                error=reason,
+                failure_provenance=failure_provenance,
+            ),
         )
         self.capture_tracked_handle = None
         self.capture_tracked_terminal_hook = None
@@ -2100,7 +2135,10 @@ class ConversationTurnBroker:
         async def operation(record: _Actor) -> None:
             await self._adopt_runtime(record, handle)
             if record.active is not None or record.capture_task is not None:
-                await record._fail_generation("Agent sent an unsupported update")
+                await record._fail_generation(
+                    "Agent sent an unsupported update",
+                    failure_provenance="backend",
+                )
 
         await self._command(actor, operation)
 
@@ -2228,7 +2266,6 @@ class ConversationTurnBroker:
         child_generation: int,
         error: BaseException | None,
     ) -> None:
-        del error
         actor = self._actors.get((employee_id, binding_generation))
         if actor is None:
             return
@@ -2239,7 +2276,9 @@ class ConversationTurnBroker:
                 or record.handle.child_generation != child_generation
             ):
                 return
-            await record._fail_generation("Employee connection failed")
+            await record._fail_generation(
+                _backend_failure_reason(error), failure_provenance="backend"
+            )
 
         try:
             await self._command(actor, operation)

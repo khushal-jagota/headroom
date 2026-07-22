@@ -2367,7 +2367,8 @@ def test_automatic_worker_starts_stream_before_midturn_browser_attach(
             assert app.state.employee_step_runner.wait_idle(timeout=3)
             with connect(db_path) as conn:
                 settled_ticket = conn.execute(
-                    "SELECT ticket_status, employee_session_id FROM tickets WHERE id = ?",
+                    "SELECT ticket_status, employee_session_id, backend_error "
+                    "FROM tickets WHERE id = ?",
                     (ticket.id,),
                 ).fetchone()
                 settled_step = conn.execute(
@@ -2375,7 +2376,7 @@ def test_automatic_worker_starts_stream_before_midturn_browser_attach(
                     (ticket.id,),
                 ).fetchone()
             assert settled_ticket is not None and settled_step is not None
-            assert tuple(settled_ticket) == ("errored", session_id)
+            assert tuple(settled_ticket) == ("empty", session_id, None)
             assert settled_step["status"] == "interrupted"
 
 
