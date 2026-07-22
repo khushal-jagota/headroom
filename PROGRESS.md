@@ -12,11 +12,12 @@ Matched tool updates still patch normally, while recognized unsupported updates 
 `plan_removed` remain visible as unsupported agent content.
 
 Focused TDD evidence: `node tests/acp-browser-state.test.mjs` first failed on the new unmatched-update
-assertion, then passed after the reducer change. Against current `main` base
-`d60e62dda2aa7ac1693fdf989bf72d41009e724d`, the prospective merged tree's canonical `./verify`
-passed Ruff, strict mypy across 152 source files, 1,292 unit tests, compile/CSS checks, zero Svelte
-diagnostics, production frontend build/tests, and 115 Playwright E2E tests; final `VERIFY: PASS`.
-The merged feature branch is ready to advance `main`, with no blockers.
+assertion, then passed after the reducer change. Main advanced by fast-forward from
+`d60e62dda2aa7ac1693fdf989bf72d41009e724d` to `bc9de5ca40fa3099e006e8a7ac875c5b0146f7fc`.
+The canonical `./verify` evidence remains the exact prospective/final tree result: Ruff, strict mypy
+across 152 source files, 1,292 unit tests, compile/CSS checks, zero Svelte diagnostics, production
+frontend build/tests, and 115 Playwright E2E tests passed; final `VERIFY: PASS`. Unrelated local
+changes were preserved exactly. No deploy or restart applied.
 
 ## Current work cycle (2026-07-22): compact Workers Closeout (`t_6v0bjnwh`)
 
