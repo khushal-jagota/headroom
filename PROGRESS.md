@@ -1,5 +1,42 @@
 # PROGRESS
 
+## Current work cycle (2026-07-22): Bound Codex file-edit conversation payloads
+
+Live reproduction for Ticket `t_m024gke4` is exact: its durable Codex session loads 239 typed ACP
+notifications, but Panels attempts 241 browser envelopes totaling 1,137,603 bytes against the
+1,048,576-byte reset-buffer limit. The hub therefore clears the atomic replay and closes every
+attach with 1013 `conversation replay unavailable; retry`; the browser receives no cursor, renders
+no history, and cannot send. Ticket `errored` status is unrelated.
+
+One completed Codex `Editing files` update is 956,514 bytes. The pinned external Codex ACP adapter
+expands two small append patches against `PROGRESS.md` and `decisions.md` into complete old/new file
+snapshots. Panels will not patch or fork that dependency. Instead, its backend definition supplies
+one typed normalizer applied inside ordered ingress after the raw/typed fingerprint match and before
+both live publication and private replay capture.
+Codex file edits will retain truthful paths, status, bounded changed hunks, original line origins,
+and explicit truncation metadata without forwarding complete unchanged files. Other Codex updates
+and all other backends remain byte-for-byte unchanged. The reset-buffer ceiling remains the final
+integrity guard, with focused live/replay regressions followed by one canonical `./verify`.
+
+The implementation now bounds Codex edit detail to 64 KiB beyond measured mandatory identity,
+uses grouped small-file hunks and fixed-work large-file evidence, and carries truthful origin and
+truncation metadata through transcript steps and permission prompts. Focused normalizer, real SDK
+child live/private-load, frontend component, and Hub replay tests are green; the Hub fixture proves a
+raw update above 1 MiB reaches `ready` after normalization without changing the replay cap.
+
+Independent implementation review found and resolved collision-ordering and trailing-newline
+presentation defects; the final review reports `NO VIOLATIONS`. The canonical `./verify` passed
+Ruff, strict Mypy across 153 source files, 1,304 unit tests, compile/CSS checks, zero Svelte
+diagnostics, the production build and frontend tests, and all 116 Playwright tests; final
+`VERIFY: PASS`.
+
+Landed on main and restarted. A live attach to the affected Ticket now replays all 239 ACP updates,
+reaches `ready` at sequence 241, and transfers 198,376 bytes total; the largest envelope is 60,730
+bytes. The pre-existing dirty main-worktree contents were restored exactly for every non-generated
+path. The one generated-bundle conflict was resolved by rebuilding from the combined source tree,
+so the dirty bundle contains both the landed fix and the owner's restored frontend work. Both
+temporary stashes were removed; older owner stashes and all dirty nested worktrees remain untouched.
+
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.

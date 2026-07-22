@@ -4,6 +4,7 @@
   import type { DeepReadonly } from "../../lib/acp/conversationState";
   import { acpFilePreviewTarget } from "../../lib/acp/filePreview";
   import { lineDiff } from "../../lib/acp/lineDiff";
+  import { panelsFileEditMetadata } from "../../lib/acp/fileEditMetadata";
   import { stepIconPaths } from "../../lib/acp/stepIcons";
   import FilePreview from "../FilePreview.svelte";
   import MarkdownBlock from "../MarkdownBlock.svelte";
@@ -34,15 +35,24 @@
     let added = 0;
     let removed = 0;
     let sawDiff = false;
+    let partial = false;
     for (const content of tool.content ?? []) {
       if (content.type !== "diff") continue;
       sawDiff = true;
-      for (const row of lineDiff(content.oldText, content.newText)) {
+      const bounded = panelsFileEditMetadata(content._meta);
+      if (bounded?.detailState !== "complete" && bounded !== null) partial = true;
+      if (bounded?.detailState === "omitted") continue;
+      for (const row of lineDiff(content.oldText, content.newText, {
+        oldStartLine: bounded?.oldStartLine,
+        newStartLine: bounded?.newStartLine,
+        emptyNewTextMeansNoLines: bounded?.operation === "delete",
+        normalizedSnapshotFragments: bounded !== null,
+      })) {
         if (row.kind === "add") added += 1;
         else if (row.kind === "delete") removed += 1;
       }
     }
-    return sawDiff ? { added, removed } : null;
+    return sawDiff ? { added, removed, partial } : null;
   });
 
   function terminalLabel(terminal: DeepReadonly<ConversationTerminalState>): string {
@@ -76,6 +86,7 @@
   {#if counts}
     <span class="acp-step-counts">
       <span class="acp-step-add">+{counts.added}</span> <span class="acp-step-del">−{counts.removed}</span>
+      {#if counts.partial}<span aria-label="Partial edit counts">partial</span>{/if}
     </span>
   {/if}
   {@render mark()}
@@ -94,7 +105,7 @@
     <div id={regionId} class="acp-step-detail">
       {#each detail as content}
         {#if content.type === "diff"}
-          <DiffView path={content.path} oldText={content.oldText} newText={content.newText} />
+          <DiffView path={content.path} oldText={content.oldText} newText={content.newText} fieldMeta={content._meta} />
         {:else if content.type === "terminal"}
           {@const terminal = terminalStates[content.terminalId]}
           <section class="acp-code-well" aria-label={`Terminal ${content.terminalId}`}>

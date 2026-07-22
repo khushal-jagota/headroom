@@ -74,11 +74,41 @@ const plan = [{ content: "Ship runtime proof", status: "in_progress", priority: 
 const tool = {
   toolCallId: "tool-runtime",
   title: "Runtime tool",
-  kind: "shell",
+  kind: "edit",
   status: "completed",
   expanded: false,
   content: [
-    { type: "diff", path: "runtime.txt", oldText: "before\\n", newText: "after\\n" },
+    {
+      type: "diff", path: "runtime.txt", oldText: "before", newText: "after",
+      _meta: {
+        "https://panels.local/acp/codex-file-edit/v1": {
+          operation: "update", detailState: "complete", oldStartLine: 999,
+          newStartLine: 999, oldLineCount: 1, newLineCount: 1,
+        },
+        "https://panels.local/acp/codex-file-edit/v1#9007199254740992": {
+          operation: "update", detailState: "complete", oldStartLine: 777,
+          newStartLine: 777, oldLineCount: 1, newLineCount: 1,
+        },
+        "https://panels.local/acp/codex-file-edit/v1#9007199254740993": {
+          operation: "update", detailState: "truncated", oldStartLine: 41,
+          newStartLine: 51, oldLineCount: null, newLineCount: null,
+        },
+      },
+    },
+    {
+      type: "diff", path: "added-newline.txt", oldText: null, newText: "one\\n",
+      _meta: { "https://panels.local/acp/codex-file-edit/v1": {
+        operation: "add", detailState: "complete", oldStartLine: null,
+        newStartLine: 7, oldLineCount: 0, newLineCount: 1,
+      } },
+    },
+    {
+      type: "diff", path: "deleted-newline.txt", oldText: "one\\n", newText: "",
+      _meta: { "https://panels.local/acp/codex-file-edit/v1": {
+        operation: "delete", detailState: "complete", oldStartLine: 9,
+        newStartLine: null, oldLineCount: 1, newLineCount: 0,
+      } },
+    },
     { type: "terminal", terminalId: "terminal-runtime" },
   ],
   locations: [],
@@ -411,13 +441,37 @@ const controller: ConversationController = {
                 path: "/workspace/first.txt",
                 oldText: ["first before", ...Array.from({ length: 80 }, (_, index) => "shared " + index)].join("\\n") + "\\n",
                 newText: ["first after", ...Array.from({ length: 80 }, (_, index) => "shared " + index)].join("\\n") + "\\n",
+                _meta: { "https://panels.local/acp/codex-file-edit/v1": {
+                  operation: "update", detailState: "truncated", oldStartLine: 101,
+                  newStartLine: 201, oldLineCount: null, newLineCount: null,
+                } },
               },
               { type: "terminal", terminalId: "permission-terminal-must-stay-hidden" },
               {
                 type: "diff",
                 path: "/workspace/second.txt",
                 oldText: null,
-                newText: "second added",
+                newText: "",
+                _meta: { "https://panels.local/acp/codex-file-edit/v1": {
+                  operation: "add", detailState: "omitted", oldStartLine: null,
+                  newStartLine: null, oldLineCount: null, newLineCount: null,
+                } },
+              },
+              {
+                type: "diff", path: "/workspace/added-newline.txt",
+                oldText: null, newText: "one\\n",
+                _meta: { "https://panels.local/acp/codex-file-edit/v1": {
+                  operation: "add", detailState: "complete", oldStartLine: null,
+                  newStartLine: 7, oldLineCount: 0, newLineCount: 1,
+                } },
+              },
+              {
+                type: "diff", path: "/workspace/deleted-newline.txt",
+                oldText: "one\\n", newText: "",
+                _meta: { "https://panels.local/acp/codex-file-edit/v1": {
+                  operation: "delete", detailState: "complete", oldStartLine: 9,
+                  newStartLine: null, oldLineCount: 1, newLineCount: 0,
+                } },
               },
             ],
           },
@@ -503,9 +557,10 @@ with sync_playwright() as playwright:
 
     page.evaluate("window.__showPermissionDiff()")
     diffs = permission.locator("[data-acp-diff]")
-    assert diffs.count() == 2
+    assert diffs.count() == 4
     assert diffs.locator("figcaption").all_inner_texts() == [
-        "/workspace/first.txt", "/workspace/second.txt"
+        "/workspace/first.txt", "/workspace/second.txt",
+        "/workspace/added-newline.txt", "/workspace/deleted-newline.txt"
     ]
     first = diffs.nth(0)
     assert first.get_by_role("table", name="Line changes for /workspace/first.txt").count() == 1
@@ -513,12 +568,19 @@ with sync_playwright() as playwright:
     assert first.get_by_role("cell", name="Added", exact=True).count() == 1
     assert first.get_by_text("first before", exact=True).count() == 1
     assert first.get_by_text("first after", exact=True).count() == 1
-    assert first.locator("[role='row']").nth(0).locator("[role='cell']").nth(0).inner_text() == "1"
-    assert first.locator("[role='row']").nth(1).locator("[role='cell']").nth(1).inner_text() == "1"
+    assert first.get_by_text("Some edit detail was truncated", exact=True).count() == 1
+    assert first.locator("[role='row']").nth(0).locator("[role='cell']").nth(0).inner_text() == "101"
+    assert first.locator("[role='row']").nth(1).locator("[role='cell']").nth(1).inner_text() == "201"
     second = diffs.nth(1)
     assert second.get_by_role("table", name="Line changes for /workspace/second.txt").count() == 1
-    assert second.get_by_role("cell", name="Added", exact=True).count() == 1
-    assert second.get_by_text("second added", exact=True).count() == 1
+    assert second.locator("[role='row']").count() == 0
+    assert second.get_by_text("Edit detail was omitted", exact=True).count() == 1
+    added = diffs.nth(2)
+    deleted = diffs.nth(3)
+    assert added.locator("[role='row']").count() == 1
+    assert added.get_by_role("cell", name="Added", exact=True).count() == 1
+    assert deleted.locator("[role='row']").count() == 1
+    assert deleted.get_by_role("cell", name="Deleted", exact=True).count() == 1
     assert page.get_by_text("ARBITRARY PERMISSION CONTENT MUST STAY HIDDEN").count() == 0
     assert page.get_by_text("permission-terminal-must-stay-hidden").count() == 0
 

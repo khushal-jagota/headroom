@@ -82,6 +82,13 @@ class BackendTurnStrategy(Protocol):
 
 
 WorkingDirectoryResolver = Callable[[ConversationEmployee], Path]
+SessionNotificationNormalizer = Callable[[SessionNotification], SessionNotification]
+
+
+def identity_session_notification_normalizer(
+    notification: SessionNotification,
+) -> SessionNotification:
+    return notification
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +103,9 @@ class AgentBackendDefinition:
     reverse_service_capabilities: ReverseServiceCapabilities
     working_directory_resolver: WorkingDirectoryResolver
     turn_strategy: BackendTurnStrategy
+    session_notification_normalizer: SessionNotificationNormalizer = (
+        identity_session_notification_normalizer
+    )
 
     def __post_init__(self) -> None:
         _require_non_empty_text(self.backend_key, field_name="backend_key")

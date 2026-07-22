@@ -24,6 +24,7 @@ from acp.schema import (
     ClientCapabilities,
     CloseSessionResponse,
     ContentToolCallContent,
+    FileEditToolCallContent,
     ForkSessionResponse,
     Implementation,
     InitializeResponse,
@@ -353,6 +354,26 @@ class ScriptedAcpAgent:
         if metadata_complete is not None:
             await metadata_complete.wait()
         durable = self._durable_session_updates.setdefault(session_id, [])
+        if os.environ.get("ACP_TEST_LARGE_FILE_EDIT_HISTORY") == "1" and not durable:
+            whole_file = "unchanged source line\n" * 30_000
+            durable.append(
+                ToolCallStart(
+                    session_update="tool_call",
+                    tool_call_id="large-edit",
+                    title="Editing files",
+                    kind="edit",
+                    status="completed",
+                    content=[
+                        FileEditToolCallContent(
+                            type="diff",
+                            path="PROGRESS.md",
+                            old_text=whole_file,
+                            new_text=whole_file + "small append\n",
+                        )
+                    ],
+                    field_meta={"scriptedRawPayloadExceedsOneMiB": True},
+                )
+            )
         self._session_updates[session_id] = copy.deepcopy(durable)
         self._cancel_events.setdefault(session_id, asyncio.Event())
         for update in self._session_updates[session_id]:

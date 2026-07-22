@@ -20,6 +20,16 @@ receipts, connection state, and compaction boundaries. It does not parse a secon
 Panels transcript format. Reloading or reconnecting attaches to the durable ACP
 binding and rebuilds the pane from the backend's replay.
 
+The pinned Codex adapter can describe one file edit by sending complete before-and-after
+file snapshots. Panels normalizes those Codex diff entries after the raw ACP notification
+has matched its typed callback and before live or replay routing. Small edits become grouped
+hunks. Large edits use bounded head and tail evidence, or an explicit omitted marker when
+bounded work cannot locate the change. Each rendered fragment carries its real old and new
+line origins when those origins are known; unknown origins stay blank. Edit detail is limited
+to 64 KiB per notification in addition to the measured tool and file identities. Tool identity,
+paths, lifecycle, and unrelated ACP fields are preserved. Other Codex notifications and the
+other backends pass through unchanged.
+
 Replay is integrity-checked and held as a subscriber-local bootstrap. It does not
 occupy the bounded queue used for live browser updates. A connected browser crossing
 a session refresh or replacement receives one ordered replay cutover before later
@@ -197,4 +207,4 @@ mode and no runtime code reads the removed tables.
 
 ---
 
-_Last verified: 2026-07-21 (single ACP conversation with three production backends)._
+_Last verified: 2026-07-22 (single ACP conversation with bounded Codex file-edit replay)._

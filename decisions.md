@@ -3071,3 +3071,22 @@ not guarantee notification/request wire ordering across the prior fork response.
   quiet ring, error mark, and green completed mark without changing layout or inventing a new visual.
 - Preserve the unrelated dirty `composition.py` and nested-worktree state exactly; this ticket has no
   reason to touch those paths.
+# 2026-07-22 — Panels owns bounded Codex file-edit ingress
+
+- Do not patch or fork `@agentclientprotocol/codex-acp`. Panels pins but does not own that adapter,
+  and carrying a modified `node_modules` artifact would make every dependency upgrade an integration
+  hazard.
+- Let the backend definition supply the normalizer, but execute it inside ordered ingress only after
+  the raw notification and typed SDK callback match. Run it before the slot's live or private
+  `session/load` downstream is selected. This preserves wire-integrity matching and gives one behavior
+  for live and restored conversations without teaching the generic Hub that one backend inflates edits.
+- Bound normalized edit detail to 64 KiB beyond the serialized mandatory tool/file identities. Use
+  grouped hunks only for bounded small inputs. For large inputs, cap comparison work and show fixed
+  head/tail evidence; if the bounded scan cannot locate a huge middle-only change, publish an explicit
+  omitted-detail diff instead of fabricated rows or invented line origins.
+- Preserve semantic edit evidence—path, completion status, changed hunks, source line origins, and
+  explicit truncation—while removing unchanged full-file snapshots. Keep the existing replay byte
+  ceiling as a genuine integrity bound rather than raising it to accommodate amplification.
+- Treat this as one contract-scoped conversation slice. Use TDD at the child-ingress and real Hub
+  replay seams, independent implementation review, and the repository's one final `./verify` before
+  advancing `main`.

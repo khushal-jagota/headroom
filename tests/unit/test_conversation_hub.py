@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import sys
 import threading
 from dataclasses import replace
 from pathlib import Path
@@ -12,6 +13,8 @@ import pytest
 from acp.schema import (
     AgentMessageChunk,
     DeniedOutcome,
+    FileEditToolCallContent,
+    LoadSessionRequest,
     PermissionOption,
     PromptRequest,
     PromptResponse,
@@ -19,13 +22,18 @@ from acp.schema import (
     RequestPermissionResponse,
     SessionNotification,
     TextContentBlock,
+    ToolCallStart,
     ToolCallUpdate,
 )
+from acp.transports import default_environment
 
 from planner.conversation.backend_contracts import (
     AgentBackendDefinition,
     BackendTurnCapabilities,
     ReverseServiceCapabilities,
+)
+from planner.conversation.codex_session_notification_normalizer import (
+    normalize_codex_session_notification,
 )
 from planner.conversation.contracts import (
     ConversationEmployee,
@@ -45,6 +53,10 @@ from planner.conversation.hub import (
 )
 from planner.conversation.permission_broker import ConversationPermissionBroker
 from planner.conversation.runtime_ports import ConversationRuntimeHandle
+from planner.conversation.sdk_child import (
+    SdkAcpEmployeeChildFactory,
+    build_panels_initialize_request,
+)
 from planner.conversation.sqlite_binding_repository import (
     SqliteConversationBindingRepository,
 )
@@ -57,6 +69,8 @@ from planner.core.db import connect, create_schema
 from planner.tickets.contracts import EmployeeLaunchConfiguration
 from planner.tickets.conversation_projection import TicketConversationProjection
 from planner.worker_types.configuration import PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS
+
+SCRIPTED_AGENT = Path(__file__).resolve().parents[1] / "support" / "acp_scripted_agent.py"
 
 
 class _Strategy:
@@ -366,6 +380,8 @@ def test_websocket_writer_cancellation_awaits_both_iteration_waits() -> None:
 
 async def _ticket_database(
     tmp_path: Path,
+    *,
+    backend_key: str = "hermes",
 ) -> tuple[str, SqliteConversationBindingRepository]:
     db_path = str(tmp_path / "hub.db")
     conn = connect(db_path)
@@ -385,8 +401,8 @@ async def _ticket_database(
         "INSERT INTO tickets "
         "(id, title, worker_type, employee_backend, stage, ceiling, fields, "
         "created_at, updated_at) "
-        "VALUES ('t_hub', 'Hub', 'coding', 'hermes', 'needs_kickoff', 'needs_kickoff', ?, 1, 1)",
-        (json.dumps(fields, separators=(",", ":")),),
+        "VALUES ('t_hub', 'Hub', 'coding', ?, 'needs_kickoff', 'needs_kickoff', ?, 1, 1)",
+        (backend_key, json.dumps(fields, separators=(",", ":"))),
     )
     conn.close()
     repository = SqliteConversationBindingRepository(
@@ -399,7 +415,7 @@ async def _ticket_database(
     binding = ConversationSessionBinding(
         employee_id="t_hub",
         acp_session_id="session-hub",
-        backend_key="hermes",
+        backend_key=backend_key,
         binding_generation=1,
     )
     employee = await repository.resolve_employee("t_hub")
@@ -2156,6 +2172,113 @@ def test_active_turn_attach_orders_replay_larger_than_live_queue_before_ready_an
             "live",
         ]
         assert active.closed.is_set() is False
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_normalized_codex_edit_over_one_megabyte_replays_through_ready(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path, backend_key="codex")
+        employee = ConversationEmployee(
+            employee_id="t_hub",
+            entity_kind="ticket",
+            entity_id="t_hub",
+            workspace_roots=(tmp_path,),
+            backend_key="codex",
+        )
+        binding = ConversationSessionBinding(
+            employee_id="t_hub",
+            acp_session_id="session-hub",
+            backend_key="codex",
+            binding_generation=1,
+        )
+        definition = AgentBackendDefinition(
+            backend_key="codex",
+            argv=(sys.executable, str(SCRIPTED_AGENT)),
+            inherited_environment_names=tuple(default_environment()),
+            environment_overrides=(("ACP_TEST_LARGE_FILE_EDIT_HISTORY", "1"),),
+            expected_agent_name="panels-scripted-agent",
+            expected_agent_version="1.0.0",
+            turn_capabilities=BackendTurnCapabilities(
+                supports_steer=False, observes_compaction=False
+            ),
+            reverse_service_capabilities=ReverseServiceCapabilities(
+                filesystem=False, terminal=False, permission=True
+            ),
+            working_directory_resolver=lambda value: value.workspace_roots[0],
+            turn_strategy=_Strategy(),
+            session_notification_normalizer=normalize_codex_session_notification,
+        )
+        hub = ConversationHub(repository, reset_buffer_byte_limit=1_048_576)
+        identity = object()
+        source = ConversationIngressSource(employee, 1, identity)
+
+        async def hub_ingress(item: Any) -> None:
+            await hub.registry_conversation_ingress(source, item)
+
+        async def deny_permission(_request: Any) -> RequestPermissionResponse:
+            return RequestPermissionResponse(outcome={"outcome": "cancelled"})
+
+        async def ignore_death(_cause: BaseException | None) -> None:
+            return None
+
+        child = await SdkAcpEmployeeChildFactory(definition).create(
+            employee, 1, hub_ingress, deny_permission, ignore_death
+        )
+        record = AcpEmployeeRecord(employee, binding, 1, child, identity)
+        handle = ConversationRuntimeHandle(employee, binding, 1, child, definition, identity)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        whole_file = "unchanged source line\n" * 30_000
+        raw = SessionNotification(
+            session_id=record.binding.acp_session_id,
+            update=ToolCallStart(
+                session_update="tool_call",
+                tool_call_id="large-edit",
+                title="Editing files",
+                kind="edit",
+                status="completed",
+                content=[
+                    FileEditToolCallContent(
+                        type="diff",
+                        path="PROGRESS.md",
+                        old_text=whole_file,
+                        new_text=whole_file + "small append\n",
+                    )
+                ],
+            ),
+        )
+        assert len(raw.model_dump_json(by_alias=True, exclude_none=True).encode()) > 1_048_576
+        await child.initialize(build_panels_initialize_request(definition))
+        await child.capture_load_session(
+            LoadSessionRequest(cwd=str(tmp_path), session_id="session-hub", mcp_servers=[]),
+            hub_ingress,
+        )
+
+        browser = await hub.attach_browser("t_hub", connection_id="browser-normalized")
+        envelopes = []
+        while True:
+            envelope = json.loads(await asyncio.wait_for(browser.queue.get(), timeout=1))
+            envelopes.append(envelope)
+            if envelope["type"] == "connection" and envelope["payload"]["state"] == "ready":
+                break
+        assert browser.close_reason is None
+        assert [item["payload"]["state"] for item in envelopes if item["type"] == "connection"] == [
+            "reset",
+            "ready",
+        ]
+        assert any(item["type"] == "acp_session_update" for item in envelopes)
+        edit_envelope = next(item for item in envelopes if item["type"] == "acp_session_update")
+        update = edit_envelope["payload"]["update"]
+        assert update["_meta"] == {"scriptedRawPayloadExceedsOneMiB": True}
+        assert len(json.dumps(edit_envelope).encode()) < 65_536
+        await child.close()
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
