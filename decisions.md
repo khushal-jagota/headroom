@@ -3062,6 +3062,27 @@ The current-main post-fork SDK regression continues to require exact-session rou
 replay ordering, and a fully drained healthy ingress. It does not require a candidate notification to
 arrive before the subsequent load request: the private response epoch is installed first, and ACP does
 not guarantee notification/request wire ordering across the prior fork response.
+# 2026-07-22 — t_xq6ragj3 permission is a launch invariant
+
+- The owner's live correction supersedes the approved plan's permission snapshot. Permission is
+  always full access at actual new-session launch, so it has no editable setting, Ticket field,
+  binding field, database column, or migration state.
+- Backend, Model, and Reasoning keep their established ownership: Ticket creation copies Worker
+  defaults once; a new Chief conversation copies current Chief defaults into its binding. Ticket
+  New Conversation does not reapply historical Model or Reasoning.
+- Preserve the established same-child Ticket New Conversation lifecycle and apply only the
+  backend-native full-access mode there. Chief alone needs a fresh child because its managed
+  Backend may change between conversations.
+- Independent review's lock-order finding is accepted. Chief launch snapshots and Chief settings
+  saves both acquire the managed Chief settings lock before SQLite, so an exact snapshot is
+  serialized without a settings-lock/`BEGIN IMMEDIATE` inversion.
+- Independent review's recovery finding is accepted. A restored last-known-good Worker settings
+  file is parsed for its managed launch trio on the first read; immutable profile defaults remain
+  only the legacy-file fallback.
+- Rebase the isolated implementation branch onto current main before its final gate. Main advanced
+  during interrupted Employee turns; syncing the feature branch avoids testing a mixed historical
+  baseline and does not integrate this Ticket into main before Closeout.
+
 # 2026-07-22 — t_m024gke4 implementation routing
 
 - Delegate the approved implementation as one focused slice because the projection writer, HTTP

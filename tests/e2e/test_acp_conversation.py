@@ -11,6 +11,7 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from time import monotonic
 from typing import Any
@@ -57,14 +58,44 @@ from planner.days.logic.dates import resolve_day_id
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import NO_FURTHER, AtCap
 from planner.worker_context import data as worker_context_data
+from planner.worker_settings import service as worker_settings_service
+from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
     PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
     build_employee_runtime_definitions,
 )
+from planner.worker_types.exploration import EXPLORATION_WORKER_TYPE_DEFINITION
+from planner.worker_types.initiative_planning import INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION
+from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTED_AGENT = REPOSITORY_ROOT / "tests/support/acp_scripted_agent.py"
 E2E_SERVER = REPOSITORY_ROOT / "tests/support/acp_e2e_server.py"
+
+_SCRIPTED_WORKER_TYPE_DEFINITIONS = tuple(
+    replace(
+        definition,
+        worker_profile=replace(
+            definition.worker_profile,
+            default_employee_backend="hermes",
+            default_employee_model=None,
+            default_employee_reasoning_effort=None,
+        ),
+    )
+    for definition in (
+        CODING_WORKER_TYPE_DEFINITION,
+        NEW_WORKER_TYPE_DEFINITION,
+        EXPLORATION_WORKER_TYPE_DEFINITION,
+        INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION,
+    )
+)
+
+
+def _scripted_runtime_definitions(catalog: EmployeeBackendCatalog) -> Any:
+    return build_employee_runtime_definitions(
+        catalog,
+        worker_type_definitions=_SCRIPTED_WORKER_TYPE_DEFINITIONS,
+    )
 
 
 def test_production_employee_backend_catalog_is_hermes_codex_claude() -> None:
@@ -204,12 +235,22 @@ def _application_with_backends(
             for definition, factory in backends
         )
     )
+    runtime_definitions = _scripted_runtime_definitions(catalog)
+    worker_settings_service.update_chief_launch_defaults(
+        Path(config.db_path).expanduser().parent,
+        runtime_definitions.worker_type_registry,
+        {
+            "employee_backend": "hermes",
+            "employee_launch_model": None,
+            "employee_launch_reasoning_effort": None,
+        },
+    )
     return create_app(
         config,
         clock,
         lambda: connect(config.db_path),
         conversation_test_options=ConversationTestOptions(
-            employee_runtime_definitions=build_employee_runtime_definitions(catalog),
+            employee_runtime_definitions=runtime_definitions,
             browser_capacity=browser_capacity,
             reset_buffer_byte_limit=reset_buffer_byte_limit,
         ),
@@ -232,7 +273,7 @@ def _seed_eligible_ticket(
         actor="test",
         now=clock.now_unix(),
         title_max_chars=200,
-        employee_backend=employee_backend,
+        employee_backend=employee_backend or "hermes",
         employee_runtime_definitions=employee_runtime_definitions,
     )
     tickets_data.accept_proposal(
@@ -327,6 +368,7 @@ def _vite_vertical_server(tmp_path: Path) -> Iterator[tuple[str, str, Path, Path
             actor="test",
             now=1,
             title_max_chars=200,
+            employee_backend="hermes",
         )
     backend_port = _free_port()
     vite_port = _free_port()
@@ -497,7 +539,7 @@ def test_ticket_route_worker_selector_is_preselected_catalog_only_and_first_prom
             assert selector.input_value() == "hermes"
             assert selector.locator("option").evaluate_all(
                 "options => options.map(option => option.value)"
-            ) == ["hermes", "probe-backend"]
+            ) == ["hermes", "codex", "claude", "probe-backend"]
             with connect(str(database_path)) as conn:
                 assert (
                     conn.execute(
@@ -670,7 +712,7 @@ def test_fake_non_hermes_human_and_automatic_step_share_backend_and_session(
             config.boundary_hour,
             title="Fake non-Hermes shared session",
             employee_backend="probe-backend",
-            employee_runtime_definitions=build_employee_runtime_definitions(catalog),
+            employee_runtime_definitions=_scripted_runtime_definitions(catalog),
         )
 
     app = _application_with_backends(config, clock, backends)
@@ -746,7 +788,7 @@ def test_employee_configuration_catalog_does_not_bind_and_first_prompt_uses_sele
             ),
         )
     )
-    runtime_definitions = build_employee_runtime_definitions(catalog)
+    runtime_definitions = _scripted_runtime_definitions(catalog)
     with connect(db_path) as conn:
         create_schema(conn)
         ticket = tickets_data.create_ticket(
@@ -1053,6 +1095,7 @@ def test_fresh_uvicorn_process_resumes_durable_binding(tmp_path: Path) -> None:
             actor="test",
             now=1,
             title_max_chars=200,
+            employee_backend="hermes",
         )
     port = _free_port()
     first = _start_acp_backend(db_path=db_path, logs_dir=tmp_path / "first-logs", port=port)
@@ -1130,6 +1173,7 @@ def test_official_fork_compaction_survives_refresh_child_death_and_restart(
             actor="test",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_backend="hermes",
         )
 
     first_replacement_session_id = ""
@@ -1369,6 +1413,7 @@ def test_automatic_official_fork_retargets_and_runs_queued_successor(
             actor="test",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_backend="hermes",
         )
     definition = _compaction_definition()
     replacement_definition = AgentBackendDefinition(
@@ -1498,6 +1543,7 @@ def test_missing_fork_capability_retires_source_and_fresh_attach_restores_bindin
             actor="test",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_backend="hermes",
         )
     app = _application(config, clock, _compaction_definition())
     with TestClient(app) as client:
@@ -1592,6 +1638,7 @@ def test_browser_and_worker_share_one_real_sdk_session(
             actor="test",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_backend="hermes",
         )
         conn.execute(
             "INSERT INTO events (entity_id, kind, payload, created_at) "
@@ -1910,6 +1957,7 @@ def test_official_requested_cancel_exception_recovers_same_session_for_stop_and_
             actor="test",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_backend="hermes",
         )
         send_now_ticket = tickets_data.create_ticket(
             conn,
@@ -1918,6 +1966,7 @@ def test_official_requested_cancel_exception_recovers_same_session_for_stop_and_
             actor="test",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_backend="hermes",
         )
 
     app = _application(config, clock, _definition())
@@ -2500,6 +2549,7 @@ def test_worker_failure_settles_before_queued_successor(
                 actor="test",
                 now=clock.now_unix(),
                 title_max_chars=200,
+                employee_backend="hermes",
             )
         app = _application(
             config,
@@ -2603,6 +2653,7 @@ def test_active_vertical_replay_fails_closed_without_harming_live_browser(
             actor="test",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_backend="hermes",
         )
     app = _application(
         config,
@@ -2701,6 +2752,7 @@ def test_real_websocket_replay_larger_than_live_queue_reaches_ready_then_deliver
             actor="test",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_backend="hermes",
         )
     app = _application(config, clock, _definition(), browser_capacity=16)
 
@@ -2819,6 +2871,7 @@ def test_existing_websocket_crosses_large_replacement_replay_without_partial_tra
             actor="test",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_backend="hermes",
         )
     live_capacity = 16
     app = _application(

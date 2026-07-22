@@ -16,7 +16,7 @@ from planner.core.legacy_execution_route import (
 from planner.projects import data as projects_data
 from planner.worker_types.configuration import configured_worker_type_registry
 
-SCHEMA_VERSION: Final = 30
+SCHEMA_VERSION: Final = 31
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -117,6 +117,8 @@ CREATE TABLE IF NOT EXISTS conversation_session_bindings (
   entity_id          TEXT NOT NULL,
   acp_session_id     TEXT NOT NULL UNIQUE,
   backend_key        TEXT NOT NULL,
+  employee_launch_model TEXT,
+  employee_launch_reasoning_effort TEXT,
   binding_generation INTEGER NOT NULL CHECK (binding_generation > 0),
   compaction_boundaries_json TEXT NOT NULL DEFAULT '[]',
   created_at         INTEGER NOT NULL,
@@ -262,7 +264,56 @@ def create_schema(conn: sqlite3.Connection) -> None:
             "v30 Ticket schema is missing the nullable captured Stage ownership default "
             "without a default"
         )
+    if incoming_version < 31:
+        if conn.in_transaction:
+            conn.commit()
+        _migrate_to_v31(conn)
+    elif not _chief_launch_snapshot_schema_is_v31(conn):
+        raise RuntimeError("v31 schema is missing Chief launch snapshot columns")
     _create_indexes(conn)
+
+
+def _chief_launch_snapshot_schema_is_v31(conn: sqlite3.Connection) -> bool:
+    binding_columns = _table_columns(conn, "conversation_session_bindings")
+    return all(
+        column in binding_columns
+        for column in (
+            "employee_launch_model",
+            "employee_launch_reasoning_effort",
+        )
+    )
+
+
+def _migrate_to_v31(conn: sqlite3.Connection) -> None:
+    """Add the model and reasoning snapshot used by durable Chief bindings."""
+
+    if conn.in_transaction:
+        raise RuntimeError("Employee launch v31 migration requires an autocommit connection")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        binding_columns = _table_columns(conn, "conversation_session_bindings")
+        if "employee_launch_model" not in binding_columns:
+            conn.execute(
+                "ALTER TABLE conversation_session_bindings ADD COLUMN employee_launch_model TEXT"
+            )
+        if "employee_launch_reasoning_effort" not in binding_columns:
+            conn.execute(
+                "ALTER TABLE conversation_session_bindings ADD COLUMN "
+                "employee_launch_reasoning_effort TEXT"
+            )
+        if not _chief_launch_snapshot_schema_is_v31(conn):
+            raise RuntimeError("Employee launch v31 migration did not establish its columns")
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(
+                f"foreign key check failed after Employee launch v31 migration: {violations!r}"
+            )
+        conn.execute("PRAGMA user_version=31")
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
 
 
 def _migrate_to_v25(conn: sqlite3.Connection) -> None:

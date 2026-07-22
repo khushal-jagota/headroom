@@ -203,6 +203,7 @@ def build_claude_employee_backend_registration() -> EmployeeBackendRegistration:
             definition=definition,
             child_factory=child_factory,
             workspace_root=context.repository_root,
+            full_access_mode="bypassPermissions",
         )
         preflight = ClaudeBackendStartupPreflight(
             definition=definition,
@@ -272,6 +273,9 @@ class _ClaudeAcpEmployeeChild(AcpEmployeeChild):
         self, session_id: str, config_id: str, value: str
     ) -> SetSessionConfigOptionResponse:
         return await self._delegate.set_config_option(session_id, config_id, value)
+
+    async def set_session_mode(self, session_id: str, mode_id: str) -> None:
+        await self._delegate.set_session_mode(session_id, mode_id)
 
     async def close_session(self, session_id: str) -> None:
         await self._delegate.close_session(session_id)

@@ -29,6 +29,13 @@ def _first_workspace_root(employee: ConversationEmployee) -> Path:
     return employee.workspace_roots[0]
 
 
+def _hermes_employee_environment_overrides(
+    employee: ConversationEmployee,
+) -> tuple[tuple[str, str], ...]:
+    del employee
+    return (("HERMES_YOLO_MODE", "1"),)
+
+
 def build_hermes_acp_backend_definition(
     *,
     hermes_executable: Path,
@@ -65,4 +72,5 @@ def build_hermes_acp_backend_definition(
         ),
         working_directory_resolver=_first_workspace_root,
         turn_strategy=turn_strategy,
+        employee_environment_overrides=_hermes_employee_environment_overrides,
     )

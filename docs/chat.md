@@ -117,6 +117,12 @@ replacement, compaction recovery, or later New Conversation never reapplies or p
 them as current. Human prompts and Automatic Employee steps still share the selected
 backend and durable binding.
 
+Chief has managed Backend, Model, and Reasoning defaults. Starting a new Chief conversation
+copies the current trio into that binding; loading an existing Chief conversation keeps its
+stored trio. Permission is not stored configuration. Every actual new Worker or Chief session
+uses backend-native full access. Codex selects `agent-full-access`, Claude Code selects
+`bypassPermissions`, and Hermes starts in YOLO mode and selects `dont_ask`.
+
 Claude Code runs one initialize-only preflight when Panels starts. That temporary
 child is closed before startup completes and creates no worker session. Codex is lazy:
 its child starts only on first demand. Actual Ticket and Chief sessions for every

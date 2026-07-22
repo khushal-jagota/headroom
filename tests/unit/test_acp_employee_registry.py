@@ -246,6 +246,10 @@ class _FakeChild:
             ]
         )
 
+    async def set_session_mode(self, session_id: str, mode_id: str) -> None:
+        if self.operation_observer is not None:
+            self.operation_observer(f"set_session_mode:{session_id}:{mode_id}")
+
     async def close_session(self, session_id: str) -> None:
         if self.operation_observer is not None:
             self.operation_observer(f"close_session:{session_id}")
@@ -685,7 +689,9 @@ def test_bound_load_replacement_compaction_and_new_conversation_do_not_reapply_k
         assert requested_cancel.replacement_handle.binding.binding_generation == 1
         assert compacted.replacement_handle.binding.binding_generation == 2
         assert replacement.binding.binding_generation == 3
-        assert adapter.configure_calls == 0
+        # New Conversation re-enters the adapter only for backend-native full access;
+        # the null launch configuration proves Kickoff values are not reapplied.
+        assert adapter.configure_calls == 1
         assert not any(
             operation.startswith("set_config_option:") for operation in operations
         )

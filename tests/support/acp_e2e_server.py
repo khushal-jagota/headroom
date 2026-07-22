@@ -78,7 +78,10 @@ def _scripted_definition(backend_key: str) -> AgentBackendDefinition:
 
 
 def build_scripted_employee_runtime_definitions() -> ConfiguredEmployeeRuntimeDefinitions:
-    definitions = tuple(_scripted_definition(key) for key in ("hermes", "probe-backend"))
+    definitions = tuple(
+        _scripted_definition(key)
+        for key in ("hermes", "codex", "claude", "probe-backend")
+    )
     catalog = EmployeeBackendCatalog(
         tuple(
             static_employee_backend_registration(

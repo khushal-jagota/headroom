@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import sqlite3
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
@@ -12,6 +14,7 @@ from tests.support.acp_in_memory_binding_repository import (
     InMemoryAcpBindingRepository,
 )
 
+from planner.conversation import sqlite_binding_repository as binding_repository_module
 from planner.conversation.backend_catalog import (
     EmployeeBackendCatalog,
     EmployeeBackendRegistration,
@@ -30,12 +33,14 @@ from planner.conversation.sqlite_binding_repository import (
 )
 from planner.core.db import connect, create_schema
 from planner.tickets.contracts import EmployeeLaunchConfiguration
-from planner.worker_types.configuration import PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS
+from planner.worker_settings import service as worker_settings_service
+from planner.worker_types.configuration import (
+    PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
+    configured_worker_type_registry,
+)
 
 
-class _TestSqliteConversationBindingRepository(
-    _SqliteConversationBindingRepository
-):
+class _TestSqliteConversationBindingRepository(_SqliteConversationBindingRepository):
     async def compare_and_swap(
         self,
         expected: ConversationSessionBinding | None,
@@ -51,9 +56,7 @@ class _TestSqliteConversationBindingRepository(
             EmployeeLaunchConfiguration(
                 employee_backend=employee.backend_key,
                 employee_launch_model=employee.employee_launch_model,
-                employee_launch_reasoning_effort=(
-                    employee.employee_launch_reasoning_effort
-                ),
+                employee_launch_reasoning_effort=(employee.employee_launch_reasoning_effort),
             ),
         )
 
@@ -163,12 +166,18 @@ def test_initial_binding_rejects_session_prepared_from_stale_ticket_configuratio
         )
 
     conn = connect(str(db_path))
-    assert conn.execute(
-        "SELECT employee_session_id FROM tickets WHERE id = 't_alpha'"
-    ).fetchone()["employee_session_id"] is None
-    assert conn.execute(
-        "SELECT COUNT(*) AS total FROM conversation_session_bindings"
-    ).fetchone()["total"] == 0
+    assert (
+        conn.execute("SELECT employee_session_id FROM tickets WHERE id = 't_alpha'").fetchone()[
+            "employee_session_id"
+        ]
+        is None
+    )
+    assert (
+        conn.execute("SELECT COUNT(*) AS total FROM conversation_session_bindings").fetchone()[
+            "total"
+        ]
+        == 0
+    )
     conn.close()
 
 
@@ -850,3 +859,84 @@ def test_chief_first_binding_has_no_second_product_mirror(tmp_path: Path) -> Non
         str(row["name"])
         for row in check.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     }
+
+
+def test_chief_settings_save_and_initial_binding_share_settings_then_sqlite_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "chief-lock-order.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    conn.close()
+    registry = configured_worker_type_registry()
+    repository = _SqliteConversationBindingRepository(
+        str(db_path),
+        workspace_root=tmp_path,
+        integer_now=lambda: 30,
+        busy_timeout_ms=250,
+        employee_backend_catalog=(PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog),
+        chief_backend_key="codex",
+        worker_type_registry=registry,
+    )
+    candidate = ConversationSessionBinding(
+        employee_id=CHIEF_OF_STAFF_ENTITY_ID,
+        acp_session_id="chief-session",
+        backend_key="codex",
+        employee_launch_model="gpt-5.6-sol",
+        employee_launch_reasoning_effort="medium",
+        binding_generation=1,
+    )
+    prepared = EmployeeLaunchConfiguration("codex", "gpt-5.6-sol", "medium")
+    settings_publish_started = threading.Event()
+    binding_called = threading.Event()
+    binding_began_sqlite = threading.Event()
+    original_repository_connect = binding_repository_module.connect
+
+    def observed_repository_connect(path: str, busy_timeout_ms: int = 5000):
+        observed = original_repository_connect(path, busy_timeout_ms)
+        observed.set_trace_callback(
+            lambda statement: binding_began_sqlite.set() if statement == "BEGIN IMMEDIATE" else None
+        )
+        return observed
+
+    monkeypatch.setattr(binding_repository_module, "connect", observed_repository_connect)
+
+    def publish_sqlite_event() -> None:
+        settings_publish_started.set()
+        assert binding_called.wait(timeout=2)
+        assert not binding_began_sqlite.wait(timeout=0.1)
+        event_conn = connect(str(db_path), 250)
+        try:
+            event_conn.execute("BEGIN IMMEDIATE")
+            event_conn.execute("COMMIT")
+        finally:
+            event_conn.close()
+
+    def save_settings() -> None:
+        worker_settings_service.update_chief_launch_defaults(
+            tmp_path,
+            registry,
+            {
+                "employee_backend": "codex",
+                "employee_launch_model": "gpt-5.6-sol-new",
+                "employee_launch_reasoning_effort": "high",
+            },
+            after_publish=publish_sqlite_event,
+        )
+
+    def bind() -> None:
+        binding_called.set()
+        with pytest.raises(
+            ConversationBindingError,
+            match="Chief employee configuration changed before binding",
+        ):
+            asyncio.run(repository.compare_and_swap_initial(candidate, prepared))
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        save = executor.submit(save_settings)
+        assert settings_publish_started.wait(timeout=2)
+        binding = executor.submit(bind)
+        save.result(timeout=2)
+        binding.result(timeout=2)
+
+    assert binding_began_sqlite.is_set()

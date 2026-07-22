@@ -169,6 +169,7 @@ class AcpEmployeeRegistry:
         compare_and_swap_binding: CompareAndSwapConversationBinding,
         compare_and_swap_initial_binding: CompareAndSwapInitialConversationBinding | None = None,
         resolve_employee: ResolveConversationEmployee | None = None,
+        resolve_employee_for_new_conversation: ResolveConversationEmployee | None = None,
         conversation_ingress: AcpConversationIngress,
         permission_callback: PermissionRequestCallback,
         conversation_child_death_callback: ConversationChildDeathCallback | None = None,
@@ -195,6 +196,9 @@ class AcpEmployeeRegistry:
         self._compare_and_swap_binding = compare_and_swap_binding
         self._compare_and_swap_initial_binding = compare_and_swap_initial_binding
         self._resolve_employee = resolve_employee
+        self._resolve_employee_for_new_conversation = (
+            resolve_employee_for_new_conversation or resolve_employee
+        )
         self._employee_configuration_adapters: dict[
             str, EmployeeSessionConfigurationAdapter
         ] = {
@@ -366,6 +370,13 @@ class AcpEmployeeRegistry:
         return record
 
     async def _replace_conversation(self, employee: ConversationEmployee) -> AcpEmployeeRecord:
+        if employee.entity_kind == "ticket":
+            return await self._replace_ticket_conversation(employee)
+        return await self._replace_chief_conversation(employee)
+
+    async def _replace_ticket_conversation(
+        self, employee: ConversationEmployee
+    ) -> AcpEmployeeRecord:
         record = await self.get_or_spawn(employee)
         original_handle = self._runtime_handle(record)
         old_binding = record.binding
@@ -384,11 +395,22 @@ class AcpEmployeeRegistry:
                         )
             response = await record.child.new_session(self._new_request(employee))
             session_created = True
+            await self._employee_configuration_adapters[
+                old_binding.backend_key
+            ].configure_initial_session(
+                record.child,
+                response,
+                EmployeeLaunchConfiguration(old_binding.backend_key, None, None),
+            )
             candidate = ConversationSessionBinding(
                 employee_id=employee.employee_id,
                 acp_session_id=response.session_id,
-                backend_key=employee.backend_key,
+                backend_key=old_binding.backend_key,
                 binding_generation=old_binding.binding_generation + 1,
+                employee_launch_model=old_binding.employee_launch_model,
+                employee_launch_reasoning_effort=(
+                    old_binding.employee_launch_reasoning_effort
+                ),
             )
             winner = await self._compare_and_swap_binding(old_binding, candidate)
             self._validate_binding(employee.employee_id, winner)
@@ -408,7 +430,6 @@ class AcpEmployeeRegistry:
                     child=adopted.child,
                     record_identity=adopted.record_identity,
                 )
-
             persisted = await self._resolve_binding(employee.employee_id)
             if persisted != candidate:
                 raise AcpEmployeeBindingError(
@@ -423,7 +444,7 @@ class AcpEmployeeRegistry:
                             "new conversation lost its child generation before publication"
                         )
                     replacement = AcpEmployeeRecord(
-                        employee=employee,
+                        employee=record.employee,
                         binding=candidate,
                         child_generation=record.child_generation,
                         child=record.child,
@@ -443,6 +464,98 @@ class AcpEmployeeRegistry:
             lifecycle_gate.release()
             if child_to_close is not None:
                 self._detach_child_close(child_to_close)
+
+    async def _replace_chief_conversation(
+        self, employee: ConversationEmployee
+    ) -> AcpEmployeeRecord:
+        record = await self.get_or_spawn(employee)
+        original_handle = self._runtime_handle(record)
+        old_binding = record.binding
+        launch_employee = (
+            await self._resolve_employee_for_new_conversation(employee.employee_id)
+            if self._resolve_employee_for_new_conversation is not None
+            else employee.model_copy(
+                update={
+                    "backend_key": old_binding.backend_key,
+                    "employee_launch_model": (
+                        old_binding.employee_launch_model
+                        if employee.entity_kind == "agent"
+                        else None
+                    ),
+                    "employee_launch_reasoning_effort": (
+                        old_binding.employee_launch_reasoning_effort
+                        if employee.entity_kind == "agent"
+                        else None
+                    ),
+                }
+            )
+        )
+        child: AcpEmployeeChild | None = None
+        lifecycle_gate = await self._lifecycle_mutation_gate(employee.employee_id)
+        publication_gate = await self._publication_update_gate(employee.employee_id)
+        await lifecycle_gate.acquire()
+        try:
+            async with publication_gate:
+                async with self._lock:
+                    current = self._records.get(employee.employee_id)
+                    if not self._handle_matches_record(original_handle, current):
+                        raise AcpEmployeeStaleGeneration(
+                            "new conversation started on a stale child generation"
+                        )
+            async with self._lock:
+                generation = self._allocate_generation_locked(employee.employee_id)
+            definition = self._definition_for(launch_employee.backend_key)
+            child = await self._spawn_initialized_child(
+                launch_employee, generation, definition
+            )
+            response = await child.new_session(self._new_request(launch_employee))
+            launch_configuration = self._launch_configuration(launch_employee)
+            await self._employee_configuration_adapters[
+                launch_employee.backend_key
+            ].configure_initial_session(child, response, launch_configuration)
+            candidate = ConversationSessionBinding(
+                employee_id=employee.employee_id,
+                acp_session_id=response.session_id,
+                backend_key=launch_employee.backend_key,
+                binding_generation=old_binding.binding_generation + 1,
+                employee_launch_model=launch_employee.employee_launch_model,
+                employee_launch_reasoning_effort=(
+                    launch_employee.employee_launch_reasoning_effort
+                ),
+            )
+            winner = await self._compare_and_swap_binding(old_binding, candidate)
+            self._validate_binding(employee.employee_id, winner)
+            if winner != candidate:
+                deadline = (
+                    asyncio.get_running_loop().time()
+                    + ACP_CONVERSATION_SERVICE_SHUTDOWN_TIMEOUT_SECONDS
+                )
+                await child.close()
+                child = None
+                await self._discard_generation(employee.employee_id, generation)
+                return await self._adopt_winner(employee, winner)
+
+            persisted = await self._resolve_binding(employee.employee_id)
+            if persisted != candidate:
+                raise AcpEmployeeBindingError(
+                    "durable binding changed before new-conversation publication"
+                )
+            bound_employee = await self._resolve_bound_employee(
+                launch_employee, candidate, require_repository_resolution=False
+            )
+            replacement = await self._publish(
+                bound_employee, candidate, generation, child
+            )
+            child = None
+            return replacement
+        except BaseException:
+            if child is not None:
+                await child.close()
+            if "generation" in locals():
+                await self._discard_generation(employee.employee_id, generation)
+            raise
+        finally:
+            lifecycle_gate.release()
 
     async def _initialize_record(
         self, employee: ConversationEmployee, generation: int
@@ -485,6 +598,10 @@ class AcpEmployeeRegistry:
                     acp_session_id=response.session_id,
                     backend_key=employee.backend_key,
                     binding_generation=1,
+                    employee_launch_model=employee.employee_launch_model,
+                    employee_launch_reasoning_effort=(
+                        employee.employee_launch_reasoning_effort
+                    ),
                 )
                 if launch_configuration is None:
                     winner = await self._compare_and_swap_binding(None, candidate)
@@ -504,6 +621,10 @@ class AcpEmployeeRegistry:
                     acp_session_id=response.session_id,
                     backend_key=employee.backend_key,
                     binding_generation=binding.binding_generation + 1,
+                    employee_launch_model=binding.employee_launch_model,
+                    employee_launch_reasoning_effort=(
+                        binding.employee_launch_reasoning_effort
+                    ),
                 )
                 winner = await self._compare_and_swap_binding(binding, candidate)
 
@@ -1131,6 +1252,10 @@ class AcpEmployeeRegistry:
                 acp_session_id=fork_session_id,
                 backend_key=handle.binding.backend_key,
                 binding_generation=handle.binding.binding_generation + 1,
+                employee_launch_model=handle.binding.employee_launch_model,
+                employee_launch_reasoning_effort=(
+                    handle.binding.employee_launch_reasoning_effort
+                ),
             )
             captured: list[SessionNotification | ProtocolUpdateRejectedPayload] = []
 
@@ -1964,9 +2089,7 @@ class AcpEmployeeRegistry:
     @staticmethod
     def _launch_configuration(
         employee: ConversationEmployee,
-    ) -> EmployeeLaunchConfiguration | None:
-        if employee.entity_kind != "ticket":
-            return None
+    ) -> EmployeeLaunchConfiguration:
         return EmployeeLaunchConfiguration(
             employee_backend=employee.backend_key,
             employee_launch_model=employee.employee_launch_model,

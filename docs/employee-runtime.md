@@ -162,6 +162,11 @@ the first binding, the stored launch model and reasoning are historical only. Bo
 loads, child replacement, compaction recovery, and New Conversation do not reapply them;
 the ACP session owns its live configuration.
 
+Permission is a runtime invariant, not Ticket or binding state. Each actual new Worker or
+Chief session receives the backend's full-access mode. A bound reload preserves the durable
+session instead of creating or reconfiguring one. Hermes combines YOLO mode with `dont_ask`,
+but its adapter may still expose residual permission behavior.
+
 Claude Code receives an initialize-only preflight at server startup, and the temporary
 child closes without creating a session. Codex starts lazily on first demand. Neither
 startup behavior changes the Ticket's durable backend choice or session identity.

@@ -158,7 +158,19 @@ def _runtime_definitions(
     definition: AgentBackendDefinition,
     factory: Any,
 ) -> ConfiguredEmployeeRuntimeDefinitions:
-    catalog = EmployeeBackendCatalog((static_employee_backend_registration(definition, factory),))
+    codex_definition = replace(definition, backend_key="codex")
+    claude_definition = replace(definition, backend_key="claude")
+    catalog = EmployeeBackendCatalog(
+        (
+            static_employee_backend_registration(definition, factory),
+            static_employee_backend_registration(
+                codex_definition, _Factory(codex_definition)
+            ),
+            static_employee_backend_registration(
+                claude_definition, _Factory(claude_definition)
+            ),
+        )
+    )
     return build_employee_runtime_definitions(catalog)
 
 
@@ -174,6 +186,12 @@ def _database(tmp_path: Path) -> tuple[str, MutableTestClock, str]:
         actor="test",
         now=1,
         title_max_chars=200,
+    )
+    conn.execute(
+        "UPDATE tickets SET employee_backend = 'hermes', "
+        "employee_launch_model = NULL, "
+        "employee_launch_reasoning_effort = NULL WHERE id = ?",
+        (ticket.id,),
     )
     conn.close()
     return db_path, test_clock, ticket.id
@@ -312,8 +330,12 @@ def test_employee_backend_preflights_run_once_in_catalog_order_without_registry_
         order: list[str] = []
         contexts: list[EmployeeBackendBuildContext] = []
         hermes_definition = _definition()
+        codex_definition = replace(hermes_definition, backend_key="codex")
+        claude_definition = replace(hermes_definition, backend_key="claude")
         probe_definition = replace(hermes_definition, backend_key="probe-backend")
         hermes_factory = _Factory(hermes_definition)
+        codex_factory = _Factory(codex_definition)
+        claude_factory = _Factory(claude_definition)
         probe_factory = _Factory(probe_definition)
 
         def registration(
@@ -339,6 +361,8 @@ def test_employee_backend_preflights_run_once_in_catalog_order_without_registry_
         catalog = EmployeeBackendCatalog(
             (
                 registration(hermes_definition, hermes_factory),
+                registration(codex_definition, codex_factory),
+                registration(claude_definition, claude_factory),
                 registration(probe_definition, probe_factory),
             )
         )
@@ -356,13 +380,19 @@ def test_employee_backend_preflights_run_once_in_catalog_order_without_registry_
         assert [context.repository_root for context in contexts] == [
             tmp_path.resolve(),
             tmp_path.resolve(),
+            tmp_path.resolve(),
+            tmp_path.resolve(),
         ]
         assert hermes_factory.children == []
+        assert codex_factory.children == []
+        assert claude_factory.children == []
         assert probe_factory.children == []
         await composition.run_employee_backend_startup_preflights()
         await composition.run_employee_backend_startup_preflights()
-        assert order == ["hermes", "probe-backend"]
+        assert order == ["hermes", "codex", "claude", "probe-backend"]
         assert hermes_factory.children == []
+        assert codex_factory.children == []
+        assert claude_factory.children == []
         assert probe_factory.children == []
         await composition.shutdown(asyncio.get_running_loop().time() + 1)
 

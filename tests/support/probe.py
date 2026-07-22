@@ -82,6 +82,8 @@ def _unmaterialized_probe_backend(
 PROBE_EMPLOYEE_BACKEND_CATALOG = EmployeeBackendCatalog(
     (
         EmployeeBackendRegistration("hermes", _unmaterialized_probe_backend),
+        EmployeeBackendRegistration("codex", _unmaterialized_probe_backend),
+        EmployeeBackendRegistration("claude", _unmaterialized_probe_backend),
         EmployeeBackendRegistration("probe-backend", _unmaterialized_probe_backend),
     )
 )

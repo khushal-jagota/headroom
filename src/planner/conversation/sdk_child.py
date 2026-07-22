@@ -134,6 +134,8 @@ def build_confined_child_environment(
         name: ambient[name] for name in definition.inherited_environment_names if name in ambient
     }
     environment.update(definition.environment_overrides)
+    if definition.employee_environment_overrides is not None:
+        environment.update(definition.employee_environment_overrides(employee))
     for name in tuple(environment):
         if name.startswith("PLAN_") or name == "HERMES_TUI_SKILLS":
             del environment[name]
@@ -480,6 +482,13 @@ class SdkAcpEmployeeChild(AcpEmployeeChild):
         await raw_connection.send_request(
             "session/set_model",
             {"sessionId": session_id, "modelId": model_id},
+        )
+
+    async def set_session_mode(self, session_id: str, mode_id: str) -> None:
+        self._require_alive()
+        await self._connection.set_session_mode(
+            session_id=session_id,
+            mode_id=mode_id,
         )
 
     async def close_session(self, session_id: str) -> None:

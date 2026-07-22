@@ -192,9 +192,10 @@ and retry independently. Successful skill edits refresh the configured planner H
 changing existing Employee session ids. Codex and Claude Code continue to use the repository skill
 source exposed through their native project links.
 
-`GET /api/workers` serves the compact index. `GET /api/workers/{id}` composes registry structure with
-managed settings. `worker_settings_changed` invalidates only `workers` and the matching
-`worker:<id>` browser resource.
+`GET /api/workers` serves the compact index and Chief settings. `GET /api/workers/{id}`
+composes registry structure with managed settings. Worker and Chief launch-default endpoints
+edit Backend, Model, and Reasoning only. `worker_settings_changed` invalidates only `workers`
+and the matching `worker:<id>` browser resource.
 
 _Code paths:_ `src/planner/worker_settings/`, `src/planner/tickets/data.py`,
 `src/planner/conversation/hermes_backend_configuration.py`, and
@@ -222,6 +223,15 @@ The stored model and reasoning are requests for the first session, not a live se
 mirror. After the Ticket binds a session they remain only as the historical Kickoff
 request, while human conversation and Automatic Employee work use the same stored
 backend and durable ACP session.
+
+Chief settings use the same managed authority for Backend, Model, and Reasoning. A new Chief
+conversation copies the then-current trio into its durable binding. An existing Chief session
+continues with the trio it launched with, including after a server restart.
+
+Permission is not a launch setting and is never copied into a Ticket or conversation binding.
+Every new Worker or Chief session starts with the backend's full-access mode: Codex uses
+`agent-full-access`, Claude Code uses `bypassPermissions`, and Hermes uses YOLO plus
+`dont_ask`. Hermes can still surface permission behavior its adapter does not suppress.
 
 _Code paths:_ `src/planner/conversation/backend_catalog.py` owns the ordered backend
 catalog; `src/planner/worker_types/configuration.py` composes it with the Worker-type

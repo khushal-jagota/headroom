@@ -28,11 +28,26 @@ class SpecialistSkillPatch(TypedDict, total=False):
 
 
 @dataclass(frozen=True, slots=True)
+class ManagedEmployeeLaunchDefaults:
+    employee_backend: str
+    employee_launch_model: str | None
+    employee_launch_reasoning_effort: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class ManagedWorkerSettings:
     worker_type: str
     stage_ownership_defaults: dict[str, StageOwnershipMode]
     specialist_skill: ManagedSkill
+    launch_defaults: ManagedEmployeeLaunchDefaults
     candidate_specialist_skill: ManagedSkill | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ManagedChiefSettings:
+    employee_id: str
+    label: str
+    launch_defaults: ManagedEmployeeLaunchDefaults
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +56,7 @@ class WorkerManagementSummary:
     label: str
     specialist_skill_name: str
     stage_ownership_defaults: dict[str, StageOwnershipMode]
+    launch_defaults: ManagedEmployeeLaunchDefaults
 
 
 @dataclass(frozen=True, slots=True)

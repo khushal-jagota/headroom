@@ -78,6 +78,28 @@ restore conflicts preserved both board tests and the pre-existing local bundle p
 untracked files matched their pre-merge hashes, and the dirty status path set matched except for
 the old bundle deletion now owned by the landed commit. No restart or deploy. Next: propose
 Closeout.
+## Current work cycle (2026-07-22): Worker and Chief launch defaults (`t_xq6ragj3`)
+
+Managed Worker settings now carry Backend, Model, and Reasoning defaults; new Tickets copy
+their Worker's trio once. Managed Chief settings carry the same trio; each new Chief
+conversation copies the then-current values into its durable binding while active bindings
+remain stable. Production defaults are Codex, `gpt-5.6-sol`, and medium reasoning.
+
+The live owner correction removed permission from settings and persistence entirely. No Ticket,
+binding, API payload, managed file, or migration column stores it. Every actual new Worker or
+Chief session instead applies backend-native full access: Codex `agent-full-access`, Claude Code
+`bypassPermissions`, and Hermes YOLO plus `dont_ask`, with Hermes' residual adapter limitation
+documented. Bound reloads do not reconfigure an existing session.
+
+Independent review found a Chief settings/SQLite lock-order inversion and an incorrect first read
+after last-known-good recovery. Both are fixed with focused regressions: Chief binding CAS now holds
+the Chief settings lock before `BEGIN IMMEDIATE`, and recovery parses the restored launch trio.
+The isolated branch was then rebased onto current main so the implementation gate included the
+already-landed blocker and Codex-ingress work without integrating this Ticket into main.
+
+The final canonical `./verify` passed Ruff, strict Mypy across 153 source files, 1,317 unit tests,
+compile/CSS checks, zero Svelte diagnostics, the production build and frontend tests, and all 116
+Playwright tests; final `VERIFY: PASS`. Next: propose Implementation. No blocker.
 
 ## Current work cycle (2026-07-22): Clear Worker-message attention on Ticket open (`t_m024gke4`)
 

@@ -62,4 +62,3 @@ def normalize_employee_launch_configuration(
         employee_launch_model=model,
         employee_launch_reasoning_effort=reasoning_effort,
     )
-

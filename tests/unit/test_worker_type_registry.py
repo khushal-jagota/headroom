@@ -56,15 +56,15 @@ def test_production_employee_backend_catalog_is_ordered_hermes_codex_claude() ->
         runtime_definitions.worker_type_registry.require(worker_type)
         .worker_profile.default_employee_backend
         for worker_type in runtime_definitions.worker_type_registry.registered_worker_types()
-    } == {"hermes"}
+    } == {"codex"}
 
 
 def test_worker_profile_declares_complete_employee_defaults() -> None:
     for worker_type in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types():
         profile = PRODUCTION_WORKER_TYPE_REGISTRY.require(worker_type).worker_profile
-        assert profile.default_employee_backend == "hermes"
-        assert profile.default_employee_model is None
-        assert profile.default_employee_reasoning_effort is None
+        assert profile.default_employee_backend == "codex"
+        assert profile.default_employee_model == "gpt-5.6-sol"
+        assert profile.default_employee_reasoning_effort == "medium"
 
 
 def assert_error(
@@ -134,9 +134,9 @@ def test_coding_definition_owns_complete_behavior() -> None:
         if not stage.is_terminal
     )
     assert definition.worker_profile.specialist_skill == "panels-worker-coding"
-    assert definition.worker_profile.default_employee_backend == "hermes"
-    assert definition.worker_profile.default_employee_model is None
-    assert definition.worker_profile.default_employee_reasoning_effort is None
+    assert definition.worker_profile.default_employee_backend == "codex"
+    assert definition.worker_profile.default_employee_model == "gpt-5.6-sol"
+    assert definition.worker_profile.default_employee_reasoning_effort == "medium"
     definition.validate_ticket_position("dropped", "done")
 
 
@@ -367,15 +367,17 @@ def test_worker_profiles_require_non_empty_registered_default_employee_backend(
         assert raised.value.detail["employee_backends"] == ["hermes", "codex", "claude"]
 
 
-def test_probe_default_employee_backend_is_registered_second_catalog_entry() -> None:
+def test_probe_default_employee_backend_is_registered_after_production_catalog() -> None:
     probe_registry = build_probe_registry()
     assert PROBE_EMPLOYEE_BACKEND_CATALOG.registered_backend_keys() == (
         "hermes",
+        "codex",
+        "claude",
         "probe-backend",
     )
     assert (
         probe_registry.require("probe").worker_profile.default_employee_backend
-        == PROBE_EMPLOYEE_BACKEND_CATALOG.registered_backend_keys()[1]
+        == PROBE_EMPLOYEE_BACKEND_CATALOG.registered_backend_keys()[-1]
     )
 
 
@@ -483,9 +485,9 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
         ],
         "default_ceiling": "needs_kickoff",
         "worker_profile_id": "panels-worker-coding",
-        "default_employee_backend": "hermes",
-        "default_employee_model": None,
-        "default_employee_reasoning_effort": None,
+        "default_employee_backend": "codex",
+        "default_employee_model": "gpt-5.6-sol",
+        "default_employee_reasoning_effort": "medium",
     }
     assert json.loads(json.dumps(coding)) == coding
     assert (

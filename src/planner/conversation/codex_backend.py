@@ -204,6 +204,7 @@ def build_codex_employee_backend_registration() -> EmployeeBackendRegistration:
                     definition=definition,
                     child_factory=child_factory,
                     workspace_root=repository_root,
+                    full_access_mode="agent-full-access",
                 )
             ),
         )

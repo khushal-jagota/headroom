@@ -91,6 +91,7 @@ def test_hermes_environment_has_explicit_overrides_and_exact_panels_identity() -
     assert ticket_environment["HERMES_PYTHON_SRC_ROOT"] == "/opt/hermes/source"
     assert ticket_environment["PLAN_TICKET_ID"] == "ticket-hermes"
     assert ticket_environment["PLAN_ACTOR"] == "worker"
+    assert ticket_environment["HERMES_YOLO_MODE"] == "1"
     assert "OPENAI_API_KEY" not in ticket_environment
     assert "ANTHROPIC_API_KEY" not in ticket_environment
     assert "HERMES_TUI_SKILLS" not in ticket_environment
@@ -99,6 +100,7 @@ def test_hermes_environment_has_explicit_overrides_and_exact_panels_identity() -
         _definition(), _employee("agent"), ambient_environment=ambient
     )
     assert chief_environment["PLAN_ACTOR"] == "chief"
+    assert chief_environment["HERMES_YOLO_MODE"] == "1"
     assert "PLAN_TICKET_ID" not in chief_environment
 
 

@@ -76,6 +76,9 @@ class _RoleSkillKickoffAcpEmployeeChild(AcpEmployeeChild):
     ) -> SetSessionConfigOptionResponse:
         return await self._delegate.set_config_option(session_id, config_id, value)
 
+    async def set_session_mode(self, session_id: str, mode_id: str) -> None:
+        await self._delegate.set_session_mode(session_id, mode_id)
+
     async def set_legacy_session_model(self, session_id: str, model_id: str) -> None:
         if not isinstance(self._delegate, LegacyAcpSessionModelSelection):
             raise TypeError("ACP child does not support legacy session model selection")

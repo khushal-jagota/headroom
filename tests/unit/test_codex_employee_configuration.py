@@ -192,6 +192,9 @@ class _ScriptedChild:
             ]
         )
 
+    async def set_session_mode(self, session_id: str, mode_id: str) -> None:
+        self.factory.operations.append(f"set_session_mode:{session_id}:{mode_id}")
+
     async def close_session(self, session_id: str) -> None:
         self.factory.operations.append(f"close_session:{session_id}")
         if self.factory.scenario.close_session_failure:
@@ -483,6 +486,7 @@ def test_codex_initial_configuration_applies_model_then_refreshed_reasoning_and_
                 "set_config_option:first-ticket-session:"
                 "refreshed-reasoning-option-id:max"
             ),
+            "set_session_mode:first-ticket-session:agent-full-access",
         ]
 
         factory.operations.clear()
@@ -495,7 +499,9 @@ def test_codex_initial_configuration_applies_model_then_refreshed_reasoning_and_
                 employee_launch_reasoning_effort=None,
             ),
         )
-        assert factory.operations == []
+        assert factory.operations == [
+            "set_session_mode:first-ticket-session:agent-full-access"
+        ]
 
     asyncio.run(exercise())
 
@@ -561,7 +567,7 @@ def test_codex_launch_values_are_not_reapplied_after_first_binding(
                 prompt=[],
             )
         )
-        assert operations[:6] == [
+        assert operations[:7] == [
             "initialize",
             "new_session:codex-session-1-1",
             (
@@ -572,6 +578,7 @@ def test_codex_launch_values_are_not_reapplied_after_first_binding(
                 "set_config_option:codex-session-1-1:"
                 "refreshed-reasoning-option-id:max"
             ),
+            "set_session_mode:codex-session-1-1:agent-full-access",
             "publish_first_binding",
             "prompt:codex-session-1-1",
         ]
@@ -581,6 +588,10 @@ def test_codex_launch_values_are_not_reapplied_after_first_binding(
         assert replaced.binding.binding_generation == 2
         assert not any(
             item.startswith("set_config_option:")
+            for item in operations[operations.index("before_new_conversation") + 1 :]
+        )
+        assert any(
+            item.startswith("set_session_mode:")
             for item in operations[operations.index("before_new_conversation") + 1 :]
         )
 
@@ -599,6 +610,9 @@ def test_codex_launch_values_are_not_reapplied_after_first_binding(
         assert any(item.startswith("load_session:") for item in replacement_operations)
         assert not any(
             item.startswith("set_config_option:") for item in replacement_operations
+        )
+        assert not any(
+            item.startswith("set_session_mode:") for item in replacement_operations
         )
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
 

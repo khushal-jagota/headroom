@@ -106,6 +106,9 @@ class AgentBackendDefinition:
     session_notification_normalizer: SessionNotificationNormalizer = (
         identity_session_notification_normalizer
     )
+    employee_environment_overrides: Callable[
+        [ConversationEmployee], tuple[tuple[str, str], ...]
+    ] | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty_text(self.backend_key, field_name="backend_key")
@@ -171,6 +174,8 @@ class AcpEmployeeChild(Protocol):
     async def set_config_option(
         self, session_id: str, config_id: str, value: str
     ) -> SetSessionConfigOptionResponse: ...
+
+    async def set_session_mode(self, session_id: str, mode_id: str) -> None: ...
 
     async def close_session(self, session_id: str) -> None: ...
 

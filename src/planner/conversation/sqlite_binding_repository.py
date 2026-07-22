@@ -14,6 +14,11 @@ from planner.tickets.contracts import (
     EmployeeLaunchConfiguration,
     EmployeeSessionIdTransition,
 )
+from planner.worker_settings.service import (
+    chief_settings_binding_snapshot_lock,
+    read_chief_settings,
+)
+from planner.worker_types.registry import WorkerTypeRegistry
 
 from .backend_catalog import EmployeeBackendCatalog
 from .contracts import (
@@ -42,6 +47,7 @@ class SqliteConversationBindingRepository:
         busy_timeout_ms: int = 5000,
         employee_backend_catalog: EmployeeBackendCatalog,
         chief_backend_key: str,
+        worker_type_registry: WorkerTypeRegistry | None = None,
     ) -> None:
         if not workspace_root.is_absolute():
             raise ValueError("workspace_root must be absolute")
@@ -53,12 +59,18 @@ class SqliteConversationBindingRepository:
             raise ValueError("Chief backend must be registered")
         self._employee_backend_catalog = employee_backend_catalog
         self._chief_backend_key = chief_backend_key
+        self._worker_type_registry = worker_type_registry
 
     async def resolve(self, employee_id: str) -> ConversationSessionBinding | None:
         return await asyncio.to_thread(self._resolve_sync, employee_id)
 
     async def resolve_employee(self, employee_id: str) -> ConversationEmployee:
         return await asyncio.to_thread(self._resolve_employee_sync, employee_id)
+
+    async def resolve_employee_for_new_conversation(self, employee_id: str) -> ConversationEmployee:
+        return await asyncio.to_thread(
+            self._resolve_employee_for_new_conversation_sync, employee_id
+        )
 
     async def resolve_compaction_boundaries(
         self, binding: ConversationSessionBinding
@@ -139,12 +151,41 @@ class SqliteConversationBindingRepository:
                 entity_id=employee_id,
                 workspace_roots=(self._workspace_root,),
                 backend_key=backend_key,
-                employee_launch_model=(
-                    employee_launch_model if binding is None else None
-                ),
+                employee_launch_model=(employee_launch_model if binding is None else None),
                 employee_launch_reasoning_effort=(
                     employee_launch_reasoning_effort if binding is None else None
                 ),
+            )
+        finally:
+            conn.close()
+
+    def _resolve_employee_for_new_conversation_sync(self, employee_id: str) -> ConversationEmployee:
+        conn = connect(self._db_path, self._busy_timeout_ms)
+        try:
+            ticket = conn.execute(
+                "SELECT employee_backend FROM tickets WHERE id = ?",
+                (employee_id,),
+            ).fetchone()
+            if ticket is not None:
+                configuration = EmployeeLaunchConfiguration(
+                    str(ticket["employee_backend"]),
+                    None,
+                    None,
+                )
+                entity_kind: ConversationEntityKind = "ticket"
+            elif employee_id == CHIEF_OF_STAFF_ENTITY_ID:
+                configuration = self._managed_chief_configuration()
+                entity_kind = "agent"
+            else:
+                raise ValueError("employee must be an existing Ticket or the Chief of Staff")
+            return ConversationEmployee(
+                employee_id=employee_id,
+                entity_kind=entity_kind,
+                entity_id=employee_id,
+                workspace_roots=(self._workspace_root,),
+                backend_key=configuration.employee_backend,
+                employee_launch_model=configuration.employee_launch_model,
+                employee_launch_reasoning_effort=(configuration.employee_launch_reasoning_effort),
             )
         finally:
             conn.close()
@@ -188,8 +229,21 @@ class SqliteConversationBindingRepository:
         encoded_candidate_boundaries = self._serialize_compaction_boundaries(
             validated_candidate_boundaries
         )
-        conn = connect(self._db_path, self._busy_timeout_ms)
-        conn.execute("BEGIN IMMEDIATE")
+        chief_settings_lock = (
+            chief_settings_binding_snapshot_lock(Path(self._db_path).expanduser().parent)
+            if candidate.employee_id == CHIEF_OF_STAFF_ENTITY_ID
+            and self._worker_type_registry is not None
+            else None
+        )
+        if chief_settings_lock is not None:
+            chief_settings_lock.acquire()
+        try:
+            conn = connect(self._db_path, self._busy_timeout_ms)
+            conn.execute("BEGIN IMMEDIATE")
+        except BaseException:
+            if chief_settings_lock is not None:
+                chief_settings_lock.release()
+            raise
         try:
             (
                 entity_kind,
@@ -198,6 +252,11 @@ class SqliteConversationBindingRepository:
                 employee_launch_model,
                 employee_launch_reasoning_effort,
             ) = self._classify_and_read_mirror(conn, candidate.employee_id)
+            if entity_kind == "agent" and expected is not None:
+                managed = self._managed_chief_configuration()
+                selected_backend = managed.employee_backend
+                employee_launch_model = managed.employee_launch_model
+                employee_launch_reasoning_effort = managed.employee_launch_reasoning_effort
             self._require_registered_backend(candidate.backend_key)
             if candidate.backend_key != selected_backend:
                 raise ConversationBindingError(
@@ -231,9 +290,7 @@ class SqliteConversationBindingRepository:
                     actual_employee_configuration = EmployeeLaunchConfiguration(
                         employee_backend=selected_backend,
                         employee_launch_model=employee_launch_model,
-                        employee_launch_reasoning_effort=(
-                            employee_launch_reasoning_effort
-                        ),
+                        employee_launch_reasoning_effort=(employee_launch_reasoning_effort),
                     )
                     if prepared_employee_configuration is None:
                         raise ConversationBindingError(
@@ -243,17 +300,28 @@ class SqliteConversationBindingRepository:
                         raise ConversationBindingError(
                             "Ticket employee configuration changed before first binding"
                         )
-                elif prepared_employee_configuration is not None:
-                    raise ConversationBindingError(
-                        "Chief binding cannot carry Ticket employee configuration"
+                else:
+                    actual_employee_configuration = EmployeeLaunchConfiguration(
+                        selected_backend,
+                        employee_launch_model,
+                        employee_launch_reasoning_effort,
                     )
+                    if (
+                        self._worker_type_registry is not None
+                        and prepared_employee_configuration != actual_employee_configuration
+                    ):
+                        raise ConversationBindingError(
+                            "Chief employee configuration changed before binding"
+                        )
             else:
                 if prepared_employee_configuration is not None:
                     raise ConversationBindingError(
                         "replacement binding cannot carry launch configuration"
                     )
-                if candidate.backend_key != expected.backend_key:
-                    raise ConversationBindingError("replacement binding must preserve its backend")
+                if entity_kind == "ticket" and candidate.backend_key != expected.backend_key:
+                    raise ConversationBindingError(
+                        "Ticket replacement binding must preserve its backend"
+                    )
                 if candidate.binding_generation != expected.binding_generation + 1:
                     raise ConversationBindingError(
                         "replacement binding generation must be the exact successor"
@@ -262,6 +330,21 @@ class SqliteConversationBindingRepository:
                     raise ConversationBindingError(
                         "product mirror changed before binding replacement"
                     )
+                if entity_kind == "agent":
+                    current_chief = EmployeeLaunchConfiguration(
+                        selected_backend,
+                        employee_launch_model,
+                        employee_launch_reasoning_effort,
+                    )
+                    candidate_chief = EmployeeLaunchConfiguration(
+                        candidate.backend_key,
+                        candidate.employee_launch_model,
+                        candidate.employee_launch_reasoning_effort,
+                    )
+                    if candidate_chief != current_chief:
+                        raise ConversationBindingError(
+                            "Chief employee configuration changed before replacement binding"
+                        )
             now = self._integer_now()
             if entity_kind == "ticket":
                 effective = tickets_data.write_employee_session_id_in_transaction(
@@ -284,14 +367,18 @@ class SqliteConversationBindingRepository:
                 conn.execute(
                     "INSERT INTO conversation_session_bindings "
                     "(employee_id, entity_kind, entity_id, acp_session_id, backend_key, "
-                    "binding_generation, compaction_boundaries_json, created_at, "
-                    "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "employee_launch_model, employee_launch_reasoning_effort, "
+                    "binding_generation, "
+                    "compaction_boundaries_json, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         candidate.employee_id,
                         entity_kind,
                         candidate.employee_id,
                         candidate.acp_session_id,
                         candidate.backend_key,
+                        candidate.employee_launch_model,
+                        candidate.employee_launch_reasoning_effort,
                         candidate.binding_generation,
                         encoded_candidate_boundaries,
                         now,
@@ -301,13 +388,17 @@ class SqliteConversationBindingRepository:
             else:
                 cursor = conn.execute(
                     "UPDATE conversation_session_bindings SET acp_session_id = ?, "
-                    "backend_key = ?, binding_generation = ?, "
+                    "backend_key = ?, employee_launch_model = ?, "
+                    "employee_launch_reasoning_effort = ?, "
+                    "binding_generation = ?, "
                     "compaction_boundaries_json = ?, updated_at = ? "
                     "WHERE employee_id = ? AND entity_kind = ? AND entity_id = ? "
                     "AND acp_session_id = ? AND backend_key = ? AND binding_generation = ?",
                     (
                         candidate.acp_session_id,
                         candidate.backend_key,
+                        candidate.employee_launch_model,
+                        candidate.employee_launch_reasoning_effort,
                         candidate.binding_generation,
                         encoded_candidate_boundaries,
                         now,
@@ -339,6 +430,8 @@ class SqliteConversationBindingRepository:
             raise
         finally:
             conn.close()
+            if chief_settings_lock is not None:
+                chief_settings_lock.release()
 
     def _read_validated_binding(
         self, conn: sqlite3.Connection, employee_id: str
@@ -354,6 +447,7 @@ class SqliteConversationBindingRepository:
     ]:
         row = conn.execute(
             "SELECT employee_id, entity_kind, entity_id, acp_session_id, backend_key, "
+            "employee_launch_model, employee_launch_reasoning_effort, "
             "binding_generation, compaction_boundaries_json "
             "FROM conversation_session_bindings WHERE employee_id = ?",
             (employee_id,),
@@ -376,6 +470,14 @@ class SqliteConversationBindingRepository:
             acp_session_id=str(row["acp_session_id"]),
             backend_key=str(row["backend_key"]),
             binding_generation=int(row["binding_generation"]),
+            employee_launch_model=(
+                None if row["employee_launch_model"] is None else str(row["employee_launch_model"])
+            ),
+            employee_launch_reasoning_effort=(
+                None
+                if row["employee_launch_reasoning_effort"] is None
+                else str(row["employee_launch_reasoning_effort"])
+            ),
         )
         if binding.employee_id != employee_id:
             raise ConversationBindingError("binding belongs to another employee")
@@ -435,10 +537,17 @@ class SqliteConversationBindingRepository:
 
     def _classify_and_read_mirror(
         self, conn: sqlite3.Connection, employee_id: str
-    ) -> tuple[ConversationEntityKind, str | None, str, str | None, str | None]:
+    ) -> tuple[
+        ConversationEntityKind,
+        str | None,
+        str,
+        str | None,
+        str | None,
+    ]:
         ticket = conn.execute(
             "SELECT employee_session_id, employee_backend, employee_launch_model, "
-            "employee_launch_reasoning_effort FROM tickets WHERE id = ?",
+            "employee_launch_reasoning_effort "
+            "FROM tickets WHERE id = ?",
             (employee_id,),
         ).fetchone()
         if ticket is not None:
@@ -455,9 +564,66 @@ class SqliteConversationBindingRepository:
                 None if reasoning is None else str(reasoning),
             )
         if employee_id == CHIEF_OF_STAFF_ENTITY_ID:
-            return "agent", None, self._chief_backend_key, None, None
+            binding = conn.execute(
+                "SELECT backend_key, employee_launch_model, "
+                "employee_launch_reasoning_effort "
+                "FROM conversation_session_bindings WHERE employee_id = ?",
+                (employee_id,),
+            ).fetchone()
+            if binding is not None:
+                return (
+                    "agent",
+                    None,
+                    str(binding["backend_key"]),
+                    (
+                        None
+                        if binding["employee_launch_model"] is None
+                        else str(binding["employee_launch_model"])
+                    ),
+                    (
+                        None
+                        if binding["employee_launch_reasoning_effort"] is None
+                        else str(binding["employee_launch_reasoning_effort"])
+                    ),
+                )
+            if self._worker_type_registry is None:
+                return (
+                    "agent",
+                    None,
+                    self._chief_backend_key,
+                    None,
+                    None,
+                )
+            settings = read_chief_settings(
+                Path(self._db_path).expanduser().parent,
+                self._worker_type_registry,
+            ).launch_defaults
+            return (
+                "agent",
+                None,
+                settings.employee_backend,
+                settings.employee_launch_model,
+                settings.employee_launch_reasoning_effort,
+            )
         raise ValueError("employee must be an existing Ticket or the Chief of Staff")
 
     def _require_registered_backend(self, backend_key: str) -> None:
         if not self._employee_backend_catalog.is_registered(backend_key):
             raise ConversationBindingError(f"employee backend {backend_key!r} is not registered")
+
+    def _managed_chief_configuration(self) -> EmployeeLaunchConfiguration:
+        if self._worker_type_registry is None:
+            return EmployeeLaunchConfiguration(
+                self._chief_backend_key,
+                None,
+                None,
+            )
+        defaults = read_chief_settings(
+            Path(self._db_path).expanduser().parent,
+            self._worker_type_registry,
+        ).launch_defaults
+        return EmployeeLaunchConfiguration(
+            defaults.employee_backend,
+            defaults.employee_launch_model,
+            defaults.employee_launch_reasoning_effort,
+        )

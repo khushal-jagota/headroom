@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -31,11 +32,33 @@ from planner.days import data as days_data
 from planner.days.logic.dates import resolve_day_id
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import NO_FURTHER, AtCap
+from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import build_employee_runtime_definitions
+from planner.worker_types.exploration import EXPLORATION_WORKER_TYPE_DEFINITION
+from planner.worker_types.initiative_planning import INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION
+from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTED_AGENT = REPOSITORY_ROOT / "tests/support/acp_scripted_agent.py"
 _AGENT = {"X-Plan-Actor": "agent"}
+
+_SCRIPTED_WORKER_TYPE_DEFINITIONS = tuple(
+    replace(
+        definition,
+        worker_profile=replace(
+            definition.worker_profile,
+            default_employee_backend="hermes",
+            default_employee_model=None,
+            default_employee_reasoning_effort=None,
+        ),
+    )
+    for definition in (
+        CODING_WORKER_TYPE_DEFINITION,
+        NEW_WORKER_TYPE_DEFINITION,
+        EXPLORATION_WORKER_TYPE_DEFINITION,
+        INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION,
+    )
+)
 
 
 class _Strategy:
@@ -83,6 +106,14 @@ def _application(tmp_path: Path) -> tuple[Any, Path, str]:
         },
     )
     clock = build_clock(config)
+    definition = _definition()
+    catalog = EmployeeBackendCatalog(
+        (static_employee_backend_registration(definition, SdkAcpEmployeeChildFactory(definition)),)
+    )
+    runtime_definitions = build_employee_runtime_definitions(
+        catalog,
+        worker_type_definitions=_SCRIPTED_WORKER_TYPE_DEFINITIONS,
+    )
     with connect(str(db_path)) as conn:
         create_schema(conn)
         ticket = tickets_data.create_ticket(
@@ -92,6 +123,7 @@ def _application(tmp_path: Path) -> tuple[Any, Path, str]:
             actor="human",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_runtime_definitions=runtime_definitions,
         )
         tickets_data.accept_proposal(
             conn,
@@ -108,16 +140,12 @@ def _application(tmp_path: Path) -> tuple[Any, Path, str]:
             ticket.id,
             clock.now_unix(),
         )
-    definition = _definition()
-    catalog = EmployeeBackendCatalog(
-        (static_employee_backend_registration(definition, SdkAcpEmployeeChildFactory(definition)),)
-    )
     app = create_app(
         config,
         clock,
         lambda: connect(str(db_path)),
         conversation_test_options=ConversationTestOptions(
-            employee_runtime_definitions=build_employee_runtime_definitions(catalog),
+            employee_runtime_definitions=runtime_definitions,
         ),
     )
     return app, db_path, ticket.id
