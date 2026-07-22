@@ -28,7 +28,7 @@ from planner.worker_types.configuration import (
     configured_employee_runtime_definitions,
 )
 
-from .backend_contracts import AcpConversationIngress
+from .backend_contracts import AcpConversationIngress, ConversationIngressTransition
 from .configuration import ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES
 from .employee_configuration import EmployeeConfigurationCatalogService
 from .employee_registry import (
@@ -179,9 +179,9 @@ class ConversationComposition:
             worker_client_message_id_factory=worker_client_message_id_factory,
             ticket_conversation_projection=ticket_conversation_projection,
         )
-        source_ingress = _BindOnceAsyncCallback[[ConversationIngressSource, object], None](
-            "conversation ingress"
-        )
+        source_ingress = _BindOnceAsyncCallback[
+            [ConversationIngressSource, ConversationIngressTransition], None
+        ]("conversation ingress")
         source_permission = _BindOnceAsyncCallback[
             [ConversationRuntimeHandle, RequestPermissionRequest],
             RequestPermissionResponse,

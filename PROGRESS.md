@@ -1,5 +1,42 @@
 # PROGRESS
 
+## Current work cycle (2026-07-22): Materialize live terminal replay
+
+Ticket `t_xq6ragj3` proves a second replay-overflow class after the Codex file-edit correction.
+Its durable session privately loads as 590 normalized notifications / 361,465 bytes, but two live
+verification turns emitted 4,140 `terminal_output_delta` notifications carrying 535,573 bytes of
+terminal text. The Hub retained every transient browser envelope in the ready stream's append-only
+reset buffer, crossed the 1,048,576-byte integrity ceiling, discarded replay atomically, and now
+closes every Ticket attach with 1013 `conversation replay unavailable; retry` while the worker
+continues running.
+
+The landed atomic-session-load work fixes historical ingress saturation and browser reload races;
+it intentionally retains the replay-byte ceiling and does not materialize live terminal progress.
+The new contract keeps byte-identical immediate delivery for attached browsers but consolidates
+well-formed terminal deltas by session and tool-call identity in the reconnect snapshot. Malformed
+extensions and all other envelopes remain append-only; genuine materialized overflow still fails
+closed. Contract and implementation-plan review passed. The RED Hub reconnect regression first
+closed 1013 after 50 live deltas crossed its test ceiling; the implementation now preserves all 50
+live deliveries while reconnect receives one consolidated terminal update. The first independent
+diff review found provider knowledge in the Hub, permissive shape matching, and canonical byte-
+accounting drift; all three were corrected. Focused Hub, Codex materializer/backend, and employee-
+child tests now pass with Ruff, strict Mypy, and `git diff --check`. Root made only three mechanical
+integration repairs: removed two unused values and added explicit Mapping/string narrowing for
+strict Mypy. The final independent review reports `NO VIOLATIONS` after the reconnect regression
+was strengthened at sequence 100 so subscriber resequencing changes digit width and would expose
+the former accounting mutation. The canonical `./verify` passed Ruff, strict Mypy across 154 source
+files, 1,354 unit tests, compile/CSS checks, zero Svelte diagnostics, the production build and
+frontend tests, and all 117 Playwright tests; final `VERIFY: PASS`.
+
+Landed on main and restarted. The first restart request exposed a separate lifecycle fault: the
+nine-hour-old supervisor accepted the request but its application child did not exit after SIGTERM,
+so no replacement had started and the first proof still exercised old code. The exact stalled
+application process group was force-finished; its supervisor exited, so a fresh supervised
+`panels serve` was started from the committed main tree. A direct WebSocket attach to `t_xq6ragj3`
+then replayed 779 ACP updates plus reset/ready—781 envelopes / 698,415 bytes—reached `ready` at
+sequence 6,632 on durable session `019f87af-1efe-7232-9e0c-456ceb42e0dc`, and received no prompt.
+The four pre-existing dirty nested worktrees remain untouched.
+
 ## Current work cycle (2026-07-22): Bound Codex file-edit conversation payloads
 
 Live reproduction for Ticket `t_m024gke4` is exact: its durable Codex session loads 239 typed ACP
@@ -40,6 +77,23 @@ temporary stashes were removed; older owner stashes and all dirty nested worktre
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
+
+## Current work cycle (2026-07-22): Atomic ACP session-load replay (t_k431pv7q)
+
+Implementation is complete on the branch. A first or cold attach privately captures the complete
+durable ACP session load and publishes it as one sequenced, atomic replay transition before racing
+live callbacks. A per-generation publication barrier preserves that order without holding the gate
+across external I/O; temporary sequencer pressure backpressures instead of dropping or failing; and
+an ordinary reconnect to a ready stream uses its materialized snapshot without another load. Exact
+source/barrier cleanup covers retry, child death, and shutdown; diagnostics remain content-free; and
+the existing finite browser and external-operation protections remain in force.
+
+Current main base `d5f4d0e` was merged into feature branch `ticket/t_k431pv7q-acp-replay` at
+`282319d`. The prospective merged tree's canonical `./verify` passed Ruff, strict Mypy over 153
+source files, 1,346 unit tests, compile/CSS checks, zero Svelte diagnostics, frontend build/tests,
+and 117 e2e tests, ending with `VERIFY: PASS`. Main fast-forwarded from `d5f4d0e` to `282319d`.
+The four pre-existing dirty nested-worktree paths and their exact subproject diffs were preserved.
+No restart or deploy. Next propose Closeout.
 
 ## Current work cycle (2026-07-22): Coherent blocked-Ticket intake and workspace (`t_np7fjas6`)
 
